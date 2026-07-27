@@ -33,7 +33,7 @@ DESCRIPTION="Reserved name for the antseal project (pre-M0 placeholder — see r
 # so the GPL-3.0 distribution effect on net/cli does not attach to them.
 LICENSE="MIT OR Apache-2.0"
 REPOSITORY="https://github.com/aed900/antseal"
-USER_AGENT="antseal-setup (contact: 129773515+aed900@users.noreply.github.com)"
+USER_AGENT="antseal-setup (+https://github.com/aed900/antseal)"
 API="https://crates.io/api/v1/crates"
 # Pause between real publishes (crates.io rate-limits new-crate publishes).
 PUBLISH_PAUSE_SECS=30

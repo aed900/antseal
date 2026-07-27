@@ -47,7 +47,7 @@ Re-confirmed live by the script's own availability pre-check on 2026-07-27
 for c in antseal antseal-core antseal-anchor antseal-net antseal-cli; do
   printf '%s: ' "$c"
   curl -sS -o /dev/null -w '%{http_code}\n' \
-    -A 'antseal-setup (contact: 129773515+aed900@users.noreply.github.com)' \
+    -A 'antseal-setup (+https://github.com/aed900/antseal)' \
     "https://crates.io/api/v1/crates/$c"
 done
 ```
@@ -66,7 +66,7 @@ script (never part of the workspace):
   placeholders contain only our empty lib and no ant-core dependency, so
   the GPL-3.0 distribution effect on net/cli does not attach to them. The
   net/cli distribution note attaches at first *real* publish (M4/Q29).
-- **Repository**: `https://github.com/aed900/antseal` (relocated 2026-07-27; never publish crates pointing at the deprecated aed900 repo)
+- **Repository**: `https://github.com/aed900/antseal`
 - **Edition**: 2021 (standalone crates outside the workspace, buildable on
   any ambient toolchain; superseded by real publishes — D4 note)
 
