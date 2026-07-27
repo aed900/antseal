@@ -178,15 +178,23 @@ impl fmt::Display for ContentCommitKind {
 /// # Cross-domain wrapper arms (integration extension point)
 ///
 /// Failures produced by the sibling domains surface through this same
-/// enum via wrapper arms. Those modules land on parallel branches, so
-/// their error types do not exist here yet; **the integrator adds the
-/// following arms at merge** (each `#[error(transparent)]`-style or with
-/// a `#[source]`, keeping the wrapped error's own distinct code
-/// surfaced via a `code()` delegation arm):
+/// enum via wrapper arms (each `#[error(transparent)]`-style or with a
+/// `#[source]`, keeping the wrapped error's own distinct code surfaced
+/// via a `code()` delegation arm).
 ///
-/// - `Codec(…)` — F: strict-canonical CBOR decode rejections (duplicate
-///   keys, non-shortest ints, indefinite lengths, unknown keys, trailing
-///   bytes, size/count/depth caps; MVP-SPEC.md line 73).
+/// **Landed:**
+///
+/// - [`Self::Codec`] — F (landed with F3): strict-canonical CBOR decode
+///   rejections (duplicate keys, non-shortest ints/lengths, indefinite
+///   lengths, out-of-order keys, floats/simples/tags, trailing bytes,
+///   invalid UTF-8, plus the totality classes; MVP-SPEC.md line 73).
+///   Codes are `cbor-`-prefixed, delegated from
+///   [`crate::codec::DecodeError::code`]. Unknown-key and cap errors
+///   arrive later through the same arm's wrapped type or as F5/F8/F11
+///   extend the codec taxonomy.
+///
+/// **Still pending — the integrator adds these at merge:**
+///
 /// - `Crypto(…)` — C: signature-stage failures (`sig_policy`
 ///   missing/invalid/unlisted-extra/empty, non-canonical Ed25519 `S`,
 ///   non-canonical ML-DSA encoding; C14 owns those rows).
@@ -411,9 +419,21 @@ pub enum VerifyError {
         /// The file whose mirror does not canonicalize to its content.
         file_id: u64,
     },
+
+    // ── Cross-domain wrapper arms (see the enum-level doc) ──────────
+    /// F: the bundle/manifest/body bytes failed the strict canonical
+    /// CBOR decode layer (MVP-SPEC.md line 73; task F3). The wrapped
+    /// error's distinct `cbor-*` code is surfaced unchanged through
+    /// [`Self::code`], so every codec rejection class stays its own
+    /// tamper-matrix row. Positions inside the wrapped error are
+    /// relative to the decoded slice (outer envelope or inner body);
+    /// which layer was being decoded is pipeline context the R5
+    /// orchestrator reports, not part of the code.
+    #[error(transparent)]
+    Codec(#[from] crate::codec::DecodeError),
     // ── INTEGRATION EXTENSION POINT ─────────────────────────────────
-    // Wrapper arms Codec(F) / Crypto(C) / Canon(G) / Anchor(A) are added
-    // HERE at merge — see the enum-level doc comment for the contract.
+    // Wrapper arms Crypto(C) / Canon(G) / Anchor(A) are added HERE at
+    // merge — see the enum-level doc comment for the contract.
     // ────────────────────────────────────────────────────────────────
 }
 
@@ -471,6 +491,9 @@ impl VerifyError {
             Self::RawMirrorCanonicalizationMismatch { .. } => {
                 "raw-mirror-canonicalization-mismatch"
             }
+            // Wrapper arm: the wrapped error's own distinct stable code
+            // (`cbor-*`) is the row key — never flattened or renamed.
+            Self::Codec(e) => e.code(),
         }
     }
 }
@@ -561,6 +584,7 @@ impl std::error::Error for VerifyFailures {}
 /// breaks the build otherwise).
 #[cfg(test)]
 pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
+    use crate::codec::{DecodeError as CodecError, ForbiddenKind};
     use VerifyError as E;
     vec![
         E::UnitDecryptFailed { unit_id: 3 },
@@ -658,6 +682,39 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
         E::FineRootRebuildMismatch { file_id: 6 },
         E::RawCommitMismatch { file_id: 7 },
         E::RawMirrorCanonicalizationMismatch { file_id: 8 },
+        // ── Codec wrapper arm (F3): one exemplar per distinct cbor-*
+        // code of crate::codec::DecodeError ──
+        E::Codec(CodecError::Truncated { position: 10 }),
+        E::Codec(CodecError::Malformed { position: 11 }),
+        E::Codec(CodecError::ForbiddenType {
+            kind: ForbiddenKind::Float,
+            position: 12,
+        }),
+        E::Codec(CodecError::ForbiddenType {
+            kind: ForbiddenKind::Simple,
+            position: 13,
+        }),
+        E::Codec(CodecError::ForbiddenType {
+            kind: ForbiddenKind::Tag,
+            position: 14,
+        }),
+        E::Codec(CodecError::IndefiniteLength { position: 15 }),
+        E::Codec(CodecError::NonShortestInt { position: 16 }),
+        E::Codec(CodecError::NonShortestLength { position: 17 }),
+        E::Codec(CodecError::DuplicateMapKey { position: 18 }),
+        E::Codec(CodecError::UnsortedMapKeys { position: 19 }),
+        E::Codec(CodecError::InvalidUtf8 { position: 20 }),
+        E::Codec(CodecError::TrailingBytes {
+            position: 21,
+            trailing: 2,
+        }),
+        E::Codec(CodecError::NestingTooDeep { position: 22 }),
+        E::Codec(CodecError::UnexpectedType {
+            expected: crate::codec::ExpectedKind::Unsigned,
+            found: crate::codec::ItemKind::Bytes,
+            position: 23,
+        }),
+        E::Codec(CodecError::IntOutOfRange { position: 24 }),
     ]
 }
 
@@ -670,8 +727,9 @@ mod tests {
     /// The number of distinct stable codes: 14 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
-    /// ConcatCommitMismatch×2).
-    const DISTINCT_CODES: usize = 30;
+    /// ConcatCommitMismatch×2), plus the 15 delegated `cbor-*` codes of
+    /// the Codec wrapper arm (12 codec variants, ForbiddenType×3).
+    const DISTINCT_CODES: usize = 45;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -730,16 +788,19 @@ mod tests {
                 VerifyError::RawMirrorCanonicalizationMismatch { .. } => {
                     "RawMirrorCanonicalizationMismatch"
                 }
+                VerifyError::Codec(_) => "Codec",
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 19, "19 variants must be represented");
+        assert_eq!(tally.len(), 20, "20 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),
             ("PartialRevealSaltLeak", 2),
             ("FullRevealMaterialMissing", 2),
             ("ConcatCommitMismatch", 2),
+            // One exemplar per delegated cbor-* code (F3).
+            ("Codec", 15),
         ]
         .into_iter()
         .collect();
@@ -791,6 +852,18 @@ mod tests {
             kind: TilingViolationKind::OutOfBounds,
         };
         assert!(e.to_string().contains("out-of-bounds"), "{e}");
+    }
+
+    /// The Codec wrapper arm honors the extension-point contract:
+    /// `From` conversion, transparent `Display` (equal to the wrapped
+    /// error's), and `code()` delegation to the wrapped `cbor-*` code.
+    #[test]
+    fn codec_wrapper_arm_delegates_display_and_code() {
+        let inner = crate::codec::DecodeError::DuplicateMapKey { position: 7 };
+        let wrapped = VerifyError::from(inner.clone());
+        assert_eq!(wrapped.code(), "cbor-duplicate-map-key");
+        assert_eq!(wrapped.code(), inner.code());
+        assert_eq!(wrapped.to_string(), inner.to_string());
     }
 
     /// `LengthField::spec_len` mirrors the line-121 exact-length table.
