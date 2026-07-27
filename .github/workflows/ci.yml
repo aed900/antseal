@@ -16,8 +16,8 @@
 #
 # Task-ID map (corrected by Q1 — the P8 header had fuzz under "Q1" and
 # vector retention under "Q9"; authoritative IDs are per tasks/Q.md):
-#   Q4:  golden-vectors — native golden-vector runner over
-#        testdata/vectors/<version>/ (mount point below)
+#   Q4:  golden-vectors — LANDED: native runner over testdata/vectors/
+#        (discovery walk, no hardcoded lists; testdata/vectors/README.md)
 #   Q5:  wasm-bitmatch — native<->WASM bit-match, built on the P14 wasm
 #        probe recipe (mount point below)
 #   Q6:  vector-freeze guard (append-only FROZEN.sha256 check) — new job,
@@ -27,9 +27,13 @@
 #        below); the nightly long run is a separate scheduled workflow, and
 #        cargo-fuzz needs its own nightly-toolchain pin, independent of
 #        rust-toolchain.toml
-#   P13/Q10: audit-deny — cargo-audit + cargo-deny (mount point below); the
-#        scheduled advisory run is a separate cron workflow
-#   Q2:  testdata secret-material guard — new job, lands at Q2
+#   P13/Q10: audit-deny — LANDED at P13 as cargo-deny ONLY (decision D19:
+#        no cargo-audit — deny's advisories check reads the same RUSTSEC
+#        DB); job name kept (required-status context). Q10 owns permanent
+#        operation + the Q29 licenses completion. The weekly scheduled run
+#        independent of PR traffic is .github/workflows/advisory-cron.yml
+#   Q2:  secret-guard — LANDED: vault-export/wallet-key signature grep with
+#        a planted-fake self-test each run (testdata/README.md convention)
 #   Q15/Q16/Q19/Q31: devnet E2E venue / anchor-fixture lane / playwright
 #        page lane / release + signing — later milestones, new jobs or
 #        workflows
@@ -78,6 +82,13 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    env:
+      # Q3 (docs/testing/proptest-conventions.md): CI runs 4x the local
+      # default case count. Seeds stay fixed per proptest! block, so the
+      # extra cases are a longer deterministic sequence, not lost
+      # reproducibility. Tests with spec-mandated floors (e.g. C3's
+      # >= 10_000) hardcode `cases` and are unaffected.
+      PROPTEST_CASES: "1024"
     steps:
       - uses: actions/checkout@v4
       - name: rustup show (toolchain from rust-toolchain.toml)
@@ -207,19 +218,36 @@ jobs:
   # rustup-from-toolchain-file → rust-cache → content, matching the lanes
   # above) and MUST keep the job id and `name:` byte-identical.
 
-  # Q4: native golden-vector runner — discovery-glob over
-  # testdata/vectors/<version>/, full antseal-core verification per vector,
-  # malformed vectors fail loudly. Q6's append-only freeze guard extends this
-  # job or lands as a sibling (Q6's call).
+  # Q4 (live): native golden-vector runner — walks testdata/vectors/
+  # (no hardcoded lists; discovery contract in testdata/vectors/README.md),
+  # executes every committed vector of every format version through
+  # antseal_core::test_util::vectors; malformed/unclassifiable files and
+  # empty discovery all fail loudly. The libtest `vector_` filter selects
+  # exactly the reserved-marker golden-vector suite (runner +
+  # per-component vector-pinning tests like hkdf_golden). The cross-os
+  # lane runs the same suite on all three OSes; this context is the
+  # dedicated always-required golden-vector gate. Q6's append-only freeze
+  # guard lands as a sibling job or extends this one (Q6's call).
   golden-vectors:
     name: golden-vectors
     runs-on: ubuntu-latest
     steps:
-      - name: Mount point — content lands at Q4
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
-          echo "MOUNT POINT (Q1): required-status context 'golden-vectors' is reserved."
-          echo "No golden vectors exist yet. Green here asserts NOTHING until Q4 lands the native runner."
-          echo "Q4: replace this step's body; never rename the job (branch-protection context)."
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the golden-vector suite (vector_ reserved-name marker)
+        run: |
+          set -u
+          cargo test -p antseal-core --locked -- vector_
+          matched="$(cargo test -p antseal-core --locked -- vector_ --list 2>/dev/null | grep -c ': test$' || true)"
+          echo "golden-vector suite: matched ${matched} test(s) for reserved-name filter [vector_]"
+          if [ "${matched}" -eq 0 ]; then
+            echo "::error::golden-vector suite is EMPTY — the Q4 runner tests must always match; the vector_ marker or the runner is broken"
+            exit 1
+          fi
 
   # Q5: WASM/native bit-match — antseal-core verification compiled to
   # wasm32-unknown-unknown (wasm-bindgen-test under node / headless runner)
@@ -265,17 +293,103 @@ jobs:
           echo "No fuzz targets exist yet. Green here asserts NOTHING until Q9 lands the smoke run."
           echo "Q9: replace this step's body; never rename the job (branch-protection context)."
 
-  # P13/Q10: cargo-audit + cargo-deny (advisories at P13; audit + licenses/
-  # bans/sources completion at Q10; documented ml-dsa advisory ignores per
-  # the spec's pin decision). Both tools run as steps of this ONE job so the
-  # required context stays single and stable. The scheduled advisory run
-  # independent of PR traffic is a separate cron workflow, not a PR context.
+  # P13 (live; permanent operation + licenses completion = Q10): cargo-deny
+  # ONLY per decision D19 (docs/decisions/D19-advisory-lane.md) — no
+  # cargo-audit; deny's `advisories` check consumes the same RUSTSEC DB.
+  # Config: deny.toml (advisories/bans/sources active; licenses STUBBED
+  # until Q29 — hence the explicit check list, never a bare `check`).
+  # Job name kept from the Q1 mount point: it is a required-status context.
+  # The weekly scheduled run independent of PR traffic lives in
+  # .github/workflows/advisory-cron.yml (same pinned tool, same command).
+  # cargo-deny is exact-pinned per docs/dependency-policy.md §5; bump =
+  # deliberate event (§4). The version literal appears in the two workflow
+  # files + the policy doc — grep '0\.19\.8' to move all at once.
   audit-deny:
     name: audit-deny
     runs-on: ubuntu-latest
     steps:
-      - name: Mount point — content lands at P13/Q10
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
-          echo "MOUNT POINT (Q1): required-status context 'audit-deny' is reserved."
-          echo "No deny.toml/audit config exists yet. Green here asserts NOTHING until P13/Q10 land."
-          echo "P13/Q10: replace this step's body; never rename the job (branch-protection context)."
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned cargo-deny binary
+        id: deny-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-0.19.8-${{ runner.os }}
+      - name: Install pinned cargo-deny (docs/dependency-policy.md §5)
+        if: steps.deny-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --version 0.19.8 --locked
+      - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
+        run: |
+          cargo deny --version
+          cargo deny --locked check advisories bans sources
+
+  # Q2: secret-material guard (testdata/README.md, "Secret-material
+  # convention"; project rule 6). Greps the checkout for vault-export /
+  # wallet-key file signatures; each run FIRST proves the detector works by
+  # planting fakes in a temp dir (test-of-the-test — never committed).
+  # Patterns are spelled with character classes so this file cannot match
+  # itself; scan excludes .git/, target/, .github/ (this script) and *.md
+  # (prose may discuss the formats). A future legit source literal (e.g. a
+  # keystore-import parser) extends the exclusions in the same PR as a
+  # reviewed event.
+  secret-guard:
+    name: secret-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vault-export / wallet-key signature guard (self-test, then scan)
+        run: |
+          set -u
+          scan() {
+            # $1 = directory. Prints hits; returns 0 = clean, 1 = hit.
+            local root="$1" hits=""
+            ex() { grep -rlaE --exclude-dir=.git --exclude-dir=target \
+                     --exclude-dir=.github --exclude='*.md' -e "$1" "$root" || true; }
+            # (1) PEM private-key blocks (wallet/signing keys, any flavor).
+            hits+="$(ex '[-]{5}BEGIN[ A-Z0-9]*PRIVATE KEY[-]{5}')"$'\n'
+            # (2) EVM keystore JSON (web3 secret storage): both signature
+            #     keys must appear in the same file.
+            local a b
+            a="$(ex '"ciphertext"')" ; b="$(ex '"kdfparams"')"
+            hits+="$(comm -12 <(printf '%s\n' "$a" | sort -u) <(printf '%s\n' "$b" | sort -u))"$'\n'
+            # (3) Reserved antseal vault-export magic (testdata/README.md:
+            #     the U12 vault format must embed it so strays are
+            #     detectable).
+            hits+="$(ex 'ANTSEAL[ ]VAULT[ ]EXPORT')"$'\n'
+            # (4) age / minisign secret-key markers.
+            hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
+            hits+="$(ex 'minisign encrypted secret key')"$'\n'
+            hits="$(printf '%s\n' "$hits" | grep -v '^$' | sort -u || true)"
+            if [ -n "$hits" ]; then
+              printf '%s\n' "$hits"
+              return 1
+            fi
+            return 0
+          }
+          # Self-test FIRST, every run: planted fakes in a temp dir MUST
+          # trigger every pattern class before the repo verdict is trusted.
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          printf 'fake for guard self-test\n-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n' > "$tmp/fake-wallet.pem"
+          printf '{"version":3,"crypto":{"ciphertext":"00","cipherparams":{},"kdf":"scrypt","kdfparams":{"n":1},"mac":"00"}}\n' > "$tmp/fake-keystore.json"
+          printf 'ANTSEAL VAULT EXPORT v0 guard-self-test\n' > "$tmp/fake-vault-export.bin"
+          printf 'AGE-SECRET-KEY-1SELFTESTSELFTESTSELFTEST\n' > "$tmp/fake-age.key"
+          planted=4
+          found="$(scan "$tmp" | wc -l)" || true
+          if [ "$found" -ne "$planted" ]; then
+            echo "::error::secret-guard self-test FAILED: planted $planted fakes, detected $found — the detector is broken; fix it before trusting a green scan"
+            scan "$tmp" || true
+            exit 1
+          fi
+          echo "self-test OK: all $planted planted fakes detected in the temp dir"
+          # The real scan.
+          if ! scan .; then
+            echo "::error::secret-guard: vault-export/wallet-key file signature(s) found (paths above). No real secret material may ever be committed (project rule 6; testdata/README.md)."
+            exit 1
+          fi
+          echo "OK: no vault-export/wallet-key signatures in the tree."

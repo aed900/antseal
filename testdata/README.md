@@ -1,28 +1,78 @@
 # testdata/
 
-Fixture tree for antseal (MVP-SPEC.md, Architecture). This README fixes the
-layout (P5); fixture content is owned by the C (crypto), F (formats), G
-(canonicalization/units/fine tree) and Q (test infrastructure) domains and
-lands with their milestones.
+Fixture tree for antseal (MVP-SPEC.md line 57: "golden vectors, UTF-8
+corpus, tamper matrix, fine-tree range-proof fixtures"). Layout and
+conventions are owned by Q (Q2); fixture *content* is contributed by the
+component domains named per directory and lands with their milestones.
 
-Layout:
+This file supersedes the P5 stub layout (which sketched `golden/` and
+`tamper-matrix/`; those names were never populated — the authoritative
+homes are `vectors/<format-version>/` and `tamper/` below).
 
-- `vectors/` — committed golden vectors for derivation/crypto primitives,
-  each subdirectory self-documenting via its README. First resident:
-  `vectors/hkdf/` (C3) — HKDF-SHA256 label-registry vectors from a fixed
-  NON-SECRET `W`, verified by `crates/antseal-core/tests/hkdf_golden.rs`.
-  Committed vectors are retained forever. (C)
-- `golden/` — golden vectors: exact canonical bytes (plus digests) for every
-  versioned format — manifest, bundle, commitments — cross-checked against an
-  independent CBOR implementation. Committed vectors are retained forever.
-  (F/Q; intended)
-- `utf8-corpus/` — UTF-8 canonicalization corpus: NFC, LF, BOM and other edge
-  cases; idempotence and cross-platform stability inputs. (G)
-- `tamper-matrix/` — mutated manifests/bundles: every mutation class must
-  fail verification with a distinct error. (Q, fed by F/C)
-- `fine-tree/` — fine-tree range-proof fixtures for selective disclosure
-  (leaf/node domain separation, boundary ranges). (G)
+## Layout and ownership
 
-Rules: fixtures are deterministic (seeded RNG only), and no secret material
-ever appears here — master secrets, unit keys and salts live only in vaults,
-never in test fixtures.
+| Directory | Contents | Contributors |
+| --- | --- | --- |
+| `vectors/<format-version>/` | Golden vectors in the Q4 envelope schema (see `vectors/README.md`): today the migrated HKDF label vectors (`v1/hkdf/`); next manifest/bundle (F12/F13), crypto (C16), fine-tree/canonicalization (G3/G15), report (R), anchor (A, M2) kinds. Retained forever, per version, frozen by Q6. | F, C, G, A, R (harness: Q) |
+| `utf8-corpus/` | UTF-8 canonicalization corpus: CRLF, NFD-vs-NFC, BOM, emoji/ZWJ, mixed scripts — idempotence + cross-platform stability inputs (MVP-SPEC.md line 170). | G (G3) |
+| `tamper/` | Tamper-matrix fixtures: pre-mutated manifests/bundles/tokens for the Q7 harness; every mutation must fail with its distinct expected error. Q8's `MATRIX.toml` completeness registry lands here. | Q (harness), rows fed by F, C, G, A, R |
+| `fine-tree/` | Fine-tree range-proof fixtures for selective disclosure: leaf/node domain separation, boundary ranges, the unbalanced n=6 MSB-first GGM vector (MVP-SPEC.md line 169). | G (G15) |
+| `anchors/` | **Reserved for M2**: recorded real OTS calendar responses, `.ots` upgrade states, and TSA tokens (FreeTSA ECDSA P-384, DigiCert) captured per the Q16 runbook, replayed by CI so the anchor lane never touches real anchor networks. | A (A24/A25) |
+| `fuzz-seeds/` | Committed fuzz seed corpora, one subdirectory per cargo-fuzz target; seeded from golden vectors + tamper fixtures, minimized per the Q9 cadence. | Q (Q9), targets from F (M0), A (M2) |
+
+Byte-exactness guard: `.gitattributes` sets `testdata/** -text`, so fixture
+bytes survive checkout unchanged on every OS (the Windows CI image sets
+`core.autocrlf=true`). Never remove that guard; it covers every current and
+future path under `testdata/`.
+
+## Contribution rules
+
+1. **Nothing here is ever silently skipped.** Vector files must conform to
+   the envelope schema (`vectors/README.md`); unclassifiable files under
+   `vectors/` fail the runner. Put prose in `README.md` files, generators
+   in `*.py`.
+2. **Fixtures are deterministic**: seeded RNG only, no time/machine
+   dependence; independent reference generators are committed beside their
+   output and are run to *verify*, never to silently regenerate.
+3. **Committed vectors are append-only once frozen** (Q6): a byte change to
+   a frozen fixture is a format event with an explicit justification and a
+   format-version bump, never a drive-by regeneration. Per-version
+   directories are retained indefinitely and every future release's CI runs
+   all of them (MVP-SPEC.md line 123).
+4. Cross-OS-sensitive suites consume fixtures via tests whose names carry
+   the reserved `corpus_`/`vector_` markers (CONTRIBUTING.md) so the
+   three-OS CI lane proves byte-identical behavior.
+5. New fixture *categories* (top-level directories) are a Q-reviewed layout
+   change to this README, not an ad-hoc mkdir.
+
+## Secret-material convention (project rule 6 — normative)
+
+Real secret material — a real master secret `W`, unit keys, salts derived
+from real secrets, vault exports, wallet keys/keystores, mnemonics — must
+**never** be committed anywhere in this repository, fixtures included.
+
+- **Every fixture secret derives from the documented fixed test seed**: the
+  32-byte pattern `00 01 02 … 1f` (`0x00..=0x1F`), exposed to Rust tests as
+  `antseal_core::test_util::TEST_MASTER_SECRET_W`. Fixture values that are
+  secret-*shaped* (a `W`, a key, a salt, a seed) are either this seed
+  itself or deterministically derived from it via the crate's own public
+  derivation functions. (In-memory values generated by property-test
+  strategies during a test run are fine — this convention governs
+  *committed* material.)
+- **Label it**: every vector file carries a `non_secret` field containing
+  the `NON-SECRET` marker (schema-enforced); non-vector fixture files and
+  generators state it in a header comment; directory READMEs repeat it.
+- **No real vault or wallet material, ever** — not even "expired" or
+  "empty" ones. The CI `secret-guard` lane greps the tree for
+  vault-export/wallet-key file signatures (PEM private-key blocks, EVM
+  keystore JSON, age/minisign secret keys, and the reserved antseal
+  vault-export magic `ANTSEAL VAULT EXPORT`, which the U-domain vault
+  format must embed precisely so strays are detectable) and fails on any
+  hit; the lane self-tests by planting fakes in a temp directory each run.
+  Prose (`*.md`) and the workflow file itself are excluded from the scan so
+  formats can be *discussed*; if source code ever legitimately needs a
+  matching literal (e.g. a keystore import parser), extend the guard's
+  exclusions in the same PR as a reviewed event.
+- Anchor fixtures (M2) contain real *public* cryptographic material (TSA
+  certificates, timestamp tokens, calendar proofs over fixture digests) —
+  that is fine; the rule bars *private/secret* material only.

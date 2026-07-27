@@ -1,0 +1,110 @@
+# antseal dependency-graph policy — cargo-deny configuration (P13).
+#
+# Decision record: docs/decisions/D19-advisory-lane.md (cargo-deny ONLY —
+# no cargo-audit; deny's advisories check consumes the same RUSTSEC DB).
+# Tool version pinned per docs/dependency-policy.md §5: cargo-deny =0.19.8
+# (CI installs exactly that; run the same locally).
+#
+# ACTIVE checks (CI + local):     cargo deny check advisories bans sources
+# STUBBED check:                  licenses — see the bottom of this file.
+# Never run a bare `cargo deny check` and treat a licenses failure as
+# meaningful before Q29 lands the allowlist.
+#
+# Triggers (D19): per-PR via the `audit-deny` job in
+# .github/workflows/ci.yml, plus a weekly cron in
+# .github/workflows/advisory-cron.yml so a new advisory against a pinned
+# dependency surfaces even with zero pushes.
+#
+# IGNORE DISCIPLINE (D19): every entry in [advisories].ignore MUST carry a
+# written justification and a review date in its `reason` string. An ignore
+# with a passed review date is treated as expired: re-assess and re-date it
+# or remove it. Expected first residents: the two Jan-2026 `ml-dsa`
+# advisories, entering WITH P12's applicability assessment when the ml-dsa
+# pin lands (they are not in today's graph, so they are not pre-ignored
+# here — an ignore for an absent crate would be dead config).
+
+[graph]
+# Scan the full feature surface: antseal-core's `test-util` (optional
+# proptest) must not hide from the advisory sweep.
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# advisories — RUSTSEC advisory DB (https://github.com/rustsec/advisory-db)
+# ---------------------------------------------------------------------------
+[advisories]
+# Defaults deliberately kept: vulnerabilities/unmaintained/unsound/yanked
+# all surface. The watchlist the weekly run exists for (tasks/Q.md Q10):
+# ml-dsa, fips204, ed25519-dalek, ant-core, minicbor — plus everything else
+# in the graph.
+ignore = [
+    # (empty — 2026-07-27, tree clean against the RUSTSEC DB; see the
+    # ignore-discipline note in the header before adding anything.)
+]
+
+# ---------------------------------------------------------------------------
+# bans — duplicate versions, wildcard requirements, explicit denials
+# ---------------------------------------------------------------------------
+[bans]
+# RECORDED CHOICE (P13, 2026-07-27): `warn`, not `deny`.
+# Today's tree carries three benign duplicate-version pairs, all in
+# dev/proc-macro tiers, none format-affecting:
+#   syn 2.0.119 + 3.0.3            (thiserror derive vs serde_derive)
+#   getrandom 0.3.4 + 0.4.3        (proptest: rand 0.9 vs tempfile — dev-only)
+#   r-efi 5.3.0 + 6.0.0            (getrandom UEFI stubs, target-gated)
+# and the ant-core graph arriving at M1 (~38 direct deps, weekly upstream
+# cadence) would make a skip-list under `deny` a permanent maintenance
+# treadmill with no security payoff — the exact-pin class + committed
+# lockfile (docs/dependency-policy.md §1/§3) already freeze everything that
+# matters. Duplicates stay VISIBLE as warnings in every per-PR and weekly
+# run; Q10 (permanent operation) revisits the level once the M1 graph is
+# real.
+multiple-versions = "warn"
+# No wildcard version requirements — except cargo's implicit `*` on
+# version-less internal path dependencies (`antseal-core = { path = … }`),
+# which is the workspace-internal norm (versions land at first publish).
+wildcards = "deny"
+allow-wildcard-paths = true
+# No denied crates yet: antseal-core's I/O/async/network purity is enforced
+# structurally by the `core-dep-graph` CI lane; add entries here when a
+# concrete crate must be banned workspace-wide.
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# sources — crates.io only
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+# ---------------------------------------------------------------------------
+# licenses — STUBBED until Q29 (D19; context: docs/decisions/D6-license.md)
+# ---------------------------------------------------------------------------
+# The licenses check is NOT run today (`cargo deny check advisories bans
+# sources` — deliberately not `check licenses`): D6 resolved per-crate
+# dual MIT/Apache-2.0 for our own code, but LICENSE files, per-crate
+# `license` fields, and the allowlist below are the M4/Q29 deliverable.
+# What Q29 must encode (already known from D6):
+#
+#   * allow: MIT, Apache-2.0, BSD-3-Clause (ed25519-dalek), Unicode-3.0
+#     (unicode-ident et al.), plus the usual permissive residents of the
+#     graph at Q29 time;
+#   * **BlueOak-1.0.0**: required by `minicbor =2.3.0` (the pinned D7
+#     deterministic-CBOR codec) — permissive but uncommon, needs an
+#     explicit allowlist entry (D6 "Housekeeping");
+#   * **GPL-3.0**: enters the graph with `ant-core` at M1 via its
+#     mandatory `self_encryption ^0.36` dependency (GPL-3.0, no linking
+#     exception). No single workspace-wide allowlist is possible: the
+#     exception must be scoped to the antseal-net/antseal-cli dependency
+#     graph (their distribution is effectively GPL-3.0 while the dep
+#     remains), and MUST NOT extend to antseal-core/verifier-web — see the
+#     D6 CRITICAL flag on P15 before self_encryption ever nears the core.
+#
+# [licenses]
+# allow = []  # Q29 completes; see above.

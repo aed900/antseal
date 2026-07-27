@@ -160,6 +160,11 @@ are untouched.
 
 ## Final lane set = future required-status contexts (13)
 
+> **[wave-2 note]** Superseded: Q2 adds a 14th context (`secret-guard`) and
+> Q4/P13 turn `golden-vectors`/`audit-deny` from mount points into live
+> lanes. The authoritative context list and branch-protection payload are
+> now in the "Q2/Q3/Q4 + P13 (wave 2)" section at the end of this file.
+
 ```
 fmt
 clippy
@@ -235,8 +240,12 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
    failing-run URLs there. The probe PR will also exercise all Q1 lanes on
    a PR event — confirm the mount lanes and cross-OS lanes report there
    too.
-5. **Branch protection — only now.** Required contexts = the 13 lane names.
-   Exact invocation (classic branch-protection API; needs repo admin):
+5. **Branch protection — only now.** Required contexts = the lane names.
+   **[wave-2 note]** The payload below predates Q2's `secret-guard` lane —
+   use the updated 14-context payload in the wave-2 section at the end of
+   this file; everything else about this step (ordering, verification,
+   semantics) stands. Original invocation (classic branch-protection API;
+   needs repo admin):
 
    ```bash
    gh api -X PUT repos/aed900/antseal/branches/main/protection --input - <<'EOF'
@@ -291,3 +300,127 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
 6. **actionlint** (also discharges P8 pending step 3): run `actionlint`
    against `.github/workflows/ci.yml` and note the result here:
    _(pending)_
+
+---
+
+# Q2/Q3/Q4 + P13 — wave-2 lane changes (2026-07-27)
+
+## What changed
+
+- **`golden-vectors` — mount point → LIVE (Q4).** Body: checkout → rustup
+  (toolchain file) → rust-cache → `cargo test -p antseal-core --locked --
+  vector_` plus a match-count step that **fails on an empty suite** (the
+  Q4 runner must always match — unlike the allowed-empty cross-os lane).
+  The suite = the runner (`tests/vector_runner.rs`: directory-walk
+  discovery over `testdata/vectors/`, envelope validation, kind dispatch,
+  loud failure on malformed/unclassifiable/zero-vector states) + the C3
+  vector-pinning test (`tests/hkdf_golden.rs`). Job id/name unchanged.
+- **`audit-deny` — mount point → LIVE (P13).** cargo-deny **only**
+  (decision [D19](decisions/D19-advisory-lane.md); no cargo-audit), exact
+  tool pin `=0.19.8` (dependency-policy §5) installed via
+  `cargo install cargo-deny --version 0.19.8 --locked` behind an
+  `actions/cache` keyed on the version string; command:
+  `cargo deny --locked check advisories bans sources` against the
+  committed `deny.toml` (licenses stubbed until Q29 — hence the explicit
+  check list). Job id/name unchanged (context stability beats name
+  accuracy).
+- **`secret-guard` — NEW job, NEW required context (Q2).** Greps the
+  checkout for vault-export/wallet-key file signatures (PEM private-key
+  blocks; EVM keystore JSON — both `"ciphertext"` and `"kdfparams"` in one
+  file; the reserved `ANTSEAL VAULT EXPORT` magic; age/minisign secret-key
+  markers), excluding `.git/`, `target/`, `.github/` (the patterns
+  themselves live there) and `*.md` (prose may discuss formats). Each run
+  **self-tests first**: four fakes planted in a `mktemp -d` directory must
+  all be detected before the repo verdict is trusted (permanent
+  test-of-the-test, nothing committed).
+- **`test` lane env (Q3)**: `PROPTEST_CASES: "1024"` — CI runs 4× the
+  local default; deterministic per-block seeds unaffected
+  ([proptest conventions](testing/proptest-conventions.md)).
+- **NEW workflow `.github/workflows/advisory-cron.yml` (P13/D19)**: weekly
+  `schedule` (`17 6 * * 1`) + `workflow_dispatch`, single job
+  `advisory-weekly` (never a PR context), same pinned cargo-deny + same
+  command as `audit-deny` — a new RUSTSEC advisory surfaces with zero
+  pushes. GitHub runs cron against the **default branch only**, so the
+  schedule is inert until the push blocker clears; `workflow_dispatch`
+  also only appears once the workflow file is on the default branch.
+
+## Authoritative context set (now 14)
+
+```
+fmt
+clippy
+test
+wasm32-core
+core-dep-graph
+cross-os-linux
+cross-os-macos
+cross-os-windows
+golden-vectors
+wasm-bitmatch
+tamper-matrix
+fuzz-smoke
+audit-deny
+secret-guard
+```
+
+Updated branch-protection payload for runbook step 5 (only change: the
+`secret-guard` line):
+
+```bash
+gh api -X PUT repos/aed900/antseal/branches/main/protection --input - <<'EOF'
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      { "context": "fmt" },
+      { "context": "clippy" },
+      { "context": "test" },
+      { "context": "wasm32-core" },
+      { "context": "core-dep-graph" },
+      { "context": "cross-os-linux" },
+      { "context": "cross-os-macos" },
+      { "context": "cross-os-windows" },
+      { "context": "golden-vectors" },
+      { "context": "wasm-bitmatch" },
+      { "context": "tamper-matrix" },
+      { "context": "fuzz-smoke" },
+      { "context": "audit-deny" },
+      { "context": "secret-guard" }
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+EOF
+```
+
+## Local verification — 2026-07-27 (remote CI has still never run)
+
+Environment: as the P8/Q1 records (linux x86_64, toolchain 1.92.0 from
+`rust-toolchain.toml`), wave-2 tree.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| Workflow YAML validity ×2 | PyYAML structural parse of `ci.yml` (12 jobs) and `advisory-cron.yml` (1 job; triggers `schedule` + `workflow_dispatch`); `actionlint` still not installed (unchanged from P8; runbook step 6) | **PASS** |
+| `golden-vectors` body | Step body executed verbatim: `cargo test -p antseal-core --locked -- vector_` then the `--list` count | **PASS** — 9 tests matched and passed (8 runner incl. all fail-loudly cases + the C3 committed-file test); count guard took the non-empty branch |
+| `audit-deny` body | `cargo deny --version` → `cargo-deny 0.19.8` (the pin, already installed locally); `cargo deny --locked check advisories bans sources` | **PASS** — `advisories ok, bans ok, sources ok`; 3 duplicate-version warnings printed as intended (`multiple-versions = "warn"`, recorded in deny.toml/D19) |
+| `secret-guard` body | Step body executed verbatim from a scratch file | **PASS** — self-test detected 4/4 planted fakes; repo scan clean |
+| `secret-guard` red path (test-of-the-test at repo level) | Planted `testdata/PROBE-fake-vault.bin` containing the vault-export magic, re-ran, removed | **PASS** — exit 1, offending path printed, `::error::` emitted; clean re-run green |
+| `test` lane with the Q3 env | `PROPTEST_CASES=1024 cargo test --workspace --locked` (see gate table below) | **PASS** |
+| Full gate on the wave-2 tree | `cargo fmt --check` · `cargo clippy --all-targets --locked -- -D warnings` · `cargo test --workspace --locked` · `cargo build -p antseal-core --target wasm32-unknown-unknown --locked` · `cargo deny --locked check advisories bans sources` | **PASS** (all exit 0) |
+
+**Not verifiable locally** (added to the runbook's remote expectations):
+
+- The cron trigger itself (default-branch-only) and `workflow_dispatch`
+  listing for `advisory-cron` — first weekly run lands after the push
+  blocker clears; record its URL in the D19 record when it does.
+- The D19 red-lane demonstration (synthetic ignore/advisory turning the
+  scheduled lane red) — procedure in
+  [D19](decisions/D19-advisory-lane.md), execute post-unblock alongside
+  the wasm-guard probe.
+- `actions/cache` behavior for the pinned cargo-deny binary on the
+  runners (first run compiles ~minutes; subsequent runs hit the
+  version-keyed cache).
+- Check-run name of `secret-guard` (expected verbatim; confirm in runbook
+  step 3 before step 5, exactly like the cross-os names).

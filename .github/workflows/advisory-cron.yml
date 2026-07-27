@@ -1,0 +1,61 @@
+# antseal weekly advisory sweep (P13; decision D19).
+#
+# WHY A SEPARATE WORKFLOW: a new RUSTSEC advisory against a pinned
+# dependency must surface even when nothing is pushed (P13 accept: the
+# scheduled run is independent of PR traffic). GitHub runs `schedule:`
+# triggers against the DEFAULT BRANCH only, so this file is inert until it
+# lands on main (docs/ci-verification.md tracks the remote-run status).
+# `workflow_dispatch` allows a manual run for the D19/P13
+# red-lane demonstration (add a synthetic ignore/advisory on a branch and
+# dispatch it) and for on-demand sweeps.
+#
+# Same pinned tool + same command as the per-PR `audit-deny` job in
+# ci.yml: cargo-deny =0.19.8 (docs/dependency-policy.md §5; NO cargo-audit
+# per D19 — deny's advisories check reads the same RUSTSEC DB), checks
+# advisories/bans/sources only (licenses stubbed until Q29 — see
+# deny.toml). Job name `advisory-weekly` is NOT a PR status context and
+# never becomes one.
+#
+# Follow-up on red (Q10 owns the permanent process): a failing weekly run
+# means a new advisory landed — open a tracking issue, write the
+# applicability assessment (dependency-policy §4), and either bump or add
+# a justified, review-dated ignore to deny.toml.
+name: advisory-cron
+
+on:
+  schedule:
+    # Mondays 06:17 UTC (off the top-of-hour load spikes GitHub docs warn
+    # about; weekly cadence per P13/D19 and the P19 upstream-check rhythm).
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisory-weekly:
+    name: advisory-weekly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned cargo-deny binary
+        id: deny-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-0.19.8-${{ runner.os }}
+      - name: Install pinned cargo-deny (docs/dependency-policy.md §5)
+        if: steps.deny-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --version 0.19.8 --locked
+      - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
+        run: |
+          cargo deny --version
+          cargo deny --locked check advisories bans sources

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate hkdf-sha256-v1.txt — antseal HKDF golden vectors (tasks/C.md C3).
+"""Regenerate hkdf-labels.json — antseal HKDF golden vectors (tasks/C.md C3).
 
 Independent reference implementation: RFC 5869 HKDF-SHA256 built from Python
 stdlib hmac/hashlib only (no Rust code path shared), so the committed vectors
@@ -7,18 +7,30 @@ double as a cross-implementation check of antseal-core's derivation
 (MVP-SPEC.md line 77; the full independent cross-check mandate is C16).
 
 ALL INPUTS ARE NON-SECRET, FIXED TEST FIXTURES (project rule 6): the test W
-is the public byte pattern 00 01 02 .. 1f and must never be a real secret.
+is the documented fixed test seed 00 01 02 .. 1f (testdata/README.md) and
+must never be a real secret.
+
+The output is a Q4 golden-vector file (envelope schema documented in
+testdata/vectors/README.md), discovered and executed by the native runner
+`crates/antseal-core/tests/vector_runner.rs`.
 
 Committed vectors are retained forever (dependency-policy/Q6): a byte change
 here is a format event, never a silent regeneration. Run only to *verify*:
 
-    python3 gen_vectors.py > /tmp/check.txt && diff /tmp/check.txt hkdf-sha256-v1.txt
+    python3 gen_vectors.py > /tmp/check.json && diff /tmp/check.json hkdf-labels.json
+
+History: this file emitted the line-format `hkdf-sha256-v1.txt` until Q2/Q4
+migrated the vectors into the envelope schema (pre-Q6, so the move was safe);
+the derivation values (info/okm hex) are unchanged, only the container format
+changed.
 """
 
 import hashlib
 import hmac
+import json
 
-# NON-SECRET fixture master secret W (32 bytes, 0x00..0x1f).
+# NON-SECRET fixture master secret W = the documented fixed test seed
+# (32 bytes, 0x00..0x1f; testdata/README.md "Secret-material convention").
 W = bytes(range(32))
 SENTINEL = 0xFFFF_FFFF_FFFF_FFFF
 
@@ -59,31 +71,39 @@ def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
 
 
 def main() -> None:
-    print("# antseal golden vectors: HKDF-SHA256 label registry (v1)")
-    print("#")
-    print("# NON-SECRET FIXTURE - the master secret W below is a fixed public")
-    print("# test pattern (bytes 0x00..0x1f), never a real secret (project rule 6).")
-    print("#")
-    print("# Construction (MVP-SPEC.md line 77):")
-    print("#   HKDF-SHA256(W, label, id): salt = empty, IKM = W,")
-    print("#   info = u8(len(label)) || label || LE64(id)")
-    print("# Sentinel id (no-natural-id labels) = 0xffffffffffffffff.")
-    print("#")
-    print("# Format: '<key> = <value>' header lines, then one 'vector' line per")
-    print("# registry entry with whitespace-separated key=value fields; hex is")
-    print("# lowercase, ids are 0x-prefixed 16-digit hex (LE64 of the value).")
-    print("# Regeneration (verify-only; committed bytes are frozen):")
-    print("#   see gen_vectors.py in this directory.")
-    print()
-    print(f"w = {W.hex()}")
-    print()
+    vectors = []
     for label, out_len, domain, ident in REGISTRY:
         info = info_bytes(label, ident)
         okm = hkdf_sha256(W, b"", info, out_len)
-        print(
-            f"vector label={label} id=0x{ident:016x} id_domain={domain} "
-            f"info={info.hex()} okm={okm.hex()}"
+        vectors.append(
+            {
+                "label": label,
+                "id": f"0x{ident:016x}",
+                "id_domain": domain,
+                "info": info.hex(),
+                "okm": okm.hex(),
+            }
         )
+    document = {
+        "schema": "antseal-golden-vector",
+        "schema_version": 1,
+        "format_version": "v1",
+        "kind": "hkdf-labels",
+        "non_secret": (
+            "NON-SECRET test fixture (project rule 6): the master secret W is "
+            "the documented fixed test seed, bytes 0x00..0x1f "
+            "(testdata/README.md); never real vault or wallet material."
+        ),
+        "description": (
+            "HKDF-SHA256 label-registry golden vectors (C3): "
+            "HKDF-SHA256(W, label, id) with salt = empty, IKM = W, "
+            "info = u8(len(label)) || label || LE64(id) (MVP-SPEC.md line 77); "
+            "one vector per registered label; sentinel id = 0xffffffffffffffff."
+        ),
+        "inputs": {"w": W.hex()},
+        "expect": {"vectors": vectors},
+    }
+    print(json.dumps(document, indent=2))
 
 
 if __name__ == "__main__":
