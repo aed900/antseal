@@ -1,0 +1,117 @@
+# antseal CI skeleton (P8).
+#
+# Toolchain: taken exclusively from rust-toolchain.toml — the rustup step in
+# every job installs from that file; no toolchain version is ever hardcoded
+# here (docs/toolchain.md).
+# Lockfile: every dependency-resolving lane runs --locked, so lockfile drift
+# fails loudly (docs/dependency-policy.md §3).
+#
+# ── Extension points ────────────────────────────────────────────────────────
+# Jobs are deliberately small named units: extend by ADDING jobs, not by
+# folding steps into existing lanes.
+#   Q1:  fuzz lanes (separate nightly toolchain pin; F/A supply targets)
+#   Q5:  native<->WASM bit-match lanes (built on the P14 wasm test harness)
+#   Q9:  golden-vector retention lane (committed vectors verify byte-exact,
+#        forever — never regenerated silently)
+#   Q31: release CI + binary signing
+#   P13: cargo-deny advisory lane (per-PR + weekly schedule) joins alongside
+#        these jobs at M0
+#   P14: wasm32-core gains the exact getrandom recipe (feature `js` for the
+#        0.2 line, `wasm_js` + RUSTFLAGS --cfg getrandom_backend="wasm_js"
+#        for 0.3/0.4) once crypto deps land; recipe mirrored in
+#        .cargo/config.toml
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  # antseal-core must ALWAYS build for wasm32-unknown-unknown: WASM-safety is
+  # enforced from the stub stage (MVP-SPEC.md M0 — "wasm32 build in CI from
+  # day one"). P14 upgrades this lane with the getrandom recipe.
+  wasm32-core:
+    name: wasm32-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+
+  # antseal-core's NORMAL dependency graph must never gain an async runtime,
+  # network, or I/O crate (WASM-safety + churn isolation; MVP-SPEC.md
+  # Architecture). The list approximates "std::net users and friends" and is
+  # extended as offenders appear; it fails loudly naming the offender.
+  core-dep-graph:
+    name: core-dep-graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Assert antseal-core normal deps are I/O-free
+        run: |
+          set -u
+          forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2) '
+          tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)"
+          printf '%s\n' "$tree"
+          offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
+          if [ -n "$offenders" ]; then
+            echo ""
+            echo "::error::antseal-core's normal dependency graph contains forbidden I/O/async/network crates:"
+            printf '%s\n' "$offenders"
+            echo "antseal-core must stay WASM-safe: no async runtimes, no network/socket/HTTP crates"
+            echo "(MVP-SPEC.md Architecture; docs/dependency-policy.md)."
+            exit 1
+          fi
+          echo "OK: antseal-core normal dep graph is free of forbidden crates."
