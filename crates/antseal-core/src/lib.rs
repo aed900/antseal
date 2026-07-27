@@ -14,6 +14,7 @@
 //! build must bit-match native verification.
 
 pub mod canon;
+pub mod codec;
 pub mod crypto;
 pub mod verify;
 
