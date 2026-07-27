@@ -14,6 +14,7 @@
 //! build must bit-match native verification.
 
 pub mod canon;
+pub mod verify;
 
 /// Crate version as compiled in (pre-M0 scaffold marker).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

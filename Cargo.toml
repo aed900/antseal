@@ -53,6 +53,13 @@ minicbor = { version = "=2.3.0", default-features = false, features = ["alloc"] 
 # line 123).
 unicode-normalization = "=0.1.25"
 
+# Exact-pin class (docs/dependency-policy.md §1): the serialized
+# VerificationReport is the R9/Q4/Q5 bit-match vector byte format —
+# serializer output drift is a vector break, so these move only via the
+# deliberate-bump procedure (§4). Decision: docs/decisions/D29.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
 

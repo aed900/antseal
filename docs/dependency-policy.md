@@ -28,6 +28,7 @@ lands):
 | Unicode/NFC data crate (nominated by G at M0; its Unicode data version is frozen into manifests) | canonicalization output bytes | G |
 | Argon2/scrypt (vault KDF) | vault format | U/C |
 | `zeroize` | secret-hygiene behavior | C |
+| `serde` + `serde_json` (pinned `=1.0.229` / `=1.0.151` at R1) | the serialized `VerificationReport` is the R9/Q4/Q5 native↔WASM bit-match vector byte format, retained forever — serializer output drift is a silent vector break ([D29](decisions/D29-report-byte-format.md)) | R1 |
 
 **This list grows — it is a floor, not a ceiling.** G nominates the
 Unicode/NFC crate (with its exact Unicode data version) at M0, and C
