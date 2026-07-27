@@ -1,0 +1,7 @@
+# Exact toolchain pin — see docs/toolchain.md for the policy (MSRV = this
+# pin; bumps follow the deliberate-event procedure in
+# docs/dependency-policy.md).
+[toolchain]
+channel = "1.92.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
