@@ -11,7 +11,7 @@ finding is quoted inline in the records with its retrieval timestamp.
 
 | ID | Title | Status | Date |
 | --- | --- | --- | --- |
-| [D1](D1-product-name.md) | Product name — `antseal` pending upstream blessing; fallback `sealstone` | **OPEN (provisional)** | 2026-07-27 |
+| [D1](D1-product-name.md) | Product name — **`antseal`, maintainer-confirmed final** (no upstream blessing — recorded deviation; blessing request now optional courtesy; fallback retired) | RESOLVED | 2026-07-27 |
 | [D2](D2-hosting-ci.md) | Hosting + CI — GitHub + GitHub Actions | RESOLVED | 2026-07-27 |
 | [D3](D3-repo-layout.md) | Repo layout — repo root IS the workspace root (no `antseal/` subdir) | RESOLVED | 2026-07-27 |
 | [D4](D4-edition-msrv.md) | Edition 2024; toolchain pinned =1.92.0; MSRV = the pin | RESOLVED | 2026-07-27 |

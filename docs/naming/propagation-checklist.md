@@ -1,5 +1,10 @@
 # P1 — Name propagation checklist
 
+> **D1 RESOLVED 2026-07-27: the final name is `antseal`** (maintainer-confirmed;
+> docs/decisions/D1-product-name.md closing entry). Every "current value"
+> below IS the final value — owning domains implement/freeze their rows as
+> their tasks reach them; nothing awaits a rename.
+
 Every name-bearing identifier the D1 product-name decision propagates into,
 with its owning domain (per tasks/P.md P1: **C** context string, **F**
 format strings, **U** vault dir/binary, **P** crates/domain/repo, **Q**

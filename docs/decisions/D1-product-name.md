@@ -1,7 +1,7 @@
 # D1 — Product name
 
-- **Status: OPEN (provisional)**
-- **Date: 2026-07-27** (provisional state recorded; final resolution due by M0 start)
+- **Status: RESOLVED — `antseal` (maintainer-confirmed final)**
+- **Date: 2026-07-27** (provisional state recorded; final resolution due by M0 start; **finalized later the same day — see the closing entry below**)
 
 ## Context
 
@@ -106,3 +106,39 @@ Re-anchored deadline policy:
 3. Until D1-final, any newly written code/docs must keep product-name-bearing
    strings out of frozen surfaces (wave-1 work complies; nothing new may
    embed the name outside the propagation checklist's tracked items).
+
+## 2026-07-27 (final) — RESOLVED: `antseal`, maintainer-confirmed
+
+The maintainer confirmed the final product name as **`antseal`**
+("I confirm the name is antseal", 2026-07-27). This closes D1.
+
+1. **Deviation from P1's original accept criteria, recorded deliberately**
+   (per the flag-don't-silently-diverge rule): P1 offered two branches —
+   upstream written blessing for the `ant-` prefix, or a non-ant rename.
+   The maintainer chose a third: **finalize `antseal` without upstream
+   blessing**, accepting the residual risk that upstream later objects to
+   the `ant-` prefix (mitigations: the README/positioning already state
+   non-affiliation; a post-freeze rename could touch the crate/binary/domain
+   names but never the frozen format identifiers — the context string is
+   deliberately a plain string constant, not a trademark claim).
+2. **The blessing request is downgraded to an optional courtesy
+   notification.** `docs/naming/upstream-blessing-request.md` may still be
+   filed for upstream-relations hygiene, but no decision waits on it and the
+   fallback clock is void.
+3. **The `sealstone` fallback is retired.** The re-anchored deadline policy
+   above is superseded by this resolution.
+4. **Availability re-verified at confirmation time** (2026-07-27
+   ~18:58 UTC): all five crates.io names (`antseal`, `antseal-core`,
+   `antseal-anchor`, `antseal-net`, `antseal-cli`) FREE (HTTP 404) with
+   `cargo publish --dry-run` green ×5; antseal.org and antseal.dev FREE
+   (RDAP 404 with redirects followed). **P2/P3 are now executable** and
+   should run promptly — availability decays (the sealproof.dev squat
+   signal above).
+5. Caveat kept on record: no formal trademark search was run for `antseal`
+   (the availability research found antseal.com held by an unrelated party
+   since 2004 — a long-standing coexistence signal, judged non-blocking).
+6. Name-bearing identifiers now propagate per
+   [`docs/naming/propagation-checklist.md`](../naming/propagation-checklist.md)
+   as their owning tasks reach them: C12 context string
+   `"antseal-manifest-v1"`, F4 format strings, U1 binary/vault dir — all
+   frozen at Q14.
