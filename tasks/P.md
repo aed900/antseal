@@ -231,11 +231,11 @@
 - Notes: Q36 owns the equivalent chore from the release side — implement once, cross-referenced.
 
 ## Open decisions (P)
-- Final product name — keep `antseal` with upstream's written blessing vs a non-ant rename; blocks P2, P3 (and, cross-domain, the C/F M0 freezes of the signature context string and format identifiers); must land pre-M0.
-- Repo hosting platform + CI provider (working assumption GitHub + Actions, needed for scheduled lanes in P13/P19); blocks P4, P8; pre-M0.
-- Repo root layout — `/home/deb/Documents/code0` as workspace root vs containing `antseal/` per the spec tree; blocks P4, P5; pre-M0.
-- Rust edition + MSRV policy; blocks P6; pre-M0.
-- CLI crate published name — spec tree says `antseal-cli` (binary `antseal`); `cargo install antseal` UX argues for publishing the CLI as the bare name. Spec tree is normative, so recorded as disagreement only; reservation (P2) covers both names; pre-M0.
+- Final product name — keep `antseal` with upstream's written blessing vs a non-ant rename; blocks P2, P3 (and, cross-domain, the C/F M0 freezes of the signature context string and format identifiers); must land pre-M0. — **[2026-07-27]** OPEN (provisional): working name stays `antseal`; blessing request drafted (docs/naming/upstream-blessing-request.md) for the maintainer to file at WithAutonomi/ant-client issues; no reply by M0 start → unilateral fallback `sealstone` (docs/decisions/D1-product-name.md).
+- Repo hosting platform + CI provider (working assumption GitHub + Actions, needed for scheduled lanes in P13/P19); blocks P4, P8; pre-M0. — **[2026-07-27]** RESOLVED: GitHub + GitHub Actions, private repo aed900/antseal (docs/decisions/D2-hosting-ci.md; remote-CI verification status in docs/ci-verification.md).
+- Repo root layout — `/home/deb/Documents/code0` as workspace root vs containing `antseal/` per the spec tree; blocks P4, P5; pre-M0. — **[2026-07-27]** RESOLVED: repo root = workspace root; the repo root IS the spec tree's `antseal/`, no nested subdir (docs/decisions/D3-repo-layout.md).
+- Rust edition + MSRV policy; blocks P6; pre-M0. — **[2026-07-27]** RESOLVED: edition 2024; toolchain pinned =1.92.0; MSRV = the pin, moves only via the dependency-policy bump procedure (docs/decisions/D4-edition-msrv.md).
+- CLI crate published name — spec tree says `antseal-cli` (binary `antseal`); `cargo install antseal` UX argues for publishing the CLI as the bare name. Spec tree is normative, so recorded as disagreement only; reservation (P2) covers both names; pre-M0. — **[2026-07-27]** RESOLVED as recorded deferral: spec tree stays normative (`antseal-cli` crate, `antseal` binary); both names reserved at P2; bare-name publish decided at release, Q31/M4 (docs/decisions/D5-cli-crate-name.md).
 - wasm-bindgen surface location — feature-gated exports inside `antseal-core` vs a thin wrapper crate; partially blocks P14 (test harness), finally blocks R's M3 page build (R22); decide by M0, final by M3.
 - Deterministic-CBOR crate (candidate `minicbor` with integer keys) — joint P/F decision; blocks P10 and F's M0 Definitions freeze; M0.
 - `ed25519-dalek` 2.x vs 3.0.0; blocks P11 and C's signature work; M0.
