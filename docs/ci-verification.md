@@ -55,8 +55,10 @@ behavior on the runners, the red-lane probe) remain pending below.
 
 ## Remote blocker — push rejected without `workflow` scope
 
-`origin` (`https://github.com/aed900/antseal.git`) is 1 commit behind
-local `main`: the P8 commit `eea4eed` adds `.github/workflows/ci.yml`, and
+`origin` (`https://github.com/aed900/antseal.git` — **relocated 2026-07-27**
+from the deprecated `aed900/antseal`, full identity rewrite to aed900;
+see the D2 amendment) is a fresh empty private repo: ALL local history is
+unpushed. The P8 commit adds `.github/workflows/ci.yml`, and
 GitHub rejects pushes that create or update workflow files from credentials
 lacking the `workflow` OAuth scope:
 

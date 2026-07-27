@@ -14,7 +14,7 @@ root, or does it *contain* an `antseal/` subdirectory?
 
 **`/home/deb/Documents/code0` is the repo root AND the Cargo workspace
 root; the repo root IS the spec tree's `antseal/`; no nested subdirectory.**
-The GitHub repo name is `antseal` (currently under the `aed900`
+The GitHub repo name is `antseal` (since 2026-07-27 under the `aed900`
 account), so the checkout directory name supplies the `antseal/` of the
 spec tree wherever a fresh clone lands.
 
