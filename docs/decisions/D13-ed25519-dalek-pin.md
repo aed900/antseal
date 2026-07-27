@@ -1,6 +1,7 @@
 # D13 — `ed25519-dalek` pin: 3.0.0 over the 2.x line
 
-- **Status: RECOMMENDED**
+- **Status: RESOLVED** (recommended by the C11 probe; accepted at wave-2
+  integration review — evidence is probe-executed and source-diffed)
 - **Date: 2026-07-27**
 
 ## Context

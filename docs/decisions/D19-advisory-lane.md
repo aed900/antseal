@@ -29,6 +29,18 @@ Known allowlist requirements for the licenses section when Q29 activates it
 (`self_encryption`, `evmlib` — see D6). The licenses section ships stubbed
 (commented baseline) with a pointer to D6/Q29.
 
+## Amendment (2026-07-27, from the C11 probe)
+
+The C11 advisory assessment found that of the three ml-dsa advisories,
+**only one carries a RUSTSEC ID** — the other two exist only as
+GHSA/osv.dev entries (GHSA-5x2r-hc65-25f9, GHSA-h37v-hp6w-2pp8). A
+RUSTSEC-DB-only lane would have missed both, including the
+verification-malleability one squarely in our threat class. Consequence:
+cargo-deny remains the lane's tool, but **P13/Q10's weekly operation MUST
+additionally sweep GHSA/osv.dev for the pinned crypto crates** (documented
+in the lane runbook; a scripted osv.dev API query over the exact-pin list
+is the recommended mechanism).
+
 ## Consequences
 
 - P13 commits `deny.toml` (advisories/bans/sources active; licenses

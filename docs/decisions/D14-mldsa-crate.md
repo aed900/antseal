@@ -1,6 +1,8 @@
 # D14 — ML-DSA-65 crate: primary `ml-dsa =0.1.1`, fallback `fips204 =0.4.6`, Ed25519-only fallback not shipped
 
-- **Status: RECOMMENDED**
+- **Status: RESOLVED** (recommended by the C11 probe; accepted at wave-2
+  integration review — wasm32 executed bit-match, canonical rejection
+  source-verified, fips204 cross-implementation byte-equality)
 - **Date: 2026-07-27**
 
 ## Context
