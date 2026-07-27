@@ -76,10 +76,12 @@ use super::padding::{apply_padding, strip_padding};
 use super::secrets::SealId;
 
 /// The 32-byte per-unit AEAD key `k_u = HKDF(W, "unit-key", unit_id)`
-/// (spec line 91). An alias of the zeroize-on-drop [`Key32`] material type;
-/// it never crosses the public API here — both [`encrypt_unit`] and
-/// [`decrypt_unit`] derive it internally and wipe it on scope exit (the
-/// cipher's own key copy also zeroizes on drop via the `zeroize` feature).
+/// (spec line 91). An alias of the zeroize-on-drop [`Key32`] material type.
+/// The W-holding paths ([`encrypt_unit`], [`decrypt_unit`]) derive it
+/// internally and wipe it on scope exit (the cipher's own key copy also
+/// zeroizes on drop via the `zeroize` feature); the one API that *accepts*
+/// it is [`decrypt_unit_with_key`] — the verifier-side seam, where `k_u`
+/// arrives as a bundle disclosure rather than a derivation (spec line 114).
 pub type UnitKey = Key32;
 
 /// A 24-byte XChaCha20-Poly1305 nonce as recorded in the manifest unit
@@ -136,16 +138,22 @@ pub fn unit_aad(seal_id: &SealId, unit_id: UnitId) -> [u8; 24] {
     aad
 }
 
-/// Build the cipher for one unit, deriving `k_u` internally. The derived
-/// `k_u` ([`UnitKey`], ZeroizeOnDrop) wipes when this function returns; the
+/// Build the cipher over an explicit key — the shared core of the
+/// W-derived (sealer/restore) and key-direct (verifier) paths. The
 /// cipher's internal key copy zeroizes on *its* drop (the chacha20poly1305
 /// `zeroize` feature).
-fn unit_cipher(w: MasterSecretRef<'_>, unit_id: UnitId) -> XChaCha20Poly1305 {
-    let k_u: UnitKey = derive_unit_key(w, unit_id);
+fn cipher_for_key(k_u: &UnitKey) -> XChaCha20Poly1305 {
     // Static impossibility: `Key32::LEN` (32) is exactly the
     // XChaCha20-Poly1305 key size, so `new_from_slice` cannot fail.
     XChaCha20Poly1305::new_from_slice(k_u.as_bytes())
         .expect("Key32::LEN equals the XChaCha20-Poly1305 key size")
+}
+
+/// Build the cipher for one unit, deriving `k_u` internally. The derived
+/// `k_u` ([`UnitKey`], ZeroizeOnDrop) wipes when this function returns.
+fn unit_cipher(w: MasterSecretRef<'_>, unit_id: UnitId) -> XChaCha20Poly1305 {
+    let k_u: UnitKey = derive_unit_key(w, unit_id);
+    cipher_for_key(&k_u)
 }
 
 /// Encrypt already-padded plaintext under a fresh internally-drawn nonce —
@@ -208,11 +216,14 @@ pub fn encrypt_unit<R: TryCryptoRng + ?Sized>(
     result
 }
 
-/// Decrypt one unit and strip its padding — the verifier-side path R
-/// orchestrates (spec lines 91, 118, 121). Authenticates under
+/// Decrypt one unit and strip its padding, deriving `k_u` from `W` — the
+/// sealer-side path (`restore`, reveal previews). Authenticates under
 /// `AAD = seal_id ‖ LE64(unit_id)` with the manifest-recorded nonce, then
 /// runs C8's **length-first** strip driven by the manifest's `true_length`,
-/// with both rejections.
+/// with both rejections. Thin delegation to [`decrypt_unit_with_key`] (the
+/// single AEAD-open + strip implementation, which is also the verifier-side
+/// entry point — the verifier holds the bundle-supplied `k_u`, never `W`;
+/// spec line 114).
 ///
 /// # Errors
 ///
@@ -233,7 +244,39 @@ pub fn decrypt_unit(
     ciphertext: &[u8],
     true_length: usize,
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = unit_cipher(w, unit_id);
+    let k_u: UnitKey = derive_unit_key(w, unit_id);
+    decrypt_unit_with_key(&k_u, seal_id, unit_id, nonce, ciphertext, true_length)
+}
+
+/// Decrypt one unit with an **explicit** `k_u` and strip its padding — the
+/// single implementation of the AEAD-open + C8 length-first-strip sequence.
+///
+/// # Cross-domain seam (R2; spec line 114)
+///
+/// A `.sealproof` bundle carries `k_u` per revealed unit, and the verifier
+/// decrypts with that **bundle-supplied key — it never holds `W`**. This
+/// function is the verifier-side entry point R's per-unit evidence stage
+/// ([`crate::verify::unit_stages`]) orchestrates; the W-based
+/// [`decrypt_unit`] (sealer-side `restore`/preview paths) delegates here
+/// after the C2 derivation, so the AEAD/strip logic cannot fork between
+/// the two callers. The nonce comes from the manifest unit table — the
+/// single authoritative copy (spec line 91; bundles have no nonce field).
+///
+/// # Errors
+///
+/// Exactly the [`decrypt_unit`] classes, in the same fail order:
+/// [`CryptoError::AeadDecryptFailed`], then post-authentication
+/// [`CryptoError::PaddingLengthMismatch`] /
+/// [`CryptoError::NonZeroPadding`].
+pub fn decrypt_unit_with_key(
+    k_u: &UnitKey,
+    seal_id: &SealId,
+    unit_id: UnitId,
+    nonce: &Nonce24,
+    ciphertext: &[u8],
+    true_length: usize,
+) -> Result<Vec<u8>, CryptoError> {
+    let cipher = cipher_for_key(k_u);
     let aad = unit_aad(seal_id, unit_id);
     let xnonce = XNonce::from(*nonce.as_bytes());
     let mut padded = cipher
@@ -621,6 +664,64 @@ mod tests {
         assert_eq!(
             encrypt_unit(w(), &seal_id(), UnitId(0), b"x", &mut FailingRng).expect_err("fails"),
             CryptoError::RngFailure
+        );
+    }
+
+    /// R2 seam: the key-direct decrypt is the same implementation the
+    /// W-based path delegates to — a bundle-supplied `k_u` equal to the C2
+    /// derivation opens the unit identically, a wrong key fails with
+    /// `AeadDecryptFailed`, and the post-AEAD padding classes are reachable
+    /// key-directly too (the verifier never holds `W`, spec line 114).
+    #[test]
+    fn key_direct_decrypt_matches_w_path_and_rejects_wrong_key() {
+        let mut rng = rng();
+        let content = b"revealed to a bundle recipient";
+        let unit_id = UnitId(11);
+        let (ciphertext, nonce) =
+            encrypt_unit(w(), &seal_id(), unit_id, content, &mut rng).expect("encrypts");
+
+        // The bundle-supplied key IS the C2 derivation: identical plaintext
+        // through both entry points.
+        let k_u = crate::crypto::hkdf::derive_unit_key(w(), unit_id);
+        let via_key = decrypt_unit_with_key(
+            &k_u,
+            &seal_id(),
+            unit_id,
+            &nonce,
+            &ciphertext,
+            content.len(),
+        )
+        .expect("bundle-supplied k_u decrypts");
+        let via_w = decrypt_unit(w(), &seal_id(), unit_id, &nonce, &ciphertext, content.len())
+            .expect("W path decrypts");
+        assert_eq!(via_key, via_w);
+        assert_eq!(via_key, content);
+
+        // A wrong bundle-supplied key (another unit's derivation) fails
+        // authentication.
+        let wrong_key = crate::crypto::hkdf::derive_unit_key(w(), UnitId(12));
+        assert_eq!(
+            decrypt_unit_with_key(
+                &wrong_key,
+                &seal_id(),
+                unit_id,
+                &nonce,
+                &ciphertext,
+                content.len()
+            )
+            .expect_err("must fail"),
+            CryptoError::AeadDecryptFailed
+        );
+
+        // Post-AEAD padding classes fire key-directly as well (right key,
+        // wrong true_length).
+        assert_eq!(
+            decrypt_unit_with_key(&k_u, &seal_id(), unit_id, &nonce, &ciphertext, 256)
+                .expect_err("must fail post-AEAD"),
+            CryptoError::PaddingLengthMismatch {
+                expected: 512,
+                got: 256
+            }
         );
     }
 
