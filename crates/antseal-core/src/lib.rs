@@ -15,6 +15,7 @@
 
 pub mod canon;
 pub mod codec;
+pub mod content;
 pub mod crypto;
 #[cfg(feature = "test-util")]
 pub mod test_util;
