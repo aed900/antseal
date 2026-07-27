@@ -12,10 +12,21 @@
 //! - [`unicode`] (G1, decision D25): the pinned Unicode/NFC data-version
 //!   registry and the registry-routed NFC entry point. This is the version
 //!   substrate everything else dispatches through.
-//! - The canonicalization pipeline `canonicalize_v` — text detection, single
-//!   leading-BOM strip, CRLF / lone-CR → LF, version-dispatched NFC, UTF-8
-//!   encode — lands here with G2 and builds on [`unicode`].
+//! - The pipeline (G2, decisions D20 + D21), re-exported here:
+//!   [`canonicalize_v`] / [`canonicalize`] run the frozen five-stage
+//!   transform — decode (strict for detected text, lossy U+FFFD for forced
+//!   text), strip of **all** leading U+FEFF scalars, one-pass CRLF /
+//!   lone-CR → LF, version-dispatched NFC, UTF-8 encode with no BOM —
+//!   yielding an invariant-carrying [`CanonicalBytes`]; [`is_text`] is the
+//!   strict-UTF-8 detection predicate and [`TextMode`] selects the
+//!   detected/forced decode. This is the exact function the verifier's
+//!   raw-mirror binding check recomputes (spec line 121).
 
 pub mod unicode;
 
-pub use unicode::{UnicodeVersion, UnicodeVersionError};
+mod pipeline;
+
+pub use pipeline::{
+    CanonicalBytes, CanonicalizeError, TextMode, canonicalize, canonicalize_v, is_text,
+};
+pub use unicode::{UNICODE_17_0_0, UnicodeVersion, UnicodeVersionError};
