@@ -27,6 +27,9 @@
 //! - [`manifest_aead`] — manifest XChaCha20-Poly1305 under `k_m` with the
 //!   frozen **empty** AAD, plus the `{nonce, k_m}` storage-record values
 //!   (C10).
+//! - [`sig_ed25519`] — the Ed25519 half of the author signature: keys from
+//!   `W`, the `ctx ‖ 0x00 ‖ body` pre-image, and strict/canonical
+//!   verification with the D16 pre-validation layer (C12).
 //! - [`error`] — the crypto error taxonomy, one distinct variant per tamper-
 //!   matrix failure class (C4).
 //!
@@ -69,6 +72,26 @@ pub mod manifest_aead;
 pub mod material;
 pub mod padding;
 pub mod secrets;
+pub mod sig_ed25519;
 pub mod unit_aead;
 
 pub use error::CryptoError;
+
+/// The **frozen author-signature context string** `"antseal-manifest-v1"`
+/// (MVP-SPEC.md line 97), fixed at M0 so a signature can never be lifted into
+/// another context.
+///
+/// It lives here, at the crypto module root, because it belongs to neither
+/// algorithm: both halves of the hybrid signature bind *this same* string,
+/// each in the way its own standard prescribes —
+///
+/// - Ed25519 ([`sig_ed25519`]) folds it into the pre-image:
+///   `message = ctx ‖ 0x00 ‖ body` (RFC 8032 has no context parameter for
+///   plain Ed25519, so the domain prefix is the construction);
+/// - ML-DSA-65 ([`sig_mldsa`]) passes it as the FIPS 204 `ctx` parameter,
+///   which the standard absorbs as `0x00 ‖ len(ctx) ‖ ctx` ahead of the
+///   message.
+///
+/// Changing these bytes is a format event, not a refactor: every existing
+/// signature would stop verifying.
+pub const SIG_CONTEXT: &[u8] = b"antseal-manifest-v1";
