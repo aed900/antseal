@@ -84,7 +84,7 @@ can succeed until the maintainer re-authorizes.
 
 1. **Green run on `main`**: after the push, confirm the `ci` workflow runs
    on `main` and all five lanes pass. Record the run URL here:
-   - main run: _(pending)_
+   - main run: <https://github.com/aed900/antseal/actions/runs/30309407509> — GREEN, all 14 contexts, 2026-07-27 (first push after the workflow-scope grant)
 2. **Red-lane probe** (P8 accept: "wasm32 lane demonstrably fails when a
    non-WASM dep is added to antseal-core — verified once with a throwaway
    commit"). Procedure:
@@ -235,7 +235,7 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
    Expect exactly the 13 names (in particular `cross-os-linux`,
    `cross-os-macos`, `cross-os-windows` — if these render differently,
    fix/reconcile BEFORE step 5). Record the run URL here:
-   - main run: _(pending)_
+   - main run: <https://github.com/aed900/antseal/actions/runs/30309407509> — GREEN, all 14 contexts, 2026-07-27 (first push after the workflow-scope grant)
 4. **wasm-guard probe**: execute the P8 red-lane probe procedure (P8
    section above, "Pending P8 acceptance steps", step 2) and record the two
    failing-run URLs there. The probe PR will also exercise all Q1 lanes on
