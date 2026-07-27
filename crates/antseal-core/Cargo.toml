@@ -13,18 +13,35 @@ rust-version.workspace = true
 # docs/decisions/D7-cbor-crate.md). The D12 independent cross-check
 # implementation (Python cbor2) is dev-tool-only and never appears here.
 minicbor.workspace = true
+chacha20poly1305.workspace = true
 hkdf.workspace = true
+rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
+zeroize.workspace = true
+
+[features]
+# Test-support surface for fixture generation ONLY — never enabled by any
+# production build (CLI, verifier page, wasm CI lane all build without it).
+# Gates: the C9 wrong-bucket mis-encryptors (C17/R7 tamper fixtures) and the
+# vector-generation byte accessor on the otherwise-opaque `FileSalt` (C7's
+# disclosure rule vs the C3/C16 committed-vector needs).
+test-util = []
 
 [dev-dependencies]
+# Self-dependency enabling `test-util` for this crate's own unit,
+# integration, and doc tests (cargo feature unification); normal builds and
+# the wasm32 CI lane are unaffected (dev-deps don't apply there).
+antseal-core = { workspace = true, features = ["test-util"] }
 # Raw HMAC-SHA256 used to re-derive HKDF as the RFC 5869 independent
 # reference (tasks/C.md C2 accept). Exact-pinned in the workspace table.
 hmac.workspace = true
 proptest.workspace = true
+rand_chacha.workspace = true
 
 [lints]
 workspace = true

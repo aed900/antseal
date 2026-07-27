@@ -31,3 +31,5 @@ wallets/
 # Claude Code: committed agents live in .claude/agents/ — do NOT ignore
 # .claude/ itself; only local settings stay out.
 .claude/settings.local.json
+# Agent worktrees are transient checkouts, never tracked
+.claude/worktrees/

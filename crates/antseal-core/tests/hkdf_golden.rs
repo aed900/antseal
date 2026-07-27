@@ -145,7 +145,13 @@ fn derive_via_typed_api(w: MasterSecretRef<'_>, label: Label, id: u64) -> Vec<u8
         Label::UnitKey => derive_unit_key(w, UnitId(id)).into_bytes().to_vec(),
         Label::UnitSalt => derive_unit_salt(w, UnitId(id)).into_bytes().to_vec(),
         Label::PathSalt => derive_path_salt(w, FileId(id)).into_bytes().to_vec(),
-        Label::FileSalt => derive_file_salt(w, FileId(id)).into_bytes().to_vec(),
+        // `FileSalt` is opaque by C7's disclosure rule; the byte accessor
+        // for committed-vector verification exists only under the
+        // `test-util` feature (enabled for this crate's tests via the
+        // self dev-dependency — see crates/antseal-core/Cargo.toml).
+        Label::FileSalt => derive_file_salt(w, FileId(id))
+            .expose_bytes_for_test_vectors()
+            .to_vec(),
         Label::FineSeed => derive_fine_seed(w, FileId(id)).into_bytes().to_vec(),
         Label::SigEd25519 => derive_sig_ed25519_seed(w).into_bytes().to_vec(),
         Label::SigMlDsa65 => derive_sig_mldsa65_seed(w).into_bytes().to_vec(),
