@@ -18,3 +18,4 @@ finding is quoted inline in the records with its retrieval timestamp.
 | [D5](D5-cli-crate-name.md) | CLI crate name — spec tree normative (`antseal-cli` crate, `antseal` binary); bare-name publish deferred | RESOLVED (recorded deferral) | 2026-07-27 |
 | [D6](D6-license.md) | Licensing — per-crate dual MIT/Apache-2.0; GPL-3.0 effect on net/cli via `self_encryption`; P15 flag | RESOLVED (files land M4/Q29) | 2026-07-27 |
 | [D7](D7-cbor-crate.md) | Deterministic-CBOR crate — `minicbor = "=2.3.0"`; strictness lives in F3 on native probes; in-house-codec contingency trigger; D12 cross-check nominee `cbor2==6.1.3` (dev-only) | RESOLVED | 2026-07-27 |
+| [D25](D25-unicode-normalization.md) | Unicode/NFC — `unicode-normalization =0.1.25`, data version 17.0.0, descriptor string `unicode-17.0.0`; add-only version registry, shipped tables retained forever | RESOLVED | 2026-07-27 |

@@ -43,6 +43,19 @@ ant-core = "=0.5.0"
 # crates/antseal-core/tests/cbor_pin_eval.rs green UNMODIFIED.
 minicbor = { version = "=2.3.0", default-features = false, features = ["alloc"] }
 
+# Unicode/NFC data crate (exact-pin class; decision D25,
+# docs/decisions/D25-unicode-normalization.md):
+# ships the Unicode 17.0.0 tables behind descriptor string "unicode-17.0.0",
+# frozen into manifests. This pin may NEVER move onto a release whose
+# UNICODE_VERSION differs from (17, 0, 0) — antseal-core's mapping test
+# enforces that. Future Unicode versions are ADDED as distinctly named
+# vendored crates; every shipped table is retained forever (MVP-SPEC.md
+# line 123).
+unicode-normalization = "=0.1.25"
+
+# --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
+thiserror = "2"
+
 [workspace.lints.rust]
 # `unsafe` is denied workspace-wide. Sanctioned per-crate opt-out procedure:
 # a crate that genuinely needs `unsafe` adds `#![allow(unsafe_code)]` at its

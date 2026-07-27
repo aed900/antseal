@@ -4,11 +4,17 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
+# Versions live ONLY in the root [workspace.dependencies]
+# (docs/dependency-policy.md §2). This crate must stay WASM-safe: no I/O,
+# async-runtime, or network crates may enter its normal dependency graph
+# (CI lane `core-dep-graph`).
 [dependencies]
 # The ONLY CBOR crate allowed in this crate's dependency tree (F1 accept;
 # docs/decisions/D7-cbor-crate.md). The D12 independent cross-check
 # implementation (Python cbor2) is dev-tool-only and never appears here.
 minicbor.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
 
 [lints]
 workspace = true
