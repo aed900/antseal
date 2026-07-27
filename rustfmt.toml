@@ -1,0 +1,2 @@
+# rustfmt defaults + the 2024 style edition (matches the workspace edition).
+style_edition = "2024"

@@ -1,0 +1,29 @@
+# ============================================================================
+# SAFETY RULE: no secret material may ever be committable by default.
+# The key/wallet-shaped patterns below are deny-by-default — extend them
+# freely, never narrow them. Real secrets live only in the encrypted vault.
+# ============================================================================
+
+# Build output
+/target
+
+# Devnet data (local Autonomi devnet + Anvil state; P16/P17)
+devnet-data/
+*.devnet/
+
+# Wallet & key material
+*.key
+*.pem
+wallets/
+*wallet*.json
+.secrets/
+
+# Editor droppings
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code: committed agents live in .claude/agents/ — do NOT ignore
+# .claude/ itself; only local settings stay out.
+.claude/settings.local.json

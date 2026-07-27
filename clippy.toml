@@ -1,0 +1,3 @@
+# MSRV = the pinned toolchain (docs/toolchain.md); keeps clippy suggestions
+# compatible with the pin.
+msrv = "1.92.0"

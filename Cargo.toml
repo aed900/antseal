@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/antseal-core",
+    "crates/antseal-anchor",
+    "crates/antseal-net",
+    "crates/antseal-cli",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.92.0"
+# NOTE: no `license` field yet — the license decision (D6) lands later.
+# Adding it is a deliberate, recorded event, not a drive-by edit.
+
+# ----------------------------------------------------------------------------
+# SINGLE version-declaration point for the whole workspace.
+# Every dependency version (internal path deps included) is declared HERE and
+# only here; member crates inherit with `<dep>.workspace = true`. Exact
+# `=x.y.z` pins are mandatory for every format-, crypto-, or
+# network-consensus-affecting dependency.
+# Normative policy: docs/dependency-policy.md
+#
+# No external dependencies yet (pre-M0 scaffold).
+# ----------------------------------------------------------------------------
+[workspace.dependencies]
+antseal-core = { path = "crates/antseal-core" }
+
+[workspace.lints.rust]
+# `unsafe` is denied workspace-wide. Sanctioned per-crate opt-out procedure:
+# a crate that genuinely needs `unsafe` adds `#![allow(unsafe_code)]` at its
+# crate root together with a written justification (a doc comment at the
+# allow site documenting the invariants upheld), and the exception is called
+# out explicitly in review. Never weaken this lint at the workspace level.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Small deliberate set (P5). Panicking macros that mark unfinished/debug code
+# are denied outright; `unwrap` is surfaced as a warning (CI's `-D warnings`
+# hardens it) so library code grows real error types instead.
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
