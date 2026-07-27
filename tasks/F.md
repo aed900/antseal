@@ -211,11 +211,11 @@
   - Targets handed to Q with documented run commands for CI.
 
 ## Open decisions (F)
-- CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10).
+- CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.
 - Complete v1 wire registry: integer key assignments, reserved-slot ranges, signatures-container encoding, anchor-status enum wire values, byte-range representation (start+length vs start+end), integer time encoding for claimed time and fetch dates, GGM cover/path node-coordinate encoding (with G), explicit `file_id` in touched-file bundle entries or not — blocks F5, F8 — must freeze at M0 Definitions sign-off.
 - Concrete parser cap constants (bundle/manifest byte size, unit/file/anchor counts, list lengths, nesting depth) with recorded rationale — blocks F11, F15 — M0.
-- Autonomi ciphertext-address byte length pinned from ant-core =0.5.0 source (via S1) — blocks F4, F5, F8 length checks — M0.
-- Independent CBOR implementation for the cross-check (Python `cbor2` vs a second Rust crate, dev-tool-only) — blocks F14 — M0 (jointly with Q).
+- Autonomi ciphertext-address byte length pinned from ant-core =0.5.0 source (via S1) — blocks F4, F5, F8 length checks — M0. — **[2026-07-27]** RESOLVED (D11 via S1): **32 bytes** — `XorName = [u8; 32]`, BLAKE3-256 of chunk content (ant-protocol 2.3.0 src/chunk.rs:43; docs/research/S1-ant-core-api-survey.md).
+- Independent CBOR implementation for the cross-check (Python `cbor2` vs a second Rust crate, dev-tool-only) — blocks F14 — M0 (jointly with Q). — **[2026-07-27]** RESOLVED (D12, nominated in D7): Python `cbor2 ==6.1.3` (PyPI 2026-07-04, MIT), dev-tool-only; independent lineage; proven byte-identical to minicbor at integer boundaries + sorted-uint-key map; RFC 7049 ordering caveat recorded (moot for uint-only keys).
 
 ## Cross-domain expectations
 - P: workspace scaffolding, exact-pin execution for the CBOR crate and `sha2`, wasm32 target setup so `antseal-core` builds for `wasm32-unknown-unknown`.

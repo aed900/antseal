@@ -17,6 +17,7 @@
   - Report serializes deterministically (two serializations of the same report are byte-identical)
   - No secret material (`k_u`, salts, `W`) appears in any `Display`/`Debug` output of report or errors (test asserts redaction)
 - Notes: Decide fail-fast vs collect-all error reporting (see Open decisions); design for both: typed first-error for the tamper matrix, optional multi-error collection for rendering.
+  — **[2026-07-27] executed**: D27 resolved (hybrid, docs/decisions/D27-verify-error-mode.md); D29 recommended (byte-deterministic compact JSON, serde/serde_json exact-pinned; freeze reserved to Q14 via Q4/Q5 — docs/decisions/D29-report-byte-format.md). The C/G/F/A wrapper variants are a documented extension point in `verify/error.rs` (wildcard-free `code()` match makes an armless addition a compile error); they land with their consumers (R2 for C/G, F3 for codec, A-stage for anchors) so wrapping semantics are decided by real call sites, not guessed at R1.
 
 ### R2 — Implement per-unit evidence stages: decrypt, padding verify/strip, true-length binding, content-binding dispatch
 - Milestone: M0
@@ -342,7 +343,7 @@
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.
-- `verify_bundle` error mode: fail-fast single distinct error (tamper-matrix authoritative) vs collect-all for rendering, and which the report exposes — blocks R1/R5/R7; by M0.
+- `verify_bundle` error mode: fail-fast single distinct error (tamper-matrix authoritative) vs collect-all for rendering, and which the report exposes — blocks R1/R5/R7; by M0. — **[2026-07-27]** RESOLVED (D27): hybrid — fail-fast typed first-error (`Result<VerificationReport, VerifyError>`) is the sole normative mode the tamper matrix/Q7 bind to; `VerifyFailures` is rendering-only collection, primary-first by construction, first element must equal the fail-fast error (docs/decisions/D27-verify-error-mode.md).
 - Confirm the derived strictness rule: a bundle revealing all of a file's non-mirror units MUST carry `file_salt` (+ `s_root` when a fine tree exists) or hard-fail (`FullRevealMaterialMissing`) — blocks R4/R7; by M0 (format-freeze relevant).
 - Raw-mirror inclusion on whole-file reveals: always automatic (implemented default) vs a future opt-out — blocks R13/R16 final UX; by M3.
 - Online-overlay ↔ headline presentation: exact layout for how a `--online`-promoted anchor supplies the headline while the offline cryptographic verdict stays distinct and visible — blocks R17/R18 (snapshots freeze it); by M3.

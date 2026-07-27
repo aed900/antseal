@@ -237,7 +237,7 @@
 - Rust edition + MSRV policy; blocks P6; pre-M0. — **[2026-07-27]** RESOLVED: edition 2024; toolchain pinned =1.92.0; MSRV = the pin, moves only via the dependency-policy bump procedure (docs/decisions/D4-edition-msrv.md).
 - CLI crate published name — spec tree says `antseal-cli` (binary `antseal`); `cargo install antseal` UX argues for publishing the CLI as the bare name. Spec tree is normative, so recorded as disagreement only; reservation (P2) covers both names; pre-M0. — **[2026-07-27]** RESOLVED as recorded deferral: spec tree stays normative (`antseal-cli` crate, `antseal` binary); both names reserved at P2; bare-name publish decided at release, Q31/M4 (docs/decisions/D5-cli-crate-name.md).
 - wasm-bindgen surface location — feature-gated exports inside `antseal-core` vs a thin wrapper crate; partially blocks P14 (test harness), finally blocks R's M3 page build (R22); decide by M0, final by M3.
-- Deterministic-CBOR crate (candidate `minicbor` with integer keys) — joint P/F decision; blocks P10 and F's M0 Definitions freeze; M0.
+- Deterministic-CBOR crate (candidate `minicbor` with integer keys) — joint P/F decision; blocks P10 and F's M0 Definitions freeze; M0. — **[2026-07-27]** RESOLVED: `minicbor = "=2.3.0"`, features `alloc` only; strict-decode layer feasible on native probes; independent cross-check = Python `cbor2 ==6.1.3` dev-only (docs/decisions/D7-cbor-crate.md).
 - `ed25519-dalek` 2.x vs 3.0.0; blocks P11 and C's signature work; M0.
 - cargo-deny vs cargo-audit (or both) for the advisory lane; blocks P13; M0.
 - Test-ANT acquisition mechanism on Arbitrum Sepolia (chain 421614) — upstream faucet/mint/bridge, verified at execution; blocks P17's funding runbook; must land by the M4 Sepolia-mode gate (targeted M1).

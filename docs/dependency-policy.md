@@ -25,7 +25,7 @@ lands):
 | `opentimestamps` (spec pin `=0.2.0`) | `.ots` wire format. **Scope: wire-format codec only** — the calendar HTTP client is in-house (antseal-anchor); no networking surface of the crate may be used | P18 (A) |
 | `self_encryption` | deterministic ciphertext-address recomputation; **must equal the exact version ant-core's graph locks** — skew breaks the storage-linkage layer | P15 |
 | AEAD/HKDF/SHA-2 stack — **HKDF/SHA-2 part nominated 2026-07-27 (C1–C4): `sha2 = "=0.11.0"`, `hkdf = "=0.13.0"`, `hmac = "=0.13.0"`** (current stable verified on crates.io; RUSTSEC clean — sha2's only advisory RUSTSEC-2021-0100 affects 0.9.7 only, hkdf/hmac have none; `hmac` is hkdf's HMAC layer, also the tests' RFC 5869 reference). XChaCha20-Poly1305 crate still pending, nominated at C9 | ciphertext format + key derivation | C |
-| Unicode/NFC data crate (nominated by G at M0; its Unicode data version is frozen into manifests) | canonicalization output bytes | G |
+| Unicode/NFC data crate — **nominated 2026-07-27 (G1): `unicode-normalization = "=0.1.25"`, shipping Unicode data 17.0.0 behind the frozen descriptor string `unicode-17.0.0`** ([D25](decisions/D25-unicode-normalization.md)); the data version is frozen into manifests, and every shipped table is retained forever | canonicalization output bytes | G |
 | Argon2/scrypt (vault KDF) | vault format | U/C |
 | `zeroize` | secret-hygiene behavior | C |
 | `serde` + `serde_json` (pinned `=1.0.229` / `=1.0.151` at R1) | the serialized `VerificationReport` is the R9/Q4/Q5 native↔WASM bit-match vector byte format, retained forever — serializer output drift is a silent vector break ([D29](decisions/D29-report-byte-format.md)) | R1 |

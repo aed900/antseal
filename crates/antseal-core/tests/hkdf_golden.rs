@@ -71,8 +71,12 @@ struct Vector {
 /// Python reference implementation in `testdata/vectors/hkdf/` — verify
 /// against this crate's public derivation API: info bytes, output length,
 /// and output bytes, for all 8 registry labels.
+///
+/// The `vector_` name prefix opts this test into the cross-OS CI lane
+/// (Q1 convention, CONTRIBUTING.md): committed-vector byte stability must
+/// hold on linux, macOS, and windows.
 #[test]
-fn committed_golden_vectors_verify() {
+fn vector_committed_hkdf_golden_file_verifies() {
     let content = std::fs::read_to_string(VECTOR_FILE)
         .unwrap_or_else(|e| panic!("cannot read {VECTOR_FILE}: {e}"));
 

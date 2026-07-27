@@ -39,9 +39,9 @@ Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversaria
 
 ## Current focus
 
-> **Phase: pre-M0 — executed 2026-07-27** (P4–P7 ✅; P8 workflow committed + all lanes green locally; D2–D6 resolved, D1 provisional).
-> **Maintainer actions to close the gate**: (1) `gh auth refresh -h github.com -s workflow` then `git push origin main` → green CI + wasm-guard probe per docs/ci-verification.md (P8); (2) file docs/naming/upstream-blessing-request.md at WithAutonomi/ant-client (P1); (3) on D1-final: `scripts/reserve-crates.sh --execute` after `cargo login` (P2) + register antseal.org/.dev (P3).
-> D1 deadline: silence past M0 start → recorded fallback (docs/decisions/D1-product-name.md). M0 tasks not depending on D1-final (P9, P10+F1, S1, C1/C2, C4, G1, R1, Q1) may start; the Q14 freeze itself still gates on D1.
+> **Phase: M0 — wave 1 executed 2026-07-27** (6-agent run): P9 ✅ P10+F1 ✅ S1 ✅ C1–C4 ✅ G1 ✅ R1 ✅; Q1 ⏳ (workflow done + locally verified; remote run maintainer-blocked). D7/D11/D12/D25/D27 resolved; D29 recommended (freeze at Q14); D32/D33/D37 inputs captured. Full local gate green post-integration: fmt/clippy/test (54 tests)/wasm32/core-dep-graph.
+> **Next wave (unblocked now)**: F2→F3 (canonical encode + strict decode on the minicbor pin) · C5 (needs zeroize + rand_core pins; getrandom wasm recipe interacts with P14) → C6→C7/C8/C9 · C11 probe (+P11/P12 pins, D13/D14) · G2 (needs D20/D21 frozen first — decision-first) · Q2/Q3/Q4 (testdata conventions, proptest, vector framework) · F4 registry drafting (address length now pinned: 32 B) · P13 (deny.toml — remember minicbor's BlueOak-1.0.0 allowlist entry) · R2 (lands the C/G wrapper arms in VerifyError).
+> **Maintainer actions (unchanged + one new)**: (1) `gh auth refresh -h github.com -s workflow` then `git push origin main` → confirm 13 CI lanes green (3-OS matrix) → wasm-guard probe → THEN branch protection per docs/ci-verification.md runbook (P8+Q1); (2) **file docs/naming/upstream-blessing-request.md at WithAutonomi/ant-client** — D1's fallback clock starts only at filing (deadline re-anchored 2026-07-27: D1-final needed before C12/F4/U1 name-bearing work, decided with maintainer; see D1 doc addendum); (3) on D1-final: `scripts/reserve-crates.sh --execute` after `cargo login` (P2) + register antseal.org/.dev (P3).
 
 ## Critical path
 
@@ -69,15 +69,15 @@ Gate: name decided + propagation checklist owned; crates.io names reserved; veri
 Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id encodings, HKDF info encoding, Unicode version, signature context string); all M0 golden vectors committed + frozen (incl. empty-anchor + unbalanced n=6); independent cross-check (Q11) clean; M0 tamper registry (Q8) fully implemented; HKDF pairwise-distinctness test green; WASM bit-match green; ML-DSA probe decision recorded; Security-assumptions sign-off; traceability M0 rows filled; annotated `format-v1-freeze` tag.
 
 ### Pins & probes (P)
-- [ ] **P9** (S) Re-verify + land `ant-core = "=0.5.0"` pin at M0 start (spec-mandated)
-- [ ] **P10** (M) Select + exact-pin the deterministic-CBOR encoder crate (joint with F1)
+- [x] **P9** (S) Re-verify + land `ant-core = "=0.5.0"` pin at M0 start (spec-mandated) ✅ 2026-07-27 — KEEP 0.5.0 (crates.io newest, not yanked, upstream HEAD ≡ tag); self_encryption locks 0.36.0; pin = workspace declaration only, lock unchanged (docs/upstream/P9-ant-core-reverification.md)
+- [x] **P10** (M) Select + exact-pin the deterministic-CBOR encoder crate (joint with F1) ✅ 2026-07-27 — `minicbor = "=2.3.0"` (D7); cross-check nominee `cbor2 ==6.1.3` (D12)
 - [ ] **P11** (S) Decide + pin `ed25519-dalek` (2.x vs 3.0.0) — with C11
 - [ ] **P12** (S) Pin `ml-dsa =0.1.1` + `fips204 =0.4.6` with RUSTSEC advisory assessment
 - [ ] **P13** (S) RUSTSEC advisory tracking lane (cargo-deny/audit, weekly schedule)
 - [ ] **P14** (M) WASM toolchain: getrandom js/wasm_js recipe, wasm-pack/wasm-bindgen pins, wasm32 test execution
 
 ### Formats & parser hardening (F)
-- [ ] **F1** (M) Evaluate + pin the CBOR crate against RFC 8949 §4.2.1 + strict-decode feasibility (joint P10)
+- [x] **F1** (M) Evaluate + pin the CBOR crate against RFC 8949 §4.2.1 + strict-decode feasibility (joint P10) ✅ 2026-07-27 — every line-73 rejection class implementable on minicbor's public probes (13 live eval tests: crates/antseal-core/tests/cbor_pin_eval.rs); derive off, F5–F9 manual impls
 - [ ] **F2** (M) Canonical CBOR encode layer (shortest forms, definite lengths, sorted integer keys) — after F1
 - [ ] **F3** (L) Strict canonical decode layer — hard-reject every non-canonical class, distinct errors, outer+inner layers — after F1,F2
 - [ ] **F4** (M) Frozen v1 wire-format registry: every map key, type, presence rule, byte length, reserved slots — with C/G/A/S inputs
@@ -96,10 +96,10 @@ Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id 
 - [ ] **F17** (M) cargo-fuzz targets: manifest decode, bundle decode, round-trip — after F6,F9,F11–F15
 
 ### Crypto primitives (C)
-- [ ] **C1** (S) Hash domain-tag registry 0x00–0x06, single module, `tagged_sha256` helper
-- [ ] **C2** (M) HKDF-SHA256 with length-prefixed injective info encoding + full 8-label registry + sentinel id
-- [ ] **C3** (S) HKDF golden test: pairwise-distinct infos (spec-mandated) + derivation vectors — after C2
-- [ ] **C4** (S) Crypto error taxonomy (thiserror, distinct variants, secret-redaction discipline)
+- [x] **C1** (S) Hash domain-tag registry 0x00–0x06, single module, `tagged_sha256` helper ✅ 2026-07-27 — crypto/domain.rs; grep test enforces single tag site (bite verified)
+- [x] **C2** (M) HKDF-SHA256 with length-prefixed injective info encoding + full 8-label registry + sentinel id ✅ 2026-07-27 — typed per-label API only; sha2 =0.11.0 / hkdf =0.13.0 / hmac =0.13.0 pinned; RFC 5869 reference cross-checked; W seam → C5 (`MasterSecretRef`)
+- [x] **C3** (S) HKDF golden test: pairwise-distinct infos (spec-mandated) + derivation vectors — after C2 ✅ 2026-07-27 — pairwise test + 10k-case proptest injectivity; vectors from an independent Python impl matched byte-for-byte (testdata/vectors/hkdf/); vector test opted into the cross-OS lane; **rider**: wasm bit-match execution joins Q5's harness
+- [x] **C4** (S) Crypto error taxonomy (thiserror, distinct variants, secret-redaction discipline) ✅ 2026-07-27 — exact 15-variant set; distinctness + no-byte-content Display tests; `#![deny(clippy::unwrap_used)]` over the crypto tree
 - [ ] **C5** (S) `MasterSecret` (W) + `SealId` types: CSPRNG generation, ZeroizeOnDrop, redacted Debug — after C4
 - [ ] **C6** (M) Four salted commitments (unit/path/raw/canon) + `Salt16`/`Seed32`/`NodeHash32` length-checked newtypes — after C1,C2,C4,C5
 - [ ] **C7** (M) Type-system enforcement: `unit_commit` iff not-covered (`UnitBinding`); `file_salt` reachable only via full-reveal constructor — after C5,C6
@@ -119,7 +119,7 @@ Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id 
 - [ ] **C21** (S) Zeroization coverage audit + WASM browser-memory caveat — after C5,C9,C10,C12,C13
 
 ### Content model (G)
-- [ ] **G1** (M) Pin Unicode/NFC data version; ship normalization table in core; version-dispatch registry (retained forever)
+- [x] **G1** (M) Pin Unicode/NFC data version; ship normalization table in core; version-dispatch registry (retained forever) ✅ 2026-07-27 — `unicode-normalization =0.1.25` = Unicode 17.0.0 (verified from crate bytes, machine-asserted); descriptor string `unicode-17.0.0`; add-only registry + `UnknownUnicodeVersion` (D25)
 - [ ] **G2** (M) Canonicalization v1: detection, BOM/EOL/NFC pipeline, `canonicalize_v`, idempotent, total under --force-text — after G1
 - [ ] **G3** (M) UTF-8 corpus with golden canonical outputs (CRLF, NFD/NFC, BOM, emoji/ZWJ, mixed scripts) + cross-platform stability — after G2
 - [ ] **G4** (S) Canonicalization descriptor struct + construction logic + cross-field validation — after G2
@@ -141,10 +141,10 @@ Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id 
 - [ ] **G20** (M) Consolidated content-model property suite (seeded, committed regressions) — after G2,G6,G9,G11–G13
 
 ### Storage survey (S)
-- [ ] **S1** (M) Re-verify ant-core 0.5.0 + survey exact payment/storage API shapes (written memo; feeds F4 address length, S2/S6/S7)
+- [x] **S1** (M) Re-verify ant-core 0.5.0 + survey exact payment/storage API shapes (written memo; feeds F4 address length, S2/S6/S7) ✅ 2026-07-27 — memo with source citations (docs/research/S1-ant-core-api-survey.md); address = 32 B BLAKE3 (D11); D32/D33/D37 inputs captured; external-signer flow recommended primary; GO on the pin
 
 ### Verification pipeline core (R)
-- [ ] **R1** (M) `VerificationReport` model + `VerifyError` taxonomy (deterministic serialization; every line-121 invariant a distinct variant)
+- [x] **R1** (M) `VerificationReport` model + `VerifyError` taxonomy (deterministic serialization; every line-121 invariant a distinct variant) ✅ 2026-07-27 — 19 variants / 30 distinct stable codes; byte-deterministic JSON + pinned snapshot fixture; D27 resolved, D29 recommended; **rider**: C/G/F/A wrapper arms land with R2/F3/A-stage (documented extension point, compile-enforced)
 - [ ] **R2** (M) Per-unit evidence stages: decrypt → padding verify/strip → true_length binding → content-binding dispatch (fine_root vs unit_commit) — after R1
 - [ ] **R3** (M) Structural checks: exact lengths, referential integrity, tiling invariant (+mirror exemption), path_commit — after R1
 - [ ] **R4** (L) Reveal-shape classification + file-level checks: partial-reveal isolation, full-reveal concat + fine-tree rebuild, raw-mirror canonicalize(raw)==canonical — after R2,R3
@@ -156,7 +156,7 @@ Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id 
 - [ ] **R10** (S) `verify_bundle` no-panic fuzz + property coverage — after R5,R6
 
 ### Shared infrastructure & freeze (Q)
-- [ ] **Q1** (M) Extend CI skeleton to full M0 matrix + multi-OS corpus/vector lane (+ mount points for later lanes; branch protection)
+- [ ] **Q1** (M) Extend CI skeleton to full M0 matrix + multi-OS corpus/vector lane (+ mount points for later lanes; branch protection) ⏳ WIP — workflow extended 2026-07-27: 13 lanes (3-OS `corpus_`/`vector_` suites + 5 mount points), locally verified; `.gitattributes` fixture guard ⛔ remote run + branch protection blocked on the P8 push blocker; protection deliberately deferred until after the first green remote run (runbook: docs/ci-verification.md)
 - [ ] **Q2** (S) `testdata/` layout + fixture conventions + no-real-secrets CI guard — after Q1
 - [ ] **Q3** (S) proptest conventions + shared strategy helpers — after Q2
 - [ ] **Q4** (M) Golden-vector framework (schema, discovery, native runner) — after Q1,Q2
@@ -348,20 +348,20 @@ Gate = **Q34 evidence bundle**: Sepolia-mode E2E green; exactly ONE mainnet smok
 Unresolved decisions are blockers-in-waiting: each must land by its due milestone. On resolution: check it, record outcome + date, update the blocked tasks in `tasks/*.md`. (Merged from all nine domains; joint owners shown.)
 
 ### Due pre-M0
-- [ ] **D1** Product name: `antseal` with upstream written blessing vs non-ant rename (P — blocks P2, P3, C12 context string, F4 format strings, U1 binary/dir; gates the M0 freeze) — **2026-07-27 provisional**: `antseal` (all 5 crate names + GitHub ns + .org/.dev free; only antseal.com held, unrelated party since 2004); blessing request drafted for maintainer to file; fallback + M0-start deadline recorded in docs/decisions/D1-product-name.md
+- [ ] **D1** Product name: `antseal` with upstream written blessing vs non-ant rename (P — blocks P2, P3, C12 context string, F4 format strings, U1 binary/dir; gates the M0 freeze) — **2026-07-27 provisional**: `antseal` (all 5 crate names + GitHub ns + .org/.dev free; only antseal.com held, unrelated party since 2004); blessing request drafted for maintainer to file; fallback + M0-start deadline recorded in docs/decisions/D1-product-name.md — **2026-07-27 (M0 start)**: request still unfiled → silence clock never started, fallback NOT triggered; deadline re-anchored to "before C12/F4/U1 name-bearing work and in every case before Q14", fallback decided with the maintainer (D1 doc addendum)
 - [x] **D2** Repo hosting platform + CI provider (assumption: GitHub + Actions) (P — blocks P4, P8) — **Resolved 2026-07-27**: GitHub + GitHub Actions; private repo `aed900/antseal` (docs/decisions/D2-hosting-ci.md)
 - [x] **D3** Repo root layout: `code0/` as workspace root vs `antseal/` subdir per the spec tree (P — blocks P4, P5) — **Resolved 2026-07-27**: repo root = workspace root = the spec tree's `antseal/`; no nested subdir (docs/decisions/D3-repo-layout.md)
 - [x] **D4** Rust edition + MSRV policy (P — blocks P6) — **Resolved 2026-07-27**: edition 2024; toolchain pinned =1.92.0; MSRV = pinned toolchain, moves only via P7 bump procedure (docs/decisions/D4-edition-msrv.md)
 - [x] **D5** CLI crate publish name: spec's `antseal-cli` vs bare `antseal` for `cargo install` (P — reserve both in P2; recorded spec-disagreement) — **Resolved 2026-07-27** as recorded deferral: spec tree stays normative (crate `antseal-cli`, binary `antseal`); both names reserved at P2; publish-name call at Q31 (docs/decisions/D5-cli-crate-name.md)
-- [x] **D6** License choice — spec milestone is M4 (Q29) but P2's crates.io placeholders need a license: decide early, execute at M4 (Q/P) — **Resolved 2026-07-27**: per-crate — antseal-core/anchor/verifier-web `MIT OR Apache-2.0`; antseal-net/cli own code dual-licensed but distribution effectively GPL-3.0 while ant-core's mandatory `self_encryption` dep stays GPL-3.0; ⚠ P15 direct-dep plan would pull GPL into the permissive core/WASM page — options recorded, decide at P15/S4; files land Q29 (docs/decisions/D6-license.md)
+- [x] **D6** License choice — spec milestone is M4 (Q29) but P2's crates.io placeholders need a license: decide early, execute at M4 (Q/P) — **Resolved 2026-07-27**: per-crate — antseal-core/anchor/verifier-web `MIT OR Apache-2.0`; antseal-net/cli own code dual-licensed but distribution effectively GPL-3.0 while ant-core's mandatory `self_encryption` dep stays GPL-3.0; ⚠ P15 direct-dep plan would pull GPL into the permissive core/WASM page — options recorded, decide at P15/S4; files land Q29 (docs/decisions/D6-license.md) — **2026-07-27 (S1 finding)**: GPL exposure in ant-core's graph is TWO crates — `self_encryption` 0.36.0 AND `evmlib` 0.9.0 (ant-core itself MIT/Apache-2.0); P15/S4 assessment must cover both
 
 ### Due M0 (format-freeze relevant — permanent once frozen)
-- [ ] **D7** Deterministic-CBOR crate + exact pin; in-house-codec contingency trigger (P10/F1)
+- [x] **D7** Deterministic-CBOR crate + exact pin; in-house-codec contingency trigger (P10/F1) — **Resolved 2026-07-27**: `minicbor = "=2.3.0"`, features `alloc` only, derive off; strict rejections live in F3 on native probes; contingency trigger recorded (docs/decisions/D7-cbor-crate.md)
 - [ ] **D8** Complete v1 wire registry: key assignments, reserved ranges, signatures container, anchor-status enum values, byte-range representation, integer time encoding, explicit file_id in touched-file entries (F4, with C/G/A/S)
 - [ ] **D9** GGM node-address representation ((level,index) vs bit-path) — co-frozen G8/F4
 - [ ] **D10** Parser cap constants (bundle/manifest size, unit/file/anchor counts, list lengths, depth) (F11)
-- [ ] **D11** Autonomi address byte length pinned from ant-core source via S1 (F4/F5/F8)
-- [ ] **D12** Independent CBOR cross-check implementation (Python `cbor2` vs second Rust crate, dev-only) (F14/Q11)
+- [x] **D11** Autonomi address byte length pinned from ant-core source via S1 (F4/F5/F8) — **Resolved 2026-07-27**: **32 bytes** — `XorName = [u8; 32]`, BLAKE3-256 of chunk content (ant-protocol 2.3.0 src/chunk.rs:43; docs/research/S1-ant-core-api-survey.md)
+- [x] **D12** Independent CBOR cross-check implementation (Python `cbor2` vs second Rust crate, dev-only) (F14/Q11) — **Resolved 2026-07-27**: Python `cbor2 ==6.1.3` dev-tool-only (independent lineage; boundary-value byte-identity proven; RFC 7049 ordering caveat recorded — moot for uint-only keys) (docs/decisions/D7-cbor-crate.md §D12)
 - [ ] **D13** `ed25519-dalek` 2.x vs 3.0.0 (P11/C11)
 - [ ] **D14** Primary ML-DSA crate (ml-dsa vs fips204) + whether the Ed25519-only `sig_policy` fallback ships (C11)
 - [ ] **D15** ML-DSA signing mode: hedged vs deterministic (affects golden-vector shape) (C16)
@@ -374,21 +374,21 @@ Unresolved decisions are blockers-in-waiting: each must land by its due mileston
 - [ ] **D22** Blank-line definition for `--split` (whitespace-only lines; separator attachment) (G6)
 - [ ] **D23** Raw-mirror placement in manifest order (proposal: appended after the file's normal units) — frozen forever (G5/G7)
 - [ ] **D24** `--no-fine-tree` × `--split` on one file: silent single-unit vs hard error (G5/G6/U13)
-- [ ] **D25** Normalization crate + exact Unicode data version + multi-version retention architecture (G1/P7)
+- [x] **D25** Normalization crate + exact Unicode data version + multi-version retention architecture (G1/P7) — **Resolved 2026-07-27**: `unicode-normalization = "=0.1.25"` = Unicode **17.0.0** (verified from crate bytes; machine-asserted); descriptor `unicode-17.0.0`; append-only registry, future versions vendored side-by-side, shipped tables retained forever (docs/decisions/D25-unicode-normalization.md)
 - [ ] **D26** Perf/memory budget constants (C₁, corpus size, ceilings) (G18)
-- [ ] **D27** `verify_bundle` error mode: fail-fast (tamper-authoritative) vs collect-all (rendering) (R1/R5/R7)
+- [x] **D27** `verify_bundle` error mode: fail-fast (tamper-authoritative) vs collect-all (rendering) (R1/R5/R7) — **Resolved 2026-07-27**: hybrid — fail-fast typed first-error is the sole normative mode (tamper matrix/Q7 bind to it); `VerifyFailures` is rendering-only, primary-first, first element ≡ the fail-fast error (docs/decisions/D27-verify-error-mode.md)
 - [ ] **D28** Full-reveal strictness: bundle revealing all non-mirror units MUST carry file_salt (+s_root if fine tree) or hard-fail (R4/R7)
-- [ ] **D29** Deterministic verification-report byte format (the bit-match contract) (Q4/Q5/R1)
+- [ ] **D29** Deterministic verification-report byte format (the bit-match contract) (Q4/Q5/R1) — **2026-07-27 recommended** (freeze reserved to Q14 via Q4/Q5): byte-deterministic compact `serde_json` — declaration-order fields, Vec/BTreeMap only, no floats, lowercase-hex, kebab-case wire names; serde =1.0.229 / serde_json =1.0.151 exact-pinned; canonical-CBOR re-base option + forcing conditions recorded (docs/decisions/D29-report-byte-format.md)
 - [ ] **D30** Stable machine-readable error-code contract across F/C/G/A/R (Q7/Q8)
 - [ ] **D31** Independent cross-check vehicles for the non-CBOR surfaces + permanence (one-shot artifact vs CI lane; is ml-dsa↔fips204+ACVP "independent" for ML-DSA? — the CBOR vehicle is D12's) (Q11)
 
 ### Due M1
-- [ ] **D32** Blob↔address model (data-map style vs per-chunk) per ant-core's real storage model (S2/S4/S6; informed by S1)
-- [ ] **D33** Block-number acquisition locus: antseal-net pay() vs antseal-anchor RPC client (S7/A17)
+- [ ] **D32** Blob↔address model (data-map style vs per-chunk) per ant-core's real storage model (S2/S4/S6; informed by S1) — 2026-07-27 inputs captured in the S1 memo (recommended: blob = one chunk, 32-B BLAKE3 address; `get_data` ↦ `chunk_get`)
+- [ ] **D33** Block-number acquisition locus: antseal-net pay() vs antseal-anchor RPC client (S7/A17) — 2026-07-27 inputs captured: no upstream payment API returns a block number; own `eth_getTransactionReceipt` mandatory (S1 memo)
 - [ ] **D34** Seal-pipeline crate placement (CLI lib target vs orchestration module; must be library-drivable) (S12/S10)
 - [ ] **D35** self_encryption in core: direct pinned dep vs vendored address-derivation subset (S4/P15)
 - [ ] **D36** Pre-pay resume re-quote/re-consent policy on cost change (proposed: re-consent) (S11/U17)
-- [ ] **D37** Multi-tx payment handling (per-tx chunk cap; plural tx hashes) (S6/S7)
+- [ ] **D37** Multi-tx payment handling (per-tx chunk cap; plural tx hashes) (S6/S7) — 2026-07-27 inputs captured: 256 transfers/tx, 64-chunk waves, 256 merkle leaves; `PaymentReceipt` needs `Vec<TxHash>` (S1 memo)
 - [ ] **D38** Test-ANT acquisition mechanism on Arbitrum Sepolia 421614 (P17)
 - [ ] **D39** `init` interaction model: wizard vs flags (U1/U11)
 - [ ] **D40** KDF selection mechanism + low-RAM (cannot allocate 256 MiB) behavior (U6/U11)
@@ -473,4 +473,5 @@ Scope discipline: if a task seems to require any of the above, stop and check th
 
 - 2026-07-27 — v1: initial list generated from MVP-SPEC.md Rev 2 (9-agent decomposition, 219 tasks). Nothing started; phase = pre-M0.
 - 2026-07-27 — pre-M0 execution (3-agent run: research + scaffold/CI + decisions/docs): P4–P7 ✅; P8 committed with all 5 lanes verified green locally, remote run blocked on gh `workflow` scope (maintainer device-flow); P1 provisional decision + propagation checklist + blessing draft committed; P2/P3 execution kits ready (reserve script dry-run green ×5), execution maintainer-blocked; D2–D6 resolved, D1 provisional with fallback + M0-start deadline. Evidence: docs/decisions/, docs/naming/, docs/ci-verification.md. Notable finding: `self_encryption` (mandatory in ant-core) is GPL-3.0 → D6 per-crate split + P15 flag.
+- 2026-07-27 — M0 wave 1 (6 parallel worktree agents + orchestrated integration): P9/P10+F1/S1/C1–C4/G1/R1 ✅, Q1 ⏳ (remote-blocked). Pins landed: ant-core =0.5.0 (declaration-only), minicbor =2.3.0 (D7), unicode-normalization =0.1.25/Unicode 17.0.0 (D25), sha2 =0.11.0 + hkdf =0.13.0 + hmac =0.13.0, serde =1.0.229 + serde_json =1.0.151 (D29). D11 (32-B BLAKE3 address), D12 (cbor2 ==6.1.3), D27 (hybrid error mode) resolved; D1 fallback re-anchored (request unfiled at M0 start — clock not started). Notable findings: evmlib 0.9.0 is a second GPL-3.0 crate in ant-core's graph (D6); no upstream payment API returns block numbers (D33); CI needed .gitattributes to keep golden fixtures CRLF-safe on windows runners. Full local gate green; push still blocked on gh `workflow` scope.
 - 2026-07-27 — v1.1: adversarial verification applied. Coverage audit: **0 gaps** against the spec. Consistency audit: 12 defect groups fixed — R16/R21 redefined as library APIs (U28/U30 are the sole CLI owners of `reveal`/`verify`); A18 cedes verdict aggregation to R17; C17↔R7 tamper-fixture ownership resolved (R owns committed fixtures, C owns primitives+helpers); wallet keygen/import/address ops added to S5 (was an orphaned U11 dependency); A6→A7 sequenced; U13⇄U14 and eight consumer-reference cycles annotated (Deps-discipline rule 7 added); A5/A11/A12 real-fixture bootstrap via early A25 capture noted; multi-OS corpus lane added to Q1 (G3 was unexecutable); D31 scoped against D12.
