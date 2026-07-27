@@ -7,6 +7,10 @@
 //!   [`proptest` config builder](strategies::proptest_config) every
 //!   component domain (F/C/G/S/A/R) uses instead of redefining its own
 //!   (conventions: `docs/testing/proptest-conventions.md`).
+//! - [`tamper`] — the tamper-matrix harness (Q7): row model, the
+//!   distinct-outcome and no-panic assertions, and the row-addition
+//!   procedure every domain (F15/C17/G19/A21/R7) registers rows through.
+//!   Error-code contract: `docs/testing/error-code-contract.md`.
 //! - [`vectors`] — the golden-vector envelope schema, validation, kind
 //!   dispatch, and execution (schema doc: `testdata/vectors/README.md`).
 //!   Deliberately WASM-safe (parses/executes **bytes**; zero I/O) so the
@@ -29,6 +33,7 @@
 //! whole workspace.
 
 pub mod strategies;
+pub mod tamper;
 pub mod vectors;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component
