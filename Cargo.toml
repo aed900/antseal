@@ -83,20 +83,23 @@ hmac = "=0.13.0"
 
 # --- Signature stack (exact-pin class; C11 probe + decisions D13/D14, ---
 # --- probe artifacts: probes/sig-probe, report: docs/research/C11-signature-probe.md ---
-# Declaration-only until C12/C13 consume them (precedent: the ant-core pin
-# above), so none of these enters Cargo.lock yet.
+# CONSUMED by antseal-core since C12/C13 (`ed25519-dalek`, `ml-dsa`);
+# `fips204` remains declaration-only (fallback, see below).
 #
 # Ed25519 half of the hybrid author signature (MVP-SPEC.md line 97).
 # Decision D13: 3.0.0 over the 2.x line — identical verify_strict semantics
 # (probe-proven byte- and behavior-equivalent to 2.2.0) but a single crypto
 # stack shared with ml-dsa: signature 3, sha2 =0.11.0 (our exact pin),
-# getrandom-0.4 line. Consumption shape (C12): default-features = false,
-# features = ["alloc", "zeroize"] — no rand_core (keys derive from W), the
-# `fast` precomputed-tables feature is C12's size/speed call. KNOWN GAP the
-# C12 pre-validation layer must close: VerifyingKey::from_bytes is ZIP-215
-# (accepts non-canonical A encodings); S >= L and non-canonical/small-order
-# R ARE rejected by verify_strict (probe bits 15-24).
-ed25519-dalek = "=3.0.0"
+# getrandom-0.4 line. Consumption shape (C12, applied here): no rand_core
+# (keys derive from W), never `legacy_compatibility` (it weakens the S >= L
+# check to a 3-bit test), and `fast` (curve25519-dalek precomputed tables)
+# stays OFF — C12's size/speed call, taken for the WASM verifier page and
+# for exact feature parity with the C11 probe, whose behavioral evidence
+# therefore applies to this build unchanged. KNOWN GAP the C12
+# pre-validation layer closes: VerifyingKey::from_bytes is ZIP-215 (accepts
+# non-canonical A encodings); S >= L and non-canonical/small-order R ARE
+# rejected by verify_strict (probe bits 15-24).
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["alloc", "zeroize"] }
 
 # ML-DSA-65 half (primary; decision D14). Pre-1.0, unaudited, three 2026
 # advisories ALL patched in 0.1.1 (assessment in D14/P12): pin exact, track
@@ -105,9 +108,11 @@ ed25519-dalek = "=3.0.0"
 # bit-match, so the fips204 path and the Ed25519-only sig_policy fallback
 # are NOT invoked. Canonical rejection (dup/unsorted hints, count > omega,
 # nonzero padding, z bound) happens at Signature::decode — probe bits 4-9.
-# Consumption shape (C13): default-features = false,
-# features = ["alloc", "zeroize"] — deterministic profile, no getrandom.
-ml-dsa = "=0.1.1"
+# Consumption shape (C13, applied here): `alloc` + the NON-default `zeroize`
+# (SigningKey/ExpandedSigningKey ZeroizeOnDrop); default `getrandom` and
+# `pkcs8` are OFF — the deterministic profile (keygen from the HKDF-derived
+# xi, sign_deterministic) needs no RNG at all.
+ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "zeroize"] }
 
 # ML-DSA fallback implementation (decision D14; dormant upstream since
 # 2024-12 — accepted for a fallback). Kept pinned and probe-covered

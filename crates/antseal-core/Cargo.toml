@@ -30,7 +30,13 @@ test-util = ["dep:proptest"]
 # implementation (Python cbor2) is dev-tool-only and never appears here.
 minicbor.workspace = true
 chacha20poly1305.workspace = true
+# Hybrid author-signature stack (MVP-SPEC.md line 97; C12/C13). Feature
+# selection and the D13/D14 rationale live in the workspace table; both are
+# RNG-free here (keys derive from `W`, ML-DSA signs deterministically), so
+# neither pulls `getrandom` into this crate's WASM-safe graph.
+ed25519-dalek.workspace = true
 hkdf.workspace = true
+ml-dsa.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
