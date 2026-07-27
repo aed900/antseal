@@ -383,6 +383,13 @@ mod tests {
     /// anchors — any drift in the derivation, the keygen, the signing mode,
     /// or the context moves these.
     ///
+    /// These digests pin *antseal's own derivation chain*
+    /// (`W → HKDF ξ → keygen → deterministic sign over BODY`), so they are a
+    /// drift detector rather than independent evidence. The independence
+    /// comes from [`matches_the_c11_probe_transcript_golden`] below, which
+    /// reproduces an artifact already cross-checked against a second ML-DSA
+    /// implementation (`fips204`) and executed on wasm32.
+    ///
     /// (C16 lifts these into `testdata/vectors/v1/` as a registered vector
     /// kind; the framework extension belongs to that task, not this one.)
     #[test]
@@ -403,7 +410,7 @@ mod tests {
         );
         assert_eq!(
             hex(&Sha256::digest(sig.as_bytes())),
-            "5f0f5cf5a0a3fdf1f0f9b1bc1d5b6e1a7a1b3c2d5e6f7a8b9c0d1e2f3a4b5c6d"
+            "8eca4584820063c48edaf84eccede6cdf842adb912f6d4ce4d21d4b80633ec9d"
         );
     }
 
@@ -490,14 +497,18 @@ mod tests {
         for wrong_ctx in [&b"antseal-manifest-v2"[..], b"antseal-manifest-v10", b""] {
             assert_eq!(
                 verify_with_context(pk, BODY, wrong_ctx, sig).expect_err("must fail"),
-                CryptoError::SignatureInvalid { alg: SigAlg::MlDsa65 }
+                CryptoError::SignatureInvalid {
+                    alg: SigAlg::MlDsa65
+                }
             );
         }
         // …and a signature made under a wrong ctx fails the frozen-ctx path.
         let sig_wrong_ctx = sign_with_context(w(), BODY, b"antseal-manifest-v2");
         assert_eq!(
             verify(pk, BODY, &sig_wrong_ctx).expect_err("must fail"),
-            CryptoError::SignatureInvalid { alg: SigAlg::MlDsa65 }
+            CryptoError::SignatureInvalid {
+                alg: SigAlg::MlDsa65
+            }
         );
         // Sanity: it does verify under the ctx it was made with, so the
         // failure above is attributable to the context alone.
@@ -515,16 +526,25 @@ mod tests {
 
         let other_sig = sign(other_w(), BODY);
         let invalid = verify(pk, BODY, &other_sig).expect_err("must fail");
-        assert_eq!(invalid, CryptoError::SignatureInvalid { alg: SigAlg::MlDsa65 });
+        assert_eq!(
+            invalid,
+            CryptoError::SignatureInvalid {
+                alg: SigAlg::MlDsa65
+            }
+        );
 
         let mut other_body = BODY.to_vec();
         other_body[0] ^= 0x01;
         assert_eq!(
             verify(pk, &other_body, sig).expect_err("must fail"),
-            CryptoError::SignatureInvalid { alg: SigAlg::MlDsa65 }
+            CryptoError::SignatureInvalid {
+                alg: SigAlg::MlDsa65
+            }
         );
 
-        let non_canonical = CryptoError::NonCanonicalSignature { alg: SigAlg::MlDsa65 };
+        let non_canonical = CryptoError::NonCanonicalSignature {
+            alg: SigAlg::MlDsa65,
+        };
         assert_ne!(
             core::mem::discriminant(&invalid),
             core::mem::discriminant(&non_canonical)
@@ -589,7 +609,9 @@ mod tests {
             let mutated = MlDsa65Signature::from_bytes(bytes);
             assert_eq!(
                 verify(pk, BODY, &mutated).expect_err("must fail"),
-                CryptoError::NonCanonicalSignature { alg: SigAlg::MlDsa65 },
+                CryptoError::NonCanonicalSignature {
+                    alg: SigAlg::MlDsa65
+                },
                 "{name} must be rejected as non-canonical"
             );
         }
@@ -600,7 +622,9 @@ mod tests {
         decodable[0] ^= 0x01;
         assert_eq!(
             verify(pk, BODY, &MlDsa65Signature::from_bytes(decodable)).expect_err("must fail"),
-            CryptoError::SignatureInvalid { alg: SigAlg::MlDsa65 },
+            CryptoError::SignatureInvalid {
+                alg: SigAlg::MlDsa65
+            },
             "a decodable mutation is invalid, not non-canonical"
         );
         // A flip inside z stays in range here but breaks verification too.
@@ -610,11 +634,24 @@ mod tests {
 
         // All-zero and all-0xFF signatures reject cleanly (no panic).
         assert_eq!(
-            verify(pk, BODY, &MlDsa65Signature::from_bytes([0xFFu8; SIGNATURE_LEN]))
-                .expect_err("must fail"),
-            CryptoError::NonCanonicalSignature { alg: SigAlg::MlDsa65 }
+            verify(
+                pk,
+                BODY,
+                &MlDsa65Signature::from_bytes([0xFFu8; SIGNATURE_LEN])
+            )
+            .expect_err("must fail"),
+            CryptoError::NonCanonicalSignature {
+                alg: SigAlg::MlDsa65
+            }
         );
-        assert!(verify(pk, BODY, &MlDsa65Signature::from_bytes([0u8; SIGNATURE_LEN])).is_err());
+        assert!(
+            verify(
+                pk,
+                BODY,
+                &MlDsa65Signature::from_bytes([0u8; SIGNATURE_LEN])
+            )
+            .is_err()
+        );
     }
 
     /// C13 accept: ξ is zeroized after expansion — `Seed32` wipes on drop and
@@ -655,11 +692,15 @@ mod tests {
             let bytes = vec![0u8; bad_len];
             assert_eq!(
                 MlDsa65PublicKey::try_from_slice(&bytes).expect_err("must reject"),
-                CryptoError::NonCanonicalSignature { alg: SigAlg::MlDsa65 }
+                CryptoError::NonCanonicalSignature {
+                    alg: SigAlg::MlDsa65
+                }
             );
             assert_eq!(
                 MlDsa65Signature::try_from_slice(&bytes).expect_err("must reject"),
-                CryptoError::NonCanonicalSignature { alg: SigAlg::MlDsa65 }
+                CryptoError::NonCanonicalSignature {
+                    alg: SigAlg::MlDsa65
+                }
             );
         }
 

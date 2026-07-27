@@ -20,6 +20,14 @@ use antseal_core::manifest::{
 };
 use manifest_wire as w;
 
+/// A manifest body as raw `(map key, encoded value)` entries — the shape the
+/// hand-rolled writer produces so tests can build bodies the schema types
+/// could never construct.
+type RawBody = Vec<(u64, Vec<u8>)>;
+
+/// A named shipped-fixture constructor.
+type FixtureBuilder = (&'static str, fn() -> ManifestBodyV1);
+
 /// Decode a body from a list of raw map entries.
 fn decode(entries: &[(u64, Vec<u8>)]) -> Result<ManifestBodyV1, ManifestError> {
     ManifestBodyV1::decode(&w::map(entries))
@@ -700,7 +708,7 @@ fn every_reject_case_carries_a_distinct_error_code() {
     // (case name, mutated body) pairs whose codes must be pairwise
     // distinct — the line-168 "every mutation fails with a distinct
     // error" requirement, executed.
-    let mut cases: Vec<(&str, Vec<(u64, Vec<u8>)>)> = Vec::new();
+    let mut cases: Vec<(&str, RawBody)> = Vec::new();
 
     let mut b = w::default_body();
     w::set(&mut b, key::body::SIG_POLICY, w::array(&[]));
@@ -1066,7 +1074,7 @@ fn in_memory_construction_runs_the_same_validation() {
 /// so the committed fixtures and the schema can never drift apart.
 #[test]
 fn every_shipped_fixture_round_trips() {
-    let builders: [(&str, fn() -> ManifestBodyV1); 6] = [
+    let builders: [FixtureBuilder; 6] = [
         ("text_with_mirror", fixtures::text_with_mirror_body),
         ("binary_single_unit", fixtures::binary_single_unit_body),
         ("no_fine_tree", fixtures::no_fine_tree_body),
