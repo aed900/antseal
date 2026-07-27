@@ -1,0 +1,329 @@
+{
+  "registry": "antseal-wire-format",
+  "registry_version": 1,
+  "status": "draft-until-Q14",
+  "date": "2026-07-27",
+  "doc": "docs/format/registry-v1.md",
+  "open_decisions": {
+    "D8": "whole-registry sign-off: key assignments, reserved ranges, signatures container, time encoding, byte-range representation, explicit file_id",
+    "D9": "GGM node-address representation — co-freeze with G8; candidate A (level,index) drafted primary",
+    "D17": "sig_policy algorithm-ID numeric values — proposed 0=ed25519, 1=ml-dsa-65, 2-15 reserved"
+  },
+  "profile": {
+    "encoding": "RFC 8949 section 4.2.1 Core Deterministic (MVP-SPEC.md line 73; minicbor =2.3.0 per D7)",
+    "major_types_allowed": [0, 2, 3, 4, 5],
+    "negative_integers_allowed": false,
+    "simple_values_allowed": false,
+    "floats_allowed": false,
+    "tags_allowed": false,
+    "indefinite_lengths_allowed": false,
+    "booleans": "uint 0/1",
+    "optionality": "key absence (no null)",
+    "map_keys": "unsigned integers only, strictly ascending",
+    "v1_key_band_max": 23,
+    "key_error_bands": "unassigned key in 0..=23 -> reserved-slot error naming the key; key >= 24 -> unknown-key error (F10)",
+    "magic_bytes": "none — version discriminant is map key 0, first in canonical encoded order",
+    "time_encoding": {
+      "status": "proposed",
+      "type": "uint",
+      "semantics": "POSIX seconds UTC",
+      "fields": ["manifest_body.claimed_time", "ots_anchor.fetch_date", "tsa_anchor.fetch_date"]
+    },
+    "envelope_frozen_across_versions": true
+  },
+  "scalars": [
+    { "name": "seal_id", "type": "bstr", "length": 16, "status": "proposed" },
+    { "name": "salt16", "type": "bstr", "length": 16, "status": "proposed", "notes": "unit_salt, path_salt, file_salt" },
+    { "name": "nonce24", "type": "bstr", "length": 24, "status": "proposed", "notes": "XChaCha20-Poly1305" },
+    { "name": "commit32", "type": "bstr", "length": 32, "status": "proposed", "notes": "path_commit, raw_commit, canon_commit, unit_commit, fine_root" },
+    { "name": "seed32", "type": "bstr", "length": 32, "status": "proposed", "notes": "s_root, GGM cover seeds" },
+    { "name": "hash32", "type": "bstr", "length": 32, "status": "proposed", "notes": "boundary Merkle node hashes; EVM tx hashes (Keccak-256)" },
+    { "name": "key32", "type": "bstr", "length": 32, "status": "proposed", "notes": "k_u, k_m" },
+    { "name": "address32", "type": "bstr", "length": 32, "status": "proposed", "notes": "Autonomi XorName = [u8; 32], BLAKE3-256 (D11, S1 section 1)" },
+    { "name": "btc_header", "type": "bstr", "length": 80, "status": "proposed" },
+    { "name": "ed25519_pubkey", "type": "bstr", "length": 32, "status": "pending-D17" },
+    { "name": "ed25519_sig", "type": "bstr", "length": 64, "status": "pending-D17" },
+    { "name": "mldsa65_pubkey", "type": "bstr", "length": 1952, "status": "pending-D17" },
+    { "name": "mldsa65_sig", "type": "bstr", "length": 3309, "status": "pending-D17" }
+  ],
+  "enums": [
+    {
+      "name": "anchor_status",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 127-137, spec order; sealer-recorded, never trusted by the verifier",
+      "values": [
+        { "value": 0, "name": "proven" },
+        { "value": 1, "name": "valid-at-stamping-cert-since-expired" },
+        { "value": 2, "name": "attested" },
+        { "value": 3, "name": "pending" },
+        { "value": 4, "name": "internally-consistent-only" },
+        { "value": 5, "name": "invalid" },
+        { "value": 6, "name": "absent" }
+      ],
+      "reserved": [{ "first": 7, "last": 15, "purpose": "future states", "status": "proposed" }]
+    },
+    {
+      "name": "sig_alg",
+      "status": "pending-D17",
+      "doc": "registered sig_policy algorithm IDs; also the key space of the pubkeys and signatures maps",
+      "values": [
+        { "value": 0, "name": "ed25519", "pubkey_len": 32, "sig_len": 64 },
+        { "value": 1, "name": "ml-dsa-65", "pubkey_len": 1952, "sig_len": 3309 }
+      ],
+      "reserved": [{ "first": 2, "last": 15, "purpose": "future signature algorithms; unregistered in v1 (parse reject)", "status": "pending-D17" }]
+    },
+    {
+      "name": "descriptor_kind",
+      "status": "proposed",
+      "values": [
+        { "value": 0, "name": "binary" },
+        { "value": 1, "name": "text" }
+      ],
+      "reserved": []
+    },
+    {
+      "name": "fine_tree_domain",
+      "status": "proposed",
+      "values": [
+        { "value": 0, "name": "raw" },
+        { "value": 1, "name": "canonical" }
+      ],
+      "reserved": []
+    },
+    {
+      "name": "unit_kind",
+      "status": "proposed",
+      "values": [
+        { "value": 0, "name": "normal" },
+        { "value": 1, "name": "raw-mirror" }
+      ],
+      "reserved": []
+    }
+  ],
+  "tuples": [
+    {
+      "name": "byte_range",
+      "status": "proposed",
+      "doc": "registry-v1.md section 4: [start, length], unit byte domain; width is the load-bearing quantity",
+      "elements": [
+        { "index": 0, "name": "start", "type": "uint" },
+        { "index": 1, "name": "length", "type": "uint" }
+      ]
+    },
+    {
+      "name": "ggm_node_address",
+      "status": "pending-D9",
+      "doc": "candidate A (recommended): level = distance from grid root (root 0, leaves d), index < 2^level; path bits = bits of index MSB-first; co-freeze with G8",
+      "elements": [
+        { "index": 0, "name": "level", "type": "uint" },
+        { "index": 1, "name": "index", "type": "uint" }
+      ]
+    },
+    {
+      "name": "cover_entry",
+      "status": "pending-D9",
+      "doc": "one disclosed GGM sub-cover seed; leading elements = ggm_node_address",
+      "elements": [
+        { "index": 0, "name": "level", "type": "uint" },
+        { "index": 1, "name": "index", "type": "uint" },
+        { "index": 2, "name": "seed", "type": "bstr", "length": 32 }
+      ]
+    },
+    {
+      "name": "path_node",
+      "status": "pending-D9",
+      "doc": "one boundary Merkle sibling; content-tree canonical slot = deepest (registry-v1.md section 5)",
+      "elements": [
+        { "index": 0, "name": "level", "type": "uint" },
+        { "index": 1, "name": "index", "type": "uint" },
+        { "index": 2, "name": "hash", "type": "bstr", "length": 32 }
+      ]
+    }
+  ],
+  "maps": [
+    {
+      "name": "manifest_envelope",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md line 74; shape frozen across ALL versions (no reserved range; keys other than 0/1 are unknown-key forever)",
+      "fields": [
+        { "key": 0, "name": "body", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "embedded canonical-CBOR manifest body; work_id = SHA-256 of exactly these bytes" },
+        { "key": 1, "name": "signatures", "type": "map", "presence": "required", "rule": null, "length": null, "status": "pending-D17", "notes": "uint keys = sig_alg -> bstr sig of per-alg exact length; non-empty; duplicates impossible by map semantics; present-set == policy-set is C14" }
+      ],
+      "reserved": []
+    },
+    {
+      "name": "manifest_body",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md line 98; inside manifest_envelope.body; version discriminant at key 0 encodes first",
+      "fields": [
+        { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "= 1 in v1" },
+        { "key": 1, "name": "app_version", "type": "tstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "informational only" },
+        { "key": 2, "name": "seal_id", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": null },
+        { "key": 3, "name": "title", "type": "tstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "may be empty (D8 item 3)" },
+        { "key": 4, "name": "claimed_time", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "POSIX seconds UTC; informational only" },
+        { "key": 5, "name": "pubkeys", "type": "map", "presence": "required", "rule": null, "length": null, "status": "pending-D17", "notes": "uint keys = sig_alg -> bstr pubkey of per-alg exact length; non-empty; key-set == policy-set is C14" },
+        { "key": 6, "name": "sig_policy", "type": "array", "presence": "required", "rule": null, "length": null, "status": "pending-D17", "notes": "uint sig_alg elements; order-preserving; non-empty + duplicate-free + registered-only at parse (line 97)" },
+        { "key": 7, "name": "files", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "file_entry elements; non-empty; array index IS file_id (line 76)" }
+      ],
+      "reserved": [{ "first": 8, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "file_entry",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md line 98 file table",
+      "fields": [
+        { "key": 0, "name": "path_commit", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
+        { "key": 1, "name": "raw_commit", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
+        { "key": 2, "name": "canon_commit", "type": "bstr", "presence": "optional", "rule": "present iff descriptor.kind == text", "length": 32, "status": "proposed", "notes": null },
+        { "key": 3, "name": "size", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "leaf count / tiling-domain byte count (canonical for text, raw for binary)" },
+        { "key": 4, "name": "descriptor", "type": "map", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "canon_descriptor" },
+        { "key": 5, "name": "fine_root", "type": "bstr", "presence": "optional", "rule": "present iff descriptor.fine_tree_present == 1", "length": 32, "status": "proposed", "notes": null },
+        { "key": 6, "name": "units", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "unit_entry elements; non-empty (empty file = one empty unit)" }
+      ],
+      "reserved": [{ "first": 7, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "canon_descriptor",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 83/98; G4 field set; no forced-text flag (D20)",
+      "fields": [
+        { "key": 0, "name": "kind", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum descriptor_kind" },
+        { "key": 1, "name": "fine_tree_present", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "0/1; 0 for --no-fine-tree and empty files (G4)" },
+        { "key": 2, "name": "fine_tree_domain", "type": "uint", "presence": "optional", "rule": "present iff fine_tree_present == 1", "length": null, "status": "proposed", "notes": "enum fine_tree_domain" },
+        { "key": 3, "name": "unicode_version", "type": "tstr", "presence": "optional", "rule": "present iff kind == text", "length": null, "status": "proposed", "notes": "v1 value set = {\"unicode-17.0.0\"} (D25); known-version lookup is G's at verify time" }
+      ],
+      "reserved": [{ "first": 4, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "unit_entry",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 91-92/98 unit table",
+      "fields": [
+        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "work-global manifest-order ordinal; stored AND parse-checked equal to the derived ordinal (D8 item 7)" },
+        { "key": 1, "name": "kind", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum unit_kind" },
+        { "key": 2, "name": "range", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "byte_range tuple; raw-mirror spans [0, raw_size)" },
+        { "key": 3, "name": "true_length", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "== range[1] is R's invariant (line 121; deliberate redundancy)" },
+        { "key": 4, "name": "unit_commit", "type": "bstr", "presence": "optional", "rule": "present iff kind == raw-mirror or file descriptor.fine_tree_present == 0", "length": 32, "status": "proposed", "notes": "line 94: covered units are bound solely by fine_root" },
+        { "key": 5, "name": "nonce", "type": "bstr", "presence": "required", "rule": null, "length": 24, "status": "proposed", "notes": "single authoritative copy (line 91); reveal entries carry no nonce" },
+        { "key": 6, "name": "address", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": "Autonomi ciphertext address (D11)" }
+      ],
+      "reserved": [{ "first": 7, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "bundle",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 112-114 .sealproof top level; version discriminant at key 0 encodes first",
+      "fields": [
+        { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "= 1 in v1; bundle versions independently of the manifest" },
+        { "key": 1, "name": "manifest", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "full plaintext manifest envelope bytes; anchor_digest = SHA-256 of exactly these bytes; nested strict decode (F9)" },
+        { "key": 2, "name": "storage_record", "type": "map", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "storage_record" },
+        { "key": 3, "name": "ots_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "ots_anchor elements; empty-anchor bundle = both anchor arrays empty" },
+        { "key": 4, "name": "tsa_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "tsa_anchor elements" },
+        { "key": 5, "name": "receipt", "type": "map", "presence": "optional", "rule": "present iff sealer passed --include-receipt", "length": null, "status": "proposed", "notes": "receipt_record" },
+        { "key": 6, "name": "covered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "covered_reveal elements, strictly ascending unit_id" },
+        { "key": 7, "name": "noncovered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "noncovered_reveal elements, strictly ascending unit_id; raw-mirror reveals ride here" },
+        { "key": 8, "name": "touched_files", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "touched_file elements, strictly ascending file_id" },
+        { "key": 9, "name": "full_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "full_reveal elements, strictly ascending file_id; every file_id also in touched_files (R)" }
+      ],
+      "reserved": [
+        { "first": 10, "last": 10, "purpose": "range_reveals — v1.1 sub-unit arbitrary-byte-range covers + boundary paths (spec lines 114/161); reject-if-present in v1", "status": "proposed" },
+        { "first": 11, "last": 23, "purpose": "future v1.x sections", "status": "proposed" }
+      ]
+    },
+    {
+      "name": "storage_record",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md line 98 manifest storage record {address, nonce, k_m}",
+      "fields": [
+        { "key": 0, "name": "address", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
+        { "key": 1, "name": "nonce", "type": "bstr", "presence": "required", "rule": null, "length": 24, "status": "proposed", "notes": null },
+        { "key": 2, "name": "k_m", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null }
+      ],
+      "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "ots_anchor",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 108/112-114",
+      "fields": [
+        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted" },
+        { "key": 1, "name": "ots", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "raw .ots, opaque at this layer (A parses)" },
+        { "key": 2, "name": "block_height", "type": "uint", "presence": "optional", "rule": "present iff status == attested", "length": null, "status": "proposed", "notes": null },
+        { "key": 3, "name": "block_header", "type": "bstr", "presence": "optional", "rule": "present iff status == attested", "length": 80, "status": "proposed", "notes": null },
+        { "key": 4, "name": "fetch_date", "type": "uint", "presence": "optional", "rule": "present iff status == attested", "length": null, "status": "proposed", "notes": "POSIX seconds; upgrade/header fetch time (semantics to A — D8 item 5)" }
+      ],
+      "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "tsa_anchor",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 109/112-114",
+      "fields": [
+        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted" },
+        { "key": 1, "name": "token", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "DER TimeStampResp/token, opaque at this layer" },
+        { "key": 2, "name": "intermediates", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "bstr DER certs; intermediates only — bundle-supplied roots never close a chain (line 109)" },
+        { "key": 3, "name": "fetch_date", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "POSIX seconds; token obtained at seal time" },
+        { "key": 4, "name": "source", "type": "tstr", "presence": "optional", "rule": "informational; may be omitted", "length": null, "status": "proposed", "notes": "TSA URL/identity, never verdict-bearing; beyond the literal spec list (D8 item 1)" }
+      ],
+      "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "receipt_record",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md line 110; opt-in; internals A/S-owned (D8 item 4)",
+      "fields": [
+        { "key": 0, "name": "tx_hashes", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "bstr(32) Keccak-256 EVM tx hashes; non-empty" },
+        { "key": 1, "name": "block_number", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": null },
+        { "key": 2, "name": "payload", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "opaque A/S serialization: quote preimages + proof_bytes (full v1.1-chain capture)" }
+      ],
+      "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "covered_reveal",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 96/112-114 per revealed fine-tree-covered unit",
+      "fields": [
+        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "must resolve into the embedded manifest's unit table (R)" },
+        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
+        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "len % 256 == 16 and len >= 272 at parse; == padded_length(true_length)+16 is R's check" },
+        { "key": 3, "name": "cover", "type": "array", "presence": "required", "rule": null, "length": null, "status": "pending-D9", "notes": "cover_entry tuples; non-empty; strictly ascending leaf-interval start; leaf-exactness is R's check" },
+        { "key": 4, "name": "paths", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "pending-D9", "notes": "path_node tuples; strictly ascending leaf-interval start; empty when the unit spans [0, n)" }
+      ],
+      "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "noncovered_reveal",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 92/94/112-114 per revealed non-covered unit (--no-fine-tree or raw-mirror); keys 0-2 aligned with covered_reveal",
+      "fields": [
+        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": null },
+        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
+        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "same parse shape check as covered_reveal.ciphertext" },
+        { "key": 3, "name": "unit_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": "opens unit_commit" }
+      ],
+      "reserved": [{ "first": 4, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "touched_file",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 112-114 per touched file; explicit file_id decided YES (registry-v1.md section 10)",
+      "fields": [
+        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "index into the embedded manifest's file table; in-range (R)" },
+        { "key": 1, "name": "path", "type": "tstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "opens path_commit with path_salt" },
+        { "key": 2, "name": "path_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": null }
+      ],
+      "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    },
+    {
+      "name": "full_reveal",
+      "status": "proposed",
+      "doc": "MVP-SPEC.md lines 112-114/121 per fully-revealed file; partial-reveal isolation is R's check",
+      "fields": [
+        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "must also appear in touched_files (R)" },
+        { "key": 1, "name": "file_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": "opens raw_commit/canon_commit (full reveal only, line 95)" },
+        { "key": 2, "name": "s_root", "type": "bstr", "presence": "optional", "rule": "present iff file descriptor.fine_tree_present == 1", "length": 32, "status": "proposed", "notes": "full [0, n) cover; discloses nothing since every leaf is revealed (line 114)" }
+      ],
+      "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+    }
+  ]
+}
