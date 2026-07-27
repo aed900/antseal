@@ -24,6 +24,16 @@ rust-version = "1.92.0"
 [workspace.dependencies]
 antseal-core = { path = "crates/antseal-core" }
 
+# Autonomi client (exact-pin class: storage/payment surface, network
+# consensus). Re-verified at M0 start, 2026-07-27: 0.5.0 is the newest
+# published version, not yanked; upstream HEAD is content-identical to the
+# release tag; decision KEEP. Record: docs/upstream/P9-ant-core-reverification.md;
+# API survey: docs/research/S1-ant-core-api-survey.md. Consumed by
+# antseal-net from M1 (until then this is the declared pin only, so it does
+# not enter Cargo.lock). Bumps follow dependency-policy §4 and move in
+# lockstep with the locked self_encryption version (0.36.0 at this pin; P15).
+ant-core = "=0.5.0"
+
 # EXACT-PIN CLASS (format-affecting): the deterministic-CBOR codec every
 # hashed/signed/stored byte flows through (MVP-SPEC.md line 73). Decision
 # record: docs/decisions/D7-cbor-crate.md (P10/F1). Features: `alloc` only —
