@@ -24,6 +24,9 @@
 //!   strip (C8).
 //! - [`unit_aead`] — unit XChaCha20-Poly1305 with AAD binding and the
 //!   `(k_u, nonce)` single-use invariant (C9).
+//! - [`manifest_aead`] — manifest XChaCha20-Poly1305 under `k_m` with the
+//!   frozen **empty** AAD, plus the `{nonce, k_m}` storage-record values
+//!   (C10).
 //! - [`error`] — the crypto error taxonomy, one distinct variant per tamper-
 //!   matrix failure class (C4).
 //!
@@ -62,6 +65,7 @@ pub mod disclosure;
 pub mod domain;
 pub mod error;
 pub mod hkdf;
+pub mod manifest_aead;
 pub mod material;
 pub mod padding;
 pub mod secrets;
