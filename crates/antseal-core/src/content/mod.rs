@@ -11,7 +11,7 @@
 //!   fine-tree presence, its byte domain, and the frozen Unicode data version
 //!   (MVP-SPEC.md line 83), with the seal-time decision logic and the
 //!   decode-time cross-field validation predicate.
-//! - [`unit`] (G5) — the unit model: work-global `unit_id` assignment in
+//! - [`unit`](mod@unit) (G5) — the unit model: work-global `unit_id` assignment in
 //!   manifest order (MVP-SPEC.md line 76), the file-table `size` semantics
 //!   (line 98), and the `is_fine_tree_covered` predicate that decides whether a
 //!   unit carries its own `unit_commit` (line 94).
