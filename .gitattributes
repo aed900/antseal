@@ -1,0 +1,8 @@
+# Byte-exactness guard for fixtures (Q1). The cross-os CI lane checks the
+# repo out on Windows, and the GitHub windows-latest image sets
+# core.autocrlf=true machine-wide — text-classified files would be
+# CRLF-mangled at checkout, breaking golden byte comparisons. `-text`
+# disables ALL end-of-line conversion under testdata/ so fixture bytes
+# (G3 UTF-8 corpus inputs/outputs, Q4 golden vectors, Q7 tamper fixtures;
+# layout owned by Q2) survive checkout unchanged on every OS.
+testdata/** -text

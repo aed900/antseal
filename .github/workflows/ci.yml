@@ -1,4 +1,4 @@
-# antseal CI skeleton (P8).
+# antseal CI — P8 skeleton, extended to the full M0 matrix by Q1.
 #
 # Toolchain: taken exclusively from rust-toolchain.toml — the rustup step in
 # every job installs from that file; no toolchain version is ever hardcoded
@@ -8,14 +8,31 @@
 #
 # ── Extension points ────────────────────────────────────────────────────────
 # Jobs are deliberately small named units: extend by ADDING jobs, not by
-# folding steps into existing lanes.
-#   Q1:  fuzz lanes (separate nightly toolchain pin; F/A supply targets)
-#   Q5:  native<->WASM bit-match lanes (built on the P14 wasm test harness)
-#   Q9:  golden-vector retention lane (committed vectors verify byte-exact,
-#        forever — never regenerated silently)
-#   Q31: release CI + binary signing
-#   P13: cargo-deny advisory lane (per-PR + weekly schedule) joins alongside
-#        these jobs at M0
+# folding steps into existing lanes. Every job `name:` is a (future)
+# required status context for branch protection (runbook:
+# docs/ci-verification.md) — NEVER rename a job once it has landed on main.
+# A domain task claims its mount-point job by replacing the placeholder step
+# body only, keeping id and `name:` (CONTRIBUTING.md "CI lanes").
+#
+# Task-ID map (corrected by Q1 — the P8 header had fuzz under "Q1" and
+# vector retention under "Q9"; authoritative IDs are per tasks/Q.md):
+#   Q4:  golden-vectors — native golden-vector runner over
+#        testdata/vectors/<version>/ (mount point below)
+#   Q5:  wasm-bitmatch — native<->WASM bit-match, built on the P14 wasm
+#        probe recipe (mount point below)
+#   Q6:  vector-freeze guard (append-only FROZEN.sha256 check) — new job,
+#        lands at Q6
+#   Q7:  tamper-matrix — distinct-error tamper harness (mount point below)
+#   Q9:  fuzz-smoke — per-PR cargo-fuzz smoke, fixed budget (mount point
+#        below); the nightly long run is a separate scheduled workflow, and
+#        cargo-fuzz needs its own nightly-toolchain pin, independent of
+#        rust-toolchain.toml
+#   P13/Q10: audit-deny — cargo-audit + cargo-deny (mount point below); the
+#        scheduled advisory run is a separate cron workflow
+#   Q2:  testdata secret-material guard — new job, lands at Q2
+#   Q15/Q16/Q19/Q31: devnet E2E venue / anchor-fixture lane / playwright
+#        page lane / release + signing — later milestones, new jobs or
+#        workflows
 #   P14: wasm32-core gains the exact getrandom recipe (feature `js` for the
 #        0.2 line, `wasm_js` + RUSTFLAGS --cfg getrandom_backend="wasm_js"
 #        for 0.3/0.4) once crypto deps land; recipe mirrored in
@@ -115,3 +132,150 @@ jobs:
             exit 1
           fi
           echo "OK: antseal-core normal dep graph is free of forbidden crates."
+
+  # ── Q1: cross-OS lane ──────────────────────────────────────────────────────
+  # Proves byte-identical behavior of the cross-platform-sensitive suites on
+  # linux, macOS, and Windows (MVP-SPEC.md Verification: the M0 UTF-8 corpus
+  # must be "cross-platform stable"; golden vectors must verify identically
+  # everywhere). Suite membership is by RESERVED TEST-NAME MARKER
+  # (CONTRIBUTING.md "Cross-OS suite naming"): any test whose fully-qualified
+  # libtest name contains `corpus_` (G3 UTF-8 corpus) or `vector_` (Q4 golden
+  # vectors) runs here on all three OSes.
+  #
+  # Allowed-empty BY DESIGN: no such tests exist yet, so the filtered run
+  # matches zero tests and passes, and the step logs a loud notice that the
+  # suite set is empty. G3 and Q4 populate it; nothing here changes then.
+  #
+  # Scope is `-p antseal-core` deliberately: canonicalization and vector
+  # verification are antseal-core by architecture, and the 3-OS lane must not
+  # depend on the heavyweight net/anchor dependency stacks (ant-core et al.)
+  # building on Windows/macOS — upstream churn stays out of the
+  # cross-platform proof. A future suite that cannot live in antseal-core
+  # extends this lane's package list; that edit belongs to the task landing
+  # the suite (a reviewed lane-content change, not a fold-in of unrelated
+  # steps).
+  #
+  # Context names are decoupled from runner labels via matrix.label, so
+  # pinning a runner image later never renames a required status context.
+  # Fixture byte-exactness on Windows checkouts (image sets
+  # core.autocrlf=true) is guarded by .gitattributes (`testdata/** -text`).
+  cross-os:
+    name: cross-os-${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Never cancel sibling OSes: a divergence report needs all three
+      # verdicts, not just the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux
+            runner: ubuntu-latest
+          - label: macos
+            runner: macos-latest
+          - label: windows
+            runner: windows-latest
+    defaults:
+      run:
+        # One portable script for all three OSes (Git Bash on the Windows
+        # runner); also gives pipefail semantics everywhere.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Run cross-platform-sensitive suites (corpus_/vector_ filters; allowed-empty)
+        run: |
+          set -u
+          cargo test -p antseal-core --locked -- corpus_ vector_
+          matched="$(cargo test -p antseal-core --locked -- corpus_ vector_ --list 2>/dev/null | grep -c ': test$' || true)"
+          echo "cross-OS suite: matched ${matched} test(s) for reserved-name filters [corpus_ vector_]"
+          if [ "${matched}" -eq 0 ]; then
+            echo "::notice title=cross-OS suite set is EMPTY::No corpus_*/vector_* tests exist yet — this lane is vacuously green by design (Q1). G3 (UTF-8 corpus) and Q4 (golden vectors) populate it."
+          fi
+
+  # ── Mount-point jobs (Q1) ──────────────────────────────────────────────────
+  # Each job below reserves a permanent required-status context for a lane
+  # whose content lands with a later task. They are real jobs (not comment
+  # stubs) so branch protection can list the final context set ONCE, before
+  # any content exists, and never be edited again — "allowed-empty, later
+  # required" (tasks/Q.md Q1). Until its task lands, a green mount-point
+  # lane asserts NOTHING; the step logs say so loudly. The owning task
+  # replaces the placeholder step(s) with real ones (checkout →
+  # rustup-from-toolchain-file → rust-cache → content, matching the lanes
+  # above) and MUST keep the job id and `name:` byte-identical.
+
+  # Q4: native golden-vector runner — discovery-glob over
+  # testdata/vectors/<version>/, full antseal-core verification per vector,
+  # malformed vectors fail loudly. Q6's append-only freeze guard extends this
+  # job or lands as a sibling (Q6's call).
+  golden-vectors:
+    name: golden-vectors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mount point — content lands at Q4
+        run: |
+          echo "MOUNT POINT (Q1): required-status context 'golden-vectors' is reserved."
+          echo "No golden vectors exist yet. Green here asserts NOTHING until Q4 lands the native runner."
+          echo "Q4: replace this step's body; never rename the job (branch-protection context)."
+
+  # Q5: WASM/native bit-match — antseal-core verification compiled to
+  # wasm32-unknown-unknown (wasm-bindgen-test under node / headless runner)
+  # executed over every golden vector; output bytes + recomputed digests must
+  # be SHA-256-identical to the native runner's. Auto-covers new vectors,
+  # including M2 anchor vectors.
+  wasm-bitmatch:
+    name: wasm-bitmatch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mount point — content lands at Q5
+        run: |
+          echo "MOUNT POINT (Q1): required-status context 'wasm-bitmatch' is reserved."
+          echo "No bit-match harness exists yet. Green here asserts NOTHING until Q5 lands it."
+          echo "Q5: replace this step's body; never rename the job (branch-protection context)."
+
+  # Q7: tamper-matrix harness — every registered mutation row must produce
+  # exactly its expected stable error code / verdict state, expected outcomes
+  # are pairwise distinct, and no row may panic. Q8's completeness tracker
+  # (spec M0 row list) joins this lane.
+  tamper-matrix:
+    name: tamper-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mount point — content lands at Q7
+        run: |
+          echo "MOUNT POINT (Q1): required-status context 'tamper-matrix' is reserved."
+          echo "No tamper harness exists yet. Green here asserts NOTHING until Q7 lands it."
+          echo "Q7: replace this step's body; never rename the job (branch-protection context)."
+
+  # Q9: per-PR cargo-fuzz smoke — fixed seconds per target (e.g. 90 s), F's
+  # manifest/bundle CBOR targets first, A's DER/`.ots` targets at M2 (Q17).
+  # Needs its own pinned NIGHTLY toolchain (cargo-fuzz), independent of
+  # rust-toolchain.toml — that pin arrives with Q9. The nightly long run with
+  # corpus persistence is a separate scheduled workflow, not a PR context.
+  fuzz-smoke:
+    name: fuzz-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mount point — content lands at Q9
+        run: |
+          echo "MOUNT POINT (Q1): required-status context 'fuzz-smoke' is reserved."
+          echo "No fuzz targets exist yet. Green here asserts NOTHING until Q9 lands the smoke run."
+          echo "Q9: replace this step's body; never rename the job (branch-protection context)."
+
+  # P13/Q10: cargo-audit + cargo-deny (advisories at P13; audit + licenses/
+  # bans/sources completion at Q10; documented ml-dsa advisory ignores per
+  # the spec's pin decision). Both tools run as steps of this ONE job so the
+  # required context stays single and stable. The scheduled advisory run
+  # independent of PR traffic is a separate cron workflow, not a PR context.
+  audit-deny:
+    name: audit-deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mount point — content lands at P13/Q10
+        run: |
+          echo "MOUNT POINT (Q1): required-status context 'audit-deny' is reserved."
+          echo "No deny.toml/audit config exists yet. Green here asserts NOTHING until P13/Q10 land."
+          echo "P13/Q10: replace this step's body; never rename the job (branch-protection context)."
