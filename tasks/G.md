@@ -29,7 +29,7 @@
   - KATs: leading BOM stripped, interior U+FEFF preserved, CRLF→LF, lone CR→LF, NFD input → NFC output
   - Unknown version string → distinct error; no panics on arbitrary bytes (proptest)
   - Compiles for wasm32-unknown-unknown
-- Notes: Open decisions 1–2 below must be frozen before this task completes (canonicalization is frozen at seal time and recorded in the manifest).
+- Notes: Open decisions 1–2 below must be frozen before this task completes (canonicalization is frozen at seal time and recorded in the manifest). **[2026-07-27] Deliberate revision**: the Do-text's "strip a single leading BOM" is superseded by D21 — the implemented, frozen rule is strip the **contiguous leading run** of U+FEFF (idempotence requirement; docs/decisions/D21-canonicalization-micro-semantics.md).
 
 ### G3 — Build the M0 UTF-8 corpus with committed golden canonical outputs + idempotence/stability tests
 - Milestone: M0
@@ -246,8 +246,8 @@
   - Suite runs (possibly size-reduced) under wasm32 (dep Q)
 
 ## Open decisions (G)
-- `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze).
-- Canonicalization micro-semantics: lone CR → LF (in addition to CRLF), strip exactly one leading BOM with interior U+FEFF preserved, and the fixed pipeline order (BOM → EOL → NFC). Blocks G2, G3. M0.
+- `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
+- Canonicalization micro-semantics: lone CR → LF (in addition to CRLF), strip exactly one leading BOM with interior U+FEFF preserved, and the fixed pipeline order (BOM → EOL → NFC). Blocks G2, G3. M0. — **[2026-07-27]** RESOLVED (D21) with one recorded deviation from this entry's proposal: strip **ALL** leading U+FEFF (contiguous run), not exactly one — strip-exactly-one violates G2's normative idempotence proptest on multi-BOM inputs; interior U+FEFF preserved; one-pass EOL (CR CR LF → LF LF); order decode → BOM → EOL → NFC frozen (docs/decisions/D21-canonicalization-micro-semantics.md). G3 must pin the double-BOM and BOM-only-file fixtures.
 - Blank-line definition for `--split blank-lines`: whether whitespace-only lines count as blank; separator-attachment (trailing run to preceding unit, leading run to first unit). Blocks G6, G14. M0.
 - Raw-mirror entry placement within manifest order (proposal: appended after the file's normal units) — affects work-global id assignment, frozen forever in the format. Blocks G5, G7, G14. M0.
 - `--no-fine-tree` × `--split` on the same file: silently force single-unit vs. hard CLI error (model must be single-unit either way, per the unit_commit-only-for-whole-file-units rule). Blocks G5, G6, G14 (+U flag validation). M0.
