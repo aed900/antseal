@@ -18,7 +18,7 @@ lands):
 | Dependency | Why exact-pinned | Deciding task |
 | --- | --- | --- |
 | `ant-core` (spec pin `=0.5.0`, re-verified at M0 start) | storage/payment surface; network consensus | P9 |
-| deterministic-CBOR encoder (candidate `minicbor`) | every hashed/signed byte flows through it | P10 (joint with F) |
+| `minicbor` (pinned `=2.3.0`, decision D7) | every hashed/signed byte flows through it | P10 (joint with F) — landed |
 | `ed25519-dalek` (2.x vs 3.0.0 decision) | signature format + strict-verification semantics | P11 (C sign-off) |
 | `ml-dsa` (spec pin `=0.1.1`; pre-1.0, unaudited) | PQC signature format | P12 |
 | `fips204` (spec pin `=0.4.6`; fallback impl) | PQC signature fallback | P12 |
@@ -86,9 +86,11 @@ fallout, with this checklist completed in the PR description:
   wherever they are installed (CI workflows, scripts, docs):
   **wasm-pack**, **wasm-bindgen-cli** (must equal the `wasm-bindgen` crate
   pin — a mismatch breaks the build), **cargo-deny** (its verdict gates
-  merges; P13 pins the CI version). The M3 reproducible wasm build makes
-  the wasm-pack/wasm-bindgen versions format-provenance-relevant, exactly
-  like the toolchain itself.
+  merges; P13 pins the CI version), **Python `cbor2` `==6.1.3`** (the D12
+  independent CBOR cross-check the M0 golden-vector freeze gate depends on;
+  F14 installs it — never enters any Rust dependency tree). The M3
+  reproducible wasm build makes the wasm-pack/wasm-bindgen versions
+  format-provenance-relevant, exactly like the toolchain itself.
 
 ## Enforcement & cross-references
 

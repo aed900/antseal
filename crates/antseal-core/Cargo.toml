@@ -4,5 +4,11 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+# The ONLY CBOR crate allowed in this crate's dependency tree (F1 accept;
+# docs/decisions/D7-cbor-crate.md). The D12 independent cross-check
+# implementation (Python cbor2) is dev-tool-only and never appears here.
+minicbor.workspace = true
+
 [lints]
 workspace = true

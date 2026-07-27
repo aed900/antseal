@@ -20,11 +20,18 @@ rust-version = "1.92.0"
 # `=x.y.z` pins are mandatory for every format-, crypto-, or
 # network-consensus-affecting dependency.
 # Normative policy: docs/dependency-policy.md
-#
-# No external dependencies yet (pre-M0 scaffold).
 # ----------------------------------------------------------------------------
 [workspace.dependencies]
 antseal-core = { path = "crates/antseal-core" }
+
+# EXACT-PIN CLASS (format-affecting): the deterministic-CBOR codec every
+# hashed/signed/stored byte flows through (MVP-SPEC.md line 73). Decision
+# record: docs/decisions/D7-cbor-crate.md (P10/F1). Features: `alloc` only —
+# no `std`, no `derive` (wire formats use manual impls per D7), no `half`
+# (floats are banned by the profile); minicbor 2.3.0 has no default features.
+# Bumps follow docs/dependency-policy.md §4 and must keep
+# crates/antseal-core/tests/cbor_pin_eval.rs green UNMODIFIED.
+minicbor = { version = "=2.3.0", default-features = false, features = ["alloc"] }
 
 [workspace.lints.rust]
 # `unsafe` is denied workspace-wide. Sanctioned per-crate opt-out procedure:
