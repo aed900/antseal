@@ -41,15 +41,21 @@
 //! ([`Salt16`] vs [`Key32`]/[`Seed32`]) is unrepresentable. No public API
 //! accepts a label string; the registry is the only path.
 //!
-//! # C5 seam
+//! # Input and disclosure shapes (C5/C7)
 //!
-//! `W` is taken as the borrowed [`MasterSecretRef`]; C5's owning, zeroizing
-//! `MasterSecret` will borrow into it without touching these signatures.
+//! `W` is taken as the borrowed [`MasterSecretRef`]; the owning, zeroizing
+//! [`crate::crypto::secrets::MasterSecret`] borrows into it via
+//! `secret_ref()` (C5). [`derive_file_salt`] returns the **opaque**
+//! [`FileSalt`] — no byte accessor — because `file_salt` bytes may be
+//! disclosed only through
+//! [`crate::crypto::disclosure::FullFileRevealDisclosure`] (C7; spec
+//! line 95). Intermediate OKM buffers are wiped before return (C21).
 
 use hkdf::Hkdf;
 use sha2::Sha256;
+use zeroize::Zeroize;
 
-use super::material::{Key32, MasterSecretRef, Salt16, Seed32};
+use super::material::{FileSalt, Key32, MasterSecretRef, Salt16, Seed32};
 
 /// Reserved sentinel id `0xFFFFFFFFFFFFFFFF` for derivations with no natural
 /// id (spec line 77): the `"sig-ed25519"`, `"sig-mldsa65"` and
@@ -214,19 +220,25 @@ fn hkdf_expand(w: MasterSecretRef<'_>, label: Label, id: u64, okm: &mut [u8]) {
 fn derive_key32(w: MasterSecretRef<'_>, label: Label, id: u64) -> Key32 {
     let mut okm = [0u8; Key32::LEN];
     hkdf_expand(w, label, id, &mut okm);
-    Key32::from_bytes(okm)
+    let out = Key32::from_bytes(okm);
+    okm.zeroize();
+    out
 }
 
 fn derive_seed32(w: MasterSecretRef<'_>, label: Label, id: u64) -> Seed32 {
     let mut okm = [0u8; Seed32::LEN];
     hkdf_expand(w, label, id, &mut okm);
-    Seed32::from_bytes(okm)
+    let out = Seed32::from_bytes(okm);
+    okm.zeroize();
+    out
 }
 
 fn derive_salt16(w: MasterSecretRef<'_>, label: Label, id: u64) -> Salt16 {
     let mut okm = [0u8; Salt16::LEN];
     hkdf_expand(w, label, id, &mut okm);
-    Salt16::from_bytes(okm)
+    let out = Salt16::from_bytes(okm);
+    okm.zeroize();
+    out
 }
 
 /// `k_u = HKDF(W, "unit-key", unit_id)` — the 32-byte XChaCha20-Poly1305
@@ -252,11 +264,15 @@ pub fn derive_path_salt(w: MasterSecretRef<'_>, file_id: FileId) -> Salt16 {
 }
 
 /// `file_salt = HKDF(W, "file-salt", file_id)` — the 16-byte salt of
-/// `raw_commit`/`canon_commit`, disclosed only on a full-file reveal
-/// (spec line 95; consumed by C6; disclosure rule enforced by C7).
+/// `raw_commit`/`canon_commit`, disclosed only on a full-file reveal (spec
+/// line 95; consumed by C6). Returns the **opaque** [`FileSalt`]: the C7
+/// disclosure rule is enforced by the type — its bytes are publicly
+/// reachable only through
+/// [`crate::crypto::disclosure::FullFileRevealDisclosure`], never from this
+/// derivation API.
 #[must_use]
-pub fn derive_file_salt(w: MasterSecretRef<'_>, file_id: FileId) -> Salt16 {
-    derive_salt16(w, Label::FileSalt, file_id.0)
+pub fn derive_file_salt(w: MasterSecretRef<'_>, file_id: FileId) -> FileSalt {
+    FileSalt::from_derived(derive_salt16(w, Label::FileSalt, file_id.0))
 }
 
 /// `s_root = HKDF(W, "fine-seed", file_id)` — the 32-byte GGM salt-tree
@@ -338,7 +354,13 @@ mod tests {
             Label::UnitKey => derive_unit_key(w, UnitId(id)).into_bytes().to_vec(),
             Label::UnitSalt => derive_unit_salt(w, UnitId(id)).into_bytes().to_vec(),
             Label::PathSalt => derive_path_salt(w, FileId(id)).into_bytes().to_vec(),
-            Label::FileSalt => derive_file_salt(w, FileId(id)).into_bytes().to_vec(),
+            // In-module test: crate-private preimage access. Public byte
+            // access to a derived file_salt exists only via
+            // `disclosure::FullFileRevealDisclosure` (C7).
+            Label::FileSalt => derive_file_salt(w, FileId(id))
+                .as_salt()
+                .as_bytes()
+                .to_vec(),
             Label::FineSeed => derive_fine_seed(w, FileId(id)).into_bytes().to_vec(),
             Label::SigEd25519 => {
                 assert_eq!(id, SENTINEL_ID);
@@ -477,7 +499,7 @@ mod tests {
         // (spec line 95's two independent per-file salts).
         let path_salt = derive_path_salt(w, FileId(3));
         let file_salt = derive_file_salt(w, FileId(3));
-        assert_ne!(path_salt.as_bytes(), file_salt.as_bytes());
+        assert_ne!(path_salt.as_bytes(), file_salt.as_salt().as_bytes());
         // Same label, different ids.
         let key_0 = derive_unit_key(w, UnitId(0));
         let key_1 = derive_unit_key(w, UnitId(1));

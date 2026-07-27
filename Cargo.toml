@@ -77,11 +77,54 @@ hkdf = "=0.13.0"
 # independent reference (tasks/C.md C2 accept).
 hmac = "=0.13.0"
 
+# XChaCha20-Poly1305 AEAD (exact-pin class: ciphertext format), nominated at
+# C9 completing the policy-table AEAD row. Every unit/manifest ciphertext
+# byte — permanent, paid-for network bytes whose addresses are content-
+# derived — comes out of this crate (MVP-SPEC.md lines 91, 98). 0.11.0 is
+# the current stable of the same RustCrypto generation as the pinned
+# sha2 0.11 / hkdf 0.13 stack. Features: `alloc` only + `zeroize`
+# (ChaChaPoly1305 zeroizes its key copy on drop); default features are OFF
+# to exclude `getrandom` — antseal-core takes injected RNGs only (C5/C9;
+# the wasm getrandom recipe is P14's problem, kept out of this graph).
+# Underlying chacha20/poly1305/aead/cipher versions are frozen by Cargo.lock
+# (policy §3). RUSTSEC check 2026-07-27: no advisories on record.
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+
+# Secret-hygiene zeroization (exact-pin class per the policy table: its drop
+# semantics are load-bearing for `W`/unit-key/passphrase handling, C5/C21).
+# `alloc` for Vec-backed SecretBuf; the `derive` feature is deliberately NOT
+# enabled (impls are manual — keeps syn/proc-macro out of antseal-core's
+# graph). RUSTSEC check 2026-07-27: no advisories on record.
+zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
+
+# Constant-time equality for commitment-digest verification (exact-pin
+# class: verdict-bearing comparison semantics, C6; MVP-SPEC.md line 121
+# structural checks run over adversarial bundles). default-features = false
+# drops `std`/`i128` (unneeded; wasm-lean). 2.6.1 is current stable (2.6.0
+# yanked). RUSTSEC check 2026-07-27: no advisories on record.
+subtle = { version = "=2.6.1", default-features = false }
+
+# RNG *trait* surface only (exact-pin class: the injected-CSPRNG API
+# contract of C5/C9 generation paths). rand_core 0.10.1 is a pure trait
+# crate — zero dependencies, zero features — so it structurally cannot pull
+# `getrandom` into antseal-core; OS-CSPRNG wiring lives with callers
+# (CLI/U; wasm recipe is P14). Note rand_core 0.10 renamed the traits:
+# `CryptoRngCore` (0.6) → `CryptoRng`/`TryCryptoRng`. RUSTSEC check
+# 2026-07-27: RUSTSEC-2019-0035 (<0.4.2) and RUSTSEC-2021-0023
+# (0.6.0–0.6.1) do not affect 0.10.1.
+rand_core = "=0.10.1"
+
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
 # dev-only: property testing (C3/C18). Test infrastructure, not
 # format-affecting; deterministic seeding is set in the tests themselves.
 proptest = "1"
+# dev-only: seeded deterministic CSPRNG for tests (C5 accept: generation is
+# deterministic under a seeded test RNG). ChaCha20Rng's output stream is the
+# IETF ChaCha20 spec — version-stable by definition — and no committed
+# vector derives from it, so caret + lockfile freeze suffices (policy §1
+# last paragraph / §3). Implements the pinned rand_core 0.10 traits.
+rand_chacha = "0.10"
 
 [workspace.lints.rust]
 # `unsafe` is denied workspace-wide. Sanctioned per-crate opt-out procedure:
