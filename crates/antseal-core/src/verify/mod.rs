@@ -14,6 +14,12 @@
 //!
 //! The stage layer starts here too:
 //!
+//! - [`structural`] (task R3) — the manifest/bundle-shape invariants of
+//!   MVP-SPEC.md line 121 ([`check_structural`]): exact lengths of every
+//!   disclosed salt/seed/node hash, referential integrity, the per-file
+//!   tiling invariant with its raw-mirror exemption, and `path_commit`
+//!   recomputation. R5 runs this stage **before** the per-unit stages.
+//!
 //! - [`unit_stages`] (task R2) — the per-revealed-unit evidence pipeline
 //!   ([`verify_revealed_unit`]): AEAD decrypt with the bundle-supplied
 //!   `k_u`, padding verify + length-first strip, `true_length` ↔
@@ -30,6 +36,7 @@
 
 pub mod error;
 pub mod report;
+pub mod structural;
 pub mod unit_stages;
 
 pub use error::{
@@ -41,6 +48,11 @@ pub use report::{
     REPORT_VERSION, RawMirrorReveal, ReportEncodeError, RevealSet, SignatureScheme,
     StorageLinkageResult, SupportingEvidenceResult, UnitSpan, UnrevealedFilePlaceholder,
     VerificationReport, WorkMetadata,
+};
+pub use structural::{
+    BundleView, DisclosedField, FileEntry, ManifestView, TouchedFile, UnitEntry, UnitKind,
+    check_disclosed_lengths, check_field_length, check_manifest_refs, check_path_commits,
+    check_reveal_refs, check_structural, check_tiling,
 };
 pub use unit_stages::{
     ContentBinding, FineRangeCheck, FineTreeError, RevealedUnitInput, verify_revealed_unit,
