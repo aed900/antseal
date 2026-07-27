@@ -39,9 +39,9 @@ Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversaria
 
 ## Current focus
 
-> **Phase: pre-M0 — nothing implemented yet.**
-> Next actions (parallelizable): **P1** (naming — longest latency, gates the M0 freeze), **P4** (git init + hosting), then **P5→P6→P7→P8** (scaffold, toolchain, pin policy, CI skeleton). P2/P3 follow P1.
-> First decisions due: D1–D6 (pre-M0 block of the Decision register).
+> **Phase: pre-M0 — executed 2026-07-27** (P4–P7 ✅; P8 workflow committed + all lanes green locally; D2–D6 resolved, D1 provisional).
+> **Maintainer actions to close the gate**: (1) `gh auth refresh -h github.com -s workflow` then `git push origin main` → green CI + wasm-guard probe per docs/ci-verification.md (P8); (2) file docs/naming/upstream-blessing-request.md at WithAutonomi/ant-client (P1); (3) on D1-final: `scripts/reserve-crates.sh --execute` after `cargo login` (P2) + register antseal.org/.dev (P3).
+> D1 deadline: silence past M0 start → recorded fallback (docs/decisions/D1-product-name.md). M0 tasks not depending on D1-final (P9, P10+F1, S1, C1/C2, C4, G1, R1, Q1) may start; the Q14 freeze itself still gates on D1.
 
 ## Critical path
 
@@ -55,14 +55,14 @@ The M0 freeze (Q14) is the single most consequential gate: everything frozen the
 
 Gate: name decided + propagation checklist owned; crates.io names reserved; verifier domain registered; repo pushed; workspace scaffold + toolchain pin + pin policy committed; CI skeleton green (fmt/clippy/test/wasm32).
 
-- [ ] **P1** (M) Finalize the product name — upstream blessing for `ant-` prefix or non-ant rename; propagation checklist (context string, format strings, binary/dir, crates, domain)
-- [ ] **P2** (S) Reserve crates.io names (placeholder publishes; re-verify availability) — after P1
-- [ ] **P3** (S) Check and register the verifier domain — after P1
-- [ ] **P4** (S) Git init, initial commit (specs), remote hosting + platform decision
-- [ ] **P5** (M) Cargo workspace scaffold exactly per Architecture tree (4 crates + verifier-web + testdata; lints; lockfile) — after P4
-- [ ] **P6** (S) Pin Rust toolchain, wasm32 target, edition/MSRV — after P4
-- [ ] **P7** (S) Dependency pin-governance policy + lockfile discipline (`--locked` CI; bump = deliberate event) — after P5
-- [ ] **P8** (M) CI skeleton: fmt/clippy/test + wasm32 build lane + core dep-graph assertion — after P4,P5,P6
+- [ ] **P1** (M) Finalize the product name — upstream blessing for `ant-` prefix or non-ant rename; propagation checklist (context string, format strings, binary/dir, crates, domain) ⏳ WIP — provisional `antseal` + propagation checklist + blessing-request draft committed 2026-07-27 (docs/decisions/D1-product-name.md, docs/naming/) ⛔ maintainer must file docs/naming/upstream-blessing-request.md at WithAutonomi/ant-client; silence past M0 start → recorded fallback
+- [ ] **P2** (S) Reserve crates.io names (placeholder publishes; re-verify availability) — after P1 ⛔ D1-final + `cargo login` (maintainer) — kit ready, dry-run green ×5 2026-07-27 (scripts/reserve-crates.sh + docs/naming/P2-crates-reservation-runbook.md)
+- [ ] **P3** (S) Check and register the verifier domain — after P1 ⛔ D1-final + registrar/payment (maintainer) — plan ready 2026-07-27: antseal.org primary + antseal.dev defensive (docs/naming/P3-domain-registration.md)
+- [x] **P4** (S) Git init, initial commit (specs), remote hosting + platform decision ✅ 2026-07-27
+- [x] **P5** (M) Cargo workspace scaffold exactly per Architecture tree (4 crates + verifier-web + testdata; lints; lockfile) — after P4 ✅ 2026-07-27
+- [x] **P6** (S) Pin Rust toolchain, wasm32 target, edition/MSRV — after P4 ✅ 2026-07-27
+- [x] **P7** (S) Dependency pin-governance policy + lockfile discipline (`--locked` CI; bump = deliberate event) — after P5 ✅ 2026-07-27
+- [ ] **P8** (M) CI skeleton: fmt/clippy/test + wasm32 build lane + core dep-graph assertion — after P4,P5,P6 ⏳ WIP — workflow committed, all 5 lanes green locally 2026-07-27 (docs/ci-verification.md) ⛔ push rejected: gh token lacks `workflow` scope — maintainer: `gh auth refresh -h github.com -s workflow`, then `git push` + green run + wasm-guard probe
 
 ## M0 — Core formats & crypto (88 tasks) — ends at the **format-v1 freeze**
 
@@ -348,12 +348,12 @@ Gate = **Q34 evidence bundle**: Sepolia-mode E2E green; exactly ONE mainnet smok
 Unresolved decisions are blockers-in-waiting: each must land by its due milestone. On resolution: check it, record outcome + date, update the blocked tasks in `tasks/*.md`. (Merged from all nine domains; joint owners shown.)
 
 ### Due pre-M0
-- [ ] **D1** Product name: `antseal` with upstream written blessing vs non-ant rename (P — blocks P2, P3, C12 context string, F4 format strings, U1 binary/dir; gates the M0 freeze)
-- [ ] **D2** Repo hosting platform + CI provider (assumption: GitHub + Actions) (P — blocks P4, P8)
-- [ ] **D3** Repo root layout: `code0/` as workspace root vs `antseal/` subdir per the spec tree (P — blocks P4, P5)
-- [ ] **D4** Rust edition + MSRV policy (P — blocks P6)
-- [ ] **D5** CLI crate publish name: spec's `antseal-cli` vs bare `antseal` for `cargo install` (P — reserve both in P2; recorded spec-disagreement)
-- [ ] **D6** License choice — spec milestone is M4 (Q29) but P2's crates.io placeholders need a license: decide early, execute at M4 (Q/P)
+- [ ] **D1** Product name: `antseal` with upstream written blessing vs non-ant rename (P — blocks P2, P3, C12 context string, F4 format strings, U1 binary/dir; gates the M0 freeze) — **2026-07-27 provisional**: `antseal` (all 5 crate names + GitHub ns + .org/.dev free; only antseal.com held, unrelated party since 2004); blessing request drafted for maintainer to file; fallback + M0-start deadline recorded in docs/decisions/D1-product-name.md
+- [x] **D2** Repo hosting platform + CI provider (assumption: GitHub + Actions) (P — blocks P4, P8) — **Resolved 2026-07-27**: GitHub + GitHub Actions; private repo `aed900/antseal` (docs/decisions/D2-hosting-ci.md)
+- [x] **D3** Repo root layout: `code0/` as workspace root vs `antseal/` subdir per the spec tree (P — blocks P4, P5) — **Resolved 2026-07-27**: repo root = workspace root = the spec tree's `antseal/`; no nested subdir (docs/decisions/D3-repo-layout.md)
+- [x] **D4** Rust edition + MSRV policy (P — blocks P6) — **Resolved 2026-07-27**: edition 2024; toolchain pinned =1.92.0; MSRV = pinned toolchain, moves only via P7 bump procedure (docs/decisions/D4-edition-msrv.md)
+- [x] **D5** CLI crate publish name: spec's `antseal-cli` vs bare `antseal` for `cargo install` (P — reserve both in P2; recorded spec-disagreement) — **Resolved 2026-07-27** as recorded deferral: spec tree stays normative (crate `antseal-cli`, binary `antseal`); both names reserved at P2; publish-name call at Q31 (docs/decisions/D5-cli-crate-name.md)
+- [x] **D6** License choice — spec milestone is M4 (Q29) but P2's crates.io placeholders need a license: decide early, execute at M4 (Q/P) — **Resolved 2026-07-27**: per-crate — antseal-core/anchor/verifier-web `MIT OR Apache-2.0`; antseal-net/cli own code dual-licensed but distribution effectively GPL-3.0 while ant-core's mandatory `self_encryption` dep stays GPL-3.0; ⚠ P15 direct-dep plan would pull GPL into the permissive core/WASM page — options recorded, decide at P15/S4; files land Q29 (docs/decisions/D6-license.md)
 
 ### Due M0 (format-freeze relevant — permanent once frozen)
 - [ ] **D7** Deterministic-CBOR crate + exact pin; in-house-codec contingency trigger (P10/F1)
@@ -472,4 +472,5 @@ Scope discipline: if a task seems to require any of the above, stop and check th
 ## Change log
 
 - 2026-07-27 — v1: initial list generated from MVP-SPEC.md Rev 2 (9-agent decomposition, 219 tasks). Nothing started; phase = pre-M0.
+- 2026-07-27 — pre-M0 execution (3-agent run: research + scaffold/CI + decisions/docs): P4–P7 ✅; P8 committed with all 5 lanes verified green locally, remote run blocked on gh `workflow` scope (maintainer device-flow); P1 provisional decision + propagation checklist + blessing draft committed; P2/P3 execution kits ready (reserve script dry-run green ×5), execution maintainer-blocked; D2–D6 resolved, D1 provisional with fallback + M0-start deadline. Evidence: docs/decisions/, docs/naming/, docs/ci-verification.md. Notable finding: `self_encryption` (mandatory in ant-core) is GPL-3.0 → D6 per-crate split + P15 flag.
 - 2026-07-27 — v1.1: adversarial verification applied. Coverage audit: **0 gaps** against the spec. Consistency audit: 12 defect groups fixed — R16/R21 redefined as library APIs (U28/U30 are the sole CLI owners of `reveal`/`verify`); A18 cedes verdict aggregation to R17; C17↔R7 tamper-fixture ownership resolved (R owns committed fixtures, C owns primitives+helpers); wallet keygen/import/address ops added to S5 (was an orphaned U11 dependency); A6→A7 sequenced; U13⇄U14 and eight consumer-reference cycles annotated (Deps-discipline rule 7 added); A5/A11/A12 real-fixture bootstrap via early A25 capture noted; multi-OS corpus lane added to Q1 (G3 was unexecutable); D31 scoped against D12.
