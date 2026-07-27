@@ -14,6 +14,7 @@
 //! build must bit-match native verification.
 
 pub mod canon;
+pub mod crypto;
 pub mod verify;
 
 /// Crate version as compiled in (pre-M0 scaffold marker).

@@ -60,8 +60,28 @@ unicode-normalization = "=0.1.25"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 
+# HKDF/SHA-2 stack (exact-pin class), nominated by C at M0 (tasks/C.md C1/C2; policy-table row
+# "AEAD/HKDF/SHA-2 stack"). Every derived key/salt/seed and every commitment
+# preimage flows through these crates, so their bytes are format-consensus.
+# Verified current stable on crates.io 2026-07-27. RUSTSEC check 2026-07-27:
+# sha2 — only RUSTSEC-2021-0100 (AVX2 miscompute; affects 0.9.7 only,
+# patched >= 0.9.8; 0.11.0 unaffected); hkdf/hmac — no advisories on record.
+# default-features = false on sha2 drops `alloc`/`oid` (unneeded; keeps the
+# wasm32 surface minimal).
+sha2 = { version = "=0.11.0", default-features = false }
+hkdf = "=0.13.0"
+# hmac is hkdf 0.13's underlying HMAC implementation (already in the locked
+# graph via hkdf's `hmac ^0.13`). Declared and exact-pinned here because it
+# IS the derivation path (HKDF = HMAC extract/expand) and because
+# antseal-core's tests re-derive HKDF from raw HMAC-SHA256 as the RFC 5869
+# independent reference (tasks/C.md C2 accept).
+hmac = "=0.13.0"
+
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
+# dev-only: property testing (C3/C18). Test infrastructure, not
+# format-affecting; deterministic seeding is set in the tests themselves.
+proptest = "1"
 
 [workspace.lints.rust]
 # `unsafe` is denied workspace-wide. Sanctioned per-crate opt-out procedure:
