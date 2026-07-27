@@ -19,9 +19,9 @@ lands):
 | --- | --- | --- |
 | `ant-core` (spec pin `=0.5.0`, re-verified at M0 start) | storage/payment surface; network consensus | P9 |
 | `minicbor` (pinned `=2.3.0`, decision D7) | every hashed/signed byte flows through it | P10 (joint with F) — landed |
-| `ed25519-dalek` (2.x vs 3.0.0 decision) | signature format + strict-verification semantics | P11 (C sign-off) |
-| `ml-dsa` (spec pin `=0.1.1`; pre-1.0, unaudited) | PQC signature format | P12 |
-| `fips204` (spec pin `=0.4.6`; fallback impl) | PQC signature fallback | P12 |
+| `ed25519-dalek` — **pinned `=3.0.0` 2026-07-27 ([D13](decisions/D13-ed25519-dalek-pin.md); C11 probe)**: verify_strict semantics probe-proven identical to 2.2.0 (byte-identical keys/sigs), chosen for the unified signature-3/sha2-0.11/getrandom-0.4 stack shared with `ml-dsa`; ZIP-215 pubkey-parse gap closed by C12's pre-validation layer | signature format + strict-verification semantics | P11 (C sign-off) — landed (declaration-only until C12) |
+| `ml-dsa` — **pinned `=0.1.1` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md); C11 probe)**: primary ML-DSA-65; pre-1.0, unaudited; all three 2026 advisories patched in 0.1.1 (only CVE-2026-22705 has a RUSTSEC ID — P13 must watch GHSA/osv.dev, not RUSTSEC alone); wasm32 probe passed with executed native↔wasm bit-match | PQC signature format | P12 — landed (declaration-only until C13) |
+| `fips204` — **pinned `=0.4.6` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md))**: fallback impl, dormant since 2024-12 (accepted for a fallback); probe-proven byte-identical keygen + deterministic sign vs `ml-dsa`, so activation needs no re-derivation; normally consumed by no crate | PQC signature fallback | P12 — landed (declaration-only) |
 | `opentimestamps` (spec pin `=0.2.0`) | `.ots` wire format. **Scope: wire-format codec only** — the calendar HTTP client is in-house (antseal-anchor); no networking surface of the crate may be used | P18 (A) |
 | `self_encryption` | deterministic ciphertext-address recomputation; **must equal the exact version ant-core's graph locks** — skew breaks the storage-linkage layer | P15 |
 | AEAD/HKDF/SHA-2 stack — **HKDF/SHA-2 part nominated 2026-07-27 (C1–C4): `sha2 = "=0.11.0"`, `hkdf = "=0.13.0"`, `hmac = "=0.13.0"`** (current stable verified on crates.io; RUSTSEC clean — sha2's only advisory RUSTSEC-2021-0100 affects 0.9.7 only, hkdf/hmac have none; `hmac` is hkdf's HMAC layer, also the tests' RFC 5869 reference). XChaCha20-Poly1305 crate still pending, nominated at C9 | ciphertext format + key derivation | C |

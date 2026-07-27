@@ -1,0 +1,67 @@
+# C11 signature-crate probe (tasks/C.md C11; MVP-SPEC.md line 97).
+#
+# STANDALONE crate: the empty [workspace] table below keeps it OUT of the
+# root workspace and its Cargo.lock. Its own Cargo.lock is committed so the
+# probe — and therefore the D13/D14 pin decisions — is reproducible.
+# It is NOT part of the root gate; run it explicitly from this directory:
+#
+#   cargo test                                         # native probes
+#   cargo build --release --target wasm32-unknown-unknown
+#   node run-wasm.mjs target/wasm32-unknown-unknown/release/sig_probe.wasm
+#
+# Versions probed here are the exact pins landed in the root
+# [workspace.dependencies] (declaration-only until C12/C13 consume them).
+
+[workspace]
+
+[package]
+name = "sig-probe"
+version = "0.0.0"
+# Edition 2021 (not the workspace's 2024) so the wasm exports can use plain
+# `#[no_mangle]` — under edition 2024 that attribute requires the
+# `unsafe(no_mangle)` syntax, and this probe deliberately contains zero
+# unsafe code.
+edition = "2021"
+publish = false
+
+[lib]
+# cdylib: the wasm32-unknown-unknown artifact executed by run-wasm.mjs.
+# rlib: the native tests.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Primary ML-DSA candidate (RustCrypto). default-features = false drops
+# `getrandom` (default) — our profile is deterministic keygen-from-seed +
+# sign_deterministic + verify, none of which needs an RNG — and `pkcs8`.
+# `zeroize` is NOT a default feature; enabled explicitly (SigningKey /
+# ExpandedSigningKey zeroize-on-drop, ml-dsa-0.1.1/src/signing.rs:222,644).
+ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "zeroize"] }
+
+# Fallback ML-DSA candidate (integritychain). default-features = false drops
+# `default-rng` (= rand_core/getrandom, the getrandom-0.2 line) and the
+# unused parameter sets; the ml-dsa-65 feature gates the one we need.
+# rand_core 0.6 itself stays in the graph (non-optional) but pulls no
+# getrandom backend without `default-rng`.
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-65"] }
+
+# Both ed25519-dalek candidates simultaneously via package rename (they are
+# semver-incompatible majors, so cargo keeps both in one graph).
+# default-features = false drops `fast` (precomputed tables, size) and — on
+# 2.2.0 — `std`; neither candidate gets `rand_core`, so no RNG chain at all
+# (keys derive from 32-byte seeds). zeroize on both (SigningKey: ZeroizeOnDrop).
+ed25519-dalek-2 = { package = "ed25519-dalek", version = "=2.2.0", default-features = false, features = ["alloc", "zeroize"] }
+ed25519-dalek-3 = { package = "ed25519-dalek", version = "=3.0.0", default-features = false, features = ["alloc", "zeroize"] }
+
+# Direct dep only for the compile-time ZeroizeOnDrop assertions in lib.rs —
+# cargo unifies it with the single 1.x instance the four candidates already
+# use, so the trait bound checks the very impls those crates provide.
+zeroize = "1"
+
+[dev-dependencies]
+# Native-side transcript hashing only (golden pin). Matches the workspace's
+# sha2 pin line; never enters the wasm artifact (dev-deps do not apply).
+sha2 = "=0.11.0"
+
+[profile.release]
+# Deterministic, debuggable wasm artifact; opt for size a little.
+opt-level = "s"

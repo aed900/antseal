@@ -6,6 +6,10 @@
 
 # Build output
 /target
+# Standalone probe crates (probes/*) have their own target dirs; their
+# Cargo.lock files ARE committed (reproducible probes) — only build output
+# is ignored.
+probes/*/target/
 
 # Devnet data (local Autonomi devnet + Anvil state; P16/P17)
 devnet-data/
