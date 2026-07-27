@@ -33,6 +33,9 @@
 //! - [`sig_mldsa`] — the ML-DSA-65 half: FIPS 204 keys from a `W`-derived
 //!   xi, deterministic signing with the frozen `ctx`, and canonical-strict
 //!   verification (C13).
+//! - [`sig_policy`] — `sig_policy` validation, the algorithm-id registry,
+//!   and hybrid sign/verify orchestration enforcing present-set ==
+//!   policy-set (C14).
 //! - [`error`] — the crypto error taxonomy, one distinct variant per tamper-
 //!   matrix failure class (C4).
 //!
@@ -77,6 +80,7 @@ pub mod padding;
 pub mod secrets;
 pub mod sig_ed25519;
 pub mod sig_mldsa;
+pub mod sig_policy;
 pub mod unit_aead;
 
 pub use error::CryptoError;
