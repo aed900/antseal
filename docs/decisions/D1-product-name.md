@@ -80,3 +80,29 @@ freeze.
 - On fallback: `sealstone` re-runs the availability checks + trademark
   search, and the whole checklist propagates `sealstone` instead; the
   `.sealproof` bundle extension stays regardless (not ant-coupled).
+
+## 2026-07-27 (later) — M0 started with the blessing request still unfiled; deadline re-anchored
+
+M0 execution began 2026-07-27 (wave 1: P9/P10+F1/S1/C1–C4/G1/R1/Q1 — all
+verified name-independent per the propagation checklist; HKDF labels and
+domain tags carry no product name). At that moment the blessing request had
+**not yet been filed** at WithAutonomi/ant-client — filing is a pending
+maintainer action, so the deadline policy's premise ("silence" = upstream
+chose not to answer a pending request) does not hold. **The silence clock
+has not started; the `sealstone` fallback is NOT triggered.**
+
+Re-anchored deadline policy:
+
+1. The fallback trigger is re-anchored from "M0 start" to **"before any
+   name-bearing identifier is implemented or frozen"** — concretely: before
+   C12 (signature context string `"antseal-manifest-v1"`), F4 (format
+   identifier strings), U1 (binary/vault dir), and in every case before the
+   Q14 format-v1 freeze, which remains hard-gated on D1-final.
+2. The maintainer should file the request **now**; a reasonable reply window
+   (suggested: 14 days from filing, or shorter if C12/F4 become ready first)
+   then applies, after which the fallback decision is made **with the
+   maintainer**, not unilaterally by tooling — the rename propagates into
+   permanent identifiers and is a maintainer-level call.
+3. Until D1-final, any newly written code/docs must keep product-name-bearing
+   strings out of frozen surfaces (wave-1 work complies; nothing new may
+   embed the name outside the propagation checklist's tracked items).
