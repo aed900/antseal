@@ -86,12 +86,16 @@ fallout, with this checklist completed in the PR description:
 - Dev-tools whose output or verdict the project depends on are exact-pinned
   wherever they are installed (CI workflows, scripts, docs):
   **wasm-pack**, **wasm-bindgen-cli** (must equal the `wasm-bindgen` crate
-  pin — a mismatch breaks the build), **cargo-deny** (its verdict gates
-  merges; P13 pins the CI version), **Python `cbor2` `==6.1.3`** (the D12
-  independent CBOR cross-check the M0 golden-vector freeze gate depends on;
-  F14 installs it — never enters any Rust dependency tree). The M3
-  reproducible wasm build makes the wasm-pack/wasm-bindgen versions
-  format-provenance-relevant, exactly like the toolchain itself.
+  pin — a mismatch breaks the build), **cargo-deny `=0.19.8`** (its verdict
+  gates merges; pinned at P13 per [D19](decisions/D19-advisory-lane.md) —
+  installed with `cargo install cargo-deny --version 0.19.8 --locked` in
+  both the per-PR `audit-deny` job and the weekly `advisory-cron`
+  workflow, and the same version is what "run cargo-deny locally" means),
+  **Python `cbor2` `==6.1.3`** (the D12 independent CBOR cross-check the
+  M0 golden-vector freeze gate depends on; F14 installs it — never enters
+  any Rust dependency tree). The M3 reproducible wasm build makes the
+  wasm-pack/wasm-bindgen versions format-provenance-relevant, exactly like
+  the toolchain itself.
 
 ## Enforcement & cross-references
 

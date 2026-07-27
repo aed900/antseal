@@ -35,18 +35,24 @@ Live lanes (Q1):
 
 | Lane | What it asserts |
 | --- | --- |
-| `cross-os-linux` / `cross-os-macos` / `cross-os-windows` | The cross-platform-sensitive suites (naming convention below) pass identically on all three GitHub-hosted OSes. Currently **vacuously green** — the suite set is empty until G3 (UTF-8 corpus) and Q4 (golden vectors) land; the lane logs that emptiness loudly. |
+| `cross-os-linux` / `cross-os-macos` / `cross-os-windows` | The cross-platform-sensitive suites (naming convention below) pass identically on all three GitHub-hosted OSes. Populated since Q4 (the `vector_` golden-vector suite); grows further with G3 (`corpus_`). |
+
+Live lanes (wave 2 — Q2/Q4/P13):
+
+| Lane | What it asserts |
+| --- | --- |
+| `golden-vectors` | Q4 — the native runner discovers (directory walk, no hardcoded lists) and executes **every** committed vector under `testdata/vectors/<format-version>/`; malformed or unclassifiable files and empty discovery fail loudly. Schema + add-a-vector procedure: `testdata/vectors/README.md`. Q6 adds the append-only freeze guard. |
+| `secret-guard` | Q2 — no vault-export/wallet-key file signatures anywhere in the checkout (PEM private keys, EVM keystore JSON, age/minisign secret keys, the reserved `ANTSEAL VAULT EXPORT` magic); self-tests each run by planting fakes in a temp dir (testdata/README.md, secret-material convention). |
+| `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources` against the committed `deny.toml` (licenses stubbed until Q29). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
 
 Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
 task; **a green mount-point lane asserts nothing until then**):
 
 | Lane | Content lands at |
 | --- | --- |
-| `golden-vectors` | Q4 — native golden-vector runner over `testdata/vectors/<version>/` (Q6 adds the append-only freeze guard) |
 | `wasm-bitmatch` | Q5 — WASM verification output byte-matches native over every vector |
 | `tamper-matrix` | Q7 — every registered mutation fails with its distinct expected error; no panics (Q8 tracks completeness) |
 | `fuzz-smoke` | Q9 — fixed-budget per-PR cargo-fuzz smoke (nightly long run is a separate scheduled workflow) |
-| `audit-deny` | P13/Q10 — cargo-audit + cargo-deny (advisories, licenses, bans, sources) |
 
 ### Cross-OS suite naming (reserved test-name markers)
 
@@ -65,7 +71,10 @@ cargo test -p antseal-core --locked -- corpus_ vector_
 (libtest substring filters, OR-combined) and **must be byte-deterministic
 across OSes**. The markers are reserved: do not use `corpus_`/`vector_` in
 the name of any test outside these two suites — a matching name *is*
-membership. Zero matches is a passing state by design (pre-G3/Q4).
+membership. Zero matches is a passing state for the *cross-os* lane by
+design (`corpus_` is empty until G3); the dedicated `golden-vectors` lane
+by contrast **fails** on an empty `vector_` set — the Q4 runner must
+always match.
 
 Cross-OS suites live in `antseal-core` — canonicalization and vector
 verification are core by architecture, and the 3-OS lane deliberately does
@@ -79,7 +88,7 @@ runner image sets `core.autocrlf=true`. Never remove that guard.
 
 ### Claiming a mount point
 
-The owning task (Q4/Q5/Q7/Q9/P13/Q10):
+The owning task (remaining: Q5/Q7/Q9 — Q4 and P13 claimed theirs):
 
 1. replaces the placeholder step body of its job in `ci.yml` with the real
    steps (checkout → rustup-from-toolchain-file → `rust-cache` → content,
@@ -100,6 +109,9 @@ The owning task (Q4/Q5/Q7/Q9/P13/Q10):
       crates in its normal dependency graph)
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
+- [ ] `cargo deny --locked check advisories bans sources` green with the
+      pinned cargo-deny (`=0.19.8`, docs/dependency-policy.md §5) — new
+      advisories need an assessment, never a silent ignore
 - [ ] **Does the PR touch any dependency version, the toolchain pin, or a
       pinned dev-tool version?** Then it is a bump PR: follow the
       deliberate-bump procedure and complete the checklist in

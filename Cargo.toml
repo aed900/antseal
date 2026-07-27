@@ -22,7 +22,11 @@ rust-version = "1.92.0"
 # Normative policy: docs/dependency-policy.md
 # ----------------------------------------------------------------------------
 [workspace.dependencies]
-antseal-core = { path = "crates/antseal-core" }
+# Internal path dep. The explicit `version` (matching the crate's own,
+# pre-publish 0.0.0) exists so the requirement is never cargo's implicit
+# `*`: the cargo-deny bans lane (P13, deny.toml) rejects wildcard
+# requirements workspace-wide, path deps included.
+antseal-core = { path = "crates/antseal-core", version = "=0.0.0" }
 
 # Autonomi client (exact-pin class: storage/payment surface, network
 # consensus). Re-verified at M0 start, 2026-07-27: 0.5.0 is the newest
@@ -79,8 +83,12 @@ hmac = "=0.13.0"
 
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
-# dev-only: property testing (C3/C18). Test infrastructure, not
-# format-affecting; deterministic seeding is set in the tests themselves.
+# Test infrastructure only, never format-affecting: property testing
+# (C3/C18; conventions in docs/testing/proptest-conventions.md, Q3).
+# Resolved version frozen by Cargo.lock (1.11.0 at Q3). Reaches test code
+# exclusively through antseal-core's `test-util` feature (optional dep +
+# re-export) — component crates never declare proptest themselves, so one
+# frozen version serves the whole workspace.
 proptest = "1"
 
 [workspace.lints.rust]

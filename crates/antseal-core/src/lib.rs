@@ -15,6 +15,8 @@
 
 pub mod canon;
 pub mod crypto;
+#[cfg(feature = "test-util")]
+pub mod test_util;
 pub mod verify;
 
 /// Crate version as compiled in (pre-M0 scaffold marker).
