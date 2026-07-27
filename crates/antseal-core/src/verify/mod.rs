@@ -12,6 +12,15 @@
 //!   normative, collection is a rendering aid whose first element equals
 //!   the fail-fast error).
 //!
+//! The stage layer starts here too:
+//!
+//! - [`unit_stages`] (task R2) — the per-revealed-unit evidence pipeline
+//!   ([`verify_revealed_unit`]): AEAD decrypt with the bundle-supplied
+//!   `k_u`, padding verify + length-first strip, `true_length` ↔
+//!   byte-range binding, and the content-binding dispatch (`unit_commit`
+//!   vs the G13 `fine_root` seam), in the normative order of MVP-SPEC.md
+//!   lines 91/114/118/121.
+//!
 //! The orchestration itself —
 //! `verify_bundle(bytes, opts) -> Result<VerificationReport, VerifyError>`
 //! and `verify_bundle_collecting(..) -> Result<_, VerifyFailures>` — is
@@ -21,6 +30,7 @@
 
 pub mod error;
 pub mod report;
+pub mod unit_stages;
 
 pub use error::{
     ContentCommitKind, FullRevealMaterial, LengthField, TilingViolationKind, VerifyError,
@@ -31,6 +41,9 @@ pub use report::{
     REPORT_VERSION, RawMirrorReveal, ReportEncodeError, RevealSet, SignatureScheme,
     StorageLinkageResult, SupportingEvidenceResult, UnitSpan, UnrevealedFilePlaceholder,
     VerificationReport, WorkMetadata,
+};
+pub use unit_stages::{
+    ContentBinding, FineRangeCheck, FineTreeError, RevealedUnitInput, verify_revealed_unit,
 };
 
 #[cfg(test)]

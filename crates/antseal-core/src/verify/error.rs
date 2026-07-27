@@ -20,6 +20,8 @@
 
 use core::fmt;
 
+use super::unit_stages::FineTreeError;
+
 /// Which exact-length-checked disclosed field failed its length rule.
 ///
 /// MVP-SPEC.md line 121: "**every disclosed salt/seed/node hash has its
@@ -193,15 +195,29 @@ impl fmt::Display for ContentCommitKind {
 ///   arrive later through the same arm's wrapped type or as F5/F8/F11
 ///   extend the codec taxonomy.
 ///
+/// - [`Self::Crypto`] — C (landed with R2): the full C4 taxonomy with
+///   codes delegated from [`crate::crypto::CryptoError::code`]
+///   (`crypto-`-prefixed). Deliberately **no** `#[from]`: R2's per-unit
+///   stage maps its decrypt/padding/commit failures into the named,
+///   field-identifying variants above (`UnitDecryptFailed`,
+///   `PaddedLengthMismatch`, `NonZeroPadding`, `UnitCommitMismatch`), and
+///   an auto-`From` would let a stray `?` silently bypass that mapping —
+///   so wrapping a crypto error is always an explicit, reviewed act. The
+///   arm's live rows arrive with C14's signature/`sig_policy` stage
+///   (R5); until then it is the defensive-totality outlet for crypto
+///   classes no named variant owns.
+/// - The G **fine-tree** wrapper (landed with R2):
+///   [`Self::FineRootBindingFailed`] carries its `#[source]`
+///   [`FineTreeError`] (the G13 seam placeholder in
+///   [`super::unit_stages`]), with per-class codes so G's over-broad-
+///   cover rejection surfaces distinctly through R2's covered-unit
+///   stage.
+///
 /// **Still pending — the integrator adds these at merge:**
 ///
-/// - `Crypto(…)` — C: signature-stage failures (`sig_policy`
-///   missing/invalid/unlisted-extra/empty, non-canonical Ed25519 `S`,
-///   non-canonical ML-DSA encoding; C14 owns those rows).
-/// - `Canon(…)` — G: canonicalization/fine-tree machinery failures,
-///   notably the over-broad GGM cover spanning an unrevealed real leaf
-///   (G's rejection surfaces through R2 as a distinct wrapped error);
-///   [`Self::FineRootBindingFailed`] gains its `#[source]` payload here.
+/// - `Canon(…)` — G: canonicalization failures outside the fine tree
+///   (descriptor-version dispatch, `canonicalize_v` recompute), consumed
+///   by R4's raw-mirror ↔ canonical binding stage.
 /// - `Anchor(…)` — A: anchor-artifact **structural** failures only.
 ///   NOTE: most anchor outcomes are per-anchor report *states*
 ///   (`invalid`, `internally-consistent-only`, …), not errors — Q7
@@ -264,13 +280,24 @@ pub enum VerifyError {
 
     /// A fine-tree-covered unit's bytes failed the GGM sub-cover → leaf →
     /// boundary-path verification against `fine_root`
-    /// (MVP-SPEC.md lines 96, 118). Wraps G's range-verification failure;
-    /// the `#[source]` payload is added with the G wrapper arms at
-    /// integration (see the extension point above).
-    #[error("unit {unit_id}: leaf-range/boundary-path verification against fine_root failed")]
+    /// (MVP-SPEC.md lines 96, 118) — the G wrapper arm, landed with its
+    /// R2 consumer per the extension-point plan. Wraps G's
+    /// range-verification failure ([`FineTreeError`], the G13 seam type in
+    /// [`super::unit_stages`]); [`Self::code`] discriminates on the
+    /// wrapped class, so the over-broad-cover rejection (a cover node
+    /// spanning an unrevealed real leaf) is its own distinct tamper row,
+    /// never folded into the generic root mismatch. G13's future
+    /// `FineTreeError` variants each compile-break `code()` until they
+    /// receive distinct codes.
+    #[error(
+        "unit {unit_id}: leaf-range/boundary-path verification against fine_root failed ({source})"
+    )]
     FineRootBindingFailed {
         /// Work-global id of the covered unit that failed binding.
         unit_id: u64,
+        /// G's range-verification failure class (G13 seam).
+        #[source]
+        source: FineTreeError,
     },
 
     /// A non-covered (`--no-fine-tree`/raw-mirror) unit's recomputed
@@ -431,9 +458,22 @@ pub enum VerifyError {
     /// orchestrator reports, not part of the code.
     #[error(transparent)]
     Codec(#[from] crate::codec::DecodeError),
+
+    /// C: a crypto failure surfacing through the pipeline **outside** the
+    /// classes owned by a named variant above (task R2 landed the arm;
+    /// C14's signature/`sig_policy` stage is its main future producer —
+    /// see the enum-level doc). The wrapped error's distinct `crypto-*`
+    /// code ([`crate::crypto::CryptoError::code`]) is surfaced unchanged
+    /// through [`Self::code`]. **Intentionally no `#[from]`** — wrapping
+    /// must be explicit so it can never bypass R2's named-variant mapping
+    /// (enum-level doc).
+    #[error(transparent)]
+    Crypto(crate::crypto::CryptoError),
     // ── INTEGRATION EXTENSION POINT ─────────────────────────────────
-    // Wrapper arms Crypto(C) / Canon(G) / Anchor(A) are added HERE at
-    // merge — see the enum-level doc comment for the contract.
+    // Wrapper arms Canon(G canonicalization, R4) / Anchor(A) are added
+    // HERE at merge — see the enum-level doc comment for the contract.
+    // (Codec landed with F3; Crypto and the FineRootBindingFailed source
+    // landed with R2.)
     // ────────────────────────────────────────────────────────────────
 }
 
@@ -453,7 +493,15 @@ impl VerifyError {
             Self::PaddedLengthMismatch { .. } => "padded-length-mismatch",
             Self::NonZeroPadding { .. } => "non-zero-padding",
             Self::TrueLengthRangeMismatch { .. } => "true-length-range-mismatch",
-            Self::FineRootBindingFailed { .. } => "fine-root-binding-failed",
+            // Discriminated on the wrapped G13 class (wildcard-free, so
+            // every future FineTreeError variant must be assigned a code
+            // here): the generic binding failure keeps R1's original
+            // code; the over-broad-cover rejection is its own tamper row
+            // (R2 accept; MVP-SPEC.md line 96 leaf-exact-cover rule).
+            Self::FineRootBindingFailed { source, .. } => match source {
+                FineTreeError::RootMismatch => "fine-root-binding-failed",
+                FineTreeError::OverBroadCover => "fine-root-over-broad-cover",
+            },
             Self::UnitCommitMismatch { .. } => "unit-commit-mismatch",
             Self::WrongLength { field, .. } => match field {
                 LengthField::UnitSalt => "wrong-length-unit-salt",
@@ -491,9 +539,11 @@ impl VerifyError {
             Self::RawMirrorCanonicalizationMismatch { .. } => {
                 "raw-mirror-canonicalization-mismatch"
             }
-            // Wrapper arm: the wrapped error's own distinct stable code
-            // (`cbor-*`) is the row key — never flattened or renamed.
+            // Wrapper arms: the wrapped error's own distinct stable code
+            // (`cbor-*` / `crypto-*`) is the row key — never flattened or
+            // renamed.
             Self::Codec(e) => e.code(),
+            Self::Crypto(e) => e.code(),
         }
     }
 }
@@ -586,7 +636,7 @@ impl std::error::Error for VerifyFailures {}
 pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
     use crate::codec::{DecodeError as CodecError, ForbiddenKind};
     use VerifyError as E;
-    vec![
+    let mut exemplars = vec![
         E::UnitDecryptFailed { unit_id: 3 },
         E::PaddedLengthMismatch {
             unit_id: 4,
@@ -602,7 +652,16 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             true_length: 250,
             range_width: 260,
         },
-        E::FineRootBindingFailed { unit_id: 7 },
+        // One exemplar per wrapped G13 class (R2): the generic root
+        // mismatch and the distinct over-broad-cover rejection.
+        E::FineRootBindingFailed {
+            unit_id: 7,
+            source: FineTreeError::RootMismatch,
+        },
+        E::FineRootBindingFailed {
+            unit_id: 7,
+            source: FineTreeError::OverBroadCover,
+        },
         E::UnitCommitMismatch { unit_id: 8 },
         E::WrongLength {
             field: LengthField::UnitSalt,
@@ -715,7 +774,16 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             position: 23,
         }),
         E::Codec(CodecError::IntOutOfRange { position: 24 }),
-    ]
+    ];
+    // ── Crypto wrapper arm (R2): one exemplar per distinct crypto-*
+    // code of crate::crypto::CryptoError (the C-side list owns the
+    // per-discriminant enumeration; its own test pins the count) ──
+    exemplars.extend(
+        crate::crypto::error::all_code_exemplars()
+            .into_iter()
+            .map(E::Crypto),
+    );
+    exemplars
 }
 
 #[cfg(test)]
@@ -724,12 +792,16 @@ mod tests {
 
     use super::*;
 
-    /// The number of distinct stable codes: 14 single-code variants plus
+    /// The number of distinct stable codes: 13 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
-    /// ConcatCommitMismatch×2), plus the 15 delegated `cbor-*` codes of
-    /// the Codec wrapper arm (12 codec variants, ForbiddenType×3).
-    const DISTINCT_CODES: usize = 45;
+    /// ConcatCommitMismatch×2, FineRootBindingFailed×2 — one per wrapped
+    /// G13 class), plus the 15 delegated `cbor-*` codes of the Codec
+    /// wrapper arm (12 codec variants, ForbiddenType×3), plus the 25
+    /// delegated `crypto-*` codes of the Crypto wrapper arm
+    /// (CommitmentMismatch×5, SaltLength×3, four signature variants ×2
+    /// algorithms, 9 single-code variants).
+    const DISTINCT_CODES: usize = 71;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -789,18 +861,23 @@ mod tests {
                     "RawMirrorCanonicalizationMismatch"
                 }
                 VerifyError::Codec(_) => "Codec",
+                VerifyError::Crypto(_) => "Crypto",
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 20, "20 variants must be represented");
+        assert_eq!(tally.len(), 21, "21 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),
             ("PartialRevealSaltLeak", 2),
             ("FullRevealMaterialMissing", 2),
             ("ConcatCommitMismatch", 2),
+            // One exemplar per wrapped G13 class (R2).
+            ("FineRootBindingFailed", 2),
             // One exemplar per delegated cbor-* code (F3).
             ("Codec", 15),
+            // One exemplar per delegated crypto-* code (R2).
+            ("Crypto", 25),
         ]
         .into_iter()
         .collect();
@@ -864,6 +941,58 @@ mod tests {
         assert_eq!(wrapped.code(), "cbor-duplicate-map-key");
         assert_eq!(wrapped.code(), inner.code());
         assert_eq!(wrapped.to_string(), inner.to_string());
+    }
+
+    /// The Crypto wrapper arm (R2) honors the same contract — transparent
+    /// `Display`, `code()` delegation to the wrapped `crypto-*` code —
+    /// minus `From`: wrapping is deliberately explicit-only, so R2's
+    /// named-variant mapping (`AeadDecryptFailed` → `UnitDecryptFailed`
+    /// etc.) cannot be bypassed by a stray `?` (enum-level doc).
+    #[test]
+    fn crypto_wrapper_arm_delegates_display_and_code() {
+        let inner = crate::crypto::CryptoError::SigPolicyEmpty;
+        let wrapped = VerifyError::Crypto(inner);
+        assert_eq!(wrapped.code(), "crypto-sig-policy-empty");
+        assert_eq!(wrapped.code(), inner.code());
+        assert_eq!(wrapped.to_string(), inner.to_string());
+
+        // The delegated code and the R2 named variant for the same
+        // underlying event stay distinct rows: a wrapped AEAD failure is
+        // NOT the per-unit decrypt row.
+        let wrapped_aead = VerifyError::Crypto(crate::crypto::CryptoError::AeadDecryptFailed);
+        assert_eq!(wrapped_aead.code(), "crypto-aead-decrypt-failed");
+        assert_ne!(
+            wrapped_aead.code(),
+            VerifyError::UnitDecryptFailed { unit_id: 0 }.code()
+        );
+    }
+
+    /// The G13 seam arm (R2): `FineRootBindingFailed` exposes its wrapped
+    /// class both as a `source()` chain and as per-class stable codes —
+    /// the over-broad-cover rejection is its own distinct row, never the
+    /// generic binding failure.
+    #[test]
+    fn fine_root_binding_arm_discriminates_g13_classes() {
+        use std::error::Error as _;
+
+        let generic = VerifyError::FineRootBindingFailed {
+            unit_id: 21,
+            source: FineTreeError::RootMismatch,
+        };
+        let over_broad = VerifyError::FineRootBindingFailed {
+            unit_id: 21,
+            source: FineTreeError::OverBroadCover,
+        };
+        assert_eq!(generic.code(), "fine-root-binding-failed");
+        assert_eq!(over_broad.code(), "fine-root-over-broad-cover");
+        assert_ne!(generic.code(), over_broad.code());
+
+        let source = generic.source().expect("wrapped G error is the source");
+        assert_eq!(source.to_string(), FineTreeError::RootMismatch.to_string());
+        assert!(
+            over_broad.to_string().contains("over-broad"),
+            "{over_broad}"
+        );
     }
 
     /// `LengthField::spec_len` mirrors the line-121 exact-length table.

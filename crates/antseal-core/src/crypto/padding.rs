@@ -44,8 +44,13 @@ pub const PAD_BLOCK: usize = 256;
 
 /// The exact formula over `u128` — total for every `u64`/`usize` input
 /// (adversarial manifest values included), with headroom that cannot
-/// overflow. All verdict-bearing comparisons use this form.
-const fn padded_length_exact(true_length: u128) -> u128 {
+/// overflow. All verdict-bearing comparisons use this form; R2's verifier
+/// stage ([`crate::verify::unit_stages`]) also recomputes its
+/// `PaddedLengthMismatch` payload through it, so native and wasm32 error
+/// payloads are identical even for manifest `true_length` values that
+/// exceed the target's `usize` (spec line 121: the verifier recomputes
+/// `padded_length` from the manifest's `true_length`).
+pub const fn padded_length_exact(true_length: u128) -> u128 {
     (true_length + 1).div_ceil(PAD_BLOCK as u128) * (PAD_BLOCK as u128)
 }
 

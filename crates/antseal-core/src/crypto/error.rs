@@ -245,6 +245,115 @@ pub enum CryptoError {
     RngFailure,
 }
 
+impl CryptoError {
+    /// Stable machine-readable code, pairwise-distinct across every
+    /// (variant, discriminant) pair — the C-side leg of Q7's error-code
+    /// stability contract (open decision D30), delegated through
+    /// `verify::VerifyError::Crypto` exactly like the codec's `cbor-*`
+    /// codes (F3 precedent). Lowercase kebab-case, `crypto-` prefixed so
+    /// the global tamper matrix stays distinct across domains (the
+    /// unprefixed forms would collide with R's verify-side codes, e.g.
+    /// `non-zero-padding`); never changes once a tamper row binds to it.
+    ///
+    /// The exhaustive, wildcard-free match is the compile-time guard: a
+    /// new variant (or a new [`CommitmentKind`]/[`SaltKind`]/[`SigAlg`]
+    /// discriminant) fails compilation here until it receives a distinct
+    /// code — and an exemplar in `all_code_exemplars`.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::CommitmentMismatch { kind } => match kind {
+                CommitmentKind::Unit => "crypto-unit-commit-mismatch",
+                CommitmentKind::Raw => "crypto-raw-commit-mismatch",
+                CommitmentKind::Canon => "crypto-canon-commit-mismatch",
+                CommitmentKind::Path => "crypto-path-commit-mismatch",
+                CommitmentKind::FineRoot => "crypto-fine-root-commit-mismatch",
+            },
+            Self::SaltLength { kind, .. } => match kind {
+                SaltKind::Unit => "crypto-unit-salt-length",
+                SaltKind::Path => "crypto-path-salt-length",
+                SaltKind::File => "crypto-file-salt-length",
+            },
+            Self::SeedLength { .. } => "crypto-seed-length",
+            Self::NodeHashLength { .. } => "crypto-node-hash-length",
+            Self::AeadDecryptFailed => "crypto-aead-decrypt-failed",
+            Self::PaddingLengthMismatch { .. } => "crypto-padding-length-mismatch",
+            Self::NonZeroPadding { .. } => "crypto-non-zero-padding",
+            Self::SigPolicyEmpty => "crypto-sig-policy-empty",
+            Self::SigPolicyDuplicate => "crypto-sig-policy-duplicate",
+            Self::SigPolicyUnknownAlg => "crypto-sig-policy-unknown-alg",
+            Self::SignatureMissing { alg } => match alg {
+                SigAlg::Ed25519 => "crypto-signature-missing-ed25519",
+                SigAlg::MlDsa65 => "crypto-signature-missing-ml-dsa-65",
+            },
+            Self::SignatureInvalid { alg } => match alg {
+                SigAlg::Ed25519 => "crypto-signature-invalid-ed25519",
+                SigAlg::MlDsa65 => "crypto-signature-invalid-ml-dsa-65",
+            },
+            Self::SignatureUnlisted { alg } => match alg {
+                SigAlg::Ed25519 => "crypto-signature-unlisted-ed25519",
+                SigAlg::MlDsa65 => "crypto-signature-unlisted-ml-dsa-65",
+            },
+            Self::NonCanonicalSignature { alg } => match alg {
+                SigAlg::Ed25519 => "crypto-non-canonical-signature-ed25519",
+                SigAlg::MlDsa65 => "crypto-non-canonical-signature-ml-dsa-65",
+            },
+            Self::RngFailure => "crypto-rng-failure",
+        }
+    }
+}
+
+/// One exemplar per distinct [`CryptoError::code`] — every (variant,
+/// discriminant) pair exactly once, with pairwise-distinct `Display`
+/// renderings (payload values chosen so no two collide). Consumed by this
+/// module's code tests and by `verify::error::all_error_exemplars`, which
+/// wraps each in the `VerifyError::Crypto` arm so the R-side distinctness
+/// meta-test covers the delegated codes too (F3's `cbor-*` precedent).
+#[cfg(test)]
+pub(crate) fn all_code_exemplars() -> Vec<CryptoError> {
+    use CryptoError as E;
+    let mut exemplars = Vec::new();
+    for kind in CommitmentKind::ALL {
+        exemplars.push(E::CommitmentMismatch { kind });
+    }
+    for kind in SaltKind::ALL {
+        exemplars.push(E::SaltLength {
+            kind,
+            expected: 16,
+            got: 17,
+        });
+    }
+    exemplars.extend([
+        E::SeedLength {
+            expected: 32,
+            got: 31,
+        },
+        E::NodeHashLength {
+            expected: 32,
+            got: 33,
+        },
+        E::AeadDecryptFailed,
+        E::PaddingLengthMismatch {
+            expected: 256,
+            got: 512,
+        },
+        E::NonZeroPadding { offset: 42 },
+        E::SigPolicyEmpty,
+        E::SigPolicyDuplicate,
+        E::SigPolicyUnknownAlg,
+    ]);
+    for alg in SigAlg::ALL {
+        exemplars.extend([
+            E::SignatureMissing { alg },
+            E::SignatureInvalid { alg },
+            E::SignatureUnlisted { alg },
+            E::NonCanonicalSignature { alg },
+        ]);
+    }
+    exemplars.push(E::RngFailure);
+    exemplars
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,6 +547,55 @@ mod tests {
     fn error_trait_no_source() {
         for err in one_of_each() {
             assert!(err.source().is_none(), "{err}");
+        }
+    }
+
+    /// Stable-code contract (D30 open decision; Q7): one exemplar per
+    /// (variant, discriminant) pair — 25 in total — with pairwise-distinct
+    /// `crypto-`-prefixed kebab-case codes and pairwise-distinct Display
+    /// strings (the property `verify::error`'s meta-test relies on when it
+    /// wraps these in the `VerifyError::Crypto` arm).
+    #[test]
+    fn codes_are_pairwise_distinct_and_prefixed() {
+        use std::collections::BTreeSet;
+
+        let exemplars = super::all_code_exemplars();
+        assert_eq!(
+            exemplars.len(),
+            25,
+            "one exemplar per (variant, discriminant) pair"
+        );
+
+        let codes: BTreeSet<&'static str> = exemplars.iter().map(CryptoError::code).collect();
+        assert_eq!(codes.len(), exemplars.len(), "codes pairwise distinct");
+        for code in &codes {
+            assert!(
+                code.starts_with("crypto-"),
+                "code {code:?} must carry the domain prefix"
+            );
+            assert!(
+                code.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "code {code:?} is not lowercase kebab-case"
+            );
+        }
+
+        let displays: BTreeSet<String> = exemplars.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            displays.len(),
+            exemplars.len(),
+            "displays pairwise distinct"
+        );
+
+        // Every variant of `one_of_each` (the per-variant list) is covered
+        // by the per-code list — no variant can miss a code.
+        for variant in one_of_each() {
+            assert!(
+                exemplars
+                    .iter()
+                    .any(|e| discriminant(e) == discriminant(&variant)),
+                "{variant:?} missing from all_code_exemplars"
+            );
         }
     }
 }
