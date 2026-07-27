@@ -19,9 +19,10 @@ bytes, in this order and no other:
 1. **Decode** UTF-8 to a scalar sequence — strict for detected text, lossy
    (D20 maximal-subparts U+FFFD) under `--force-text`. (For detected text
    the two are identical.)
-2. **BOM strip**: remove **all leading U+FEFF scalars** (see deviation
-   note). U+FEFF anywhere after the first non-U+FEFF scalar is content
-   (ZWNBSP) and is preserved.
+2. **BOM strip**: remove **all leading U+FEFF scalars** — precisely, the
+   contiguous leading run of U+FEFF in the *decoded scalar stream* (see
+   deviation note). A U+FEFF after any non-FEFF scalar — including after a
+   U+FFFD minted by lossy decode — is content (ZWNBSP) and is preserved.
 3. **EOL normalize**: one left-to-right pass — CR LF → LF, then any
    remaining lone CR → LF. (Equivalently: CR consumes an immediately
    following LF; every CR becomes LF. CR CR LF → LF LF.)

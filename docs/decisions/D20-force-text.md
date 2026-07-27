@@ -33,6 +33,11 @@ total. No forced-mode descriptor flag.**
    canonical outputs pin the maximal-subparts replacement byte-exactly
    (guarding against any alternative U+FFFD-count policy), and the
    independent cross-check (Q11) must reproduce them.
+4. Corner pinned by G2's KATs: a *truncated* BOM (`EF BB`) is not a BOM —
+   under forced mode it lossy-decodes to U+FFFD, which the BOM-strip stage
+   does not remove, so a canonical rendition **can begin with U+FFFD**.
+   Deterministic and invariant-respecting (the no-leading-U+FEFF invariant
+   is unaffected).
 
 ## Rationale
 
