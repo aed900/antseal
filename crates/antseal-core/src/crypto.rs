@@ -30,6 +30,9 @@
 //! - [`sig_ed25519`] — the Ed25519 half of the author signature: keys from
 //!   `W`, the `ctx ‖ 0x00 ‖ body` pre-image, and strict/canonical
 //!   verification with the D16 pre-validation layer (C12).
+//! - [`sig_mldsa`] — the ML-DSA-65 half: FIPS 204 keys from a `W`-derived
+//!   xi, deterministic signing with the frozen `ctx`, and canonical-strict
+//!   verification (C13).
 //! - [`error`] — the crypto error taxonomy, one distinct variant per tamper-
 //!   matrix failure class (C4).
 //!
@@ -73,6 +76,7 @@ pub mod material;
 pub mod padding;
 pub mod secrets;
 pub mod sig_ed25519;
+pub mod sig_mldsa;
 pub mod unit_aead;
 
 pub use error::CryptoError;
