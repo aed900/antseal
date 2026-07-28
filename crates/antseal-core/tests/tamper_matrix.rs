@@ -16,6 +16,11 @@
 //! codes it binds to are genuinely distinct across three domains, and that
 //! the row-addition procedure has been exercised end to end.
 
+/// Q8's completeness registry check (`testdata/tamper/MATRIX.json`). It
+/// lives here rather than in its own test target because the assembled
+/// registry it checks against — [`all_rows`] — is this file's.
+mod tamper_completeness;
+
 use antseal_core::codec::decode::check_canonical;
 use antseal_core::crypto::commit::path_commit;
 use antseal_core::crypto::error::CryptoError;
@@ -444,4 +449,40 @@ fn seeded_rows_span_multiple_domains() {
             .any(|row| row.expected == ExpectedOutcome::ErrorCode("crypto-path-commit-mismatch")),
         "no row binds `crypto-path-commit-mismatch`"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Q8 — completeness against the spec's M0 row list
+// (module docs: tests/tamper_completeness/mod.rs; registry:
+// testdata/tamper/MATRIX.json)
+// ---------------------------------------------------------------------------
+
+/// Every family and case of MVP-SPEC.md line 168 maps onto implemented rows
+/// or an explicitly owed one, every implemented row is accounted for
+/// (spec case or declared project addition), and the pinned family counts
+/// hold.
+#[test]
+fn tamper_matrix_is_mapped_1_to_1_onto_the_spec_row_list() {
+    tamper_completeness::assert_registry_is_consistent(&all_rows());
+}
+
+/// The still-owed rows are exactly the enumerated ones, each naming its
+/// owning task — the gap is visible rather than silent.
+#[test]
+fn tamper_matrix_pending_rows_are_the_enumerated_ones() {
+    tamper_completeness::assert_pending_set_is_the_pinned_one(&all_rows());
+}
+
+/// Mutations that deliberately will NOT become rows are recorded with
+/// their reasons (D28's full-reveal unit strip; the C-level GGM-seed
+/// length), so nobody "completes" the matrix by adding one.
+#[test]
+fn tamper_matrix_records_its_deliberate_non_rows() {
+    tamper_completeness::assert_non_rows_are_recorded(&all_rows());
+}
+
+/// Prints Q14's gate condition and the outstanding work every run.
+#[test]
+fn tamper_matrix_reports_the_q14_gate() {
+    tamper_completeness::report_q14_gate(&all_rows());
 }

@@ -1,0 +1,509 @@
+{
+  "registry_version": 1,
+  "_readme": [
+    "Q8 — the tamper-matrix COMPLETENESS registry: MVP-SPEC.md line 168's",
+    "mutation enumeration mapped 1:1 onto implemented rows of the Q7 harness.",
+    "Checker: crates/antseal-core/tests/tamper_completeness/mod.rs, run from",
+    "tests/tamper_matrix.rs (CI lane `tamper-matrix`). Contract for the codes",
+    "these rows bind to: docs/testing/error-code-contract.md (D30).",
+    "",
+    "Three kinds of entry, and the distinction is the point:",
+    "  families[]      — the spec's own rows. Every case either names",
+    "                    implemented row ids or carries a `pending` marker",
+    "                    naming the task that owes it. There is no third",
+    "                    state: a missing row is never silently absent.",
+    "  project_added[] — implemented rows the spec's line-168 list does NOT",
+    "                    name. Legitimate (line 168 is illustrative of `every",
+    "                    mutation fails with a distinct error`, not exhaustive",
+    "                    of it) but each needs a recorded justification, so",
+    "                    the 1:1 spec mapping above stays honest.",
+    "  non_rows[]      — mutations that deliberately will NOT become rows,",
+    "                    with the reason. Recorded so a future contributor",
+    "                    does not `complete` the matrix by adding one and",
+    "                    breaking the harness's distinctness assertion.",
+    "",
+    "Q14's gate condition is ZERO pending. Q18 extends the same structure with",
+    "the M2 anchor rows, which are already enumerated here as pending."
+  ],
+  "spec_source": {
+    "file": "MVP-SPEC.md",
+    "line_anchor": "- **Tamper matrix**",
+    "m0_marker": "**(M0)** format/commitment/signature/structural rows:",
+    "m2_marker": "**(M2)** anchor rows:",
+    "note": "Every family's `spec_quote` is checked to be a literal substring of its milestone's half of that line. The registry cannot drift from the spec without going red, and it cannot contain an invented family."
+  },
+
+  "families": [
+    {
+      "id": "flipped-ciphertext-byte",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "flipped ciphertext byte",
+      "cases": [
+        {
+          "id": "flipped-ciphertext-byte",
+          "what": "flip one byte of a revealed unit's ciphertext in the bundle",
+          "pending": {
+            "task": "R8",
+            "row_id": "verify-flipped-ciphertext-byte",
+            "outcome_kind": "error",
+            "expected": "unit-decrypt-failed",
+            "why": "R8 owns pipeline-integration rows through `verify_bundle` (tasks/R.md R8). C's primitive-level AEAD rejection is already a row (`crypto-unit-aead-wrong-key`), but it binds the C code `crypto-aead-decrypt-failed`, so it does not cover this pipeline row."
+          }
+        }
+      ]
+    },
+    {
+      "id": "altered-manifest-field",
+      "milestone": "M0",
+      "owner": "G+R",
+      "spec_quote": "altered manifest field — a covered unit's bytes must fail the `fine_root` leaf-range/boundary-path check, a non-covered (`--no-fine-tree`/raw-mirror) unit's bytes must fail `unit_commit`",
+      "note": "The spec splits this family by the single authoritative commitment for the unit's coverage class. Both routes are separate rows.",
+      "cases": [
+        {
+          "id": "covered-unit-fails-fine-root",
+          "what": "alter a fine-tree-covered unit's bytes; the leaf-range/boundary-path check against `fine_root` must fail",
+          "pending": {
+            "task": "G19",
+            "row_id": "content-fine-root-binding-failed",
+            "outcome_kind": "error",
+            "expected": "fine-root-binding-failed",
+            "why": "G19 row (1): flip a byte of a covered unit's revealed content against a known-good opening fixture (tasks/G.md G19).",
+            "hazard": "R8's task text names the same route through `verify_bundle`. R's wrapper arm surfaces the INNER code unchanged (error-code contract §2), so a G19 row and an R8 row would both claim `fine-root-binding-failed` and `check_registry` would refuse the pair. One of the two is the registry row; the other belongs in an R10 property. Coordinate before writing both — see non_rows for the same shape already settled by D28."
+          }
+        },
+        {
+          "id": "non-covered-unit-fails-unit-commit",
+          "what": "alter a non-covered (`--no-fine-tree` / raw-mirror) unit's bytes; `unit_commit` must fail",
+          "pending": {
+            "task": "R8",
+            "row_id": "verify-non-covered-unit-commit-mismatch",
+            "outcome_kind": "error",
+            "expected": "unit-commit-mismatch",
+            "why": "R8 accept: covered-unit vs non-covered-unit alteration must fail at their respective single authoritative commitment (tasks/R.md R8)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "wrong-salt",
+      "milestone": "M0",
+      "owner": "C",
+      "spec_quote": "wrong salt",
+      "note": "Every commitment is salted (project rule 3), so this family has one case per commitment kind; each opens with a bit-flipped salt.",
+      "cases": [
+        { "id": "unit-commit", "what": "flip one bit of the disclosed `unit_salt`", "rows": ["crypto-unit-commit-wrong-salt"] },
+        { "id": "path-commit", "what": "flip one bit of the disclosed `path_salt`", "rows": ["crypto-path-commit-wrong-salt"] },
+        { "id": "raw-commit", "what": "flip one bit of the disclosed `file_salt`, opening `raw_commit`", "rows": ["crypto-raw-commit-wrong-salt"] },
+        { "id": "canon-commit", "what": "flip one bit of the disclosed `file_salt`, opening `canon_commit`", "rows": ["crypto-canon-commit-wrong-salt"] }
+      ]
+    },
+    {
+      "id": "wrong-length-salt-or-seed",
+      "milestone": "M0",
+      "owner": "C+R",
+      "spec_quote": "wrong-length salt or seed (16-B `*_salt`; 32-B `s_root`/GGM seed/boundary node)",
+      "note": "The spec names six length-checked fields: three 16-byte `*_salt`s and three 32-byte values. One case each.",
+      "cases": [
+        { "id": "unit-salt-16", "what": "truncate the disclosed `unit_salt` to 15 bytes", "rows": ["crypto-unit-salt-wrong-length"] },
+        { "id": "path-salt-16", "what": "truncate the disclosed `path_salt` to 15 bytes", "rows": ["crypto-path-salt-length"] },
+        { "id": "file-salt-16", "what": "append a byte to the disclosed `file_salt` (17 bytes)", "rows": ["crypto-file-salt-wrong-length"] },
+        { "id": "s-root-32", "what": "truncate the disclosed `s_root` to 31 bytes", "rows": ["crypto-s-root-wrong-length", "verify-wrong-length-s-root"] },
+        {
+          "id": "ggm-seed-32",
+          "what": "supply a wrong-length GGM covering seed",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-wrong-length-ggm-covering-seed",
+            "outcome_kind": "error",
+            "expected": "wrong-length-ggm-covering-seed",
+            "why": "R7 enumerates all six wrong-length rows through `verify_bundle` (tasks/R.md R7). This case MUST land at the R level: see non_rows — C's `CryptoError::SeedLength` carries no kind discriminator, so a C-level row would collide with the `s_root` one."
+          }
+        },
+        { "id": "boundary-node-32", "what": "append a byte to a boundary Merkle node hash (33 bytes)", "rows": ["crypto-node-hash-wrong-length"] }
+      ]
+    },
+    {
+      "id": "wrong-key",
+      "milestone": "M0",
+      "owner": "C",
+      "spec_quote": "wrong key",
+      "cases": [
+        { "id": "wrong-key", "what": "decrypt a unit under a different master secret W", "rows": ["crypto-unit-aead-wrong-key"] }
+      ]
+    },
+    {
+      "id": "swapped-unit",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "swapped unit",
+      "cases": [
+        {
+          "id": "swapped-unit",
+          "what": "present unit A's ciphertext under unit B's entry; the AAD's `unit_id` binding — not a commitment — is what catches it first",
+          "pending": {
+            "task": "R8",
+            "row_id": "verify-swapped-unit",
+            "outcome_kind": "error",
+            "expected": "unit-decrypt-failed",
+            "why": "R8's own task text: swapped unit → decrypt failure via the AAD's `unit_id` binding (tasks/R.md R8).",
+            "collision_note": "Claims the SAME outcome as this registry's `flipped-ciphertext-byte` pending row (`unit-decrypt-failed`), because `VerifyError::UnitDecryptFailed` carries no cause discriminator. `check_registry` will refuse both rows. R8 must either mint a discriminated code so the two mutations are genuinely distinguishable — which is what the error-code contract §4 says a layer-2 collision means — or keep one as a registry row and assert the other as an R10 property, following the D28 precedent in non_rows. Do NOT resolve it by editing an expected code (contract §3)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "sig-policy-violations",
+      "milestone": "M0",
+      "owner": "C",
+      "spec_quote": "`sig_policy` violations (missing/invalid/*unlisted-extra* sig, empty policy)",
+      "note": "Four named violations, four cases. C14 ratified the per-algorithm codes.",
+      "cases": [
+        { "id": "missing-signature", "what": "delete the ML-DSA-65 signature, leaving one good signature", "rows": ["crypto-sig-policy-missing-signature"] },
+        { "id": "invalid-signature", "what": "replace the Ed25519 signature with one by another author", "rows": ["crypto-sig-policy-invalid-signature"] },
+        { "id": "unlisted-extra-signature", "what": "add a valid ML-DSA-65 signature the policy does not list", "rows": ["crypto-sig-policy-unlisted-signature"] },
+        { "id": "empty-policy", "what": "strip every algorithm from `sig_policy`", "rows": ["crypto-sig-policy-empty"] }
+      ]
+    },
+    {
+      "id": "non-canonical-signature-encoding",
+      "milestone": "M0",
+      "owner": "C",
+      "spec_quote": "non-canonical Ed25519 `S` (mauled but strict-invalid) / non-canonical ML-DSA encoding",
+      "cases": [
+        { "id": "ed25519-s", "what": "maul the Ed25519 `S` to S + L — same scalar, non-canonical encoding, rejected by `verify_strict`", "rows": ["crypto-non-canonical-ed25519-s"] },
+        { "id": "ml-dsa-encoding", "what": "raise the ML-DSA hint cut above omega = 55", "rows": ["crypto-non-canonical-mldsa-hints"] }
+      ]
+    },
+    {
+      "id": "non-canonical-cbor-body",
+      "milestone": "M0",
+      "owner": "F",
+      "spec_quote": "non-canonical CBOR body (duplicate key, non-shortest int, indefinite length, trailing bytes)",
+      "note": "Exactly the four the spec names. F3's decoder rejects more classes than these (spec line 153's full RFC 8949 §4.2.1 profile); those rows are in project_added.",
+      "cases": [
+        { "id": "duplicate-key", "what": "repeat a map key with a second value", "rows": ["cbor-duplicate-map-key"] },
+        { "id": "non-shortest-int", "what": "re-encode the value 1 in a two-byte head", "rows": ["cbor-non-shortest-int"] },
+        { "id": "indefinite-length", "what": "re-encode the map with an indefinite-length head", "rows": ["cbor-indefinite-length"] },
+        { "id": "trailing-bytes", "what": "append a byte after the complete top-level item", "rows": ["cbor-trailing-bytes"] }
+      ]
+    },
+    {
+      "id": "non-mirror-range-violations",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "overlapping/out-of-bounds/non-tiling non-mirror ranges",
+      "note": "Three named violations of the exact-tiling invariant (spec line 121).",
+      "cases": [
+        { "id": "overlapping", "what": "extend the first unit's range into the second's", "rows": ["verify-tiling-overlap"] },
+        {
+          "id": "out-of-bounds",
+          "what": "extend a unit's range past the file's `size`",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-tiling-out-of-bounds",
+            "outcome_kind": "error",
+            "expected": "tiling-out-of-bounds",
+            "why": "R7 enumerates overlapping / out-of-bounds / gap / unsorted ranges (tasks/R.md R7); Q7 seeded overlap and gap, this one and `tiling-unsorted` remain."
+          }
+        },
+        { "id": "non-tiling", "what": "delete a unit, leaving a gap in the file's coverage", "rows": ["verify-tiling-gap"] }
+      ]
+    },
+    {
+      "id": "raw-mirror-in-tiling-set",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "raw-mirror wrongly included in the tiling set",
+      "cases": [
+        { "id": "raw-mirror-in-tiling-set", "what": "replace a file's canonical units with its raw mirror", "rows": ["verify-raw-mirror-in-tiling-set"] }
+      ]
+    },
+    {
+      "id": "raw-mirror-canonicalization-mismatch",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "raw-mirror whose `canonicalize(raw)` ≠ the file's canonical bytes",
+      "cases": [
+        {
+          "id": "raw-mirror-canonicalization-mismatch",
+          "what": "substitute raw-mirror bytes that do not canonicalize to the file's canonical bytes",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-raw-mirror-canonicalization-mismatch",
+            "outcome_kind": "error",
+            "expected": "raw-mirror-canonicalization-mismatch",
+            "why": "R7 owns the raw-mirror structural rows (tasks/R.md R7). The code already exists in R1's shipped taxonomy; only the fixture and row are missing."
+          }
+        }
+      ]
+    },
+    {
+      "id": "true-length-range-mismatch",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "`true_length` ≠ byte-range width",
+      "cases": [
+        {
+          "id": "true-length-range-mismatch",
+          "what": "declare a `true_length` that disagrees with the unit's [start, end) width",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-true-length-range-mismatch",
+            "outcome_kind": "error",
+            "expected": "true-length-range-mismatch",
+            "why": "R7's enumerated rows include `true_length` ≠ byte-range width (tasks/R.md R7)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "over-padded-unit",
+      "milestone": "M0",
+      "owner": "C",
+      "spec_quote": "over-padded unit (plaintext length ≠ `padded_length`)",
+      "cases": [
+        { "id": "over-padded-unit", "what": "append one extra 256-byte pad bucket beyond the `padded_length` formula", "rows": ["crypto-padding-length-mismatch"] }
+      ]
+    },
+    {
+      "id": "over-broad-ggm-cover",
+      "milestone": "M0",
+      "owner": "G",
+      "spec_quote": "over-broad GGM cover whose node spans an unrevealed real leaf",
+      "cases": [
+        {
+          "id": "over-broad-ggm-cover",
+          "what": "substitute a dyadically-valid but over-broad GGM cover whose node spans an unrevealed real leaf (spec line 96's leaf-exact-cover rule)",
+          "pending": {
+            "task": "G19",
+            "row_id": "content-fine-root-over-broad-cover",
+            "outcome_kind": "error",
+            "expected": "fine-root-over-broad-cover",
+            "why": "G19 row (2), against a known-good opening fixture (tasks/G.md G19). The code already exists in G13's taxonomy.",
+            "hazard": "R7 also lists this mutation `constructed via G, rejected through the pipeline`. As with the covered-unit route above, R's wrapper surfaces the inner code unchanged, so a G-level and an R-level row would collide on `fine-root-over-broad-cover`. One row, one owner; the other layer asserts it as a property."
+          }
+        }
+      ]
+    },
+    {
+      "id": "partial-reveal-material-leak",
+      "milestone": "M0",
+      "owner": "R",
+      "spec_quote": "`file_salt`/`s_root` present for an only-partially-revealed file",
+      "note": "Split per material because each has its own code (D28, docs/decisions/D28-full-reveal-strictness.md). The symmetric *missing*-material rows are NOT in this family — see project_added; D28 ratified them as a project addition precisely so this mapping stays honest.",
+      "cases": [
+        {
+          "id": "file-salt-leak",
+          "what": "attach a partially revealed file's `file_salt` to the bundle",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-partial-reveal-salt-leak-file-salt",
+            "outcome_kind": "error",
+            "expected": "partial-reveal-salt-leak-file-salt",
+            "why": "D28's R7 row table, row 3 (docs/decisions/D28-full-reveal-strictness.md)."
+          }
+        },
+        {
+          "id": "s-root-leak",
+          "what": "attach a partially revealed file's `s_root` to the bundle",
+          "pending": {
+            "task": "R7",
+            "row_id": "verify-partial-reveal-salt-leak-s-root",
+            "outcome_kind": "error",
+            "expected": "partial-reveal-salt-leak-s-root",
+            "why": "D28's R7 row table, row 4."
+          }
+        }
+      ]
+    },
+    {
+      "id": "oversized-or-deep-cbor",
+      "milestone": "M0",
+      "owner": "F",
+      "spec_quote": "oversized/deep CBOR",
+      "note": "Two fixtures, two errors — an explicit F15 accept (`oversized ≠ over-deep`).",
+      "cases": [
+        {
+          "id": "oversized",
+          "what": "a body exceeding the hard cap on bundle size / unit count / allocation (spec line 153)",
+          "pending": {
+            "task": "F15",
+            "row_id": "cbor-oversized",
+            "outcome_kind": "error",
+            "expected": null,
+            "why": "No size-cap code exists in F3's `cbor-*` set today (only `cbor-nesting-too-deep`); F15 mints one when it lands the caps. Recording the case with a null expected code is deliberate — the obligation is visible and the code is the owning task's to choose, append-only per D30."
+          }
+        },
+        {
+          "id": "deep",
+          "what": "nesting beyond the decoder's depth cap",
+          "pending": {
+            "task": "F15",
+            "row_id": "cbor-nesting-too-deep",
+            "outcome_kind": "error",
+            "expected": "cbor-nesting-too-deep",
+            "why": "F15 accept: oversized and over-deep are two fixtures with two distinct errors (tasks/F.md F15). The depth code already exists in F3's decoder."
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "anchor-token-for-a-different-digest",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "`.ots`/TSA token for a different digest",
+      "cases": [
+        {
+          "id": "anchor-token-for-a-different-digest",
+          "what": "an otherwise valid `.ots` proof / TSA token committing to a digest other than this seal's `anchor_digest`",
+          "pending": { "task": "A21", "row_id": "anchor-digest-mismatch", "outcome_kind": "error", "expected": null, "why": "M2 anchor rows; the code set arrives with A18's anchor verification. Registered now so Q18's extension is a data change, not a schema change." }
+        }
+      ]
+    },
+    {
+      "id": "untrusted-tsa-root",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "well-formed TSA token from an untrusted root",
+      "cases": [
+        {
+          "id": "untrusted-tsa-root",
+          "what": "a structurally valid TSA token whose chain does not reach the pinned root store",
+          "pending": { "task": "A21", "row_id": "anchor-untrusted-root", "outcome_kind": "verdict", "expected": "internally-consistent-only", "why": "The spec states the outcome inline: an untrusted root does not ERROR, it lands in a specific non-headline verdict state. This is the case Q7's `ExpectedOutcome::VerdictState` namespace exists for." }
+        }
+      ]
+    },
+    {
+      "id": "forged-bitcoin-header",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "forged Bitcoin header that fails the `--online` block match",
+      "cases": [
+        {
+          "id": "forged-bitcoin-header",
+          "what": "an OTS attestation whose embedded header does not match the block returned by the online endpoint",
+          "pending": { "task": "A21", "row_id": "anchor-forged-header", "outcome_kind": "verdict", "expected": "invalid", "why": "Spec-stated outcome (→ `invalid`)." }
+        }
+      ]
+    },
+    {
+      "id": "attested-ots-withheld-from-headline",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "an `attested` OTS anchor correctly withheld from the offline headline",
+      "cases": [
+        {
+          "id": "attested-ots-withheld-from-headline",
+          "what": "a well-formed `attested` (not yet Bitcoin-confirmed) OTS anchor must not reach the offline headline verdict",
+          "pending": { "task": "A21", "row_id": "anchor-attested-not-headline", "outcome_kind": "verdict", "expected": "attested", "why": "A positive-shaped row: the artifact is honest, and what is being pinned is that the verdict machine withholds it. A18/R17 own the state names." }
+        }
+      ]
+    },
+    {
+      "id": "tsa-chain-expiry",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "expired-at-genTime vs expired-after-genTime chain cases",
+      "note": "Two cases: LTV semantics mean `expired ≠ invalid` only when the certificate was valid AT genTime.",
+      "cases": [
+        {
+          "id": "expired-at-gentime",
+          "what": "the signing certificate had already expired when the token's genTime claims it signed",
+          "pending": { "task": "A21", "row_id": "anchor-expired-at-gentime", "outcome_kind": "error", "expected": null, "why": "M2; codes arrive with A18." }
+        },
+        {
+          "id": "expired-after-gentime",
+          "what": "the certificate was valid at genTime and expired later — must still verify (LTV)",
+          "pending": { "task": "A21", "row_id": "anchor-expired-after-gentime", "outcome_kind": "verdict", "expected": null, "why": "M2; the positive control for the expiry pair — `expired ≠ invalid` (MVP-SPEC.md risks, pinned roots + genTime LTV)." }
+        }
+      ]
+    },
+    {
+      "id": "ber-where-der-required",
+      "milestone": "M2",
+      "owner": "A",
+      "spec_quote": "BER-where-DER-required",
+      "cases": [
+        {
+          "id": "ber-where-der-required",
+          "what": "a token encoded in BER where RFC 3161 requires strict DER",
+          "pending": { "task": "A21", "row_id": "anchor-ber-not-der", "outcome_kind": "error", "expected": null, "why": "M2; strict-DER limits and their fuzz targets are A/Q17." }
+        }
+      ]
+    }
+  ],
+
+  "project_added": [
+    {
+      "row_id": "cbor-unsorted-map-keys",
+      "owner": "F",
+      "why": "Line 168's CBOR family names four cases; the canonical profile the decoder actually enforces is line 153's full RFC 8949 §4.2.1 set, which adds unsorted keys. Kept as a row because a verifier that accepts unsorted keys accepts two encodings of one manifest."
+    },
+    {
+      "row_id": "cbor-truncated",
+      "owner": "F",
+      "why": "Well-formedness, not canonicality: a truncated head is the commonest hostile-bundle shape and must produce its own code rather than a generic parse failure (spec line 187, hostile bundles)."
+    },
+    {
+      "row_id": "cbor-float",
+      "owner": "F",
+      "why": "The v1 CBOR profile forbids floats outright (F1/F3). Not named at line 168; kept because a float slipping through would break the deterministic-encoding claim the whole format rests on."
+    },
+    {
+      "row_id": "crypto-non-zero-padding",
+      "owner": "C",
+      "why": "The second arm of padding integrity. Line 168 names only the over-padded arm (length ≠ `padded_length`); a pad byte that is non-zero at the correct length is a different mutation with its own code, and R7's task text enumerates it explicitly."
+    },
+    {
+      "row_id": "verify-unknown-unit-ref",
+      "owner": "R",
+      "why": "R3 structural invariant (spec line 121): a bundle revealing a `unit_id` absent from the signed manifest. Not in line 168's enumeration; R7's task text lists duplicate/unknown unit and file references."
+    },
+    {
+      "row_id": "verify-duplicate-unit-reveal",
+      "owner": "R",
+      "why": "R3 structural invariant: the same `unit_id` revealed twice. Same basis as above."
+    },
+    {
+      "row_id": "verify-path-commit-mismatch",
+      "owner": "R",
+      "why": "Substituting a touched file's disclosed path while keeping its salt. Line 168's `altered manifest field` family names only the two unit-BYTES routes, so this path-substitution route is recorded as project-added rather than folded into that family. R8's task text lists it (`wrong path_salt/path → path_commit mismatch`)."
+    },
+    {
+      "row_id": "crypto-sig-policy-duplicate",
+      "owner": "C",
+      "why": "Line 168 names four `sig_policy` violations; C14 added a fifth from spec line 97, which requires the policy to be a duplicate-free list of registered algorithm ids. A duplicate is not `empty`, `missing`, `invalid`, or `unlisted-extra`, so it needs its own code."
+    },
+    {
+      "row_id": "crypto-sig-policy-unknown-alg",
+      "owner": "C",
+      "why": "Sixth `sig_policy` case, same basis: an unregistered/reserved algorithm id (D17 reserves 2–15 and requires rejection). Distinct from `unlisted-extra`, which is a valid algorithm the policy omits."
+    }
+  ],
+
+  "non_rows": [
+    {
+      "id": "full-reveal-unit-strip-downgrade",
+      "milestone": "M0",
+      "owner": "R",
+      "mutation": "drop one revealed unit from a full-reveal bundle while leaving `file_salt` attached — the third-party proof-downgrade attack",
+      "collides_with": "verify-partial-reveal-salt-leak-file-salt",
+      "why": "Removing a unit reclassifies the file as partially revealed, so the still-attached `file_salt` fires the isolation arm: the observable outcome is `partial-reveal-salt-leak-file-salt`, exactly the same as the row above. Two rows claiming one outcome is a harness failure by design — `check_registry` refuses it, correctly, because the two mutations are one observable failure.",
+      "instead": "Assert it as an R10 property: `no single-unit deletion from a full-reveal bundle verifies`.",
+      "record": "docs/decisions/D28-full-reveal-strictness.md, section `Deliberately NOT a fifth row`",
+      "warning": "A naive R7 implementation that adds this row will break the tamper harness. That is the harness working, not a bug to route around."
+    },
+    {
+      "id": "crypto-level-ggm-seed-length",
+      "milestone": "M0",
+      "owner": "C",
+      "mutation": "supply a wrong-length GGM covering seed to a C-level primitive",
+      "collides_with": "crypto-s-root-wrong-length",
+      "why": "`CryptoError::SeedLength` carries no kind discriminator, so both 32-byte seeds — `s_root` and the GGM covering seed — bind the single code `crypto-seed-length`, already claimed by the `s_root` row. A C-level GGM-seed row is therefore indistinguishable from it.",
+      "instead": "The R pipeline DOES discriminate (`wrong-length-s-root` vs `wrong-length-ggm-covering-seed`), so the spec's `GGM seed` sub-variant is satisfied by the R-level row `verify-wrong-length-ggm-covering-seed` — registered as pending under family `wrong-length-salt-or-seed`, case `ggm-seed-32`.",
+      "record": "This registry. If a C-level row is ever wanted, the fix is a kind discriminator on `SeedLength` with its own appended code (error-code contract §4), never an edited expected code."
+    }
+  ]
+}

@@ -759,3 +759,61 @@ addition** (vector + manifest line) stays green.
 **Not verifiable locally**: execution of the two `./scripts/*.sh` steps on
 the runner image (POSIX `bash`, `set -euo pipefail`; `sha256sum` from the
 image's coreutils, with a `shasum -a 256` fallback for non-GNU hosts).
+
+---
+
+# Q8 — wave-5 lane changes (2026-07-28)
+
+## What changed
+
+- **Mount point `tamper-matrix` claimed.** Job id and `name:` are
+  **byte-identical** to the Q1 placeholder, so this is *not* a new
+  required-status context and the branch-protection payload is unchanged
+  from the 16-context Q6 payload above. Only the step bodies changed, per
+  the CONTRIBUTING.md "CI lanes" rule.
+- The lane now runs Q7's harness self-tests (`--lib -- test_util::tamper`),
+  Q7's registry, C17's crypto suite, and Q8's completeness check, with
+  `--nocapture` so the Q14 gate report appears in the log every run.
+- Registry `testdata/tamper/MATRIX.json`; checker
+  `crates/antseal-core/tests/tamper_completeness/mod.rs` (wired from
+  `tests/tamper_matrix.rs`, which owns the assembled row registry).
+
+**Only one mount point remains**: `fuzz-smoke` (Q9).
+
+## Local verification (2026-07-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Harness self-tests | `cargo test -p antseal-core --locked --lib -- test_util::tamper` | **PASS** — 8 tests |
+| Registry + completeness | `cargo test -p antseal-core --locked --test tamper_matrix --test tamper_crypto` | **PASS** — 20 + 8 tests |
+
+Gate report printed by the lane:
+
+```
+Q14 gate — M0 tamper matrix: NOT COMPLETE, 13 row(s) owed:
+    F15: oversized-or-deep-cbor/{oversized, deep}
+    G19: altered-manifest-field/covered-unit-fails-fine-root, over-broad-ggm-cover/…
+    R7:  wrong-length-salt-or-seed/ggm-seed-32, non-mirror-range-violations/out-of-bounds,
+         raw-mirror-canonicalization-mismatch/…, true-length-range-mismatch/…,
+         partial-reveal-material-leak/{file-salt-leak, s-root-leak}
+    R8:  flipped-ciphertext-byte/…, altered-manifest-field/non-covered-unit-fails-unit-commit,
+         swapped-unit/…
+    M2 anchor rows additionally registered for Q18: 7
+tamper completeness: 37 M0 spec case(s) — 24 implemented, 13 pending;
+                     9 project-added row(s); 2 recorded non-row(s)
+```
+
+That the lane is green **while 13 rows are owed** is deliberate and is the
+point of the design: the gap is enumerated with named owners rather than
+hidden by a weakened check. Q14 flips zero-pending into the gate condition.
+
+**Test-of-the-test coverage** (14 cases in the checker module), one per way
+the registry could lie: a case with no coverage and no pending marker; a
+stale pending marker on an implemented case; a case naming a nonexistent
+row; an implemented row accounted for nowhere; a `spec_quote` absent from
+the spec line; a deleted family; a pending row colliding with an
+implemented one; two pending rows colliding without a note; a pending
+marker reserving a live row id; a pending marker without a task id; a
+non-row whose `collides_with` points at nothing; a project addition with an
+empty justification; an unknown field. Plus the positive control (the
+committed registry passes through the identical text path).

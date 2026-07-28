@@ -57,13 +57,13 @@ Live lanes (wave 5 — Q6):
 | Lane | What it asserts |
 | --- | --- |
 | `vector-freeze` | Q6 — **NEW required context.** Per format version, `testdata/vectors/v<n>/FROZEN.sha256` pins the exact bytes of every committed vector **and** is that version's must-exist list: `golden-vectors` can only fail on files it finds, so a **deleted** vector is caught here, as is a committed vector left *outside* the manifest. Two independent layers: coreutils `sha256sum -c` (no shared code with antseal) and `crates/antseal-core/tests/vector_freeze.rs` (directives, misfiled/unfrozen/stray classes, per-version retention, `#! pending` must-exist obligations). **Self-tests first, every run**: a mutated and a deleted vector must both turn the digest check red (`./scripts/vector-freeze.sh --self-test`). Add a vector with `./scripts/vector-freeze.sh --update`. Contract: `testdata/vectors/README.md`; retention policy: `testdata/README.md`. |
+| `tamper-matrix` | Q7 + Q8 — **mount point claimed** (job id and name unchanged). Q7: every registered mutation row produces exactly its expected stable code / verdict state, outcomes are pairwise distinct across domains, no row panics. Q8: `testdata/tamper/MATRIX.json` maps MVP-SPEC.md line 168's enumeration **1:1** onto implemented rows — each family's `spec_quote` must be a literal substring of that spec line, every spec case is implemented or carries a `pending` marker naming its owning task, every implemented row is mapped or declared in `project_added` with a justification, and deliberate non-rows are recorded. **Zero pending is Q14's gate condition**, printed every run. See `testdata/tamper/README.md`. |
 
 Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
 task; **a green mount-point lane asserts nothing until then**):
 
 | Lane | Content lands at |
 | --- | --- |
-| `tamper-matrix` | Q7 — every registered mutation fails with its distinct expected error; no panics (Q8 tracks completeness) |
 | `fuzz-smoke` | Q9 — fixed-budget per-PR cargo-fuzz smoke (nightly long run is a separate scheduled workflow) |
 
 ### Cross-OS suite naming (reserved test-name markers)
