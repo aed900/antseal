@@ -435,6 +435,29 @@ pub enum VerifyError {
         file_id: u64,
     },
 
+    /// A `touched_files` entry names a file the bundle reveals no unit of
+    /// (**decision D82**, closing the converse half D80 left open:
+    /// `touched_files` must *equal* the set of files with a revealed unit).
+    ///
+    /// MVP-SPEC.md line 95 says bundle recipients see unrevealed files
+    /// "only as committed placeholders", and line 121's rendering taxonomy
+    /// names the state — an unrevealed file renders as a placeholder with
+    /// its **path withheld**. A disclosed path for a file with no revealed
+    /// unit is therefore a disclosure the format does not define, and the
+    /// verifier discards its verified value anyway
+    /// ([`reveal_set`](super::pipeline)).
+    ///
+    /// It is not a forgery — `path_salt = HKDF(W, "path-salt", file_id)` is
+    /// a per-work constant, so any party holding another bundle of the same
+    /// work can splice a *genuine* `{path, path_salt}` pair in, overriding
+    /// the sealer's per-bundle disclosure decision. That is the D74
+    /// add-material hole in the touched-file section, and this closes it.
+    #[error("file {file_id}: touched_files entry for a file with no revealed unit")]
+    TouchedFileWithoutRevealedUnit {
+        /// The disclosed file that no reveal touches.
+        file_id: u64,
+    },
+
     /// The bundle reveals a unit in the wrong reveal section for the way
     /// the **signed manifest** binds it (MVP-SPEC.md line 94): a
     /// fine-tree-covered unit shipped as a non-covered reveal (so it
@@ -679,6 +702,7 @@ impl VerifyError {
             Self::RawMirrorInTilingSet { .. } => "raw-mirror-in-tiling-set",
             Self::PathCommitMismatch { .. } => "path-commit-mismatch",
             Self::RevealedUnitFileNotTouched { .. } => "revealed-unit-file-not-touched",
+            Self::TouchedFileWithoutRevealedUnit { .. } => "touched-file-without-revealed-unit",
             // Named from the *bundle's* mistake, since that is what a
             // tamper row mutates: the manifest side is the fixed fact.
             Self::RevealModeMismatch {
@@ -899,6 +923,7 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             unit_id: 10,
             file_id: 2,
         },
+        E::TouchedFileWithoutRevealedUnit { file_id: 2 },
         E::RevealModeMismatch {
             unit_id: 11,
             manifest_binding: BindingMode::FineTreeCovered,
@@ -1017,7 +1042,7 @@ mod tests {
 
     use super::*;
 
-    /// The number of distinct stable codes: 15 single-code variants plus
+    /// The number of distinct stable codes: 16 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
     /// ConcatCommitMismatch×2, RevealModeMismatch×2,
@@ -1033,10 +1058,11 @@ mod tests {
     ///
     /// The 14th single-code variant is D74's
     /// `FullRevealSRootWithoutFineTree` (R4); the 15th is D80's
-    /// `RevealedUnitFileNotTouched` (R5).
+    /// `RevealedUnitFileNotTouched` (R5); the 16th is D82's
+    /// `TouchedFileWithoutRevealedUnit` (R5), the converse of the 15th.
     ///
-    /// 15 + (6+4+2+2+2+2+7) + 2 + 15 + 25 + 2 = 84.
-    const DISTINCT_CODES: usize = 84;
+    /// 16 + (6+4+2+2+2+2+7) + 2 + 15 + 25 + 2 = 85.
+    const DISTINCT_CODES: usize = 85;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -1088,6 +1114,9 @@ mod tests {
                 VerifyError::RawMirrorInTilingSet { .. } => "RawMirrorInTilingSet",
                 VerifyError::PathCommitMismatch { .. } => "PathCommitMismatch",
                 VerifyError::RevealedUnitFileNotTouched { .. } => "RevealedUnitFileNotTouched",
+                VerifyError::TouchedFileWithoutRevealedUnit { .. } => {
+                    "TouchedFileWithoutRevealedUnit"
+                }
                 VerifyError::RevealModeMismatch { .. } => "RevealModeMismatch",
                 VerifyError::PartialRevealSaltLeak { .. } => "PartialRevealSaltLeak",
                 VerifyError::FullRevealMaterialMissing { .. } => "FullRevealMaterialMissing",
@@ -1107,7 +1136,7 @@ mod tests {
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 26, "26 variants must be represented");
+        assert_eq!(tally.len(), 27, "27 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),

@@ -34,6 +34,21 @@
 //! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
 //!   structural rows, mutated from [`bundle_fixtures`] works and driven
 //!   through `verify_bundle` wherever the mutation is reachable there.
+//! - [`tamper_rows_pipeline`] — R's other registry slice (R8): the
+//!   pipeline-integration rows, which mutate a bundle's *contents*
+//!   (ciphertext, keys, salts, signed manifest fields) rather than its
+//!   shape. Also the home of the named tests that stand in for the three
+//!   mutations decision D81 and R8 demoted to recorded non-rows, since an
+//!   AEAD tag comparison and a commitment opening are each one bit and
+//!   cannot attribute a cause.
+//! - [`bundle_mutators`] — R10's hostile-bundle generator: the structure-
+//!   aware mutation set, the seed corpus (valid R6 shapes + R7/R8 tamper
+//!   fixtures), and the `verify_bundle` driver. Shared verbatim by R10's
+//!   in-suite proptest and the cargo-fuzz target, so the mutators are
+//!   exercised on every CI build rather than only when someone fuzzes, and
+//!   a fuzzer crash reproduces through the identical code path. Takes raw
+//!   entropy rather than an `Arbitrary` impl, so no fuzzing dependency
+//!   enters this crate.
 //! - [`bundle_fixtures`] — R6's seeded, deterministic constructor for valid
 //!   works and `.sealproof` bundles of every M0 shape. The substrate R7–R10
 //!   mutate and R9's golden vectors pin; the M3 production builder (R13)
@@ -95,6 +110,8 @@
 //! whole workspace.
 
 pub mod bundle_fixtures;
+#[cfg(feature = "test-util")]
+pub mod bundle_mutators;
 pub mod fixture_rng;
 #[cfg(feature = "test-util")]
 pub mod strategies;
@@ -104,6 +121,8 @@ pub mod tamper;
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_fine_tree;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_pipeline;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_structural;
 pub mod vectors;

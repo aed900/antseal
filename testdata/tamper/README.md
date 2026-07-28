@@ -24,9 +24,24 @@ Three kinds of entry, and the distinction is the point:
 
 | Section | Meaning |
 | --- | --- |
-| `families[]` | The spec's own rows. Every **case** either names implemented row ids or carries a `pending` marker naming the task that owes it. **There is no third state** — a case with neither fails the check, so a missing row is never silently absent. |
+| `families[]` | The spec's own rows. Every **case** is in exactly one of three states: `rows` (implemented row ids), `pending` (a marker naming the task that owes it), or `non_row` (the id of the recorded argument that it can never have a row). **There is no fourth state, and no case may be in two** — a case with none fails the check, so a missing row is never silently absent, and a case with two is an unresolved claim about which state is current. |
 | `project_added[]` | Implemented rows the spec's line-168 list does *not* name. Legitimate — line 168's framing is "every mutation fails with a distinct error", which its list illustrates rather than exhausts — but each carries a recorded justification, so the 1:1 spec mapping stays honest about which rows came from where. |
-| `non_rows[]` | Mutations that deliberately will **not** become rows, because another row already claims their outcome and Q7's distinctness assertion correctly refuses the pair. Recorded with the reason and where the property lives instead. |
+| `non_rows[]` | Mutations that deliberately will **not** become rows, because another row already claims their outcome and Q7's distinctness assertion correctly refuses the pair. Recorded with the reason and where the property lives instead. Each entry's `collides_with` must name a row that is live or reserved by a `pending` marker — which is what lets a *case* discharge itself by naming one. |
+
+**The `non_row` case state, and why it is constrained** (decision D81). A
+spec case whose mutation is observationally identical to another case's can
+never have a row: `check_registry` would correctly refuse the pair. Before
+D81 such a case could only be written `pending` — and **Q14's gate is zero
+pending**, so it would have held the freeze gate red for ever. The registry
+can now say "discharged, and here is the argument" instead, but never on
+prose alone: the named `non_rows[]` entry has already been required to name
+a `collides_with` row that actually claims the outcome, so the discharge
+transitively names a row, which is the same strength `pending` has. It is
+pinned twice besides — `EXPECTED_NON_ROWS` for the argument set and
+`EXPECTED_M0_NON_ROW_CASES` for the discharged-case set, both in the
+checker — so a case cannot be discharged by editing one file. It is still
+weaker than a row, and D81 says so; the alternative was minting a permanent
+error code for information the construction does not have.
 
 What makes it a real 1:1 check rather than a restatement: every family's
 `spec_quote` must be a **literal substring of MVP-SPEC.md line 168**, in its
@@ -56,7 +71,10 @@ than a schema change.
    completeness claim to be reviewed alongside the row.
 4. If the row cannot exist because another row already claims its outcome,
    that is a `non_rows` entry plus a property test — never an edited
-   expected code (error-code contract §3).
+   expected code (error-code contract §3). If the mutation is one the
+   **spec** names, the case it belongs to also swaps its `pending` block for
+   `"non_row": "<non-row-id>"`, and its `EXPECTED_M0_NON_ROW_CASES` entry
+   lands in the same commit.
 
 Fuzz regression cases from crash triage (Q9) are also added here when a
 crash reduces to a deterministic malformed input.

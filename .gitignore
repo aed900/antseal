@@ -10,6 +10,13 @@
 # Cargo.lock files ARE committed (reproducible probes) — only build output
 # is ignored.
 probes/*/target/
+# cargo-fuzz (R10/F17/A23): the target is committed, the machine-generated
+# corpora and crash artifacts are not. Q9 owns the minimized-corpus
+# retention policy and will commit those deliberately, under its own path.
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
 
 # Devnet data (local Autonomi devnet + Anvil state; P16/P17)
 devnet-data/

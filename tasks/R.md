@@ -390,6 +390,30 @@
   - Q14's checklist carries the row, so a future report-format bump cannot land without its vector re-emit
 - Notes: Surfaced at R9 (M0 wave 5). Must land **before** Q14 flips `status frozen`, since after the freeze `--update` refuses to modify an existing digest and the same change becomes a report-format version bump instead of a pre-freeze re-snapshot.
 
+### R31 — Decide whether `unit_commit` mismatch deserves a cause discriminator, or close it the way D81 closed the AEAD
+- Milestone: M0 (before Q14 — it is a code-set question)
+- Size: S (a record, and either zero or one code)
+- Deps: R8 (landed); reads `docs/decisions/D81-unit-decrypt-cause.md`
+- Spec: Tamper matrix (line 168); single authoritative commitment (line 94); Format stability (line 123)
+- Do: R8 found a **third** collision of D81's exact shape, one commitment layer up, and discharged it as the recorded non-row `pipeline-level-wrong-unit-salt` on the argument that a salted commitment opening is one bit: the verifier recomputes `SHA-256(0x02 ‖ unit_salt ‖ bytes)` and compares, and a mismatch cannot attribute itself to a substituted bundle `unit_salt` rather than to an altered manifest `unit_commit`, because both are inputs to the one comparison. That argument is sound and is asserted by a named test, but unlike D81 it has **no decision record**, and the code set freezes at Q14. Either ratify the non-row in a short record (the expected outcome — it is the same argument, and D81's four candidate discriminators have no analogue here), or find the discriminator and mint the code before the freeze. Note the asymmetry that makes it worth a look rather than a rubber stamp: unlike the AEAD, both inputs to this comparison are *structurally* attributable — the salt is bundle-side and the commit is manifest-side, and the manifest is **signed**. A verifier that ran the signature stage first could say which side was altered. That is precisely the trade the frozen stage order rejects (Files before Signatures, so a content failure reports as a content failure), so the answer is very likely "no code" — but the reasoning should be written down rather than inferred from R8's module docs.
+- Accept:
+  - A decision record, or a recorded ratification of the existing non-row, before Q14
+  - If a code is minted, it is appended (never an edited expected code), and `pipeline-level-wrong-unit-salt` becomes a row in `tamper_rows_pipeline`
+  - If not, `docs/testing/error-code-contract.md` §7's R8 entry is the citation and the non-row's `record` field points at the ratifying record rather than at the registry
+- Notes: Surfaced at R8 (M0 wave 5). The generalisation worth keeping either way, already recorded in the contract: R's codes name the *check that failed*, not the field that was wrong — so any check that is a single comparison over several inputs (AEAD tag, commitment opening, Merkle root) cannot carry a cause.
+
+### R32 — Extend R10's structure-aware mutators to the sections R6 cannot currently vary
+- Milestone: M0
+- Size: S
+- Deps: R10 (landed), R6
+- Spec: M0 milestone — parser hardening, fuzzing in CI (line 153); Risks — hostile bundles (line 187)
+- Do: R10's structure-aware mutation set works on encoded bundle bytes (bit-flips, truncations, prefix/suffix splices) plus R6's typed `Tweak` knobs. What it cannot yet do is *section-level* recombination that stays decodable — swap the `covered_reveals` and `noncovered_reveals` arrays wholesale, move a `full_reveals` entry between files, or graft one work's `storage_record`/anchor section onto another work's bundle — because R6 builds a bundle in one pass and exposes no re-assembly seam. Those are exactly the inputs a hostile relay can cheaply produce, and they exercise decode-then-cross-check paths that byte-level mutation reaches only by luck. Add a builder seam (a `BundleParts` round-trip on R6's output, or a decode→mutate→re-encode helper) and drive it from both the proptest and the fuzz target.
+- Accept:
+  - Section-level recombination mutators that produce *decodable* bundles, so the mutation lands past stage 1 rather than dying at the codec
+  - Both the in-suite proptest and the fuzz target consume them; the no-panic and typed-outcome invariants are unchanged
+  - Cross-work grafts included (one work's manifest, another's reveals), since that is the shape no single-work fixture can produce
+- Notes: Surfaced at R10 (M0 wave 5). R10 deliberately shipped without it rather than blocking on a builder change; the fuzz target's `Corpus::Reject` accounting means adding mutators later cannot silently reduce coverage.
+
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.

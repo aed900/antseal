@@ -392,12 +392,14 @@ const ROWS: &[TamperRow] = &[
 /// both sit in one registry.
 ///
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
-/// tree) and R7 (structural) are present; F15, A21 and R8 follow.
+/// tree), R7 (structural) and R8 (pipeline integration) are present; F15
+/// and A21 follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
     rows
 }
 
@@ -481,6 +483,15 @@ fn tamper_matrix_pending_rows_are_the_enumerated_ones() {
 #[test]
 fn tamper_matrix_records_its_deliberate_non_rows() {
     tamper_completeness::assert_non_rows_are_recorded(&all_rows());
+}
+
+/// Spec cases discharged **without a row** are exactly the pinned ones
+/// (decision D81). This is the state that can make Q14's gate green by
+/// argument rather than by a row, so the set is pinned outside the registry
+/// and every addition is a reviewed event.
+#[test]
+fn tamper_matrix_non_row_discharges_are_the_pinned_ones() {
+    tamper_completeness::assert_non_row_cases_are_the_pinned_ones(&all_rows());
 }
 
 /// Prints Q14's gate condition and the outstanding work every run.

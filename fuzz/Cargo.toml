@@ -1,0 +1,51 @@
+# R10's cargo-fuzz target for `verify_bundle`.
+#
+# DELIBERATELY NOT A WORKSPACE MEMBER. The empty `[workspace]` table below
+# is cargo-fuzz's standard idiom for detaching a fuzz crate from the parent
+# workspace, and it is what keeps `libfuzzer-sys` and its `cc`/`arbitrary`
+# subtree out of the audited normal dependency graph and out of the
+# workspace `Cargo.lock` (docs/dependency-policy.md: a new dependency is a
+# deliberate, reviewed event). Nothing the main build resolves changes
+# because this directory exists.
+#
+# It also cannot build on the pinned stable toolchain: `-Z sanitizer` and
+# libFuzzer's instrumentation need nightly, and rust-toolchain.toml pins
+# 1.92.0. Q9 owns that pin — see fuzz/README.md for exactly what is left.
+[package]
+name = "antseal-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+# The only two dependencies, and both are fuzzing-harness infrastructure
+# rather than anything the product links.
+libfuzzer-sys = "0.4"
+
+# `test-util` (not `test-vectors`): the mutation engine and the seed corpus
+# live behind it, alongside R7/R8's tamper fixtures. This edge is the reason
+# the fuzz crate is detached — `test-util` activates proptest, which must
+# never reach a normal dependency edge (crates/antseal-core/src/test_util).
+[dependencies.antseal-core]
+path = "../crates/antseal-core"
+features = ["test-util"]
+
+[[bin]]
+name = "verify_bundle"
+path = "fuzz_targets/verify_bundle.rs"
+test = false
+doc = false
+bench = false
+
+# cargo-fuzz's own defaults; stated rather than inherited so a reader knows
+# the target is built with debug assertions ON — a debug_assert firing is a
+# finding, not noise.
+[profile.release]
+debug = true
+debug-assertions = true
+overflow-checks = true

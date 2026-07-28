@@ -348,6 +348,99 @@ kebab-case id, and never edit an existing row's expected code.
     over a per-unit `unit_commit` error). Owed tamper row: F15.
   - R's `VerifyError::Decode` wrapper surfaces all nineteen unchanged (§2), so
     R's universe grows by nineteen without R minting anything.
+- **2026-07-28 (M0 wave 5, D82)** — R appended one code in its unprefixed
+  namespace, in the **same class as the 2026-07-28 R5 entry above** (bundle
+  and manifest each well formed, the two inconsistent):
+  `touched-file-without-revealed-unit`, on the new variant
+  `VerifyError::TouchedFileWithoutRevealedUnit { file_id }`. R's universe:
+  **85** distinct codes over **27** variants.
+
+  It is the converse of D80's `revealed-unit-file-not-touched`, and the pair
+  is why it is a second code rather than a widened first: a verdict must say
+  which direction the bundle got `touched_files` wrong, and the two
+  mutations are separately reachable (drop an entry vs. splice one in).
+  With both in force `touched_files` is exactly determined by the revealed
+  set, so any deviation in either direction is a named error.
+
+  Two contract points worth recording:
+
+  1. **The check is additive to a frozen order.** It runs at R5's coherence
+     group 1b, after D80's group 1 and before the reveal-section rule. No
+     previously-rejected input changes its reported code — group 1 still
+     wins where both fire, and the inputs 1b newly rejects were previously
+     *accepted*, so they had no code to change. Both precedences are pinned
+     by tests rather than asserted in prose
+     (`d82_group_order_*` in `verify::coherence`).
+  2. **A stage-ordering trap the row had to be built around, recorded
+     because it generalises.** `check_path_commits` runs earlier, in stage
+     2's structural groups, and iterates the *bundle's* touched list. A
+     fixture that splices an entry with an invented path or a junk salt
+     therefore reports `path-commit-mismatch` and silently pins a
+     **different, already-owned** outcome. The mutation only reaches 1b
+     when the spliced `{path, path_salt}` pair is genuine — which is also
+     the security point, since `path_salt = HKDF(W, "path-salt", file_id)`
+     is a per-work constant and needs no forgery to copy. Both codes are
+     pinned from the same fixture knob
+     (`d82_a_junk_salt_is_claimed_by_the_earlier_path_commit_stage`), so
+     the row cannot drift onto the wrong one.
+
+- **2026-07-28 (M0 wave 5, R8 / D81)** — **no code minted.** R8's three
+  pipeline mutations that all land on `unit-decrypt-failed` — flipped
+  ciphertext byte, swapped unit, wrong `k_u` — were resolved by **D81** in
+  favour of one row and two recorded non-rows, not a cause discriminator.
+  An AEAD authentication failure is one bit by construction (a single
+  Poly1305 tag comparison over key, nonce, AAD, ciphertext and lengths), so
+  a cause code would be a claim to information the construction is built not
+  to have; D81 evaluates and rejects the four candidate discriminators
+  (ciphertext length, chunk-address recompute, speculative re-decryption,
+  AAD introspection). The precedent it follows is C's own collapse one layer
+  down, where `crypto-unit-aead-wrong-key` is the single row for the whole
+  wrong-key/nonce/AAD/flip family.
+
+  The contract consequence is §3-shaped and worth stating: **adding a
+  `unit-decrypt-*` cause code later is not a routine append.** Appending
+  codes stays routine; appending *this* one requires a decision that first
+  defeats D81's four items, because the verifier would have to obtain the
+  information from outside the AEAD — which in every candidate means an
+  unauthenticated check displacing an authenticated one.
+
+  D81 also forced a **checker** change rather than a code change, recorded
+  here because it widens what "discharged" means: a Q8 spec case may now be
+  discharged by a recorded non-row (`non_row`), not only by a row or a
+  `pending` marker. It is constrained so the discharge still names a real
+  row — the non-row's `collides_with` must resolve to a live or reserved row
+  id — and both the non-row set and the discharged-case set are pinned
+  outside the registry.
+
+  **A third collision, found while implementing R8, of the same shape one
+  commitment layer up.** R8's task text also names `wrong unit_salt →
+  unit_commit mismatch`, which lands on `unit-commit-mismatch` — the code
+  R8's own `altered manifest field, non-covered unit` row claims. It is the
+  same argument as D81's, and it is worth stating because it generalises
+  past the AEAD: **a salted commitment opening is one bit too.** The
+  verifier recomputes `SHA-256(0x02 ‖ unit_salt ‖ bytes)` and compares it
+  with the manifest's stored value; a mismatch says the *triple* is
+  inconsistent and cannot attribute itself to a substituted bundle salt
+  rather than to an altered manifest commit, because both are inputs to the
+  one comparison. `VerifyError::UnitCommitMismatch` carries only `unit_id`,
+  and a cause field would be reporting a sub-comparison that does not
+  exist. The spec's `wrong-salt/unit-commit` case is in any event already
+  discharged by C's primitive-level row, so a pipeline-level salt row would
+  be a project addition claiming an owned outcome. Recorded as the non-row
+  `pipeline-level-wrong-unit-salt` with a named test.
+
+  The generalisation worth carrying forward: **the codes in R's namespace
+  name the check that failed, not the field that was wrong.** Wherever a
+  check is a single comparison over several inputs — an AEAD tag, a
+  commitment opening, a Merkle root — asking for a cause discriminator is
+  asking the verifier for information the comparison does not produce.
+
+  R8 also brought R's unprefixed namespace to **full row coverage**: R7's
+  `every_unprefixed_verify_code_has_a_row_or_a_named_owner` had two codes
+  standing on `OWED_BY_ANOTHER_TASK` (`unit-decrypt-failed`,
+  `unit-commit-mismatch`) and both are now rows, so that list is empty. It
+  is kept rather than deleted, so the "named owner" escape stays available
+  and deliberate the next time a code lands ahead of its row.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

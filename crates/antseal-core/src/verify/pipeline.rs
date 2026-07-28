@@ -17,7 +17,7 @@
 //! | # | [`VerifyStage`] | what runs | owner |
 //! |---|---|---|---|
 //! | 1 | [`Decode`] | [`SealProof::decode`] — the three strict CBOR layers (bundle schema, manifest envelope, manifest body) | F8/F9 |
-//! | 2 | [`Structural`] | [`check_structural`] (lengths → manifest refs → bundle refs → tiling → `path_commit`), then [`check_coherence`] (D80 touched-file coverage → reveal-section agreement) | R3 + R5 |
+//! | 2 | [`Structural`] | [`check_structural`] (lengths → manifest refs → bundle refs → tiling → `path_commit`), then [`check_coherence`] (D80 touched-file coverage → D82 touched-set exactness → reveal-section agreement) | R3 + R5 |
 //! | 3 | [`Units`] | [`verify_revealed_unit`] per revealed unit, in manifest unit order: decrypt → padding → `true_length` → content binding | R2 |
 //! | 4 | [`Files`] | [`check_file_stages`]: reveal-shape classification, partial-reveal isolation, full-reveal cross-checks, raw-mirror binding | R4 |
 //! | 5 | [`Signatures`] | [`sig_policy::verify_body`] over the **received** body bytes: present-set == policy-set, then each algorithm | C14 |
@@ -898,9 +898,11 @@ fn anchor_stubs(bundle: &BundleV1<'_>) -> Vec<AnchorResult> {
 ///
 /// A file with at least one revealed unit becomes a [`FileReveal`] carrying
 /// its verified path; every other file becomes an
-/// [`UnrevealedFilePlaceholder`] — size only, path withheld — including a
-/// file whose path the bundle disclosed without revealing any of its bytes
-/// (see [`super::coherence`]). Spans are sorted by start; R3's tiling check
+/// [`UnrevealedFilePlaceholder`] — size only, path withheld. Since D82 the
+/// second arm handles only genuinely *untouched* files: a bundle disclosing
+/// a path without revealing any of that file's bytes no longer reaches this
+/// function, because stage 2's coherence group 1b rejects it (see
+/// [`super::coherence`]). Spans are sorted by start; R3's tiling check
 /// already guarantees the manifest order is that order, but sorting here
 /// keeps the report's own invariant local to the report.
 fn reveal_set(
@@ -1078,6 +1080,16 @@ mod tests {
         drop_full_material: bool,
         /// Omit the `touched_files` entry for this file (D80).
         drop_touched_file: Option<u64>,
+        /// Splice a `touched_files` entry for file 2 — which this fixture
+        /// reveals nothing from — using this `path_salt` byte pattern
+        /// (D82). `Some(0x32)` is the file's **genuine** salt, so
+        /// `check_path_commits` (stage 2's structural groups, which run
+        /// before coherence) cannot preempt D82's code with
+        /// `path-commit-mismatch`; that is the whole point of the knob,
+        /// and `path_salt = HKDF(W, "path-salt", file_id)` being a
+        /// per-work constant is why the splice needs no forgery. Any other
+        /// pattern is the junk-salt control.
+        add_touched_file_2: Option<u8>,
         /// Emit this covered unit in `noncovered_reveals` instead.
         misplace_covered_unit: Option<u64>,
         /// Flip a ciphertext byte of each of these units.
@@ -1391,7 +1403,11 @@ mod tests {
             }
         }
 
-        let touched_files: Vec<BundleTouchedFile> = [(0u64, F0_PATH, 0x12u8), (1, F1_PATH, 0x22)]
+        let mut planned_touched = vec![(0u64, F0_PATH, 0x12u8), (1, F1_PATH, 0x22)];
+        if let Some(pattern) = tweak.add_touched_file_2 {
+            planned_touched.push((2, F2_PATH, pattern));
+        }
+        let touched_files: Vec<BundleTouchedFile> = planned_touched
             .into_iter()
             .filter(|(file_id, ..)| tweak.drop_touched_file != Some(*file_id))
             .map(|(file_id, path, pattern)| {
@@ -1706,6 +1722,51 @@ mod tests {
             }),
             "revealed-unit-file-not-touched"
         );
+    }
+
+    /// **D82** through the whole pipeline: file 2 is revealed from not at
+    /// all, so a `touched_files` entry for it is rejected — even though the
+    /// entry is *genuine* and opens the signed `path_commit`.
+    #[test]
+    fn d82_touched_file_without_a_revealed_unit_is_rejected() {
+        assert_eq!(
+            code_of(&Tweak {
+                add_touched_file_2: Some(0x32),
+                ..Tweak::default()
+            }),
+            "touched-file-without-revealed-unit"
+        );
+    }
+
+    /// The trap D82's record spells out, pinned rather than assumed:
+    /// `check_path_commits` runs **before** coherence and iterates the
+    /// *bundle's* list, so a spliced entry whose salt does not open
+    /// `path_commit` reports `path-commit-mismatch` and never reaches group
+    /// 1b. A row built on such a fixture would silently test the wrong
+    /// thing — so the two salts must produce two different codes, and the
+    /// row above is on the good one.
+    #[test]
+    fn d82_a_junk_salt_is_claimed_by_the_earlier_path_commit_stage() {
+        assert_eq!(
+            code_of(&Tweak {
+                add_touched_file_2: Some(0x99),
+                ..Tweak::default()
+            }),
+            "path-commit-mismatch"
+        );
+    }
+
+    /// The report's `UnrevealedFilePlaceholder` arm now handles only
+    /// genuinely untouched files: with D82 in force there is no input that
+    /// reaches [`reveal_set`] carrying a disclosed path for a file with no
+    /// revealed unit. File 2 still renders as a placeholder in the valid
+    /// fixture, path withheld.
+    #[test]
+    fn d82_leaves_the_placeholder_rendering_untouched() {
+        let report = verify_bundle(&valid(), &VerifyOptions::new()).expect("the fixture verifies");
+        let placeholders = &report.reveal.unrevealed_files;
+        assert_eq!(placeholders.len(), 1);
+        assert_eq!(placeholders[0].file_id, 2);
     }
 
     /// A covered unit shipped in `noncovered_reveals` is rejected before
