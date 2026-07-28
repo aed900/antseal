@@ -1360,6 +1360,135 @@ pub mod shapes {
             FileSelection::Untouched,
         ])
     }
+
+    /// One entry of the [`catalogue`]: a named work + the reveal selection
+    /// that exercises it.
+    #[derive(Debug, Clone)]
+    pub struct Case {
+        /// Stable handle, `"<shape>/<selection>"`.
+        ///
+        /// Treat it like an error code: R9's committed golden vectors name
+        /// cases by this string, so renaming one is a vector edit, not a
+        /// refactor.
+        pub name: &'static str,
+        /// The work to seal.
+        pub spec: WorkSpec,
+        /// What the reveal shows of it.
+        pub selection: Selection,
+    }
+
+    /// **The named case catalogue**: every M0 shape paired with the selection
+    /// that exercises it.
+    ///
+    /// Promoted out of R6's own `#[cfg(test)]` list so exactly one definition
+    /// of "the M0 shapes" exists. R6's suite iterates it, and R9's `report`
+    /// golden vectors resolve their `shape` field through [`by_name`] — on
+    /// wasm32 as well as natively, which is why it sits on the `test-vectors`
+    /// tier with everything else here.
+    ///
+    /// Adding a case is additive; **renaming** one breaks a committed vector
+    /// by design.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn catalogue() -> Vec<Case> {
+        let case = |name, spec, selection| Case {
+            name,
+            spec,
+            selection,
+        };
+        vec![
+            case(
+                "single-text-with-mirror/full",
+                single_text_with_mirror(),
+                Selection::all(1),
+            ),
+            case(
+                "single-text-with-mirror/full-no-mirror",
+                single_text_with_mirror(),
+                Selection(vec![FileSelection::FullNoMirror]),
+            ),
+            case(
+                "single-text-with-mirror/untouched",
+                single_text_with_mirror(),
+                Selection::nothing(1),
+            ),
+            case("single-binary/full", single_binary(), Selection::all(1)),
+            case(
+                "split-multi-unit/partial",
+                split_multi_unit(),
+                Selection(vec![FileSelection::Units(vec![1])]),
+            ),
+            case(
+                "split-multi-unit/partial-two-of-three",
+                split_multi_unit(),
+                Selection(vec![FileSelection::Units(vec![0, 2])]),
+            ),
+            case(
+                "split-multi-unit/full-via-enumerated-units",
+                split_multi_unit(),
+                Selection(vec![FileSelection::Units(vec![0, 1, 2])]),
+            ),
+            case("split-multi-unit/all", split_multi_unit(), Selection::all(1)),
+            case("no-fine-tree/full", no_fine_tree(), Selection::all(1)),
+            case(
+                "raw-mirror-sources/all",
+                raw_mirror_sources(),
+                Selection::all(2),
+            ),
+            case("empty-file/full", empty_file(), Selection::all(1)),
+            case("empty-file/untouched", empty_file(), Selection::nothing(1)),
+            case("one-byte-file/full", one_byte_file(), Selection::all(1)),
+            case("unbalanced-n6/all", unbalanced_n6(), Selection::all(1)),
+            // The three single-unit reveals of the unbalanced n = 6 file.
+            // Each unit is two bytes, so each opens a different depth-1 GGM
+            // subtree — leaves {0,1}, {2,3}, {4,5}. Taken together they walk
+            // every non-palindromic path of the d = 3 grid, which is what
+            // pins MSB-first indexing *through the pipeline* (R9) rather
+            // than at the tree layer alone (G15).
+            case(
+                "unbalanced-n6/unit-0",
+                unbalanced_n6(),
+                Selection(vec![FileSelection::Units(vec![0])]),
+            ),
+            case(
+                "unbalanced-n6/unit-1",
+                unbalanced_n6(),
+                Selection(vec![FileSelection::Units(vec![1])]),
+            ),
+            case(
+                "unbalanced-n6/unit-2",
+                unbalanced_n6(),
+                Selection(vec![FileSelection::Units(vec![2])]),
+            ),
+            case(
+                "multi-file/mixed",
+                multi_file(),
+                multi_file_mixed_selection(),
+            ),
+            case("multi-file/all", multi_file(), Selection::all(3)),
+            case(
+                "multi-file-anchored/mixed",
+                multi_file_anchored(),
+                multi_file_mixed_selection(),
+            ),
+            case(
+                "ed25519-only-policy/full",
+                single_binary().with_ed25519_only_policy(),
+                Selection::all(1),
+            ),
+        ]
+    }
+
+    /// Look a [`catalogue`] case up by its stable name.
+    ///
+    /// Returns `None` for an unknown name rather than panicking: the caller
+    /// is a golden-vector executor parsing a committed file, and an unknown
+    /// shape there is adversarial-shaped input to be reported, not a bug to
+    /// abort on.
+    #[must_use]
+    pub fn by_name(name: &str) -> Option<Case> {
+        catalogue().into_iter().find(|case| case.name == name)
+    }
 }
 
 #[cfg(test)]
@@ -1378,96 +1507,34 @@ mod tests {
     }
 
     /// Every named M0 shape, paired with the selection that exercises it.
+    ///
+    /// One definition, in [`shapes::catalogue`] — R9's committed golden
+    /// vectors resolve the very same names through `shapes::by_name`, so a
+    /// shape cannot mean one thing here and another there.
     fn every_shape() -> Vec<(&'static str, WorkSpec, Selection)> {
-        vec![
-            (
-                "single-text-with-mirror/full",
-                shapes::single_text_with_mirror(),
-                Selection::all(1),
-            ),
-            (
-                "single-text-with-mirror/full-no-mirror",
-                shapes::single_text_with_mirror(),
-                Selection(vec![FileSelection::FullNoMirror]),
-            ),
-            (
-                "single-text-with-mirror/untouched",
-                shapes::single_text_with_mirror(),
-                Selection::nothing(1),
-            ),
-            (
-                "single-binary/full",
-                shapes::single_binary(),
-                Selection::all(1),
-            ),
-            (
-                "split-multi-unit/partial",
-                shapes::split_multi_unit(),
-                Selection(vec![FileSelection::Units(vec![1])]),
-            ),
-            (
-                "split-multi-unit/partial-two-of-three",
-                shapes::split_multi_unit(),
-                Selection(vec![FileSelection::Units(vec![0, 2])]),
-            ),
-            (
-                "split-multi-unit/full-via-enumerated-units",
-                shapes::split_multi_unit(),
-                Selection(vec![FileSelection::Units(vec![0, 1, 2])]),
-            ),
-            (
-                "split-multi-unit/all",
-                shapes::split_multi_unit(),
-                Selection::all(1),
-            ),
-            (
-                "no-fine-tree/full",
-                shapes::no_fine_tree(),
-                Selection::all(1),
-            ),
-            (
-                "raw-mirror-sources/all",
-                shapes::raw_mirror_sources(),
-                Selection::all(2),
-            ),
-            ("empty-file/full", shapes::empty_file(), Selection::all(1)),
-            (
-                "empty-file/untouched",
-                shapes::empty_file(),
-                Selection::nothing(1),
-            ),
-            (
-                "one-byte-file/full",
-                shapes::one_byte_file(),
-                Selection::all(1),
-            ),
-            (
-                "unbalanced-n6/all",
-                shapes::unbalanced_n6(),
-                Selection::all(1),
-            ),
-            (
-                "unbalanced-n6/partial",
-                shapes::unbalanced_n6(),
-                Selection(vec![FileSelection::Units(vec![1])]),
-            ),
-            (
-                "multi-file/mixed",
-                shapes::multi_file(),
-                shapes::multi_file_mixed_selection(),
-            ),
-            ("multi-file/all", shapes::multi_file(), Selection::all(3)),
-            (
-                "multi-file-anchored/mixed",
-                shapes::multi_file_anchored(),
-                shapes::multi_file_mixed_selection(),
-            ),
-            (
-                "ed25519-only-policy/full",
-                shapes::single_binary().with_ed25519_only_policy(),
-                Selection::all(1),
-            ),
-        ]
+        shapes::catalogue()
+            .into_iter()
+            .map(|case| (case.name, case.spec, case.selection))
+            .collect()
+    }
+
+    /// The catalogue is a lookup table, so its names must be unique, and
+    /// [`shapes::by_name`] must find every one of them and nothing else.
+    #[test]
+    fn the_shape_catalogue_is_a_usable_registry() {
+        let catalogue = shapes::catalogue();
+        assert!(!catalogue.is_empty());
+        let mut names: Vec<&str> = catalogue.iter().map(|case| case.name).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "catalogue names must be unique");
+        for case in &catalogue {
+            let found = shapes::by_name(case.name).expect("every case resolves by name");
+            assert_eq!(found.name, case.name);
+            assert_eq!(found.selection, case.selection);
+        }
+        assert!(shapes::by_name("no-such-shape/never").is_none());
     }
 
     /// R6's headline: every M0 shape the milestone enumerates builds and
