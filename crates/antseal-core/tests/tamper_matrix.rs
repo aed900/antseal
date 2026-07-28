@@ -483,6 +483,15 @@ fn tamper_matrix_records_its_deliberate_non_rows() {
     tamper_completeness::assert_non_rows_are_recorded(&all_rows());
 }
 
+/// Spec cases discharged **without a row** are exactly the pinned ones
+/// (decision D81). This is the state that can make Q14's gate green by
+/// argument rather than by a row, so the set is pinned outside the registry
+/// and every addition is a reviewed event.
+#[test]
+fn tamper_matrix_non_row_discharges_are_the_pinned_ones() {
+    tamper_completeness::assert_non_row_cases_are_the_pinned_ones(&all_rows());
+}
+
 /// Prints Q14's gate condition and the outstanding work every run.
 #[test]
 fn tamper_matrix_reports_the_q14_gate() {
