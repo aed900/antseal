@@ -68,6 +68,7 @@ discovery/reading is native and lives in the runner test.
 | `kind` | Since | `inputs` | `expect` | Executed as |
 | --- | --- | --- | --- | --- |
 | `hkdf-labels` | M0 (C3) | `w` (32-byte hex; must equal the documented fixed test seed) | `vectors`: one entry per registered HKDF label — `label`, `id` (`0x…` LE64 value), `id_domain` (`unit_id`\|`file_id`\|`sentinel`), `info` (hex), `okm` (hex) | full-registry coverage check, then per label: registry `id_domain`/output-length match, `info` re-encoded and compared, `okm` re-derived through the typed API and byte-compared |
+| `sig-reject` | M0 (C15) | `w`, `alg` (`ed25519`\|`ml-dsa-65`), `ctx` (must equal the frozen signature context), `body` (hex) | `base` (honest `public_key`/`signature` hex) + `cases`: per case an `id`, a `class`, a `why`, a **source** recipe for the key and the signature bytes, and the `expect`ed outcome (`accept` or a stable `crypto-…` code) | `base` re-derived and byte-compared; per-algorithm class coverage; expected codes checked against the real `CryptoError` code set; every case's bytes rebuilt from its recipe and run through C14's full verification path (`sig_policy::verify_body`). Format doc: `v1/sig-reject/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a

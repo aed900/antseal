@@ -8,6 +8,12 @@
 //! spec line 101); binding on standard-model SHA-256 collision resistance
 //! (spec line 100).
 //!
+//! That attack is not left as prose: [`super::confirmation_attack`] runs it,
+//! successfully against unsalted toy variants of `unit_commit` and
+//! `canon_commit` and unsuccessfully against the functions below, as
+//! doc-tests that execute on every CI run (C19). Read them before removing
+//! a salt from any preimage here.
+//!
 //! | commitment     | preimage (via [`tagged_sha256`])            | salt (C2 derivation)                  |
 //! |----------------|---------------------------------------------|---------------------------------------|
 //! | `unit_commit`  | `0x02 ‖ unit_salt ‖ unit_bytes`             | `HKDF(W, "unit-salt", unit_id)`       |

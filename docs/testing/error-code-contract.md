@@ -111,5 +111,15 @@ kebab-case id, and never edit an existing row's expected code.
   unprefixed 30+ (the running total recorded in the TODO decision register
   as D30). Wave-3 work adds `manifest-` (F5–F7) and `content-` (G4/G5/G8)
   codes; the cross-domain sweep runs over the merged set at integration.
+- **2026-07-28** — C17 landed C's registry slice
+  (`antseal_core::test_util::tamper_rows_crypto`): **17 crypto rows**, merged
+  with the Q7 seed rows in `tests/tamper_matrix.rs` so the layer-2
+  cross-domain sweep runs over **34 rows**. C15 added a fourth enforcement
+  surface for the same code set: committed reject vectors validate their
+  expected code against the real `CryptoError` code universe
+  (`all_code_exemplars`), so a code that no variant emits cannot be pinned
+  by a committed artifact either. First genuine cross-domain near-miss
+  recorded and kept separable: R's pipeline-level `path-commit-mismatch` vs
+  C's primitive-level `crypto-path-commit-mismatch`.
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

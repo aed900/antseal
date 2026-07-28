@@ -1,0 +1,257 @@
+{
+  "description": "ML-DSA-65 canonical-encoding reject vectors (FIPS 204 Algorithm 27 sigDecode as enforced by the pinned ml-dsa 0.1.1): hint count/order/padding rules, the z norm bound, wrong lengths, a decodable bit flip, wrong key and wrong ctx — each routed through C14's full verification path.",
+  "expect": {
+    "base": {
+      "public_key": "f0e4be1b562caa3c05eddc6127f99b62b77a538688d939ea88cff4b179a887e72362bb9baea381f290dfe11c009c1c3f318b840a954924f49c617af3006f3e0663279374e2642cb0a85ed55186a859ff1ee85868e4914ea3e87c891e1d7d483a2e66573a8c03f8626d1f6fec9dcc2cc9fe54aea083f0b290594778bbef0b53e42e008ff3dc61126798b547b533c567933a2388c915b8e14211b19061dfce2305765230c5fae6b9200395fb53fcd953eb67cd3f266a02a1300ba4574c29b496baddc90a17c7ab0a251a40973055e39ffb2a6684aec67fd7bac18f0a355a9c9f5a83644e039dba893bf5d4dcd5884a97abf4355ffa56c724e358e17a36a003686159381eec6bdc832b5386425c5de499e79dfad59d5bc55bf685fc9e6100fe1beb8bb694c1831e2098e03ad86108e21110d9bcc28b78fde7e123c8ae43feae63ae5d8fbcda04c9a51e4f8a92fcd23315f7987199e8416a78456fc05ff4747ed656ec9eaf634a6592d4e8774579e7b68effde8b27d2a7b9963626ebb03fac7ed99b72c9553622c42932e04f10b0ac380531dc5bd3813279b8d889501869b63d7b131aeffc5dcf6f30e5234564b1f3c182ae852422701118cab82917671eafed953ead38fd52517b68a284d590f42204376215fcb255ed495ba2f41cff81c9d97299dfb13cd0cdc93ba5a2696b7c08bb60350f3f4bfcc80c488911ebc3f5779ff1da2e2ae487038e4199da6508434ade8e8bd426cd8168b526dbf6d43fd81392470085155ea72cc56a0c4c5028bdff67d0e08ad2f80590de4cf79387add709756cadef490da7e452281eb1674b5094ef23b58b774e23414e6c4e6cb4b3622544a5c9fc4b22a0f463e07f578bc255c4c4bf93e99a51b5a75a2b753c8f86873e9ed6a06f44f68310313adf137999dc4d6a7f85aa6b662930865c8b042e7c1df4da37c1f2faa01acdf61e927e695516bd73eaf865f73a33da2036b3fb09170c283314d0a43cffe2818e155cb9dd5ba5a496e626253ce38ae3ca7cbd12e8887060159638a518c0212493c0b05c582782d360b57710f398dd006f049e8929286608f55d690b4c8cdb3d8e20958e6bb2bd764b17d728d9adecc2ba8cc17f9ad6bed5055f8b4174492ef2ed3da42505b83a4ac8f06055e22df6b347996bd30c5628818e16274355f24232218926318fbcbe47daddb7a348a08fb3600feb487be02a7b9017183a98426475f3af6c6e99651f20e7197ed0b51b36048db1f2ef20f630bc485323630f94e9388b0feac9fd7b982846f8742e64ae9d268cd4614e4d3a2fd9f6951cd2e354ed6a63127028274fe5a855304b24750d144cb796a7bf8abc5067b49c6bd40edc01dbc74298a7d62473316ed8127baa460d7a4bd25d3a6c02e4308cc469fc0a195bb6180709f0324f011c8a730f3f7aa48170dc30f5b5442fc5b0104363dbf32bbbce1f11423266568a16e7060e064ee8294b4ad36bb1297bf735fce14853abe8b0b525b1f6258e837dbe5577ba588fdc8eb947be826b67f014de72ea4f0ef664ef23ef34833a32e460967c5f307c7412694df2b2f154032b312d88c683ad60b4e0aa740697ce52d547a53c0d0c41b5d3216d4dbc5983a3146565e3a11f7f45d9898abc336d94a06cd57c96c5de1d066f9600fc8cdbd6e3ba9976789907fc6e4637228ac8e72a82f0402dae5f41fa8449689c45f7163b36b04da85cf3f87baaa9c71b8ab1a4537d9a5685aa5d143a9709c27c7c1b2628e6fd66749ebf86c5c93dfdcc14c8297347b763f378c676de60394110493fd963e0bf25128edcce1b1791bbe3ddea8ed66b356dfb38b74d84b625179867f2341dacb4ce5a1ffc794a0e4daf74e40184a41d6124f95c2f44d66aabaa6bc2606251f9b711f6f35c02e495850a9bb7c2fcdfe1d032b79741f0abf031433b26429811fd6d89d172910742155e2ef02c2feb86c1d5ffb126d296636c4498aceb227138407db37e4851995e74056de8baefec2bdef8a793d67ce495a438dad6651317f685a467d96429a41d7ee53147690932445d8fdee4dc63b85706184cb07722b70f17c01a4e2c83e27f7994c648ffad5b19b2b9839a9610eea4a61d19307839385b1ccf5586781c04908860d9bf3a4ce7cd807f27c459e0da61bb318687b0e13d4912df0d55067664c78e2a39ffe14a1f9ef0e91de057048920c90b252b17a45f5a3b250cf59f97e6b0214fb2640c80d4d16f4b63b0e7b079349d748eef530cc829241dc55b84e8017df7aa755a0a15a4e5fa85cf719ab5ec8e7bdfdfe67812ecf11df1ad26e93c7c03de29bf97cb35f58020f355fbf56aa975e718f4a25010cb79f9b86151f4fbf7b9113854c716f9d27dc7f312eecc85b98b96475f0bda453abcd7d625ab7399799e8e25bdff7bcd598544891008ea28b273c27753f8ef774a20324ee358479624df03b34ef3449372790876dbe6ccf53141e9888712977134340d1af0b41cb8eb3545dc967cf80ee1f5869c1d1c3ccbdf7f5031efc5d9b52a05b4cb9636030e259a52b8270a1213da876a4071c7c3f852a68a4ee0c5ae4e0c46a26302fd3931a67a2fa18ef0ab111a11d9f235fc60a7c97260e384feea8f2e84c132497bd19da7a3f06bd3d99388ffdde3ac03fc84a61ca9920c1de003f150214e208e0c4b63546c2e0a12a492785a53bfbeacc0f0f433b0ce38713cb0bff13522a62c1730fbf8ea3183324335686792dc4ca893c713773da54699d09b9431a5afbee688fced69",
+      "signature": "7bea418b378518582317363def16927cede808b5f0268452cf65dd3bbce427af8d3d3e34b329a9831199a1c4e8de1364a4b86e1b0e708e0a18c294c3be40f962235e0e7d99e9a2fa203a2b29cc705338dfed77cd7e66e57bc887fe441672b30daeff3a8cc5a404c505a2f948cbf1d9988aa433a903af13dea98f05292126221eed2494f89d306bf1b41c9a1aed3d63206753df18d5b1922790e6a846a1dee5cad9aa51a3ac4d4a917b7ca1e5d11f312025ef02087cd3031e636b954f68d1efc75385a96b81cbbe9beaf25aafb031e0528a34ae8e6d9552394543adcaa6f8cb4c5279422762cc206a9ecc2e4b210224dbe59f792b1d885a3ade5522455238ee84b8509d96986873146305425c5c006cfa28f9eb8a996cbd558671e3406a821369e590429461a22acf7f6c22981cbcd94e0f93fcd8a113753e74446e5333e142da3f8085f191313026d4a88e475d17eed910d2292d5e4bd28483e91f969af67be5b41de52b51c732bb53a133a6f5c24070fbbcd0fbfdf3c567a7d661739f1efc8fb5683fbac0ab0b79f5c24a2136c1892a00896304bbf2f0d9038a210f90b1d2ac1e74103a36e6bac203212bf1b6328f589acf663b68e7e41ded5666f0c3b378f6c6d4cf23f9a9f9b0998c73e6dbc31545a8f4e87560c081f17ffe986fea89b594de4ea610b7a887a6514f1a4fe978cdeb95910229e02818407bd8aaea3bf57c350cf77dc5c9b83ab6e52dac1b9aa9afb6696d5d96543aa8f70fb71699c9ca02886990e42ae28188d4866a57275115ff04c4ee89c08b1a6dc3b63908289fdcda06e5c0ce8e88ada24429ea1e741df2a95b75abe5857a71c2899849f92f68fbd1bf9fcefae899cebbe5b4ef534ac4d93fc5ec383723ceb8362ef79c5e00fa001698bbba6730efb88b90e1091acfabedfc1e7d145877807734e75f4d472dfb4945aa737efeb35efa246af6d91c2e999bc83fa6e675e7726aa373a06cbcd021c0794314a7105f9b735d14b3967a4607966e4200c3d49a05a960d1ce95fc512633ff38975697b274f8289d6add252115e02ad347ad1df6bb02fe3bd0b0abbfa649c9a473762f540680ac6b2efa3e71e960e869ba779047212bc57a34192dc70b387f18f739039cdf5ca288740b55aef27615940c83ab9fbe9be0719b03966e773e182281990fae7da1483ee066355bda85fbf72c920d017707532ee7918c65a0357adaf55e55f58170ab151365e51af595f0120f1ca3f926021c15a5e94b2bbfbe63f332e5a31e546c04da60ed8aafdb84388cb77b684ac992d76b1732ecc6c68322ae3e8b6ab05d475ebf0f9942e93f23a9606cbd020539ba91c9f59872f9b47dc36f271e5332922de225ba7118577866eb0fced4ddb9c09b8c4fb1ed889f46a69f15383e685697e5d94d565f8989143d24c1478e5e832f0ddc899ad661cf7cdf0ae068bccb99b542c41067b9dfbe8f1edab67219572bdb881fcae965da9216370d6f3bb9fb7029e3d84eb107ce43cc8b4e595b5ff070d1c3823c6c9db9396990ba09cabe0abeba4cdaeb2598919c7e1eb572d1a374ef891efb08c90ae71f833b8fa42f1a4bb636bc70237959691febdf63894e5c51cee4c402c6a0815ca698743e6c335a5317273ef10ca3b540da2015276c374f4eb241f67dac34cc4bb5a84d3cdf26e2d25983805e181931e9706bf6a89c5d7998da77e5fbccd6d9f5a50d83fe2bb5177d5696bc2edb8f2a24dec6772fda722d9bb617903fb15a7f8d9846bd6859f5466a72ebdf23c011c7cc451744cb6a6e3f8c08d15efa9baacebe80c6b578f0c8ee3a0620bcbd317eb4c0e40ee8be0687d3c40d32ae786138541b85b79460d170fa9f8bea9016c700af7d0c6da03709d81bbc27b2ec4cfcfeaa801ab0d980d3bfa48c2a68be45735a3e2b335d0426be125ea4006dc81820881a7159609e6773b430c01c5799439c3fc3f74543e421d026cb12832e2233fbb67016ff17534654b5dc2f4243a3429a695a68ab3b35a1167a6ce2c419605dbb27497e0a4d8f41a1fee64e16f8e3f83f4c6e5e072a686c695525ada3a2c15537300cd89aec1b7c3028620479113b225fe5c03c3eb1b4431ec53bc1e048be063082ff293db61d7cbc6145ec4728defe1e14d2173dfddd2eb2da0908febe9788e09dfd8451c5053c1277bceb54d68535d56f5d0432048f1ab0e05ca3e5292176bb96bec1067053304adbcd94014af13119f47fef36b9b88bbeaf544d0e871d71346ca476359b7dca80f8b475cf80d879ed369ff7d0293a8112b337d49b4badcebc0394df05b630248ee84ef801c400d97e16c2e628cc86b896928d76d5b09e251cd9b3811250a0d4724c05e4acf83ac1871780b0ee31d186847df13a257096d449bc2651bcef92b34e7c97fbf35ca4b563b7258708d8e466bbc1ed1979f143322444ad2a94e298b1f5c7461eb35e9b861c86071f75ddaba9bf2dcd782279baa538a26cd96b60ed2868ee604df1375d3ba58d2f79bc854e4636748b71b42250c80f0d5025593e653b4bcda2b0b5593287450953abaeb2adc96af8bd70f50843ab61a1cfe272a43ca5834da20acf5b71b348db38b738e295ed97af048507eb0148927fe58d1230e2d3c49e8a13922625ffb167459249fb03c8da40a774aa4850df9ef6a029c7b701df53b9173bf3893874185e7a13ec955205a1def7ffa8d730d8be65979bc0749c0bf136f6e9a2c9750a95f9ecd912ee72e5b85be8b038c1154494e8bc6f755711d2428ccd7cfbed0715be87447c7d952dc1a22fd8f396ae1c727b73707448bb40e3fd58f0f0fb8c497c8314e6e0f3661ea37d6466fb279101c1d2ae98e55447954984a77c9474e16df72523c7fcd07be44d465916d063c96dae56234404becad24bf0b2bb5504e47fd4d2aceafb8c42e0226d0ba3349e3c6f8d1237885d1e8c4f79a0436cfd4808b301a6060d78529a9a55c41a5b56490736f2a156b51f7420c6f0b0f703ca302aa163bc4ed7d4b90196627cf570ce165b504467f8a6ab6dadd3e291e7c074570dcac0461af597c114b34f03132650b7f0ac91164e8d3a683679c14862312c18669125d31f3f0e453eaf7ef09d1c85c7810e8b34087694dc34c58d9596852bbcc92915d5b3190ecdda225e8ce08d71afa18455b4d394b72bbd42dc0cc648d752b9a279922283e8b3f26c7dfb9f6f2eb3e14dcf72fb3245c36e5610360927dc956d00a043fcec1a8aaad3f8327cd47102587b4b107658a7525a0f75e4f445ee2989744d8dff479765040a7d14e74d0052bc1e81b3abf7a9c1059b11bc2972af1139cda8d0f535adbda5c6808aa2673e3baa47e750dcf4f56fa571282f621687ac1f652f159e98a9da6f3cbf25874e808cf6cee99cca7eb932494a8d7eb3aea28e919d0d0e52aa3606f5660b5c38da721ec73d2ff199f054a1e4ba7c5367f278381f0c3d1853db5b32ad059482ff2636a1e856f7bb8f89e03debbde3bb9e6a709c16e61f42a1469e840152f8651d022fa7b796ecfc1f3554d1290c9b6a238139a32cf368da62b1d75a9caf94bdd48773bb501c438d3d11ad3df1b303b454f3b43758397e7923c73f3f5847b2b6696f8468a576268c5d68b93ffa9de269913f243bd23ce7aae742224655dd62ee5dd81a1e4ef4902918f5b0915c22552d4a939a022d84dd25e470ad7ef41e8af9e0bf74b5fa2b244ea1b0c79a87e784abb7fcb3fab86d04fe3ac31431ed2dc3b189b79de6b45a60418089b611b2dce37038132a1d2fc908067e1167982ef8456ef903cc17b618362bb483bee13098c93fa1a269fa0d35bcf2ea39caa5f4e1889a93338929699bdcf141dab48ca0f77e633347b6cbd401cc57391ae1a753cc70b4913d31aba11e14ab0b0733bbf79b1a153418d57617aa3850119ac3bebb9051e2a2f7e26ff88dee0f42b2c26ec78f8ae51f04c07286b9730a6fe0c4404cb10e0d892fa9a2b5936363eaeeb95530143a307c8b044aabc91907dde37bbd1ffa752b000c84720a945aab82b83ea7b9a7ca7028dd4bf660869a196144e312c46e73665eb8d0b0e4bf08dc66cb673adc5c6de03f9bb4ea74e018311bb8c1db3daec031762a0c23bf5749ad9f570e3c16d3c639d698fb1554235345532a52fefcefd27490ea565d8d451b2b002140c7635be35b8e7e16bf56b546471a6e1aa8a5690bcce574993cc2befb84d39dcc14a249cb352dafca08e652c16f4c91c6fe291d2431273c12a6dbbaa4dc583f1efdb7a383ee6c91da574b9a51122a33489f4896dff53413fd509c3e1c9276a61d956cb936713d09a7c1c844b54d12c945e7d3b8aa41b8270f397cf7f84f442a61dc0374f5aa30bce3be43c98707ce2ba9d6a026f7ee5f5f6fcd8a701dbaa9e71db610d1c1bcceb4789f37e709427b3fa30f3fa02973153d18a0316c8ac87f11ab79449b4c574ee47f18f05dba2928bce1b16626cdc4b115d311eaae0297ca6b3f4286fd82a59a4d0aaff5b7fd5f9069a07820ba401c763c275336c2031ca82ccec6f83f3c19d93f49106ae32865c679f5e6a462ef9e5edb9f75ddb5b155f45d9e803d8000b550f4d7e020b3d8ed27a58c183eec68240a4869c1c6d5e3f79699abdee5ebfa223c4356aab1bfcc767b7c90c9e3e50a324372a9e8fb18244277cadce9efff000000000000000000080f171e252e"
+    },
+    "cases": [
+      {
+        "class": "accept",
+        "expect": "accept",
+        "id": "positive-control",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "from": "base"
+        },
+        "why": "the untouched deterministic (rnd = 0^32, decision D15) signature over the frozen FIPS 204 ctx must verify"
+      },
+      {
+        "class": "hint-rule",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "duplicate-hint-indices",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "05050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020202020202",
+              "offset": 3248
+            }
+          ],
+          "from": "base"
+        },
+        "why": "two equal indices inside one polynomial segment violate the strict `<` ordering of FIPS 204 Algorithm 21 step 9 — the exact rule whose `<=` regression was CVE-2026-24850"
+      },
+      {
+        "class": "hint-rule",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "hint-count-above-omega",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000383838383838",
+              "offset": 3248
+            }
+          ],
+          "from": "base"
+        },
+        "why": "a cumulative cut of 56 exceeds omega = 55 for ML-DSA-65 (Algorithm 21 step 4; FIPS 204 Table 2)"
+      },
+      {
+        "class": "hint-rule",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "nonzero-hint-padding",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "09000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+              "offset": 3248
+            }
+          ],
+          "from": "base"
+        },
+        "why": "a nonzero index byte past the last cut violates the zero-padding rule (Algorithm 21 steps 16-18) — otherwise a signature would have spare bits to carry a second encoding"
+      },
+      {
+        "class": "hint-rule",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "decreasing-hint-cuts",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020102020202",
+              "offset": 3248
+            }
+          ],
+          "from": "base"
+        },
+        "why": "cumulative cuts must be non-decreasing (Algorithm 21 step 4)"
+      },
+      {
+        "class": "z-out-of-range",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "z-out-of-range",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "000060",
+              "offset": 48
+            }
+          ],
+          "from": "base"
+        },
+        "why": "the first z coefficient forced to gamma1, so ||z||inf >= gamma1 - beta; the pinned crate checks this norm bound eagerly at decode rather than in Verify step 13"
+      },
+      {
+        "class": "bit-flip",
+        "expect": "crypto-signature-invalid-ml-dsa-65",
+        "id": "c-tilde-bit-flip",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "hex": "7a",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "why": "c_tilde is 48 opaque hash bytes — every value is a legal encoding, so this mutation DECODES and fails only at verification: the layering the two distinct verdicts rest on"
+      },
+      {
+        "class": "wrong-key",
+        "expect": "crypto-signature-invalid-ml-dsa-65",
+        "id": "wrong-key",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "from": "alternate-signer"
+        },
+        "why": "a well-formed signature by the alternate signer, checked against the base public key"
+      },
+      {
+        "class": "wrong-context",
+        "expect": "crypto-signature-invalid-ml-dsa-65",
+        "id": "wrong-context",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "ctx": "antseal-manifest-v2",
+          "from": "context"
+        },
+        "why": "signed with the FIPS 204 ctx `antseal-manifest-v2`; the standard absorbs `0x00 || len(ctx) || ctx` before the message, so the context is part of what is signed"
+      },
+      {
+        "class": "wrong-context",
+        "expect": "crypto-signature-invalid-ml-dsa-65",
+        "id": "empty-context",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "ctx": "",
+          "from": "context"
+        },
+        "why": "the empty ctx is what the crate's `Signer`/`Verifier` trait impls silently use (C11 report §2.2) — this vector is the standing guard that antseal never takes that path"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "signature-truncated",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "from": "base",
+          "truncate_to": 3308
+        },
+        "why": "3308 bytes: the exact-size conversion rejects before any decoding"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "signature-over-length",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "append_hex": "00",
+          "from": "base"
+        },
+        "why": "3310 bytes: a trailing byte must not be ignored"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "public-key-truncated",
+        "public_key": {
+          "from": "base",
+          "truncate_to": 1951
+        },
+        "signature": {
+          "from": "base"
+        },
+        "why": "1951-byte public key — length-checked before decode"
+      },
+      {
+        "class": "degenerate",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "all-ones-signature",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "fill": "ff",
+              "offset": 0,
+              "repeat": 3309
+            }
+          ],
+          "from": "base"
+        },
+        "why": "every hint rule violated at once; adversarial input must reject cleanly, never panic"
+      },
+      {
+        "class": "degenerate",
+        "expect": "crypto-non-canonical-signature-ml-dsa-65",
+        "id": "all-zero-signature",
+        "public_key": {
+          "from": "base"
+        },
+        "signature": {
+          "edits": [
+            {
+              "fill": "00",
+              "offset": 0,
+              "repeat": 3309
+            }
+          ],
+          "from": "base"
+        },
+        "why": "all-zero z fields decode to the range endpoint gamma1, so the norm bound rejects this at decode"
+      }
+    ]
+  },
+  "format_version": "v1",
+  "inputs": {
+    "alg": "ml-dsa-65",
+    "body": "616e747365616c206d616e696665737420626f6479206279746573202866697874757265290a",
+    "ctx": "antseal-manifest-v1",
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "kind": "sig-reject",
+  "non_secret": "NON-SECRET — every key here derives from the documented fixed test seed W = 00 01 .. 1f (testdata/README.md); the `wrong-key` cases use the alternate signer SHA-256(\"antseal C15 alternate signer\" || W). No real vault or wallet material.",
+  "schema": "antseal-golden-vector",
+  "schema_version": 1
+}

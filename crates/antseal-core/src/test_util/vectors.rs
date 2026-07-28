@@ -44,7 +44,7 @@ pub const NON_SECRET_MARKER: &str = "NON-SECRET";
 
 /// Registered vector kinds. Extending this list is a framework change
 /// (see the module docs), not a per-vector event.
-pub const KNOWN_KINDS: &[&str] = &["hkdf-labels"];
+pub const KNOWN_KINDS: &[&str] = &["hkdf-labels", super::vectors_sig_reject::KIND];
 
 /// Why a vector file failed. Every variant is a *loud* failure in the
 /// runner — nothing is skipped.
@@ -171,6 +171,13 @@ pub fn execute_vector_bytes(
     }
     match envelope.kind.as_str() {
         "hkdf-labels" => execute_hkdf_labels(envelope),
+        // C15's reject-vector suites; executor in a sibling module so this
+        // dispatch stays a one-liner per kind.
+        super::vectors_sig_reject::KIND => super::vectors_sig_reject::execute(
+            envelope.inputs,
+            envelope.expect,
+            envelope.description,
+        ),
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }
@@ -403,8 +410,9 @@ fn parse_id64(context: &str, id: &str) -> Result<u64, VectorError> {
 }
 
 /// Decode canonical lowercase hex (rejects uppercase and odd length —
-/// committed vectors are canonical by convention).
-fn decode_hex(
+/// committed vectors are canonical by convention). Shared with the sibling
+/// kind executors so hex parsing cannot fork per kind.
+pub(super) fn decode_hex(
     kind: &'static str,
     field: &'static str,
     hex_str: &str,
@@ -433,7 +441,9 @@ fn decode_hex(
         .collect()
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// Canonical lowercase hex rendering (shared with the sibling kind
+/// executors, as [`decode_hex`] is).
+pub(super) fn hex(bytes: &[u8]) -> String {
     use core::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
