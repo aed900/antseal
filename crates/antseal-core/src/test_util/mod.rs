@@ -31,6 +31,16 @@
 //!   fine-tree rows (`fine-root-binding-failed`,
 //!   `fine-root-over-broad-cover`), plus the **single** over-broad-cover
 //!   construction helper the R lane consumes rather than duplicating.
+//! - [`tamper_rows_format`] — F's registry slice (F15): the format-level
+//!   tamper **fixtures** — twenty single mutations of the F12/F13 golden
+//!   vectors' own manifest and bundle bytes, each pinned on the
+//!   `(code, layer)` pair its strict surface reports — and the seven of them
+//!   whose code is not already claimed, which carry a harness row. The
+//!   fixture/row split is not incidental: a wrapped codec rejection surfaces
+//!   its inner code unchanged at every layer (error-code contract §2), so
+//!   the same canonicality fault in the body, the envelope, the bundle map
+//!   and the embedded manifest is four fixtures and one code. Committed
+//!   bytes + mapping table: `testdata/tamper/format/`.
 //! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
 //!   structural rows, mutated from [`bundle_fixtures`] works and driven
 //!   through `verify_bundle` wherever the mutation is reachable there.
@@ -121,6 +131,8 @@ pub mod tamper;
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_fine_tree;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_format;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_pipeline;
 #[cfg(feature = "test-util")]
