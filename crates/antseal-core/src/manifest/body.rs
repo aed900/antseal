@@ -664,14 +664,26 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    /// Assemble a file entry, checking the two rules this level owns:
-    /// the unit table is non-empty, and every unit's coverage mode agrees
-    /// with the file's fine-tree state and the unit's own kind.
+    /// Assemble a file entry, checking the three rules this level owns:
+    /// the unit table is non-empty, it contains at least one `kind = normal`
+    /// unit, and every unit's coverage mode agrees with the file's fine-tree
+    /// state and the unit's own kind.
     ///
     /// # Errors
     ///
-    /// - [`ManifestError::EmptyContainer`] — no units (an empty file
-    ///   still has one empty unit, spec line 78).
+    /// - [`ManifestError::EmptyContainer`] with
+    ///   [`ContainerField::Units`] — no units (an empty file still has one
+    ///   empty unit, spec line 78).
+    /// - [`ManifestError::EmptyContainer`] with
+    ///   [`ContainerField::NormalUnits`] — units exist but every one is a
+    ///   raw mirror (**D77**). Raw mirrors are tiling-exempt by kind (spec
+    ///   line 92), so such a file has no tiling domain for line 121 to speak
+    ///   about, D28's `full(F)` is false for it forever, and its
+    ///   `canon_commit`/`raw_commit` would be permanently unopenable. No
+    ///   honest sealer emits the shape — a mirror exists **iff** raw ≠
+    ///   canonical, and G5 emits the `[0,0)` Normal unit alongside the mirror
+    ///   even in the degenerate BOM-only case — so the rule costs nothing and
+    ///   makes the shape unrepresentable in any decoded manifest.
     /// - [`ManifestError::UnexpectedField`] — a fine-tree-covered unit
     ///   carries a `unit_commit` (spec line 94: covered content is bound
     ///   *solely* by `fine_root`, so a second commitment would let a
@@ -690,6 +702,18 @@ impl FileEntry {
         if units.is_empty() {
             return Err(ManifestError::EmptyContainer {
                 field: ContainerField::Units,
+            });
+        }
+        // D77. The position is frozen and observable in both directions: it
+        // must come **after** `units.is_empty()`, so a genuinely unit-less
+        // file reports `manifest-empty-units` and not this code (two codes
+        // for one input would break "one code per outcome a mutation can be
+        // pinned to"); and **before** the coverage loop, so a mirror-only
+        // file reports the shape error rather than whichever per-unit
+        // `unit_commit` error a malformed mirror happens to trip first.
+        if !units.iter().any(|unit| unit.kind() == UnitKind::Normal) {
+            return Err(ManifestError::EmptyContainer {
+                field: ContainerField::NormalUnits,
             });
         }
         for unit in &units {

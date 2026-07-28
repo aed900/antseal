@@ -475,7 +475,7 @@ Version discriminant at key 0 (encoded first; F10 dispatch).
 | 3 | `size` | uint | req | leaf count / tiling-domain byte count: canonical bytes for text, raw bytes for binary (line 98; a text file's raw byte count travels as its raw-mirror unit's `true_length`) | proposed |
 | 4 | `descriptor` | map | req | §7.4 | proposed |
 | 5 | `fine_root` | bstr | opt: `descriptor.fine_tree_present == 1` | 32 | proposed |
-| 6 | `units` | array | req | unit-table entries (§7.5); non-empty (empty file = one empty unit, line 78) | proposed |
+| 6 | `units` | array | req | unit-table entries (§7.5); non-empty (empty file = one empty unit, line 78); **at least one `kind = normal` unit [P]** — a mirror-only file has no tiling domain (D77) | proposed |
 | 7–23 | — | — | — | reserved | proposed |
 
 ### 7.4 Canonicalization descriptor (lines 83, 98; G4 field set)
@@ -1342,7 +1342,7 @@ re-raised as a D8 item here:
 | --- | --- | --- |
 | **D74** — extraneous `s_root` on a fine-tree-absent full reveal | §7.14 key 2, the fifth violation row | the row is left **unassigned**, and the permissive reading is explicitly not encoded |
 | **D75** — does a full reveal ship covers *and* `s_root`? | §7.11 key 3 presence | shown to be **key-neutral** (only the presence rule and its tier move); the draft leans "both", with reasons, as D75 input |
-| **D77** — zero-non-mirror-unit file | §7.14's `N(F) ≠ ∅` clause | recorded as the reason the clause exists; no registry change either way |
+| **D77** — zero-non-mirror-unit file | §7.14's `N(F) ≠ ∅` clause | **RESOLVED 2026-07-28: reject at F5.** §7.3 key 6 gains "at least one `kind = normal` unit **[P]**", code `manifest-empty-normal-units`. The draft's "no registry change either way" note is thereby falsified and corrected |
 
 ## 14. Machine-readable mirror and tests
 

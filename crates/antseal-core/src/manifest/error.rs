@@ -204,11 +204,24 @@ pub enum ContainerField {
     Pubkeys,
     /// Envelope `signatures`.
     Signatures,
+    /// A file's `kind = normal` units — a file must have at least one unit
+    /// in its tiling domain (**D77**). Raw mirrors are tiling-exempt by kind
+    /// (spec line 92), so a mirror-only file has no tiling domain at all and
+    /// its `canon_commit`/`raw_commit` would be permanently unopenable: with
+    /// `N(F) = ∅`, D28's `full(F)` is false for every bundle forever, which
+    /// is verbatim the condition D28 exists to remove.
+    NormalUnits,
 }
 
 impl ContainerField {
     /// Every container, for exhaustive tests.
-    pub const ALL: [Self; 4] = [Self::Files, Self::Units, Self::Pubkeys, Self::Signatures];
+    pub const ALL: [Self; 5] = [
+        Self::Files,
+        Self::Units,
+        Self::Pubkeys,
+        Self::Signatures,
+        Self::NormalUnits,
+    ];
 }
 
 impl fmt::Display for ContainerField {
@@ -218,6 +231,7 @@ impl fmt::Display for ContainerField {
             Self::Units => "units",
             Self::Pubkeys => "pubkeys",
             Self::Signatures => "signatures",
+            Self::NormalUnits => "normal units",
         })
     }
 }
@@ -638,6 +652,7 @@ impl ManifestError {
                 ContainerField::Units => "manifest-empty-units",
                 ContainerField::Pubkeys => "manifest-empty-pubkeys",
                 ContainerField::Signatures => "manifest-empty-signatures",
+                ContainerField::NormalUnits => "manifest-empty-normal-units",
             },
             Self::InputTooLarge { .. } => "manifest-too-large",
             Self::ListTooLong { list, .. } => match list {
@@ -786,7 +801,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            47,
+            48,
             "one exemplar per distinct code — update deliberately"
         );
 
@@ -996,6 +1011,12 @@ mod tests {
                     field: ContainerField::Units,
                 },
                 "units must not be empty",
+            ),
+            (
+                ManifestError::EmptyContainer {
+                    field: ContainerField::NormalUnits,
+                },
+                "normal units must not be empty",
             ),
             (
                 ManifestError::UnknownEnumValue {

@@ -658,6 +658,70 @@ fn reject_empty_containers() {
     );
 }
 
+/// **D77: a file whose entire unit table is raw mirrors is rejected.**
+///
+/// The shape TODO.md and D28 named — a size-0 file with *zero* units — was
+/// already closed by `manifest-empty-units` above. The one that survived every
+/// layer is the **mirror-only** file: `units` is non-empty, so F5 accepted it;
+/// R3's `check_tiling` filters to `kind = Normal` and `tile(&[], 0) == Ok`, so
+/// it accepted it too; and D28's `full(F)` is then false for *every* bundle
+/// forever, which permanently un-opens two signed, anchored commitments
+/// (`canon_commit`, `raw_commit`) — verbatim the condition D28 exists to
+/// prevent.
+///
+/// No honest sealer can emit it: a mirror exists **iff** raw ≠ canonical, and
+/// G5 emits the Normal `[0,0)` unit alongside the mirror even in the
+/// degenerate BOM-only case. So the strict rule costs the honest sealer
+/// nothing, and strict → permissive stays a legal future relaxation while the
+/// reverse is not.
+#[test]
+fn reject_a_file_whose_only_unit_is_a_raw_mirror() {
+    // A `--no-fine-tree` file whose single unit is `kind = 1` (raw mirror).
+    // Every other rule is satisfied: the unit table is non-empty, and the
+    // mirror carries the `unit_commit` a non-covered unit needs.
+    let file = w::file_entry(1, false, 0, vec![w::noncovered_unit(0, 1, 0, 12)]);
+    reject(
+        &body_with_file(file),
+        &ManifestError::EmptyContainer {
+            field: ContainerField::NormalUnits,
+        },
+    );
+}
+
+/// **D77's frozen check order, in both directions.** The new rule sits after
+/// `units.is_empty()` and before the coverage loop, and both edges are
+/// observable:
+///
+/// - a genuinely unit-less file must still report `manifest-empty-units`, not
+///   the new code — two codes for one input would break "one code per outcome
+///   a mutation can be pinned to" (error-code contract §1);
+/// - a mirror-only file whose file *has* a fine tree must report the shape
+///   error, not whichever per-unit `unit_commit` error the coverage loop would
+///   otherwise reach first.
+#[test]
+fn the_normal_unit_rule_is_ordered_between_emptiness_and_coverage() {
+    // Edge 1: no units at all keeps the older, more specific code.
+    let mut empty = w::binary_file();
+    w::set(&mut empty, key::file::UNITS, w::array(&[]));
+    reject(
+        &body_with_file(empty),
+        &ManifestError::EmptyContainer {
+            field: ContainerField::Units,
+        },
+    );
+
+    // Edge 2: a fine-tree file whose only unit is a mirror carrying a
+    // `unit_commit` — the configuration in which a *Normal* unit would have
+    // been rejected by the coverage loop. The shape error still wins.
+    let file = w::file_entry(1, true, 0, vec![w::noncovered_unit(0, 1, 0, 12)]);
+    reject(
+        &body_with_file(file),
+        &ManifestError::EmptyContainer {
+            field: ContainerField::NormalUnits,
+        },
+    );
+}
+
 #[test]
 fn reject_byte_range_that_is_not_a_two_element_array() {
     for (items, got) in [
@@ -1072,6 +1136,36 @@ fn in_memory_construction_runs_the_same_validation() {
         .map(|_| ()),
         Err(ManifestError::EmptyContainer {
             field: ContainerField::Units
+        })
+    );
+
+    // D77: a non-empty unit table with no `kind = normal` unit. Constructible
+    // ≡ decodable — `FileEntry::decode` routes through `new`, so closing the
+    // shape here closes it for every decoded manifest as well, which is why
+    // D77 chose F5 over R3.
+    let mirror_only = UnitEntry::new(
+        0,
+        UnitKind::RawMirror,
+        ByteRange::new(0, 12),
+        12,
+        UnitBinding::NonCovered {
+            unit_commit: [0x77; 32],
+        },
+        Nonce24::from_bytes([0; 24]),
+        ContentAddress::from_bytes([0; 32]),
+    );
+    assert_eq!(
+        FileEntry::new(
+            [0; 32],
+            [0; 32],
+            CanonMode::Binary,
+            0,
+            FineTree::Absent,
+            vec![mirror_only],
+        )
+        .map(|_| ()),
+        Err(ManifestError::EmptyContainer {
+            field: ContainerField::NormalUnits
         })
     );
 }
