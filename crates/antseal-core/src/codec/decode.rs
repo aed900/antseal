@@ -829,6 +829,54 @@ pub fn check_canonical(input: &[u8]) -> Result<(), DecodeError> {
     d.finish()
 }
 
+/// One exemplar per distinct [`DecodeError::code`] — every (variant,
+/// discriminant) pair exactly once, with pairwise-distinct codes.
+///
+/// This list was an array inside `codes_are_pairwise_distinct_kebab_case`
+/// until Q52. It is a free function now for the reason every other domain's
+/// `all_code_exemplars` already is: the `cbor-` family is one of the eight
+/// enumerators the frozen error-code universe
+/// (`crate::error_universe`, `testdata/error-codes/v1/CODES.txt`) is
+/// collected from, and a code universe assembled by re-typing a list into a
+/// second place is a list that drifts. The distinctness meta-test below
+/// consumes this, so the two can never disagree.
+#[cfg(test)]
+pub(crate) fn all_code_exemplars() -> Vec<DecodeError> {
+    vec![
+        DecodeError::Truncated { position: 0 },
+        DecodeError::Malformed { position: 0 },
+        DecodeError::ForbiddenType {
+            kind: ForbiddenKind::Float,
+            position: 0,
+        },
+        DecodeError::ForbiddenType {
+            kind: ForbiddenKind::Simple,
+            position: 0,
+        },
+        DecodeError::ForbiddenType {
+            kind: ForbiddenKind::Tag,
+            position: 0,
+        },
+        DecodeError::IndefiniteLength { position: 0 },
+        DecodeError::NonShortestInt { position: 0 },
+        DecodeError::NonShortestLength { position: 0 },
+        DecodeError::DuplicateMapKey { position: 0 },
+        DecodeError::UnsortedMapKeys { position: 0 },
+        DecodeError::InvalidUtf8 { position: 0 },
+        DecodeError::TrailingBytes {
+            position: 0,
+            trailing: 1,
+        },
+        DecodeError::NestingTooDeep { position: 0 },
+        DecodeError::UnexpectedType {
+            expected: ExpectedKind::Unsigned,
+            found: ItemKind::Bytes,
+            position: 0,
+        },
+        DecodeError::IntOutOfRange { position: 0 },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1242,39 +1290,7 @@ mod tests {
     /// Stable codes: pairwise distinct, kebab-case, `cbor-` prefixed.
     #[test]
     fn codes_are_pairwise_distinct_kebab_case() {
-        let exemplars = [
-            DecodeError::Truncated { position: 0 },
-            DecodeError::Malformed { position: 0 },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Float,
-                position: 0,
-            },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Simple,
-                position: 0,
-            },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Tag,
-                position: 0,
-            },
-            DecodeError::IndefiniteLength { position: 0 },
-            DecodeError::NonShortestInt { position: 0 },
-            DecodeError::NonShortestLength { position: 0 },
-            DecodeError::DuplicateMapKey { position: 0 },
-            DecodeError::UnsortedMapKeys { position: 0 },
-            DecodeError::InvalidUtf8 { position: 0 },
-            DecodeError::TrailingBytes {
-                position: 0,
-                trailing: 1,
-            },
-            DecodeError::NestingTooDeep { position: 0 },
-            DecodeError::UnexpectedType {
-                expected: ExpectedKind::Unsigned,
-                found: ItemKind::Bytes,
-                position: 0,
-            },
-            DecodeError::IntOutOfRange { position: 0 },
-        ];
+        let exemplars = super::all_code_exemplars();
         let codes: std::collections::BTreeSet<&'static str> =
             exemplars.iter().map(DecodeError::code).collect();
         assert_eq!(codes.len(), exemplars.len(), "codes must be distinct");

@@ -145,7 +145,39 @@ Before the Q14 freeze a code may still be corrected, but only as a recorded,
 justified change (the same discipline as a fixture byte change). After Q14
 the code set of frozen surfaces is permanent.
 
-## 4. Distinctness enforcement, in three layers
+## 4. Enforcement
+
+### 4a. The frozen code universe — what makes §3 real (Q52)
+
+§3 is the rule third-party verifiers depend on, and until Q52 **nothing
+enforced it**. The three distinctness layers below check that codes are
+pairwise distinct and correctly shaped; a *renamed* code is still pairwise
+distinct and still correctly shaped, so none of them can see a rename. The
+gate audit measured the consequence: **53 of the 191 codes (28 %) could be
+renamed with a fully green suite** — 38 `manifest-`, 9 `content-`, 4
+`crypto-`, 2 `cbor-`. The codes that were safe were safe only incidentally,
+because some committed vector or tamper row happened to spell them out.
+
+The mechanism is one committed file, `testdata/error-codes/v1/CODES.txt`,
+holding every code collected from the eight per-domain exemplar enumerators,
+compared on every test run with **additions-only** semantics:
+
+| change | verdict |
+|---|---|
+| a code is added | pass — §3: *"routine and unrestricted"* |
+| a code is removed | **fail**, naming it |
+| a code is renamed | **fail**, naming the code under its frozen name |
+
+Implementation and rationale: `crates/antseal-core/src/error_universe.rs`.
+It runs in the `test` lane (`cargo test -p antseal-core --lib`), needs no
+feature flags, and carries its own planted-fault tests for all three rows of
+that table plus a proof that the refresh path can only ever add.
+
+**It pins existence, not coverage.** A code can be in the snapshot and be
+reachable by no tamper row — the `crypto-` and `content-` reverse-coverage
+gap is `Q55`'s, not this file's.
+
+### 4b. Distinctness enforcement, in three layers
 
 1. **Per-domain meta-tests** — each domain asserts its own codes are
    pairwise distinct over an exemplar of every variant (F's `DecodeError`,
@@ -576,5 +608,30 @@ kebab-case id, and never edit an existing row's expected code.
   reverse-coverage check must be able to accept, rather than flag as an
   orphan or force a row for.
 
+- **2026-07-28 (M0 wave 7, Q52)** — §3's append-only rule acquired a
+  mechanism. `testdata/error-codes/v1/CODES.txt` freezes the universe as
+  **191 codes**: `cbor-` 15, `manifest-` 48, `bundle-` 47, `crypto-` 25,
+  `content-` 14, `fine-root-` 9, unprefixed 33. Collected from the eight
+  enumerators and compared every run, additions-only (§4a).
+
+  Three things the census settles that prose had left ambiguous:
+
+  1. **A prefix is not a partition of the enumerators.** `fine-root-` has
+     **9** codes, not the 8 that `content::fine_tree::error` yields:
+     `fine-root-rebuild-mismatch` is minted by **R**, in
+     `verify/error.rs:767`. §2's "a domain never mints a code under another
+     domain's prefix" therefore has a second standing exception beyond the
+     one §2 records — R owning one `fine-root-` code — and adding per-family
+     counts across enumerators undercounts the universe by exactly that one.
+  2. **The `cbor-` list was not an enumerator.** It was an array inside
+     `codes_are_pairwise_distinct_kebab_case`. It is now
+     `codec::decode::all_code_exemplars`, consumed by that test, so the
+     family has one list rather than two.
+  3. **Blessing cannot remove.** The refresh path writes the union of the
+     committed and live sets, so dropping a code is only ever a hand edit
+     with a reviewable diff.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
-  codes. Frozen for good at Q14 along with the rest of format v1.
+  codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
+  as the enforcement, and with §3's "before the Q14 freeze a code may still
+  be corrected" ending at that commit.
