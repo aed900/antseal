@@ -41,6 +41,23 @@
 //!   the same canonicality fault in the body, the envelope, the bundle map
 //!   and the embedded manifest is four fixtures and one code. Committed
 //!   bytes + mapping table: `testdata/tamper/format/`.
+//! - [`cbor_span`] — F25's span-locating cursor over canonical CBOR: an
+//!   item's byte span (head and payload separately), `(path-to-item)`
+//!   addressing, and the splices built on them. Built on the F3 decoder's own
+//!   public surface — `peek_kind` plus the typed reads — so it is incapable
+//!   of disagreeing with `check_canonical` about where an item begins or
+//!   ends, which is asserted over every item of every golden document rather
+//!   than argued. It is what makes a mutation of a *nested* item expressible
+//!   at all; F15's own primitives reach only a top-level head and the end of
+//!   the slice.
+//! - [`tamper_rows_caps`] — F's cap/shape registry slice (F22): one
+//!   representative row per cap-producing error *variant*, plus the D77
+//!   mirror-only row, plus the register of cap codes deliberately left
+//!   unrowed with the reason for each.
+//! - [`tamper_rows_cbor`] — F's `cbor-`-family slice (F24): rows for the
+//!   `DecodeError` codes that were reachable but unrowed, and the reverse
+//!   coverage check that maps `DecodeError`'s whole exemplar list onto rows
+//!   or named owners.
 //! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
 //!   structural rows, mutated from [`bundle_fixtures`] works and driven
 //!   through `verify_bundle` wherever the mutation is reachable there.
@@ -140,6 +157,8 @@
 pub mod bundle_fixtures;
 #[cfg(feature = "test-util")]
 pub mod bundle_mutators;
+#[cfg(feature = "test-util")]
+pub mod cbor_span;
 #[cfg(feature = "test-util")]
 pub mod codec_fuzz;
 pub mod fixture_rng;

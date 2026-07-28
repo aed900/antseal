@@ -102,6 +102,19 @@ use crate::manifest::{Manifest, ManifestError, encode_envelope};
 use super::bundle_fixtures::{Selection, WorkSpec, build, shapes};
 use super::tamper::{ActualOutcome, ExpectedOutcome, TamperRow};
 
+/// **F25's span-locating primitives, exposed beside F15's own.**
+///
+/// F15's primitives ([`insert_first_entry`](self), [`append_entry`](self),
+/// [`widen_head`](self), …) reach a top-level map head and the end of the
+/// slice. [`super::cbor_span`] reaches an *arbitrary* item, by
+/// `(path-to-item)` rather than by a pinned offset, and is built on the same
+/// F3 public surface — so the two sets are interchangeable in kind and a
+/// fixture can pick whichever expresses its mutation honestly.
+pub use super::cbor_span::{
+    ItemSpan, MAJOR_ARRAY, MAJOR_BYTES, Step, all_item_spans, canonical_head, item_span,
+    span_at_path, span_of_next_item, splice_head_at_path, splice_item_at_path,
+};
+
 // ---------------------------------------------------------------------------
 // the two bases
 // ---------------------------------------------------------------------------
