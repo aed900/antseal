@@ -328,3 +328,71 @@ The ACVP and Unicode fixtures are retained forever like any other frozen
 fixture. A newer release may be *added* as a second pinned subset; the
 existing one is never replaced, because it is the evidence that this freeze
 was clean.
+
+---
+
+## Freeze report — 2026-07-28, the `format-v1-freeze` commit
+
+**Supersedes §3's report, which describes a different tree.** That section is
+dated the same day but names commit `788519b`, the Q11 landing. Between
+`788519b` and this freeze the vector set moved three times, each for a
+recorded reason: **D83/G23** re-emitted `fine-tree/fine-tree.json` (the
+canonical zero tail), **R32** rewrote all 21 pinned strings in
+`report/verification-reports.json` (`REPORT_VERSION` 0 → 1), **G21** added the
+`content-model` kind, which did not exist, and **G24** added two bundle cases.
+§3's own count — *"11 committed v1 vector files"* — reads 12 here. Earlier
+sections are never rewritten (§6); this one is appended beside them.
+
+Recording this is the point of Q14's row N8, which requires a report **for the
+freeze commit** and warns that a reader can otherwise tick it by agreeing with
+a document instead of verifying the evidence it names.
+
+**Tree verified:** `9d3ab16`. The `format-v1-freeze` tag lands on a later
+commit that adds only this report, the CHANGELOG and the register updates —
+no artifact this report verifies changes between the two, and
+`FROZEN.sha256`, `docs/format/FROZEN.sha256` and `testdata/tamper/` are
+byte-identical across them.
+
+**Result: ZERO discrepancies**, every surface, first run.
+
+### Per-surface
+
+| # | surface | vehicle | version | scope | tier |
+|---|---|---|---|---|---|
+| 1 | Canonical CBOR (§4.2.1) | `crosscheck_cbor.py` — our own encoder; `cbor2` **decodes only** | `cbor2 ==6.1.3` | 255 checks over 16 cases in the 2 CBOR-committing vectors of 12 files | **T1**, on a **T0** anchor of 33 RFC 8949 Appendix A examples, both directions |
+| 2 | Format tamper fixtures | same checker | as above | 17 confirmed non-canonical **for the reason claimed**, 9 confirmed canonical-but-schema-invalid, 4 out of scope | T1 |
+| 3 | HKDF-SHA256 + the 8-label registry | `hkdf/gen_vectors.py` | stdlib | all committed cases | T1 on a **T0** anchor (RFC 5869 App. A) |
+| 4 | Salted commitments, unit padding | `crypto/gen_vectors.py` | stdlib | all committed cases | **T1 with no T0 anchor and none possible** — the construction is ours |
+| 5 | XChaCha20-Poly1305 | from-scratch Python cipher | stdlib | 12 ciphertexts | T1, corroborated against libsodium |
+| 6 | Ed25519 | RFC 8032 §6 reference formulation | stdlib | 21 reject cases + keygen | T1 on a **T0** anchor (RFC 8032 §7.1) |
+| 7 | ML-DSA-65 | **NIST ACVP**, replayed by `tests/acvp_ml_dsa.rs` | ACVP-Server `2972def` | 115 cases | **T0** |
+| 8 | ML-DSA-65 vector file completeness | `gen_vectors.py::check_mldsa_half` (**C27**) | stdlib | ρ per FIPS 204 Alg 6, HintBitUnpack per Alg 21, lengths, residue | T1 — completeness, not soundness; row 7 is the soundness evidence |
+| 9 | GGM fine tree | `fine-tree/gen_vectors.py` | stdlib | all committed cases | **T1 with no T0 anchor and none possible** |
+| 10 | Canonicalization / NFC | `utf8-corpus/gen_corpus.py` | stdlib | 37 fixtures + **1 537 `NormalizationTest.txt` lines** | T1 on a **T0** anchor (Unicode's own conformance data) |
+| 11 | Verification-report byte format (**Q38**) | `scripts/crosscheck-report.py` | stdlib `json` only | 21 pinned strings, 69 enum values, 9 properties + 3 envelope checks each | **T1 with no T0 anchor** — the contract is ours |
+| 12 | External-fixture provenance (**Q41**) | `scripts/crosscheck-provenance.py` | stdlib | digests parsed from each `PROVENANCE.md`, offline | T1 |
+| 13 | `ml-dsa` ↔ `fips204` | `tests/mldsa_fallback_equivalence.rs` | `fips204 =0.4.6` | keygen + deterministic sign | **T2 — does NOT count toward this row** (D14 fallback evidence, per D31 §10) |
+
+### Environment, because two counts depend on it
+
+`python 3.11.2`, `unicodedata.unidata_version = 14.0.0`. The NFC anchor
+therefore reports **1 537 lines executed, 70 skipped as unassigned** — the
+skips are scalars assigned after Unicode 14.0.0. On the CI runner (3.12) the
+skip count differs. This is D31's recorded ceiling, not a defect: **no
+released CPython embeds Unicode 17.0.0**, which is why D31's original
+`unidata_version == '17.0.0'` assertion was found unsatisfiable and replaced
+with Unicode's own conformance file. **Q42** is the tripwire for when CPython
+catches up.
+
+### What this report does not cover, stated plainly
+
+- Rows 4 and 9 — salted commitments, unit padding, the GGM tree — are **T1
+  with no external oracle, and none can exist**, because those constructions
+  are this project's own. A shared misreading of our own spec is invisible to
+  them. That is the honest ceiling of the whole exercise.
+- Row 11 cannot detect a **uniform** key reordering of a report document: the
+  checker re-serialises in the order it received. `vector-freeze` and the
+  native↔wasm32 bit-match are what hold that line.
+- The CBOR checker's schema branch inspects the outer layer only; it does not
+  descend into embedded `bstr` layers the way its canonicality branch does
+  (**F36**).

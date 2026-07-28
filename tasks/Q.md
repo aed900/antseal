@@ -179,7 +179,7 @@ The two copies are drift-checked by
 
 <!-- FREEZE-BOUNDARY:BEGIN — D84 §7 verbatim. Byte-identical copies live in `docs/format/anchor-artifact-limits.md` §2 (A27) and here; `scripts/check-traceability.py --freeze-boundary` fails if they drift. Edit D84 first, then both copies. -->
 
-- [ ] **Anchor-artifact freeze scope (D84).** Inside the v1 freeze: the
+- [x] **Anchor-artifact freeze scope (D84).** Inside the v1 freeze: the
   anchor **envelope** — that an `.ots`, a TSA token, an intermediate
   certificate and a receipt payload are opaque CBOR `bstr`s in their
   registered keys (`docs/format/registry-v1.md` §7.8, §7.9); D10's byte and
@@ -199,7 +199,7 @@ The two copies are drift-checked by
   and are **not** an exception to line 123 — under F1–F3 no released
   verifier ever rendered a verdict that depends on them, because M0/M1
   render every anchor `absent` (R12 replaces that stub at M2).
-- [ ] **Report-version evolution is not blocked by this freeze.** The Q14
+- [x] **Report-version evolution is not blocked by this freeze.** The Q14
   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
   D29 records that adding fields after the freeze requires a version bump,
   not that no bump may occur. M2's anchor stage will populate anchor states
@@ -212,7 +212,7 @@ The two copies are drift-checked by
 **Coupled version constants — the row that makes a bump impossible to
 half-land.**
 
-- [ ] **`REPORT_VERSION` is `1` and its coupled edits are all in (R32; D29
+- [x] **`REPORT_VERSION` is `1` and its coupled edits are all in (R32; D29
   Recommendation rule 8).** Bumping it is a format event, never a chore.
   **Three** sites, and the third is a deliberate NEGATIVE:
 
@@ -254,7 +254,7 @@ half-land.**
 
 **Report-format scope — what the freeze does and does not close.**
 
-- [ ] **The decode layer is never a report field (D86, permanent).** `layer` is
+- [x] **The decode layer is never a report field (D86, permanent).** `layer` is
   reserved forever in the report's namespace for the **evidence layer** and the
   **storage-linkage layer** (MVP-SPEC.md lines 118–119). The *decode* layer of
   registry §7.6.3 is **failure context only**: `VerificationReport` exists only
@@ -268,14 +268,14 @@ half-land.**
 **Known-and-closed dispositions (so the gate does not read silence as an open
 question).**
 
-- [ ] **Zeroization dispositions closed (C21/C22/D88).** `Cargo.toml` shows
+- [x] **Zeroization dispositions closed (C21/C22/D88).** `Cargo.toml` shows
   `sha2 = { version = "=0.11.0", default-features = false, features =
   ["zeroize"] }`; `crates/antseal-core/tests/zeroization_residue.rs` green
   on native; `docs/zeroization-audit.md` R1 carries the dated D88
   disposition and its narrowed residue; R2–R5 carry dated accepted
   dispositions. **Known-and-accepted, not open.**
 
-- [ ] **Full-reveal cover shape (D75) — closed *contingent on D83.*** D75 is
+- [x] **Full-reveal cover shape (D75) — closed *contingent on D83.*** D75 is
   RESOLVED and ratified: a full reveal ships per-unit covers **and** `s_root`
   (`covered_reveal.cover`, registry §7.11 key 3, stays required at tier [P]).
   **This row may not be ticked while D83 is open.** D75's discharged open
@@ -292,7 +292,7 @@ question).**
 
 **Verification coverage — the row that names what is still missing.**
 
-- [ ] **Traceability matrix M0 rows complete (Q13).**
+- [x] **Traceability matrix M0 rows complete (Q13).**
   `docs/testing/verification-matrix.md` carries a row for every bullet of
   MVP-SPEC.md lines 165–175, and `scripts/check-traceability.py --matrix`
   is green — every test the matrix names resolves. **Every M0 row reads
@@ -309,7 +309,7 @@ question).**
 
 **Independent cross-check (D31 §10, verbatim).**
 
-- [ ] **Independent cross-check clean (Q11/F14/D31).** `docs/testing/
+- [x] **Independent cross-check clean (Q11/F14/D31).** `docs/testing/
   cross-check.md` carries a dated report for this freeze commit with
   **zero discrepancies**, naming per surface the vehicle, its exact version,
   the vector count and the evidence tier (T0 external oracle / T1
@@ -682,6 +682,19 @@ question).**
   - The guard still fires on an empty selection, proven by a planted fault (a filter that matches nothing).
   - `scripts/ci-lanes.sh --self-test`'s Q8 reproduction keeps working, or is restated against the new mechanism — it is the reason the counter is written down at all.
 - Notes: `tamper-matrix` has the same shape but a weaker case for changing it: its run passes `--nocapture` to print the Q14 gate, so its output is already being read for something else.
+
+### Q49 — Make the freeze-boundary lint tolerate a ticked checkbox
+- Milestone: M0 (it blocks Q14 absolutely)
+- Size: S
+- Deps: Q37 (which created the normative-rows block), Q13 (the lint), D84 (the source of truth the copies are cut from)
+- Spec: Format stability (MVP-SPEC.md line 123); Milestones M0 (line 153)
+- Discovered by: **the Q14 gate audit** (2026-07-28, wave 7), and **proven on a scratch tree rather than argued**. Q14's `Accept` requires *both* `scripts/check-traceability.py --freeze-boundary` green **and** every normative row ticked. Rows N1 and N2 live *inside* the `<!-- FREEZE-BOUNDARY:BEGIN … END -->` markers in `tasks/Q.md`, and that block is byte-compared against `docs/decisions/D84-…md` §7, which contains the literal `- [ ]`. Changing `- [ ]` to `- [x]` is a byte change, so the lint went red on the tick. **There was no ordering of the two Accept criteria that satisfied both: the gate could not be executed as written.**
+- Do: Normalise the checkbox marker before comparing, on **both** sides, in `extract_boundary` and the source-block extractor. The rule *text* stays byte-compared — that is the property the lint exists to protect — while the tick, which is per-copy **gate state** and legitimately differs between the decision record (which never ticks) and the checklist (which must), stops counting as drift. The alternative considered and rejected: move the tick outside the markers into a sibling table keyed on row id, which costs the rows their checkbox affordance and makes a reader cross-reference.
+- Accept:
+  - Ticking every normative row leaves `--freeze-boundary` green.
+  - The tolerance is **narrow, and proven narrow**: `--self-test` carries a green case (a ticked row passes) *and* red cases for a changed word and for a **deleted** marker. A normalisation that widened to "compare nothing" would otherwise leave this lint green forever.
+  - The reported first-difference is computed on the same normalised forms, so a message can never point at a tick the comparison deliberately ignored.
+- Notes: **[2026-07-28] DONE, wave 7.** ~8 lines of change plus four self-test cases; the self-test harness gained an `expect` field of `"red"` or `"green"` per case, and a guard that a mutation which matched nothing fails its own case rather than passing vacuously. Landed before any lane merged, because every other gate row was unreachable behind it.
 
 ### Q50 — A freeze digest for the wire registry, and the caps it silently un-pins
 - Milestone: M0
