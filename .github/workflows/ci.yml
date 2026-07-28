@@ -41,10 +41,15 @@
 #        resolves every test it names, and that D84 section 7's freeze-boundary
 #        rows have not drifted between their copies. Script:
 #        scripts/check-traceability.py (self-tests first, every run)
-#   Q9:  fuzz-smoke — per-PR cargo-fuzz smoke, fixed budget (mount point
-#        below); the nightly long run is a separate scheduled workflow, and
-#        cargo-fuzz needs its own nightly-toolchain pin, independent of
-#        rust-toolchain.toml
+#   Q9:  fuzz-smoke — LANDED (mount point claimed at Q9; job id and `name:`
+#        unchanged, so the required-status context is unaffected). Per-PR
+#        cargo-fuzz smoke: self-test first, then a fixed budget per target
+#        over the committed seed corpora (testdata/fuzz-seeds/). The nightly
+#        long run with corpus persistence is
+#        .github/workflows/fuzz-nightly.yml. cargo-fuzz's nightly-toolchain
+#        pin lives in fuzz/rust-toolchain.toml, independent of
+#        rust-toolchain.toml. Driver scripts/fuzz.sh; doc
+#        docs/testing/fuzzing.md
 #   P13/Q10: audit-deny — LANDED at P13 as cargo-deny ONLY (decision D19:
 #        no cargo-audit — deny's advisories check reads the same RUSTSEC
 #        DB); job name kept (required-status context). Q10 owns permanent
@@ -470,20 +475,68 @@ jobs:
             exit 1
           fi
 
-  # Q9: per-PR cargo-fuzz smoke — fixed seconds per target (e.g. 90 s), F's
-  # manifest/bundle CBOR targets first, A's DER/`.ots` targets at M2 (Q17).
-  # Needs its own pinned NIGHTLY toolchain (cargo-fuzz), independent of
-  # rust-toolchain.toml — that pin arrives with Q9. The nightly long run with
-  # corpus persistence is a separate scheduled workflow, not a PR context.
+  # Q9 (mount point CLAIMED; job id and `name:` unchanged, so the
+  # required-status context is unaffected): per-PR cargo-fuzz smoke, a fixed
+  # budget per target over the committed seed corpora.
+  #
+  # Targets: F17's `manifest_decode` / `bundle_decode` / `codec_round_trip`
+  # and R10's `verify_bundle`. A's DER/`.ots` targets join at M2 (Q17) by
+  # editing fuzz/Cargo.toml and scripts/fuzz.sh's TARGETS list — never this
+  # file, which is why every step below is a call into that script.
+  #
+  # TOOLCHAIN: cargo-fuzz needs nightly; the pin lives in
+  # fuzz/rust-toolchain.toml (NOT here, and NOT the workspace's stable pin).
+  # The install step runs from `fuzz/` so rustup reads that file — no version
+  # literal appears in this workflow, exactly as the header's toolchain rule
+  # requires.
+  #
+  # SELF-TEST FIRST, EVERY RUN: `scripts/fuzz.sh selftest` arms the permanent
+  # tripwire (fuzz/src/lib.rs) so each target panics on its first input, and
+  # fails the lane unless the crash is caught AND a reproducer artifact is
+  # written. Only then is a clean fuzz run treated as evidence — the same
+  # discipline `secret-guard` and `wasm-bitmatch` already apply. This is also
+  # Q9's "crash artifacts uploaded, demonstrated with a synthetic crash".
+  #
+  # The nightly long run with corpus persistence is a separate scheduled
+  # workflow (.github/workflows/fuzz-nightly.yml), never a PR context.
+  # Doc: docs/testing/fuzzing.md.
   fuzz-smoke:
     name: fuzz-smoke
     runs-on: ubuntu-latest
     steps:
-      - name: Mount point — content lands at Q9
+      - uses: actions/checkout@v4
+      - name: rustup show (fuzzing nightly from fuzz/rust-toolchain.toml)
+        working-directory: fuzz
         run: |
-          echo "MOUNT POINT (Q1): required-status context 'fuzz-smoke' is reserved."
-          echo "No fuzz targets exist yet. Green here asserts NOTHING until Q9 lands the smoke run."
-          echo "Q9: replace this step's body; never rename the job (branch-protection context)."
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Cache pinned cargo-fuzz binary
+        id: fuzz-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.13.2-${{ runner.os }}
+      - name: Install pinned cargo-fuzz (docs/dependency-policy.md §5)
+        if: steps.fuzz-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: fmt + clippy the fuzz crate (workspace stable toolchain)
+        run: ./scripts/fuzz.sh lint
+      - name: Build the instrumented targets
+        run: ./scripts/fuzz.sh build
+      - name: Self-test — an injected panic MUST crash the target and leave an artifact
+        run: ./scripts/fuzz.sh selftest
+      - name: Smoke run — 90 s per target over the committed seed corpora
+        run: ./scripts/fuzz.sh smoke 90
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-smoke-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
 
   # P13 (live; permanent operation + licenses completion = Q10): cargo-deny
   # ONLY per decision D19 (docs/decisions/D19-advisory-lane.md) — no

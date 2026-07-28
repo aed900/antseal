@@ -65,12 +65,16 @@ Live lanes (wave 6 — F14):
 | --- | --- |
 | `cross-check` | F14 (D31) — **NEW required context**, and an input to the Q14 format freeze. Entry point `./scripts/cross-check.sh`; Q11 adds the non-CBOR surfaces to the same script. Today: a **second implementation** is run over every committed vector that carries a diagnostic sidecar and must agree with the **committed bytes** — render-and-compare per strict-decode layer, re-encode, `SHA-256` of the envelope's key-0 byte string == `work_id`, `SHA-256` of the whole envelope == `anchor_digest`. **D31's role split is the point**: `cbor2 ==6.1.3` **decodes only** (its canonical mode is RFC 7049 length-first key order, coinciding with §4.2.1 only over today's uint keys), while the **RFC 8949 §4.2.1 encoder and the canonicality judgement are ours**, written in the checker. It never runs our Rust encoder: an expectation produced by our own codec would make the check a tautology. That is tier **T1**, which cannot see a *shared misreading of the spec* — so each run opens with a **T0 oracle**, the RFC 8949 Appendix A worked examples in both directions. It also confirms F15's `testdata/tamper/format/` fixtures are non-canonical **for the reason they claim**, and that the schema-level ones are perfectly good CBOR. **Self-tests first, every run**: eight planted faults — seven mutations of a real committed case, including a sidecar whose entries are correct but **reordered**, plus a wrong RFC expectation — must each go red (`./scripts/cross-check.sh --self-test`). `cbor2` is hash-pinned in `requirements-crosscheck.txt` and never enters a Cargo manifest (enforced by a test). Locally an unprovisioned cbor2 is a visible SKIP with the fix printed (`--setup` needs no pip); in CI `--require` makes it a failure. **New vectors need no lane change** — discovery is a directory walk, scope is "commits a diagnostic sidecar", and the script iterates `testdata/vectors/v*/`. Contract: [docs/testing/cbor-cross-check.md](docs/testing/cbor-cross-check.md). |
 
-Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
-task; **a green mount-point lane asserts nothing until then**):
+Live lanes (wave 6 — F17/Q9):
 
-| Lane | Content lands at |
+| Lane | What it asserts |
 | --- | --- |
-| `fuzz-smoke` | Q9 — fixed-budget per-PR cargo-fuzz smoke (nightly long run is a separate scheduled workflow) |
+| `fuzz-smoke` | Q9 — **mount point claimed** (job id and name unchanged, so the required-status context set is unchanged at 16). Builds the four cargo-fuzz targets — F17's `manifest_decode` / `bundle_decode` / `codec_round_trip` and R10's `verify_bundle` — and fuzzes each for 90 s over the committed seed corpora (`testdata/fuzz-seeds/`). **Self-tests first, every run**: `scripts/fuzz.sh selftest` arms a permanent env-gated tripwire so each target panics on its first input, and the lane fails unless the crash is caught *and* a reproducer artifact is written — only then is a clean run evidence. Crash artifacts upload on failure. Nightly long run with corpus persistence: `.github/workflows/fuzz-nightly.yml` (scheduled, never a PR context). Driver `scripts/fuzz.sh`; doc [`docs/testing/fuzzing.md`](docs/testing/fuzzing.md). |
+
+**No mount-point lanes remain**: every Q1 placeholder has been claimed.
+cargo-fuzz needs nightly, so a second dated toolchain pin lives in
+`fuzz/rust-toolchain.toml` and governs `fuzz/` only — the workspace pin
+(= the MSRV) is untouched.
 
 ### Cross-OS suite naming (reserved test-name markers)
 

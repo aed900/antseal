@@ -35,6 +35,7 @@
 use libfuzzer_sys::{Corpus, fuzz_target};
 
 use antseal_core::test_util::bundle_mutators::{Outcome, mutate_from_entropy, seed_bytes};
+use antseal_fuzz::selftest_tripwire;
 
 /// The seed corpus, built once per process.
 ///
@@ -47,6 +48,10 @@ fn corpus() -> &'static [Vec<u8>] {
 }
 
 fuzz_target!(|data: &[u8]| -> Corpus {
+    // Q9's crash-artifact demonstration, armed per target by
+    // `scripts/fuzz.sh selftest` and inert otherwise (fuzz/src/lib.rs).
+    selftest_tripwire("verify_bundle");
+
     let bundle = mutate_from_entropy(data, corpus());
 
     // The assertion is the return: a panic anywhere inside `verify_bundle`

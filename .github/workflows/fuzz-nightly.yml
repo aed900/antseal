@@ -1,0 +1,114 @@
+# antseal nightly fuzzing (Q9).
+#
+# WHY A SEPARATE WORKFLOW: the per-PR `fuzz-smoke` lane in ci.yml is a
+# required status context, so its budget has to stay small enough to sit in
+# front of every merge (90 s/target). Searching for a real bug needs orders
+# of magnitude more than that, and it needs the corpus to *accumulate* rather
+# than start from the committed seeds each time. Neither belongs on a PR
+# context, so this is a scheduled job that is never one — the same shape
+# `advisory-cron.yml` uses for the same reason.
+#
+# GitHub runs `schedule:` triggers against the DEFAULT BRANCH only, so this
+# file is inert until it lands on main (docs/ci-verification.md tracks the
+# remote-run status). `workflow_dispatch` allows a manual run — for an
+# on-demand sweep, or to re-run the crash-artifact demonstration.
+#
+# Toolchain and tool pins: fuzz/rust-toolchain.toml (nightly, dated) and
+# cargo-fuzz =0.13.2 (docs/dependency-policy.md §5). The version literal
+# appears in this file, ci.yml and the policy doc — grep '0\.13\.2' to move
+# all three at once, exactly like cargo-deny's.
+#
+# Corpus policy, minimization cadence and the crash-triage workflow:
+# docs/testing/fuzzing.md.
+name: fuzz-nightly
+
+on:
+  schedule:
+    # 03:41 UTC daily — off the top-of-hour load spikes GitHub's docs warn
+    # about, and offset from advisory-cron's Monday 06:17 so a busy Monday
+    # does not queue both.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        required: false
+        default: "900"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-long:
+    # NOT a PR status context and never becomes one.
+    name: fuzz-long
+    runs-on: ubuntu-latest
+    # Four targets x 900 s plus an instrumented build; the cap is generous so
+    # a slow runner is not reported as a hang.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (fuzzing nightly from fuzz/rust-toolchain.toml)
+        working-directory: fuzz
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Cache pinned cargo-fuzz binary
+        id: fuzz-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.13.2-${{ runner.os }}
+      - name: Install pinned cargo-fuzz (docs/dependency-policy.md §5)
+        if: steps.fuzz-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+
+      # The WORKING corpus persists across runs so coverage found overnight
+      # is not thrown away. It is deliberately NOT the committed corpus:
+      # testdata/fuzz-seeds/ stays deterministic and regenerable, and this
+      # cache is machine-found material with no claim to reproducibility.
+      # `restore-keys` makes each run start from the most recent cache, and
+      # the run-numbered `key` writes a fresh one — GitHub's caches are
+      # immutable, so a fixed key would freeze the corpus on day one.
+      - name: Restore the working fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+
+      - name: Build the instrumented targets
+        run: ./scripts/fuzz.sh build
+      - name: Self-test — an injected panic MUST crash the target and leave an artifact
+        run: ./scripts/fuzz.sh selftest
+      - name: Long run
+        run: ./scripts/fuzz.sh long "${{ github.event.inputs.seconds || '900' }}"
+
+      # Minimization is a REVIEWED cadence step (docs/testing/fuzzing.md §3),
+      # so this only reports what cmin would drop; it never rewrites the
+      # committed tree, and its output is what a human acts on monthly.
+      - name: Report corpus size (input to the monthly minimization review)
+        if: always()
+        run: |
+          set -u
+          for t in $(./scripts/fuzz.sh targets); do
+            d="fuzz/corpus/$t"
+            [ -d "$d" ] || continue
+            printf '%-20s %6s files %10s\n' "$t" \
+              "$(find "$d" -type f | wc -l)" "$(du -sh "$d" | cut -f1)"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-nightly-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

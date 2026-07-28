@@ -817,3 +817,73 @@ marker reserving a live row id; a pending marker without a task id; a
 non-row whose `collides_with` points at nothing; a project addition with an
 empty justification; an unknown field. Plus the positive control (the
 committed registry passes through the identical text path).
+
+---
+
+# Q9 — wave-6 lane changes (2026-07-28)
+
+## What changed
+
+- **The last mount point, `fuzz-smoke`, is claimed.** Job id and `name:`
+  are **byte-identical** to the Q1 placeholder, so this is *not* a new
+  required-status context and the branch-protection payload is unchanged
+  from the 16-context Q6 payload above. Only the step bodies changed, per
+  the CONTRIBUTING.md "CI lanes" rule. **No mount-point lanes remain.**
+- **A new scheduled workflow**, `.github/workflows/fuzz-nightly.yml`, job
+  `fuzz-long`. Like `advisory-weekly` it is **not** a PR status context and
+  never becomes one, so it adds nothing to the branch-protection payload.
+  GitHub runs `schedule:` triggers against the default branch only, so it is
+  inert until it lands on main.
+- **A second toolchain pin**, `fuzz/rust-toolchain.toml`
+  (`nightly-2026-01-26`), governing `fuzz/` only. cargo-fuzz needs nightly;
+  the workspace pin (= the MSRV) is untouched. Both workflows install *from
+  that file* (`working-directory: fuzz`), so no toolchain version literal
+  appears in either — the same rule the ci.yml header already states.
+- **A new pinned dev-tool**: cargo-fuzz `=0.13.2`
+  (docs/dependency-policy.md §5). The version literal appears in `ci.yml`,
+  `fuzz-nightly.yml`, `scripts/fuzz.sh` and the policy doc — grep
+  `0\.13\.2` to move all four at once, exactly like cargo-deny's.
+  `scripts/fuzz.sh` **refuses to run** on a different version rather than
+  installing one silently.
+- Both lanes call `scripts/fuzz.sh`, never inline cargo invocations, so
+  adding A23's M2 targets (Q17) edits `fuzz/Cargo.toml` and the script's
+  `TARGETS` list and touches no workflow.
+
+## Local verification (2026-07-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Toolchain pin resolves | `rustup toolchain install nightly-2026-01-26` | **PASS** — `rustc 1.95.0-nightly (873d4682c 2026-01-25)`; `scripts/fuzz.sh` picks it up from `fuzz/` with no `+toolchain` argument |
+| `fuzz-smoke` step 1 | `./scripts/fuzz.sh lint` | **PASS** (exit 0) — `cargo fmt --check` + `cargo clippy --all-targets --locked -- -D warnings` over the fuzz crate, on the **workspace stable** toolchain |
+| `fuzz-smoke` step 2 | `./scripts/fuzz.sh build` | **PASS** — four instrumented binaries (`manifest_decode`, `bundle_decode`, `codec_round_trip`, `verify_bundle`) |
+| `fuzz-smoke` step 3 (self-test) | `./scripts/fuzz.sh selftest` | **PASS** — all four targets: injected panic crashed the run **and** wrote a reproducer to `fuzz/artifacts/<target>/`; the script fails if either half is missing, so a green self-test cannot pass vacuously |
+| `fuzz-smoke` step 4 (the lane) | `./scripts/fuzz.sh runs 100000` per target | **PASS** — 4 × 100 000 = **400 000 iterations, zero crashes**. `manifest_decode` 12 500 exec/s, `bundle_decode` 11 111, `codec_round_trip` 4 347, `verify_bundle` 574 |
+| Corpus minimization | `./scripts/fuzz.sh cmin` | **PASS** — working corpus 827 files / 4.3 MB → 557 files / 3.0 MB |
+| Committed corpora are the generated ones | `cargo test -p antseal-core --features test-util --test codec_fuzz` | **PASS** — 10 tests; drift, stray-file and from-disk drive checks green |
+
+**The one finding, and it is a real one.** The first 20 000-iteration run of
+`manifest_decode` crashed in seconds on the *allocation budget* the target
+asserts. A 152-byte manifest whose `signatures` map head claims 59 638
+entries drives a 4 704-byte single allocation — 147 elements of
+`(SigAlg, Vec<u8>)` at 32 B each. The clamp is working exactly as D10 §4
+specifies; what was wrong is the **claim**: `parser_caps_alloc.rs` states
+the consequence as "never more than the attacker's own bytes", which holds
+there only because its two inputs are under 32 bytes so the element-size
+multiplier hides inside a 4 KiB slack. Scaled to `MAX_MANIFEST_BYTES`, a
+16 MiB manifest can drive a ~512 MiB reservation before one map entry is
+read. No verdict changes (capacity is a hint), so the lane now asserts the
+*true* bound and task **F30** carries the fix (element-aware clamping where
+a bound is already known) plus the prose correction.
+
+**Not verifiable locally**: execution on the runner image; the
+`actions/cache` corpus-persistence round trip (`fuzz-corpus-<run_id>` key
+with a `fuzz-corpus-` restore prefix — immutable caches mean a fixed key
+would freeze the corpus on day one); `actions/upload-artifact` of
+`fuzz/artifacts/` on failure; and the `schedule:` trigger, which is inert
+until the workflow lands on main.
+
+## Authoritative context set (still 16)
+
+Unchanged from the Q6 payload above. `fuzz-smoke` was already in it as a
+mount point; claiming it changed the step bodies only, and `fuzz-long` is
+not a PR context. **Runbook step 5 needs no re-run for this wave.**

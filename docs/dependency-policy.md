@@ -129,9 +129,26 @@ fallout, with this checklist completed in the PR description:
   shaped that: cbor2 6.x is a compiled **Rust/PyO3** extension with no
   pure-Python fallback (so a source install would want a Rust toolchain and
   dev headers), and a wheel is a zip — so the setup step needs no `pip`,
-  no `ensurepip` and no root. The M3 reproducible wasm build makes the
+  no `ensurepip` and no root, **cargo-fuzz `=0.13.2`** (its verdict
+  gates merges via the `fuzz-smoke` lane; pinned at Q9 — installed with
+  `cargo install cargo-fuzz --version 0.13.2 --locked` in both the per-PR
+  `fuzz-smoke` job and the scheduled `fuzz-nightly` workflow, and
+  `scripts/fuzz.sh` **refuses to run** on any other version rather than
+  silently producing a verdict from an unreviewed tool).
+  The M3 reproducible wasm build makes the
   wasm-pack/wasm-bindgen versions format-provenance-relevant, exactly like
   the toolchain itself.
+- **A second, dated toolchain pin exists for fuzzing only**:
+  `fuzz/rust-toolchain.toml` (`nightly-2026-01-26` at Q9). cargo-fuzz needs
+  nightly for `-Z sanitizer` and libFuzzer instrumentation, and the
+  workspace pin — which is the MSRV — must not move for that. rustup
+  resolves toolchain files from the invocation directory upward and
+  `scripts/fuzz.sh` runs cargo from `fuzz/`, so the nightly governs fuzzing
+  and nothing else (`fuzz/` is not an ancestor of `crates/`). It is a
+  **date**, not a floating `nightly`, for the reason this whole section
+  exists: a floating channel would make "the fuzzer found nothing" a
+  statement about whatever compiler CI downloaded that morning. Bumps
+  follow §4.
 
 ## Enforcement & cross-references
 
@@ -142,6 +159,12 @@ fallout, with this checklist completed in the PR description:
   every wasm32 build graph and the wasm-bindgen crate↔CLI pin equality of §5
   ([wasm-toolchain.md](wasm-toolchain.md)).
 - cargo-deny advisory lane, per-PR + weekly schedule (P13, M0).
+- CI (Q9): the `fuzz-smoke` lane installs cargo-fuzz at the §5 pin and the
+  fuzzing nightly from `fuzz/rust-toolchain.toml`; neither version literal
+  is hardcoded in a workflow. `fuzz/Cargo.lock` is committed and separate
+  from the workspace lockfile — the fuzz crate carries an empty
+  `[workspace]` table, so `libfuzzer-sys`/`arbitrary`/`cc` structurally
+  cannot reach the audited graph (`docs/testing/fuzzing.md`).
 - Weekly upstream-bump check: report-only, human-reviewed PR required for
   any pin change (P19).
 - PR process: [../CONTRIBUTING.md](../CONTRIBUTING.md) — its checklist

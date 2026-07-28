@@ -1,0 +1,29 @@
+# The NIGHTLY pin for fuzzing only (Q9).
+#
+# cargo-fuzz needs nightly: `-Z sanitizer=address` and libFuzzer's
+# instrumentation are unstable. The workspace pin (../rust-toolchain.toml,
+# stable 1.92.0 = the MSRV) must not move for this, so the nightly lives
+# here — rustup resolves toolchain files from the invocation directory
+# upward, and `scripts/fuzz.sh` runs cargo from `fuzz/`, so this file governs
+# fuzzing and nothing else. `fuzz/` is not an ancestor of `crates/`, so no
+# ordinary build can pick it up.
+#
+# WHY A DATE AND NOT `nightly`: docs/dependency-policy.md §5 puts dev-tools
+# whose verdict the project depends on under the same exact-pin rule as
+# dependencies. A floating `nightly` would make "the fuzzer found nothing"
+# a statement about whatever compiler CI happened to download that morning,
+# and would let a nightly regression masquerade as a finding (or hide one).
+# Bumps follow §4: deliberate, reviewed, in their own commit.
+#
+# LOCAL OVERRIDE: `ANTSEAL_FUZZ_TOOLCHAIN=nightly scripts/fuzz.sh …` runs
+# with whatever nightly is already installed, for a contributor who does not
+# want a second ~1 GB toolchain. CI never sets it — the pin is the point
+# there.
+#
+# NO `components` LIST: fmt and clippy for this crate run on the WORKSPACE
+# stable toolchain (`scripts/fuzz.sh lint`, invoked from the repo root with
+# `--manifest-path fuzz/Cargo.toml`), so the fuzz crate is held to exactly
+# the same lint verdict as everything else rather than to whatever nightly
+# clippy happens to think this week.
+[toolchain]
+channel = "nightly-2026-01-26"
