@@ -8,6 +8,7 @@
 //! | --- | --- | --- |
 //! | G8 | [`ggm`](super::ggm) | `s_root` → per-leaf 16-byte salts on the depth-`d` dyadic grid |
 //! | G9 | [`build`] | streaming construction with O(log n) memory; [`rebuild_fine_root`] |
+//! | G10 | [`cost`] | the seal-time cost estimate `seal` prints for large files |
 //! | G11 | [`cover`] | the leaf-exact minimal GGM sub-cover, and the only seed-disclosure path |
 //! | G12 | [`proof`] | range-proof generation; per-unit reveals as leaf-aligned ranges |
 //! | G13 | [`verify`](mod@verify) | range-proof verification against `fine_root`, defensively |
@@ -43,6 +44,7 @@
 //! the caller already holds.
 
 pub mod build;
+pub mod cost;
 pub mod cover;
 pub mod error;
 mod ggm_walk;
@@ -50,6 +52,7 @@ pub mod proof;
 pub mod verify;
 
 pub use build::{FineRoot, FineTreeBuilder, FineTreeStats, rebuild_fine_root};
+pub use cost::{CostEstimate, estimate_fine_tree_cost};
 pub use cover::{CoverEntry, CoverNode, LeafExactCover, cover_seeds, minimal_cover};
 pub use error::FineTreeError;
 pub use proof::{BoundaryNode, CoveredUnit, RangeProof, WireNode, prove_range, prove_unit};
