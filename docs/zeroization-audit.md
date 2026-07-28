@@ -115,6 +115,37 @@ it is a claim about a different mechanism.
 | `FileSalt::expose_bytes_for_test_vectors` | `material` | Gated behind the `test-vectors` feature, which no shipped build enables. |
 | `Sha256` block buffer (GGM child preimage `0x06 ‖ s_v ‖ b`) | `crypto::domain::tagged_sha256`, reached from `content::ggm::child_seed` | **Wiped** — `sha2/zeroize` (D88). Before D88 the parent seed was fully recoverable from the dropped hasher; measured (94 of 104 bytes non-zero, seed verbatim). |
 
+## F. Caller-owned secret preimage and truncation buffers (C23, 2026-07-28)
+
+Tables A–E were scoped to `crypto/`. D88 §9.6 asked for the same sweep over
+**`content/`** and over the plain `[u8; N]` buffers *we* own — not the
+newtypes, which wipe, and not third-party internals, which `sha2/zeroize`
+now wipes, but the raw arrays in between. `[u8; N]` has no `Drop`, so a
+truncation or a slice-to-array conversion leaves a full copy of the secret on
+the stack unless it is wiped by hand.
+
+Every hit below is **library code**, on a production path, and every one is
+now wiped. None of these changes a derived byte: they add a wipe *after* the
+value has been moved into its newtype.
+
+| Buffer | Where | Held | Disposition |
+| --- | --- | --- | --- |
+| `[u8; 16]` salt truncation | `content::ggm::SaltTree::salt` | `salt_i` | **Wiped** — `salt.zeroize()` after the value is inside `Salt16`. |
+| `[u8; 32]` leaf-seed copy | `content::fine_tree::ggm_walk::GgmWalker::next_salt` | a full **GGM leaf seed** | **Removed entirely.** The truncation now reads straight out of the borrowed `Seed32`; no 32-byte copy is materialised. This one fired on *every leaf of every fine tree*. |
+| `[u8; 16]` salt truncation | same | `salt_i` | **Wiped.** |
+| `[u8; 32]` cover-seed parse | `content::fine_tree::verify::seed_of` | a bundle-supplied **covering seed** | **Wiped** after the value is inside `Seed32`. The wire slice itself is the caller's copy, not ours. |
+| `[u8; 16]` slice→array | `crypto::material::Salt16::try_from_slice` | bundle-supplied `unit_salt`/`path_salt` | **Wiped.** |
+| `[u8; 32]` slice→array | `crypto::material::<Seed32 as TryFrom<&[u8]>>::try_from` | bundle-supplied `s_root` / covering seed | **Wiped.** |
+| tagged SHA-256 preimages | `crypto::domain::tagged_sha256` | GGM seeds, every commitment salt | **No owned buffer exists** — parts are streamed into the hasher as slices, so the only owned bytes are the public digest. Documented at the function as a hygiene requirement, because concatenating into a `Vec` would silently recreate the whole class. |
+
+Deliberately **not** wiped, and why: the unnamed `[u8; 32]` temporaries at
+`ggm::SaltTree::derive_along`, `ggm_walk::GgmWalker::new` and
+`cover::descend`, where `*seed.as_bytes()` is passed by value into
+`Seed32::from_bytes`. These are compiler-managed argument temporaries with no
+binding to wipe; closing them means changing `from_bytes` to take a reference
+across the whole material API. Recorded rather than fixed — the window is one
+function call and the owning newtype wipes.
+
 ---
 
 ## Residual risks

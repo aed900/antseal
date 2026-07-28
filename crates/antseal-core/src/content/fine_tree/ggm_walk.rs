@@ -42,6 +42,8 @@
 //! on drop, `truncate` therefore wipes the abandoned suffix, and no accessor
 //! here yields anything but the current leaf's 16-byte salt.
 
+use zeroize::Zeroize;
+
 use crate::content::ggm::{ChildBit, child_seed};
 use crate::crypto::material::{Salt16, Seed32};
 
@@ -108,16 +110,23 @@ impl GgmWalker {
         self.cursor = Some(next);
 
         // `reseat` guarantees `stack.len() == depth + 1`, so the leaf seed is
-        // the last entry; the `unwrap_or` arm is unreachable (the stack is
-        // never empty) and exists only to keep this path panic-free.
-        let leaf_seed = self.stack.last().map_or([0u8; Seed32::LEN], |seed| {
-            let mut bytes = [0u8; Seed32::LEN];
-            bytes.copy_from_slice(seed.as_bytes());
-            bytes
-        });
+        // the last entry; the `None` arm is unreachable (the stack is never
+        // empty) and exists only to keep this path panic-free — it yields the
+        // all-zero salt the previous formulation also produced.
+        //
+        // C23: truncate straight out of the borrowed, zeroizing `Seed32`.
+        // This deliberately does NOT materialise a `[u8; Seed32::LEN]` copy of
+        // the leaf seed first: that copy was a full GGM ancestor seed in a
+        // buffer we own, with no `Drop`, left behind on every single leaf of
+        // every fine tree. The 16-byte truncation is wiped explicitly once the
+        // value is inside the newtype.
         let mut salt = [0u8; Salt16::LEN];
-        salt.copy_from_slice(&leaf_seed[..Salt16::LEN]);
-        Salt16::from_bytes(salt)
+        if let Some(seed) = self.stack.last() {
+            salt.copy_from_slice(&seed.as_bytes()[..Salt16::LEN]);
+        }
+        let wrapped = Salt16::from_bytes(salt);
+        salt.zeroize();
+        wrapped
     }
 
     /// Re-derive exactly the levels the paths to `self.cursor` and `next` do

@@ -183,7 +183,14 @@ impl Salt16 {
     /// [`CryptoError::SaltLength`] when `bytes.len() != 16`.
     pub fn try_from_slice(kind: SaltKind, bytes: &[u8]) -> Result<Self, CryptoError> {
         match <[u8; Self::LEN]>::try_from(bytes) {
-            Ok(array) => Ok(Self::from_bytes(array)),
+            // C23: `array` is a copy of secret salt bytes in a buffer we own,
+            // and `[u8; N]` has no `Drop` — wipe it once the value is inside
+            // the zeroizing newtype.
+            Ok(mut array) => {
+                let salt = Self::from_bytes(array);
+                array.zeroize();
+                Ok(salt)
+            }
             Err(_) => Err(CryptoError::SaltLength {
                 kind,
                 expected: Self::LEN,
@@ -200,7 +207,13 @@ impl TryFrom<&[u8]> for Seed32 {
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         match <[u8; Self::LEN]>::try_from(bytes) {
-            Ok(array) => Ok(Self::from_bytes(array)),
+            // C23: as `Salt16::try_from_slice` — a bundle-supplied covering
+            // seed copied into a `Drop`-less buffer we own.
+            Ok(mut array) => {
+                let seed = Self::from_bytes(array);
+                array.zeroize();
+                Ok(seed)
+            }
             Err(_) => Err(CryptoError::SeedLength {
                 expected: Self::LEN,
                 got: bytes.len(),
