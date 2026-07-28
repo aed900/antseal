@@ -290,8 +290,27 @@ pub struct AnchorResult {
     /// `valid-at-stamping-cert-since-expired`). Integer per D29's
     /// no-floats rule. Never the claimed time.
     pub verified_time_unix: Option<i64>,
-    /// Artifact metadata: the anchor's source identity when known (TSA
-    /// URL / calendar identity, as recorded in the bundle artifact).
+    /// The anchor's source identity when known — **derived by the verifier
+    /// from artifact content it has itself parsed, never copied from a
+    /// bundle field**.
+    ///
+    /// The wire format carries no source string for either kind: D8 §1
+    /// removed the TSA one from v1 (a sealer's claim, bound by nothing in an
+    /// unsigned bundle) and there never was an OTS one. At M2, A18/R12 fill
+    /// this from:
+    ///
+    /// - **TSA** — the verified certificate chain: the signer certificate's
+    ///   subject / the ESSCertID-bound identity, evaluated against the
+    ///   pinned root store (MVP-SPEC.md line 109). For [`AnchorState::Proven`]
+    ///   or [`AnchorState::ValidAtStampingCertSinceExpired`] that is a
+    ///   *verified* identity; for [`AnchorState::InternallyConsistentOnly`]
+    ///   or [`AnchorState::Invalid`] it is a *claimed* one read from the same
+    ///   token and MUST render as such — the state already says the chain did
+    ///   not close, so the rendering discipline is inherited, not invented.
+    /// - **OTS** — the `.ots` attestations, which name their calendars.
+    ///
+    /// M0/M1 leave it `None` throughout: the pipeline parses no artifact byte
+    /// and deliberately copies no bundle-recorded anchor metadata.
     pub source: Option<String>,
     /// Fetch date recorded in the bundle for this artifact
     /// (sealer-recorded metadata; rendered with the anchor per

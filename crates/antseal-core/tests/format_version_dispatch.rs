@@ -439,7 +439,7 @@ fn bundle_with_injected(map_id: BundleMapId, key: u64) -> Vec<u8> {
             set(&mut b, bkey::bundle::OTS_ANCHORS, w::section(&[m]));
         }
         BundleMapId::TsaAnchor => {
-            let mut m = w::tsa_anchor(0, 2, Some("https://freetsa.org/tsr"));
+            let mut m = w::tsa_anchor(0, 2, 0x30);
             set(&mut m, key, injected);
             set(&mut b, bkey::bundle::TSA_ANCHORS, w::section(&[m]));
         }

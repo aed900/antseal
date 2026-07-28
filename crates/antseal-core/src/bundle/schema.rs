@@ -561,7 +561,6 @@ pub struct TsaAnchor {
     token: OpaqueBytes,
     intermediates: Vec<OpaqueBytes>,
     fetch_date: u64,
-    source: Option<String>,
 }
 
 impl TsaAnchor {
@@ -572,14 +571,12 @@ impl TsaAnchor {
         token: OpaqueBytes,
         intermediates: Vec<OpaqueBytes>,
         fetch_date: u64,
-        source: Option<String>,
     ) -> Self {
         Self {
             status,
             token,
             intermediates,
             fetch_date,
-            source,
         }
     }
 
@@ -613,15 +610,6 @@ impl TsaAnchor {
         self.fetch_date
     }
 
-    /// Informational TSA URL/identity, if the sealer recorded one.
-    ///
-    /// **Never verdict-bearing**: the source identity a verdict reports comes
-    /// from the verified certificate chain, not from this string.
-    #[must_use]
-    pub fn source(&self) -> Option<&str> {
-        self.source.as_deref()
-    }
-
     fn decode(d: &mut CanonicalDecoder<'_>) -> Result<Self, BundleError> {
         const MAP: BundleMapId = BundleMapId::TsaAnchor;
         let mut reader = d.map().map_err(cbor)?;
@@ -629,7 +617,6 @@ impl TsaAnchor {
         let mut token: Option<OpaqueBytes> = None;
         let mut intermediates: Option<Vec<OpaqueBytes>> = None;
         let mut fetch_date: Option<u64> = None;
-        let mut source: Option<String> = None;
 
         while let Some(k) = reader.next_key(d).map_err(cbor)? {
             admit_key(MAP, k)?;
@@ -642,7 +629,6 @@ impl TsaAnchor {
                     })?);
                 }
                 key::tsa_anchor::FETCH_DATE => fetch_date = Some(d.u64().map_err(cbor)?),
-                key::tsa_anchor::SOURCE => source = Some(d.str().map_err(cbor)?.to_owned()),
                 other => return Err(unhandled_assigned_key(MAP, other)),
             }
         }
@@ -652,7 +638,6 @@ impl TsaAnchor {
             token: token.ok_or(missing(MAP, key::tsa_anchor::TOKEN))?,
             intermediates: intermediates.ok_or(missing(MAP, key::tsa_anchor::INTERMEDIATES))?,
             fetch_date: fetch_date.ok_or(missing(MAP, key::tsa_anchor::FETCH_DATE))?,
-            source,
         })
     }
 }
@@ -1897,9 +1882,6 @@ impl TsaAnchor {
             })
         })?;
         m.entry(key::tsa_anchor::FETCH_DATE, |e| e.u64(self.fetch_date))?;
-        if let Some(source) = &self.source {
-            m.entry(key::tsa_anchor::SOURCE, |e| e.str(source))?;
-        }
         Ok(())
     }
 }

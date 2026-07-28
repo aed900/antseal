@@ -58,7 +58,7 @@ because it is.
 | `covered-unit-partial-reveal` | one covered unit of the unbalanced `n = 6` file — leaves `[2,4)`, so the cover is the leaf-exact interior node `(2,1)` and the boundary path is genuinely non-empty | none |
 | `noncovered-unit-reveal` | only the `--no-fine-tree` file, so its unit arrives with `unit_salt` in place of a cover | none |
 | `full-file-reveal-with-mirror` | a mirrored text file in full: the covered canonical unit, the non-covered raw mirror, and `file_salt` + `s_root` | none |
-| `every-anchor-kind-with-receipt` | a mixed selection (full / one unit / untouched) | **every kind and optional slot**: an OTS artifact with the D79 upgrade group and one without, a TSA artifact with intermediates and a `source` and one with neither, and the Arbitrum receipt |
+| `every-anchor-kind-with-receipt` | a mixed selection (full / one unit / untouched) | **every kind and optional slot**: an OTS artifact with the D79 upgrade group and one without, a TSA artifact with intermediates and one without, and the Arbitrum receipt |
 | `every-anchor-kind-no-receipt` | identical | the same, receipt **excluded** |
 | `nothing-revealed` | nothing at all — proves the work exists and shows none of it | none |
 

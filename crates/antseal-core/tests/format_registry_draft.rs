@@ -668,6 +668,35 @@ fn no_bundle_map_grows_a_deliberately_absent_field() {
         "nonces come from the manifest — the single source of truth (line 114)",
     )];
 
+    // Banned on the TSA artifact specifically (D8 §1): the informational
+    // `source` string left v1. It was bound by nothing — the bundle is
+    // unsigned, so any relay can rewrite it — and consumed by nothing: the
+    // report pipeline refuses in writing to copy bundle-recorded anchor
+    // metadata, and a verdict's source identity comes from the verified
+    // certificate chain. Key 4 is now plain reserved.
+    let banned_on_tsa: &[(&str, &str)] = &[(
+        "source",
+        "D8 §1 removed the TSA source string from v1: unbindable (unsigned bundle), \
+         unconsumed (verify::pipeline refuses it), and rendered beside a verdict",
+    )];
+
+    // Banned on the receipt (D8 §3b): a sealer-written chain identifier would
+    // steer the verifier's RPC choice. The chain is pinned by the verifier.
+    let banned_on_receipt: &[(&str, &str)] = &[
+        (
+            "chain_id",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+        (
+            "chain",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+        (
+            "network",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+    ];
+
     let mut violations = Vec::new();
     for map in BundleMapId::ALL {
         let name = map.registry_name();
@@ -681,6 +710,12 @@ fn no_bundle_map_grows_a_deliberately_absent_field() {
             let mut rules = banned_everywhere.to_vec();
             if in_reveal {
                 rules.extend_from_slice(banned_in_reveals);
+            }
+            if map == BundleMapId::TsaAnchor {
+                rules.extend_from_slice(banned_on_tsa);
+            }
+            if map == BundleMapId::ReceiptRecord {
+                rules.extend_from_slice(banned_on_receipt);
             }
             if let Some((_, why)) = rules.iter().find(|(b, _)| *b == field_name) {
                 violations.push(format!("maps.{name}.{field_name}: {why}"));

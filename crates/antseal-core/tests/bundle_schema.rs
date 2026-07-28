@@ -153,7 +153,7 @@ fn every_anchor_status_value_decodes() {
 
         let tsa = with_section(
             key::bundle::TSA_ANCHORS,
-            bundle_wire::section(&[bundle_wire::tsa_anchor(status.to_wire(), 0, None)]),
+            bundle_wire::section(&[bundle_wire::tsa_anchor(status.to_wire(), 0, 0x30)]),
         );
         let decoded = BundleV1::decode(&tsa).expect("TSA status decodes");
         assert_eq!(decoded.tsa_anchors()[0].status(), *status);
@@ -177,17 +177,35 @@ fn ots_upgrade_group_is_free_standing_from_status() {
     }
 }
 
-/// A TSA artifact's `source` is optional with no parse-decidable condition,
-/// and its `intermediates` list may be empty (registry §7.9).
+/// A TSA artifact's `intermediates` list may be empty (registry §7.9), and
+/// its key 4 is **reserved, not a field**.
+///
+/// D8 §1 removed the informational `source` string from v1: it was bound by
+/// nothing (the bundle is unsigned, so any relay could rewrite it) and
+/// consumed by nothing (`verify::pipeline` refuses in writing to copy
+/// bundle-recorded anchor metadata into a report). The absence is *checked*,
+/// not merely omitted — a v1 input carrying key 4 raises the ordinary
+/// reserved-slot error, so a producer that still emits one is told its file
+/// is from a version this verifier does not know rather than being silently
+/// tolerated.
 #[test]
-fn tsa_source_is_optional_and_intermediates_may_be_empty() {
+fn tsa_intermediates_may_be_empty_and_key_4_is_reserved() {
     let bare = with_section(
         key::bundle::TSA_ANCHORS,
-        bundle_wire::section(&[bundle_wire::tsa_anchor(0, 0, None)]),
+        bundle_wire::section(&[bundle_wire::tsa_anchor(0, 0, 0x30)]),
     );
     let bundle = BundleV1::decode(&bare).expect("bare TSA artifact");
-    assert!(bundle.tsa_anchors()[0].source().is_none());
     assert!(bundle.tsa_anchors()[0].intermediates().is_empty());
+
+    let mut anchor = bundle_wire::tsa_anchor(0, 0, 0x30);
+    anchor.push((4, manifest_wire::tstr("https://tsa.invalid/")));
+    let with_source = with_section(key::bundle::TSA_ANCHORS, bundle_wire::section(&[anchor]));
+    assert_eq!(
+        reject_code(&with_source),
+        "bundle-reserved-key",
+        "tsa_anchor key 4 left v1 with D8 §1 — its presence is a reserved-slot \
+         rejection, never a tolerated informational field"
+    );
 }
 
 /// A full reveal without `s_root` decodes: the key is genuinely optional at

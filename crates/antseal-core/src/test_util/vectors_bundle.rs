@@ -437,7 +437,6 @@ fn tsa_view(anchor: &TsaAnchor) -> serde_json::Value {
         "token": opaque(anchor.token()),
         "intermediates": anchor.intermediates().iter().map(opaque).collect::<Vec<_>>(),
         "fetch_date": anchor.fetch_date(),
-        "source": anchor.source(),
     })
 }
 

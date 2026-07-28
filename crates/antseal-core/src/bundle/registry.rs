@@ -169,10 +169,14 @@ pub mod key {
         pub const INTERMEDIATES: u64 = 2;
         /// When the token was obtained.
         pub const FETCH_DATE: u64 = 3;
-        /// Informational TSA identity; never verdict-bearing.
-        pub const SOURCE: u64 = 4;
         /// First reserved key of the TSA-artifact map.
-        pub const RESERVED_FIRST: u64 = 5;
+        ///
+        /// Key 4 held an informational `source` string in the draft
+        /// registry; **D8 §1 removed it from v1** and it is now a checked
+        /// absence (registry §7.6.1). Plain reserved, not a named slot — a
+        /// TSA source string is committed to nothing, so the option is
+        /// preserved by the band rather than by a name.
+        pub const RESERVED_FIRST: u64 = 4;
     }
 
     /// Arbitrum receipt record — registry §7.10.
@@ -342,7 +346,6 @@ impl BundleMapId {
                 key::tsa_anchor::TOKEN,
                 key::tsa_anchor::INTERMEDIATES,
                 key::tsa_anchor::FETCH_DATE,
-                key::tsa_anchor::SOURCE,
             ],
             Self::ReceiptRecord => &[
                 key::receipt::TX_HASHES,

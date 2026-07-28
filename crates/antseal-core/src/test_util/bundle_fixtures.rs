@@ -284,15 +284,14 @@ pub enum AnchorSet {
     Empty,
     /// One OTS artifact and two TSA artifacts (the spec's ≥2-TSA shape),
     /// each with its optional sub-structure **absent**: no OTS upgrade
-    /// group, no TSA intermediates, no `source`, no receipt.
+    /// group, no TSA intermediates, no receipt.
     OneOtsTwoTsa,
     /// **Every anchor kind and every optional slot the F8 schema defines**,
     /// populated with opaque placeholder bytes (F13):
     ///
     /// - two OTS artifacts — one carrying the D79 upgrade group (block
     ///   height, the 80-byte header, fetch date), one without it;
-    /// - two TSA artifacts — one with intermediates and a recorded `source`,
-    ///   one with neither;
+    /// - two TSA artifacts — one with intermediates, one without;
     /// - the Arbitrum receipt record when `receipt`.
     ///
     /// `receipt: false` is the receipt-**excluded** twin of the same shape,
@@ -301,8 +300,8 @@ pub enum AnchorSet {
     /// which is exactly why both need a committed vector.
     ///
     /// Added by F13: `OneOtsTwoTsa` leaves the upgrade group, the
-    /// intermediate list, `source` and the whole receipt section unexercised
-    /// by any committed artifact, and *"a bundle with every anchor kind
+    /// intermediate list and the whole receipt section unexercised by any
+    /// committed artifact, and *"a bundle with every anchor kind
     /// populated"* plus *"receipt-included and receipt-excluded variants"*
     /// are named F13 vectors.
     EveryKind {
@@ -1410,14 +1409,12 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
                     OpaqueBytes::from_vec(b"fixture TSA token A".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                    None,
                 ),
                 TsaAnchor::new(
                     AnchorStatus::Proven,
                     OpaqueBytes::from_vec(b"fixture TSA token B".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                    None,
                 ),
             ],
             None,
@@ -1442,7 +1439,7 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
                 ),
             ],
             vec![
-                // Intermediates and a recorded source…
+                // Intermediates present…
                 TsaAnchor::new(
                     AnchorStatus::Proven,
                     OpaqueBytes::from_vec(b"fixture TSA token A".to_vec()),
@@ -1451,15 +1448,13 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
                         OpaqueBytes::from_vec(b"fixture TSA intermediate A2".to_vec()),
                     ],
                     FIXTURE_CLAIMED_TIME,
-                    Some("https://tsa.invalid/fixture".to_owned()),
                 ),
-                // …and neither, so both optional shapes are committed.
+                // …and absent, so both optional shapes are committed.
                 TsaAnchor::new(
                     AnchorStatus::ValidAtStampingCertSinceExpired,
                     OpaqueBytes::from_vec(b"fixture TSA token B".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                    None,
                 ),
             ],
             receipt.then(|| {
