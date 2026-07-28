@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 
 use antseal_core::codec::caps::MAX_BUNDLE_BYTES;
 use antseal_core::test_util::tamper_rows_format::{
-    FIXTURES, FormatFixture, base_bundle, base_manifest, run_surface,
+    FIXTURES, FormatFixture, Surface, base_bundle, base_manifest, run_surface,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -413,6 +413,57 @@ fn every_fixture_fails_with_its_mapped_error() {
             fixture.id
         );
     }
+}
+
+/// **D86 §4.5, as an invariant rather than a per-fixture coincidence.**
+///
+/// `expected.layer` is null **iff** the fixture's surface is not a layered
+/// decoder, and exactly one surface qualifies: `check_canonical`, the
+/// schema-agnostic strict pass. `every_fixture_fails_with_its_mapped_error`
+/// only checks each declaration against that fixture's own observation, so
+/// a whole class of fixtures could drift together without it noticing; this
+/// pins the rule the two READMEs state.
+///
+/// It is also what keeps the rule cheap to state. The pre-D86 rule —
+/// "null means a schema rejection inside the manifest" — was not
+/// expressible as a property of the surface at all, which is why it needed
+/// restating in three places.
+#[test]
+fn a_null_layer_means_the_surface_is_not_layered() {
+    let root = table();
+    for (entry, fixture) in entries(&root, "fixtures").iter().zip(FIXTURES) {
+        let layered = !matches!(fixture.surface, Surface::Canonical);
+        assert_eq!(
+            fixture.layer.is_some(),
+            layered,
+            "`{}`: a layer is declared iff the surface is a layered decoder",
+            fixture.id
+        );
+        let declared = entry
+            .get("expected")
+            .and_then(|e| e.get("layer"))
+            .expect("expected.layer");
+        assert_eq!(
+            !declared.is_null(),
+            layered,
+            "`{}`: the committed table disagrees with the surface rule",
+            fixture.id
+        );
+    }
+    // Both halves of the "iff" are witnessed, so the test cannot pass by
+    // vacuity if a future edit leaves only one kind of surface behind.
+    assert!(
+        FIXTURES
+            .iter()
+            .any(|f| matches!(f.surface, Surface::Canonical)),
+        "no unlayered-surface fixture is left to witness the null case"
+    );
+    assert!(
+        FIXTURES
+            .iter()
+            .any(|f| !matches!(f.surface, Surface::Canonical)),
+        "no layered-surface fixture is left to witness the non-null case"
+    );
 }
 
 // ---------------------------------------------------------------------------
