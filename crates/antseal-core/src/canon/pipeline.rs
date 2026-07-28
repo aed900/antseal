@@ -223,9 +223,29 @@ impl CanonicalizeError {
     /// verdict — R4's raw-mirror binding reports content disagreement as
     /// `raw-mirror-canonicalization-mismatch` instead.
     ///
-    /// [`Self::InvalidUtf8`] is **unreachable from R4**, which always
-    /// recomputes in [`TextMode::Forced`] (decision D20); it has a code
-    /// because the seal-side pipeline can still produce it.
+    /// # Who owns `content-canonicalize-invalid-utf8` (G22)
+    ///
+    /// [`Self::InvalidUtf8`] is **structurally unreachable from the
+    /// verifier**. Every verifier-side recompute goes through
+    /// [`canonicalize_v_forced`], whose error type is
+    /// [`UnicodeVersionError`] — a type that cannot express this variant — so
+    /// the unreachability is a property of the signatures, not an argument
+    /// about arguments. (`verify::file_stages` states and tests the same fact
+    /// from R's side; that is the citable statement a reverse-coverage check
+    /// should read.)
+    ///
+    /// It keeps its code because it is still **producible**, and its owner is
+    /// precise: the strict-detection contract of the public
+    /// [`canonicalize`] / [`canonicalize_v`] API in [`TextMode::Detected`].
+    /// Worth stating plainly, because "the sealer produces it" is the natural
+    /// assumption and is currently **false**: no production call site in this
+    /// workspace selects `Detected` — seal-side assembly (G14's
+    /// `assemble_content_model`) detects with [`is_text`] and then
+    /// canonicalizes through the total [`canonicalize_forced`], so it cannot
+    /// produce this error either. What exercises the code today is G3's
+    /// `tests/utf8_corpus.rs`, which is the strict mode's conformance suite.
+    /// The code is therefore correctly *retained* (append-only, §3 of the
+    /// error-code contract) and correctly *unclaimed by any pipeline row*.
     ///
     /// The match is wildcard-free despite `#[non_exhaustive]` (which only
     /// binds downstream crates): a new variant fails compilation here until
@@ -333,6 +353,59 @@ pub fn canonicalize(
 #[must_use]
 pub fn canonicalize_forced(version: UnicodeVersion, raw_bytes: &[u8]) -> CanonicalBytes {
     canonicalize_decoded(version, &String::from_utf8_lossy(raw_bytes))
+}
+
+/// [`canonicalize_v`] in [`TextMode::Forced`] — **the verifier's entry
+/// point** (task G22), whose error type is narrowed to the only class it can
+/// actually produce.
+///
+/// [`canonicalize_v`] returns the two-variant [`CanonicalizeError`], but a
+/// caller that fixes the mode to [`TextMode::Forced`] can never see
+/// [`CanonicalizeError::InvalidUtf8`]: forced mode is total (D20), so the
+/// *only* thing left to fail is resolving the version string. Stating that in
+/// the type rather than in a comment is the point — it turns
+/// `content-canonicalize-invalid-utf8` from **unreachable-by-argument** into
+/// **structurally unreachable** on every path that uses this function, because
+/// the returned [`UnicodeVersionError`] cannot express it.
+///
+/// This is the shape R4's raw-mirror recompute needs (MVP-SPEC.md line 121,
+/// which D20 requires to run [`TextMode::Forced`]): it must resolve a
+/// *descriptor-recorded version string* — never [`UnicodeVersion::CURRENT`],
+/// which would false-positive an aging honest bundle once the verifier's
+/// tables drift — and it must not carry an error arm it can never discharge.
+/// [`canonicalize_forced`] serves the callers that already hold a resolved
+/// [`UnicodeVersion`] and are therefore infallible outright.
+///
+/// Byte-identical to `canonicalize_v(version, TextMode::Forced, raw_bytes)` by
+/// construction: same resolution, same total decode, same stages 2–5
+/// (`v_forced_matches_the_fallible_form` asserts it over arbitrary bytes,
+/// including invalid UTF-8).
+///
+/// # Errors
+///
+/// [`UnicodeVersionError::UnknownUnicodeVersion`] — and, by the type, nothing
+/// else. `version` is not registered in this build: *"produced by a newer
+/// antseal than this verifier — upgrade to verify"*, explicitly **not** an
+/// integrity verdict (G1/D25).
+///
+/// # Examples
+///
+/// ```
+/// use antseal_core::canon::{UNICODE_17_0_0, canonicalize_v_forced};
+///
+/// // Invalid UTF-8 is not an error here — it is replaced, deterministically.
+/// let canonical = canonicalize_v_forced(UNICODE_17_0_0, b"a\xFFb\r\n")?;
+/// assert_eq!(canonical.as_str(), "a\u{FFFD}b\n");
+/// # Ok::<(), antseal_core::canon::UnicodeVersionError>(())
+/// ```
+pub fn canonicalize_v_forced(
+    version: &str,
+    raw_bytes: &[u8],
+) -> Result<CanonicalBytes, UnicodeVersionError> {
+    Ok(canonicalize_forced(
+        UnicodeVersion::resolve(version)?,
+        raw_bytes,
+    ))
 }
 
 /// Stages 2–5 of the frozen D21 pipeline, over an already-decoded scalar
@@ -729,6 +802,49 @@ mod tests {
                 .expect("forced mode is total");
             assert_eq!(total, fallible, "input {raw:02X?}");
         }
+    }
+
+    /// G22's narrowed **string-version** entry point agrees with the
+    /// two-variant one byte-for-byte on the same corpus, and its narrower
+    /// error type really is the whole difference: the only way to make it
+    /// fail is an unregistered version, never the bytes.
+    #[test]
+    fn v_forced_matches_the_fallible_form() {
+        for raw in [
+            b"".as_slice(),
+            b"plain ascii",
+            b"\xEF\xBB\xBF\xEF\xBB\xBFbom\r\n\r\r\ncrlf",
+            "e\u{0301} NFD".as_bytes(),
+            b"\xFF",
+            b"\xE2\x82",
+            b"\xC0\xAF",
+            b"caf\xC3",
+            b"\xED\xA0\x80",
+        ] {
+            let narrowed =
+                canonicalize_v_forced(UNICODE_17_0_0, raw).expect("the version is registered");
+            let wide = canonicalize_v(UNICODE_17_0_0, TextMode::Forced, raw)
+                .expect("forced mode is total");
+            assert_eq!(narrowed, wide, "input {raw:02X?}");
+            // The strict counterpart is what *does* fail on the invalid rows
+            // — the failure mode G22 makes structurally unavailable to the
+            // verifier while leaving the code coded and producible here.
+            if !is_text(raw) {
+                assert_eq!(
+                    canonicalize_v(UNICODE_17_0_0, TextMode::Detected, raw)
+                        .expect_err("strict mode refuses these bytes")
+                        .code(),
+                    "content-canonicalize-invalid-utf8"
+                );
+            }
+        }
+        // Its one and only error class.
+        assert_eq!(
+            canonicalize_v_forced("unicode-99.0.0", b"anything")
+                .expect_err("unregistered version")
+                .code(),
+            "content-unknown-unicode-version"
+        );
     }
 
     #[test]

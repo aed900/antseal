@@ -69,6 +69,13 @@
       "pins": "ML-DSA-65 canonical-encoding rejects — hint/z bounds and out-of-range encodings — plus the FIPS-204 and empty-ctx confusions (MVP-SPEC.md line 97)"
     },
     {
+      "slug": "content-model-golden-work",
+      "path": "content-model/content-model.json",
+      "kind": "content-model",
+      "task": "G21",
+      "pins": "content-model kind: the seal-side assembly's DERIVED values as a committed FILE rather than Rust constants — per-file descriptor fields, canonical rendition, synthetic s_root and fine_root, and per-unit work-global id, kind, byte range, true_length, fine-tree coverage and unit_commit obligation, for G14's four-file golden work plus the --force-text-on-invalid-UTF-8 branch it leaves untouched. That is what puts the assembly inside the Q5 native<->WASM bit-match lane, which compares vector files (MVP-SPEC.md lines 76, 78, 83, 85, 92, 94, 98, 153, 169). Pins no range-proof bytes, so decision D83's cover encoding cannot move it"
+    },
+    {
       "slug": "fine-tree-unbalanced-n6",
       "path": "fine-tree/fine-tree.json",
       "kind": "fine-tree",

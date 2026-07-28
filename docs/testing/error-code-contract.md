@@ -542,6 +542,39 @@ kebab-case id, and never edit an existing row's expected code.
   from `null` to a layer; no digest, code, or row changed. D86 also closes
   the report question permanently: the decode layer is failure context and
   is never a report field.
+- **2026-07-28 (M0 wave 6, G22)** — the first code whose **ownership** is
+  recorded as an answer rather than assumed, ahead of F23/F24's
+  reverse-coverage sweep. No code was added, renamed, or retired.
+
+  `content-canonicalize-invalid-utf8` is now **structurally unreachable from
+  the verifier**. R4's raw-mirror recompute routes through the new
+  `canon::canonicalize_v_forced`, whose error type is the one-variant
+  `UnicodeVersionError`; a type that cannot express the variant is a stronger
+  guarantee than a call site that happens not to pass `TextMode::Detected`,
+  and it survives an edit to that argument. The citable statement is
+  `verify::file_stages::CANONICALIZATION_SEAM_CODES` (the seam's complete
+  code set, exhaustive by construction) plus the test
+  `invalid_utf8_is_structurally_unreachable_from_the_verifier`.
+
+  Two things deliberately did **not** change, and both are §3:
+
+  1. **`VerifyError::Canon` still wraps the two-variant
+     `CanonicalizeError`.** Narrowing the payload to `UnicodeVersionError`
+     would delete a code from R's set, which append-only forbids. The variant
+     stays admissible and coded; it simply has no verifier-side producer.
+  2. **The code is not retired.** It is still producible — by
+     `canon::canonicalize`/`canonicalize_v` in `TextMode::Detected`.
+
+  The finding worth recording for the sweep: the natural answer *"the sealer
+  owns it"* is **false**. Seal-side assembly (`assemble_content_model`)
+  decides text-ness with `is_text` and then canonicalizes through the total
+  `canonicalize_forced`, so it cannot produce this error either — and no
+  other production call site in the workspace selects `Detected`. The code's
+  owner is the **strict-detection contract of the public `canon` API**, whose
+  conformance suite is G3's `tests/utf8_corpus.rs`. It is therefore a code
+  with a real owner, a real test, and no pipeline row — a shape a
+  reverse-coverage check must be able to accept, rather than flag as an
+  orphan or force a row for.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

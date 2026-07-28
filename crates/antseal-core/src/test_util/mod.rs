@@ -83,6 +83,13 @@
 //!   `.sealproof` bytes, their **three**-layer diagnostic sidecars and the
 //!   reveal structure each discloses — including the empty-anchor
 //!   (UNANCHORED) bundle, a named M0 milestone artifact.
+//! - [`vectors_content_model`] — the `content-model` vector kind (G21): the
+//!   seal-side assembly's **derived** values — descriptors, work-global unit
+//!   ids, tilings, raw mirrors and `fine_root`s — committed as a vector
+//!   *file*, because G14's golden fixture is Rust constants and the Q5
+//!   bit-match lane compares files. Deliberately pins no proof bytes, so
+//!   decision D83's cover encoding cannot move it. Regenerator:
+//!   `tests/content_model_vectors.rs`.
 //! - [`vectors_fine_tree`] — the `fine-tree` vector kind (G15): the
 //!   fine-tree/GGM golden vectors, whose reason for existing is to pin
 //!   **MSB-first** GGM leaf indexing at the unbalanced `n = 6` case
@@ -140,6 +147,7 @@ pub mod tamper_rows_structural;
 pub mod vectors;
 pub mod vectors_bundle;
 pub mod vectors_cbor_diag;
+pub mod vectors_content_model;
 pub mod vectors_fine_tree;
 pub mod vectors_manifest;
 pub mod vectors_report;
