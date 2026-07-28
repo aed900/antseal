@@ -38,6 +38,7 @@ use std::path::PathBuf;
 
 use antseal_core::test_util::vectors_report::{KIND, REQUIRED_SHAPES, build_inputs};
 use antseal_core::test_util::{vectors::first_difference, vectors_report};
+use antseal_core::verify::REPORT_VERSION;
 
 /// The committed document (workspace-relative via the crate manifest dir, so
 /// it resolves on every OS and checkout location).
@@ -249,10 +250,18 @@ fn vector_report_document_covers_the_mandated_m0_shapes() {
             case.get("report"),
             "`{shape}`: the object form must be the pinned bytes, decoded"
         );
-        // D29 rule 8: the report carries its own format version, first field.
+        // D29 rule 8: the report carries its own format version, first field
+        // — and it is the version this build produces. Derived from the
+        // constant rather than hard-coded, so a bump that forgets the
+        // re-emit fails here naming both halves of the edit (R32).
+        let prefix = format!(r#"{{"report_version":{REPORT_VERSION}"#);
         assert!(
-            bytes.starts_with(br#"{"report_version":"#),
-            "`{shape}`: report_version must be the first serialized field (D29 rule 8)"
+            bytes.starts_with(prefix.as_bytes()),
+            "`{shape}`: pinned bytes must begin `{prefix}` — report_version is the first \
+             serialized field (D29 rule 8) and must be REPORT_VERSION ({REPORT_VERSION}). \
+             Bumping the constant re-emits the document: \
+             `cargo test -p antseal-core --features test-util --test report_vectors \
+             -- --ignored emit_report_vector_document`, then `scripts/vector-freeze.sh --update`"
         );
     }
 }

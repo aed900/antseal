@@ -13,10 +13,23 @@
 //! (`crates/antseal-core/tests/vector_runner.rs` owns the same contract at
 //! test time; `tests/bitmatch.rs` here cross-checks the two agree.)
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// D87: ceiling on the embedded bytes of any ONE format-version directory.
+///
+/// Not a ceiling on the whole tree: Q6 retains every released version
+/// forever (MVP-SPEC.md line 123), so v2 arriving beside v1 is the
+/// retention contract working, not a regression. What this bounds is one
+/// version's tree — the growth that is inside our control.
+///
+/// Raising it is a reviewed, recorded change (D87 §2.1), not a chore. The
+/// wrong fix is deleting or shrinking a committed vector: they are
+/// retained forever.
+const MAX_EMBEDDED_BYTES_PER_VERSION: u64 = 2_097_152;
 
 fn main() {
     // Declared so the deliberate-divergence self-test's `--cfg` is a known
@@ -36,9 +49,27 @@ fn main() {
     println!("cargo::rerun-if-changed={}", vectors_root.display());
     println!("cargo::rerun-if-changed=build.rs");
 
-    let mut found: Vec<(String, String, PathBuf)> = Vec::new();
+    let mut found: Vec<(String, String, PathBuf, u64)> = Vec::new();
     walk_root(&vectors_root, &mut found);
     found.sort();
+
+    // D87: per-version budget, enforced here because this is where the
+    // total is already known and because a breach must fail the BUILD.
+    let mut by_version: BTreeMap<String, u64> = BTreeMap::new();
+    for (_, version, _, len) in &found {
+        *by_version.entry(version.clone()).or_default() += len;
+    }
+    for (version, total) in &by_version {
+        assert!(
+            *total <= MAX_EMBEDDED_BYTES_PER_VERSION,
+            "testdata/vectors/{version}/ embeds {total} B, over the D87 ceiling of \
+             {MAX_EMBEDDED_BYTES_PER_VERSION} B for ONE format version. Every committed \
+             vector is retained forever (Q6), so the fix is NOT to delete or shrink one: \
+             either a vector is embedding payload bytes it should be naming (see R9's \
+             bundle-by-shape precedent), or the ceiling needs a reviewed raise in \
+             build.rs and docs/decisions/D87-bitmatch-vector-carriage.md."
+        );
+    }
 
     if found.is_empty() {
         panic!(
@@ -64,7 +95,7 @@ fn main() {
          /// Every committed vector, sorted by `path`.\n\
          pub static EMBEDDED_VECTORS: &[EmbeddedVector] = &[\n",
     );
-    for (rel_path, version, abs_path) in &found {
+    for (rel_path, version, abs_path, _) in &found {
         println!("cargo::rerun-if-changed={}", abs_path.display());
         let _ = writeln!(
             out,
@@ -75,13 +106,27 @@ fn main() {
     }
     out.push_str("];\n");
 
+    let _ = writeln!(
+        out,
+        "\n/// The D87 per-format-version ceiling on embedded bytes.\n\
+         pub const MAX_EMBEDDED_BYTES_PER_VERSION: u64 = {MAX_EMBEDDED_BYTES_PER_VERSION};\n"
+    );
+    out.push_str(
+        "/// Embedded bytes per format-version directory, ascending by version (D87).\n\
+         pub static EMBEDDED_BYTES_BY_VERSION: &[(&str, u64)] = &[\n",
+    );
+    for (version, total) in &by_version {
+        let _ = writeln!(out, "    ({version:?}, {total}),");
+    }
+    out.push_str("];\n");
+
     let dest = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"))
         .join("embedded_vectors.rs");
     fs::write(&dest, out).unwrap_or_else(|e| panic!("cannot write {}: {e}", dest.display()));
 }
 
 /// Directly under `vectors/`: only `README.md` and `v<integer>/`.
-fn walk_root(root: &Path, found: &mut Vec<(String, String, PathBuf)>) {
+fn walk_root(root: &Path, found: &mut Vec<(String, String, PathBuf, u64)>) {
     for entry in sorted_entries(root) {
         let name = file_name(&entry);
         if entry.is_dir() {
@@ -105,7 +150,7 @@ fn walk_root(root: &Path, found: &mut Vec<(String, String, PathBuf)>) {
 
 /// Inside a version directory: `*.json` are vectors, a fixed set of names
 /// are documented auxiliaries, anything else fails the build.
-fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, PathBuf)>) {
+fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, PathBuf, u64)>) {
     for entry in sorted_entries(dir) {
         if entry.is_dir() {
             walk_version_dir(&entry, version, found);
@@ -119,7 +164,13 @@ fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, 
             continue;
         }
         if name.ends_with(".json") {
-            found.push((repo_relative(&entry), version.to_owned(), entry));
+            // D87: the length travels with the path so the per-version budget
+            // is computed from the same walk that discovers the tree — one
+            // source of truth, no second description to drift.
+            let len = fs::metadata(&entry)
+                .unwrap_or_else(|e| panic!("cannot stat {}: {e}", entry.display()))
+                .len();
+            found.push((repo_relative(&entry), version.to_owned(), entry, len));
         } else {
             assert!(
                 name == "README.md" || name == "FROZEN.sha256" || name.ends_with(".py"),

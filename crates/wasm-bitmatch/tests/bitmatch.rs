@@ -14,7 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use wasm_bitmatch::{
-    EMBEDDED_VECTORS, EmbeddedVector, transcript, transcript_bytes, transcript_for,
+    EMBEDDED_BYTES_BY_VERSION, EMBEDDED_VECTORS, EmbeddedVector, MAX_EMBEDDED_BYTES_PER_VERSION,
+    transcript, transcript_bytes, transcript_for,
 };
 
 /// `testdata/vectors/`, resolved from this crate's manifest so it holds on
@@ -281,4 +282,38 @@ fn bitmatch_transcript_obeys_the_d29_serialization_rules() {
             );
         }
     }
+}
+
+/// D87: the embedded-vector budget is enforced, not documented.
+///
+/// `build.rs` is the authoritative leg — it panics, so the crate cannot
+/// build at all. This is the second, *testable* leg: it recomputes the
+/// per-version totals from the linked table (so the generated
+/// `EMBEDDED_BYTES_BY_VERSION` cannot drift from the bytes actually
+/// embedded) and prints the utilisation, so a reviewer sees the tree
+/// approaching the ceiling instead of discovering it as a red build.
+#[test]
+fn bitmatch_embedded_bytes_stay_under_the_per_version_ceiling() {
+    let mut recomputed: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for vector in EMBEDDED_VECTORS {
+        *recomputed.entry(vector.format_version).or_default() += vector.bytes.len() as u64;
+    }
+
+    let declared: std::collections::BTreeMap<&str, u64> =
+        EMBEDDED_BYTES_BY_VERSION.iter().copied().collect();
+    assert_eq!(
+        recomputed, declared,
+        "the generated per-version byte totals disagree with the embedded bytes"
+    );
+
+    for (version, total) in &recomputed {
+        let pct = (*total as f64) * 100.0 / (MAX_EMBEDDED_BYTES_PER_VERSION as f64);
+        println!("D87: {version} embeds {total} B — {pct:.1}% of the per-version ceiling");
+        assert!(
+            *total <= MAX_EMBEDDED_BYTES_PER_VERSION,
+            "{version}: {total} B embedded, over the D87 ceiling of \
+             {MAX_EMBEDDED_BYTES_PER_VERSION} B (see build.rs and D87 §2.1)"
+        );
+    }
+    assert!(!recomputed.is_empty(), "no format versions embedded");
 }

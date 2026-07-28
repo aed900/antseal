@@ -604,8 +604,11 @@ same file; **node v24.12.0**; P14 tree.
   runner now prints it too, so the `golden-vectors` and `wasm-bitmatch` logs
   are directly comparable.
 - **Transcript byte format**: compact JSON under the **D29** rules, consumed
-  as a *recommendation* — `TRANSCRIPT_VERSION` is `0` and moves to `1` when
-  **Q14** freezes the report byte format. Nothing here freezes D29.
+  as a *recommendation*. Nothing here freezes D29. `TRANSCRIPT_VERSION` is
+  `0` and **stays** `0` through Q14 — corrected at **R32**, which bumped
+  `REPORT_VERSION` to `1` and found the advertised coupling false: the
+  transcript versions its own envelope, carries no report field, aggregates
+  all seven vector kinds, and is never frozen.
 
 ## Local verification — 2026-07-28 (remote CI has still never run)
 

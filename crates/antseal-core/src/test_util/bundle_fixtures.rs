@@ -1949,6 +1949,261 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // R30 — the report's native<->wasm32 byte-match over CONSTRUCTED
+    // bundles
+    // -----------------------------------------------------------------
+    //
+    // R9 pins the same property over *committed* vectors, for the 21
+    // catalogue shapes its document names. This is the constructed half,
+    // and it asserts over `shapes::catalogue()` **directly**, so a shape
+    // added to R6 is covered from the moment it exists rather than at the
+    // next vector re-emit (R9's rider on R30).
+    //
+    // Why a pinned table is the mechanism. This module's tests run on both
+    // targets — natively via `cargo test -p antseal-core`, and on wasm32
+    // via the `wasm32-core-tests` lane's `cargo test -p antseal-core --lib
+    // --target wasm32-unknown-unknown`. Nothing carries a value *between*
+    // those two runs, so "the same test passed twice" proves only that each
+    // target agrees with itself. The committed digest is the carrier: both
+    // lanes check the constructed bytes against one number in the source,
+    // so a platform divergence turns exactly one lane red with a message
+    // naming the shape — diagnosed once, not twice (R30 accept bullet 2).
+
+    /// Domain tag for R30's per-shape report digest. Deliberately its own
+    /// domain: this is not a golden-vector recomputation and must not
+    /// collide with `vectors::RECOMPUTED_DIGEST_DOMAIN`, nor with any tag
+    /// in the C1 registry (this is test infrastructure, not wire format).
+    const R30_REPORT_DIGEST_DOMAIN: &[u8] = b"antseal/test-util/r30/report-bytes/v1\x00";
+
+    /// `SHA-256(domain || len(name) || name || len(report) || report)`.
+    ///
+    /// The shape name is bound in so a table row cannot be silently
+    /// reassigned to a different shape, and both fields are
+    /// length-prefixed so no two (name, bytes) pairs can collide by
+    /// concatenation.
+    fn report_bytes_digest(name: &str, report: &[u8]) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut digest = Sha256::new();
+        digest.update(R30_REPORT_DIGEST_DOMAIN);
+        digest.update(crate::test_util::vectors::prefix_len(name.len()));
+        digest.update(name.as_bytes());
+        digest.update(crate::test_util::vectors::prefix_len(report.len()));
+        digest.update(report);
+        digest.finalize().into()
+    }
+
+    /// The canonical report bytes every `shapes::catalogue()` entry
+    /// produces, digested — the value native and wasm32 must both compute.
+    ///
+    /// Regenerate with
+    /// `cargo test -p antseal-core --features test-util --lib -- --ignored
+    /// emit_r30_report_digest_table --nocapture` and paste the output here.
+    /// Adding a catalogue shape without adding its row is a **failure**,
+    /// not a silent gap — that is the coverage the rider asked for.
+    ///
+    /// These are digests of report bytes, so they are hiding by
+    /// construction; the test additionally scans the preimages for the
+    /// work's secret material (R30 accept bullet 3).
+    static REPORT_DIGEST_BY_SHAPE: &[(&str, &str)] = &[
+        // @generated — see emit_r30_report_digest_table
+        (
+            "single-text-with-mirror/full",
+            "88f231daea7fc5f298812f24280a76f66c94386d8c6b3cd74ec70764e7b9dde6",
+        ),
+        (
+            "single-text-with-mirror/full-no-mirror",
+            "38f2d2313b53124bbddec51bef4b953ff5683910d2763506b25e8513af712067",
+        ),
+        (
+            "single-text-with-mirror/untouched",
+            "b522cb7d28615ea2f98beea01af414434b1c7c3fd3dadd206105324b4346b42d",
+        ),
+        (
+            "single-binary/full",
+            "8d4681e61e4c814476162828447976b3851d0625fd9498c9e2e133c8f2d61bec",
+        ),
+        (
+            "split-multi-unit/partial",
+            "995286f5fd97e380c65c3638a71acd743c68098b3df9cfaa3a039df9572beb6e",
+        ),
+        (
+            "split-multi-unit/partial-two-of-three",
+            "7daca40444946e441e296fef8d84ab579c34e5e1c21eb3ed0e82640a1f3c1663",
+        ),
+        (
+            "split-multi-unit/full-via-enumerated-units",
+            "88e484564ec77d38fd5c1cd750469b50203e5bd5b834be187c4f602205f5e0d7",
+        ),
+        (
+            "split-multi-unit/all",
+            "36790a0147430d67ea3ac09ba62d20c55b0959b4d340ff3478a8d3297bf20d3b",
+        ),
+        (
+            "no-fine-tree/full",
+            "e1c790e17196ac4ea1827c5e5759a9c829bace88f49012cda3e6c91c2769b3f8",
+        ),
+        (
+            "raw-mirror-sources/all",
+            "e8e575cccfd7ec6f41979279ce627ef92cd79251384b03cd41ef974d31bb1cf1",
+        ),
+        (
+            "empty-file/full",
+            "10f4dfc71956c3b3c61fcfd8d21fd018d728459e0d86024de6ac33ecbe12d3d9",
+        ),
+        (
+            "empty-file/untouched",
+            "f0ed4edf307aefe397d60ea9fdd867278332e767320dadfb698457d5d9deb86f",
+        ),
+        (
+            "one-byte-file/full",
+            "252db121e3c27207a89a3fd3c8888f7596e66f56479d7fc2bb0af3b28f203d51",
+        ),
+        (
+            "unbalanced-n6/all",
+            "e5b32940cf661a2fe38478400d094950e633c700ada7a7b30b7f8202323e292c",
+        ),
+        (
+            "unbalanced-n6/unit-0",
+            "3b35bb7852ba6e3e8db728b5720e8cd3ae434138f23b3ed6880301875fd00061",
+        ),
+        (
+            "unbalanced-n6/unit-1",
+            "463812337fb4a916d7272c752635f6e0bec90b4dec7736efdb01da8bcf5b2811",
+        ),
+        (
+            "unbalanced-n6/unit-2",
+            "5e6d96f0c17321e4719f1fccf5e7f3a2d6f80a8f0d56b5e27da7ad648fcaf543",
+        ),
+        (
+            "multi-file/mixed",
+            "2020bc38330c40fd10d563d98dd38f1966f7e61d2684b849fb02b1ab66e93c74",
+        ),
+        (
+            "multi-file/all",
+            "37050d92f4d0e3fa1db6c04ebbdc9b721742e55e3ea29094a2928e3c5d07a9a5",
+        ),
+        (
+            "multi-file-anchored/mixed",
+            "90d663bd64a988b2453d9f736e5bc740fc093a28d3115fb111160c09617e5b2d",
+        ),
+        (
+            "ed25519-only-policy/full",
+            "ddbdb0c96529f346970f05e115771daca79ec3359fac830bf7ed7ec564bc959a",
+        ),
+    ];
+
+    /// R30: every named R6 shape's canonically-serialized
+    /// `VerificationReport` is byte-identical on native and wasm32, pinned
+    /// per shape, and carries no secret material.
+    #[test]
+    fn every_shape_report_matches_its_pinned_bytes_on_every_target() {
+        let catalogue = shapes::catalogue();
+        assert!(!catalogue.is_empty(), "the catalogue is empty");
+
+        let pinned: std::collections::BTreeMap<&str, &str> =
+            REPORT_DIGEST_BY_SHAPE.iter().copied().collect();
+        assert_eq!(
+            pinned.len(),
+            REPORT_DIGEST_BY_SHAPE.len(),
+            "REPORT_DIGEST_BY_SHAPE has a duplicate shape name"
+        );
+
+        let mut seen = 0usize;
+        for case in catalogue {
+            let name = case.name;
+            let built = build(&case.spec, &case.selection);
+            let report = verify(&built);
+            let bytes = report
+                .to_canonical_json()
+                .unwrap_or_else(|e| panic!("shape `{name}`: report must encode: {e}"));
+
+            // Accept bullet 3: R6's hygiene assertion, extended from one
+            // shape's bundle to every shape's REPORT — the bytes this test
+            // digests. The report model is normatively secret-free
+            // (verify::report module docs); this is the constructed-side
+            // check that it stays so for every shape that exists.
+            let contains = |needle: &[u8]| {
+                !needle.is_empty() && bytes.windows(needle.len()).any(|win| win == needle)
+            };
+            assert!(
+                !contains(&TEST_MASTER_SECRET_W),
+                "shape `{name}`: W reached the report"
+            );
+            for file in &built.files {
+                let file_id = FileId(file.file_id);
+                assert!(
+                    !contains(derive_path_salt(w(), file_id).as_bytes()),
+                    "shape `{name}`: path_salt for file {} reached the report",
+                    file.file_id
+                );
+                assert!(
+                    !contains(derive_fine_seed(w(), file_id).as_bytes()),
+                    "shape `{name}`: fine seed for file {} reached the report",
+                    file.file_id
+                );
+                assert!(
+                    !contains(derive_file_salt(w(), file_id).expose_bytes_for_test_vectors()),
+                    "shape `{name}`: file_salt for file {} reached the report",
+                    file.file_id
+                );
+                for unit_id in file.normal_unit_ids.iter().chain(&file.mirror_unit_id) {
+                    assert!(
+                        !contains(derive_unit_key(w(), UnitId(*unit_id)).as_bytes()),
+                        "shape `{name}`: k_u for unit {unit_id} reached the report"
+                    );
+                }
+            }
+
+            let actual = crate::test_util::vectors::hex(&report_bytes_digest(name, &bytes));
+            let expected = pinned.get(name).copied().unwrap_or_else(|| {
+                panic!(
+                    "shape `{name}` has no pinned report digest. A new R6 shape is covered by \
+                     R30 from the moment it exists: add its row to REPORT_DIGEST_BY_SHAPE with \
+                     `cargo test -p antseal-core --features test-util --lib -- --ignored \
+                     emit_r30_report_digest_table --nocapture`"
+                )
+            });
+            assert_eq!(
+                actual,
+                expected,
+                "shape `{name}`: the canonical report bytes are not the pinned ones \
+                 ({} B). Native and wasm32 both check this number, so exactly one of two \
+                 things happened: the report byte format changed (re-pin deliberately — it \
+                 is a format event), or this target diverged from the other (MVP-SPEC.md \
+                 lines 167/169)",
+                bytes.len()
+            );
+            seen += 1;
+        }
+
+        assert_eq!(
+            seen,
+            REPORT_DIGEST_BY_SHAPE.len(),
+            "REPORT_DIGEST_BY_SHAPE pins a shape the catalogue no longer has — a stale row \
+             would silently stop asserting anything"
+        );
+    }
+
+    /// Regenerate [`REPORT_DIGEST_BY_SHAPE`]. **Ignored by default**: a
+    /// re-pin is a deliberate act with a byte-format consequence, never a
+    /// side effect of running the suite.
+    #[test]
+    #[ignore = "prints the R30 digest table; run deliberately when a shape is added or the report bytes change"]
+    fn emit_r30_report_digest_table() {
+        for case in shapes::catalogue() {
+            let built = build(&case.spec, &case.selection);
+            let bytes = verify(&built)
+                .to_canonical_json()
+                .unwrap_or_else(|e| panic!("shape `{}`: {e}", case.name));
+            println!(
+                "        ({:?}, {:?}),",
+                case.name,
+                crate::test_util::vectors::hex(&report_bytes_digest(case.name, &bytes))
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Accept bullet 2 — the property test
     // -----------------------------------------------------------------
 
