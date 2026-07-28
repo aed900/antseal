@@ -1351,10 +1351,20 @@ version-dispatch subsection; §10; §11; §12; §13; §14. The seven sections
 with **no substantive change** are §7.1, §7.4, §7.5, §7.6.2, §7.6.3, §7.7 and
 §7.12.
 
-**Separately, one mechanical change touches every table in §2, §6 and §7.**
+**Separately, one mechanical change touches every table in §7.**
 Those tables carry a `status` column whose cells all read `proposed` (or
 `pending-D17`). **Ruling: delete the `status` column from the document's
-tables entirely.** After the freeze every row carries the same value, so a
+tables entirely.**
+
+> **Correction, F4 2026-07-28 (amended at source).** This paragraph and
+> §16D's D2b originally read "every table in **§2, §6 and §7**". Checked
+> against the tree: **only §7's fourteen tables have a status column.** §2's
+> is `| bytes | fields | source |`, §6.1's is
+> `| value | state | headline-eligible |`, §6.2's is
+> `| value | algorithm | pubkey | signature | notes |`, §6.3's is
+> `| enum | values |` — none carries one. The count is likewise 84 cells
+> (81 `proposed` + 3 `pending-D17 (…)`), not "100+". The ruling is unchanged
+> and the executed edit is 14 headers, 14 separators, 84 cells. After the freeze every row carries the same value, so a
 column with one value in every cell is noise and a copy-paste hazard across
 100+ cells. The document-level state is carried once, by the FROZEN banner;
 the per-item `frozen-v1` markers live in the **JSON mirror**, which is where
@@ -1501,8 +1511,9 @@ Each item is self-contained. Nothing here requires re-deriving an argument.
 - [ ] **D2.** Remove every `— status: proposed` / `— status: pending-D17`
   heading suffix (§3, §4, §5 ×2, §6.1, §6.2, §6.3, §9's version-dispatch
   subsection).
-- [ ] **D2b.** Delete the `status` column from every table in §2, §6 and §7
-  (see §15's ruling): the document's tables become
+- [ ] **D2b.** Delete the `status` column from every table in §7 (see §15's
+  ruling and its F4 correction — §2's and §6's tables have no status column):
+  the document's tables become
   `| key | field | type | presence | len/shape |`. The per-item `frozen-v1`
   markers live only in the JSON mirror, where the freeze test reads them.
 - [ ] **D3.** §0's status column definition and §14's vocabulary paragraph:
@@ -1521,6 +1532,21 @@ Each item is self-contained. Nothing here requires re-deriving an argument.
 
 ### 16E. Handed to other tasks (F4 does not do these; the orchestrator
 registers them)
+
+> **Correction, F4 2026-07-28 (amended at source).** **E1 is not separable
+> from F4** and was landed with it. `format_registry_draft::code_map_keys_match_the_registry`
+> asserts, in both directions, that each map's `assigned_keys()` equals its
+> `maps[].fields[].key` set. Deleting `tsa_anchor` key 4 from the mirror
+> (A1) without deleting `SOURCE` from `bundle::registry` therefore turns the
+> suite red in the same commit — the two edits cannot be sequenced apart.
+> **E2** (the rename and assertion families) is likewise inseparable: the
+> mirror's flip fires the two armed tripwires, so the test must move in the
+> same change. **E3** (the `verify/report.rs` doc comment) was landed with E1
+> because it documents the field E1's removal redefines. Only **E4** (the
+> Q14 checklist row and the A18/R17 + S7 obligations) and **E5** (the
+> `docs/decisions/README.md` rows) are genuinely separable; E5's D8 row is
+> landed, and its D78/D79 half became **Q57**, since those two decisions have
+> no record *file* at all, not merely no row.
 
 - [ ] **E1.** *(F-domain, next free id)* Delete `source` from the bundle
   schema: `bundle/registry.rs:173` + `RESERVED_FIRST` 5→4;
@@ -1569,7 +1595,10 @@ as the decision.
    as owed and never applied.
 
 3. **D78 and D79 have no decision record file and no `docs/decisions/README.md`
-   row.** Both are cited as normative in code (`bundle/error.rs:7`,
+   row.** *(F4 2026-07-28: confirmed; registered as **Q57**. D8's own README
+   row is landed. Note also that D82's record is
+   `D82-touched-file-without-reveal.md`, not the longer name §9.4's prose
+   implies.)* Both are cited as normative in code (`bundle/error.rs:7`,
    `bundle/schema.rs:12`, `codec/caps.rs:179`, `verify/error.rs:429`), in the
    error-code contract §2 ("decision D78, ratified 2026-07-28"), and
    throughout the registry — but they exist only as `TODO.md:452` and
