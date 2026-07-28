@@ -1,6 +1,8 @@
 # D74 — Extraneous `s_root` on a `FineTree::Absent` full reveal: reject
 
-- **Status: RESOLVED — reject, with its own distinct code**
+- **Status: RESOLVED — reject, with its own distinct code. Re-audited and
+  **ratified** at M0 wave 6 (2026-07-28); three corrections and one
+  residual appended below, none of them changing the outcome**
 - **Date: 2026-07-28**
 - **Owning task: R4** (consumed by F8 bundle schema, R7 tamper rows, R13/R16
   builder, Q8 completeness)
@@ -169,3 +171,157 @@ arguments are different and both survive:
 
 The superseded file (`D74-extraneous-s-root.md`) was removed rather than
 kept as a duplicate; nothing in it is lost — F8's argument is quoted above.
+
+---
+
+## Wave-6 ratification and corrections (2026-07-28)
+
+M0 wave 6's planning round re-opened D74 with a mandate to overturn its own
+lean. **The outcome stands: reject.** Three corrections to the record, one
+audit result, and one residual the record does not name.
+
+### The window is closed, and that should be said plainly
+
+The code `full-reveal-s-root-without-fine-tree` has landed
+(`crates/antseal-core/src/verify/error.rs:722`), the check is row 5 of the
+frozen order (`file_stages.rs:790-792`), and the tamper row
+`verify-full-reveal-s-root-without-fine-tree` binds it
+(`tamper_rows_structural.rs:595-601`). Reversing to "silently ignore" would
+require **deleting** a code that a committed row binds, which error-code
+contract §3 forbids outright, and it is the permissive direction, which
+MVP-SPEC.md line 123 forbids as a format change. So ratification is the
+only outcome still available. That is not a reason to skip the audit — it
+is a reason to record that the audit was the last one that could have
+changed anything.
+
+### Correction 1 — the "Provenance" section mis-attributes F8's argument
+
+F8's quoted claim is *"a `FileSalt` arm is unreachable … because key 1 is
+required at schema level, so a full-reveal entry without `file_salt` never
+reaches R4 (F8 rejects it as `bundle-missing-key` first)"*, and the record
+calls that "the layering fact that makes the single-code shape correct".
+It is not. That claim is about the **missing** direction — it explains how
+row 3 is *realized*, not whether an extraneous-`file_salt` arm exists.
+
+The correct reason there is no `FileSalt` arm is the one this record's own
+**Context** section already gives, and it needs no layering fact at all:
+`file_salt` is required on **every** full reveal (D28), so "unexpected
+`file_salt` on a full reveal" is not a state the classifier can be in; and
+on a non-full reveal an attached `file_salt` is row 1,
+`partial-reveal-salt-leak-file-salt`. The 2×2 D74 completes is
+(fine-tree state × `s_root` presence) — `file_salt` has no second axis to
+be surprising on.
+
+Verified against the code, not inferred: `FullReveal.file_salt` is a
+`Salt16`, not an `Option<Salt16>`
+(`crates/antseal-core/src/bundle/schema.rs:1277`), and `FullReveal::decode`
+returns `missing(MAP, key::full_reveal::FILE_SALT)` when key 1 is absent.
+The claim is true; it is simply about a different question.
+
+### Correction 2 — F8's fact does have a consequence, and D74 did not draw it
+
+Because key 1 is `req`, **row 3 is reachable only by removing the whole
+§7.14 entry**, never by removing the key from an entry. An
+entry-with-key-1-missing dies at F8 as a `bundle-` code and never reaches
+R's namespace at all.
+
+The landed row already does the right thing — base `r6-multi-file-all`,
+mutation *"strip a fully revealed file's full-reveal entry"* — but nothing
+records **why** it must be spelled that way. Recorded now: a future
+contributor who "simplifies" that row into an
+entry-with-`file_salt`-removed mutation will silently re-bind
+`verify-full-reveal-missing-file-salt` from R's
+`full-reveal-material-missing-file-salt` to F8's `bundle-missing-key`,
+and the row will still pass its own weakened assertion. This is the
+`(code, layer)` hazard F15 named, one section over.
+
+### Correction 3 — the record names the wrong base fixture
+
+This record's **Consequences** section says the R7 row has base
+`full-reveal-no-fine-tree-binary`. The landed row's base is
+`r6-multi-file-all` (`tamper_rows_structural.rs:597`), which is correct:
+R6's `multi_file` work carries `archive/old.txt` as its `--no-fine-tree`
+file, so the shape is present inside the shared base rather than needing a
+dedicated one. The **code** is right and the **record** is what should
+move; no row edit is implied.
+
+### Audit — is the totality claim (rationale 3) actually total?
+
+Rationale 3 claims that after D74 *a third party cannot alter a bundle's
+reveal shape undetected in any direction*. Re-audited across the whole v1
+bundle, not just §7.14:
+
+- **§7.14, both directions** — closed by rows 1–5.
+- **§7.13 `touched_files`, both directions** — closed by **D80**
+  (`revealed-unit-file-not-touched`) and **D82**
+  (`touched-file-without-revealed-unit`). D82 is the same add-material
+  hole in a second section, found *after* this record claimed totality.
+- **Duplicate entries in either section** — closed at F8, not at R:
+  `check_ascending_ids` (`schema.rs:164`) enforces strict ascent over the
+  `file_id` sort key of both lists, and strict ascent rejects duplicates.
+  So "append a second entry for the same file" is not an open arm.
+- **A §7.14 entry with no §7.13 entry** — closed at F8 as the tier-`[X]`
+  `bundle-full-reveal-without-touched-file`.
+- **Every other bundle-side byte** — `k_u` and ciphertext by the AEAD tag,
+  `unit_salt` by `unit_commit`, `path_salt` by `path_commit`, `file_salt`
+  by row 7, `s_root` by row 8, cover seeds and boundary node hashes by the
+  fold.
+
+So the generalisation D74 is one instance of is stronger than the record
+states, and it is **asserted rather than argued**:
+
+> **Every bundle-side byte is either bound by a check that can fail, or
+> lies in a named, measured exempt region** —
+> `the_unauthenticated_region_at_m0_is_exactly_the_storage_record`
+> (`crates/antseal-core/tests/verify_fuzz.rs:176`), which pins the exempt
+> set as an *equality*: 88 bytes of M3 storage record (32 address +
+> 24 nonce + 32 key), exhaustively, with the complement strided.
+
+**The one gap in that equality is not D74's to close, and it is open.**
+D83's inert leaf-level cover-seed tails (16 bytes per cover node whose
+`level == d`) are a third unauthenticated region that R10's equality does
+not name. It does not currently falsify the test only because **no R6
+fixture produces a leaf-level cover node** — the `[0, n)` decomposition
+contains a size-1 block iff `n` is odd, and every fixture's content length
+and split boundary is even (34, 30, 12/12/10, 10/10/10). See D75's wave-6
+amendment for the full analysis and the ordering constraint it puts on
+D83.
+
+### Residual this record does not name — `.sealproof` bundles are not union-closed
+
+D28's strictness has a consequence in the *add-material* family that no
+record states, and it is not a soundness break but it will bite at M3.
+
+Take two honest bundles of the same work from the same sealer: bundle A
+reveals units `{1, 2}` of a three-unit file `F`, bundle B reveals `{3}`.
+Neither is a full reveal, so — correctly, per rows 1–2 — neither carries
+`F`'s `file_salt` or `s_root`. Merge them (a relay can: the sections are
+plain arrays that need only be re-sorted to satisfy strict ascent) and the
+merged bundle reveals all of `N(F)`, so `full(F)` holds and **row 3 fires**:
+`full-reveal-material-missing-file-salt`.
+
+The verdict is correct — the merged bundle really does lack the material a
+full reveal must carry, and the material is not derivable from the two
+sources. But it means:
+
+1. **The union of two valid bundles is not necessarily a valid bundle.**
+   Nothing in the spec or in D28 says otherwise, and nothing says this
+   either.
+2. **A relay can turn two valid bundles into one invalid one.** That is a
+   denial-of-evidence nuisance, not a forgery: both originals still verify,
+   and the merged bundle fails loudly with a named code rather than
+   verifying with a false claim. It is the *right* failure.
+3. **An M3 "combine these bundles" affordance is not implementable
+   client-side**, because producing the merged bundle's full-reveal
+   material requires `W`. Only the sealer can widen a reveal. That is a
+   product fact worth knowing before someone designs the UX around it.
+
+Registered as **R35** in `tasks/R.md`.
+
+### What this amendment changes in the tree
+
+**Nothing executable.** No code, no check, no row, no fixture, no vector.
+The corrections above are edits to this record; corrections 1–3 may also be
+applied to the prose they describe, but no assertion changes and no
+committed digest moves.
+

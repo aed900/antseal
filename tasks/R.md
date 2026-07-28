@@ -414,6 +414,44 @@
   - Cross-work grafts included (one work's manifest, another's reveals), since that is the shape no single-work fixture can produce
 - Notes: Surfaced at R10 (M0 wave 5). R10 deliberately shipped without it rather than blocking on a builder change; the fuzz target's `Corpus::Reject` accounting means adding mutators later cannot silently reduce coverage.
 
+### R35 — Record and assert that `.sealproof` bundles are not union-closed
+- Milestone: M0 (the property + its assertion); the UX half is M3
+- Size: S
+- Deps: R4, R5, R6 (landed); D28, D74
+- Spec: Reveal bundle — evidence layer (lines 112–114); Verifier structural invariants (line 121); Format stability (line 123)
+- Do: D28's strictness has a consequence in the add-material family that no record states. Take two honest bundles of the *same* work from the same sealer — bundle A reveals units `{1,2}` of a three-unit file `F`, bundle B reveals `{3}`. Neither is a full reveal, so neither carries `F`'s `file_salt` or `s_root`, correctly per R4 rows 1–2. Merge them (any relay can: the reveal sections are plain arrays that need only re-sorting to satisfy F8's strict ascent) and the merged bundle reveals all of `N(F)`, so `full(F)` holds and R4 row 3 fires with `full-reveal-material-missing-file-salt`. **The union of two valid bundles is not necessarily a valid bundle**, and the material that would make it valid is derivable only from `W`. This is the *right* failure — the merged bundle really does lack what a full reveal must carry, and it fails loudly with a named code rather than verifying a false claim — but it is unstated, and a relay can use it to turn two valid bundles into one invalid one (a denial-of-evidence nuisance; both originals still verify). Assert it as a property so the behaviour is pinned rather than incidental, and record the product consequence: an M3 "combine these bundles" affordance is **not implementable client-side**, because only the sealer can widen a reveal.
+- Accept:
+  - A named property over R6's fixtures: for any two reveal selections of one work whose union is a full reveal of some file but neither of which is, the merged bundle fails with `full-reveal-material-missing-file-salt` (and `full-reveal-material-missing-s-root` where the file has a fine tree)
+  - The complementary positive: merging two selections whose union is *still* partial for every file verifies — so the property is about the material, not about merging
+  - The residual is written into `docs/decisions/D74-extraneous-full-reveal-s-root.md` (already appended) and cross-referenced from D28
+  - The M3 consequence is recorded against R13/R16 so a reveal-combining UX is never designed on the assumption it can work offline
+- Notes: Surfaced 2026-07-28 by wave 6's D74 re-audit. Not a soundness defect and **not** a reason to relax D28 — relaxing is the illegal direction (line 123) and would delete the `canon_commit`/`raw_commit` check entirely (D28 rationale 1). The point is that the property should be a pinned fact, not a surprise found at M3.
+
+### R36 — Restate R10's authentication-boundary equality once D83 lands
+- Milestone: M0 (before Q14)
+- Size: S
+- Deps: R10 (landed); **D83 must resolve first**; D75
+- Spec: Verification — tamper matrix (line 168); Risks — hostile bundles (line 187); storage is the bonus, not the proof (line 119)
+- Do: `the_unauthenticated_region_at_m0_is_exactly_the_storage_record` (`crates/antseal-core/tests/verify_fuzz.rs:176`) asserts as an **equality** that the only unauthenticated bytes in an anchor-free M0 bundle are the 88-byte storage record, on the strength of a one-off exhaustive sweep of all 7891 bytes of `valid-multi-file-mixed`. The equality is true of that corpus and **false in general**: D83's inert leaf-level cover-seed tails are a third unauthenticated region — 16 bytes per cover node whose `level == d`, which the GGM walker never reads (`content/fine_tree/ggm_walk.rs:95, 207`). It has not been caught because no R6 fixture produces a leaf-level cover node: the `[0, n)` decomposition contains a size-1 block **iff `n` is odd**, and every fixture length and split boundary is even (`CRLF_TEXT` canonicalizes to 34, `data/blob.bin` is 30 split 10/10/10, `notes/split.md` is 34 split 12/12/10). Once D83 resolves, restate the boundary: if D83 shortens the wire form or canonicalizes the tail, the equality becomes true in general and its doc comment should say *why* rather than resting on one corpus; if D83 accepts the malleability, the test must name the third region explicitly, the way it already names the storage record and the anchor artifacts.
+- Accept:
+  - The test's claim is scoped to what it actually proves, or generalised because D83 made it general — never left reading as universal while being corpus-dependent
+  - If D83 accepts the malleability, the third region is located by content (as the storage record already is), sized, and asserted; the `88 + 67` bound in `byte_changing_mutations_outside_the_inert_regions_are_rejected` gains its third term
+  - The doc comment records the `n` odd ⇒ leaf-level-node rule, so the corpus dependence cannot silently return
+- Notes: Surfaced 2026-07-28 by wave 6's D75 re-audit (`docs/decisions/D75-full-reveal-cover-shape.md`, wave-6 amendment). Strictly ordered **after** D83 and **before** Q14 — the freeze should not ship a boundary statement that one added fixture falsifies. Landing R37 before this makes the test go red, which is the analysis confirmed, not a regression.
+
+### R37 — Add the leaf-level-cover reveal shapes R6's catalogue cannot produce
+- Milestone: M0
+- Size: S
+- Deps: R6 (landed), R7, R10; interacts with D83, D75
+- Spec: Cryptography — GGM fine tree (line 96); Verifier structural invariants (line 121); Verification — golden vectors (line 167)
+- Do: R6's fixture catalogue has no bundle containing a **leaf-level** GGM cover node (`level == d`), so an entire class of proof shape is unexercised end to end — including the one D83 is about and the one R2's Accept list names as a required edge vector. Every fixture length and split boundary is even, and a leaf-level node appears in a `[0, n)` decomposition iff `n` is odd. Add (a) an **odd-length** fine-tree text file, whose full reveal ships a leaf-level cover node under D75's "both" rule, and (b) the **one-byte** fine-tree file, where `d = 0` so the whole cover is the single node `(0,0)` whose seed *is* `s_root` — meaning a full reveal carries the same 32 bytes twice, in §7.11 key 3 and §7.14 key 2, with (today) independently unconstrained upper halves. Also add an odd split boundary so the shape appears in a *partial* reveal, not only a full one. These are fixture additions, not new rules: they must verify.
+- Accept:
+  - The catalogue contains at least one shape whose covered reveal includes a node with `level == d`, asserted directly rather than assumed from the file length
+  - The one-byte fine-tree file verifies as a full reveal, and its `s_root` and its single cover seed are pinned as the same value in the honest fixture — so any future divergence is visible
+  - R7/R9's registries and vectors are extended, not edited: existing fixture bytes and digests are unchanged, new ones are added
+  - The interaction with R36 is stated in the commit: if D83 has not yet resolved, adding these shapes is expected to turn `the_unauthenticated_region_at_m0_is_exactly_the_storage_record` red, and the correct response is R36, never a widened tolerance
+- Notes: Surfaced 2026-07-28 by wave 6's D75 re-audit. The reason the gap survived five waves is that "even" is the natural thing to type in a fixture; the fix is one odd number, and the class it unlocks is roughly half of all real files.
+
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.
