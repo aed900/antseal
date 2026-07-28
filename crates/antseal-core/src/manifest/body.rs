@@ -861,7 +861,8 @@ impl FileEntry {
                             claimed,
                             cap: MAX_UNIT_COUNT,
                         })?;
-                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    let mut list =
+                        Vec::with_capacity(clamped_capacity::<UnitEntry>(claimed, d.remaining()));
                     for _ in 0..claimed {
                         list.push(UnitEntry::decode(d)?);
                     }
@@ -1200,7 +1201,8 @@ impl ManifestBodyV1 {
                     // clamp still applies — a cap and a clamp are different
                     // mechanisms, and only the clamp bounds allocation.
                     let claimed = d.array().map_err(body_layer)?;
-                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    let mut list =
+                        Vec::with_capacity(clamped_capacity::<SigAlg>(claimed, d.remaining()));
                     for _ in 0..claimed {
                         let alg_id = d.u64().map_err(body_layer)?;
                         list.push(sig_alg_from_wire(alg_id).ok_or(
@@ -1221,7 +1223,8 @@ impl ManifestBodyV1 {
                             cap: MAX_FILE_COUNT,
                         });
                     }
-                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    let mut list =
+                        Vec::with_capacity(clamped_capacity::<FileEntry>(claimed, d.remaining()));
                     for _ in 0..claimed {
                         list.push(FileEntry::decode(&mut d, &mut budget)?);
                     }

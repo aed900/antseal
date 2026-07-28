@@ -969,8 +969,17 @@ there only because its two inputs are under 32 bytes so the element-size
 multiplier hides inside a 4 KiB slack. Scaled to `MAX_MANIFEST_BYTES`, a
 16 MiB manifest can drive a ~512 MiB reservation before one map entry is
 read. No verdict changes (capacity is a hint), so the lane now asserts the
-*true* bound and task **F30** carries the fix (element-aware clamping where
-a bound is already known) plus the prose correction.
+*true* bound and task **F30** carries the fix plus the prose correction.
+
+**Closed by F30 (M0 wave 7).** `clamped_capacity` is generic in the element
+type and divides the remaining bytes by its width, so the reservation is
+bounded in bytes by the input. Measured on the counting allocator at the two
+worst sites: `signatures` 2 097 152 B → **65 536 B** for a 65 549 B input
+(32.0× → 1.00×) and `files` 3 145 728 B → **19 968 B** for a 20 005 B input
+(157.2× → 1.00×). No cap constant changed value and no error code moved.
+`MAX_CLAMPED_ELEMENT_BYTES` is now **1** and the fuzz lane asserts the strong
+claim literally; `TOTAL_FACTOR` was decoupled from it and held at 1 024,
+because F30 measured the clamp and produced no evidence about payload copies.
 
 **Not verifiable locally**: execution on the runner image; the
 `actions/cache` corpus-persistence round trip (`fuzz-corpus-<run_id>` key

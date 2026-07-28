@@ -39,6 +39,16 @@
 //! drive an allocation no larger than the attacker's own input" — the property
 //! F17's fuzz invariant needs in order to be statable at all.
 //!
+//! **The two sides of that `min` must be in the same unit** (task F30).
+//! `claimed_length` counts elements and `remaining_input` counts bytes, and
+//! `Vec::with_capacity` multiplies its argument by `size_of::<T>()`, so
+//! comparing them directly bounds the element *count* by the input while
+//! leaving the *allocation* free to be `size_of::<T>()` times it —
+//! measured by F17 at 32× (`signatures`) and 157× (`files`).
+//! [`clamped_capacity`] is therefore generic in the element type and divides
+//! by its width, which is what makes the sentence above true as written
+//! rather than true only for one-byte elements.
+//!
 //! Frozen order at every array head, which fixes tamper-row precedence:
 //!
 //! 1. `d.array()` — head canonicality (so a non-shortest length head beats
@@ -46,7 +56,7 @@
 //! 2. **cap check on the claimed count**, before a single element is read —
 //!    cheap by construction, since the rejecting input is an array head and
 //!    nothing else;
-//! 3. `Vec::with_capacity(clamped_capacity(claimed, d.remaining()))`;
+//! 3. `Vec::with_capacity(clamped_capacity::<T>(claimed, d.remaining()))`;
 //! 4. decode elements.
 //!
 //! Two classes need no change and must not be "fixed":
@@ -243,11 +253,48 @@ pub const MAX_RECEIPT_PAYLOAD_BYTES: u64 = 16_777_216;
 /// Callers apply this **after** the relevant cap check, so the allocation is
 /// bounded by `min(cap, remaining_input)`. Lists with no cap (D10 §3) still
 /// call it: a cap and a clamp are different mechanisms.
+///
+/// # The element type is not decoration (task F30)
+///
+/// `claimed` counts **elements**; `remaining` counts **bytes**. The value this
+/// returns is handed to [`Vec::with_capacity`], which multiplies it by
+/// `size_of::<T>()` — so clamping to `remaining` alone bounds the *element
+/// count* by the input while leaving the *allocation* free to be
+/// `size_of::<T>()` times the input. F17's first fuzz run measured exactly
+/// that: 2 097 152 B reserved for a 65 549 B `signatures` head (32 B entries,
+/// 32×), and 3 145 728 B for a 20 005 B `files` head (192 B entries, 157×).
+/// No verdict moved — capacity is only a hint — which is why it stood.
+///
+/// D10 §4's rule is `min(claimed_length, remaining_input)` and it is right;
+/// what was wrong is that `remaining_input` was being compared against a
+/// count. Dividing by the element width restores the rule in one consistent
+/// unit and makes the documented consequence — *an attacker can never make
+/// the parser allocate more than the attacker's own bytes* — literally true:
+///
+/// ```text
+/// capacity * size_of::<T>() <= remaining <= input.len()
+/// ```
+///
+/// The wire-cost bound still applies underneath it (an element costs ≥1 byte,
+/// so `remaining` also bounds the count), and for `size_of::<T>() == 1` the
+/// two coincide. Under-reserving an honest decode by the ratio of in-memory
+/// to wire width costs at most a `Vec` regrowth, which is amortised O(1); the
+/// loop was never bounded by the hint.
+///
+/// Zero-sized `T` divides by zero, so it falls back to the count bound —
+/// correct by inspection, since a `Vec` of ZSTs allocates nothing at all.
 #[must_use]
-pub fn clamped_capacity(claimed: u64, remaining: u64) -> usize {
+pub fn clamped_capacity<T>(claimed: u64, remaining: u64) -> usize {
+    // How many `T` the remaining input could pay for, in bytes of allocation.
+    let width = core::mem::size_of::<T>() as u64;
+    let affordable = if width == 0 {
+        remaining
+    } else {
+        remaining / width
+    };
     // `min` in u64 first, then one narrowing that cannot lose bits because
     // the result is <= `remaining`, itself derived from a `usize` length.
-    usize::try_from(claimed.min(remaining)).unwrap_or(usize::MAX)
+    usize::try_from(claimed.min(affordable)).unwrap_or(usize::MAX)
 }
 
 /// Work-global decode budget threaded through the manifest body decode.
@@ -347,10 +394,10 @@ mod tests {
 
     #[test]
     fn clamp_takes_the_smaller_side() {
-        assert_eq!(clamped_capacity(10, 100), 10);
-        assert_eq!(clamped_capacity(100, 10), 10);
-        assert_eq!(clamped_capacity(u64::MAX, 7), 7);
-        assert_eq!(clamped_capacity(0, 0), 0);
+        assert_eq!(clamped_capacity::<u8>(10, 100), 10);
+        assert_eq!(clamped_capacity::<u8>(100, 10), 10);
+        assert_eq!(clamped_capacity::<u8>(u64::MAX, 7), 7);
+        assert_eq!(clamped_capacity::<u8>(0, 0), 0);
     }
 
     /// The invariant the `as usize` rests on: the result never exceeds
@@ -359,11 +406,51 @@ mod tests {
     fn clamp_never_exceeds_remaining_input() {
         for claimed in [0u64, 1, 255, 65_536, u64::from(u32::MAX), u64::MAX] {
             for remaining in [0u64, 1, 9, 4096] {
-                let got = clamped_capacity(claimed, remaining);
+                let got = clamped_capacity::<u8>(claimed, remaining);
                 assert!(got as u64 <= remaining);
                 assert!(got as u64 <= claimed);
             }
         }
+    }
+
+    /// **F30.** The property the clamp exists for, stated in the unit that
+    /// matters: the *reservation in bytes* never exceeds the remaining input
+    /// in bytes. `remaining <= input.len()` at every call site, so this is
+    /// the whole of "an attacker can never make the parser allocate more than
+    /// the attacker's own bytes".
+    ///
+    /// Element widths span the range the codec actually reserves for: 1 B
+    /// (`sig_policy`'s `SigAlg`), 32 B (`signatures`), 192 B (`files`).
+    #[test]
+    fn the_reservation_in_bytes_never_exceeds_the_remaining_bytes() {
+        macro_rules! check {
+            ($($t:ty),+) => {$(
+                for claimed in [0u64, 1, 255, 65_536, u64::from(u32::MAX), u64::MAX] {
+                    for remaining in [0u64, 1, 9, 191, 4096, 65_536, 16_777_216] {
+                        let cap = clamped_capacity::<$t>(claimed, remaining) as u64;
+                        let bytes = cap * size_of::<$t>() as u64;
+                        assert!(
+                            bytes <= remaining,
+                            "{}: reserved {bytes} B from {remaining} B remaining \
+                             (claimed {claimed})",
+                            stringify!($t)
+                        );
+                        assert!(cap <= claimed, "{}: over-reserved", stringify!($t));
+                    }
+                }
+            )+};
+        }
+        check!(u8, [u8; 32], [u8; 192], [u64; 3]);
+    }
+
+    /// A zero-sized element divides by zero if the width is used naively.
+    /// A `Vec` of ZSTs allocates nothing, so the count bound is the right
+    /// fallback — but it must not be a panic.
+    #[test]
+    fn a_zero_sized_element_falls_back_to_the_count_bound() {
+        assert_eq!(clamped_capacity::<()>(u64::MAX, 4096), 4096);
+        assert_eq!(clamped_capacity::<()>(7, 4096), 7);
+        assert_eq!(clamped_capacity::<()>(u64::MAX, 0), 0);
     }
 
     #[test]
