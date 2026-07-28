@@ -97,15 +97,25 @@ fn ots_section() -> Vec<Vec<(u64, Vec<u8>)>> {
     ]
 }
 
-/// The TSA section R6's `EveryKind` builds: one artifact with intermediates
-/// and a recorded `source`, one with neither, so both optional shapes are
-/// present at once.
+/// The TSA section R6's `EveryKind` builds: one artifact with intermediates,
+/// one without, so both optional shapes are present at once.
+///
+/// **This function used to distinguish the two by a recorded `source`.** D8 §1
+/// removed that field from v1 — zero producers, zero consumers — so the pair
+/// is now told apart by `intermediates` (the shape the row set is about) and
+/// by distinct token bytes. That is strictly better for a fixture: the
+/// distinguishing bytes are the artifact's own, not a provenance string the
+/// verifier is forbidden to trust.
 fn tsa_section() -> Vec<Vec<(u64, Vec<u8>)>> {
     vec![
-        w::tsa_anchor(status::PROVEN, 2, Some("https://tsa.invalid/fixture")),
-        w::tsa_anchor(status::VALID_AT_STAMPING_CERT_SINCE_EXPIRED, 0, None),
+        w::tsa_anchor(status::PROVEN, 2, TSA_TOKEN_TAG_A),
+        w::tsa_anchor(status::VALID_AT_STAMPING_CERT_SINCE_EXPIRED, 0, TSA_TOKEN_TAG_B),
     ]
 }
+
+/// Token fill bytes for the two TSA artifacts, distinct so a swap is visible.
+const TSA_TOKEN_TAG_A: u8 = 0xA1;
+const TSA_TOKEN_TAG_B: u8 = 0xB2;
 
 /// The base bundle: a valid `.sealproof` whose anchor sections populate
 /// **every** optional slot F8 defines.
@@ -340,16 +350,20 @@ mod tests {
             "the shape under test is `one upgraded, one not, in the same bundle`"
         );
 
-        // TSA: two artifacts, exactly one with intermediates and a `source`.
+        // TSA: two artifacts, exactly one carrying intermediates.
+        //
+        // This compared `(intermediates, source.is_some())` until D8 §1 deleted
+        // `source` from v1. The surviving half is the one that was ever load
+        // -bearing: `intermediates` is the optional shape these rows exercise.
         assert_eq!(wire.tsa_anchors().len(), r6.tsa_anchors().len());
         let optional_slots = |b: &antseal_core::bundle::BundleV1<'_>| {
             b.tsa_anchors()
                 .iter()
-                .map(|a| (a.intermediates().len(), a.source().is_some()))
+                .map(|a| a.intermediates().len())
                 .collect::<Vec<_>>()
         };
         assert_eq!(optional_slots(wire), optional_slots(r6));
-        assert_eq!(optional_slots(wire), vec![(2, true), (0, false)]);
+        assert_eq!(optional_slots(wire), vec![2, 0]);
 
         // Receipt: present, with the same number of transaction hashes.
         let hashes =
