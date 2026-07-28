@@ -493,15 +493,17 @@ impl VerifyError {
             Self::PaddedLengthMismatch { .. } => "padded-length-mismatch",
             Self::NonZeroPadding { .. } => "non-zero-padding",
             Self::TrueLengthRangeMismatch { .. } => "true-length-range-mismatch",
-            // Discriminated on the wrapped G13 class (wildcard-free, so
-            // every future FineTreeError variant must be assigned a code
-            // here): the generic binding failure keeps R1's original
-            // code; the over-broad-cover rejection is its own tamper row
-            // (R2 accept; MVP-SPEC.md line 96 leaf-exact-cover rule).
-            Self::FineRootBindingFailed { source, .. } => match source {
-                FineTreeError::RootMismatch => "fine-root-binding-failed",
-                FineTreeError::OverBroadCover => "fine-root-over-broad-cover",
-            },
+            // Discriminated on the wrapped G13 class. Since G13 landed the
+            // full taxonomy in `content::fine_tree::error`, the inner code
+            // is surfaced **unchanged** — the wrapper rule of
+            // `docs/testing/error-code-contract.md` §2, so each fine-tree
+            // outcome has exactly one code. `FineTreeError::code` is
+            // itself a wildcard-free `const fn`, so a new class still
+            // fails compilation there until it gets a distinct code. The
+            // generic binding failure keeps R1's original code; the
+            // over-broad-cover rejection remains its own tamper row (R2
+            // accept; MVP-SPEC.md line 96 leaf-exact-cover rule).
+            Self::FineRootBindingFailed { source, .. } => source.code(),
             Self::UnitCommitMismatch { .. } => "unit-commit-mismatch",
             Self::WrongLength { field, .. } => match field {
                 LengthField::UnitSalt => "wrong-length-unit-salt",
@@ -652,16 +654,17 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             true_length: 250,
             range_width: 260,
         },
-        // One exemplar per wrapped G13 class (R2): the generic root
-        // mismatch and the distinct over-broad-cover rejection.
-        E::FineRootBindingFailed {
-            unit_id: 7,
-            source: FineTreeError::RootMismatch,
-        },
-        E::FineRootBindingFailed {
-            unit_id: 7,
-            source: FineTreeError::OverBroadCover,
-        },
+        // One exemplar per wrapped G13 class. Sourced from G's own
+        // exemplar list so R can never fall behind the taxonomy: adding a
+        // class there adds a row here automatically, and the tally below
+        // states the expected count so a *silent* addition still fails.
+    ];
+    exemplars.extend(
+        crate::content::fine_tree::error::all_code_exemplars()
+            .into_iter()
+            .map(|source| E::FineRootBindingFailed { unit_id: 7, source }),
+    );
+    exemplars.extend(vec![
         E::UnitCommitMismatch { unit_id: 8 },
         E::WrongLength {
             field: LengthField::UnitSalt,
@@ -774,7 +777,7 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             position: 23,
         }),
         E::Codec(CodecError::IntOutOfRange { position: 24 }),
-    ];
+    ]);
     // ── Crypto wrapper arm (R2): one exemplar per distinct crypto-*
     // code of crate::crypto::CryptoError (the C-side list owns the
     // per-discriminant enumeration; its own test pins the count) ──
@@ -795,13 +798,13 @@ mod tests {
     /// The number of distinct stable codes: 13 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
-    /// ConcatCommitMismatch×2, FineRootBindingFailed×2 — one per wrapped
-    /// G13 class), plus the 15 delegated `cbor-*` codes of the Codec
-    /// wrapper arm (12 codec variants, ForbiddenType×3), plus the 25
-    /// delegated `crypto-*` codes of the Crypto wrapper arm
-    /// (CommitmentMismatch×5, SaltLength×3, four signature variants ×2
-    /// algorithms, 9 single-code variants).
-    const DISTINCT_CODES: usize = 71;
+    /// ConcatCommitMismatch×2, FineRootBindingFailed×**7** — one per
+    /// delegated `fine-root-*` class of G13's taxonomy), plus the 15
+    /// delegated `cbor-*` codes of the Codec wrapper arm (12 codec
+    /// variants, ForbiddenType×3), plus the 25 delegated `crypto-*` codes
+    /// of the Crypto wrapper arm (CommitmentMismatch×5, SaltLength×3, four
+    /// signature variants ×2 algorithms, 9 single-code variants).
+    const DISTINCT_CODES: usize = 76;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -872,8 +875,8 @@ mod tests {
             ("PartialRevealSaltLeak", 2),
             ("FullRevealMaterialMissing", 2),
             ("ConcatCommitMismatch", 2),
-            // One exemplar per wrapped G13 class (R2).
-            ("FineRootBindingFailed", 2),
+            // One exemplar per delegated fine-root-* code (G13).
+            ("FineRootBindingFailed", 7),
             // One exemplar per delegated cbor-* code (F3).
             ("Codec", 15),
             // One exemplar per delegated crypto-* code (R2).
