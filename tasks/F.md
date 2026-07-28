@@ -223,10 +223,36 @@
   - The peek/decode agreement property runs in the F16 suite with a recorded seed; a deliberately mis-wired peek makes it fail.
 - Notes: The two version rows are the natural home for a **third-party-verifier wording check** later (M3/R): the message a user sees for "too new" must be actionable, and the `supported` payload F10 added to both error variants is what makes that possible without reaching into the crate.
 
+### F19 — Tamper rows for the D10 cap codes, and the D77 mirror-only row
+- Milestone: M0
+- Size: S
+- Deps: F11, F15, D77; Q: the Q7 harness + the Q8 completeness registry
+- Spec: Tamper matrix — every mutation fails with a **distinct** error (MVP-SPEC.md line 168); parser hardening (line 153)
+- Discovered by: **F11** (2026-07-28). F11 minted **eighteen** permanent codes and D77 a nineteenth; between them, **three** are planned to get a tamper row. D10 §consequences names F15 as the owner of two (`bundle-too-large` binds the pending `oversized` row; `cbor-nesting-too-deep` becomes a direct-call row on `check_canonical` — §6), and D77 names F15 for `manifest-empty-normal-units`. The other **sixteen** — ten `bundle-too-many-*`, four `bundle-*-too-large`, `manifest-too-large`, and the pair `manifest-too-many-files` / `manifest-too-many-units` — have no row and no named owner. They are exercised by `tests/parser_caps.rs`, which is a *unit-level* proof, not a harness row: nothing in `testdata/tamper/MATRIX.json` knows they exist, so Q8's cross-domain distinctness sweep does not run over them.
+- Do: Add rows to `testdata/tamper/MATRIX.json` + the Q7 registry for each cap code not already owned, each mutating exactly one array head or one `bstr` length on a valid base fixture (R6's constructor). Declare them `project_added` with the rationale above — MVP-SPEC.md line 168's enumeration predates the cap constants, so Q8's 1:1 spec mapping stays honest, exactly as for D28's and F18's rows. Decide deliberately whether all sixteen earn a row or whether one representative per *family* (`ListTooLong`, `ArtifactTooLarge`, `InputTooLarge`) plus F11's unit matrix is the right cost/benefit; record whichever, since an unrowed permanent code is the thing F20 will start failing on.
+- Accept:
+  - Every added row's outcome is distinct from every existing row (`check_registry` is the proof).
+  - Rows recorded as `project_added` in `MATRIX.json`.
+  - Any cap code deliberately left unrowed is recorded as a **named non-row** with its reason, in the pattern Q8 already uses for the two recorded non-rows.
+- Notes: `bundle-too-large`'s row must not be built by materializing 256 MiB in the committed fixtures — the mutation is a *length*, and the harness needs a way to express "an input of size n" without storing n bytes. That is the one genuinely awkward row and is worth solving before the rest.
+
+### F20 — Reverse coverage: every `bundle-`/`manifest-` code has a row or a named owner
+- Milestone: M0
+- Size: S
+- Deps: F15, F18, F19; Q: the Q8 completeness registry
+- Spec: Tamper matrix (MVP-SPEC.md line 168); the stable error-code contract (`docs/testing/error-code-contract.md` §§1, 3)
+- Discovered by: **F11** (2026-07-28), as the F-side twin of the gap R7 closed on its own namespace. R7 added `every_unprefixed_verify_code_has_a_row_or_a_named_owner`, which maps the *error enum* onto rows and immediately earned itself by surfacing two unowned R codes. **F's two families have no such check.** Q8's registry maps the *spec's* enumeration onto rows, which structurally cannot catch a code nobody wrote a spec case for — and F11 has just added eighteen of exactly that kind in one commit, which is the strongest possible demonstration that the direction is unguarded. `bundle::error::all_code_exemplars` and `manifest::error::all_code_exemplars` already enumerate the full universe (47 and 48 exemplars), so the check is cheap: the data it needs exists.
+- Do: Add the F-side counterpart test — every code in `BundleError`'s and `ManifestError`'s exemplar sweeps must be claimed by a `MATRIX.json` row, by a Q7 seed row, or by an entry naming the task that owes it. Model it on R7's test, including the named-owner escape hatch, so landing a new code without a row is a deliberate, recorded act rather than an omission.
+- Accept:
+  - The check passes over the current code universe with every unrowed code carrying a named owner.
+  - Deliberately mint a throwaway code locally and confirm the check goes red; remove it.
+  - Wired into the same lane as R7's check so both directions run together.
+- Notes: This is the check that would have caught F11's own eighteen at authoring time. Worth landing before Q14, because after the freeze an unrowed code is an unrowed code forever.
+
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.
 - Complete v1 wire registry: integer key assignments, reserved-slot ranges, signatures-container encoding, anchor-status enum wire values, byte-range representation (start+length vs start+end), integer time encoding for claimed time and fetch dates, GGM cover/path node-coordinate encoding (with G), explicit `file_id` in touched-file bundle entries or not — blocks F5, F8 — must freeze at M0 Definitions sign-off.
-- Concrete parser cap constants (bundle/manifest byte size, unit/file/anchor counts, list lengths, nesting depth) with recorded rationale — blocks F11, F15 — M0.
+- Concrete parser cap constants (bundle/manifest byte size, unit/file/anchor counts, list lengths, nesting depth) with recorded rationale — blocks F11, F15 — M0. — **[2026-07-28]** RESOLVED (D10): 19 frozen caps, one universal clamp rule `min(claimed_length, remaining_input)`, 18 new `bundle-`/`manifest-` codes plus the existing `cbor-nesting-too-deep`; all enforced inside verify stage 1 so a hostile bundle dies before any AEAD/hash/signature work. Implemented at F11 in `antseal_core::codec::caps`; recorded in registry-v1.md §11 + the JSON mirror with a code-==-registry test. Values freeze at Q14 (docs/decisions/D10-parser-caps.md).
 - Autonomi ciphertext-address byte length pinned from ant-core =0.5.0 source (via S1) — blocks F4, F5, F8 length checks — M0. — **[2026-07-27]** RESOLVED (D11 via S1): **32 bytes** — `XorName = [u8; 32]`, BLAKE3-256 of chunk content (ant-protocol 2.3.0 src/chunk.rs:43; docs/research/S1-ant-core-api-survey.md).
 - Independent CBOR implementation for the cross-check (Python `cbor2` vs a second Rust crate, dev-tool-only) — blocks F14 — M0 (jointly with Q). — **[2026-07-27]** RESOLVED (D12, nominated in D7): Python `cbor2 ==6.1.3` (PyPI 2026-07-04, MIT), dev-tool-only; independent lineage; proven byte-identical to minicbor at integer boundaries + sorted-uint-key map; RFC 7049 ordering caveat recorded (moot for uint-only keys).
 
