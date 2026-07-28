@@ -382,6 +382,174 @@
         "sha256": "6b78ad4bca69890608db0daacb50ada22cbba34aae3eec95ade923e9e9a53f33"
       },
       "surface": "check_canonical"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-empty-normal-units",
+        "layer": "manifest body"
+      },
+      "id": "body-mirror-only-unit",
+      "mutation": "flip file 0's only unit from `normal` to `raw-mirror`, leaving the file with no normal unit",
+      "row": "caps-manifest-empty-normal-units",
+      "source": {
+        "file": "body-mirror-only-unit.cbor",
+        "kind": "file",
+        "len": 371,
+        "sha256": "f16aa424745636b83a7fd194b18209c08cc55e5cd377ab6c3b08c2878f4cbe51"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-too-many-units",
+        "layer": "manifest body"
+      },
+      "id": "body-units-over-cap",
+      "mutation": "re-head file 0's `units` array to claim MAX_UNIT_COUNT + 1 entries",
+      "row": "caps-manifest-too-many-units",
+      "source": {
+        "file": "body-units-over-cap.cbor",
+        "kind": "file",
+        "len": 375,
+        "sha256": "3bac7ed268b13bfcddc0ded218844da6d945c1cc6cbd4959c6ae85571bf1aa13"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-too-large",
+        "layer": "manifest envelope"
+      },
+      "id": "manifest-oversized",
+      "mutation": "zero-pad the manifest envelope to MAX_MANIFEST_BYTES + 1 bytes",
+      "row": "caps-manifest-too-large",
+      "source": {
+        "kind": "synthesized",
+        "len": 16777217,
+        "recipe": "the base manifest envelope, zero-padded to MAX_MANIFEST_BYTES + 1 bytes"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "bundle-every-kind",
+      "expected": {
+        "code": "bundle-too-many-intermediates",
+        "layer": "bundle"
+      },
+      "id": "bundle-intermediates-over-cap",
+      "mutation": "grow the first TSA anchor's `intermediates` list to MAX_INTERMEDIATE_COUNT + 1 real entries",
+      "row": "caps-bundle-too-many-intermediates",
+      "source": {
+        "file": "bundle-intermediates-over-cap.cbor",
+        "kind": "file",
+        "len": 1691,
+        "sha256": "3878fbe3683a519e01958fcec3ad075939f1b855e28441bd84224ba44d4f90c8"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle-every-kind",
+      "expected": {
+        "code": "bundle-cert-too-large",
+        "layer": "bundle"
+      },
+      "id": "bundle-cert-over-cap",
+      "mutation": "replace the first TSA intermediate with MAX_CERT_BYTES + 1 zero bytes",
+      "row": "caps-bundle-cert-too-large",
+      "source": {
+        "kind": "synthesized",
+        "len": 66769,
+        "recipe": "the every-anchor-kind bundle (R6 `AnchorSet::EveryKind`, receipt excluded, over the `single binary` ed25519-only work), with `tsa_anchors[0].intermediates[0]` replaced by a bstr of MAX_CERT_BYTES + 1 zero bytes"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-tag",
+        "layer": "bundle"
+      },
+      "id": "bundle-tagged-file-id",
+      "mutation": "wrap `full_reveals[0].file_id` in tag 55799 (self-described CBOR), leaving the value itself unchanged",
+      "row": "cbor-tag",
+      "source": {
+        "file": "bundle-tagged-file-id.cbor",
+        "kind": "file",
+        "len": 939,
+        "sha256": "f4503c68ed2a53fc2bcdb9b1c57af51f9dfb3c502344a6acaf239ee6e6bd21a4"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-simple-value",
+        "layer": "manifest body"
+      },
+      "id": "body-simple-value-size",
+      "mutation": "replace the file's `size` value with the simple value `true`",
+      "row": "cbor-simple-value",
+      "source": {
+        "file": "body-simple-value-size.cbor",
+        "kind": "file",
+        "len": 370,
+        "sha256": "6de381e014c82bdc1fc31eeeb6421aab5137e342d85704040115a3600fff26cb"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-unexpected-type",
+        "layer": "manifest body"
+      },
+      "id": "body-unexpected-type-range",
+      "mutation": "replace the nested unit's `range` array with a byte string of the same width",
+      "row": "cbor-unexpected-type",
+      "source": {
+        "file": "body-unexpected-type-range.cbor",
+        "kind": "file",
+        "len": 371,
+        "sha256": "e6513bb7e1845ee96da74f9fab265eeb09ad2be82835d5fabda5ab9e006e2e7b"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-malformed",
+        "layer": "bundle"
+      },
+      "id": "bundle-malformed-file-id",
+      "mutation": "replace `touched_files[0].file_id` with a reserved (additional info 28) head byte",
+      "row": "cbor-malformed",
+      "source": {
+        "file": "bundle-malformed-file-id.cbor",
+        "kind": "file",
+        "len": 936,
+        "sha256": "3d9b76176dc472724f95ea0c1bb0c064e2f2478d0d77944b113835c888acef0b"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-invalid-utf8",
+        "layer": "bundle"
+      },
+      "id": "bundle-invalid-utf8-path",
+      "mutation": "flip the first byte of `touched_files[0].path` to a lone UTF-8 continuation byte",
+      "row": "cbor-invalid-utf8",
+      "source": {
+        "file": "bundle-invalid-utf8-path.cbor",
+        "kind": "file",
+        "len": 936,
+        "sha256": "14a8775e85fb078fc895af4a7c9197a06931818477c837e88f62ddf1cfb52b87"
+      },
+      "surface": "SealProof::decode"
     }
   ],
   "format_version": "v1",

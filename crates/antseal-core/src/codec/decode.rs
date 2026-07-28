@@ -336,6 +336,58 @@ impl DecodeError {
     }
 }
 
+/// **Every `DecodeError` code exactly once**, as constructed exemplars.
+///
+/// The universe the reverse-coverage sweeps quantify over — F24's
+/// `cbor-`-family check, and the pairwise-distinctness test below. It is a
+/// function rather than a list in a test module for the reason R7 and F11
+/// both learned the hard way: a code universe that only a test can see is a
+/// universe no other check can be stated over, and the `cbor-` family is
+/// reachable through **every** schema surface while belonging to neither the
+/// `bundle-` nor the `manifest-` exemplar sweep (both merely delegate to it).
+///
+/// The exhaustive, wildcard-free match in [`DecodeError::code`] is what keeps
+/// this honest in the other direction: a new variant fails compilation there
+/// until it has a code, and fails `codes_are_pairwise_distinct_kebab_case`
+/// here until it has an exemplar.
+#[must_use]
+pub(crate) fn all_code_exemplars() -> Vec<DecodeError> {
+    use DecodeError as E;
+    vec![
+        E::Truncated { position: 0 },
+        E::Malformed { position: 0 },
+        E::ForbiddenType {
+            kind: ForbiddenKind::Float,
+            position: 0,
+        },
+        E::ForbiddenType {
+            kind: ForbiddenKind::Simple,
+            position: 0,
+        },
+        E::ForbiddenType {
+            kind: ForbiddenKind::Tag,
+            position: 0,
+        },
+        E::IndefiniteLength { position: 0 },
+        E::NonShortestInt { position: 0 },
+        E::NonShortestLength { position: 0 },
+        E::DuplicateMapKey { position: 0 },
+        E::UnsortedMapKeys { position: 0 },
+        E::InvalidUtf8 { position: 0 },
+        E::TrailingBytes {
+            position: 0,
+            trailing: 1,
+        },
+        E::NestingTooDeep { position: 0 },
+        E::UnexpectedType {
+            expected: ExpectedKind::Unsigned,
+            found: ItemKind::Bytes,
+            position: 0,
+        },
+        E::IntOutOfRange { position: 0 },
+    ]
+}
+
 /// A fully validated item head: kind, argument (value for integers,
 /// length/count otherwise), and encoded head length. Producing a `Head`
 /// *is* the canonicality check for the head (precedence steps 1–4).
@@ -1242,39 +1294,7 @@ mod tests {
     /// Stable codes: pairwise distinct, kebab-case, `cbor-` prefixed.
     #[test]
     fn codes_are_pairwise_distinct_kebab_case() {
-        let exemplars = [
-            DecodeError::Truncated { position: 0 },
-            DecodeError::Malformed { position: 0 },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Float,
-                position: 0,
-            },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Simple,
-                position: 0,
-            },
-            DecodeError::ForbiddenType {
-                kind: ForbiddenKind::Tag,
-                position: 0,
-            },
-            DecodeError::IndefiniteLength { position: 0 },
-            DecodeError::NonShortestInt { position: 0 },
-            DecodeError::NonShortestLength { position: 0 },
-            DecodeError::DuplicateMapKey { position: 0 },
-            DecodeError::UnsortedMapKeys { position: 0 },
-            DecodeError::InvalidUtf8 { position: 0 },
-            DecodeError::TrailingBytes {
-                position: 0,
-                trailing: 1,
-            },
-            DecodeError::NestingTooDeep { position: 0 },
-            DecodeError::UnexpectedType {
-                expected: ExpectedKind::Unsigned,
-                found: ItemKind::Bytes,
-                position: 0,
-            },
-            DecodeError::IntOutOfRange { position: 0 },
-        ];
+        let exemplars = all_code_exemplars();
         let codes: std::collections::BTreeSet<&'static str> =
             exemplars.iter().map(DecodeError::code).collect();
         assert_eq!(codes.len(), exemplars.len(), "codes must be distinct");

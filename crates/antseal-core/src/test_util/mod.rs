@@ -47,6 +47,23 @@
 //!   the same canonicality fault in the body, the envelope, the bundle map
 //!   and the embedded manifest is four fixtures and one code. Committed
 //!   bytes + mapping table: `testdata/tamper/format/`.
+//! - [`cbor_span`] — F25's span-locating cursor over canonical CBOR: an
+//!   item's byte span (head and payload separately), `(path-to-item)`
+//!   addressing, and the splices built on them. Built on the F3 decoder's own
+//!   public surface — `peek_kind` plus the typed reads — so it is incapable
+//!   of disagreeing with `check_canonical` about where an item begins or
+//!   ends, which is asserted over every item of every golden document rather
+//!   than argued. It is what makes a mutation of a *nested* item expressible
+//!   at all; F15's own primitives reach only a top-level head and the end of
+//!   the slice.
+//! - [`tamper_rows_caps`] — F's cap/shape registry slice (F22): one
+//!   representative row per cap-producing error *variant*, plus the D77
+//!   mirror-only row, plus the register of cap codes deliberately left
+//!   unrowed with the reason for each.
+//! - [`tamper_rows_cbor`] — F's `cbor-`-family slice (F24): rows for the
+//!   `DecodeError` codes that were reachable but unrowed, and the reverse
+//!   coverage check that maps `DecodeError`'s whole exemplar list onto rows
+//!   or named owners.
 //! - [`tamper_rows_version`] — F's other registry slice (F18): the two rows
 //!   over F10's version dispatch, each a **one-byte** bump of a golden
 //!   vector's `format_version`. Separate from [`tamper_rows_format`] because
@@ -153,6 +170,8 @@ pub mod bundle_fixtures;
 #[cfg(feature = "test-util")]
 pub mod bundle_mutators;
 #[cfg(feature = "test-util")]
+pub mod cbor_span;
+#[cfg(feature = "test-util")]
 pub mod codec_fuzz;
 pub mod fixture_rng;
 #[cfg(feature = "test-util")]
@@ -161,6 +180,10 @@ pub mod strategies;
 pub mod tamper;
 #[cfg(feature = "test-util")]
 pub mod tamper_coverage;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_caps;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_cbor;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]

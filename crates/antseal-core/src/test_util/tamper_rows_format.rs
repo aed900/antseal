@@ -91,6 +91,16 @@
 //! table's consumer diffs both against the committed vector documents, so
 //! "derived from the golden vectors" fails loudly if it ever stops being
 //! true.
+//!
+//! # This slice is not the whole committed set
+//!
+//! [`FIXTURES`] is F15's twenty. The committed artifact under
+//! `testdata/tamper/format/` is [`all_fixtures`] — this slice plus every
+//! successor's ([`super::tamper_rows_caps`], [`super::tamper_rows_cbor`]) —
+//! because a single table and a single `.cbor` directory are what make the
+//! set checkable in both directions at once. The slices stay separate source
+//! files so that concurrent work merges as a file add rather than a hunk
+//! conflict; [`FIXTURE_SLICES`] is the one line a new slice adds.
 
 use crate::bundle::registry::key as bundle_key;
 use crate::bundle::{SealProof, SealProofError};
@@ -101,6 +111,19 @@ use crate::manifest::{Manifest, ManifestError, encode_envelope};
 
 use super::bundle_fixtures::{Selection, WorkSpec, build, shapes};
 use super::tamper::{ActualOutcome, ExpectedOutcome, TamperRow};
+
+/// **F25's span-locating primitives, exposed beside F15's own.**
+///
+/// F15's primitives ([`insert_first_entry`](self), [`append_entry`](self),
+/// [`widen_head`](self), …) reach a top-level map head and the end of the
+/// slice. [`super::cbor_span`] reaches an *arbitrary* item, by
+/// `(path-to-item)` rather than by a pinned offset, and is built on the same
+/// F3 public surface — so the two sets are interchangeable in kind and a
+/// fixture can pick whichever expresses its mutation honestly.
+pub use super::cbor_span::{
+    ItemSpan, MAJOR_ARRAY, MAJOR_BYTES, MAJOR_UINT, Step, all_item_spans, canonical_head,
+    item_span, span_at_path, span_of_next_item, splice_head_at_path, splice_item_at_path,
+};
 
 // ---------------------------------------------------------------------------
 // the two bases
@@ -303,7 +326,13 @@ fn body_first_value_offset(body: &[u8]) -> Option<usize> {
 /// The envelope is re-encoded (its `bstr` length head follows the mutated
 /// body's length), which is the only honest way to present a mutated body:
 /// a length head left stale would be a *second* mutation.
-fn envelope_around(body: &[u8]) -> Option<Vec<u8>> {
+///
+/// Public because it is also the *only* honest way to cross the embedded-bstr
+/// boundary, which F25's path addressing deliberately refuses to do
+/// ([`super::cbor_span`], "Addressing"): F22's and F24's body-level fixtures
+/// mutate the body and re-wrap it here.
+#[must_use]
+pub fn envelope_around(body: &[u8]) -> Option<Vec<u8>> {
     let base = base_manifest();
     let manifest = Manifest::decode(&base).ok()?;
     encode_envelope(body, manifest.signatures()).ok()
@@ -811,10 +840,37 @@ pub const FIXTURES: &[FormatFixture] = &[
     },
 ];
 
-/// Look up a fixture by id.
+/// Look up a fixture by id, in F15's own slice.
 #[must_use]
 pub fn fixture(id: &str) -> Option<&'static FormatFixture> {
     FIXTURES.iter().find(|f| f.id == id)
+}
+
+/// **Every format-level fixture slice**, in emit order — F15's, then the
+/// successors that add fixtures to the same committed set under
+/// `testdata/tamper/format/`.
+///
+/// The slices stay separate files (one per task, so a merge is a file add
+/// rather than a hunk conflict) but the *committed artifact* stays single:
+/// `tests/format_tamper_fixtures.rs` emits and checks this concatenation, so
+/// `FIXTURES.json` and the `.cbor` set describe all of them at once. A new
+/// task adds one line here.
+pub const FIXTURE_SLICES: &[&[FormatFixture]] = &[
+    FIXTURES,
+    super::tamper_rows_caps::FIXTURES,
+    super::tamper_rows_cbor::FIXTURES,
+];
+
+/// Every format-level fixture, across every slice, in emit order.
+#[must_use]
+pub fn all_fixtures() -> Vec<&'static FormatFixture> {
+    FIXTURE_SLICES.iter().copied().flatten().collect()
+}
+
+/// Look up a fixture by id across every slice.
+#[must_use]
+pub fn any_fixture(id: &str) -> Option<&'static FormatFixture> {
+    all_fixtures().into_iter().find(|f| f.id == id)
 }
 
 // ---------------------------------------------------------------------------
@@ -887,7 +943,15 @@ pub fn exercise(fixture: &FormatFixture) -> ActualOutcome {
 /// Exercise the fixture with this id, or report the lookup failure as an
 /// outcome. Row exercises are `fn()` pointers, so each names its id here.
 fn exercise_id(id: &'static str) -> ActualOutcome {
-    match fixture(id) {
+    exercise_by_id(FIXTURES, id)
+}
+
+/// [`exercise_id`] over an arbitrary slice — what a successor task's row
+/// exercise calls, so a missing fixture stays a distinctive *outcome* rather
+/// than a panic inside the harness (the G19 precedent).
+#[must_use]
+pub fn exercise_by_id(fixtures: &'static [FormatFixture], id: &'static str) -> ActualOutcome {
+    match fixtures.iter().find(|f| f.id == id) {
         Some(f) => exercise(f),
         None => ActualOutcome::ErrorCode(format!("f15-fixture-missing:{id}")),
     }

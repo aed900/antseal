@@ -64,17 +64,19 @@ The remaining pending markers are Q18's M2 anchor cases, owned by A21. They
 are what keeps the mechanism live: the checker's own tests-of-the-test
 anchor on an M2 pending case now that no M0 one is owed.
 
-## `format/` — F15's format-level fixtures
+## `format/` — the format-level fixtures (F15, F22, F24)
 
-`format/` holds the committed **artifact** side of the F rows: twenty single
+`format/` holds the committed **artifact** side of the F rows: single
 mutations of the F12/F13 golden vectors' own manifest and bundle bytes, plus
-`FIXTURES.json`, the machine-readable fixture→expected-error mapping. See
-`format/README.md` — in particular for why only seven of the twenty carry a
-harness row, which is a consequence of the error-code contract rather than a
-gap: a wrapped codec rejection surfaces its inner code unchanged at every
-layer, so one canonicality fault at four layers is four fixtures and one
-code. Fixtures are checked on `(code, layer)`; rows are registered only
-where the code is unclaimed.
+`FIXTURES.json`, the machine-readable fixture→expected-error mapping. One
+artifact, assembled from task-owned slices — F15's twenty, F22's five cap
+and shape fixtures, F24's five nested `cbor-` ones. See `format/README.md`
+— in particular for why most fixtures carry no harness row, which is a
+consequence of the error-code contract rather than a gap: a wrapped codec
+rejection surfaces its inner code unchanged at every layer, so one
+canonicality fault at four layers is four fixtures and one code. Fixtures
+are checked on `(code, layer)`; rows are registered only where the code is
+unclaimed.
 
 **Q18** extends the same structure with the M2 anchor rows, which are
 already enumerated here as pending, so extending is a data change rather
