@@ -14,7 +14,7 @@
 use core::ops::Range;
 
 use proptest::prelude::*;
-use proptest::test_runner::RngSeed;
+use proptest::test_runner::{FileFailurePersistence, RngSeed};
 
 /// The project-standard proptest configuration (Q3):
 ///
@@ -44,6 +44,60 @@ pub fn proptest_config(rng_seed: u64) -> ProptestConfig {
     ProptestConfig {
         rng_seed: RngSeed::Fixed(rng_seed),
         ..ProptestConfig::default()
+    }
+}
+
+/// [`proptest_config`] for a property suite living in `tests/` — an
+/// **integration test** — with failure persistence that actually works
+/// there (Q3 §5: regressions files are committed and never deleted).
+///
+/// # Why integration tests need this
+///
+/// proptest's default persistence is
+/// `FileFailurePersistence::SourceParallel("proptest-regressions")`, which
+/// walks *up* from the test's source file looking for a directory holding
+/// `lib.rs` or `main.rs`. That works for `#[cfg(test)]` blocks inside
+/// `src/`, but an integration test in `tests/` has no such ancestor: the
+/// lookup fails, proptest prints
+///
+/// ```text
+/// proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+/// ```
+///
+/// and — having no source file configured either — **persists nothing**. A
+/// failure found in CI would then be unreproducible locally, which is
+/// exactly what Q3 §5 exists to prevent.
+///
+/// Passing the path explicitly (`Direct`) fixes it. `cargo test` runs with
+/// the package root as the working directory, so a relative path lands at
+/// `crates/<crate>/proptest-regressions/<name>.txt` — the same place
+/// `SourceParallel` would have chosen for an in-`src` test, and the
+/// location Q3 documents.
+///
+/// ```rust
+/// use antseal_core::test_util::proptest::prelude::*;
+/// use antseal_core::test_util::strategies;
+///
+/// proptest! {
+///     #![proptest_config(strategies::integration_test_config(
+///         0x5EED_0003,
+///         "proptest-regressions/my_suite.txt",
+///     ))]
+///     #[test]
+///     fn tripling_is_divisible_by_three(n in 0u32..1000) {
+///         prop_assert_eq!((n * 3) % 3, 0);
+///     }
+/// }
+/// ```
+///
+/// `regressions_file` must be `'static` (proptest's API) and should be
+/// `proptest-regressions/<test-file-stem>.txt`, matching the test file it
+/// belongs to.
+#[must_use]
+pub fn integration_test_config(rng_seed: u64, regressions_file: &'static str) -> ProptestConfig {
+    ProptestConfig {
+        failure_persistence: Some(Box::new(FileFailurePersistence::Direct(regressions_file))),
+        ..proptest_config(rng_seed)
     }
 }
 
