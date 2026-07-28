@@ -475,7 +475,7 @@ Version discriminant at key 0 (encoded first; F10 dispatch).
 | 3 | `size` | uint | req | leaf count / tiling-domain byte count: canonical bytes for text, raw bytes for binary (line 98; a text file's raw byte count travels as its raw-mirror unit's `true_length`) | proposed |
 | 4 | `descriptor` | map | req | §7.4 | proposed |
 | 5 | `fine_root` | bstr | opt: `descriptor.fine_tree_present == 1` | 32 | proposed |
-| 6 | `units` | array | req | unit-table entries (§7.5); non-empty (empty file = one empty unit, line 78) | proposed |
+| 6 | `units` | array | req | unit-table entries (§7.5); non-empty (empty file = one empty unit, line 78); **at least one `kind = normal` unit [P]** — a mirror-only file has no tiling domain (D77) | proposed |
 | 7–23 | — | — | — | reserved | proposed |
 
 ### 7.4 Canonicalization descriptor (lines 83, 98; G4 field set)
@@ -1141,13 +1141,52 @@ The F4 task note requires this decision here. Bundle per-file sections
 Cost: 1–2 bytes per touched file. `full_reveals` entries reference the
 same id (their §7.13 counterpart must exist [R]).
 
-## 11. Parser resource caps (F11 — placeholder)
+## 11. Parser resource caps (D10 — frozen)
 
-Concrete cap constants (max bundle/manifest byte size, unit/file/anchor
-counts, per-list lengths incl. cover/path/cert lists, CBOR nesting depth)
-are F11's open decision and will be recorded **in this registry** when
-frozen (F11 accept). Sizing floor already fixed by the spec: cover lists
-must comfortably admit `2·⌈log₂ n⌉` entries at `n = 10⁸` (line 96).
+Frozen by decision D10 (`docs/decisions/D10-parser-caps.md`, 2026-07-28);
+implemented in `antseal_core::codec::caps`; a test asserts code == this
+table. All values are `u64` except depth (`u16`). Sizing rationale per
+row is in the decision record.
+
+| constant | value | applies to | error code |
+| --- | --- | --- | --- |
+| `MAX_BUNDLE_BYTES` | 268435456 | layer-1 `.sealproof` input | `bundle-too-large` |
+| `MAX_MANIFEST_BYTES` | 16777216 | layer-2 input (§7.6 key 1 contents) | `manifest-too-large` |
+| `MAX_CBOR_DEPTH` | 8 | enclosing containers, generic walker (§7.6.3: v1 max is 6) | `cbor-nesting-too-deep` |
+| `MAX_FILE_COUNT` | 16384 | §7.2 key 7 `files` | `manifest-too-many-files` |
+| `MAX_UNIT_COUNT` | 65536 | §7.3 key 6 `units`, **work-global running budget** | `manifest-too-many-units` |
+| `MAX_OTS_ANCHOR_COUNT` | 256 | §7.6 key 3 | `bundle-too-many-ots-anchors` |
+| `MAX_TSA_ANCHOR_COUNT` | 256 | §7.6 key 4 | `bundle-too-many-tsa-anchors` |
+| `MAX_INTERMEDIATE_COUNT` | 16 | §7.9 key 2 | `bundle-too-many-intermediates` |
+| `MAX_TX_HASH_COUNT` | 256 | §7.10 key 0 | `bundle-too-many-tx-hashes` |
+| `MAX_COVERED_REVEAL_COUNT` | 65536 | §7.6 key 6 | `bundle-too-many-covered-reveals` |
+| `MAX_NONCOVERED_REVEAL_COUNT` | 65536 | §7.6 key 7 | `bundle-too-many-noncovered-reveals` |
+| `MAX_COVER_ENTRIES` | 256 | §7.11 key 3 (2·⌈log₂ n⌉ ≤ 128 for any `uint` size) | `bundle-too-many-cover-entries` |
+| `MAX_PATH_NODES` | 256 | §7.11 key 4 | `bundle-too-many-path-nodes` |
+| `MAX_TOUCHED_FILE_COUNT` | 16384 | §7.6 key 8 | `bundle-too-many-touched-files` |
+| `MAX_FULL_REVEAL_COUNT` | 16384 | §7.6 key 9 | `bundle-too-many-full-reveals` |
+| `MAX_OTS_BYTES` | 1048576 | §7.8 key 1 | `bundle-ots-too-large` |
+| `MAX_TSA_TOKEN_BYTES` | 1048576 | §7.9 key 1 | `bundle-tsa-token-too-large` |
+| `MAX_CERT_BYTES` | 65536 | §7.9 key 2 elements | `bundle-cert-too-large` |
+| `MAX_RECEIPT_PAYLOAD_BYTES` | 16777216 | §7.10 key 2 | `bundle-receipt-payload-too-large` |
+
+**Clamp rule (normative).** Every pre-allocation in the decode path is
+clamped to `min(claimed_length, remaining_input)`, including lists with no
+cap (`sig_policy`, `pubkeys`, `signatures` — bounded instead by the
+16-value `sig_alg` universe of §6.2). Order at every array head: head
+canonicality → cap → clamped allocation → elements. `bstr`/`tstr`
+payloads are already bounds-checked before consumption (F3) and read
+zero-copy, so no string length can drive an allocation.
+
+**Recorded non-caps**: `sig_policy`/`pubkeys`/`signatures` (bounded by the
+registered-alg universe and by duplicate-freedom); `range`/`cover_entry`/
+`path_node` (fixed arity, §4/§5); `title`/`app_version`/`path`/`source`
+(free-form `tstr`s, transitively bounded); revealed-unit `ciphertext`
+(shape-checked; an upper bound would equal `MAX_BUNDLE_BYTES`).
+
+**Not F11's**: internal structural limits of the opaque artifacts (`.ots`
+op counts, DER nesting, signed-attribute counts) are A's at M2 (§7.8,
+§7.9; MVP-SPEC.md line 153) — their freeze status is **D83**.
 
 ## 12. Spec-coverage checklist
 
@@ -1290,7 +1329,8 @@ and **none is decided here**:
     (§7.6) — this is the weaker per-unit case. Owner: D8 with R (and U for
     the `reveal` surface).
 
-Open co-freezes tracked elsewhere: D17 (§6.2, with C14), F11 caps (§11).
+Open co-freezes tracked elsewhere: D17 (§6.2, with C14). The F11 caps
+(§11) are frozen by D10 and no longer open.
 **D9 closed 2026-07-28** (§5) — no longer a co-freeze, only a co-freeze
 *date* (Q14, with everything else here).
 
@@ -1302,7 +1342,7 @@ re-raised as a D8 item here:
 | --- | --- | --- |
 | **D74** — extraneous `s_root` on a fine-tree-absent full reveal | §7.14 key 2, the fifth violation row | the row is left **unassigned**, and the permissive reading is explicitly not encoded |
 | **D75** — does a full reveal ship covers *and* `s_root`? | §7.11 key 3 presence | shown to be **key-neutral** (only the presence rule and its tier move); the draft leans "both", with reasons, as D75 input |
-| **D77** — zero-non-mirror-unit file | §7.14's `N(F) ≠ ∅` clause | recorded as the reason the clause exists; no registry change either way |
+| **D77** — zero-non-mirror-unit file | §7.14's `N(F) ≠ ∅` clause | **RESOLVED 2026-07-28: reject at F5.** §7.3 key 6 gains "at least one `kind = normal` unit **[P]**", code `manifest-empty-normal-units`. The draft's "no registry change either way" note is thereby falsified and corrected |
 
 ## 14. Machine-readable mirror and tests
 

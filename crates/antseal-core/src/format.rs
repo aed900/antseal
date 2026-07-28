@@ -77,7 +77,16 @@
 //! Because canonical CBOR maps have strictly ascending keys (F3), key 0 is
 //! first whenever it is present, so the peek reads a constant number of
 //! bytes regardless of artifact size — a hostile 100 MB bundle declaring
-//! version 7 is rejected after ~4 bytes, before F11's caps even matter.
+//! version 7 is rejected after ~4 bytes, with none of F11's per-list caps
+//! reached.
+//!
+//! One F11 cap does run first, and deliberately: D10 §5 makes the O(1)
+//! `input.len() > MAX_BUNDLE_BYTES` check the **first statement** of
+//! `BundleV1::decode`, ahead of the peek. So an artifact above 256 MiB is
+//! `bundle-too-large` even when it declares an unsupported version — the
+//! cheapest possible rejection wins, and a v1 verifier has no basis for
+//! reading a 300 MiB artifact's version field anyway. Everything under the
+//! cap behaves exactly as this section describes.
 //!
 //! The chosen version's decoder still re-reads and re-checks the
 //! discriminant from the same bytes. That is not redundant: it is the guard

@@ -312,5 +312,42 @@ kebab-case id, and never edit an existing row's expected code.
      — C's seed rows pin the `strip_padding` primitive under different codes,
      and no task's text named the pipeline pair — so R7 added them.
 
+- **2026-07-28 (M0 wave 5, F11 + D77)** — nineteen new codes across two
+  existing families, all **format-permanent** and all landed before Q14 (§3).
+  - **D10's eighteen resource-cap codes.** F's `bundle-` family grows 32 → 47
+    exemplars (+15: `bundle-too-large`, ten `bundle-too-many-*`, four
+    `bundle-*-too-large`); `manifest-` grows 44 → 48 exemplars (+4:
+    `manifest-too-large`, `manifest-too-many-files`,
+    `manifest-too-many-units`, and D77's below). The split across two families
+    is **D78 applied, not stylistic**: a cap detected on the bundle's own
+    bytes is `bundle-`, a cap detected on the embedded manifest's bytes is
+    `manifest-`. Depth mints nothing — it reuses the existing
+    `cbor-nesting-too-deep`, whose constant merely moved from F3's provisional
+    `MAX_NESTING_DEPTH = 64` to `caps::MAX_CBOR_DEPTH = 8`.
+    - Verified new before minting: no `-too-large`, `-too-many-` or
+      `-oversized` literal existed anywhere in the tree; the only near
+      neighbours are `bundle-ciphertext-too-short`, `cbor-nesting-too-deep`
+      and `content-node-address-level-too-deep`, none of which collides.
+    - **Recorded non-codes** (D10 §3), for the reason D75's record warned
+      about — minting a code for a check that cannot fire: `sig_policy`,
+      `pubkeys` and `signatures` get *no* cap and *no* code, because the
+      registered `sig_alg` universe is 16 values and duplicate-freedom is
+      already enforced, so an existing code always fires first. They are still
+      allocation-clamped: a cap and a clamp are different mechanisms.
+    - **`bundle-too-large` beats every other bundle code**, including the
+      `cbor-` canonicality classes and `bundle-unsupported-format-version`,
+      because D10 §5 puts the O(1) size check as the first statement of the
+      decode. Pinned by `tests/parser_caps.rs`. See the F19 note below on the
+      version interaction.
+  - **D77's `manifest-empty-normal-units`** (`ContainerField::NormalUnits`) —
+    a file whose entire unit table is raw mirrors. Distinct from the four
+    existing `manifest-empty-*` codes and reachable only through
+    `FileEntry::new`, positioned **after** `units.is_empty()` (so a genuinely
+    unit-less file keeps reporting `manifest-empty-units` — one code per
+    outcome, §1) and **before** the coverage loop (so the shape error wins
+    over a per-unit `unit_commit` error). Owed tamper row: F15.
+  - R's `VerifyError::Decode` wrapper surfaces all nineteen unchanged (§2), so
+    R's universe grows by nineteen without R minting anything.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

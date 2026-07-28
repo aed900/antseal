@@ -73,6 +73,7 @@
 //! serializable field must not be the type whose whole purpose is to have no
 //! public byte path.
 
+use crate::codec::caps::{MAX_BUNDLE_BYTES, clamped_capacity};
 use crate::codec::encode::MapEncoder;
 use crate::codec::{CanonicalDecoder, CanonicalEncoder, DecodeError, EncodeError, encode_item};
 use crate::content::ggm::NodeAddress;
@@ -81,7 +82,8 @@ use crate::format::{SUPPORTED_VERSIONS, V1, VersionDispatch};
 use crate::manifest::{ContentAddress, Nonce24};
 
 use super::error::{
-    BundleError, CiphertextDefect, ContainerField, FixedLenField, OrderedList, TupleId,
+    BundleError, BundleListKind, CiphertextDefect, ContainerField, FixedLenField, OpaqueField,
+    OrderedList, TupleId,
 };
 use super::registry::{
     AnchorStatus, BLOCK_HEADER_LEN, BundleMapId, FORMAT_VERSION_V1, KEY_LEN, KeyClass,
@@ -508,9 +510,7 @@ impl OtsAnchor {
             admit_key(MAP, k)?;
             match k {
                 key::ots_anchor::STATUS => status = Some(decode_anchor_status(d)?),
-                key::ots_anchor::OTS => {
-                    ots = Some(OpaqueBytes::from_vec(d.bytes().map_err(cbor)?.to_vec()));
-                }
+                key::ots_anchor::OTS => ots = Some(decode_opaque(d, OpaqueField::Ots)?),
                 key::ots_anchor::BLOCK_HEIGHT => block_height = Some(d.u64().map_err(cbor)?),
                 key::ots_anchor::BLOCK_HEADER => {
                     let bytes = d.bytes().map_err(cbor)?;
@@ -635,18 +635,11 @@ impl TsaAnchor {
             admit_key(MAP, k)?;
             match k {
                 key::tsa_anchor::STATUS => status = Some(decode_anchor_status(d)?),
-                key::tsa_anchor::TOKEN => {
-                    token = Some(OpaqueBytes::from_vec(d.bytes().map_err(cbor)?.to_vec()));
-                }
+                key::tsa_anchor::TOKEN => token = Some(decode_opaque(d, OpaqueField::TsaToken)?),
                 key::tsa_anchor::INTERMEDIATES => {
-                    let count = d.array().map_err(cbor)?;
-                    // No `with_capacity`: a claimed length must never drive
-                    // an allocation (F11 bounds it properly).
-                    let mut list = Vec::new();
-                    for _ in 0..count {
-                        list.push(OpaqueBytes::from_vec(d.bytes().map_err(cbor)?.to_vec()));
-                    }
-                    intermediates = Some(list);
+                    intermediates = Some(decode_section(d, BundleListKind::Intermediates, |d| {
+                        decode_opaque(d, OpaqueField::Certificate)
+                    })?);
                 }
                 key::tsa_anchor::FETCH_DATE => fetch_date = Some(d.u64().map_err(cbor)?),
                 key::tsa_anchor::SOURCE => source = Some(d.str().map_err(cbor)?.to_owned()),
@@ -752,20 +745,14 @@ impl ReceiptRecord {
             admit_key(MAP, k)?;
             match k {
                 key::receipt::TX_HASHES => {
-                    let count = d.array().map_err(cbor)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
+                    tx_hashes = Some(decode_section(d, BundleListKind::TxHashes, |d| {
                         let bytes = d.bytes().map_err(cbor)?;
-                        list.push(fixed::<{ TX_HASH_LEN as usize }>(
-                            FixedLenField::TxHash,
-                            bytes,
-                        )?);
-                    }
-                    tx_hashes = Some(list);
+                        fixed::<{ TX_HASH_LEN as usize }>(FixedLenField::TxHash, bytes)
+                    })?);
                 }
                 key::receipt::BLOCK_NUMBER => block_number = Some(d.u64().map_err(cbor)?),
                 key::receipt::PAYLOAD => {
-                    payload = Some(OpaqueBytes::from_vec(d.bytes().map_err(cbor)?.to_vec()));
+                    payload = Some(decode_opaque(d, OpaqueField::ReceiptPayload)?);
                 }
                 other => return Err(unhandled_assigned_key(MAP, other)),
             }
@@ -1016,20 +1003,14 @@ impl CoveredReveal {
                     ciphertext = Some(OpaqueBytes::from_vec(d.bytes().map_err(cbor)?.to_vec()));
                 }
                 key::covered_reveal::COVER => {
-                    let count = d.array().map_err(cbor)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
-                        list.push(CoverEntry::decode(d)?);
-                    }
-                    cover = Some(list);
+                    cover = Some(decode_section(
+                        d,
+                        BundleListKind::Cover,
+                        CoverEntry::decode,
+                    )?);
                 }
                 key::covered_reveal::PATHS => {
-                    let count = d.array().map_err(cbor)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
-                        list.push(PathNode::decode(d)?);
-                    }
-                    paths = Some(list);
+                    paths = Some(decode_section(d, BundleListKind::Paths, PathNode::decode)?);
                 }
                 other => return Err(unhandled_assigned_key(MAP, other)),
             }
@@ -1623,13 +1604,31 @@ impl<'b> BundleV1<'b> {
     /// is a separate discriminant with a separate rejection. F9's
     /// `SealProof::decode` composes layers 2 and 3 on top.
     ///
+    /// # The size cap runs first (F11 / decision D10 §5)
+    ///
+    /// `input.len() > MAX_BUNDLE_BYTES` is the **first statement**, before the
+    /// version peek and before any decoder is constructed. It is the one O(1)
+    /// check in the whole pipeline, so an oversized bundle costs a length
+    /// comparison and nothing else — no walk, no AEAD, no hash, no signature.
+    /// The precedence is deliberate and pinned by tests: an oversized bundle
+    /// that *also* has non-canonical CBOR, or a bad signature, reports
+    /// `bundle-too-large`.
+    ///
     /// # Errors
     ///
+    /// [`BundleError::InputTooLarge`] for an over-cap input;
     /// [`BundleError::UnsupportedFormatVersion`] for a version this build
     /// has no decoder for; otherwise whatever the selected version's decoder
     /// returns — for v1, [`BundleError::Cbor`] for canonicality failures at
     /// this layer plus every `bundle-*` schema class.
     pub fn decode(input: &'b [u8]) -> Result<Self, BundleError> {
+        let len = input.len() as u64;
+        if len > MAX_BUNDLE_BYTES {
+            return Err(BundleError::InputTooLarge {
+                len,
+                cap: MAX_BUNDLE_BYTES,
+            });
+        }
         VersionDispatch::v1_only(FORMAT_VERSION_V1, Self::decode_v1).decode(input)
     }
 
@@ -1684,23 +1683,47 @@ impl<'b> BundleV1<'b> {
                     storage_record = Some(StorageRecord::decode(&mut d)?)
                 }
                 key::bundle::OTS_ANCHORS => {
-                    ots_anchors = Some(decode_section(&mut d, OtsAnchor::decode)?);
+                    ots_anchors = Some(decode_section(
+                        &mut d,
+                        BundleListKind::OtsAnchors,
+                        OtsAnchor::decode,
+                    )?);
                 }
                 key::bundle::TSA_ANCHORS => {
-                    tsa_anchors = Some(decode_section(&mut d, TsaAnchor::decode)?);
+                    tsa_anchors = Some(decode_section(
+                        &mut d,
+                        BundleListKind::TsaAnchors,
+                        TsaAnchor::decode,
+                    )?);
                 }
                 key::bundle::RECEIPT => receipt = Some(ReceiptRecord::decode(&mut d)?),
                 key::bundle::COVERED_REVEALS => {
-                    covered_reveals = Some(decode_section(&mut d, CoveredReveal::decode)?);
+                    covered_reveals = Some(decode_section(
+                        &mut d,
+                        BundleListKind::CoveredReveals,
+                        CoveredReveal::decode,
+                    )?);
                 }
                 key::bundle::NONCOVERED_REVEALS => {
-                    noncovered_reveals = Some(decode_section(&mut d, NonCoveredReveal::decode)?);
+                    noncovered_reveals = Some(decode_section(
+                        &mut d,
+                        BundleListKind::NonCoveredReveals,
+                        NonCoveredReveal::decode,
+                    )?);
                 }
                 key::bundle::TOUCHED_FILES => {
-                    touched_files = Some(decode_section(&mut d, TouchedFile::decode)?);
+                    touched_files = Some(decode_section(
+                        &mut d,
+                        BundleListKind::TouchedFiles,
+                        TouchedFile::decode,
+                    )?);
                 }
                 key::bundle::FULL_REVEALS => {
-                    full_reveals = Some(decode_section(&mut d, FullReveal::decode)?);
+                    full_reveals = Some(decode_section(
+                        &mut d,
+                        BundleListKind::FullReveals,
+                        FullReveal::decode,
+                    )?);
                 }
                 other => return Err(unhandled_assigned_key(MAP, other)),
             }
@@ -1727,22 +1750,56 @@ impl<'b> BundleV1<'b> {
     }
 }
 
-/// Decode a definite-length array of entries.
+/// Decode a definite-length array of entries under F11's cap and clamp
+/// (decision D10 §4). **Every** array head in this module goes through here.
 ///
-/// Deliberately no `Vec::with_capacity`: a claimed array length must never
-/// drive an allocation. F11 replaces this with a properly budgeted reader
-/// that clamps every pre-allocation to `min(claimed, remaining_input)`; until
-/// then the push loop bounds allocation by the bytes actually consumed.
+/// The order is frozen, because it fixes tamper-row precedence:
+///
+/// 1. `d.array()` — head canonicality, so a non-shortest length head beats
+///    every cap code with `cbor-non-shortest-length`;
+/// 2. the cap on the **claimed** count, before a single element is read —
+///    the rejecting input is an array head and nothing else, so a hostile
+///    bundle is refused in O(1) and long before any crypto;
+/// 3. `Vec::with_capacity(clamped_capacity(claimed, d.remaining()))` — by
+///    this point `claimed <= cap`, so the allocation is bounded by
+///    `min(cap, remaining_input)`;
+/// 4. decode elements (the loop was always bounded by input consumption:
+///    each element costs ≥1 byte or errors).
 fn decode_section<T>(
     d: &mut CanonicalDecoder<'_>,
+    list: BundleListKind,
     mut decode_one: impl FnMut(&mut CanonicalDecoder<'_>) -> Result<T, BundleError>,
 ) -> Result<Vec<T>, BundleError> {
-    let count = d.array().map_err(cbor)?;
-    let mut list = Vec::new();
-    for _ in 0..count {
-        list.push(decode_one(d)?);
+    let claimed = d.array().map_err(cbor)?;
+    let cap = list.cap();
+    if claimed > cap {
+        return Err(BundleError::ListTooLong { list, claimed, cap });
     }
-    Ok(list)
+    let mut out = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+    for _ in 0..claimed {
+        out.push(decode_one(d)?);
+    }
+    Ok(out)
+}
+
+/// Read an opaque foreign artifact `bstr` under its frozen byte cap
+/// (decision D10 §1 rows 16–19).
+///
+/// The length is checked on the **borrowed** slice, before the one `to_vec`,
+/// so an over-cap artifact never drives a copy. F3 has already refused a
+/// claimed length exceeding the remaining input, so the borrow itself is
+/// bounded by the attacker's own bytes.
+fn decode_opaque(
+    d: &mut CanonicalDecoder<'_>,
+    field: OpaqueField,
+) -> Result<OpaqueBytes, BundleError> {
+    let bytes = d.bytes().map_err(cbor)?;
+    let cap = field.cap();
+    let len = bytes.len() as u64;
+    if len > cap {
+        return Err(BundleError::ArtifactTooLarge { field, len, cap });
+    }
+    Ok(OpaqueBytes::from_vec(bytes.to_vec()))
 }
 
 // ---------------------------------------------------------------------------

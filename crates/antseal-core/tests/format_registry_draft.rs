@@ -279,8 +279,8 @@ fn every_draft_item_carries_a_registered_status_marker() {
     let mut violations = Vec::new();
     // The root-level `status` is the document lifecycle marker
     // (`draft-until-Q14`), checked separately in `registry_json_parses`;
-    // item statuses live under these four sections.
-    for section in ["scalars", "enums", "tuples", "maps"] {
+    // item statuses live under these five sections (`caps` joined at F11).
+    for section in ["scalars", "enums", "tuples", "maps", "caps"] {
         walk(
             get(&root, section, "registry root"),
             section,
@@ -821,4 +821,202 @@ fn code_version_dispatch_matches_the_registry() {
              with the body's"
         );
     }
+}
+
+// ===========================================================================
+// The 1:1 cap ⟷ registry cross-check (F11; decision D10, registry §11)
+// ===========================================================================
+
+/// One `caps.entries[]` row.
+struct CapRow<'a> {
+    value: u64,
+    code: &'a str,
+}
+
+/// The registry's cap table, keyed by constant name.
+fn registry_caps(root: &Value) -> BTreeMap<&str, CapRow<'_>> {
+    let caps = get(root, "caps", "registry root");
+    as_array(get(caps, "entries", "caps"), "caps.entries")
+        .iter()
+        .map(|e| {
+            let name = get_str(e, "name", "caps entry");
+            (
+                name,
+                CapRow {
+                    value: get_u64(e, "value", "caps entry"),
+                    code: get_str(e, "code", "caps entry"),
+                },
+            )
+        })
+        .collect()
+}
+
+/// **F11 accept: "code == registry table".**
+///
+/// Every one of D10's nineteen frozen constants equals its registry row, and
+/// the code each cap raises equals the row's `code`. The check runs in both
+/// directions: no constant may be missing from the table, and no table row may
+/// name a constant the code does not define.
+///
+/// The caps are format-permanent (they freeze at Q14 with the rest of v1: a
+/// receiver that rejects a bundle a sealer produced is a compatibility break,
+/// MVP-SPEC.md line 123), so a silent drift between the two would be
+/// unrecoverable rather than merely untidy.
+#[test]
+fn code_caps_match_the_registry() {
+    use antseal_core::bundle::error::{BundleListKind, OpaqueField};
+    use antseal_core::codec::caps;
+    use antseal_core::manifest::error::ManifestListKind;
+
+    let root = registry();
+    let table = registry_caps(&root);
+
+    // (constant name, code value, the code that firing it raises)
+    let mut from_code: Vec<(&str, u64, &'static str)> = vec![
+        (
+            "MAX_BUNDLE_BYTES",
+            caps::MAX_BUNDLE_BYTES,
+            antseal_core::bundle::BundleError::InputTooLarge {
+                len: caps::MAX_BUNDLE_BYTES + 1,
+                cap: caps::MAX_BUNDLE_BYTES,
+            }
+            .code(),
+        ),
+        (
+            "MAX_MANIFEST_BYTES",
+            caps::MAX_MANIFEST_BYTES,
+            antseal_core::manifest::ManifestError::InputTooLarge {
+                len: caps::MAX_MANIFEST_BYTES + 1,
+                cap: caps::MAX_MANIFEST_BYTES,
+            }
+            .code(),
+        ),
+        (
+            "MAX_CBOR_DEPTH",
+            u64::from(caps::MAX_CBOR_DEPTH),
+            antseal_core::codec::DecodeError::NestingTooDeep { position: 0 }.code(),
+        ),
+    ];
+
+    // The two capped manifest lists.
+    for list in ManifestListKind::ALL {
+        let name = match list {
+            ManifestListKind::Files => "MAX_FILE_COUNT",
+            ManifestListKind::Units => "MAX_UNIT_COUNT",
+        };
+        from_code.push((
+            name,
+            list.cap(),
+            antseal_core::manifest::ManifestError::ListTooLong {
+                list,
+                claimed: list.cap() + 1,
+                cap: list.cap(),
+            }
+            .code(),
+        ));
+    }
+
+    // The ten capped bundle lists.
+    for list in BundleListKind::ALL {
+        let name = match list {
+            BundleListKind::OtsAnchors => "MAX_OTS_ANCHOR_COUNT",
+            BundleListKind::TsaAnchors => "MAX_TSA_ANCHOR_COUNT",
+            BundleListKind::Intermediates => "MAX_INTERMEDIATE_COUNT",
+            BundleListKind::TxHashes => "MAX_TX_HASH_COUNT",
+            BundleListKind::CoveredReveals => "MAX_COVERED_REVEAL_COUNT",
+            BundleListKind::NonCoveredReveals => "MAX_NONCOVERED_REVEAL_COUNT",
+            BundleListKind::Cover => "MAX_COVER_ENTRIES",
+            BundleListKind::Paths => "MAX_PATH_NODES",
+            BundleListKind::TouchedFiles => "MAX_TOUCHED_FILE_COUNT",
+            BundleListKind::FullReveals => "MAX_FULL_REVEAL_COUNT",
+        };
+        from_code.push((
+            name,
+            list.cap(),
+            antseal_core::bundle::BundleError::ListTooLong {
+                list,
+                claimed: list.cap() + 1,
+                cap: list.cap(),
+            }
+            .code(),
+        ));
+    }
+
+    // The four capped opaque artifacts.
+    for field in OpaqueField::ALL {
+        let name = match field {
+            OpaqueField::Ots => "MAX_OTS_BYTES",
+            OpaqueField::TsaToken => "MAX_TSA_TOKEN_BYTES",
+            OpaqueField::Certificate => "MAX_CERT_BYTES",
+            OpaqueField::ReceiptPayload => "MAX_RECEIPT_PAYLOAD_BYTES",
+        };
+        from_code.push((
+            name,
+            field.cap(),
+            antseal_core::bundle::BundleError::ArtifactTooLarge {
+                field,
+                len: field.cap() + 1,
+                cap: field.cap(),
+            }
+            .code(),
+        ));
+    }
+
+    assert_eq!(
+        from_code.len(),
+        19,
+        "D10 froze nineteen caps — a new one needs a registry row too"
+    );
+
+    for (name, value, code) in &from_code {
+        let row = table
+            .get(name)
+            .unwrap_or_else(|| panic!("registry section 11 has no row for `{name}`"));
+        assert_eq!(
+            row.value, *value,
+            "caps.{name}: value differs from the code"
+        );
+        assert_eq!(
+            row.code, *code,
+            "caps.{name}: error code differs from the code"
+        );
+    }
+
+    // …and no registry row without a constant behind it.
+    let from_code_names: BTreeSet<&str> = from_code.iter().map(|(n, _, _)| *n).collect();
+    let from_registry: BTreeSet<&str> = table.keys().copied().collect();
+    assert_eq!(
+        from_registry, from_code_names,
+        "registry section 11 and `codec::caps` disagree about which constants exist"
+    );
+}
+
+/// The clamp rule is normative, so the registry must *state* it — otherwise a
+/// third-party implementer reading only the table would cap counts and still
+/// let a length header drive an unbounded allocation (D10 §4).
+#[test]
+fn registry_records_the_clamp_rule_and_the_depth_cap() {
+    let root = registry();
+    let caps = get(&root, "caps", "registry root");
+    let clamp = get_str(caps, "clamp_rule", "caps");
+    assert!(
+        clamp.contains("min(claimed_length, remaining_input)"),
+        "the clamp rule must state the formula verbatim: {clamp}"
+    );
+    assert!(
+        clamp.contains("head canonicality"),
+        "the clamp rule must state the frozen order at an array head: {clamp}"
+    );
+
+    // The depth cap appears in two places (§7.6.3's decode_layers and §11);
+    // they must agree, and both must clear the v1 structural maximum of 6.
+    let depth = get(
+        get(&root, "decode_layers", "registry root"),
+        "max_container_depth",
+        "decode_layers",
+    );
+    let cap = get_u64(depth, "cap", "max_container_depth");
+    assert_eq!(cap, u64::from(antseal_core::codec::caps::MAX_CBOR_DEPTH));
+    assert!(cap >= get_u64(depth, "manifest_chain", "max_container_depth"));
+    assert!(cap >= get_u64(depth, "bundle_chain", "max_container_depth"));
 }
