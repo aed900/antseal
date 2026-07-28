@@ -451,7 +451,11 @@ impl Fold<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::fine_tree::cover::{cover_seeds, descend};
+    // `cover_seeds` is only reached from the proptest-bearing tier, which the
+    // wasm32 `--lib` build deliberately does not enable (P14).
+    #[cfg(feature = "test-util")]
+    use crate::content::fine_tree::cover::cover_seeds;
+    use crate::content::fine_tree::cover::descend;
     use crate::content::fine_tree::proof::prove_range;
     use crate::test_util::TEST_MASTER_SECRET_W;
     #[cfg(feature = "test-util")]

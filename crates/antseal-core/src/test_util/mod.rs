@@ -25,6 +25,10 @@
 //! - [`tamper_rows_crypto`] — C's own registry slice for that harness
 //!   (C17): the M0 crypto tamper rows, plus the mutation helpers R7's
 //!   bundle-level fixtures reuse.
+//! - [`tamper_rows_fine_tree`] — G's registry slice (G19): the two
+//!   fine-tree rows (`fine-root-binding-failed`,
+//!   `fine-root-over-broad-cover`), plus the **single** over-broad-cover
+//!   construction helper the R lane consumes rather than duplicating.
 //! - [`fixture_rng`] — the deterministic fixture randomness source, for the
 //!   APIs (unit AEAD) that draw their own nonces by design.
 //! - [`vectors`] — the golden-vector envelope schema, validation, kind
@@ -64,6 +68,8 @@ pub mod strategies;
 pub mod tamper;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_fine_tree;
 pub mod vectors;
 pub mod vectors_sig_reject;
 

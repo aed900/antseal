@@ -13,7 +13,7 @@
 //! the outcome it will bind). There is no "not applicable" and no silent
 //! gap: a case with neither is a hard failure. The registry is therefore
 //! complete *by construction* while the matrix itself is still being
-//! populated — which is the state M0 is in, since F15, G19, R7 and R8 have
+//! populated — which is the state M0 is in, since F15, R7 and R8 have
 //! not run yet. **Q14 is where zero-pending becomes the gate condition**;
 //! until then the gap is enumerated and visible rather than absent.
 //!
@@ -79,11 +79,6 @@ const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[
         "verify-flipped-ciphertext-byte",
     ),
     (
-        "altered-manifest-field/covered-unit-fails-fine-root",
-        "G19",
-        "content-fine-root-binding-failed",
-    ),
-    (
         "altered-manifest-field/non-covered-unit-fails-unit-commit",
         "R8",
         "verify-non-covered-unit-commit-mismatch",
@@ -108,11 +103,6 @@ const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[
         "true-length-range-mismatch/true-length-range-mismatch",
         "R7",
         "verify-true-length-range-mismatch",
-    ),
-    (
-        "over-broad-ggm-cover/over-broad-ggm-cover",
-        "G19",
-        "content-fine-root-over-broad-cover",
     ),
     (
         "partial-reveal-material-leak/file-salt-leak",
@@ -884,7 +874,7 @@ pub fn assert_registry_is_consistent(rows: &[TamperRow]) {
 /// The still-owed rows are exactly the enumerated ones, each with its owner.
 ///
 /// This is the check that keeps the gap **visible**: the M0 matrix is
-/// genuinely incomplete today (F15, G19, R7 and R8 have not run), and the
+/// genuinely incomplete today (F15, R7 and R8 have not run), and the
 /// honest way to hold that is an enumerated list, not a weakened check.
 pub fn assert_pending_set_is_the_pinned_one(rows: &[TamperRow]) {
     let registry = checked(rows);

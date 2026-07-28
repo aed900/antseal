@@ -461,6 +461,10 @@ mod tests {
     /// per-leaf [`SaltTree::salt`]. Shares no traversal code with the
     /// streaming builder — it is deliberately the naive `O(n log n)`,
     /// `O(n)`-memory implementation the streaming one replaces.
+    ///
+    /// Its only caller is the proptest-bearing tier, which the wasm32
+    /// `--lib` build deliberately does not enable (P14).
+    #[cfg(feature = "test-util")]
     fn reference_root(s_root: &Seed32, bytes: &[u8]) -> Option<[u8; 32]> {
         let n = u64::try_from(bytes.len()).ok()?;
         let tree = SaltTree::new(s_root, n)?;
@@ -476,7 +480,9 @@ mod tests {
         Some(reference_mth(&leaves))
     }
 
-    /// RFC 6962 `MTH`, written straight from the definition.
+    /// RFC 6962 `MTH`, written straight from the definition. Gated with its
+    /// only caller, [`reference_root`].
+    #[cfg(feature = "test-util")]
     fn reference_mth(leaves: &[[u8; 32]]) -> [u8; 32] {
         assert!(!leaves.is_empty(), "MTH is undefined for zero leaves");
         if leaves.len() == 1 {

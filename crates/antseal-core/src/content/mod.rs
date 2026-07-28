@@ -43,6 +43,7 @@
 //! - **R** owns verdicts. This module supplies predicates and distinct errors;
 //!   it never decides that a bundle is invalid.
 
+pub mod assemble;
 pub mod descriptor;
 pub mod error;
 pub mod fine_tree;
@@ -51,6 +52,23 @@ pub mod mirror;
 pub mod split;
 pub mod unit;
 
+// The golden end-to-end fixture (G14) — pure constants and pure functions
+// over them, so it rides the WASM-safe `test-vectors` tier alongside
+// `manifest::fixtures` and is available to the wasm32 `--lib` test build.
+#[cfg(feature = "test-vectors")]
+pub mod fixtures;
+
+// G17's end-to-end opening suite: G14's pipeline -> prove_unit/prove_range ->
+// G13 verification against the manifest-committed `fine_root`. It lives in
+// the library's test tree, not in `tests/`, because the wasm32 lane executes
+// `--lib` unit tests only (P14) and G17 must be green on both targets.
+#[cfg(test)]
+mod openings_e2e;
+
+pub use assemble::{
+    ContentModel, FileFlags, FileInput, FileModel, FineSeedSource, SplitMode,
+    assemble_content_model,
+};
 pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, FineTreeOptOut};
 pub use error::ContentError;
 pub use fine_tree::{
