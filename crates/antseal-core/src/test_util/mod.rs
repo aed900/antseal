@@ -51,6 +51,14 @@
 //!   mutations decision D81 and R8 demoted to recorded non-rows, since an
 //!   AEAD tag comparison and a commitment opening are each one bit and
 //!   cannot attribute a cause.
+//! - [`codec_fuzz`] — F17's CBOR-parser fuzz engine: the `Manifest::decode`
+//!   and `SealProof::decode` drivers, the round-trip law
+//!   ([`codec_fuzz::round_trip`]) stated over *arbitrary bytes conditioned
+//!   on decode success*, and the committed seed corpora under
+//!   `testdata/fuzz-seeds/`. Shared verbatim with the cargo-fuzz targets,
+//!   for R10's reason — a target that carries its own logic rots between
+//!   fuzz runs. Unlike R10's, its fuzz input **is** the CBOR document, so a
+//!   corpus entry is a real artifact and an iteration costs one decode.
 //! - [`bundle_mutators`] — R10's hostile-bundle generator: the structure-
 //!   aware mutation set, the seed corpus (valid R6 shapes + R7/R8 tamper
 //!   fixtures), and the `verify_bundle` driver. Shared verbatim by R10's
@@ -122,6 +130,8 @@
 pub mod bundle_fixtures;
 #[cfg(feature = "test-util")]
 pub mod bundle_mutators;
+#[cfg(feature = "test-util")]
+pub mod codec_fuzz;
 pub mod fixture_rng;
 #[cfg(feature = "test-util")]
 pub mod strategies;

@@ -1,0 +1,1073 @@
+{
+  "_readme": [
+    "F17/Q9 — the committed cargo-fuzz seed corpora, one directory per",
+    "target. Generated, never hand-edited: the generator is",
+    "antseal_core::test_util::codec_fuzz::all_corpora and the emitter is",
+    "crates/antseal-core/tests/codec_fuzz.rs (see its module docs for the",
+    "regeneration command).",
+    "",
+    "`codec_round_trip` has no corpus of its own: its input space is the",
+    "union of manifest_decode's and bundle_decode's, and scripts/fuzz.sh",
+    "passes both directories to it rather than committing the same bytes",
+    "twice.",
+    "",
+    "Seeds are DERIVED artifacts, not frozen ones. Q6's FROZEN.sha256",
+    "covers testdata/vectors/ only, so a deliberate format change",
+    "re-blesses these as a matter of course — a byte change here means a",
+    "fixture, a shape or the wire format moved, and is reviewed as such.",
+    "",
+    "NON-SECRET fixtures only: every byte derives from the documented",
+    "test seed W (testdata/README.md; project rule 6)."
+  ],
+  "corpora": [
+    {
+      "bytes": 58500,
+      "count": 24,
+      "seeds": [
+        {
+          "file": "manifest_decode/single-text-with-mirror--full.bin",
+          "id": "single-text-with-mirror--full",
+          "len": 5812,
+          "sha256": "4fa91023ce8c2ef19794bc9fbc4a21a137dee3a17c2e5ccf9b774a7e3d6833a3"
+        },
+        {
+          "file": "manifest_decode/single-binary--full.bin",
+          "id": "single-binary--full",
+          "len": 5641,
+          "sha256": "e37bee0c21d94595b7fc989a85b9de753c70722dd1c4576704197c2b82c0047d"
+        },
+        {
+          "file": "manifest_decode/split-multi-unit--partial.bin",
+          "id": "split-multi-unit--partial",
+          "len": 5950,
+          "sha256": "3866a78e6f79aa48325341168ba1836b7419829767f6c614054e389502eddab3"
+        },
+        {
+          "file": "manifest_decode/no-fine-tree--full.bin",
+          "id": "no-fine-tree--full",
+          "len": 5689,
+          "sha256": "fd17f38f0e463e6849540ab7b518a614f8932f6e7e78c21b7a58b34cfeb04245"
+        },
+        {
+          "file": "manifest_decode/raw-mirror-sources--all.bin",
+          "id": "raw-mirror-sources--all",
+          "len": 6154,
+          "sha256": "f59e199c538c8d88dc494cc253974540f3d8d5593295b6cee0b371f88708118d"
+        },
+        {
+          "file": "manifest_decode/empty-file--full.bin",
+          "id": "empty-file--full",
+          "len": 5633,
+          "sha256": "64bef48f0a68bdc1c79251c41b9c38880078e7e8669ef7de566f15a33be67609"
+        },
+        {
+          "file": "manifest_decode/one-byte-file--full.bin",
+          "id": "one-byte-file--full",
+          "len": 5638,
+          "sha256": "c8ee7b33d35df083ff27f7ad9bbb47a26ab03e19ebbb52e46e0896a54c54e8e6"
+        },
+        {
+          "file": "manifest_decode/unbalanced-n6--all.bin",
+          "id": "unbalanced-n6--all",
+          "len": 5784,
+          "sha256": "8a12c0a756e75e7749b177f4b80e5e8e77b9f38c3dec247835da640e6b555917"
+        },
+        {
+          "file": "manifest_decode/multi-file--mixed.bin",
+          "id": "multi-file--mixed",
+          "len": 6380,
+          "sha256": "d759a185ee98928aba077613a47df10e3fc122d539cf938e23a1048270ca8204"
+        },
+        {
+          "file": "manifest_decode/ed25519-only-policy--full.bin",
+          "id": "ed25519-only-policy--full",
+          "len": 371,
+          "sha256": "083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df"
+        },
+        {
+          "file": "manifest_decode/f15-body-duplicate-map-key.bin",
+          "id": "f15-body-duplicate-map-key",
+          "len": 373,
+          "sha256": "a15e33ef22071048ccfabbfddd6d2cefa1b04cbccb5b27a648d679d3b3b35618"
+        },
+        {
+          "file": "manifest_decode/f15-body-non-shortest-int.bin",
+          "id": "f15-body-non-shortest-int",
+          "len": 372,
+          "sha256": "7235f03b6ce82f08f2a5ff848ea94c8b72f69aecc165d06be2b525f7757253ed"
+        },
+        {
+          "file": "manifest_decode/f15-body-indefinite-length.bin",
+          "id": "f15-body-indefinite-length",
+          "len": 372,
+          "sha256": "47f35892eb1c217ef0ac0ed419e2763a0fcf4d26185bdfe44ef56602dff7896e"
+        },
+        {
+          "file": "manifest_decode/f15-body-trailing-bytes.bin",
+          "id": "f15-body-trailing-bytes",
+          "len": 372,
+          "sha256": "adee6a562b66e0909405b0bdeec05d14b0c0f4b7e0b3c3f33d8bb31e41f1e1b0"
+        },
+        {
+          "file": "manifest_decode/f15-body-unsorted-map-keys.bin",
+          "id": "f15-body-unsorted-map-keys",
+          "len": 373,
+          "sha256": "95b1e0cee73ab45c4ad74dd8573ef69c9a6b73c3574f235bf770d441b545b4ab"
+        },
+        {
+          "file": "manifest_decode/f15-body-non-shortest-length.bin",
+          "id": "f15-body-non-shortest-length",
+          "len": 372,
+          "sha256": "b4b5ef6d780b8109aa7c34e6467c6a4ba9e51485f80ffbd9664290a277b46db4"
+        },
+        {
+          "file": "manifest_decode/f15-body-float.bin",
+          "id": "f15-body-float",
+          "len": 373,
+          "sha256": "01dca3c18a59e559d12184f134809d67a9661a6f71b7a719996a6d753ad6c533"
+        },
+        {
+          "file": "manifest_decode/f15-body-reserved-key.bin",
+          "id": "f15-body-reserved-key",
+          "len": 373,
+          "sha256": "05c7b6b2ccf07a5bd67221589562302599b14ca2e3eb0002299febe099c52c1a"
+        },
+        {
+          "file": "manifest_decode/f15-body-unknown-key.bin",
+          "id": "f15-body-unknown-key",
+          "len": 374,
+          "sha256": "b08ba7c9d706a66fc18af068278c18a42244212c636dbdb3bfd4ff65eceaa8a2"
+        },
+        {
+          "file": "manifest_decode/f15-envelope-duplicate-map-key.bin",
+          "id": "f15-envelope-duplicate-map-key",
+          "len": 672,
+          "sha256": "5d4dba433189243fc9efaa7edafb590ec9d158a4f4b83344de533680266ffe08"
+        },
+        {
+          "file": "manifest_decode/f15-envelope-unsorted-map-keys.bin",
+          "id": "f15-envelope-unsorted-map-keys",
+          "len": 371,
+          "sha256": "77fe4ec23f0443dc3d5f5da5f3d26b49ea67f1ef5e78fff6da70adecdf575622"
+        },
+        {
+          "file": "manifest_decode/f15-envelope-trailing-bytes.bin",
+          "id": "f15-envelope-trailing-bytes",
+          "len": 372,
+          "sha256": "acc9b11a531b3afae29c01c6b26999c5a2b922bf7b3cba39faca2ad3be8a8cf4"
+        },
+        {
+          "file": "manifest_decode/f15-envelope-unknown-key.bin",
+          "id": "f15-envelope-unknown-key",
+          "len": 373,
+          "sha256": "6ac74392bde18428ae67c82a25a00034c7dd692b2c56a72befc023971f7d8f1b"
+        },
+        {
+          "file": "manifest_decode/f15-body-nesting-too-deep.bin",
+          "id": "f15-body-nesting-too-deep",
+          "len": 306,
+          "sha256": "6b78ad4bca69890608db0daacb50ada22cbba34aae3eec95ade923e9e9a53f33"
+        }
+      ],
+      "target": "manifest_decode"
+    },
+    {
+      "bytes": 163218,
+      "count": 28,
+      "seeds": [
+        {
+          "file": "bundle_decode/single-text-with-mirror--full.bin",
+          "id": "single-text-with-mirror--full",
+          "len": 6710,
+          "sha256": "1c4abff253f40e6ffdac2ea42a435e50ec2b959bf13555bb5b3f6bd1e02e669a"
+        },
+        {
+          "file": "bundle_decode/single-text-with-mirror--full-no-mirror.bin",
+          "id": "single-text-with-mirror--full-no-mirror",
+          "len": 6378,
+          "sha256": "363e8117c3871ce20c2be3bd5637f3eedb2d79e141ee31ba0b29cc23b6327e12"
+        },
+        {
+          "file": "bundle_decode/single-text-with-mirror--untouched.bin",
+          "id": "single-text-with-mirror--untouched",
+          "len": 5930,
+          "sha256": "761349405228166362deef9fc184b4a43c5d100adb1856e99755c1b1189e142c"
+        },
+        {
+          "file": "bundle_decode/single-binary--full.bin",
+          "id": "single-binary--full",
+          "len": 6206,
+          "sha256": "4e4101aadbb4bb1f9526234472a1197a640e89c5e0603dbe58db2b58816369fa"
+        },
+        {
+          "file": "bundle_decode/split-multi-unit--partial.bin",
+          "id": "split-multi-unit--partial",
+          "len": 6645,
+          "sha256": "c96cfd9b1af32ad5e20eeebd66ff200b80898a3cb169e152738fe8bcc3ddf24e"
+        },
+        {
+          "file": "bundle_decode/split-multi-unit--partial-two-of-three.bin",
+          "id": "split-multi-unit--partial-two-of-three",
+          "len": 7074,
+          "sha256": "e46ac4832f7eae95dc4638bfb86a5e0edb8332e29af9a57e69acf13a89e7d389"
+        },
+        {
+          "file": "bundle_decode/split-multi-unit--full-via-enumerated-units.bin",
+          "id": "split-multi-unit--full-via-enumerated-units",
+          "len": 7670,
+          "sha256": "58f3362240866af2f40b43d7c289c939cb1aa984c2f24e7bbcf826e8e9eda8bd"
+        },
+        {
+          "file": "bundle_decode/split-multi-unit--all.bin",
+          "id": "split-multi-unit--all",
+          "len": 8002,
+          "sha256": "318af094e958ff721c3f1b3f7ac14cd43ad781251560a3297541806fc8db60e7"
+        },
+        {
+          "file": "bundle_decode/no-fine-tree--full.bin",
+          "id": "no-fine-tree--full",
+          "len": 6198,
+          "sha256": "959a2b9b79befcf643213bd02feaf82fbf636dce2c3a46f85a3a52457e813cb7"
+        },
+        {
+          "file": "bundle_decode/raw-mirror-sources--all.bin",
+          "id": "raw-mirror-sources--all",
+          "len": 7832,
+          "sha256": "d4be56237262fe7bd9d04e79304dd7bc466a354d966bb81c9c64de8f6c1c2e9a"
+        },
+        {
+          "file": "bundle_decode/empty-file--full.bin",
+          "id": "empty-file--full",
+          "len": 6141,
+          "sha256": "8bb99cc116b5dde89094d060e44e54e2e92eb1a4b632d419d5e792d407ce3f9e"
+        },
+        {
+          "file": "bundle_decode/empty-file--untouched.bin",
+          "id": "empty-file--untouched",
+          "len": 5751,
+          "sha256": "18b3bcf0822a33b6e1d05d45b56ef72d0600599b709cae0a429c81c51d7c7a3b"
+        },
+        {
+          "file": "bundle_decode/one-byte-file--full.bin",
+          "id": "one-byte-file--full",
+          "len": 6202,
+          "sha256": "9bf905fa657ac8fde042fbad4bfa11e47c050869162c0ae9b55f74d016f1a74b"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6--all.bin",
+          "id": "unbalanced-n6--all",
+          "len": 7242,
+          "sha256": "b974e0b9eee4c1ac14619c53630f5928656d8fb3a5d0172e791fd2027c928f4a"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6--unit-0.bin",
+          "id": "unbalanced-n6--unit-0",
+          "len": 6365,
+          "sha256": "342b3907daeae5923f59802668637daeead9c57f35d7f5b0bf821991aaf3ddc0"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6--unit-1.bin",
+          "id": "unbalanced-n6--unit-1",
+          "len": 6365,
+          "sha256": "14f657285c809bedcfe3798eee35b48b04ea65030e255c7592485542472ec502"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6--unit-2.bin",
+          "id": "unbalanced-n6--unit-2",
+          "len": 6328,
+          "sha256": "2c3781ee5754b5c6e42ef72554bb79a79f9fc76cf5eea8b0ca9e40d26ad71e59"
+        },
+        {
+          "file": "bundle_decode/multi-file--mixed.bin",
+          "id": "multi-file--mixed",
+          "len": 7891,
+          "sha256": "c73af6fa8935847ed338736e67242b76a889e1a9c288bfc736cb0bfcd5f74aae"
+        },
+        {
+          "file": "bundle_decode/multi-file--all.bin",
+          "id": "multi-file--all",
+          "len": 9307,
+          "sha256": "d4bea86d90758840c848eb18f2d23de0b882b11d3fae902041f306ad75645f5d"
+        },
+        {
+          "file": "bundle_decode/multi-file-anchored--mixed.bin",
+          "id": "multi-file-anchored--mixed",
+          "len": 7981,
+          "sha256": "5921ff87adfafc9bd6c345ee922384f633040e53473c6c561374a151df9214b0"
+        },
+        {
+          "file": "bundle_decode/ed25519-only-policy--full.bin",
+          "id": "ed25519-only-policy--full",
+          "len": 936,
+          "sha256": "86ef0c8341e72b9526fd1e366b6668186af8451068dc205334f18aa98df7ce69"
+        },
+        {
+          "file": "bundle_decode/every-anchor-kind.bin",
+          "id": "every-anchor-kind",
+          "len": 9749,
+          "sha256": "f4222ffc295efb8cb5c9209429207d03e60602fad4dee1b2b4fbc811994b5093"
+        },
+        {
+          "file": "bundle_decode/every-anchor-kind-no-receipt.bin",
+          "id": "every-anchor-kind-no-receipt",
+          "len": 9627,
+          "sha256": "019fa9bdc07185f165934bd99aec7f012c99a4040b992d7db5e06d8f4ea80e9f"
+        },
+        {
+          "file": "bundle_decode/f15-bundle-duplicate-map-key.bin",
+          "id": "f15-bundle-duplicate-map-key",
+          "len": 938,
+          "sha256": "f493fa5a7d4487ed86cb1a0571e4a635eb8f1479bebc1a55726d5731d9de075c"
+        },
+        {
+          "file": "bundle_decode/f15-bundle-trailing-bytes.bin",
+          "id": "f15-bundle-trailing-bytes",
+          "len": 937,
+          "sha256": "dc47a6c791acbae168793b6a7b875b5698603cd7c78067e0b29f084dfa250f06"
+        },
+        {
+          "file": "bundle_decode/f15-bundle-reserved-key.bin",
+          "id": "f15-bundle-reserved-key",
+          "len": 938,
+          "sha256": "bd0dd75fbbb9f4ece1f4c5b36615e68d446c205ca9bb27eec15f00251b4100ba"
+        },
+        {
+          "file": "bundle_decode/f15-bundle-unknown-key.bin",
+          "id": "f15-bundle-unknown-key",
+          "len": 939,
+          "sha256": "ece42fa606f8895ecf20dfb9b5a59256840bddbbba93ff9ac67a4f850bf7f556"
+        },
+        {
+          "file": "bundle_decode/f15-embedded-manifest-unsorted-map-keys.bin",
+          "id": "f15-embedded-manifest-unsorted-map-keys",
+          "len": 936,
+          "sha256": "c8dff1f976897b98cfbd2b763cf3d94d867ca46f061833ba919c9abccc371559"
+        }
+      ],
+      "target": "bundle_decode"
+    },
+    {
+      "bytes": 1870,
+      "count": 119,
+      "seeds": [
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--identity.bin",
+          "id": "valid-multi-file-mixed--identity",
+          "len": 2,
+          "sha256": "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-1.bin",
+          "id": "valid-multi-file-mixed--mutation-1",
+          "len": 18,
+          "sha256": "7ee57358c3359c693c6aafb1dd21444d98de32e3e67775e09ac4ca2fa94ea23a"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-2.bin",
+          "id": "valid-multi-file-mixed--mutation-2",
+          "len": 18,
+          "sha256": "205f87998a493069ea2888c2fc8e9ebd5f418f9e022fd16e506f923c91c2aaa9"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-3.bin",
+          "id": "valid-multi-file-mixed--mutation-3",
+          "len": 18,
+          "sha256": "1d6ddad956a709845741c60bdbfc03eea345803c95a63c845046f643f8194c72"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-4.bin",
+          "id": "valid-multi-file-mixed--mutation-4",
+          "len": 18,
+          "sha256": "bbd15fa8f07b8ec2793c81323e740cf89243f916355ef0e0369262fa6f5459cb"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-5.bin",
+          "id": "valid-multi-file-mixed--mutation-5",
+          "len": 18,
+          "sha256": "279715cbf738fa42c7fddc82181c3ab2bdbbefd329a6782669af8242ab1916a6"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-mixed--mutation-6.bin",
+          "id": "valid-multi-file-mixed--mutation-6",
+          "len": 18,
+          "sha256": "f658a2c98a9e32401df4d5f06e32ff2542891d8e9709a2e7e825d8ee7ca7371c"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--identity.bin",
+          "id": "valid-multi-file-all--identity",
+          "len": 2,
+          "sha256": "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-1.bin",
+          "id": "valid-multi-file-all--mutation-1",
+          "len": 18,
+          "sha256": "e925269d767c429de1598c8de0254f2f1289f6a965f6555df6d9e44eff5b8a07"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-2.bin",
+          "id": "valid-multi-file-all--mutation-2",
+          "len": 18,
+          "sha256": "01eaed36315af3fe76634c41326635d5813de9769366f315a1caec857cc0d875"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-3.bin",
+          "id": "valid-multi-file-all--mutation-3",
+          "len": 18,
+          "sha256": "8997d3eef6cfc851feb63048a363558c7cbdf71708a801d257584d887a508813"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-4.bin",
+          "id": "valid-multi-file-all--mutation-4",
+          "len": 18,
+          "sha256": "9681bb5224f373d57458ffc4602bb7788fe691351ab7b66dfd06671941900721"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-5.bin",
+          "id": "valid-multi-file-all--mutation-5",
+          "len": 18,
+          "sha256": "f123bf37dd168f1c76d342816a66f19941dade5782de983facffc1cfe0e90c87"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-all--mutation-6.bin",
+          "id": "valid-multi-file-all--mutation-6",
+          "len": 18,
+          "sha256": "9600f1108e91446442703681a7027585768d49890f85597763ecb803270caf24"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--identity.bin",
+          "id": "valid-multi-file-nothing--identity",
+          "len": 2,
+          "sha256": "9b4fb24edd6d1d8830e272398263cdbf026b97392cc35387b991dc0248a628f9"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-1.bin",
+          "id": "valid-multi-file-nothing--mutation-1",
+          "len": 18,
+          "sha256": "b94499195de9b6389eaec0190ae8fd615f65b98ad6528fd420b944ebcb5e0733"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-2.bin",
+          "id": "valid-multi-file-nothing--mutation-2",
+          "len": 18,
+          "sha256": "ff8ff2751e702a661d5f8751fc5b8423aa71d4808c79d57dfdf7969e78939709"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-3.bin",
+          "id": "valid-multi-file-nothing--mutation-3",
+          "len": 18,
+          "sha256": "d5d5d1ab3cecfad6d1e41e60c816399f3004b34b81da17c38ee0b3a59c087340"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-4.bin",
+          "id": "valid-multi-file-nothing--mutation-4",
+          "len": 18,
+          "sha256": "5d11ea064456a0afb8d87de45c1eb34e76b5e41b3b7efe3a04b53a6d2a6ab21a"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-5.bin",
+          "id": "valid-multi-file-nothing--mutation-5",
+          "len": 18,
+          "sha256": "df212a5f184a9d945f6f9887aeb47ba965bc82384cab2c95a84e3e1cb7645f15"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-nothing--mutation-6.bin",
+          "id": "valid-multi-file-nothing--mutation-6",
+          "len": 18,
+          "sha256": "753ad0bdc0c894eb3765709d5e8611cb703d266b68c2ec3b23a6b63f483b2d91"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--identity.bin",
+          "id": "valid-single-text-with-mirror--identity",
+          "len": 2,
+          "sha256": "c0ba8a33ac67f44abff5984dfbb6f56c46b880ac2b86e1f23e7fa9c402c53ae7"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-1.bin",
+          "id": "valid-single-text-with-mirror--mutation-1",
+          "len": 18,
+          "sha256": "5cc622b47f8605de78b7f040298c2016cb4a49b0a6c9c64ece2f2eccd2daacce"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-2.bin",
+          "id": "valid-single-text-with-mirror--mutation-2",
+          "len": 18,
+          "sha256": "c96823fb1802b5a30abb006acdc5ea09d78142bb04080db92bdedcf4e1cf5242"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-3.bin",
+          "id": "valid-single-text-with-mirror--mutation-3",
+          "len": 18,
+          "sha256": "562d8f0eed1564676e4c8d4e167485469392655aca3d9ad3f619de1f2b54a167"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-4.bin",
+          "id": "valid-single-text-with-mirror--mutation-4",
+          "len": 18,
+          "sha256": "0b043a0bfc65338fab28fdf65527eecf86363d33ef2655d7b8dd02d85f93b40f"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-5.bin",
+          "id": "valid-single-text-with-mirror--mutation-5",
+          "len": 18,
+          "sha256": "9d76bc6c65d46edfd5251c59c7bac6d685fd46779fc2ba0799cb475f62d26dcb"
+        },
+        {
+          "file": "verify_bundle/valid-single-text-with-mirror--mutation-6.bin",
+          "id": "valid-single-text-with-mirror--mutation-6",
+          "len": 18,
+          "sha256": "952b47cf7ce5940790954be201f8ecb3cdd19bc5bbd9a645b8ab6afd2e5f5f0d"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--identity.bin",
+          "id": "valid-split-multi-unit-partial--identity",
+          "len": 2,
+          "sha256": "2921a11f25dadaa24aa79a548e4e81508c2e5e56af2d833d65e2bcce448ce2f5"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-1.bin",
+          "id": "valid-split-multi-unit-partial--mutation-1",
+          "len": 18,
+          "sha256": "1763ebc59fd72656f5cda04d6f399558d8d174bf8c5e5d865f1fac27de0e30c1"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-2.bin",
+          "id": "valid-split-multi-unit-partial--mutation-2",
+          "len": 18,
+          "sha256": "9562c267b2bbfb30f5eed4a2a7693552112bbbe3282fa5ff227454ae0f1a51d9"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-3.bin",
+          "id": "valid-split-multi-unit-partial--mutation-3",
+          "len": 18,
+          "sha256": "cf77fb7fdad9e7f79b3013c38879e38949ddaf32189a80699ec78f411e1b67aa"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-4.bin",
+          "id": "valid-split-multi-unit-partial--mutation-4",
+          "len": 18,
+          "sha256": "4bbf46bd1ccf18772bf1cba1256ccd19aacad96dc1cb1bde22e3aa3e957f683c"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-5.bin",
+          "id": "valid-split-multi-unit-partial--mutation-5",
+          "len": 18,
+          "sha256": "132b6587f113a9ed3f5b31f2d509088e0d84bd6e5582920f8939aadef2839c60"
+        },
+        {
+          "file": "verify_bundle/valid-split-multi-unit-partial--mutation-6.bin",
+          "id": "valid-split-multi-unit-partial--mutation-6",
+          "len": 18,
+          "sha256": "9b733fe1e3736247a7a9bf1fbc26d9c94270cd877e0c446b6d2cd6700835ad2f"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--identity.bin",
+          "id": "valid-multi-file-anchored--identity",
+          "len": 2,
+          "sha256": "ceb827ad3d3884fd4d50ae6099d6d50c09a21e72ebd309708e8b69d93df19e55"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-1.bin",
+          "id": "valid-multi-file-anchored--mutation-1",
+          "len": 18,
+          "sha256": "86414c6a09b7e9eddfdba08a5f733076bec12ca9c7dcc9c04dfd7e6feb7255c8"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-2.bin",
+          "id": "valid-multi-file-anchored--mutation-2",
+          "len": 18,
+          "sha256": "8c73756a3bee3106418f6ae96162c3b1772c6cfe7fd4f7ecca16d43ab70b5f19"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-3.bin",
+          "id": "valid-multi-file-anchored--mutation-3",
+          "len": 18,
+          "sha256": "8d11362a574cf6dcc014dbb1ad62dd1ef4e9651535d09e7c82a8fe1f5a7761bd"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-4.bin",
+          "id": "valid-multi-file-anchored--mutation-4",
+          "len": 18,
+          "sha256": "fc84eea72aed896ea017c35fbd33f3f4581da69e193ac216a688e65e9c06f24a"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-5.bin",
+          "id": "valid-multi-file-anchored--mutation-5",
+          "len": 18,
+          "sha256": "b9f04f10126c29f9bfc6db30627528720cbaa4198dc246c4d75acdf5c2c24731"
+        },
+        {
+          "file": "verify_bundle/valid-multi-file-anchored--mutation-6.bin",
+          "id": "valid-multi-file-anchored--mutation-6",
+          "len": 18,
+          "sha256": "e5239c3fe48d778e5ab158ab667752beb59790ad8123675a52a2f56e42138764"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--identity.bin",
+          "id": "tamper-tiling-out-of-bounds--identity",
+          "len": 2,
+          "sha256": "0a6361b3a802f55cd5ae06101c88a1e216320fe11cc0cfe1d791eed08a1200fd"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-1.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-1",
+          "len": 18,
+          "sha256": "d2a7fabaa67663f13bd9fe28b2c64df1eb85b4ff7b35e620a98cf442e0c44d47"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-2.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-2",
+          "len": 18,
+          "sha256": "ce63e5be28c091a9c681ee74d2c22bec5048287de7fab40ec6768841cf364352"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-3.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-3",
+          "len": 18,
+          "sha256": "67221c25e50be18daa9a93a374f9f10394706b7ba8ec57053783b7949c84b48b"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-4.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-4",
+          "len": 18,
+          "sha256": "889fe8a769aeaa7e2747975e8a8069a0042d3a395db434cbb67e9df42a2900fd"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-5.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-5",
+          "len": 18,
+          "sha256": "1e13ca1df345577de63cdea32f9607c6fb340e64260f6e9fe66014ba1c7fd75f"
+        },
+        {
+          "file": "verify_bundle/tamper-tiling-out-of-bounds--mutation-6.bin",
+          "id": "tamper-tiling-out-of-bounds--mutation-6",
+          "len": 18,
+          "sha256": "dc2e02aaa4ce5f6672cc500848914cab400dfbcca6ded6039bf152ff07c35adc"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--identity.bin",
+          "id": "tamper-true-length-excess--identity",
+          "len": 2,
+          "sha256": "e545d395bb3fd971f91bf9a2b6722831df704efae6c1aa9da0989ed0970b77bb"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-1.bin",
+          "id": "tamper-true-length-excess--mutation-1",
+          "len": 18,
+          "sha256": "b22391854e310f995acd5aade9fe8676211fd4f2defde0623233b14a6729c1d8"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-2.bin",
+          "id": "tamper-true-length-excess--mutation-2",
+          "len": 18,
+          "sha256": "d05187fd5eb4bc19a3a27073face571fe8bee66976a714ea33073c75d65dd9aa"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-3.bin",
+          "id": "tamper-true-length-excess--mutation-3",
+          "len": 18,
+          "sha256": "de27583cbc6c748a2628f0b083daa04dea2da8f63e3fb148eae939cf70669277"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-4.bin",
+          "id": "tamper-true-length-excess--mutation-4",
+          "len": 18,
+          "sha256": "d6405228b43bf9bb4187614ac7735c4d933850eae66218a969446defeb2dbc75"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-5.bin",
+          "id": "tamper-true-length-excess--mutation-5",
+          "len": 18,
+          "sha256": "06cfe740d2d52671c5e34b7637174ff391ed40473882ca537718e3a13067f42a"
+        },
+        {
+          "file": "verify_bundle/tamper-true-length-excess--mutation-6.bin",
+          "id": "tamper-true-length-excess--mutation-6",
+          "len": 18,
+          "sha256": "99dc2e504176d3aa5b713b85f1404b370dfbbf6ea5449ab7489d13b37ff451a5"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--identity.bin",
+          "id": "tamper-unknown-touched-file--identity",
+          "len": 2,
+          "sha256": "a2c4aed1cf757cd9a509734a267ffc7b1166b55f4c8f9c3e3550c56e743328fc"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-1.bin",
+          "id": "tamper-unknown-touched-file--mutation-1",
+          "len": 18,
+          "sha256": "d7bc480a2488b7272f4fcbf0c940b1a2a2a7cd82db0c7d57d9e403c5b1980197"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-2.bin",
+          "id": "tamper-unknown-touched-file--mutation-2",
+          "len": 18,
+          "sha256": "2637a600807853709654ffbac8d4ed27620f6302abadf6890a5965109a48faad"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-3.bin",
+          "id": "tamper-unknown-touched-file--mutation-3",
+          "len": 18,
+          "sha256": "b9e83d96af803dd3a2e8670bdb5ddc2008bcc3a26b6142f6759706eec62806fb"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-4.bin",
+          "id": "tamper-unknown-touched-file--mutation-4",
+          "len": 18,
+          "sha256": "01f06a125bde03cdf75318b1c13512a38565e7ba1e0a39c416fce52153e9b6b5"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-5.bin",
+          "id": "tamper-unknown-touched-file--mutation-5",
+          "len": 18,
+          "sha256": "9c534e8e55f932eb066372d4f11c9372519043c9c817e4aa19482f52b0d9a621"
+        },
+        {
+          "file": "verify_bundle/tamper-unknown-touched-file--mutation-6.bin",
+          "id": "tamper-unknown-touched-file--mutation-6",
+          "len": 18,
+          "sha256": "648a422d2058080b42c42fa22a6c8cef012808a6fe18777dfe6f04e9c6d5a878"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--identity.bin",
+          "id": "tamper-drop-touched-file--identity",
+          "len": 2,
+          "sha256": "102b51b9765a56a3e899f7cf0ee38e5251f9c503b357b330a49183eb7b155604"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-1.bin",
+          "id": "tamper-drop-touched-file--mutation-1",
+          "len": 18,
+          "sha256": "08c8cead1dab678728db3cbe0bcfb5aea86513f101bb88429c149fa3f9492452"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-2.bin",
+          "id": "tamper-drop-touched-file--mutation-2",
+          "len": 18,
+          "sha256": "bf61698c75294aace9de70ab9919d8c6ad98d9ad8f392287c4ff7cfeebd0526b"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-3.bin",
+          "id": "tamper-drop-touched-file--mutation-3",
+          "len": 18,
+          "sha256": "41638ad8bcb7467fe5e00e0cd0a4f2f5ba02c1bc652a7916c2e14c5c2dfe51d0"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-4.bin",
+          "id": "tamper-drop-touched-file--mutation-4",
+          "len": 18,
+          "sha256": "b6c771c4e3bee095167c729049c5451397456de6eba3b36b303e46601b35ec8c"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-5.bin",
+          "id": "tamper-drop-touched-file--mutation-5",
+          "len": 18,
+          "sha256": "544f884cfd62128254198cdb16ace4eb7eecffcbcf152a6843ddc26b525d64c0"
+        },
+        {
+          "file": "verify_bundle/tamper-drop-touched-file--mutation-6.bin",
+          "id": "tamper-drop-touched-file--mutation-6",
+          "len": 18,
+          "sha256": "2e83d20a3ea7f8257621ec177e405468c7670cf59b506b93d952cf6f63072483"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--identity.bin",
+          "id": "tamper-touch-without-reveal--identity",
+          "len": 2,
+          "sha256": "cbe2268747c9c8072c7f9926f2288f270637dc55bb9d14d3368361d5e47d25be"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-1.bin",
+          "id": "tamper-touch-without-reveal--mutation-1",
+          "len": 18,
+          "sha256": "cd4aab5f65466923cd9a20bc5fd71526b952e0b4728f2313cc045764f6eb6aca"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-2.bin",
+          "id": "tamper-touch-without-reveal--mutation-2",
+          "len": 18,
+          "sha256": "88848e3eb09d7442122ee01d38bd376bcb560364924da3dce772b395e741d53a"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-3.bin",
+          "id": "tamper-touch-without-reveal--mutation-3",
+          "len": 18,
+          "sha256": "3d7bb8ed764cd3cef133e3297499da72ec484ab5c4270e45c558b7c1d3e87d4b"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-4.bin",
+          "id": "tamper-touch-without-reveal--mutation-4",
+          "len": 18,
+          "sha256": "5f882a48414aa69557cb06df1345d87664628e9d57129d8ac886f07d7cc85887"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-5.bin",
+          "id": "tamper-touch-without-reveal--mutation-5",
+          "len": 18,
+          "sha256": "c43bff40cb3e6c3276baccc65bc1090923195abfea12f1a364bdba212daa68be"
+        },
+        {
+          "file": "verify_bundle/tamper-touch-without-reveal--mutation-6.bin",
+          "id": "tamper-touch-without-reveal--mutation-6",
+          "len": 18,
+          "sha256": "d66a71c01c3186f5a53f193b7dbfe7a46c942407ce79e95b3c971b17428d5aa6"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--identity.bin",
+          "id": "tamper-misplace-covered-unit--identity",
+          "len": 2,
+          "sha256": "bf60e4349cace6bce0d552e8d783428db66d0d649bd9e430a3627e2ee14ac839"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-1.bin",
+          "id": "tamper-misplace-covered-unit--mutation-1",
+          "len": 18,
+          "sha256": "ed23412f2f8b97db7f66931244bf2a3bb58f3d996f669324ab12c00808488624"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-2.bin",
+          "id": "tamper-misplace-covered-unit--mutation-2",
+          "len": 18,
+          "sha256": "083b56df70eaadd72e5b3fc1d2107af59336be7fee0f206a3fa35057dc5f4445"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-3.bin",
+          "id": "tamper-misplace-covered-unit--mutation-3",
+          "len": 18,
+          "sha256": "a7889cca29e4db066063ee953c72840f515f7d890e86ab136a7065c2cf4c9745"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-4.bin",
+          "id": "tamper-misplace-covered-unit--mutation-4",
+          "len": 18,
+          "sha256": "137280841bda0f5b980dd0c0f294683d5d9fbab779cf3a0342c6c653f25bb8ff"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-5.bin",
+          "id": "tamper-misplace-covered-unit--mutation-5",
+          "len": 18,
+          "sha256": "dabcbf7ba38e1b175437678095e53a4e486525088138a7994f0a4b51219d4d21"
+        },
+        {
+          "file": "verify_bundle/tamper-misplace-covered-unit--mutation-6.bin",
+          "id": "tamper-misplace-covered-unit--mutation-6",
+          "len": 18,
+          "sha256": "5bac6a1f32059108e54b04016500f4c43e826f085cb9492ddb45e423bb1a3bd4"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--identity.bin",
+          "id": "tamper-leak-full-material--identity",
+          "len": 2,
+          "sha256": "f566cc6fccc657365c0197accf3a7d6f80f85209ff666ff774f4dcbc524aa842"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-1.bin",
+          "id": "tamper-leak-full-material--mutation-1",
+          "len": 18,
+          "sha256": "91703bcc74b184c8e98b5dd5aa86042ee652ef8e04e2acd72eb128e6a56372ea"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-2.bin",
+          "id": "tamper-leak-full-material--mutation-2",
+          "len": 18,
+          "sha256": "c3235e82930af25bd75f687448236d90c91e30ad4b6350d99cd6f355b7dea7f8"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-3.bin",
+          "id": "tamper-leak-full-material--mutation-3",
+          "len": 18,
+          "sha256": "14a79bb46a0f334478bf7b69f84413c03405a35133880a79c0cccb676d0d0874"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-4.bin",
+          "id": "tamper-leak-full-material--mutation-4",
+          "len": 18,
+          "sha256": "a9c7250f08f2ce535e9fce526bba705a89f4ca1fef626400ab087dd72d99232c"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-5.bin",
+          "id": "tamper-leak-full-material--mutation-5",
+          "len": 18,
+          "sha256": "dde5c7d5cd4d2e7657d48c559720714c35f381f851970cae99e9061b0b63c33b"
+        },
+        {
+          "file": "verify_bundle/tamper-leak-full-material--mutation-6.bin",
+          "id": "tamper-leak-full-material--mutation-6",
+          "len": 18,
+          "sha256": "e2819ac19b1c6206634c71db639f08b8a3d9c2c07dcf63d4e35382e6c88cc4fd"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--identity.bin",
+          "id": "tamper-corrupt-ciphertext--identity",
+          "len": 2,
+          "sha256": "7a2a7c0a81d1bd595dff09b918f8ecb5b5e8493654a4f83496956ed8eb017674"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-1.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-1",
+          "len": 18,
+          "sha256": "7753392198a2c8987954519d37cab1bfb1f99cedfcb1123de5880dace5f4f47d"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-2.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-2",
+          "len": 18,
+          "sha256": "c0894d1419a3db5ad35a8ac3e279a715ad93afc862ff499b6a753203834ccd52"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-3.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-3",
+          "len": 18,
+          "sha256": "300bb7d9702222af3fbcc1af595614642eb3599c765882a6ff96ef562218046e"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-4.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-4",
+          "len": 18,
+          "sha256": "a06c91d13212b905101480e58f40f41ad975fdd6eb3b8f3f59ea01bded5a1175"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-5.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-5",
+          "len": 18,
+          "sha256": "7842ef837cc7be7896b57fd33c018562c3c735d3e309175965b6d48ac3bfdda3"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-ciphertext--mutation-6.bin",
+          "id": "tamper-corrupt-ciphertext--mutation-6",
+          "len": 18,
+          "sha256": "76c336d3c575c065f8517cab7a05c8cfef4b914f6778bc6fa03573c3edae025f"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--identity.bin",
+          "id": "tamper-corrupt-canon-commit--identity",
+          "len": 2,
+          "sha256": "46e04d129d7b45d054469ce34e24069a1426b3e34f1b68a3d1bff1e070aee192"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-1.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-1",
+          "len": 18,
+          "sha256": "3bbc9df49f16c9b4389753bb79b0927ae1ad6c01ed619603f1d005253ea8d5f3"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-2.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-2",
+          "len": 18,
+          "sha256": "989b1851a5562bc2ed5dd1c9a89eb251a6fc32674469f9745717dd9cd63060f7"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-3.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-3",
+          "len": 18,
+          "sha256": "b64fcc551c934722c7ded7ff486052740e86d9878c2eb58f87f6db3f55ea8a99"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-4.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-4",
+          "len": 18,
+          "sha256": "912feb4aa78354cae660f78ce3ec4a1ce91dbe5948da1b4e5f8bee8ffbf5b803"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-5.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-5",
+          "len": 18,
+          "sha256": "5dd3c546015fc422da382b0586c2406d5a3b5ad98d9754722659b74aef862805"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-canon-commit--mutation-6.bin",
+          "id": "tamper-corrupt-canon-commit--mutation-6",
+          "len": 18,
+          "sha256": "80a3b674e939a31c89b06fc38e8d19099eb91a29b7e307b22a8cdf055658b2b1"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--identity.bin",
+          "id": "tamper-corrupt-disclosed-s-root--identity",
+          "len": 2,
+          "sha256": "707bf0b938f307b5c222e670598b865d5e1f8a8003df82c7abbf7c9f8fa4d720"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-1.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-1",
+          "len": 18,
+          "sha256": "73bd106dc24c5bfd3d338cc958fee93c6aef03c301042ee7ce370ba43cf95048"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-2.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-2",
+          "len": 18,
+          "sha256": "3bf93deae3e6c21927c751a72a8b6ff6dc78dd7909d4717e03e5d7c471bf4f4f"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-3.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-3",
+          "len": 18,
+          "sha256": "58b76c4743650eb60103a39aae81694108519feddcc1716e35877ba844f325f8"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-4.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-4",
+          "len": 18,
+          "sha256": "e233af70c90b6713accdb4ba04df403131694802a9b0df05901e87fb5f62cd5f"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-5.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-5",
+          "len": 18,
+          "sha256": "1bbc6b8853b1737264395825f4985a52a629f20f03900db67713cd9f36d9a024"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-disclosed-s-root--mutation-6.bin",
+          "id": "tamper-corrupt-disclosed-s-root--mutation-6",
+          "len": 18,
+          "sha256": "a82777042ba515f5fc259207235f9b73ac056d98955d8a5fe507e1051b522d1b"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--identity.bin",
+          "id": "tamper-corrupt-unit-commit--identity",
+          "len": 2,
+          "sha256": "d94e7f1e9bb1f8a9b90996ba12c461b84956f0e7f230145cc594c2f80b067aa0"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-1.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-1",
+          "len": 18,
+          "sha256": "410808f01a84d6a1c78474b431ecf5b6b44655a3896c46636b85ba9fe577106a"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-2.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-2",
+          "len": 18,
+          "sha256": "6187411cda0bcb39e10cf211078ae41cd71a3c801f4da4302b9d16b8ed46d9ca"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-3.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-3",
+          "len": 18,
+          "sha256": "2244b25168b1c2ae5b2b06efde81dee4948dac29456a71dee8836cf76f6d4698"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-4.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-4",
+          "len": 18,
+          "sha256": "0aa1950630f331540d11b0680a3697c4cdd0e07502a66a159307b6298dfb7c69"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-5.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-5",
+          "len": 18,
+          "sha256": "785ddc05df79f3cb554ffcb5c7001f7824147338a48cc7bf8adaa1e51fc6c52b"
+        },
+        {
+          "file": "verify_bundle/tamper-corrupt-unit-commit--mutation-6.bin",
+          "id": "tamper-corrupt-unit-commit--mutation-6",
+          "len": 18,
+          "sha256": "98ce502bd309a6edc4411dd256df3aecad83b8c1f5f2cdfd53ab0e9bdd145423"
+        }
+      ],
+      "target": "verify_bundle"
+    }
+  ],
+  "schema": "antseal-fuzz-seed-corpora",
+  "schema_version": 1
+}

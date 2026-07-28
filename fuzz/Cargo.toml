@@ -1,4 +1,5 @@
-# R10's cargo-fuzz target for `verify_bundle`.
+# antseal's cargo-fuzz workspace (R10 stood it up; F17 added the codec
+# targets; Q9 owns the toolchain pin, the lanes and the corpora).
 #
 # DELIBERATELY NOT A WORKSPACE MEMBER. The empty `[workspace]` table below
 # is cargo-fuzz's standard idiom for detaching a fuzz crate from the parent
@@ -6,11 +7,15 @@
 # subtree out of the audited normal dependency graph and out of the
 # workspace `Cargo.lock` (docs/dependency-policy.md: a new dependency is a
 # deliberate, reviewed event). Nothing the main build resolves changes
-# because this directory exists.
+# because this directory exists — the `core-dep-graph` lane's verdict is
+# structurally unaffected, not merely unaffected today.
 #
-# It also cannot build on the pinned stable toolchain: `-Z sanitizer` and
-# libFuzzer's instrumentation need nightly, and rust-toolchain.toml pins
-# 1.92.0. Q9 owns that pin — see fuzz/README.md for exactly what is left.
+# TOOLCHAIN: `-Z sanitizer` and libFuzzer's instrumentation need nightly,
+# and the workspace pins stable 1.92.0. The nightly pin for this directory
+# is `fuzz/rust-toolchain.toml` — rustup resolves toolchain files from the
+# invocation directory upward, and `scripts/fuzz.sh` runs cargo from here,
+# so the pin applies to fuzzing and to nothing else. No version literal
+# appears in a workflow or a script.
 [package]
 name = "antseal-fuzz"
 version = "0.0.0"
@@ -23,17 +28,33 @@ cargo-fuzz = true
 [workspace]
 
 [dependencies]
-# The only two dependencies, and both are fuzzing-harness infrastructure
+# The only third-party dependency, and it is fuzzing-harness infrastructure
 # rather than anything the product links.
 libfuzzer-sys = "0.4"
 
-# `test-util` (not `test-vectors`): the mutation engine and the seed corpus
-# live behind it, alongside R7/R8's tamper fixtures. This edge is the reason
-# the fuzz crate is detached — `test-util` activates proptest, which must
-# never reach a normal dependency edge (crates/antseal-core/src/test_util).
+# `test-util` (not `test-vectors`): the mutation engine (R10), the codec
+# fuzz engine (F17) and the seed corpora live behind it, alongside R7/R8's
+# tamper fixtures. This edge is the reason the fuzz crate is detached —
+# `test-util` activates proptest, which must never reach a normal dependency
+# edge (crates/antseal-core/src/test_util).
 [dependencies.antseal-core]
 path = "../crates/antseal-core"
 features = ["test-util"]
+
+# The shared harness every target links: the counting global allocator that
+# makes F11's budget assertable per input, and the permanent self-test
+# tripwire that proves the crash-artifact path works.
+[lib]
+name = "antseal_fuzz"
+path = "src/lib.rs"
+test = true
+doc = false
+bench = false
+
+# ── targets ────────────────────────────────────────────────────────────────
+# Registry + ownership table: fuzz/README.md. Each target is also a row in
+# `scripts/fuzz.sh`'s TARGETS list — adding one means editing both, which is
+# deliberate: a target nothing runs is worse than no target.
 
 [[bin]]
 name = "verify_bundle"
@@ -42,10 +63,43 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "manifest_decode"
+path = "fuzz_targets/manifest_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bundle_decode"
+path = "fuzz_targets/bundle_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codec_round_trip"
+path = "fuzz_targets/codec_round_trip.rs"
+test = false
+doc = false
+bench = false
+
 # cargo-fuzz's own defaults; stated rather than inherited so a reader knows
-# the target is built with debug assertions ON — a debug_assert firing is a
+# the targets are built with debug assertions ON — a debug_assert firing is a
 # finding, not noise.
 [profile.release]
 debug = true
 debug-assertions = true
 overflow-checks = true
+
+# The workspace lint policy, restated: this crate is detached, so it does not
+# inherit `[workspace.lints]`. `unsafe_code` is denied here too; the one
+# sanctioned exception (the counting global allocator) carries its
+# `#![allow(unsafe_code)]` and written justification at `src/lib.rs`'s root,
+# exactly as `crates/antseal-core/tests/parser_caps_alloc.rs` does.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
