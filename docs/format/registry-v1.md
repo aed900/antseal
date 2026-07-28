@@ -40,10 +40,17 @@
   is **derived, never declared** — §7.14, and the fourth checked absence in
   §7.6.1), **D30** (stable error codes: every rejection class named here must
   land on its own code — docs/testing/error-code-contract.md).
-- Registered decisions this slice **feeds but must not resolve**: **D74**
-  (extraneous `s_root` on a fine-tree-absent full reveal — §7.14), **D75**
-  (does a full reveal ship covers *and* `s_root` — §7.11), **D77**
-  (zero-non-mirror-unit file — §7.14's anti-vacuity clause).
+- Registered decisions this slice fed and **F8 subsequently resolved**
+  (2026-07-28): **D74** — extraneous `s_root` on a fine-tree-absent full
+  reveal: **reject** (§7.14); **D75** — a full reveal ships covers *and*
+  `s_root`: **both** (§7.11); **D80** — a revealed unit's owning file must
+  appear in `touched_files`: **required, tier [R]** (§7.6). Still open and
+  **not** resolved here: **D77** (zero-non-mirror-unit file — §7.14's
+  anti-vacuity clause makes the predicate safe without it), **D76**
+  (splitting `file_salt` — recommended NO for v1).
+- Ratified before F8 and binding on it: **D78** (bundle schema validation
+  never opens the embedded manifest — §0, §7.6.3), **D79** (the OTS upgrade
+  group is free-standing all-or-nothing, never keyed on `status` — §7.8).
 - Already-consumed rows: the manifest-side maps §§7.1–7.5 are **implemented**
   (F5/F6 — `crates/antseal-core/src/manifest/`, key constants in
   `manifest/registry.rs`). Their key numbers are consumed; the bundle slice
@@ -528,8 +535,28 @@ F8 owns them; none needs the manifest):
 The matching **[R]** rules — the ones that genuinely need both sides —
 are: *which* array a unit belongs in (covered iff its file has
 `fine_tree_present == 1` and its `kind` is not `raw-mirror`, line 94),
-every id resolving into the manifest tables, and `full_reveal.s_root`
-presence (§7.14).
+every id resolving into the manifest tables, `full_reveal.s_root`
+presence (§7.14), and — **D80, resolved 2026-07-28 with F8** — that
+**every revealed unit's owning file has a `touched_files` entry**
+(`docs/decisions/D80-revealed-unit-touched-file.md`).
+
+D80 is [R] and not [X] precisely because "a revealed unit's *owning
+file*" is a manifest fact: the unit table is nested inside file entries,
+so the mapping needs layer 2, which §0's rule forbids the bundle schema
+layer from reaching for. It is therefore a verify-pipeline outcome
+(recommended `revealed-unit-file-not-touched`; R4/R5 mints the final
+spelling), **not** a `bundle-` code — and it does not subsume the
+`full_reveals ⊆ touched_files` row above, which stays [X]: a file may be
+touched by a unit reveal without being fully revealed.
+
+The evidence, since this one was a genuine open question: line 95 says
+`path_salt` "ships whenever any reveal *touches* the file (so the
+recipient can verify the path)", and line 121 gives only two rendering
+states — revealed content, or "unrevealed files render as committed
+placeholders (size only, path withheld)". A permissive reading would
+need a third state the spec does not define, and would hide only the
+*filename*: the plaintext manifest already exposes file identity, size,
+and unit boundaries to every recipient (line 95, stated deliberately).
 
 **Canonical concatenation order.** Where a consumer needs "the revealed
 units" as one sequence — e.g. `verify::structural::BundleView`'s
@@ -721,7 +748,7 @@ slot can promote it, and none should be read as promising to.
 | 0 | `unit_id` | uint | req | must resolve into the embedded manifest's unit table **[R]** | proposed |
 | 1 | `k_u` | bstr | req | 32 **[P]** — the unit key, disclosed per reveal so the verifier decrypts without ever holding `W` (line 114) | proposed |
 | 2 | `ciphertext` | bstr | req | var; `len ≡ 16 (mod 256)` and `len ≥ 272` **[P]** (§2). The exact `len == padded_length(true_length) + 16` is **[R]** — it needs the manifest's `true_length` | proposed |
-| 3 | `cover` | array | req **(D75-provisional — see below)** | `cover_entry` tuples (§5), **non-empty [P]** (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree, §7.4), strictly ascending interval start **[X]**; leaf-exactness and the no-ancestor-seed rule are **[R]** | proposed |
+| 3 | `cover` | array | req **(D75 RESOLVED — "both"; see below)** | `cover_entry` tuples (§5), **non-empty [P]** (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree, §7.4), strictly ascending interval start **[X]**; leaf-exactness and the no-ancestor-seed rule are **[R]** | proposed |
 | 4 | `paths` | array | req, may be empty | `path_node` tuples (§5), strictly ascending interval start **[X]**; empty exactly when the unit spans `[0, n)` (no boundary siblings) — the *exactly* is **[R]** | proposed |
 | 5–23 | — | — | — | reserved | proposed |
 
@@ -740,7 +767,18 @@ so the check is not deleted as dead code.
 
 #### D75 — does a full reveal ship per-unit covers *and* `s_root`?
 
-**Registered open decision (D75, resolve with F8); not decided here.**
+> **RESOLVED 2026-07-28 with F8: "both"** — key 3 is unconditionally
+> `req` at tier [P]
+> (`docs/decisions/D75-full-reveal-cover-shape.md`). The draft's lean
+> below is retained as the recorded rationale, not as an open choice.
+> The decision's rider is binding: because two independent routes to
+> `fine_root` now coexist, **they must be required to agree** — leaf
+> salts derived from `s_root` and from the per-unit covers are the same
+> values, and a disagreement is an equivocation attempt. That is an
+> **open tamper row for R4/Q8**, without which the redundancy buys
+> nothing.
+
+**The original registered framing (D75, resolve with F8):**
 On a *full* reveal of a fine-tree file the bundle would, as drafted,
 carry both this entry's per-unit `cover`/`paths` for every unit **and**
 the file's `s_root` (§7.14 key 2) — two independent routes to the same
@@ -849,7 +887,7 @@ signed manifest data or bundle field presence, but the predicate needs
 | key 2 present, `¬full(F)` | `partial-reveal-salt-leak-s-root` |
 | `full(F)`, no entry | `full-reveal-material-missing-file-salt` |
 | `full(F) ∧ fine_tree = Present`, key 2 absent | `full-reveal-material-missing-s-root` |
-| `full(F) ∧ fine_tree = Absent`, key 2 present | **unassigned — D74** (recommendation: reject as `full-reveal-s-root-without-fine-tree`). Do **not** implement the permissive reading; a stray `s_root` must not be silently dropped |
+| `full(F) ∧ fine_tree = Absent`, key 2 present | `full-reveal-s-root-without-fine-tree` — **D74 RESOLVED 2026-07-28 with F8: reject** (`docs/decisions/D74-extraneous-s-root.md`). A single code: the `FileSalt` counterpart would be unreachable, because key 1 is `req` at schema level and F8 rejects a key-1-less entry as `bundle-missing-key` before R4 runs |
 
 Two shape consequences worth stating, because they are easy to get
 subtly wrong:

@@ -2,13 +2,23 @@
 //! fixed byte lengths, closed enums, and the `sig_alg` numeric mapping.
 //!
 //! Normative table: `docs/format/registry-v1.md`; machine mirror
-//! `docs/format/registry-v1.json`. Every constant below is asserted equal
-//! to its registry row by `crates/antseal-core/tests/format_registry_draft.rs`
-//! — the 1:1 code ⟷ registry check the F4 draft defers to F5/F8
-//! (registry §14). **Changing a number here without changing the registry
-//! (or vice versa) fails that test**, which is the point: after the Q14
-//! `format-v1-freeze` gate, either change is a format-version event
-//! (MVP-SPEC.md line 123).
+//! `docs/format/registry-v1.json`. Every **map key**, **reserved band**,
+//! **closed-enum value and spelling**, **fixed byte length**, and **tuple
+//! arity** below is asserted equal to its registry row by
+//! `crates/antseal-core/tests/format_registry_draft.rs`
+//! (`code_map_keys_match_the_registry`,
+//! `code_reserved_bands_match_the_registry`, `code_enums_match_the_registry`,
+//! `code_scalar_lengths_match_the_registry`,
+//! `code_tuple_arities_match_the_registry`) — the 1:1 code ⟷ registry check
+//! the F4 draft defers to F5/F8 (registry §14), in **both** directions: a
+//! registry map with no code counterpart fails too. **Changing a number here
+//! without changing the registry (or vice versa) fails those tests**, which
+//! is the point: after the Q14 `format-v1-freeze` gate, either change is a
+//! format-version event (MVP-SPEC.md line 123).
+//!
+//! [`FORMAT_VERSION_V1`] is the one constant with no machine-readable row to
+//! bind to — registry §7.2 key 0 states its value in prose — so it is pinned
+//! by this module's own test instead.
 //!
 //! # Key bands (registry §1 rule 4)
 //!

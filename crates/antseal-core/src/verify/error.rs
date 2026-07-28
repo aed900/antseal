@@ -417,6 +417,26 @@ pub enum VerifyError {
         commit: ContentCommitKind,
     },
 
+    /// A fully revealed file carries an `s_root` although its descriptor
+    /// records **no** fine tree (`--no-fine-tree`, or an empty file), so
+    /// there is nothing the seed could be the root of.
+    ///
+    /// **D74 (resolved with F8): reject.** This is the fifth arm of D28's
+    /// biconditional (registry §7.14) and the only one that was left
+    /// unassigned. The permissive reading — silently ignoring the stray seed
+    /// — was rejected on the C14 present-set-==-required-set precedent: a
+    /// bundle that ships material the schema has no use for is either built
+    /// by a confused producer or probing for a lenient verifier, and neither
+    /// deserves a pass. Distinct from
+    /// [`Self::PartialRevealSaltLeak`]`{ material: SRoot }`, which fires when
+    /// the file is *not* fully revealed: here the reveal is legitimate and
+    /// the material is not.
+    #[error("file {file_id}: full reveal carries an s_root but the file has no fine tree")]
+    FullRevealSRootWithoutFineTree {
+        /// The fully revealed, fine-tree-less file.
+        file_id: u64,
+    },
+
     /// On a full file reveal, the fine tree rebuilt from the bundled
     /// `s_root` over the revealed bytes does not match the manifest's
     /// `fine_root` (MVP-SPEC.md line 121: "the verifier MUST rebuild the
@@ -532,6 +552,7 @@ impl VerifyError {
                 FullRevealMaterial::FileSalt => "full-reveal-material-missing-file-salt",
                 FullRevealMaterial::SRoot => "full-reveal-material-missing-s-root",
             },
+            Self::FullRevealSRootWithoutFineTree { .. } => "full-reveal-s-root-without-fine-tree",
             Self::ConcatCommitMismatch { commit, .. } => match commit {
                 ContentCommitKind::Canon => "concat-commit-mismatch-canon",
                 ContentCommitKind::Raw => "concat-commit-mismatch-raw",
@@ -733,6 +754,7 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             file_id: 4,
             material: FullRevealMaterial::SRoot,
         },
+        E::FullRevealSRootWithoutFineTree { file_id: 4 },
         E::ConcatCommitMismatch {
             file_id: 5,
             commit: ContentCommitKind::Canon,
@@ -795,16 +817,20 @@ mod tests {
 
     use super::*;
 
-    /// The number of distinct stable codes: 13 single-code variants plus
-    /// the discriminated ones (WrongLength×6, TilingViolation×4,
-    /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
-    /// ConcatCommitMismatch×2, FineRootBindingFailed×**7** — one per
-    /// delegated `fine-root-*` class of G13's taxonomy), plus the 15
-    /// delegated `cbor-*` codes of the Codec wrapper arm (12 codec
-    /// variants, ForbiddenType×3), plus the 25 delegated `crypto-*` codes
-    /// of the Crypto wrapper arm (CommitmentMismatch×5, SaltLength×3, four
-    /// signature variants ×2 algorithms, 9 single-code variants).
-    const DISTINCT_CODES: usize = 76;
+    /// The number of distinct stable codes: **14** single-code variants
+    /// (F8 added `FullRevealSRootWithoutFineTree`, D28's fifth arm, when
+    /// D74 resolved to reject) plus the discriminated ones (WrongLength×6,
+    /// TilingViolation×4, PartialRevealSaltLeak×2,
+    /// FullRevealMaterialMissing×2, ConcatCommitMismatch×2,
+    /// FineRootBindingFailed×**7** — one per delegated `fine-root-*` class
+    /// of G13's taxonomy), plus the 15 delegated `cbor-*` codes of the Codec
+    /// wrapper arm (12 codec variants, ForbiddenType×3), plus the 25
+    /// delegated `crypto-*` codes of the Crypto wrapper arm
+    /// (CommitmentMismatch×5, SaltLength×3, four signature variants ×2
+    /// algorithms, 9 single-code variants).
+    ///
+    /// 14 + (6+4+2+2+2+7) + 15 + 25 = 77.
+    const DISTINCT_CODES: usize = 77;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -857,6 +883,9 @@ mod tests {
                 VerifyError::PathCommitMismatch { .. } => "PathCommitMismatch",
                 VerifyError::PartialRevealSaltLeak { .. } => "PartialRevealSaltLeak",
                 VerifyError::FullRevealMaterialMissing { .. } => "FullRevealMaterialMissing",
+                VerifyError::FullRevealSRootWithoutFineTree { .. } => {
+                    "FullRevealSRootWithoutFineTree"
+                }
                 VerifyError::ConcatCommitMismatch { .. } => "ConcatCommitMismatch",
                 VerifyError::FineRootRebuildMismatch { .. } => "FineRootRebuildMismatch",
                 VerifyError::RawCommitMismatch { .. } => "RawCommitMismatch",
@@ -868,7 +897,7 @@ mod tests {
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 21, "21 variants must be represented");
+        assert_eq!(tally.len(), 22, "22 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),

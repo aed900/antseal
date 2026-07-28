@@ -31,10 +31,22 @@ algorithm, a tiling-violation class — each value gets its own code
 | Prefix | Owner | Surface |
 |---|---|---|
 | `cbor-` | F | canonical-CBOR decode (F3) |
-| `manifest-` | F | manifest/bundle schema validation (F5–F9) |
+| `manifest-` | F | manifest schema validation (F5–F7) |
+| `bundle-` | F | `.sealproof` bundle schema validation (F8–F9) |
 | `crypto-` | C | HKDF, commitments, padding, AEAD, signatures (C2–C14) |
 | `content-` | G | canonicalization, unit model, fine tree (G2–G13) |
 | *(unprefixed)* | R | verification-pipeline outcomes (R1–R5) |
+
+`manifest-` and `bundle-` are **separate families, and that separation is
+normative** (decision D78, ratified 2026-07-28). Bundle schema validation
+never consults the embedded manifest, so a `bundle-` code always means
+"malformed on the bundle's own bytes" and a `manifest-` code always means
+"the embedded manifest is malformed". A bundle that is *well-formed but
+inconsistent with its manifest* is neither: it is a verify-pipeline
+outcome in R's unprefixed namespace. Since this section is what makes
+families permanent, the split had to exist before F8's error enum was
+written — and it is enforced structurally: `BundleError` has no arm that
+can carry a `ManifestError`.
 
 R's codes are deliberately unprefixed: they name pipeline-level outcomes
 (`tiling-gap`, `path-commit-mismatch`, `unknown-unit-ref`) that appear in
@@ -141,5 +153,13 @@ kebab-case id, and never edit an existing row's expected code.
   by a committed artifact either. First genuine cross-domain near-miss
   recorded and kept separable: R's pipeline-level `path-commit-mismatch` vs
   C's primitive-level `crypto-path-commit-mismatch`.
+- **2026-07-28 (M0 wave 4, F8)** — `bundle-` registered as a sixth family
+  with **32** codes, asserted pairwise distinct *and* disjoint from
+  `manifest-` (`bundle::error`'s meta-tests) and exercised from real bytes
+  by `tests/bundle_schema.rs`'s 32-row reject matrix. R gained one code,
+  `full-reveal-s-root-without-fine-tree`, when **D74** resolved to reject
+  — completing D28's five-arm violation table (R total 71 → 72).
+  **D80** fixes a further rule whose code R4/R5 still owes:
+  `revealed-unit-file-not-touched` (recommended spelling).
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

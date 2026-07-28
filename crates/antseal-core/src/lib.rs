@@ -13,6 +13,7 @@
 //! `self_encryption`. Verification must succeed fully offline, and the WASM
 //! build must bit-match native verification.
 
+pub mod bundle;
 pub mod canon;
 pub mod codec;
 pub mod content;
