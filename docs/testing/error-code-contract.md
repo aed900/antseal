@@ -576,6 +576,18 @@ kebab-case id, and never edit an existing row's expected code.
     - `codec::decode::all_code_exemplars()` is promoted out of a `#[cfg(test)]`
       array so the `cbor-` universe can be quantified over by checks other
       than its own distinctness test.
+    - **F14's independent cross-check earned itself again**, moving three
+      fixtures before they landed: a count-cap fixture that re-heads an array
+      without supplying its entries is *truncated as well as over-cap*, so the
+      `ListTooLong` representative became `intermediates` (cap 16, the only
+      bundle list where cap + 1 real entries are committable and the document
+      stays canonical); and the `cbor-malformed` and `cbor-tag` fixtures moved
+      to layer 1, because the checker's descent into embedded layers depends on
+      `cbor2` loading the blob, which a reserved head byte defeats and a
+      semantically-known tag distorts. The checker gained the four new
+      canonicality reasons and a `CANONICAL_BUT_SCHEMA_INVALID` category for
+      `cbor-unexpected-type`, which is canonical CBOR rejected by a schema type
+      expectation.
 - **2026-07-28 (M0 wave 6, G22)** — the first code whose **ownership** is
   recorded as an answer rather than assumed, ahead of F23/F24's
   reverse-coverage sweep. No code was added, renamed, or retired.

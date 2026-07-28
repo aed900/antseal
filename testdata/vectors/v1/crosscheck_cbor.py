@@ -736,12 +736,27 @@ CANONICALITY_REASON = {
     "cbor-trailing-bytes": "trailing",
     "cbor-unsorted-map-keys": "out of order",
     "cbor-float": "major type 7",
+    # F24's four genuinely non-canonical additions. Simple values and tags land
+    # in the same profile refusal as floats (major type 7 / major type 6),
+    # which is why two of them share a wording.
+    "cbor-simple-value": "major type 7",
+    "cbor-tag": "major type 6",
+    "cbor-invalid-utf8": "invalid UTF-8",
+    "cbor-malformed": "reserved additional-information",
 }
 
 # Codes whose fixtures are an antseal RESOURCE CAP, not an RFC 8949 property.
 # Nesting depth is F11's limit and bundle size is D10's; arbitrarily deep or
 # large CBOR is perfectly canonical, so there is nothing here to confirm.
 NOT_A_CANONICALITY_CLAIM = {"cbor-nesting-too-deep", "bundle-too-large"}
+
+# `cbor-`-prefixed codes that are NOT canonicality faults: the bytes are
+# perfectly good CBOR and the rejection is a schema TYPE expectation. They take
+# the schema branch below, where the assertion is that the outer layer really is
+# canonical -- which is exactly this fixture's claim, and a stronger statement
+# than skipping it would be. (F24: a bstr where the schema requires an array is
+# canonical CBOR; RFC 8949 has no opinion about it.)
+CANONICAL_BUT_SCHEMA_INVALID = {"cbor-unexpected-type"}
 
 
 def _verdicts(cbor2, data: bytes, depth: int = 0) -> list[str]:
@@ -774,9 +789,15 @@ def tamper_sweep(cbor2, report) -> int:
 
     * a `cbor-` fixture must be non-canonical **for the reason it claims**,
       judged by our §4.2.1 logic rather than by our decoder's error code;
-    * a schema-level fixture (`manifest-…`, `bundle-…`) must be **perfectly
-      good CBOR** at the outer layer, which proves it exercises the schema
-      rather than tripping the codec first and never reaching it.
+    * a schema-level fixture (`manifest-…`, `bundle-…`, and the `cbor-` codes
+      in CANONICAL_BUT_SCHEMA_INVALID) must be **perfectly good CBOR** at the
+      outer layer, which proves it exercises the schema rather than tripping
+      the codec first and never reaching it.
+
+    The second assertion inspects the OUTER layer only. A fixture whose fault
+    is inside an embedded `bstr` therefore passes it on the strength of its
+    envelope, which is honest for the layer named but is not a statement about
+    the inner one -- see tasks/F.md F36.
     """
     manifest = TAMPER_FORMAT / "FIXTURES.json"
     if not manifest.is_file():
@@ -796,7 +817,7 @@ def tamper_sweep(cbor2, report) -> int:
             continue
         data = (TAMPER_FORMAT / source["file"]).read_bytes()
 
-        if code.startswith("cbor-"):
+        if code.startswith("cbor-") and code not in CANONICAL_BUT_SCHEMA_INVALID:
             wanted = CANONICALITY_REASON.get(code)
             if wanted is None:
                 raise CheckFailure(

@@ -33,11 +33,11 @@
 //!
 //! | code | fixture | why it is a row |
 //! | --- | --- | --- |
-//! | `cbor-tag` | `body-tagged-unit-kind` | security-bearing: a tagged re-spelling of a value aliasing an untagged one under one `work_id` is precisely why F3 bans tags |
+//! | `cbor-tag` | `bundle-tagged-file-id` | security-bearing: a tagged re-spelling of a value aliasing an untagged one under one `work_id` is precisely why F3 bans tags |
 //! | `cbor-simple-value` | `body-simple-value-size` | same argument: `true`/`null` are not `1`, and the profile admits neither |
 //! | `cbor-invalid-utf8` | `bundle-invalid-utf8-path` | reachable from any `tstr`, and the disclosed path is the one a user *reads* |
 //! | `cbor-unexpected-type` | `body-unexpected-type-range` | load-bearing for D10 §6: this is the code an over-deep bundle actually produces, which is the whole argument for the depth row being a direct call |
-//! | `cbor-malformed` | `body-malformed-seal-id` | the commonest hostile head after truncation, and the fixture is one byte |
+//! | `cbor-malformed` | `bundle-malformed-file-id` | the commonest hostile head after truncation, and the fixture is one byte |
 //!
 //! **`cbor-int-out-of-range` is a named non-row**, and the reason is a
 //! finding rather than a cost argument: it is produced only by
@@ -60,10 +60,12 @@
 //!
 //! That is the point of sequencing F25 first. Each mutation is expressed as
 //! `(path-to-item, replacement)` through [`super::cbor_span`], never as a
-//! pinned offset, and the five paths deliberately land at five different
-//! depths and shapes — a `uint` five levels down, a `uint` three levels
-//! down, an array, a `bstr` at the top level of the body, and a `tstr`
-//! inside a bundle-level array element.
+//! pinned offset. The five paths land at five different depths and shapes:
+//! inside the manifest body, a `uint` three levels down and an **array** five
+//! levels down; inside the bundle, two `uint`s and a `tstr` spread across two
+//! different array elements. Three of the five are at layer 1 by design —
+//! see [`TOUCHED_FILE_ID`] for the reason a fault buried in an embedded
+//! `bstr` can be invisible to an independent checker.
 //!
 //! # Relationship to F23
 //!
@@ -87,18 +89,6 @@ use super::tamper_rows_format::{
 // the five paths
 // ---------------------------------------------------------------------------
 
-/// Body → file 0 → unit 0 → `kind` (key 1). Five levels down; a one-byte
-/// `uint`. F22 addresses the same item for an unrelated reason (D77's shape
-/// rule), which is a coincidence of it being the deepest scalar in the
-/// document rather than a shared concern.
-const UNIT_KIND: [Step; 5] = [
-    Step::Value(manifest_key::body::FILES),
-    Step::Index(0),
-    Step::Value(manifest_key::file::UNITS),
-    Step::Index(0),
-    Step::Value(manifest_key::unit::KIND),
-];
-
 /// Body → file 0 → unit 0 → `range` (key 2). An **array**, so the typed read
 /// that meets it asks for `ExpectedKind::Array`.
 const UNIT_RANGE: [Step; 5] = [
@@ -116,8 +106,29 @@ const FILE_SIZE: [Step; 3] = [
     Step::Value(manifest_key::file::SIZE),
 ];
 
-/// Body → `seal_id` (key 2). A top-level `bstr` of the body map.
-const SEAL_ID: [Step; 1] = [Step::Value(manifest_key::body::SEAL_ID)];
+/// Bundle → `full_reveals[0]` → `file_id` (key 0). A one-byte `uint` two
+/// levels down, at **layer 1**.
+const FULL_REVEAL_FILE_ID: [Step; 3] = [
+    Step::Value(bundle_key::bundle::FULL_REVEALS),
+    Step::Index(0),
+    Step::Value(bundle_key::full_reveal::FILE_ID),
+];
+
+/// Bundle → `touched_files[0]` → `file_id` (key 0). A one-byte `uint` two
+/// levels down, at **layer 1**.
+///
+/// The malformed fixture lives here rather than in the manifest body for a
+/// reason F14's cross-check made visible: its descent into embedded layers is
+/// deliberately unguided, and it uses `cbor2.loads` succeeding as the test for
+/// "is this blob a CBOR layer at all". A body containing a reserved head byte
+/// does not load, so it is indistinguishable from a salt or a signature and
+/// the sweep would find no fault to confirm. At layer 1 the fault is in the
+/// outermost document, where the checker looks first.
+const TOUCHED_FILE_ID: [Step; 3] = [
+    Step::Value(bundle_key::bundle::TOUCHED_FILES),
+    Step::Index(0),
+    Step::Value(bundle_key::touched_file::FILE_ID),
+];
 
 /// Bundle → `touched_files[0]` → `path` (key 1). The one `tstr` in the base
 /// bundle, and the field a user actually reads.
@@ -139,14 +150,25 @@ fn body_at(path: &[Step], replacement: &[u8]) -> Option<Vec<u8>> {
     envelope_around(&splice_item_at_path(&body, path, replacement)?)
 }
 
-/// `cbor-tag`: wrap the nested unit's `kind` value in tag 0.
+/// `cbor-tag`: wrap `full_reveals[0].file_id` in tag **55799**, "self-described
+/// CBOR" (RFC 8949 §3.4.6).
 ///
-/// The value it decorates is the *same* `uint` the untagged document
-/// carries, which is exactly the aliasing F3 bans tags to prevent: two byte
-/// strings, one meaning, one `work_id`.
-fn body_tagged_unit_kind() -> Option<Vec<u8>> {
-    // 0xC0 = tag(0); 0x00 = the unchanged value.
-    body_at(&UNIT_KIND, &[0xC0, 0x00])
+/// The value it decorates is the *same* `uint` the untagged document carries,
+/// which is exactly the aliasing F3 bans tags to prevent: two byte strings,
+/// one meaning, one `work_id`. 55799 rather than a made-up number because it
+/// is the one tag a real encoder plausibly prepends on its own — the realistic
+/// version of the attack is an honest library, not an adversary.
+///
+/// At layer 1 rather than in the body, for [`TOUCHED_FILE_ID`]'s reason: the
+/// cross-check's descent into embedded layers runs only where `cbor2` can load
+/// the blob, and `cbor2` applies *semantics* to known tags, so whether a tagged
+/// body is reachable at all depends on which tag number was chosen. At layer 1
+/// the fault is in the outermost document, where the checker looks first and
+/// where no library's tag semantics can hide it.
+fn bundle_tagged_file_id() -> Option<Vec<u8>> {
+    let bundle = base_bundle();
+    // 0xD9 0xD9 0xF7 = tag(55799); 0x00 = the unchanged value.
+    splice_item_at_path(&bundle, &FULL_REVEAL_FILE_ID, &[0xD9, 0xD9, 0xF7, 0x00])
 }
 
 /// `cbor-simple-value`: replace the file's `size` with `true`.
@@ -167,10 +189,19 @@ fn body_unexpected_type_range() -> Option<Vec<u8>> {
     body_at(&UNIT_RANGE, &[0x43, 0x00, 0x00, 0x00])
 }
 
-/// `cbor-malformed`: replace the body's `seal_id` with a head byte no
+/// `cbor-malformed`: replace `touched_files[0].file_id` with a head byte no
 /// canonical item can start with (major type 0, reserved additional info 28).
-fn body_malformed_seal_id() -> Option<Vec<u8>> {
-    body_at(&SEAL_ID, &[0x1C])
+///
+/// One byte, length-preserving, at layer 1 (see [`TOUCHED_FILE_ID`]).
+fn bundle_malformed_file_id() -> Option<Vec<u8>> {
+    let bundle = base_bundle();
+    let span = span_at_path(&bundle, &TOUCHED_FILE_ID)?;
+    if span.byte_len() != 1 {
+        return None;
+    }
+    let mut out = bundle;
+    *out.get_mut(span.start)? = 0x1C;
+    Some(out)
 }
 
 /// `cbor-invalid-utf8`: flip the first byte of the disclosed path to a lone
@@ -192,16 +223,16 @@ fn bundle_invalid_utf8_path() -> Option<Vec<u8>> {
 /// F24's fixtures, in emit order.
 pub const FIXTURES: &[FormatFixture] = &[
     FormatFixture {
-        id: "body-tagged-unit-kind",
-        base: "manifest",
-        mutation: "wrap the nested unit's `kind` value in tag 0, leaving the value itself \
-                   unchanged",
-        surface: Surface::ManifestDecode,
+        id: "bundle-tagged-file-id",
+        base: "bundle",
+        mutation: "wrap `full_reveals[0].file_id` in tag 55799 (self-described CBOR), leaving \
+                   the value itself unchanged",
+        surface: Surface::SealProofDecode,
         code: "cbor-tag",
-        layer: Some("manifest body"),
+        layer: Some("bundle"),
         committed: true,
         row: Some("cbor-tag"),
-        build: body_tagged_unit_kind,
+        build: bundle_tagged_file_id,
     },
     FormatFixture {
         id: "body-simple-value-size",
@@ -226,15 +257,16 @@ pub const FIXTURES: &[FormatFixture] = &[
         build: body_unexpected_type_range,
     },
     FormatFixture {
-        id: "body-malformed-seal-id",
-        base: "manifest",
-        mutation: "replace the body's `seal_id` with a reserved (additional info 28) head byte",
-        surface: Surface::ManifestDecode,
+        id: "bundle-malformed-file-id",
+        base: "bundle",
+        mutation: "replace `touched_files[0].file_id` with a reserved (additional info 28) head \
+                   byte",
+        surface: Surface::SealProofDecode,
         code: "cbor-malformed",
-        layer: Some("manifest body"),
+        layer: Some("bundle"),
         committed: true,
         row: Some("cbor-malformed"),
-        build: body_malformed_seal_id,
+        build: bundle_malformed_file_id,
     },
     FormatFixture {
         id: "bundle-invalid-utf8-path",
@@ -333,7 +365,7 @@ pub fn cbor_code_universe() -> Vec<&'static str> {
 // ---------------------------------------------------------------------------
 
 fn row_tag() -> ActualOutcome {
-    exercise_by_id(FIXTURES, "body-tagged-unit-kind")
+    exercise_by_id(FIXTURES, "bundle-tagged-file-id")
 }
 fn row_simple_value() -> ActualOutcome {
     exercise_by_id(FIXTURES, "body-simple-value-size")
@@ -342,7 +374,7 @@ fn row_unexpected_type() -> ActualOutcome {
     exercise_by_id(FIXTURES, "body-unexpected-type-range")
 }
 fn row_malformed() -> ActualOutcome {
-    exercise_by_id(FIXTURES, "body-malformed-seal-id")
+    exercise_by_id(FIXTURES, "bundle-malformed-file-id")
 }
 fn row_invalid_utf8() -> ActualOutcome {
     exercise_by_id(FIXTURES, "bundle-invalid-utf8-path")
@@ -355,8 +387,8 @@ fn row_invalid_utf8() -> ActualOutcome {
 pub const ROWS: &[TamperRow] = &[
     TamperRow {
         id: "cbor-tag",
-        base: "golden-manifest-ed25519-only",
-        mutation: "wrap the nested unit's `kind` value in tag 0",
+        base: "golden-bundle-unanchored",
+        mutation: "wrap `full_reveals[0].file_id` in tag 55799 (self-described CBOR)",
         expected: ExpectedOutcome::ErrorCode("cbor-tag"),
         exercise: row_tag,
     },
@@ -376,8 +408,8 @@ pub const ROWS: &[TamperRow] = &[
     },
     TamperRow {
         id: "cbor-malformed",
-        base: "golden-manifest-ed25519-only",
-        mutation: "replace the body's `seal_id` with a reserved head byte (additional info 28)",
+        base: "golden-bundle-unanchored",
+        mutation: "replace `touched_files[0].file_id` with a reserved head byte (info 28)",
         expected: ExpectedOutcome::ErrorCode("cbor-malformed"),
         exercise: row_malformed,
     },
@@ -546,10 +578,10 @@ mod tests {
         let body = base_body().expect("base body");
         let bundle = base_bundle();
         let cases: [(&str, &[u8], &[Step]); 5] = [
-            ("body-tagged-unit-kind", &body, &UNIT_KIND),
+            ("bundle-tagged-file-id", &bundle, &FULL_REVEAL_FILE_ID),
             ("body-simple-value-size", &body, &FILE_SIZE),
             ("body-unexpected-type-range", &body, &UNIT_RANGE),
-            ("body-malformed-seal-id", &body, &SEAL_ID),
+            ("bundle-malformed-file-id", &bundle, &TOUCHED_FILE_ID),
             ("bundle-invalid-utf8-path", &bundle, &TOUCHED_PATH),
         ];
         for (id, document, path) in cases {

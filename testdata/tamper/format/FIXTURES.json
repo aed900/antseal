@@ -434,19 +434,19 @@
       "surface": "Manifest::decode"
     },
     {
-      "base": "bundle",
+      "base": "bundle-every-kind",
       "expected": {
-        "code": "bundle-too-many-full-reveals",
+        "code": "bundle-too-many-intermediates",
         "layer": "bundle"
       },
-      "id": "bundle-full-reveals-over-cap",
-      "mutation": "re-head the bundle's `full_reveals` array to claim MAX_FULL_REVEAL_COUNT + 1 entries",
-      "row": "caps-bundle-too-many-full-reveals",
+      "id": "bundle-intermediates-over-cap",
+      "mutation": "grow the first TSA anchor's `intermediates` list to MAX_INTERMEDIATE_COUNT + 1 real entries",
+      "row": "caps-bundle-too-many-intermediates",
       "source": {
-        "file": "bundle-full-reveals-over-cap.cbor",
+        "file": "bundle-intermediates-over-cap.cbor",
         "kind": "file",
-        "len": 938,
-        "sha256": "bc5ac69475a18678c4860eb7c81c4a3746fcac59181742ce8fb2f20d0a7d4108"
+        "len": 1691,
+        "sha256": "3878fbe3683a519e01958fcec3ad075939f1b855e28441bd84224ba44d4f90c8"
       },
       "surface": "SealProof::decode"
     },
@@ -467,21 +467,21 @@
       "surface": "SealProof::decode"
     },
     {
-      "base": "manifest",
+      "base": "bundle",
       "expected": {
         "code": "cbor-tag",
-        "layer": "manifest body"
+        "layer": "bundle"
       },
-      "id": "body-tagged-unit-kind",
-      "mutation": "wrap the nested unit's `kind` value in tag 0, leaving the value itself unchanged",
+      "id": "bundle-tagged-file-id",
+      "mutation": "wrap `full_reveals[0].file_id` in tag 55799 (self-described CBOR), leaving the value itself unchanged",
       "row": "cbor-tag",
       "source": {
-        "file": "body-tagged-unit-kind.cbor",
+        "file": "bundle-tagged-file-id.cbor",
         "kind": "file",
-        "len": 372,
-        "sha256": "8857ee2417a381d09268e76352f8655468cfed3e2e93bc676f3ae64586158499"
+        "len": 939,
+        "sha256": "f4503c68ed2a53fc2bcdb9b1c57af51f9dfb3c502344a6acaf239ee6e6bd21a4"
       },
-      "surface": "Manifest::decode"
+      "surface": "SealProof::decode"
     },
     {
       "base": "manifest",
@@ -518,21 +518,21 @@
       "surface": "Manifest::decode"
     },
     {
-      "base": "manifest",
+      "base": "bundle",
       "expected": {
         "code": "cbor-malformed",
-        "layer": "manifest body"
+        "layer": "bundle"
       },
-      "id": "body-malformed-seal-id",
-      "mutation": "replace the body's `seal_id` with a reserved (additional info 28) head byte",
+      "id": "bundle-malformed-file-id",
+      "mutation": "replace `touched_files[0].file_id` with a reserved (additional info 28) head byte",
       "row": "cbor-malformed",
       "source": {
-        "file": "body-malformed-seal-id.cbor",
+        "file": "bundle-malformed-file-id.cbor",
         "kind": "file",
-        "len": 355,
-        "sha256": "b978fd4b6ec545d7d62d6339ee023c1f34f8e1ba3b917529a98fa3dacdbc1f0a"
+        "len": 936,
+        "sha256": "3d9b76176dc472724f95ea0c1bb0c064e2f2478d0d77944b113835c888acef0b"
       },
-      "surface": "Manifest::decode"
+      "surface": "SealProof::decode"
     },
     {
       "base": "bundle",

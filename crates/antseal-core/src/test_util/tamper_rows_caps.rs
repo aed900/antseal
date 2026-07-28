@@ -34,7 +34,7 @@
 //! | construct | codes | representative row |
 //! | --- | --- | --- |
 //! | `BundleError::InputTooLarge` | 1 | `cbor-oversized` (F15, already landed) |
-//! | `BundleError::ListTooLong` | 10 | `caps-bundle-too-many-full-reveals` |
+//! | `BundleError::ListTooLong` | 10 | `caps-bundle-too-many-intermediates` |
 //! | `BundleError::ArtifactTooLarge` | 4 | `caps-bundle-cert-too-large` |
 //! | `ManifestError::InputTooLarge` | 1 | `caps-manifest-too-large` |
 //! | `ManifestError::ListTooLong` | 2 | `caps-manifest-too-many-units` |
@@ -66,6 +66,34 @@
 //! cannot collide on row ids; it is not a claim about what the code means.
 //! Row ids are permanent handles and carry no semantics (harness docs).
 //!
+//! # Why the list-cap representative is `intermediates`
+//!
+//! F14's independent cross-check requires a **schema-level fixture to be
+//! perfectly good CBOR at its outer layer**, "which proves it exercises the
+//! schema rather than tripping the codec first and never reaching it". That
+//! rules out the obvious construction for a count cap: re-heading an array to
+//! claim `cap + 1` entries without supplying them makes the document
+//! *truncated*, so it carries two faults and which one is observed is an
+//! ordering accident (a frozen one — D10 §4 — but an accident all the same).
+//!
+//! `MAX_INTERMEDIATE_COUNT` is **16**, the only bundle list cap small enough
+//! that `cap + 1` real entries fit in a committable fixture. So the
+//! representative supplies all seventeen and the document stays canonical;
+//! the cross-check confirms it independently, and the row pins the cap and
+//! nothing else. Every other bundle list caps at 256 or 16 384. D10 §2
+//! separately calls this "the weakest-evidence cap in the table" and asks A
+//! to confirm it before Q14, which makes it the one most worth a harness row.
+//!
+//! **The manifest side cannot have this property**, and the limitation is
+//! recorded rather than hidden: `MAX_UNIT_COUNT` is 2^16, so
+//! `body-units-over-cap` re-heads the `units` array and does not supply the
+//! entries. Its *envelope* — the layer the cross-check inspects — is exact,
+//! because the mutated body is re-encoded into a fresh envelope; its **body**
+//! is deliberately truncated, which no committed fixture can avoid at that
+//! cap. The cross-check's schema branch does not descend into embedded
+//! layers, so it neither confirms nor refutes this; that gap is written up in
+//! tasks/F.md under F36.
+//!
 //! # Bases
 //!
 //! Four fixtures mutate the two F15 bases. The `ArtifactTooLarge` one needs a
@@ -80,17 +108,18 @@
 
 use crate::bundle::registry::key as bundle_key;
 use crate::codec::caps::{
-    MAX_CERT_BYTES, MAX_FULL_REVEAL_COUNT, MAX_MANIFEST_BYTES, MAX_UNIT_COUNT,
+    MAX_CERT_BYTES, MAX_INTERMEDIATE_COUNT, MAX_MANIFEST_BYTES, MAX_UNIT_COUNT,
 };
 use crate::manifest::registry::{UnitKind, key as manifest_key};
 
 use super::bundle_fixtures::{AnchorSet, Selection, WorkSpec, build, shapes};
 use super::cbor_span::{
-    MAJOR_ARRAY, MAJOR_BYTES, Step, canonical_head, splice_head_at_path, splice_item_at_path,
+    MAJOR_ARRAY, MAJOR_BYTES, Step, canonical_head, span_at_path, splice_head_at_path,
+    splice_item_at_path,
 };
 use super::tamper::{ActualOutcome, ExpectedOutcome, TamperRow};
 use super::tamper_rows_format::{
-    FormatFixture, Surface, base_body, base_bundle, base_manifest, envelope_around, exercise_by_id,
+    FormatFixture, Surface, base_body, base_manifest, envelope_around, exercise_by_id,
 };
 
 // ---------------------------------------------------------------------------
@@ -114,13 +143,17 @@ const FIRST_FILE_UNITS: [Step; 3] = [
     Step::Value(manifest_key::file::UNITS),
 ];
 
-/// The base bundle's `full_reveals` array.
-const FULL_REVEALS: [Step; 1] = [Step::Value(bundle_key::bundle::FULL_REVEALS)];
-
-/// The every-kind bundle's first TSA anchor's first intermediate certificate.
+/// The every-kind bundle's first TSA anchor's `intermediates` list.
 ///
 /// `tsa_anchors[0]` is the anchor R6 populates with intermediates and a
 /// recorded `source`; `tsa_anchors[1]` deliberately has neither.
+const INTERMEDIATES: [Step; 3] = [
+    Step::Value(bundle_key::bundle::TSA_ANCHORS),
+    Step::Index(0),
+    Step::Value(bundle_key::tsa_anchor::INTERMEDIATES),
+];
+
+/// Its first certificate.
 const FIRST_INTERMEDIATE: [Step; 4] = [
     Step::Value(bundle_key::bundle::TSA_ANCHORS),
     Step::Index(0),
@@ -137,8 +170,9 @@ fn every_kind_work() -> WorkSpec {
         .with_anchors(AnchorSet::EveryKind { receipt: false })
 }
 
-/// The anchor-bearing base bundle. Not committed: only the synthesized
-/// `ArtifactTooLarge` fixture uses it, and that fixture is a recipe.
+/// The anchor-bearing base bundle: the only shape that carries an anchor
+/// artifact at all, since both F15 bases have empty `ots_anchors` and
+/// `tsa_anchors`. Not itself committed — see F38.
 #[must_use]
 pub fn base_bundle_every_kind() -> Vec<u8> {
     build(&every_kind_work(), &Selection::all(1)).bytes
@@ -202,14 +236,32 @@ pub fn oversized_manifest() -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// `BundleError::ListTooLong { list: FullReveals }`: re-head the bundle's
-/// `full_reveals` array to claim `MAX_FULL_REVEAL_COUNT + 1` entries.
-fn bundle_full_reveals_over_cap() -> Option<Vec<u8>> {
-    splice_head_at_path(
-        &base_bundle(),
-        &FULL_REVEALS,
-        &canonical_head(MAJOR_ARRAY, MAX_FULL_REVEAL_COUNT.checked_add(1)?),
-    )
+/// `BundleError::ListTooLong { list: Intermediates }`: grow the first TSA
+/// anchor's `intermediates` list to `MAX_INTERMEDIATE_COUNT + 1` entries, all
+/// of them really present.
+///
+/// **Intermediates rather than one of the nine larger lists, and that is the
+/// whole reason for the choice.** `MAX_INTERMEDIATE_COUNT` is 16, so a
+/// cap+1 list is seventeen real entries and the fixture stays **perfectly
+/// canonical CBOR** — the property F14's independent cross-check demands of
+/// every schema-level fixture, because a document that is *also* truncated
+/// would be rejected by the codec before the schema layer ever saw it, and
+/// the row would be pinning an ordering accident rather than the cap. Every
+/// other bundle list caps at 256 or 16 384, where a canonical fixture is not
+/// committable; re-heading such a list without supplying its elements yields
+/// exactly the two-fault document the cross-check refuses. (D10 §2 also calls
+/// this "the weakest-evidence cap in the table" and asks A to confirm it
+/// before Q14, which makes it the one most worth having a harness row.)
+fn bundle_intermediates_over_cap() -> Option<Vec<u8>> {
+    let bundle = base_bundle_every_kind();
+    let first = span_at_path(&bundle, &FIRST_INTERMEDIATE)?;
+    let cert = bundle.get(first.start..first.end)?.to_vec();
+    let count = MAX_INTERMEDIATE_COUNT.checked_add(1)?;
+    let mut item = canonical_head(MAJOR_ARRAY, count);
+    for _ in 0..count {
+        item.extend_from_slice(&cert);
+    }
+    splice_item_at_path(&bundle, &INTERMEDIATES, &item)
 }
 
 /// `BundleError::ArtifactTooLarge { field: Certificate }`: replace the first
@@ -268,16 +320,16 @@ pub const FIXTURES: &[FormatFixture] = &[
         build: oversized_manifest,
     },
     FormatFixture {
-        id: "bundle-full-reveals-over-cap",
-        base: "bundle",
-        mutation: "re-head the bundle's `full_reveals` array to claim MAX_FULL_REVEAL_COUNT + 1 \
-                   entries",
+        id: "bundle-intermediates-over-cap",
+        base: "bundle-every-kind",
+        mutation: "grow the first TSA anchor's `intermediates` list to MAX_INTERMEDIATE_COUNT + 1 \
+                   real entries",
         surface: Surface::SealProofDecode,
-        code: "bundle-too-many-full-reveals",
+        code: "bundle-too-many-intermediates",
         layer: Some("bundle"),
         committed: true,
-        row: Some("caps-bundle-too-many-full-reveals"),
-        build: bundle_full_reveals_over_cap,
+        row: Some("caps-bundle-too-many-intermediates"),
+        build: bundle_intermediates_over_cap,
     },
     FormatFixture {
         id: "bundle-cert-over-cap",
@@ -311,51 +363,55 @@ pub const DELIBERATE_NON_ROWS: &[(&str, &str, &str)] = &[
     // ── BundleError::ListTooLong, nine non-representatives ──
     (
         "bundle-too-many-ots-anchors",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "One `BundleError::ListTooLong` discriminant of ten. Every one of the ten is produced by \
          the same `decode_section` cap check on a claimed array count, and `tests/parser_caps.rs` \
          already drives each through the real `BundleV1::decode` at-cap and cap+1. A row adds \
          cross-domain distinctness, the no-panic guard and MATRIX visibility — none of which is \
-         per-discriminant.",
+         per-discriminant. There is a second, independent reason this one cannot be the \
+         representative: its cap is 256, so a cap+1 fixture supplying its entries is not \
+         committable, and one that does NOT supply them is truncated as well as over-cap — two \
+         faults, which F14's cross-check refuses for a schema-level fixture and rightly so. Only \
+         `Intermediates` (cap 16) admits a canonical fixture at all.",
     ),
     (
         "bundle-too-many-tsa-anchors",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
-        "bundle-too-many-intermediates",
-        "caps-bundle-too-many-full-reveals",
+        "bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-tx-hashes",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-covered-reveals",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-noncovered-reveals",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-cover-entries",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-path-nodes",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     (
         "bundle-too-many-touched-files",
-        "caps-bundle-too-many-full-reveals",
+        "caps-bundle-too-many-intermediates",
         "As `bundle-too-many-ots-anchors`: the same cap check, a different list discriminant.",
     ),
     // ── BundleError::ArtifactTooLarge, three non-representatives ──
@@ -401,8 +457,8 @@ fn row_manifest_too_many_units() -> ActualOutcome {
 fn row_manifest_too_large() -> ActualOutcome {
     exercise_by_id(FIXTURES, "manifest-oversized")
 }
-fn row_bundle_too_many_full_reveals() -> ActualOutcome {
-    exercise_by_id(FIXTURES, "bundle-full-reveals-over-cap")
+fn row_bundle_too_many_intermediates() -> ActualOutcome {
+    exercise_by_id(FIXTURES, "bundle-intermediates-over-cap")
 }
 fn row_bundle_cert_too_large() -> ActualOutcome {
     exercise_by_id(FIXTURES, "bundle-cert-over-cap")
@@ -435,11 +491,12 @@ pub const ROWS: &[TamperRow] = &[
         exercise: row_manifest_too_large,
     },
     TamperRow {
-        id: "caps-bundle-too-many-full-reveals",
-        base: "golden-bundle-unanchored",
-        mutation: "re-head `full_reveals` to claim MAX_FULL_REVEAL_COUNT + 1 entries",
-        expected: ExpectedOutcome::ErrorCode("bundle-too-many-full-reveals"),
-        exercise: row_bundle_too_many_full_reveals,
+        id: "caps-bundle-too-many-intermediates",
+        base: "every-anchor-kind-bundle",
+        mutation: "grow the first TSA anchor's `intermediates` list to MAX_INTERMEDIATE_COUNT + 1 \
+                   entries",
+        expected: ExpectedOutcome::ErrorCode("bundle-too-many-intermediates"),
+        exercise: row_bundle_too_many_intermediates,
     },
     TamperRow {
         id: "caps-bundle-cert-too-large",
@@ -452,6 +509,7 @@ pub const ROWS: &[TamperRow] = &[
 
 #[cfg(test)]
 mod tests {
+    use super::super::tamper_rows_format::base_bundle;
     use super::*;
     use crate::bundle::error::all_code_exemplars as bundle_exemplars;
     use crate::bundle::{BundleError, SealProof};
@@ -650,22 +708,52 @@ mod tests {
         assert_eq!(mutated[differing[0]], UnitKind::RawMirror.to_wire() as u8);
     }
 
-    /// The two array-head fixtures rewrite the head and nothing else — the
-    /// elements survive verbatim, so the cap is what rejects them rather than
-    /// a mangled element.
+    /// The manifest list-cap fixture rewrites the head and nothing else — the
+    /// one real unit entry survives verbatim, so the cap is what rejects it
+    /// rather than a mangled element.
     #[test]
-    fn the_list_cap_fixtures_rewrite_only_a_head() {
-        let base = base_bundle();
-        let mutated = bundle_full_reveals_over_cap().expect("the over-cap bundle");
-        // array(1) is one byte; array(16385) is three.
-        assert_eq!(mutated.len(), base.len() + 2);
-        let span = super::super::cbor_span::span_at_path(&base, &FULL_REVEALS).expect("the array");
+    fn the_manifest_list_cap_fixture_rewrites_only_a_head() {
+        let base = base_body().expect("base body");
+        let mutated = splice_head_at_path(
+            &base,
+            &FIRST_FILE_UNITS,
+            &canonical_head(MAJOR_ARRAY, MAX_UNIT_COUNT + 1),
+        )
+        .expect("the over-cap body");
+        // array(1) is one byte; array(65537) is five.
+        assert_eq!(mutated.len(), base.len() + 4);
+        let span = span_at_path(&base, &FIRST_FILE_UNITS).expect("the array");
         let elements = base.get(span.head_end..span.end).expect("elements");
         assert!(
             mutated
                 .windows(elements.len())
                 .any(|window| window == elements),
-            "the `full_reveals` element survived the head rewrite"
+            "the unit entry survived the head rewrite"
+        );
+    }
+
+    /// **The bundle list-cap fixture is perfectly canonical**, which is what
+    /// F14's independent cross-check requires of every schema-level fixture:
+    /// a document that is *also* truncated would be rejected by the codec
+    /// before the schema layer saw it, so the row would pin an ordering
+    /// accident rather than the cap. Seventeen real entries, all present.
+    #[test]
+    fn the_bundle_list_cap_fixture_is_canonical() {
+        let mutated = bundle_intermediates_over_cap().expect("the over-cap bundle");
+        assert_eq!(
+            crate::codec::decode::check_canonical(&mutated),
+            Ok(()),
+            "the fixture must be canonical CBOR; only the cap may reject it"
+        );
+        let span = super::super::cbor_span::span_at_path(&mutated, &INTERMEDIATES)
+            .expect("the intermediates array");
+        let mut probe = crate::codec::decode::CanonicalDecoder::new(
+            mutated.get(span.start..).expect("in range"),
+        );
+        assert_eq!(
+            probe.array(),
+            Ok(MAX_INTERMEDIATE_COUNT + 1),
+            "the list claims exactly cap + 1"
         );
     }
 }

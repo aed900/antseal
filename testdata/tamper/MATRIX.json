@@ -742,9 +742,9 @@
       "why": "The sole `ManifestError::InputTooLarge` code. Its bundle-side twin `bundle-too-large` already has a row (`cbor-oversized`); this is the layer-2 half, and it fails at the manifest ENVELOPE rather than the bundle, so the pair also pins D10 section 5's stage-1 ordering. Synthesized from a recipe: the mutation is a length (MAX_MANIFEST_BYTES + 1), so 16 MiB never enters the repository."
     },
     {
-      "row_id": "caps-bundle-too-many-full-reveals",
+      "row_id": "caps-bundle-too-many-intermediates",
       "owner": "F",
-      "why": "One representative of `BundleError::ListTooLong`, whose ten discriminants F11 minted with no row and no named owner. All ten come from the same `decode_section` cap check on a claimed array count, and `tests/parser_caps.rs` already drives each through the real decode at-cap and cap+1 — so what a row adds (cross-domain distinctness, the no-panic guard, MATRIX visibility) is a property of the error VARIANT, not of the discriminant. The nine others are named non-rows in `tamper_rows_caps::DELIBERATE_NON_ROWS`."
+      "why": "One representative of `BundleError::ListTooLong`, whose ten discriminants F11 minted with no row and no named owner. All ten come from the same `decode_section` cap check on a claimed array count, and `tests/parser_caps.rs` already drives each through the real decode at-cap and cap+1 — so what a row adds (cross-domain distinctness, the no-panic guard, MATRIX visibility) is a property of the error VARIANT, not of the discriminant. `Intermediates` is the representative because `MAX_INTERMEDIATE_COUNT` is 16, the only bundle list cap small enough that a cap+1 fixture can supply all its entries and stay PERFECTLY CANONICAL — which F14's independent cross-check requires of every schema-level fixture, since a document that is also truncated would be rejected by the codec before the schema layer saw it. D10 section 2 separately calls it the weakest-evidence cap in the table. The nine others are named non-rows in `tamper_rows_caps::DELIBERATE_NON_ROWS`."
     },
     {
       "row_id": "caps-bundle-cert-too-large",
@@ -754,7 +754,7 @@
     {
       "row_id": "cbor-tag",
       "owner": "F",
-      "why": "One of six `cbor-` codes F24 found with no row, no fixture and no named owner. The family is structurally unguarded: Q8's registry maps the SPEC's enumeration onto rows, and F23's sweep maps `BundleError`'s and `ManifestError`'s exemplar lists — but the `cbor-` namespace is a third one both of those merely delegate to (`Self::Cbor { source } => source.code()`), so a `cbor-` code is reachable through every schema surface while belonging to neither sweep. Security-bearing: a tagged re-spelling of a value aliasing an untagged one under a single `work_id` is precisely why F3 bans tags. The fixture tags a NESTED unit's `kind` and leaves the value itself unchanged."
+      "why": "One of six `cbor-` codes F24 found with no row, no fixture and no named owner. The family is structurally unguarded: Q8's registry maps the SPEC's enumeration onto rows, and F23's sweep maps `BundleError`'s and `ManifestError`'s exemplar lists — but the `cbor-` namespace is a third one both of those merely delegate to (`Self::Cbor { source } => source.code()`), so a `cbor-` code is reachable through every schema surface while belonging to neither sweep. Security-bearing: a tagged re-spelling of a value aliasing an untagged one under a single `work_id` is precisely why F3 bans tags. The fixture wraps `full_reveals[0].file_id` in tag 55799 (self-described CBOR) and leaves the value itself unchanged — tag 55799 because it is the one tag a real encoder plausibly prepends on its own, and at layer 1 because `cbor2` applies semantics to known tags, so a tagged embedded body's reachability by the cross-check would depend on which tag number was chosen."
     },
     {
       "row_id": "cbor-simple-value",
@@ -774,7 +774,7 @@
     {
       "row_id": "cbor-malformed",
       "owner": "F",
-      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code. Kept as a row rather than a representative-only candidate because a head byte no canonical item can start with is the commonest hostile-input shape after truncation (spec line 187) and the fixture costs one byte. The fixture replaces the body's `seal_id` with a reserved additional-info-28 head."
+      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code. Kept as a row rather than a representative-only candidate because a head byte no canonical item can start with is the commonest hostile-input shape after truncation (spec line 187) and the fixture costs one byte. The fixture replaces `touched_files[0].file_id` with a reserved additional-info-28 head — at layer 1 rather than in the body, because F14's cross-check descends into embedded layers only where `cbor2` can load them, and a body carrying a reserved head byte does not load, so the sweep could not confirm it."
     }
   ],
   "non_rows": [
