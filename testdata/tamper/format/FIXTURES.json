@@ -465,6 +465,91 @@
         "recipe": "the every-anchor-kind bundle (R6 `AnchorSet::EveryKind`, receipt excluded, over the `single binary` ed25519-only work), with `tsa_anchors[0].intermediates[0]` replaced by a bstr of MAX_CERT_BYTES + 1 zero bytes"
       },
       "surface": "SealProof::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-tag",
+        "layer": "manifest body"
+      },
+      "id": "body-tagged-unit-kind",
+      "mutation": "wrap the nested unit's `kind` value in tag 0, leaving the value itself unchanged",
+      "row": "cbor-tag",
+      "source": {
+        "file": "body-tagged-unit-kind.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "8857ee2417a381d09268e76352f8655468cfed3e2e93bc676f3ae64586158499"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-simple-value",
+        "layer": "manifest body"
+      },
+      "id": "body-simple-value-size",
+      "mutation": "replace the file's `size` value with the simple value `true`",
+      "row": "cbor-simple-value",
+      "source": {
+        "file": "body-simple-value-size.cbor",
+        "kind": "file",
+        "len": 370,
+        "sha256": "6de381e014c82bdc1fc31eeeb6421aab5137e342d85704040115a3600fff26cb"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-unexpected-type",
+        "layer": "manifest body"
+      },
+      "id": "body-unexpected-type-range",
+      "mutation": "replace the nested unit's `range` array with a byte string of the same width",
+      "row": "cbor-unexpected-type",
+      "source": {
+        "file": "body-unexpected-type-range.cbor",
+        "kind": "file",
+        "len": 371,
+        "sha256": "e6513bb7e1845ee96da74f9fab265eeb09ad2be82835d5fabda5ab9e006e2e7b"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-malformed",
+        "layer": "manifest body"
+      },
+      "id": "body-malformed-seal-id",
+      "mutation": "replace the body's `seal_id` with a reserved (additional info 28) head byte",
+      "row": "cbor-malformed",
+      "source": {
+        "file": "body-malformed-seal-id.cbor",
+        "kind": "file",
+        "len": 355,
+        "sha256": "b978fd4b6ec545d7d62d6339ee023c1f34f8e1ba3b917529a98fa3dacdbc1f0a"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-invalid-utf8",
+        "layer": "bundle"
+      },
+      "id": "bundle-invalid-utf8-path",
+      "mutation": "flip the first byte of `touched_files[0].path` to a lone UTF-8 continuation byte",
+      "row": "cbor-invalid-utf8",
+      "source": {
+        "file": "bundle-invalid-utf8-path.cbor",
+        "kind": "file",
+        "len": 936,
+        "sha256": "14a8775e85fb078fc895af4a7c9197a06931818477c837e88f62ddf1cfb52b87"
+      },
+      "surface": "SealProof::decode"
     }
   ],
   "format_version": "v1",

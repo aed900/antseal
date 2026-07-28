@@ -750,6 +750,31 @@
       "row_id": "caps-bundle-cert-too-large",
       "owner": "F",
       "why": "One representative of `BundleError::ArtifactTooLarge`, whose four discriminants F11 minted with no row and no named owner. `Certificate` because its cap (64 KiB) is the smallest of the four, and F3 refuses an over-claimed `bstr` length before the schema layer sees it — so the bytes must really be present, and a fixture for `ots`/`token` would cost 1 MiB, for `payload` 16 MiB, for the same construct. Synthesized from a recipe. The three others are named non-rows in `tamper_rows_caps::DELIBERATE_NON_ROWS`."
+    },
+    {
+      "row_id": "cbor-tag",
+      "owner": "F",
+      "why": "One of six `cbor-` codes F24 found with no row, no fixture and no named owner. The family is structurally unguarded: Q8's registry maps the SPEC's enumeration onto rows, and F23's sweep maps `BundleError`'s and `ManifestError`'s exemplar lists — but the `cbor-` namespace is a third one both of those merely delegate to (`Self::Cbor { source } => source.code()`), so a `cbor-` code is reachable through every schema surface while belonging to neither sweep. Security-bearing: a tagged re-spelling of a value aliasing an untagged one under a single `work_id` is precisely why F3 bans tags. The fixture tags a NESTED unit's `kind` and leaves the value itself unchanged."
+    },
+    {
+      "row_id": "cbor-simple-value",
+      "owner": "F",
+      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code, and security-bearing for the same reason — `true`/`null` are not `1`, and the deterministic profile admits neither, so a simple value slipping through would be a second spelling of a value under one `work_id`. The fixture replaces a file's `size` with `true`."
+    },
+    {
+      "row_id": "cbor-invalid-utf8",
+      "owner": "F",
+      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code, reachable from any `tstr` field. The fixture flips the first byte of `touched_files[0].path` — the disclosed path a user actually reads — to a lone UTF-8 continuation byte. Length-preserving, so every length head in the bundle including the embedded manifest's stays exact."
+    },
+    {
+      "row_id": "cbor-unexpected-type",
+      "owner": "F",
+      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code, and load-bearing for D10 section 6's argument that the over-deep row must be a DIRECT call on `check_canonical` — this is the code an over-deep bundle actually produces, because every v1 field has a fixed type and the schema layer's typed read wins at level 1. The fixture replaces a nested unit's `range` array with a byte string of the same width, so the item is perfectly canonical and only the schema's expectation is violated."
+    },
+    {
+      "row_id": "cbor-malformed",
+      "owner": "F",
+      "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code. Kept as a row rather than a representative-only candidate because a head byte no canonical item can start with is the commonest hostile-input shape after truncation (spec line 187) and the fixture costs one byte. The fixture replaces the body's `seal_id` with a reserved additional-info-28 head."
     }
   ],
   "non_rows": [

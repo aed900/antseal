@@ -494,7 +494,8 @@ kebab-case id, and never edit an existing row's expected code.
   matrix is COMPLETE (0 pending)** — Q14's gate condition, printed by the
   lane every run. F landed its registry slice
   (`antseal_core::test_util::tamper_rows_format`): **twenty fixtures, seven
-  rows**, merged into `tests/tamper_matrix.rs`. Every row binds a code that
+  rows**, merged into `tests/tamper_matrix.rs`. (Wave 7 adds F22's and F24's
+  slices to the same committed set; the counts here are F15's own.) Every row binds a code that
   already existed — `bundle-too-large` (D10 §1 tabled it for exactly this
   row), `cbor-nesting-too-deep`, `cbor-non-shortest-length`, and the two
   key-band pairs — which is the outcome §3 is meant to produce for a task
@@ -545,6 +546,36 @@ kebab-case id, and never edit an existing row's expected code.
   from `null` to a layer; no digest, code, or row changed. D86 also closes
   the report question permanently: the decode layer is failure context and
   is never a report field.
+- **2026-07-28 (M0 wave 7, F22/F24/F25)** — **no code minted, no code
+  changed**; ten new tamper rows, all binding codes that already existed.
+    - **F22** accounts for all nineteen D10/D77 cap-and-shape codes: five
+      rows, thirteen recorded non-rows, and F15's `cbor-oversized` already
+      owning `bundle-too-large`. The representative unit is the error
+      **variant**, not the list-kind or artifact-field discriminant, because
+      `tests/parser_caps.rs` already drives every one of the nineteen through
+      the real decode surface at-cap and cap+1 — so what a row adds
+      (cross-domain distinctness, the no-panic guard, MATRIX visibility) is a
+      property of the construct and not of the discriminant. The thirteen
+      unrowed codes live in `test_util::tamper_rows_caps::DELIBERATE_NON_ROWS`
+      with a reason and a named representative each, deliberately *not* in
+      `MATRIX.json`'s `non_rows[]`: that structure requires `collides_with` to
+      name a row that actually claims the outcome, and these do not collide.
+    - **F24** closes the third namespace. `bundle-` and `manifest-` both
+      **delegate** to `cbor-` (`Self::Cbor { source } => source.code()`), so a
+      `cbor-` code is reachable through every schema surface while belonging
+      to neither exemplar sweep — the direction §4 layer 2 could not see. Five
+      of the six unrowed codes gained rows; **`cbor-int-out-of-range` is a
+      named non-row on an unreachability argument**: it is produced only by
+      `CanonicalDecoder::i64`, and no v1 schema slot is decoded through it, so
+      no input to any strict surface can produce it. The argument is
+      re-derived on every run rather than trusted.
+    - **F25** made a nested mutation expressible at all, which is why D77's
+      row (owed since wave 5) and F24's five fixtures could land: fixtures are
+      addressed as `(path-to-item, mutation)` through the F3 decoder's own
+      public surface, never as pinned offsets.
+    - `codec::decode::all_code_exemplars()` is promoted out of a `#[cfg(test)]`
+      array so the `cbor-` universe can be quantified over by checks other
+      than its own distinctness test.
 - **2026-07-28 (M0 wave 6, G22)** — the first code whose **ownership** is
   recorded as an answer rather than assumed, ahead of F23/F24's
   reverse-coverage sweep. No code was added, renamed, or retired.

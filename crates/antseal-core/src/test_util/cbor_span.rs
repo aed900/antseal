@@ -19,7 +19,7 @@
 //!   the only route) — landed by [`super::tamper_rows_caps`];
 //! - most of F24's `cbor-` codes, which need a mutation at a nested
 //!   `tstr`/`uint`/container rather than at a top-level head — landed by
-//!   `super::tamper_rows_cbor`;
+//!   [`super::tamper_rows_cbor`];
 //! - per-layer variants of `cbor-truncated`, which need a cut at a chosen
 //!   item boundary.
 //!

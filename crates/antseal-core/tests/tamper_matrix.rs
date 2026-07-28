@@ -403,10 +403,12 @@ const ROWS: &[TamperRow] = &[
 ///
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
 /// tree), R7 (structural), R8 (pipeline integration), F15 (format) and F22
-/// (caps + D77's mirror-only shape) are present; A21's M2 anchor rows follow.
+/// (caps + D77's mirror-only shape) and F24 (the `cbor-` family) are present;
+/// A21's M2 anchor rows follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_caps::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_cbor::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_format::ROWS);
@@ -507,7 +509,8 @@ fn the_format_fixture_table_agrees_with_the_live_registry() {
     assert!(
         claimed
             >= antseal_core::test_util::tamper_rows_format::ROWS.len()
-                + antseal_core::test_util::tamper_rows_caps::ROWS.len(),
+                + antseal_core::test_util::tamper_rows_caps::ROWS.len()
+                + antseal_core::test_util::tamper_rows_cbor::ROWS.len(),
         "every format-level row must be backed by at least one fixture"
     );
 }
@@ -555,4 +558,27 @@ fn tamper_matrix_non_row_discharges_are_the_pinned_ones() {
 #[test]
 fn tamper_matrix_reports_the_q14_gate() {
     tamper_completeness::report_q14_gate(&all_rows());
+}
+
+/// **F24's seed-row accounting, checked against the live registry.** Every
+/// `cbor-` code that
+/// [`COVERED_BY_SEED_ROWS`](antseal_core::test_util::tamper_rows_cbor::COVERED_BY_SEED_ROWS)
+/// claims is covered by a seed row really is claimed by a live row.
+///
+/// It has to live here rather than beside the list, because the seed rows are
+/// this target's and the list is a lib const. Without it the list could name a
+/// code no row claims and F24's sweep would report full coverage of a gap.
+#[test]
+fn the_seed_row_coverage_list_names_live_rows() {
+    use antseal_core::test_util::tamper_rows_cbor::COVERED_BY_SEED_ROWS;
+
+    let rows = all_rows();
+    for code in COVERED_BY_SEED_ROWS {
+        assert!(
+            rows.iter()
+                .any(|row| row.expected == ExpectedOutcome::ErrorCode(code)),
+            "`{code}` is recorded as covered by a Q7 seed row, but no live row claims it — F24's \
+             reverse-coverage sweep would be reporting coverage that does not exist"
+        );
+    }
 }

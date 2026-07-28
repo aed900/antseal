@@ -96,7 +96,7 @@
 //!
 //! [`FIXTURES`] is F15's twenty. The committed artifact under
 //! `testdata/tamper/format/` is [`all_fixtures`] — this slice plus every
-//! successor's ([`super::tamper_rows_caps`], `super::tamper_rows_cbor`) —
+//! successor's ([`super::tamper_rows_caps`], [`super::tamper_rows_cbor`]) —
 //! because a single table and a single `.cbor` directory are what make the
 //! set checkable in both directions at once. The slices stay separate source
 //! files so that concurrent work merges as a file add rather than a hunk
@@ -855,7 +855,11 @@ pub fn fixture(id: &str) -> Option<&'static FormatFixture> {
 /// `tests/format_tamper_fixtures.rs` emits and checks this concatenation, so
 /// `FIXTURES.json` and the `.cbor` set describe all of them at once. A new
 /// task adds one line here.
-pub const FIXTURE_SLICES: &[&[FormatFixture]] = &[FIXTURES, super::tamper_rows_caps::FIXTURES];
+pub const FIXTURE_SLICES: &[&[FormatFixture]] = &[
+    FIXTURES,
+    super::tamper_rows_caps::FIXTURES,
+    super::tamper_rows_cbor::FIXTURES,
+];
 
 /// Every format-level fixture, across every slice, in emit order.
 #[must_use]
