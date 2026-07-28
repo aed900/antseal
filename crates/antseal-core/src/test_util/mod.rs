@@ -2,15 +2,17 @@
 //!
 //! # Two feature tiers (P14)
 //!
-//! - **`test-vectors`** — the WASM-safe subset: [`vectors`] and
-//!   [`TEST_MASTER_SECRET_W`]. I/O-free, allocation-only, activates **zero**
-//!   optional dependencies, and therefore compiles for
+//! - **`test-vectors`** — the WASM-safe subset: [`vectors`],
+//!   [`TEST_MASTER_SECRET_W`], the deterministic [`fixture_rng`], and R6's
+//!   [`bundle_fixtures`] constructor. I/O-free, allocation-only, activates
+//!   **zero** optional dependencies, and therefore compiles for
 //!   `wasm32-unknown-unknown` and leaves the `core-dep-graph` lane's verdict
-//!   untouched. This is what the Q5 native↔WASM bit-match harness enables.
+//!   untouched. This is what the Q5 native↔WASM bit-match harness enables,
+//!   and what the `wasm32-core-tests` lane's dev-dependency edge turns on.
 //! - **`test-util`** — `test-vectors` plus the proptest-bearing residents
 //!   ([`strategies`], [`tamper`]) and the `proptest` re-export, together
-//!   with the harness slices built on them ([`tamper_rows_crypto`] and the
-//!   [`fixture_rng`] its fixtures draw from). Native test targets only.
+//!   with the harness slices built on them ([`tamper_rows_crypto`],
+//!   [`tamper_rows_structural`]). Native test targets only.
 //!
 //! Residents:
 //!
@@ -25,6 +27,13 @@
 //! - [`tamper_rows_crypto`] — C's own registry slice for that harness
 //!   (C17): the M0 crypto tamper rows, plus the mutation helpers R7's
 //!   bundle-level fixtures reuse.
+//! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
+//!   structural rows, mutated from [`bundle_fixtures`] works and driven
+//!   through `verify_bundle` wherever the mutation is reachable there.
+//! - [`bundle_fixtures`] — R6's seeded, deterministic constructor for valid
+//!   works and `.sealproof` bundles of every M0 shape. The substrate R7–R10
+//!   mutate and R9's golden vectors pin; the M3 production builder (R13)
+//!   absorbs it under a parity test.
 //! - [`fixture_rng`] — the deterministic fixture randomness source, for the
 //!   APIs (unit AEAD) that draw their own nonces by design.
 //! - [`vectors`] — the golden-vector envelope schema, validation, kind
@@ -56,7 +65,7 @@
 //! their own proptest, so exactly one lockfile-frozen version serves the
 //! whole workspace.
 
-#[cfg(feature = "test-util")]
+pub mod bundle_fixtures;
 pub mod fixture_rng;
 #[cfg(feature = "test-util")]
 pub mod strategies;
@@ -64,6 +73,8 @@ pub mod strategies;
 pub mod tamper;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_structural;
 pub mod vectors;
 pub mod vectors_sig_reject;
 
