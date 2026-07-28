@@ -644,7 +644,7 @@
     {
       "row_id": "verify-unknown-file-ref",
       "owner": "R",
-      "why": "R3 structural invariant (spec line 121): a `touched_files` entry naming a `file_id` the signed file table has no row for. The unit-side siblings (`unknown-unit-ref`, `duplicate-unit-reveal`) are already project-added; this completes R7's `duplicate/unknown unit and file references`. NOT the D82 shape — that is an EXISTING file with no revealed unit, which is open and permissive today, so no code may be pinned for it."
+      "why": "R3 structural invariant (spec line 121): a `touched_files` entry naming a `file_id` the signed file table has no row for. The unit-side siblings (`unknown-unit-ref`, `duplicate-unit-reveal`) are already project-added; this completes R7's `duplicate/unknown unit and file references`. NOT the D82 shape — that is an EXISTING file with no revealed unit, which has its own row (`verify-touched-file-without-revealed-unit`) and its own code, and fires later: R3's group 3 rejects the dangling reference here before coherence ever runs."
     },
     {
       "row_id": "verify-full-reveal-missing-file-salt",
@@ -692,6 +692,11 @@
       "why": "D80's rule (docs/decisions/D80-revealed-unit-touched-file.md), landed at R5: a revealed unit's file MUST appear in `touched_files`. Not in line 168's enumeration because the rule did not exist when the line was written. Needs both layers decoded at once to observe, which is why R5 was the first task that could."
     },
     {
+      "row_id": "verify-touched-file-without-revealed-unit",
+      "owner": "R",
+      "why": "Decision D82 closes the converse of D80: `touched_files` must equal the set of files with a revealed unit. Not named at MVP-SPEC.md line 168, whose list illustrates rather than exhausts; kept because the bundle is unsigned and `path_salt` is a per-work constant, so without this rule any relay holding another bundle of the same work can splice a genuine `{path, path_salt}` entry into a bundle whose sealer chose not to disclose that file — the D74 add-material hole, in the touched-file section."
+    },
+    {
       "row_id": "verify-covered-unit-revealed-as-non-covered",
       "owner": "R",
       "why": "R5's reveal-section rule: a unit shipped in the reveal section its SIGNED manifest binding forbids. Named from the bundle's mistake, since that is what a tamper row mutates. Not in line 168's list — it is the check that makes the per-unit stage's dispatch total, so without it a covered unit could be opened by a `unit_commit` the manifest never assigned it."
@@ -712,9 +717,9 @@
       "id": "full-reveal-unit-strip-downgrade",
       "milestone": "M0",
       "owner": "R",
-      "mutation": "drop one revealed unit from a full-reveal bundle while leaving `file_salt` attached — the third-party proof-downgrade attack",
+      "mutation": "drop one revealed unit from a full-reveal bundle **whose file retains at least one other revealed unit**, while leaving `file_salt` attached — the third-party proof-downgrade attack",
       "collides_with": "verify-partial-reveal-salt-leak-file-salt",
-      "why": "Removing a unit reclassifies the file as partially revealed, so the still-attached `file_salt` fires the isolation arm: the observable outcome is `partial-reveal-salt-leak-file-salt`, exactly the same as the row above. Two rows claiming one outcome is a harness failure by design — `check_registry` refuses it, correctly, because the two mutations are one observable failure.",
+      "why": "Removing a unit reclassifies the file as partially revealed, so the still-attached `file_salt` fires the isolation arm: the observable outcome is `partial-reveal-salt-leak-file-salt`, exactly the same as the row above. Two rows claiming one outcome is a harness failure by design — `check_registry` refuses it, correctly, because the two mutations are one observable failure. The >=2-unit qualifier is load-bearing since decision D82: strip the ONLY revealed unit of a file and its `touched_files` entry is left with nothing revealed, so the earlier stage-2 code `touched-file-without-revealed-unit` claims the verdict instead. The mutation stays a non-row either way — it now collides for either of two reasons, never for none — and the R10 property below is unaffected, because it quantifies over rejection, not over a particular code.",
       "instead": "Assert it as an R10 property: `no single-unit deletion from a full-reveal bundle verifies`.",
       "record": "docs/decisions/D28-full-reveal-strictness.md, section `Deliberately NOT a fifth row`",
       "warning": "A naive R7 implementation that adds this row will break the tamper harness. That is the harness working, not a bug to route around."

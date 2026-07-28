@@ -27,7 +27,7 @@
 //!
 //! # Which rows are direct-call rows, and why
 //!
-//! Sixteen of the twenty-two rows drive [`verify_bundle`], which is where
+//! Seventeen of the twenty-three rows drive [`verify_bundle`], which is where
 //! R7's Accept wants them. Six cannot, all for the *same* reason, and it is
 //! a layering fact worth stating plainly:
 //!
@@ -59,17 +59,6 @@
 //!   and `check_registry` would correctly refuse the pair — the hazard Q8's
 //!   registry recorded ahead of implementation. One row, one owner; R7's
 //!   task text lists the over-broad cover, and R7 yields to G19 for it.
-//! - **A `touched_files` entry for an existing file with no revealed unit.**
-//!   That is **D82**, resolved to *reject*, minting
-//!   `touched-file-without-revealed-unit` at R5's coherence group. The code
-//!   change is a separate task's; what R7 owes and provides is the
-//!   [`Tweak::touch_without_reveal`](super::bundle_fixtures::Tweak) knob and
-//!   `the_d82_fixture_is_impeccable_except_for_the_d82_question`, which pins
-//!   that the spliced entry's `path_salt` genuinely opens `path_commit` —
-//!   without that, the row would fail at stage 2 with `path-commit-mismatch`
-//!   and silently test the wrong thing. [`unknown_file_ref`] is a *different*
-//!   mutation — a `file_id` no file-table row has at all — and its verdict is
-//!   independent of D82 either way.
 //! - **The unit-strip downgrade** (drop one revealed unit from a full reveal
 //!   and leave `file_salt` attached). It surfaces as
 //!   `partial-reveal-salt-leak-file-salt`, the same outcome as
@@ -219,10 +208,34 @@ fn non_zero_padding() -> ActualOutcome {
 
 fn unknown_file_ref() -> ActualOutcome {
     // A `touched_files` entry naming a `file_id` the signed file table does
-    // not have. Distinct from D82 (an existing file with no revealed unit),
-    // which is open and deliberately unpinned — see the module docs.
+    // not have. Distinct from D82's row below (an *existing* file with no
+    // revealed unit), and it fires earlier: R3 group 3 rejects the dangling
+    // reference before coherence ever runs.
     pipeline(&mixed(&Tweak {
         unknown_touched_file: Some(9),
+        ..Tweak::default()
+    }))
+}
+
+/// **D82's rule**: `touched_files` must *equal* the set of files with a
+/// revealed unit, so an entry for a file the bundle reveals nothing from is
+/// rejected at coherence group 1b.
+///
+/// The mutation splices in a **genuine** `{path, path_salt}` pair for file
+/// 2 — the mixed selection's untouched file. That is the whole difficulty:
+/// `check_path_commits` runs in stage 2 *before* coherence and iterates the
+/// bundle's list, so a junk salt or an invented path would make this row
+/// silently pin `path-commit-mismatch` instead. R7 pins the fixture's
+/// impeccability separately in
+/// `the_d82_fixture_is_impeccable_except_for_the_d82_question`.
+///
+/// The pair being genuine is also the *reason* for the rule: `path_salt =
+/// HKDF(W, "path-salt", file_id)` is a per-work constant, so this is not a
+/// forgery a relay has to break a commitment for — it is a copy from any
+/// other bundle of the same work.
+fn touched_file_without_revealed_unit() -> ActualOutcome {
+    pipeline(&mixed(&Tweak {
+        touch_without_reveal: Some(2),
         ..Tweak::default()
     }))
 }
@@ -526,6 +539,14 @@ pub const ROWS: &[TamperRow] = &[
         expected: ExpectedOutcome::ErrorCode("revealed-unit-file-not-touched"),
         exercise: revealed_unit_file_not_touched,
     },
+    TamperRow {
+        id: "verify-touched-file-without-revealed-unit",
+        base: "r6-multi-file-mixed",
+        mutation: "splice a genuine {path, path_salt} entry for a file the bundle reveals \
+                   nothing from",
+        expected: ExpectedOutcome::ErrorCode("touched-file-without-revealed-unit"),
+        exercise: touched_file_without_revealed_unit,
+    },
     // ── reveal-section agreement ──
     TamperRow {
         id: "verify-covered-unit-revealed-as-non-covered",
@@ -757,15 +778,18 @@ mod tests {
     /// **D82's fixture, handed to stage 2.** The decision resolved to
     /// *reject* a `touched_files` entry for a file with no revealed unit,
     /// minting `touched-file-without-revealed-unit` at R5's coherence group.
-    /// The code change is a separate agent's; what R7 owes is a fixture that
-    /// is impeccable in **every respect except** the D82 question itself.
+    /// R7 owed a fixture impeccable in **every respect except** the D82
+    /// question itself; the rule has since landed, and
+    /// [`touched_file_without_revealed_unit`] is now the row built on it.
     ///
-    /// This asserts exactly that, in a form that survives the rule landing:
-    /// the spliced entry's `path_salt` genuinely opens the manifest's
-    /// `path_commit`, so the row can never silently pin
-    /// `path-commit-mismatch` instead. Before the rule lands the fixture
-    /// verifies; after it lands it fails with D82's code — and in neither
-    /// case may it fail on the path.
+    /// This test was written to survive that landing and is deliberately
+    /// unchanged by it: the spliced entry's `path_salt` genuinely opens the
+    /// manifest's `path_commit`, so the row can never silently pin
+    /// `path-commit-mismatch` instead. Before the rule landed the fixture
+    /// verified; now it fails with D82's code — and in neither case may it
+    /// fail on the path. Keeping the tolerant `if let Err` shape is the
+    /// point: it makes the assertion about *which* rejection is legitimate,
+    /// not about whether one happens.
     #[test]
     fn the_d82_fixture_is_impeccable_except_for_the_d82_question() {
         // File 2 of the base work is untouched by the mixed selection, so it

@@ -12,7 +12,7 @@
 //! > in R's unprefixed namespace.
 //! > — `docs/testing/error-code-contract.md` §2
 //!
-//! Two such rules exist at M0, and this module owns both.
+//! Three such rules exist at M0, and this module owns all three.
 //!
 //! # The frozen check order
 //!
@@ -24,14 +24,24 @@
 //! | # | rule | error |
 //! |---|---|---|
 //! | 1 | every revealed unit's owning file has a `touched_files` entry | [`VerifyError::RevealedUnitFileNotTouched`] (D80) |
+//! | 1b | every `touched_files` entry's file has a revealed unit | [`VerifyError::TouchedFileWithoutRevealedUnit`] (D82) |
 //! | 2 | every revealed unit sits in the reveal section its manifest binding requires | [`VerifyError::RevealModeMismatch`] |
 //!
 //! Group 1 first because it is the direct continuation of R3 group 3
 //! (bundle → manifest referential integrity): group 3 proves every reveal
 //! *names* something that exists, group 1 proves the disclosure that makes
-//! the reveal interpretable to its recipient is also present. Group 2 is a
-//! step further in — it is about the shape of a unit's proof *material*, and
-//! it is what makes R5's per-unit dispatch total.
+//! the reveal interpretable to its recipient is also present. Group 1b is
+//! that rule's converse and belongs beside it: together they make
+//! `touched_files` exactly determined. Group 2 is a step further in — it is
+//! about the shape of a unit's proof *material*, and it is what makes R5's
+//! per-unit dispatch total.
+//!
+//! **1b was additive.** It was introduced after 1 and 2 were frozen, and it
+//! changes no existing input's reported code: an input violating 1 still
+//! reports 1's code (1b runs after), and the only inputs 1b newly rejects
+//! were previously *accepted*, never assigned to 2. The one deliberate new
+//! precedence is 1b before 2, pinned by
+//! `d82_group_order_touched_exactness_before_reveal_section`.
 //!
 //! Within each group, units are visited in **manifest unit-table order**
 //! (D27: "subjects in manifest order"), which is `unit_id` order, since
@@ -56,14 +66,47 @@
 //! The two are not redundant — a file can be touched by a single-unit
 //! reveal without being fully revealed.
 //!
-//! The **converse** direction — a `touched_files` entry for a file with no
-//! revealed unit — is deliberately *not* rejected here. D80 settled the
-//! implication in one direction only, the spec does not forbid disclosing a
-//! path without content, and R3 already proves such a path against
-//! `path_commit`. R5 renders that file as a committed placeholder (size
-//! only), so the extra disclosure buys the sealer nothing and costs the
-//! recipient nothing. Turning it into a rejection would mint a permanent
-//! code for a rule no decision has taken.
+//! # Group 1b — D82
+//!
+//! `touched_files ⊆ { file_id(u) : u ∈ bundle.revealed }`, which with group
+//! 1 makes the containment an **equality**:
+//!
+//! ```text
+//! touched_files  ==  { file_id(u) : u ∈ bundle.revealed }
+//! ```
+//!
+//! D80 settled the implication in one direction; D82 closes the converse.
+//! Full record: `docs/decisions/D82-touched-file-without-reveal.md`. Its
+//! three loads:
+//!
+//! - **The spec forecloses the shape.** Line 95: bundle recipients see
+//!   unrevealed files "**only** as committed placeholders". Line 121's
+//!   taxonomy is closed in both directions — an unrevealed file renders as
+//!   a placeholder with its **path withheld** — so "unrevealed file, path
+//!   disclosed" is a state the spec names the opposite of, not one it
+//!   merely omits. Line 95's defining use of *touches* (a reveal touches a
+//!   file when it discloses a unit of it, D80) makes `path_salt`'s shipping
+//!   condition a biconditional.
+//! - **The verifier throws the disclosure away anyway.**
+//!   [`reveal_set`](super::pipeline) computes `touched` from `is_revealed`
+//!   alone and emits an untouched file as `UnrevealedFilePlaceholder`
+//!   (size only). So the permissive branch was never "keep today's
+//!   behaviour": delivering the disclosure would need a third `RevealSet`
+//!   state, which `report.rs` forbids in terms.
+//! - **It is the D74 add-material hole, in this section.** The manifest is
+//!   signed; the bundle is not. A relay cannot *invent* a `(path,
+//!   path_salt)` pair — that needs a preimage of a signed `path_commit`
+//!   under a 16-byte secret salt — but it does not have to:
+//!   `path_salt = HKDF(W, "path-salt", file_id)` is a per-work constant, so
+//!   anyone holding another bundle of the same work holds the pair verbatim
+//!   and can splice it into a bundle whose sealer chose not to disclose
+//!   that file. R3's `path_commit` check passes, because the pair is
+//!   genuine. Without 1b the sealer's per-bundle, file-scoped disclosure
+//!   decision is silently overridden by a third party.
+//!
+//! One code, not two: the `full_reveals` form of the same mistake is
+//! unreachable, because a full reveal reveals every non-mirror unit and F5
+//! refuses a file with none (`ManifestError::EmptyContainer`).
 //!
 //! # Group 2 — reveal mode vs manifest binding
 //!
@@ -146,7 +189,7 @@ pub struct CoherenceBundleView<'a> {
     pub touched_file_ids: &'a [u64],
 }
 
-/// Run both coherence groups in the frozen order (module docs).
+/// Run all three coherence groups in the frozen order (module docs).
 ///
 /// `units` is the manifest unit table in manifest order; visiting it (not
 /// the bundle's sections) is what makes "first error" deterministic across
@@ -155,12 +198,14 @@ pub struct CoherenceBundleView<'a> {
 /// # Errors
 ///
 /// [`VerifyError::RevealedUnitFileNotTouched`] (group 1), then
+/// [`VerifyError::TouchedFileWithoutRevealedUnit`] (group 1b), then
 /// [`VerifyError::RevealModeMismatch`] (group 2).
 pub fn check_coherence(
     units: &[CoherenceUnit],
     bundle: &CoherenceBundleView<'_>,
 ) -> Result<(), VerifyError> {
     check_touched_coverage(units, bundle)?;
+    check_touched_exactness(units, bundle)?;
     check_reveal_sections(units, bundle)
 }
 
@@ -181,6 +226,53 @@ pub fn check_touched_coverage(
         if !bundle.touched_file_ids.contains(&unit.file_id) {
             return Err(VerifyError::RevealedUnitFileNotTouched {
                 unit_id: unit.unit_id,
+                file_id: unit.file_id,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Group 1b (D82): every disclosed file is one the bundle reveals from.
+///
+/// # Subject order
+///
+/// The **manifest** file table, never `touched_files` order — same reason
+/// group 1 visits the manifest unit table: "first error" must not depend on
+/// bundle layout (D27). No extra view is needed to enumerate it. Every file
+/// has at least one unit (F5's `EmptyContainer`: "an empty file still has
+/// one empty unit"), so the `file_id`s appearing in `units` — already in
+/// manifest order — enumerate the manifest file table by first occurrence.
+///
+/// Every touched `file_id` is known to name a real file by now: R3's group
+/// 3 already rejected a dangling one as `unknown-file-ref`. A `file_id`
+/// this loop cannot see is therefore not "touched but unknown", it is
+/// unreachable.
+///
+/// # Errors
+///
+/// [`VerifyError::TouchedFileWithoutRevealedUnit`] for the lowest-ordinal
+/// file in manifest order that has a `touched_files` entry and no revealed
+/// unit.
+pub fn check_touched_exactness(
+    units: &[CoherenceUnit],
+    bundle: &CoherenceBundleView<'_>,
+) -> Result<(), VerifyError> {
+    let mut seen: Vec<u64> = Vec::new();
+    for unit in units {
+        if seen.contains(&unit.file_id) {
+            continue;
+        }
+        seen.push(unit.file_id);
+        if !bundle.touched_file_ids.contains(&unit.file_id) {
+            continue;
+        }
+        let revealed = units
+            .iter()
+            .filter(|other| other.file_id == unit.file_id)
+            .any(|other| is_revealed(bundle, other.unit_id));
+        if !revealed {
+            return Err(VerifyError::TouchedFileWithoutRevealedUnit {
                 file_id: unit.file_id,
             });
         }
@@ -310,17 +402,103 @@ mod tests {
         );
     }
 
-    /// The converse is deliberately allowed: a path disclosed for a file
-    /// nothing was revealed from (module docs).
+    /// **D82** (the inverse of what this module asserted before the
+    /// decision landed): a path disclosed for a file nothing was revealed
+    /// from is now rejected. File 1 is legitimately touched and revealed
+    /// from; file 0 is touched with neither of its units revealed.
     #[test]
-    fn a_touched_file_with_no_revealed_unit_is_allowed() {
+    fn d82_a_touched_file_with_no_revealed_unit_is_rejected() {
         let reveals = [reveal(2, RevealSection::NonCovered)];
-        let touched = [0u64, 1, 7];
+        let touched = [0u64, 1];
         let bundle = CoherenceBundleView {
             reveals: &reveals,
             touched_file_ids: &touched,
         };
-        assert!(check_coherence(&units(), &bundle).is_ok());
+        let err = check_coherence(&units(), &bundle).expect_err("file 0 has no revealed unit");
+        assert_eq!(
+            err,
+            VerifyError::TouchedFileWithoutRevealedUnit { file_id: 0 }
+        );
+        assert_eq!(err.code(), "touched-file-without-revealed-unit");
+    }
+
+    /// D82 is about the **file**, not its units one at a time: a file with
+    /// two units is disclosed legitimately when *either* is revealed.
+    #[test]
+    fn d82_one_revealed_unit_is_enough_to_justify_the_entry() {
+        for revealed_unit in [0, 1] {
+            let section = if revealed_unit == 0 {
+                RevealSection::Covered
+            } else {
+                RevealSection::NonCovered
+            };
+            let reveals = [reveal(revealed_unit, section)];
+            let touched = [0u64];
+            let bundle = CoherenceBundleView {
+                reveals: &reveals,
+                touched_file_ids: &touched,
+            };
+            assert!(
+                check_coherence(&units(), &bundle).is_ok(),
+                "unit {revealed_unit} of file 0 justifies file 0's entry"
+            );
+        }
+    }
+
+    /// D82's subject order is **manifest file-table order**, not
+    /// `touched_files` order: with both files wrongly touched and the
+    /// bundle listing file 1 first, file 0 is still the reported subject.
+    #[test]
+    fn d82_subjects_are_visited_in_manifest_file_order() {
+        let reveals: [RevealedUnitRef; 0] = [];
+        let touched = [1u64, 0];
+        let bundle = CoherenceBundleView {
+            reveals: &reveals,
+            touched_file_ids: &touched,
+        };
+        assert_eq!(
+            check_coherence(&units(), &bundle).expect_err("neither file has a revealed unit"),
+            VerifyError::TouchedFileWithoutRevealedUnit { file_id: 0 }
+        );
+    }
+
+    /// The new precedence D82 introduces: **1b before group 2**. Unit 0 is
+    /// covered but revealed as non-covered (a group-2 violation), while
+    /// file 1 is touched with nothing revealed from it (a 1b violation).
+    /// 1b's code is the reported one.
+    #[test]
+    fn d82_group_order_touched_exactness_before_reveal_section() {
+        let reveals = [reveal(0, RevealSection::NonCovered)];
+        let touched = [0u64, 1];
+        let bundle = CoherenceBundleView {
+            reveals: &reveals,
+            touched_file_ids: &touched,
+        };
+        assert_eq!(
+            check_coherence(&units(), &bundle)
+                .expect_err("both 1b and group 2 are violated")
+                .code(),
+            "touched-file-without-revealed-unit"
+        );
+    }
+
+    /// And the older precedence is unchanged by 1b's arrival: **group 1
+    /// before 1b**. Unit 2's file 1 is not touched (group 1), and file 0 is
+    /// touched with nothing revealed from it (1b).
+    #[test]
+    fn d82_group_order_touched_coverage_before_touched_exactness() {
+        let reveals = [reveal(2, RevealSection::NonCovered)];
+        let touched = [0u64];
+        let bundle = CoherenceBundleView {
+            reveals: &reveals,
+            touched_file_ids: &touched,
+        };
+        assert_eq!(
+            check_coherence(&units(), &bundle)
+                .expect_err("both group 1 and 1b are violated")
+                .code(),
+            "revealed-unit-file-not-touched"
+        );
     }
 
     /// A covered unit shipped in `noncovered_reveals`.
