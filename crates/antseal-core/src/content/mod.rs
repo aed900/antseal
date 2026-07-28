@@ -46,8 +46,8 @@ pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, Fin
 pub use error::ContentError;
 pub use fine_tree::{
     BoundaryNode, CoverEntry, CoverNode, CoveredUnit, FineRoot, FineTreeBuilder, FineTreeError,
-    FineTreeStats, LeafExactCover, RangeProof, WireNode, cover_seeds, minimal_cover, prove_range,
-    prove_unit, rebuild_fine_root,
+    FineTreeStats, LeafExactCover, RangeProof, RangeProofView, WireNode, cover_seeds,
+    minimal_cover, prove_range, prove_unit, rebuild_fine_root, verify_range,
 };
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
 pub use unit::{
