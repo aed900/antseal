@@ -109,7 +109,11 @@ fn ots_section() -> Vec<Vec<(u64, Vec<u8>)>> {
 fn tsa_section() -> Vec<Vec<(u64, Vec<u8>)>> {
     vec![
         w::tsa_anchor(status::PROVEN, 2, TSA_TOKEN_TAG_A),
-        w::tsa_anchor(status::VALID_AT_STAMPING_CERT_SINCE_EXPIRED, 0, TSA_TOKEN_TAG_B),
+        w::tsa_anchor(
+            status::VALID_AT_STAMPING_CERT_SINCE_EXPIRED,
+            0,
+            TSA_TOKEN_TAG_B,
+        ),
     ]
 }
 

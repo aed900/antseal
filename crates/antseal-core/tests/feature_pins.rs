@@ -491,12 +491,26 @@ fn the_mldsa_wasm32_probe_verdict_still_has_its_evidence() {
          wasm32-unknown-unknown; an emptied module makes that lane green over nothing."
     );
 
+    // Q43 moved this command out of inline YAML and into a committed script,
+    // so the chain gained a link: ci.yml calls the script, the script runs the
+    // tests. Assert BOTH — checking only the script would leave a lane that no
+    // longer calls it green, and checking only the lane cannot see what it runs.
+    let runner = read("scripts/wasm-tests.sh");
+    assert!(
+        runner.contains("cargo test -p antseal-core --lib --target wasm32-unknown-unknown"),
+        "scripts/wasm-tests.sh no longer runs antseal-core's unit tests on \
+         wasm32-unknown-unknown. That command IS the standing evidence for Q14 row \
+         D13: without it the probe verdict rests on a research document from \
+         2026-07-27 and nothing else."
+    );
+
     let ci = read(".github/workflows/ci.yml");
     assert!(
-        ci.contains("cargo test -p antseal-core --lib --target wasm32-unknown-unknown"),
-        "no CI lane runs antseal-core's unit tests on wasm32-unknown-unknown any more. \
-         That command IS the standing evidence for Q14 row D13: without it the probe \
-         verdict rests on a research document from 2026-07-27 and nothing else. If the \
+        ci.contains("scripts/wasm-tests.sh --check"),
+        "no CI lane invokes scripts/wasm-tests.sh --check any more, so nothing runs \
+         antseal-core's unit tests on wasm32-unknown-unknown. That chain IS the standing \
+         evidence for Q14 row D13: without it the probe verdict rests on a research \
+         document from 2026-07-27 and nothing else. If the \
          lane was deliberately restructured, re-point this assertion at whatever \
          executes the ML-DSA tests on wasm32 — do not delete it."
     );
