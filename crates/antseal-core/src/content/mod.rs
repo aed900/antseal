@@ -44,7 +44,10 @@ pub mod unit;
 
 pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, FineTreeOptOut};
 pub use error::ContentError;
-pub use fine_tree::{FineRoot, FineTreeBuilder, FineTreeError, FineTreeStats, rebuild_fine_root};
+pub use fine_tree::{
+    CoverEntry, CoverNode, FineRoot, FineTreeBuilder, FineTreeError, FineTreeStats, LeafExactCover,
+    cover_seeds, minimal_cover, rebuild_fine_root,
+};
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
 pub use unit::{
     ByteRange, FileLengths, FileUnitPlan, SplitEligibleText, Unit, UnitKind, assign_unit_ids,
