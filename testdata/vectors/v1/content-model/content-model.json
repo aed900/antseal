@@ -1,0 +1,256 @@
+{
+  "schema": "antseal-golden-vector",
+  "schema_version": 1,
+  "format_version": "v1",
+  "kind": "content-model",
+  "non_secret": "NON-SECRET test fixture (project rule 6): every value below derives from the documented fixed test seed W = bytes 0x00..0x1f (testdata/README.md) through `content::fixtures::SyntheticFineSeeds`, the deliberately test-only s_root supplier whose domain label appears verbatim in `inputs.fine_seed_label` and which is NOT C's HKDF(W, \"fine-seed\", file_id) — so no committed value here is reachable from any production key schedule. File bytes are synthetic literals. Never real vault material.",
+  "description": "Content-model golden vectors (G21): the seal-side assembly's DERIVED values for two whole works — per-file descriptor fields, canonical rendition, synthetic s_root and fine_root, and per-unit work-global id, kind, byte range, true_length, fine-tree coverage and unit_commit obligation. The first case is byte-identical to G14's Rust fixture `content::fixtures::golden_inputs()`, which the executor asserts in both directions; the second covers the --force-text branch on bytes that are not valid UTF-8. No range-proof bytes are pinned, so decision D83's cover encoding cannot move this document (MVP-SPEC.md lines 76, 78, 83, 85, 92, 94, 98, 153, 169).",
+  "inputs": {
+    "cases": [
+      {
+        "files": [
+          {
+            "force_text": false,
+            "no_fine_tree": false,
+            "raw": "616c706861206f6e650d0a616c7068612074776f0d0a0d0a626574610d0a0d0a0d0a67616d6d610d0a",
+            "split": "blank-lines"
+          },
+          {
+            "force_text": false,
+            "no_fine_tree": false,
+            "raw": "00010280fffe0d0a00",
+            "split": "none"
+          },
+          {
+            "force_text": false,
+            "no_fine_tree": true,
+            "raw": "70617261206f6e650a0a706172612074776f0a",
+            "split": "none"
+          },
+          {
+            "force_text": false,
+            "no_fine_tree": false,
+            "raw": "",
+            "split": "none"
+          }
+        ],
+        "name": "golden-four-file-work",
+        "pins": "G14's golden end-to-end work, byte-identical to `content::fixtures::golden_inputs()`: CRLF text under --split blank-lines with a raw mirror, a binary file, a --no-fine-tree file and an empty file — both FileKinds, both UnitKinds, both fine_root presence states, and the work-global unit_id counter running across four files without restarting (MVP-SPEC.md lines 76, 78, 83, 85, 92, 94, 98)"
+      },
+      {
+        "files": [
+          {
+            "force_text": true,
+            "no_fine_tree": false,
+            "raw": "efbb686561640d0afffe7461696c0d0a",
+            "split": "none"
+          }
+        ],
+        "name": "force-text-invalid-utf8",
+        "pins": "the --force-text branch G14's four files leave untouched: a file that is NOT valid UTF-8 is sealed as text, so its canonical rendition is D20's lossy U+FFFD transform (truncated BOM and lone continuation bytes alike) and its raw mirror is the only carrier of the original bytes (MVP-SPEC.md lines 83, 92, 121)"
+      }
+    ],
+    "fine_seed_label": "antseal:test-only:content-fixture:fine-seed:v1",
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "expect": {
+    "cases": [
+      {
+        "file_count": 4,
+        "files": [
+          {
+            "canonical": "616c706861206f6e650a616c7068612074776f0a0a626574610a0a0a67616d6d610a",
+            "file_id": 0,
+            "fine_root": "4d0d8a1be8aa24d4317db1532d016170e041d47736a3dca4854a9a05b2180781",
+            "fine_tree_domain": "canonical",
+            "fine_tree_present": true,
+            "kind": "text",
+            "raw_len": 41,
+            "s_root": "fb782df004c4f5253e666c2929a8724c97e6b8a09783130758e8e1cba49d141e",
+            "size": 34,
+            "unicode_version": "unicode-17.0.0",
+            "unit_ids": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          {
+            "canonical": null,
+            "file_id": 1,
+            "fine_root": "5ec9e19c79d2fede175e4bdbe983d13d7c130c152ef2cf781350b14b455cd6ee",
+            "fine_tree_domain": "raw",
+            "fine_tree_present": true,
+            "kind": "binary",
+            "raw_len": 9,
+            "s_root": "26dd384773ecd382da6e5a451373a8f1ace429dfb4b1b0806b6fdb3bf3840040",
+            "size": 9,
+            "unicode_version": null,
+            "unit_ids": [
+              4
+            ]
+          },
+          {
+            "canonical": "70617261206f6e650a0a706172612074776f0a",
+            "file_id": 2,
+            "fine_root": null,
+            "fine_tree_domain": null,
+            "fine_tree_present": false,
+            "kind": "text",
+            "raw_len": 19,
+            "s_root": null,
+            "size": 19,
+            "unicode_version": "unicode-17.0.0",
+            "unit_ids": [
+              5
+            ]
+          },
+          {
+            "canonical": "",
+            "file_id": 3,
+            "fine_root": null,
+            "fine_tree_domain": null,
+            "fine_tree_present": false,
+            "kind": "text",
+            "raw_len": 0,
+            "s_root": null,
+            "size": 0,
+            "unicode_version": "unicode-17.0.0",
+            "unit_ids": [
+              6
+            ]
+          }
+        ],
+        "name": "golden-four-file-work",
+        "unit_count": 7,
+        "units": [
+          {
+            "bytes": "616c706861206f6e650a616c7068612074776f0a0a",
+            "covered": true,
+            "file_id": 0,
+            "kind": "normal",
+            "length": 21,
+            "start": 0,
+            "true_length": 21,
+            "unit_commit_required": false,
+            "unit_id": 0
+          },
+          {
+            "bytes": "626574610a0a0a",
+            "covered": true,
+            "file_id": 0,
+            "kind": "normal",
+            "length": 7,
+            "start": 21,
+            "true_length": 7,
+            "unit_commit_required": false,
+            "unit_id": 1
+          },
+          {
+            "bytes": "67616d6d610a",
+            "covered": true,
+            "file_id": 0,
+            "kind": "normal",
+            "length": 6,
+            "start": 28,
+            "true_length": 6,
+            "unit_commit_required": false,
+            "unit_id": 2
+          },
+          {
+            "bytes": "616c706861206f6e650d0a616c7068612074776f0d0a0d0a626574610d0a0d0a0d0a67616d6d610d0a",
+            "covered": false,
+            "file_id": 0,
+            "kind": "raw-mirror",
+            "length": 41,
+            "start": 0,
+            "true_length": 41,
+            "unit_commit_required": true,
+            "unit_id": 3
+          },
+          {
+            "bytes": "00010280fffe0d0a00",
+            "covered": true,
+            "file_id": 1,
+            "kind": "normal",
+            "length": 9,
+            "start": 0,
+            "true_length": 9,
+            "unit_commit_required": false,
+            "unit_id": 4
+          },
+          {
+            "bytes": "70617261206f6e650a0a706172612074776f0a",
+            "covered": false,
+            "file_id": 2,
+            "kind": "normal",
+            "length": 19,
+            "start": 0,
+            "true_length": 19,
+            "unit_commit_required": true,
+            "unit_id": 5
+          },
+          {
+            "bytes": "",
+            "covered": false,
+            "file_id": 3,
+            "kind": "normal",
+            "length": 0,
+            "start": 0,
+            "true_length": 0,
+            "unit_commit_required": true,
+            "unit_id": 6
+          }
+        ]
+      },
+      {
+        "file_count": 1,
+        "files": [
+          {
+            "canonical": "efbfbd686561640aefbfbdefbfbd7461696c0a",
+            "file_id": 0,
+            "fine_root": "59dc8e633abb89c1a7a1b67c391823ab61abcf03e1c4ee3373a9aae925d7ec43",
+            "fine_tree_domain": "canonical",
+            "fine_tree_present": true,
+            "kind": "text",
+            "raw_len": 16,
+            "s_root": "fb782df004c4f5253e666c2929a8724c97e6b8a09783130758e8e1cba49d141e",
+            "size": 19,
+            "unicode_version": "unicode-17.0.0",
+            "unit_ids": [
+              0,
+              1
+            ]
+          }
+        ],
+        "name": "force-text-invalid-utf8",
+        "unit_count": 2,
+        "units": [
+          {
+            "bytes": "efbfbd686561640aefbfbdefbfbd7461696c0a",
+            "covered": true,
+            "file_id": 0,
+            "kind": "normal",
+            "length": 19,
+            "start": 0,
+            "true_length": 19,
+            "unit_commit_required": false,
+            "unit_id": 0
+          },
+          {
+            "bytes": "efbb686561640d0afffe7461696c0d0a",
+            "covered": false,
+            "file_id": 0,
+            "kind": "raw-mirror",
+            "length": 16,
+            "start": 0,
+            "true_length": 16,
+            "unit_commit_required": true,
+            "unit_id": 1
+          }
+        ]
+      }
+    ]
+  }
+}

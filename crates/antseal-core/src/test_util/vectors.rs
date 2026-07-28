@@ -66,6 +66,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "signatures",
     super::vectors_sig_reject::KIND,
     super::vectors_fine_tree::KIND,
+    super::vectors_content_model::KIND,
     super::vectors_report::KIND,
     super::vectors_manifest::KIND,
     super::vectors_bundle::KIND,
@@ -233,6 +234,14 @@ pub fn execute_vector_bytes(
         // G15's fine-tree/GGM vectors; executor in a sibling module for the
         // same reason.
         super::vectors_fine_tree::KIND => super::vectors_fine_tree::execute(
+            envelope.inputs,
+            envelope.expect,
+            envelope.description,
+        ),
+        // G21's content-model vectors: the seal-side assembly's derived
+        // values (descriptors, work-global ids, tilings, mirrors,
+        // `fine_root`s) as a committed FILE, so the Q5 bit-match sees them.
+        super::vectors_content_model::KIND => super::vectors_content_model::execute(
             envelope.inputs,
             envelope.expect,
             envelope.description,
