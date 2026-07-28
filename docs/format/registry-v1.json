@@ -56,6 +56,22 @@
     "zero_copy_requirement": "layer 2 must receive a sub-slice of the bundle input, never a copy: Manifest's guarantee that work_id and signature pre-images are the received bytes holds by construction only for a borrowed slice",
     "max_container_depth": { "bundle_chain": 5, "manifest_chain": 6, "cap_basis": "max of the two, not the sum — layer 2 starts a fresh decoder over the bstr contents", "note": "input to F11" }
   },
+  "version_dispatch": {
+    "doc_section": "registry-v1.md sections 7.1 and 9 (Version dispatch order)",
+    "status": "proposed",
+    "task": "F10",
+    "code_module": "antseal_core::format",
+    "supported_versions": [1],
+    "discriminants": [
+      { "artifact": "bundle", "map": "bundle", "key": 0, "read_after": "nothing — first key of the file", "unsupported_code": "bundle-unsupported-format-version" },
+      { "artifact": "manifest_body", "map": "manifest_body", "key": 0, "read_after": "the §7.1 manifest envelope decode", "unsupported_code": "manifest-unsupported-format-version" }
+    ],
+    "envelope_frozen_across_versions": "the manifest body's discriminant sits INSIDE the body bstr, so the {body, signatures} envelope must be parsed before the version is readable at all; it therefore can never carry a version-specific change, and has no reserved band and no discriminant of its own (§1 rule 6, §7.1)",
+    "discriminants_are_independent": "a v1 bundle may one day carry a v2 manifest; the two rejections are separate codes in separate families (D78) and must stay separable",
+    "unsupported_is_not_malformed": "an unrowed version yields the version error and NOTHING else — never a canonicality error and never an unknown/reserved-key error, even when the rest of the artifact would also fail v1 validation. A *missing* discriminant is `*-missing-key`; a non-canonical one is the `cbor-*` class.",
+    "constant_cost_peek": "canonical maps ascend (§1 rule 3), so key 0 is first on the wire whenever present and the version peek is constant-cost in artifact size — an unsupported oversized artifact is rejected before any section is walked, earlier than the F11 caps apply",
+    "released_versions_decodable_forever": "MVP-SPEC.md line 123: support is added by appending a row to the dispatch table, never by widening an older version's decoder"
+  },
   "checked_absences": {
     "doc_section": "registry-v1.md section 7.6.1",
     "note": "F8's checklist test asserts these are absent, rather than merely not implementing them",

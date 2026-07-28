@@ -37,10 +37,10 @@
 //! `LeafExactCover` (G11), `UnitBinding` (C7) and `SplitEligibleText` (G5):
 //!
 //! - [`V1`] has a private field and **no public constructor**. The only
-//!   place in the crate that mints one is [`VersionDispatch::decode`], after
+//!   place in the crate that mints one is `VersionDispatch::decode`, after
 //!   it has read the discriminant and found it equal to 1.
 //! - Each per-version decoder entry point takes its own version's witness.
-//!   [`VersionDispatch`]'s row is typed `fn(V1<'b>) -> …`, so a v2 decoder
+//!   `VersionDispatch`'s row is typed `fn(V1<'b>) -> …`, so a v2 decoder
 //!   **cannot** be added as a second row of this table: it takes a `V2`
 //!   witness, which is a different type. v2 arrives as its own witness, its
 //!   own entry point and its own table — leaving every byte of the v1 path
@@ -141,7 +141,7 @@ pub fn supported_versions_str(supported: &[u64]) -> String {
 /// schema decode and equals 1.
 ///
 /// Private field, no public constructor: the only production path that mints
-/// one is [`VersionDispatch::decode`]. Holding a `V1` therefore *means*
+/// one is `VersionDispatch::decode`. Holding a `V1` therefore *means*
 /// "dispatch selected the v1 decoder for these exact bytes", which is what
 /// makes "the v1 path is frozen behind dispatch" a type-system fact rather
 /// than a convention (see the module docs).

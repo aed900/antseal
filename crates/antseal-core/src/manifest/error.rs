@@ -414,7 +414,7 @@ pub enum ManifestError {
 
     // ── Version ─────────────────────────────────────────────────────
     /// The body declares a `format_version` with no decoder in this build
-    /// (F10). Raised by [`crate::format::VersionDispatch`] **before** any
+    /// (F10). Raised by `crate::format`'s version dispatch **before** any
     /// schema decode, so a newer-than-this-verifier manifest is never
     /// reported as corrupt: it is neither a canonicality error nor an
     /// unknown-key error, which is the whole point of the class.
@@ -585,7 +585,7 @@ impl ManifestError {
 }
 
 /// F10: the manifest family's unsupported-version rejection, so
-/// [`crate::format::VersionDispatch`] can raise it without knowing anything
+/// `crate::format`'s version dispatch can raise it without knowing anything
 /// about the manifest schema.
 impl crate::format::VersionRejection for ManifestError {
     fn unsupported_version(found: u64, supported: &'static [u64]) -> Self {

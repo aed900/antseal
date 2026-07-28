@@ -59,6 +59,26 @@
 //! The composition of layers 2 and 3 lives in [`proof`], on a separate error
 //! type ([`SealProofError`]) that is the only place the two families meet.
 //!
+//! # Version dispatch and the line-123 stability contract (F10)
+//!
+//! [`BundleV1::decode`] is **not** the v1 decoder: it is F10's dispatch
+//! entry point. The bundle's discriminant is a top-level key of the file
+//! (registry §7.6 key 0) and canonical maps ascend, so it is the first
+//! thing on the wire — an unsupported bundle is
+//! [`BundleError::UnsupportedFormatVersion`] after a few bytes, before any
+//! section is walked and before F11's caps come into play. It is never a
+//! canonicality or unknown-key error: "too new" and "corrupt" are different
+//! claims about the sender.
+//!
+//! This discriminant is **independent** of the embedded manifest's
+//! (registry §7.2 key 0) — a v1 bundle may one day carry a v2 manifest, and
+//! D78 keeps the two rejections in separate families so they never render
+//! alike. The v1 decoder is reachable only with [`crate::format::V1`], an
+//! admission witness with no public constructor, so a future v2 cannot
+//! alter v1's byte behaviour.
+//!
+//! Full policy: [`crate::format`].
+//!
 //! # Construction is validation
 //!
 //! A schema-invalid [`BundleV1`] cannot exist: every field is private and

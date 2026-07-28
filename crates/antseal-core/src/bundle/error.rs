@@ -413,7 +413,7 @@ pub enum BundleError {
 
     // ── Version ─────────────────────────────────────────────────────
     /// The bundle declares a `format_version` with no decoder in this build
-    /// (F10). Raised by [`crate::format::VersionDispatch`] **before** any
+    /// (F10). Raised by `crate::format`'s version dispatch **before** any
     /// schema decode, so a newer-than-this-verifier bundle is never reported
     /// as corrupt: it is neither a canonicality error nor an unknown-key
     /// error.
@@ -546,7 +546,7 @@ impl BundleError {
 }
 
 /// F10: the bundle family's unsupported-version rejection, so
-/// [`crate::format::VersionDispatch`] can raise it without knowing anything
+/// `crate::format`'s version dispatch can raise it without knowing anything
 /// about the bundle schema.
 impl crate::format::VersionRejection for BundleError {
     fn unsupported_version(found: u64, supported: &'static [u64]) -> Self {
