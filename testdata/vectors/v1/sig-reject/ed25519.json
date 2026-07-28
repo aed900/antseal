@@ -1,0 +1,406 @@
+{
+  "description": "Ed25519 strict-verification reject vectors (RFC 8032 verify_strict plus C12's D16 pre-validation layer): S >= L straddling the order, small-order and non-canonical R/A encodings, wrong key, wrong context, wrong lengths — each routed through C14's full verification path.",
+  "expect": {
+    "base": {
+      "public_key": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+      "signature": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805"
+    },
+    "cases": [
+      {
+        "class": "accept",
+        "expect": "accept",
+        "id": "positive-control",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "the untouched base signature over the frozen ctx must verify — without a passing control the whole suite could be green for the wrong reason"
+      },
+      {
+        "class": "s-out-of-range",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "s-plus-l",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "ce84545ec5c8e4da62ee072c2619717ecefb2906e5ae07c1ae03c5b662814815",
+              "offset": 32
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ece84545ec5c8e4da62ee072c2619717ecefb2906e5ae07c1ae03c5b662814815",
+        "why": "S + L is the same scalar mod L, so a non-strict verifier accepts it: the classic Ed25519 malleability maul (RFC 8032 §5.1 requires 0 <= S < L)"
+      },
+      {
+        "class": "s-out-of-range",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "s-equals-l",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+              "offset": 32
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869eedd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+        "why": "the bound is strict: S == L is already out of range"
+      },
+      {
+        "class": "s-out-of-range",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "s-equals-l-plus-one",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "eed3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+              "offset": 32
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869eeed3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+        "why": "one past the order, straddling L from above"
+      },
+      {
+        "class": "s-out-of-range",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "s-all-ones",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "offset": 32
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869effffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "the largest 32-byte scalar encoding, far above L"
+      },
+      {
+        "class": "canonical-but-invalid",
+        "expect": "crypto-signature-invalid-ed25519",
+        "id": "s-equals-l-minus-one",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "ecd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+              "offset": 32
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869eecd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+        "why": "L−1 IS a canonical scalar, so this must fail as `invalid`, not `non-canonical` — the pair that pins the bound at exactly L"
+      },
+      {
+        "class": "small-order-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "small-order-r-identity",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "why": "R = the identity point (order 1) with S = 0 — the classic malleability handle RFC 8032 strict verification rejects"
+      },
+      {
+        "class": "small-order-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "small-order-a-identity",
+        "public_key": {
+          "edits": [
+            {
+              "hex": "0100000000000000000000000000000000000000000000000000000000000000",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "a small-order public key verifies almost every message; both dalek's verify_strict and C12's pre-validation layer reject it"
+      },
+      {
+        "class": "small-order-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "small-order-a-order-two",
+        "public_key": {
+          "edits": [
+            {
+              "hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "public_key_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "y = p−1 is the order-2 point — small-order too"
+      },
+      {
+        "class": "non-canonical-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "non-canonical-a-y-equals-p",
+        "public_key": {
+          "edits": [
+            {
+              "hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "public_key_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "y = p (= 0 mod p) is a non-canonical encoding that the pinned dalek ACCEPTS under ZIP-215 (curve25519-dalek#626) — the D16 conformance gap C12's pre-validation layer closes, pinned here so a pin bump cannot silently reopen it"
+      },
+      {
+        "class": "non-canonical-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "non-canonical-a-negative-zero",
+        "public_key": {
+          "edits": [
+            {
+              "hex": "0100000000000000000000000000000000000000000000000000000000000080",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "the sign bit set on a point with x = 0 — recompression would emit sign 0, so the encoding is not canonical"
+      },
+      {
+        "class": "non-canonical-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "non-canonical-r-y-above-p",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fe1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "the same rule applied to R: y > p is not a reduced field element"
+      },
+      {
+        "class": "non-canonical-point",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "off-curve-a",
+        "public_key": {
+          "edits": [
+            {
+              "hex": "0200000000000000000000000000000000000000000000000000000000000000",
+              "offset": 0
+            }
+          ],
+          "from": "base"
+        },
+        "public_key_hex": "0200000000000000000000000000000000000000000000000000000000000000",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "y = 2 is canonically encoded but has no square root on the curve — an encoding fault, not a wrong signature"
+      },
+      {
+        "class": "wrong-key",
+        "expect": "crypto-signature-invalid-ed25519",
+        "id": "wrong-key",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "from": "alternate-signer"
+        },
+        "signature_hex": "cdbe8a8f403b7f999b2f8eed9c895ca6406d201f989099736f73b9ac955d03580f56869d6ef38682a8a2ccb4ca17196f82b8bfd30c0b11b6ea3c259e9078150c",
+        "why": "an impeccably encoded signature by the alternate signer, checked against the base public key"
+      },
+      {
+        "class": "wrong-context",
+        "expect": "crypto-signature-invalid-ed25519",
+        "id": "wrong-context",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "ctx": "antseal-manifest-v2",
+          "from": "context"
+        },
+        "signature_hex": "ad5c00958d5a551b2a922f82a6f269f8b43384e42614e5857cd338e8a36b4067b131e62a8bf9e065a47b84a4046b95cd2120e1ddde8c11f945d533512d02810f",
+        "why": "signed over `antseal-manifest-v2 || 0x00 || body`: a signature can never be lifted between contexts (MVP-SPEC.md line 97)"
+      },
+      {
+        "class": "wrong-context",
+        "expect": "crypto-signature-invalid-ed25519",
+        "id": "no-context-prefix",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "from": "raw-body"
+        },
+        "signature_hex": "d077a24f52a30146350dc55e5306fc2e045e5e458a1c58a186e5b85c3de315fcd86a679da96b4f8fc51ac35a3238bebbb7db11ff8117e018aafbfd78abd9d604",
+        "why": "signed over the bare body, with no `ctx || 0x00` prefix at all — the cross-protocol lift the prefix construction exists to stop"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "signature-truncated",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "from": "base",
+          "truncate_to": 63
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b6628148",
+        "why": "63 bytes is not a canonical encoding of anything (defense in depth behind F's exact-length bstr rule)"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "signature-over-length",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "append_hex": "00",
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b66281480500",
+        "why": "65 bytes: an appended byte must not be ignored"
+      },
+      {
+        "class": "wrong-length",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "public-key-truncated",
+        "public_key": {
+          "from": "base",
+          "truncate_to": 31
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0",
+        "signature": {
+          "from": "base"
+        },
+        "signature_hex": "da5e0a7d5348bc11e752db8ac4cda9e0f6f0299765dd12edd8854f786cc4869ee1b05e01ab65d2828c511089471f9269cefb2906e5ae07c1ae03c5b662814805",
+        "why": "31-byte public key — the length check fires before any curve arithmetic"
+      },
+      {
+        "class": "degenerate",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "all-zero-signature",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "fill": "00",
+              "offset": 0,
+              "repeat": 64
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "why": "R = the y = 0 point (order 4) with S = 0: adversarial input must reject cleanly, never panic"
+      },
+      {
+        "class": "degenerate",
+        "expect": "crypto-non-canonical-signature-ed25519",
+        "id": "all-ones-signature",
+        "public_key": {
+          "from": "base"
+        },
+        "public_key_hex": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023",
+        "signature": {
+          "edits": [
+            {
+              "fill": "ff",
+              "offset": 0,
+              "repeat": 64
+            }
+          ],
+          "from": "base"
+        },
+        "signature_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "y >= p in R and S >= L at once"
+      }
+    ]
+  },
+  "format_version": "v1",
+  "inputs": {
+    "alg": "ed25519",
+    "body": "616e747365616c206d616e696665737420626f6479206279746573202866697874757265290a",
+    "ctx": "antseal-manifest-v1",
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "kind": "sig-reject",
+  "non_secret": "NON-SECRET — every key here derives from the documented fixed test seed W = 00 01 .. 1f (testdata/README.md); the `wrong-key` cases use the alternate signer SHA-256(\"antseal C15 alternate signer\" || W). No real vault or wallet material.",
+  "schema": "antseal-golden-vector",
+  "schema_version": 1
+}

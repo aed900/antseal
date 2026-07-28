@@ -16,6 +16,10 @@
 //!   Deliberately WASM-safe (parses/executes **bytes**; zero I/O) so the
 //!   Q5 native↔WASM bit-match lane reuses the identical execution path —
 //!   only file discovery lives in the native runner test.
+//! - [`vectors_sig_reject`] — the `sig-reject` vector kind (C15): the
+//!   committed per-algorithm signature reject-vector suites and their
+//!   executor, which routes every case through C14's full verification
+//!   path.
 //!
 //! # Consuming this module
 //!
@@ -35,6 +39,7 @@
 pub mod strategies;
 pub mod tamper;
 pub mod vectors;
+pub mod vectors_sig_reject;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component
 /// crates use this re-export instead of declaring the dependency, so the

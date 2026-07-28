@@ -307,6 +307,41 @@ pub fn verify(
     verify_with_context(pk, body, SIG_CONTEXT, sig)
 }
 
+/// Context-explicit signing for the **C15 reject-vector suite** — available
+/// only under `cfg(test)` / the `test-util` feature, never in a production
+/// build (the [`crate::crypto::unit_aead::mis_encrypt`] precedent).
+///
+/// The public [`sign`] always passes [`SIG_CONTEXT`] as the FIPS 204 `ctx`;
+/// the wrong-ctx reject vectors need signatures made under a *different*
+/// context (including the empty one the crate's `Signer`/`Verifier` trait
+/// impls would silently use), so the escape hatch lives here.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_signing {
+    use super::{MasterSecretRef, MlDsa65Signature, sign_with_context as sign_inner};
+
+    /// FIPS 204 Algorithm 2 step 1: a context longer than this is not
+    /// signable, and the standard's own failure mode is `⊥`.
+    pub const MAX_CTX_LEN: usize = 255;
+
+    /// Sign `body` under an **explicit** FIPS 204 context.
+    ///
+    /// Returns `None` — rather than panicking — when `ctx` exceeds
+    /// [`MAX_CTX_LEN`], so a vector file carrying an over-long context is a
+    /// clean rejection and not a crash (working principle *parse
+    /// defensively*).
+    #[must_use]
+    pub fn sign_with_context(
+        w: MasterSecretRef<'_>,
+        body: &[u8],
+        ctx: &[u8],
+    ) -> Option<MlDsa65Signature> {
+        if ctx.len() > MAX_CTX_LEN {
+            return None;
+        }
+        Some(sign_inner(w, body, ctx))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

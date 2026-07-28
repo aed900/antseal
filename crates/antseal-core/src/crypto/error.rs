@@ -309,8 +309,14 @@ impl CryptoError {
 /// module's code tests and by `verify::error::all_error_exemplars`, which
 /// wraps each in the `VerifyError::Crypto` arm so the R-side distinctness
 /// meta-test covers the delegated codes too (F3's `cbor-*` precedent).
-#[cfg(test)]
-pub(crate) fn all_code_exemplars() -> Vec<CryptoError> {
+///
+/// Also the **code universe** the C15 vector executor and the C17 tamper
+/// rows validate their expected codes against: a committed artifact naming
+/// a code no variant can emit is a typo, and this list is what catches it.
+/// `test-util` only — no production build sees it.
+#[cfg(any(test, feature = "test-util"))]
+#[must_use]
+pub fn all_code_exemplars() -> Vec<CryptoError> {
     use CryptoError as E;
     let mut exemplars = Vec::new();
     for kind in CommitmentKind::ALL {

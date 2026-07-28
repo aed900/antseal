@@ -380,6 +380,41 @@ pub fn verify(
     verify_message(pk, &signing_message(body), sig)
 }
 
+/// Context-explicit signing for the **C15 reject-vector suite** — available
+/// only under `cfg(test)` / the `test-util` feature, never in a production
+/// build (the [`crate::crypto::unit_aead::mis_encrypt`] precedent).
+///
+/// The public [`sign`] deliberately admits no context parameter: every
+/// signature this crate can produce binds [`SIG_CONTEXT`]. Authoring the
+/// *negative* vectors — a signature that is perfectly valid under some other
+/// context, or one made with no context prefix at all — therefore needs an
+/// explicit escape hatch, and it lives here so no production path can reach
+/// it.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_signing {
+    use super::{CONTEXT_SEPARATOR, Ed25519Signature, MasterSecretRef, sign_message};
+
+    /// Sign `ctx ‖ 0x00 ‖ body` under an **explicit** context. With
+    /// `ctx = SIG_CONTEXT` this is byte-identical to [`super::sign`]; with
+    /// any other value it produces the wrong-ctx reject vectors of
+    /// MVP-SPEC.md line 97.
+    #[must_use]
+    pub fn sign_with_context(w: MasterSecretRef<'_>, ctx: &[u8], body: &[u8]) -> Ed25519Signature {
+        let mut message = Vec::with_capacity(ctx.len() + 1 + body.len());
+        message.extend_from_slice(ctx);
+        message.push(CONTEXT_SEPARATOR);
+        message.extend_from_slice(body);
+        sign_message(w, &message)
+    }
+
+    /// Sign `message` with **no context construction at all** — the
+    /// "signature made without the prefix" reject vector (spec line 97).
+    #[must_use]
+    pub fn sign_raw_message(w: MasterSecretRef<'_>, message: &[u8]) -> Ed25519Signature {
+        sign_message(w, message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
