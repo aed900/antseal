@@ -54,15 +54,17 @@
 ### A5 — Implement strict-DER parsing for TimeStampResp/CMS/TSTInfo with hard caps
 - Milestone: M2
 - Size: M
-- Deps: A2; P/A-OD8: der/cms/x509-cert crate pins
+- Deps: A2; **A27 (the limit contract — read `docs/format/anchor-artifact-limits.md` before choosing any number)**; P/A-OD8: der/cms/x509-cert crate pins
 - Spec: Anchoring (line 109), Milestones M2 (line 155), Tamper matrix BER row (line 168), Risks — hostile bundles (line 187)
-- Do: In `antseal-core`, parse `TimeStampResp` (PKIStatusInfo status/failInfo), CMS `ContentInfo`/`SignedData`, `TSTInfo`, and X.509 certificates with strict-DER-only decoding; BER constructs (indefinite lengths, non-minimal lengths) are rejected with a distinct DER-strictness error class. Enforce hard caps before/during parse: max response size, max certificate count/size, max signed-attribute count, max nesting depth. Adversarial input returns typed errors — never panics.
+- Do: In `antseal-core`, parse `TimeStampResp` (PKIStatusInfo status/failInfo), CMS `ContentInfo`/`SignedData`, `TSTInfo`, and X.509 certificates with strict-DER-only decoding; BER constructs (indefinite lengths, non-minimal lengths) are rejected with a distinct DER-strictness error class. Adversarial input returns typed errors — never panics. **Limits split in two, per A27's contract (D84 §5) — do not mint a constant without checking which half it falls in.** (a) **Already frozen, consume by name, never redefine**: the certificate count over bundle-embedded intermediates is **`MAX_INTERMEDIATE_COUNT` = 16** (D10 row 8) and the per-element certificate size is **`MAX_CERT_BYTES` = 64 KiB** (D10 row 18); both already fire in verify stage 1 with their own error codes, so A5 adds no check over those fields. (b) **Genuinely open, chosen here at M2 against A25's recorded FreeTSA/DigiCert tokens**: max DER nesting depth, max certificate count *within a chain being validated* (a different quantity from the bundle field), max per-certificate size *within a validated chain*, max signed-attribute count. Every (b) limit obeys **F1–F4**: evaluated only in the anchor stage, never reachable from `SealProof::decode`; an over-limit artifact fails **that anchor alone** as `invalid`; raise-only afterwards; recorded in A27's F4 registry. The receive-side "max response size" over the network `TimeStampResp` is **A28's**, not this task's, and carries the derived constraint **`receive_cap <= MAX_TSA_TOKEN_BYTES`** (a token too large to embed is a seal that anchors and then cannot be revealed).
 - Accept:
   - Real FreeTSA and DigiCert responses (recorded via the A25 runbook) parse successfully.
   - A BER-transcoded variant of a valid token fails with the distinct BER-where-DER-required error (feeds A21 row 7).
-  - Every cap has a rejection test with a distinct cap error.
+  - Every (b) limit has a rejection test with a distinct cap error, plus its F4 registry row (value, A25 fixture measured against, margin, `lowered: never`).
+  - **F1 demonstrated, not asserted**: a test proves an over-limit token still yields a decodable bundle with a verified manifest and only its own anchor `invalid` (F2/F3).
+  - No new constant duplicates `MAX_INTERMEDIATE_COUNT` or `MAX_CERT_BYTES` (grep-level review item).
   - Fuzz entry point exists for A23; 1 h local fuzz run clean; `wasm32-unknown-unknown` build passes.
-- Notes: The real-response Accept bullets are bootstrapped by an early one-off capture (see A25's bootstrap note) and finally re-run at A25; evaluate the remaining bullets in dependency order.
+- Notes: The real-response Accept bullets are bootstrapped by an early one-off capture (see A25's bootstrap note) and finally re-run at A25; evaluate the remaining bullets in dependency order. **Corrected 2026-07-28 (A27/D84 §5)**: this `Do` previously promised "max certificate count/size" as if unset — both are frozen D10 constants, and an implementer reading this file alone would have minted duplicates.
 
 ### A6 — Implement pinned TSA root store: versioned format, injection API, compiled into `antseal-core`
 - Milestone: M2
@@ -127,15 +129,17 @@
 ### A11 — Wrap `.ots` codec with strict limits, op execution, and digest-commitment check
 - Milestone: M2
 - Size: M
-- Deps: A2; P: pin `opentimestamps = "=0.2.0"` (P18); A-OD6
+- Deps: A2; **A27 (the limit contract — read `docs/format/anchor-artifact-limits.md` before choosing any number)**; P: pin `opentimestamps = "=0.2.0"` (P18); A-OD6
 - Spec: Anchoring (line 108), Milestones M2 (line 155), Tamper matrix (line 168), Risks (line 187)
-- Do: In `antseal-core`, wrap the `opentimestamps` 0.2.0 crate (wire-format codec only) behind a hardened API: enforce limits before/during decode (max file size, max op count, max append/prepend operand length, max branch depth/width, max attestation count); execute the op DAG from the stamped digest; require the stamped digest to equal `anchor_digest`, else a distinct "ops do not commit anchor_digest" `invalid` error; extract per-attestation results — pending {calendar URL, commitment} and Bitcoin {attested height, ops-derived merkle root}. Unknown ops/attestation types surface as typed unverifiable results, never crashes.
+- Do: In `antseal-core`, wrap the `opentimestamps` 0.2.0 crate (wire-format codec only) behind a hardened API: execute the op DAG from the stamped digest; require the stamped digest to equal `anchor_digest`, else a distinct "ops do not commit anchor_digest" `invalid` error; extract per-attestation results — pending {calendar URL, commitment} and Bitcoin {attested height, ops-derived merkle root}. Unknown ops/attestation types surface as typed unverifiable results, never crashes — and per **F3**, unknown is *not* over-limit, so that path keeps its own treatment and is not governed by a limit. **Limits split in two, per A27's contract (D84 §5) — do not mint a constant without checking which half it falls in.** (a) **Already frozen, consume by name, never redefine**: the "max file size" over a bundle-embedded `.ots` **is `MAX_OTS_BYTES` = 1 MiB** (D10 row 16), which already fires in verify stage 1 with its own error code; A11 adds no byte cap over that field. (b) **Genuinely open, chosen here at M2 against A25's recorded pending and upgraded `.ots`**: max op count, max append/prepend operand length, max branch depth/width, max attestation count. Every (b) limit obeys **F1–F4**: evaluated only in the anchor stage, never reachable from `SealProof::decode`; an over-limit artifact fails **that anchor alone** as `invalid`; raise-only afterwards; recorded in A27's F4 registry. The receive-side cap on A13's *merged* `.ots` is **A28's**, not this task's, and carries the derived constraint **`merge_cap <= MAX_OTS_BYTES`**.
 - Accept:
   - Recorded real pending and upgraded `.ots` fixtures parse and classify correctly.
   - `.ots` stamping a different digest → distinct `invalid` error (A21 row 1).
-  - Each limit has a rejection test; fuzz entry point for A23 runs 1 h clean.
-  - `wasm32-unknown-unknown` build passes (or the A-OD6 fallback is executed).
-- Notes: `opentimestamps` 0.2.0 is from 2023 and dormant — verify at execution time that it compiles on current stable and wasm32; vendoring/forking the codec is the contingency (A-OD6). Real-fixture Accept bullets bootstrap from the early A25 capture and are finally re-run at A25.
+  - Each (b) limit has a rejection test with a distinct error, plus its F4 registry row (value, A25 fixture measured against, margin, `lowered: never`).
+  - **F1 demonstrated, not asserted**: a test proves an over-limit `.ots` still yields a decodable bundle with a verified manifest and only its own anchor `invalid` (F2/F3).
+  - No new constant duplicates `MAX_OTS_BYTES` (grep-level review item).
+  - Fuzz entry point for A23 runs 1 h clean; `wasm32-unknown-unknown` build passes (or the A-OD6 fallback is executed).
+- Notes: `opentimestamps` 0.2.0 is from 2023 and dormant — verify at execution time that it compiles on current stable and wasm32; vendoring/forking the codec is the contingency (A-OD6). Real-fixture Accept bullets bootstrap from the early A25 capture and are finally re-run at A25. **Corrected 2026-07-28 (A27/D84 §5)**: this `Do` previously promised "max file size" as if unset — it is the frozen `MAX_OTS_BYTES`, and an implementer reading this file alone would have minted a duplicate.
 
 ### A12 — Implement embedded Bitcoin header offline check producing `attested`
 - Milestone: M2
