@@ -1428,7 +1428,11 @@ pub mod shapes {
                 split_multi_unit(),
                 Selection(vec![FileSelection::Units(vec![0, 1, 2])]),
             ),
-            case("split-multi-unit/all", split_multi_unit(), Selection::all(1)),
+            case(
+                "split-multi-unit/all",
+                split_multi_unit(),
+                Selection::all(1),
+            ),
             case("no-fine-tree/full", no_fine_tree(), Selection::all(1)),
             case(
                 "raw-mirror-sources/all",
