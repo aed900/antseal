@@ -66,7 +66,7 @@ while `canon_commit` lives inside `CanonMode::Text`
 
 **Wire shape.** §7.14 key 1 `file_salt` is `req`, tier **[P]** —
 decidable from the one entry being decoded, with no reference to the manifest
-(`docs/format/registry-v1.md:861`, tier table at `:89`).
+(`docs/format/registry-v1.md` §7.14 key 1, tier table at §0).
 
 ## The exposure, quantified
 
@@ -156,7 +156,7 @@ The decision stands on the three arguments below instead.
 
 ### 2. It would push §7.14 off tier [P] and make the entry undecidable at F8
 
-Today `file_salt` is `req` [P] (`docs/format/registry-v1.md:861`): F8
+Today `file_salt` is `req` [P] (`docs/format/registry-v1.md` §7.14 key 1): F8
 validates a full-reveal entry from the entry's own bytes. Under a split,
 neither salt can be unconditionally required —
 
@@ -170,14 +170,14 @@ raw_salt   present ⟺ full(F) ∧ (F.canon = Binary ∨ F's mirror ∈ revealed
 bytes to bind. Both conditions read the **manifest**: `CanonMode` for the
 first, and `CanonMode` *plus* the intersection of the revealed set with the
 manifest's mirror unit for the second. Both are tier **[R]** by the registry's
-own definition (`docs/format/registry-v1.md:91`), and **D78** forbids bundle
+own definition (`docs/format/registry-v1.md` §0, validation tiers), and **D78** forbids bundle
 schema validation from opening the embedded manifest at all. F8 would no
 longer be able to decide whether a §7.14 entry is well formed — the exact
 failure mode D75 rejected in its rationale 1
 (`docs/decisions/D75-full-reveal-cover-shape.md` lines 33–40).
 
 There is a second-order casualty. §7.14's shape consequence 1
-(`docs/format/registry-v1.md:895–900`) records that "missing `file_salt`" is
+(`docs/format/registry-v1.md` §7.12, non-covered-unit reveal) records that "missing `file_salt`" is
 realized as a **missing entry**, not an entry with a missing key —
 *precisely because* key 1 is `req` at schema level, so F8 rejects a
 key-1-less entry as `bundle-missing-key` before R4 runs. Split the salt and
@@ -301,7 +301,7 @@ structural half the plaintext manifest publishes unconditionally anyway.
 - **C7**: one witness, one accessor. `FullFileRevealContext` /
   `FullFileRevealDisclosure::file_salt_bytes` are unchanged.
 - **F4/F8**: §7.14 key 1 stays `req` tier **[P]**
-  (`docs/format/registry-v1.md:861`). Key 3–23 stay reserved; a future
+  (`docs/format/registry-v1.md` §7.14 key 1). Key 3–23 stay reserved; a future
   `raw_salt` would take a reserved slot, not displace key 1.
 - **R4**: rows 1–5 and the `FullRevealMaterial` two-valued discriminator are
   unchanged; no new codes.

@@ -87,11 +87,11 @@ use super::hkdf::derive_sig_mldsa65_seed;
 use super::material::{MasterSecretRef, Seed32};
 
 /// Byte length of an ML-DSA-65 public key (FIPS 204 Table 2; F's schema,
-/// registry §4: 1952 B).
+/// registry §2 — fixed scalar lengths: 1952 B).
 pub const PUBLIC_KEY_LEN: usize = 1952;
 
 /// Byte length of an ML-DSA-65 signature (FIPS 204 Table 2; F's schema,
-/// registry §4: 3309 B).
+/// registry §2 — fixed scalar lengths: 3309 B).
 pub const SIGNATURE_LEN: usize = 3309;
 
 /// FIPS 204 Algorithm 26 `sigEncode` layout for ML-DSA-65, as byte offsets

@@ -155,7 +155,7 @@ signature of a missing schema rule, not of a rule correctly placed.
 1. **It is a manifest-only malformation, so it belongs to `manifest-`.**
    Deciding it needs the one file entry being decoded and nothing else — the
    same tier the registry assigns to "non-empty container", **[P]**
-   (`docs/format/registry-v1.md:89`). D30 §2 makes `manifest-` mean
+   (`docs/format/registry-v1.md` §0, validation tiers). D30 §2 makes `manifest-` mean
    "the embedded manifest is malformed on its own bytes"
    (`docs/testing/error-code-contract.md:29–49`); putting a bundle-free rule
    into R's unprefixed namespace would misfile it.
