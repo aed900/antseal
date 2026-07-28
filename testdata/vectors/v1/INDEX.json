@@ -53,6 +53,13 @@
       "kind": "sig-reject",
       "task": "C15",
       "pins": "ML-DSA-65 canonical-encoding rejects — hint/z bounds and out-of-range encodings — plus the FIPS-204 and empty-ctx confusions (MVP-SPEC.md line 97)"
+    },
+    {
+      "slug": "fine-tree-unbalanced-n6",
+      "path": "fine-tree/fine-tree.json",
+      "kind": "fine-tree",
+      "task": "G15",
+      "pins": "fine-tree kind: the unbalanced n=6 opening that pins MSB-first GGM indexing, with every intermediate exposed — GGM node seeds, per-leaf salts, RFC 6962 unbalanced promotion, fine_root, and covers + boundary paths for reveal {2}, [4,6) and full [0,6); plus n=1, n=0 and n=5 (MVP-SPEC.md lines 96, 169)"
     }
   ],
   "pending": [
@@ -69,13 +76,6 @@
       "task": "F13",
       "must_exist_before_freeze": true,
       "pins": "bundle kind incl. the empty-anchor (UNANCHORED) vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153)"
-    },
-    {
-      "slug": "fine-tree-unbalanced-n6",
-      "kind": "fine-tree",
-      "task": "G15",
-      "must_exist_before_freeze": true,
-      "pins": "fine-tree kind: the unbalanced n=6 opening that pins MSB-first GGM indexing (MVP-SPEC.md line 169)"
     },
     {
       "slug": "verification-reports",

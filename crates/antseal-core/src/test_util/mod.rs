@@ -84,6 +84,7 @@ pub mod tamper;
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_fine_tree;
+#[cfg(feature = "test-util")]
 pub mod tamper_rows_structural;
 pub mod vectors;
 pub mod vectors_fine_tree;
