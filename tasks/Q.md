@@ -212,31 +212,45 @@ The two copies are drift-checked by
 **Coupled version constants — the row that makes a bump impossible to
 half-land.**
 
-- [ ] **Report-format version constants: all three, in one edit (R32, D29 §8,
-  D87).** `REPORT_VERSION == 1` is not the whole bump. **Three** constants are
-  coupled and only **one** of the two couplings is machine-checked:
-  1. `antseal_core::verify::report::REPORT_VERSION`
-     (`crates/antseal-core/src/verify/report.rs`) — the first key of every
-     serialized report;
-  2. `wasm_bitmatch::TRANSCRIPT_VERSION`
-     (`crates/wasm-bitmatch/src/lib.rs`), whose own doc comment declares the
-     coupling — *"`0` while D29 is a recommendation; Q14 freezes the report
-     byte format and this becomes `1`"*;
-  3. `EXPECTED_TRANSCRIPT_VERSION` (`scripts/wasm-bitmatch.mjs`), the node
-     comparator's copy of (2).
+- [ ] **`REPORT_VERSION` is `1` and its coupled edits are all in (R32; D29
+  Recommendation rule 8).** Bumping it is a format event, never a chore.
+  **Three** sites, and the third is a deliberate NEGATIVE:
 
-  **(2) ↔ (3) is enforced at runtime** — `scripts/wasm-bitmatch.mjs` compares
-  them and fails the lane ("update `EXPECTED_TRANSCRIPT_VERSION` together with
-  `wasm_bitmatch::TRANSCRIPT_VERSION`"). **(1) → (2) is enforced by nothing at
-  all**: no compiler, no test, and no lane couples the report version to the
-  transcript version. R32's own entry names only (1), so following R32 to the
-  letter leaves the transcript declaring version `0` for a frozen v1 report
-  format. The gate therefore confirms **by `grep`, not by memory**: all three
-  read `1`; every case in `testdata/vectors/v1/report/verification-reports.json`
-  pins bytes beginning `{"report_version":1`; `scripts/vector-freeze.sh --update`
-  has been re-run and `FROZEN.sha256` matches; and the `wasm-bitmatch` lane is
-  green *after* the bump, not only before it. **Q40** replaces this row's first
-  clause with a machine check; until Q40 lands, this row is the only guard.
+  1. `testdata/vectors/v1/report/verification-reports.json` — all 21 pinned
+     byte strings begin `{"report_version":1`. Re-emit with
+     `cargo test -p antseal-core --features test-util --test report_vectors --
+     --ignored emit_report_vector_document`, then `scripts/vector-freeze.sh
+     --update`. **ENFORCED**: the vector executor fails on a bump without a
+     re-emit, and post-freeze the checker refuses the changed digest.
+  2. `EXPECTED_CANONICAL_JSON` in `crates/antseal-core/src/verify/mod.rs`'s
+     `tests` — D29's fixed-fixture snapshot. **Enforced by NOTHING else.** It
+     is a `#[cfg(test)]` unit test, so it runs in `wasm32-core-tests`, where
+     stdout is discarded and a panic aborts the module: the whole diagnosis
+     available there is `the test binary trapped: unreachable`, with no test
+     name, no assertion and no message. Reproduce natively with
+     `cargo test -p antseal-core --lib`. R32 missed this site; it passed every
+     other lane. **R41** makes that lane name its failing test.
+  3. **NOT** `wasm_bitmatch::TRANSCRIPT_VERSION` and **NOT**
+     `EXPECTED_TRANSCRIPT_VERSION` in `scripts/wasm-bitmatch.mjs`. R32
+     established on evidence that these version the transcript **envelope**:
+     the transcript carries no report field, aggregates all **seven** vector
+     kinds, is written to `target/`, appears in no `FROZEN.sha256`, and never
+     meets `--update`'s changed-digest refusal. They stay `0` through this
+     gate. Their `0` was a schema version doing double duty as a
+     provisionality flag — *"`0` while D29 is a recommendation"* describes
+     D29's status, not the transcript's shape. The rule now recorded in all
+     four places that asserted the false coupling: **the transcript version
+     moves when a transcript FIELD is added, removed, renamed or reordered,
+     and never for a change in what the fields contain.**
+
+  The gate confirms by `grep`, not by memory: (1) and (2) read `1`, (3) reads
+  `0`, `FROZEN.sha256` matches after `--update`, and the `wasm-bitmatch` lane
+  is green *after* the bump, not only before it.
+
+  *(History: an earlier wave-6 draft of this row named all three constants as
+  coupled and asked for all three to read `1`. R32's implementation disproved
+  it — see its coupling verdict. **Q40**, registered against the superseded
+  reading, is retargeted by **R42**.)*
 
 **Report-format scope — what the freeze does and does not close.**
 
@@ -590,6 +604,7 @@ question).**
 - Deps: R32 (the bump this guards); Q5 (the bit-match lane the constants live in); D87 §6 (the routing that found it)
 - Spec: Format stability (MVP-SPEC.md line 123); Verification (line 167); Milestones M0 (line 153)
 - Discovered by: **Q37** (2026-07-28), executing D87 §6's routing. Three constants must move together at the report-format freeze — `antseal_core::verify::report::REPORT_VERSION`, `wasm_bitmatch::TRANSCRIPT_VERSION`, and `EXPECTED_TRANSCRIPT_VERSION` in `scripts/wasm-bitmatch.mjs`. **Exactly one of the two couplings is enforced.** The `.mjs` comparator checks itself against `TRANSCRIPT_VERSION` at runtime and fails the lane on a mismatch — that pair is safe. Nothing whatsoever couples `REPORT_VERSION` to `TRANSCRIPT_VERSION`: not the compiler, not a test, not a lane. `TRANSCRIPT_VERSION`'s own doc comment promises it becomes `1` when Q14 freezes the report byte format, and that promise is enforced by nobody. R32's entry names only `REPORT_VERSION`, so following R32 exactly leaves the transcript declaring version `0` over a frozen v1 report format — the same shape of Q14 trap R32 exists to close, reproduced one file over.
+- **[2026-07-28] SUPERSEDED IN PART by R32's implementation.** The premise below — that the two constants are one number — is **false**. R32 established on evidence that `TRANSCRIPT_VERSION` versions the transcript *envelope*, which carries no report field, aggregates all seven vector kinds, is written to `target/`, and is never frozen. Do **not** add the equality assertion: it would pin a coupling that does not exist and would go red the first time either version legitimately moves alone. What survives is the real hazard this task noticed — that a version constant's doc comment promised something no check enforced. The replacement work is (a) the corrected Q14 row above, and (b) asserting the rule R32 recorded: the transcript version moves when a transcript **field** is added, removed, renamed or reordered, never for a change in field *contents*. Retarget or close with **R42**.
 - Do: Add a test in `crates/wasm-bitmatch` asserting `wasm_bitmatch::TRANSCRIPT_VERSION == antseal_core::verify::report::REPORT_VERSION`, with a comment stating *why* they are one number rather than two (the transcript serializes under D29's rules, so the transcript's format version and the report's format version freeze together). That single assertion closes the unenforced half; the `.mjs` runtime check already closes the other, so the chain becomes complete. If a future version ever needs the two to diverge, the test is the place that must be deliberately edited — which is the point.
 - Accept:
   - The test exists and is green at the current values, and goes red when either constant is changed alone (test-of-the-test: flip one, watch it fail, restore).
