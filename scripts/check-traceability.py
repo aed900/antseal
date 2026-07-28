@@ -489,6 +489,14 @@ DECISIONS_HOMED_ELSEWHERE = {
     11: "docs/research/S1-ant-core-api-survey.md (address length, pinned from ant-core source)",
     12: "docs/decisions/D7-cbor-crate.md §D12 (the cross-check nominee)",
     16: "docs/research/C11-signature-probe.md §9 (the probe that decided it)",
+    # Added at the Q14 freeze, 2026-07-28 — and this check is what noticed.
+    # Both were ratified in artifacts rather than in a record file, so while
+    # their register entries were OPEN the check let them pass on that basis.
+    # Closing the entries at the freeze removed their only home and turned this
+    # lane red, correctly: a resolved decision with no home is exactly what the
+    # check exists to catch. Their homes are named here instead.
+    17: "docs/format/registry-v1.md §6.2 + crypto::sig_policy (ratified in code at C14/F5, frozen at Q14)",
+    30: "docs/testing/error-code-contract.md (the contract IS the record; frozen at Q14, mechanism in Q52)",
 }
 
 # A citation is only a decision reference if the number is an allocated id.
