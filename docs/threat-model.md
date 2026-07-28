@@ -522,11 +522,57 @@ reachable.
 
 ## 2.10 WASM zeroization caveat
 
-*Scope.* The normative caveat from MVP-SPEC.md line 143 and task C21: the
-browser verifier cannot guarantee zeroization of bundle-supplied key
-material. Content is delivered by C21.
+**Delivered by C21 (2026-07-28) — this section is written.** The full
+per-buffer audit behind it is `docs/zeroization-audit.md`.
 
-*Status:* not written — M4 (Q21).
+### The caveat
+
+> **The WASM verifier cannot guarantee zeroization for bundle-supplied keys
+> (`k_u`, `k_m`, salts) in browser memory.**
+
+This is normative (MVP-SPEC.md line 143) and is also carried as a doc comment
+on the crypto module root, `crates/antseal-core/src/crypto.rs`.
+
+### Why not
+
+Every secret-bearing type in `antseal-core::crypto` is `ZeroizeOnDrop`, and
+those impls run under `wasm32` exactly as they do natively: the writes are
+volatile and cannot be optimised away. But that is a promise about **one
+linear-memory allocation**, not about the machine underneath it. Outside that
+allocation the runtime does things Rust cannot see or undo:
+
+- the bundle bytes were almost certainly copied into engine-owned buffers
+  before they ever reached linear memory — a `fetch` response, a `File` read,
+  the source `ArrayBuffer`, string intermediates — and those copies are
+  garbage-collected, not wiped;
+- `memory.grow` may relocate the entire WebAssembly memory, leaving the old
+  region intact and unreachable;
+- the browser may swap the tab's pages, snapshot them for session restore, or
+  hand them to a crash reporter.
+
+None of this is reachable from the Rust side, so no amount of care inside
+`antseal-core` closes it.
+
+### Why it is bounded
+
+- The keys in question open **exactly the content the bundle already contains
+  in the clear**. A verifier that has been given `k_u` for a revealed unit has
+  also been given that unit's plaintext; retaining the key discloses nothing
+  the page was not shown.
+- **`W` never reaches a browser at all.** The verifier holds bundle-supplied
+  keys only — never the master secret — so the retroactive, unrotatable
+  compromise of §2.1 cannot originate here.
+
+### Practical guidance (for the docs at M4)
+
+Treat a browser that has verified a bundle as having **retained that bundle's
+`k_u`/`k_m`/salts until the tab is closed**. For a reveal whose contents are
+sensitive to the point that the receiving machine matters, use the CLI
+verifier, which runs in a process whose memory the OS reclaims on exit and
+whose zeroization is real.
+
+*Status:* written (C21). Cross-check at M4 (Q21) once the verifier page
+exists, in case the shipped page adds handling that widens the exposure.
 
 ---
 

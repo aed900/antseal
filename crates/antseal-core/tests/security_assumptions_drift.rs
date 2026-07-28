@@ -12,7 +12,7 @@
 //! house style as `identifier_bans.rs` and the registry cross-check tests: it
 //! reads the tracked files and asserts the claims mechanically.
 //!
-//! Two claims, each an explicit acceptance criterion of its task:
+//! Three claims, each an explicit acceptance criterion of its task:
 //!
 //! 1. **C20/Q12** — the text between the `frozen-security-assumptions`
 //!    markers is **byte-identical** in `docs/security-assumptions.md` and
@@ -26,8 +26,12 @@
 //!    successful decryption is evidence of anything — so the rule is planted
 //!    where that refactor gets written, not only where security documents get
 //!    read.
+//! 3. **C21** — the normative WASM zeroization caveat is present both as a
+//!    doc comment on the crypto module root and in `docs/threat-model.md`.
+//!    It is a residual risk with no mitigation, so the only thing that can go
+//!    wrong with it is that someone deletes it.
 //!
-//! For claim 2, whitespace and Markdown emphasis are normalized before
+//! For claims 2 and 3, whitespace and Markdown emphasis are normalized before
 //! comparison, so rewrapping a doc comment is allowed and changing its words
 //! is not.
 
@@ -55,6 +59,17 @@ const AEAD_MODULES: &[&str] = &[
     "crates/antseal-core/src/crypto/unit_aead.rs",
     "crates/antseal-core/src/crypto/manifest_aead.rs",
 ];
+
+/// C21's normative WASM caveat (MVP-SPEC.md line 143), in the wording carried
+/// by the crypto module root and by the threat model.
+const WASM_ZEROIZE_CAVEAT: &str = "The WASM verifier cannot guarantee zeroization for \
+     bundle-supplied keys (k_u, k_m, salts) in browser memory.";
+
+/// The crypto module root, which must carry [`WASM_ZEROIZE_CAVEAT`].
+const CRYPTO_MODULE_ROOT: &str = "crates/antseal-core/src/crypto.rs";
+
+/// C21's per-buffer audit, which the caveat's "why" lives in.
+const ZEROIZATION_AUDIT: &str = "docs/zeroization-audit.md";
 
 fn workspace_path(relative: &str) -> PathBuf {
     Path::new(WORKSPACE_ROOT).join(relative)
@@ -215,6 +230,39 @@ fn both_documents_delimit_a_substantial_frozen_block() {
             block.len()
         );
     }
+}
+
+/// C21 accept: the WASM zeroization caveat is a doc comment on the crypto
+/// module root **and** is delivered into the threat model.
+///
+/// It is a residual risk with no mitigation available at this layer, so the
+/// documentation *is* the deliverable — which makes silent deletion the only
+/// way it can regress.
+#[test]
+fn the_wasm_zeroize_caveat_is_on_the_module_root_and_in_the_threat_model() {
+    let caveat = normalize(WASM_ZEROIZE_CAVEAT);
+
+    let prose = module_doc_prose(&read(CRYPTO_MODULE_ROOT));
+    assert!(
+        prose.contains(&caveat),
+        "{CRYPTO_MODULE_ROOT}: the C21 WASM zeroization caveat is missing from \
+         the crypto module-root docs. It must read:\n\n    \
+         {WASM_ZEROIZE_CAVEAT}\n\n(MVP-SPEC.md line 143.)"
+    );
+
+    let threat_model = normalize(&read(THREAT_MODEL));
+    assert!(
+        threat_model.contains(&caveat),
+        "{THREAT_MODEL}: the C21 WASM zeroization caveat must be delivered into \
+         the threat model (§2.10) as well as living on the crypto module root."
+    );
+
+    let audit = normalize(&read(ZEROIZATION_AUDIT));
+    assert!(
+        audit.contains(&caveat),
+        "{ZEROIZATION_AUDIT}: the audit must state the caveat it is the \
+         evidence for (residual risk R5)."
+    );
 }
 
 /// Q12 accept: every M4 threat section named by the task is present as a
