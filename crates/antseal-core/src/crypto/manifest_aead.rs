@@ -68,6 +68,13 @@
 //! plaintext bytes and by the author signatures, never by the fact that this
 //! blob decrypted. **A future refactor MUST NOT drop a content commitment in
 //! favor of trusting the AEAD.**
+//!
+//! That sentence is the frozen rule of assumption class 4 in
+//! `docs/security-assumptions.md` (C20, signed off 2026-07-28). It is
+//! carried verbatim here and in [`crate::crypto::unit_aead`], and its
+//! presence in both is machine-checked by
+//! `crates/antseal-core/tests/security_assumptions_drift.rs` — deleting it
+//! fails the test suite.
 
 use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};

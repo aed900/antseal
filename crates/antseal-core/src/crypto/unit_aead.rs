@@ -55,6 +55,13 @@
 //! refactor MUST NOT drop a content commitment in favor of trusting the
 //! AEAD.**
 //!
+//! That sentence is the frozen rule of assumption class 4 in
+//! `docs/security-assumptions.md` (C20, signed off 2026-07-28). It is
+//! carried verbatim here and in [`crate::crypto::manifest_aead`], and its
+//! presence in both is machine-checked by
+//! `crates/antseal-core/tests/security_assumptions_drift.rs` — deleting it
+//! fails the test suite.
+//!
 //! # Failure ordering (tamper-matrix distinctness, spec line 168)
 //!
 //! [`CryptoError::AeadDecryptFailed`] fires on authentication failure
