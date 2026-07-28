@@ -220,6 +220,31 @@ impl PartialRevealDisclosure {
     }
 }
 
+// C21 zeroization dispositions for this module's disclosure types.
+//
+// `NonCoveredUnitDisclosure` and `FullFileRevealDisclosure` hold only a
+// `UnitId`/`FileId` (public) plus `Salt16`/`FileSalt` fields, each of which
+// wipes in its own `Drop`. Drop glue therefore wipes every secret byte these
+// structs own, which is precisely the `ZeroizeOnDrop` contract — so the
+// marker is stated, not assumed, and the roll-up assertion in
+// `crate::crypto::zeroization_sweep` can hold them to it.
+impl zeroize::ZeroizeOnDrop for NonCoveredUnitDisclosure {}
+impl zeroize::ZeroizeOnDrop for FullFileRevealDisclosure {}
+
+// `PartialRevealDisclosure` deliberately gets NO such impl, and the omission
+// is the honest answer rather than an oversight. Its `revealed_units` is a
+// growable `Vec`, and `add_revealed_unit` pushes: on reallocation the old
+// buffer's elements are moved bitwise and the old allocation is freed
+// WITHOUT running their `Drop`, stranding un-wiped copies of every
+// `unit_salt` pushed so far on the heap. This is the same `Vec` hazard that
+// `SecretBuf` avoids by having no growth API at all.
+//
+// Severity here is low — a `unit_salt` in this collection belongs to a unit
+// the bundle reveals anyway, so the stranded bytes are already-disclosed
+// material — but claiming `ZeroizeOnDrop` would be false, and the shape is a
+// trap for any future field holding undisclosed material. Recorded as
+// residual risk R2 in `docs/zeroization-audit.md`.
+
 /// Witness that a reveal covers **every** non-mirror unit of a file — the
 /// structural precondition for disclosing `file_salt` (module docs,
 /// Rule 2).
