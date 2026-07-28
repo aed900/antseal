@@ -39,6 +39,9 @@ use antseal_core::bundle::registry::{
     self as bundle_registry, AnchorStatus, BundleMapId, key as bundle_key,
 };
 use antseal_core::crypto::error::SigAlg;
+use antseal_core::manifest::error::{
+    AlgPosition, CondField, ContainerField, EnumId, FixedLenField, ManifestListKind,
+};
 use antseal_core::manifest::registry::{
     self as manifest_registry, DescriptorKind, FineTreeDomain, MapId, UnitKind,
 };
@@ -1019,4 +1022,327 @@ fn registry_records_the_clamp_rule_and_the_depth_cap() {
     assert_eq!(cap, u64::from(antseal_core::codec::caps::MAX_CBOR_DEPTH));
     assert!(cap >= get_u64(depth, "manifest_chain", "max_container_depth"));
     assert!(cap >= get_u64(depth, "bundle_chain", "max_container_depth"));
+}
+
+// ===========================================================================
+// D86 — `ManifestError::map()` against the registry
+// ===========================================================================
+
+/// `(field name, key)` → the manifest map that declares it, read straight
+/// from `maps[].fields`.
+///
+/// Keyed by the **pair**, not the name alone: `kind` is declared twice among
+/// the manifest maps — `canon_descriptor` key 0 (`descriptor_kind`) and
+/// `unit_entry` key 1 (`unit_kind`). The pair is unique across all five, and
+/// this asserts that rather than assuming it, so a lookup below can never be
+/// satisfied by two different maps.
+fn manifest_field_owners(root: &Value) -> BTreeMap<(String, u64), MapId> {
+    let mut owners: BTreeMap<(String, u64), MapId> = BTreeMap::new();
+    for map in MapId::ALL {
+        let name = map.registry_name();
+        for field in as_array(get(map_entry(root, name), "fields", name), name) {
+            let field_key = (
+                get_str(field, "name", name).to_owned(),
+                get_u64(field, "key", name),
+            );
+            assert!(
+                owners.insert(field_key.clone(), map).is_none(),
+                "maps.{name}: field {field_key:?} is declared by two manifest maps, so the \
+                 (name, key) lookup would be ambiguous"
+            );
+        }
+    }
+    owners
+}
+
+/// The registry field a [`FixedLenField`] length check is about, as
+/// `(name, key)` — **never** as a map: which map declares a field is the
+/// registry's answer, and deriving it there rather than restating it is the
+/// whole point of this section (D86 §4.3).
+fn fixed_len_registry_field(field: FixedLenField) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match field {
+        FixedLenField::SealId => ("seal_id", key::body::SEAL_ID),
+        FixedLenField::PathCommit => ("path_commit", key::file::PATH_COMMIT),
+        FixedLenField::RawCommit => ("raw_commit", key::file::RAW_COMMIT),
+        FixedLenField::CanonCommit => ("canon_commit", key::file::CANON_COMMIT),
+        FixedLenField::FineRoot => ("fine_root", key::file::FINE_ROOT),
+        FixedLenField::UnitCommit => ("unit_commit", key::unit::UNIT_COMMIT),
+        FixedLenField::Nonce => ("nonce", key::unit::NONCE),
+        FixedLenField::Address => ("address", key::unit::ADDRESS),
+        // The two halves of one algorithm's material sit in different maps at
+        // different layers: `pubkeys` is body key 5, `signatures` envelope
+        // key 1.
+        FixedLenField::Pubkey(_) => ("pubkeys", key::body::PUBKEYS),
+        FixedLenField::Signature(_) => ("signatures", key::envelope::SIGNATURES),
+    }
+}
+
+/// The registry field a conditional-presence rule governs. Both directions
+/// (`UnexpectedField` / `MissingField`) name the same field.
+fn cond_registry_field(field: CondField) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match field {
+        CondField::CanonCommit => ("canon_commit", key::file::CANON_COMMIT),
+        CondField::FineRoot => ("fine_root", key::file::FINE_ROOT),
+        CondField::FineTreeDomain => ("fine_tree_domain", key::descriptor::FINE_TREE_DOMAIN),
+        CondField::UnicodeVersion => ("unicode_version", key::descriptor::UNICODE_VERSION),
+        CondField::UnitCommit => ("unit_commit", key::unit::UNIT_COMMIT),
+    }
+}
+
+/// The registry field a non-empty-container rule governs. `NormalUnits` is
+/// `units`' own D77 rule (`maps.file_entry.fields[6].rule`) rather than a
+/// field of its own — the registry records it exactly that way.
+fn container_registry_field(field: ContainerField) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match field {
+        ContainerField::Files => ("files", key::body::FILES),
+        ContainerField::Units | ContainerField::NormalUnits => ("units", key::file::UNITS),
+        ContainerField::Pubkeys => ("pubkeys", key::body::PUBKEYS),
+        ContainerField::Signatures => ("signatures", key::envelope::SIGNATURES),
+    }
+}
+
+/// The registry field a capped list is.
+fn list_registry_field(list: ManifestListKind) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match list {
+        ManifestListKind::Files => ("files", key::body::FILES),
+        ManifestListKind::Units => ("units", key::file::UNITS),
+    }
+}
+
+/// The registry field a closed enum is read from. `fine_tree_present` is a
+/// **descriptor** field (key 1), never a file-entry one — a row D86 §4.3
+/// bolds precisely because a hand-copy gets it wrong.
+fn enum_registry_field(enumeration: EnumId) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match enumeration {
+        EnumId::DescriptorKind => ("kind", key::descriptor::KIND),
+        EnumId::FineTreeDomain => ("fine_tree_domain", key::descriptor::FINE_TREE_DOMAIN),
+        EnumId::FineTreeFlag => ("fine_tree_present", key::descriptor::FINE_TREE_PRESENT),
+        EnumId::UnitKind => ("kind", key::unit::KIND),
+    }
+}
+
+/// The registry field a `sig_alg` id appeared in.
+fn alg_position_registry_field(position: AlgPosition) -> (&'static str, u64) {
+    use manifest_registry::key;
+    match position {
+        AlgPosition::SigPolicy => ("sig_policy", key::body::SIG_POLICY),
+        AlgPosition::Pubkeys => ("pubkeys", key::body::PUBKEYS),
+        AlgPosition::Signatures => ("signatures", key::envelope::SIGNATURES),
+    }
+}
+
+/// **D86 §4.3 — every field-bearing `ManifestError` discriminant's `map()`
+/// equals the registry map that declares the field it rejects.**
+///
+/// The rows state only *which registry field* a rejection is about, as a
+/// `(name, key)` pair; the owning map is looked up in `maps[].fields`. A
+/// hand-copied mapping table therefore cannot be enshrined here — "signatures
+/// lives in the body" is not expressible, because `("signatures", 1)`
+/// resolves to `manifest_envelope` and nowhere else. That is what the five
+/// non-obvious rows need: the two `signatures` ones, `pubkeys`,
+/// `fine_tree_present`, and (in the companion test) `InputTooLarge`.
+///
+/// The per-family matches are exhaustive and wildcard-free, so a new
+/// discriminant fails compilation here as well as in `map()` itself.
+#[test]
+fn code_error_maps_match_the_registry() {
+    use antseal_core::manifest::ManifestError as E;
+
+    let root = registry();
+    let owners = manifest_field_owners(&root);
+
+    // (error, registry field name, registry key). One entry per field-bearing
+    // discriminant; the layer-wide arms are the companion test's.
+    let mut rows: Vec<(E, &'static str, u64)> = Vec::new();
+
+    for field in FixedLenField::ALL {
+        let (name, key) = fixed_len_registry_field(field);
+        rows.push((
+            E::WrongLength {
+                field,
+                expected: 32,
+                got: 7,
+            },
+            name,
+            key,
+        ));
+    }
+    for field in CondField::ALL {
+        let (name, key) = cond_registry_field(field);
+        rows.push((E::UnexpectedField { field }, name, key));
+        rows.push((E::MissingField { field }, name, key));
+    }
+    for field in ContainerField::ALL {
+        let (name, key) = container_registry_field(field);
+        rows.push((E::EmptyContainer { field }, name, key));
+    }
+    for list in ManifestListKind::ALL {
+        let (name, key) = list_registry_field(list);
+        rows.push((
+            E::ListTooLong {
+                list,
+                claimed: list.cap() + 1,
+                cap: list.cap(),
+            },
+            name,
+            key,
+        ));
+    }
+    for enumeration in EnumId::ALL {
+        let (name, key) = enum_registry_field(enumeration);
+        rows.push((
+            E::UnknownEnumValue {
+                enumeration,
+                value: 99,
+            },
+            name,
+            key,
+        ));
+    }
+    for position in AlgPosition::ALL {
+        let (name, key) = alg_position_registry_field(position);
+        rows.push((
+            E::DuplicateAlg {
+                position,
+                alg_id: 0,
+            },
+            name,
+            key,
+        ));
+        rows.push((
+            E::UnregisteredAlg {
+                position,
+                alg_id: 9,
+            },
+            name,
+            key,
+        ));
+    }
+    {
+        use manifest_registry::key;
+        rows.extend([
+            (E::WrongRangeArity { got: 3 }, "range", key::unit::RANGE),
+            (
+                E::DescriptorDomainMismatch {
+                    kind: DescriptorKind::Binary,
+                    implied: FineTreeDomain::Raw,
+                    found: FineTreeDomain::Canonical,
+                },
+                "fine_tree_domain",
+                key::descriptor::FINE_TREE_DOMAIN,
+            ),
+            (
+                E::UnsupportedFormatVersion {
+                    found: 2,
+                    supported: antseal_core::format::SUPPORTED_VERSIONS,
+                },
+                "format_version",
+                key::body::FORMAT_VERSION,
+            ),
+            (E::SigPolicyEmpty, "sig_policy", key::body::SIG_POLICY),
+            (
+                E::UnitIdMismatch {
+                    expected: 1,
+                    found: 2,
+                },
+                "unit_id",
+                key::unit::UNIT_ID,
+            ),
+        ]);
+    }
+
+    for (err, name, key) in &rows {
+        let want = owners
+            .get(&((*name).to_owned(), *key))
+            .unwrap_or_else(|| panic!("no manifest map declares a field ({name}, {key})"));
+        assert_eq!(
+            err.map(),
+            *want,
+            "{}: rejects registry field ({name}, {key}), which `maps.{}` declares",
+            err.code(),
+            want.registry_name()
+        );
+        // The layer is the map's own projection, never a second table.
+        assert_eq!(err.layer(), want.layer(), "{}", err.code());
+    }
+
+    // The three key-space classes carry their map, so identity is the claim.
+    for map in MapId::ALL {
+        for err in [
+            E::UnknownKey { map, key: 24 },
+            E::ReservedKey { map, key: 8 },
+            E::MissingKey { map, key: 0 },
+        ] {
+            assert_eq!(err.map(), map);
+            assert_eq!(err.layer(), map.layer());
+        }
+    }
+}
+
+/// The three arms with no registry *field* behind them are pinned by the
+/// registry blocks that do govern them: §7.6.3's `decode_layers` for the two
+/// codec wrappers, and §11's cap table for the layer-2 input cap.
+#[test]
+fn code_error_maps_match_the_registry_for_the_layer_wide_arms() {
+    use antseal_core::codec::DecodeError;
+    use antseal_core::manifest::{Layer, ManifestError as E};
+
+    let root = registry();
+
+    // `decode_layers[].error_class` names the wrapper variant per layer.
+    let layers = as_array(
+        get(
+            get(&root, "decode_layers", "registry root"),
+            "layers",
+            "decode_layers",
+        ),
+        "decode_layers.layers",
+    );
+    let class_of = |n: u64| -> &str {
+        layers
+            .iter()
+            .find(|l| get_u64(l, "layer", "decode_layers.layers") == n)
+            .map(|l| get_str(l, "error_class", "decode_layers.layers"))
+            .unwrap_or_else(|| panic!("registry has no decode layer {n}"))
+    };
+    assert_eq!(class_of(2), "ManifestError::Envelope");
+    assert_eq!(class_of(3), "ManifestError::Body");
+
+    let inner = DecodeError::NonShortestInt { position: 7 };
+    let envelope = E::Envelope {
+        source: inner.clone(),
+    };
+    let body = E::Body { source: inner };
+    assert_eq!(envelope.map(), MapId::Envelope);
+    assert_eq!(envelope.layer(), Layer::Envelope);
+    assert_eq!(body.map(), MapId::Body);
+    assert_eq!(body.layer(), Layer::Body);
+
+    // `MAX_MANIFEST_BYTES` bounds the **layer-2 input** (§11, D10 §1), which
+    // is why an over-cap manifest is attributed to the envelope even though
+    // no envelope field is at fault.
+    let applies_to = as_array(
+        get(get(&root, "caps", "registry root"), "entries", "caps"),
+        "caps.entries",
+    )
+    .iter()
+    .find(|e| get_str(e, "name", "caps entry") == "MAX_MANIFEST_BYTES")
+    .map(|e| get_str(e, "applies_to", "caps entry"))
+    .expect("registry section 11 lists MAX_MANIFEST_BYTES");
+    assert!(
+        applies_to.contains("layer-2"),
+        "the manifest cap must apply to the layer-2 input, got {applies_to:?}"
+    );
+
+    let too_large = E::InputTooLarge {
+        len: antseal_core::codec::caps::MAX_MANIFEST_BYTES + 1,
+        cap: antseal_core::codec::caps::MAX_MANIFEST_BYTES,
+    };
+    assert_eq!(too_large.map(), MapId::Envelope);
+    assert_eq!(too_large.layer(), Layer::Envelope);
 }

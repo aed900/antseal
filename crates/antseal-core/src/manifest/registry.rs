@@ -273,6 +273,25 @@ impl MapId {
         }
     }
 
+    /// Which of the two manifest decode layers this map is read in
+    /// (registry §7.6.3). The envelope is layer 2; every other map is a
+    /// sub-map of the body byte string and is therefore layer 3.
+    ///
+    /// This is a *coarsening* of the map, not a competitor to it: a
+    /// schema rejection still names its own map, which is strictly more
+    /// precise. The layer exists because the bundle side has no `MapId`,
+    /// so the layer is the finest thing the two error families share
+    /// (D86 §4).
+    #[must_use]
+    pub const fn layer(self) -> crate::manifest::Layer {
+        match self {
+            Self::Envelope => crate::manifest::Layer::Envelope,
+            Self::Body | Self::FileEntry | Self::Descriptor | Self::UnitEntry => {
+                crate::manifest::Layer::Body
+            }
+        }
+    }
+
     /// Classify a decoded key against this map's v1 schema.
     #[must_use]
     pub fn classify(self, decoded_key: u64) -> KeyClass {

@@ -332,7 +332,7 @@ proptest! {
         // inner-layer tamper row indistinguishable from an outer one.
         prop_assert_eq!(
             err.layer(),
-            Some(antseal_core::manifest::Layer::Body),
+            antseal_core::manifest::Layer::Body,
             "a body mutation must be reported at the body layer"
         );
         record(kind);

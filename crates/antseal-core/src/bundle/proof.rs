@@ -119,26 +119,21 @@ impl SealProofError {
         }
     }
 
-    /// Which layer rejected, when that is determined.
+    /// Which of the three strict decode layers rejected (registry
+    /// §7.6.3). Total: a [`Self::Bundle`] failure is layer 1 by
+    /// construction, and a [`Self::Manifest`] failure carries its own
+    /// layer ([`ManifestError::layer`]).
     ///
-    /// - Layer 1 is always known: a [`Self::Bundle`] failure is layer 1 by
-    ///   construction.
-    /// - A *canonicality* failure inside the manifest carries its layer
-    ///   ([`ManifestError::layer`]), so a non-canonical embedded manifest
-    ///   reports [`ProofLayer::ManifestEnvelope`] and a non-canonical inner
-    ///   body reports [`ProofLayer::ManifestBody`] — the F9 requirement.
-    /// - A manifest **schema** rejection returns `None`, mirroring
-    ///   `ManifestError::layer`'s own recorded decision that layer is
-    ///   pipeline context rather than a rejection class: such an error names
-    ///   its own map in its payload, which is more precise than a layer.
+    /// Before D86 this returned `Option<ProofLayer>`, `None` for a
+    /// manifest schema rejection — an asymmetry that made `null` mean
+    /// "schema rejection *inside the manifest*" (D86 §2).
     #[must_use]
-    pub const fn layer(&self) -> Option<ProofLayer> {
+    pub const fn layer(&self) -> ProofLayer {
         match self {
-            Self::Bundle { .. } => Some(ProofLayer::Bundle),
+            Self::Bundle { .. } => ProofLayer::Bundle,
             Self::Manifest { source } => match source.layer() {
-                Some(Layer::Envelope) => Some(ProofLayer::ManifestEnvelope),
-                Some(Layer::Body) => Some(ProofLayer::ManifestBody),
-                None => None,
+                Layer::Envelope => ProofLayer::ManifestEnvelope,
+                Layer::Body => ProofLayer::ManifestBody,
             },
         }
     }
@@ -206,14 +201,14 @@ mod tests {
     /// One exemplar per composition arm. The *codes* are the inner errors',
     /// already exemplified by their own domains' meta-tests, so this list
     /// checks delegation and layer attribution rather than distinctness.
-    fn exemplars() -> Vec<(SealProofError, Option<ProofLayer>, &'static str)> {
+    fn exemplars() -> Vec<(SealProofError, ProofLayer, &'static str)> {
         let cbor = DecodeError::NonShortestInt { position: 7 };
         vec![
             (
                 SealProofError::Bundle {
                     source: BundleError::UnitRevealedTwice { unit_id: 3 },
                 },
-                Some(ProofLayer::Bundle),
+                ProofLayer::Bundle,
                 "bundle-unit-revealed-twice",
             ),
             (
@@ -222,7 +217,7 @@ mod tests {
                         source: cbor.clone(),
                     },
                 },
-                Some(ProofLayer::Bundle),
+                ProofLayer::Bundle,
                 "cbor-non-shortest-int",
             ),
             (
@@ -231,22 +226,48 @@ mod tests {
                         source: cbor.clone(),
                     },
                 },
-                Some(ProofLayer::ManifestEnvelope),
+                ProofLayer::ManifestEnvelope,
                 "cbor-non-shortest-int",
             ),
             (
                 SealProofError::Manifest {
                     source: ManifestError::Body { source: cbor },
                 },
-                Some(ProofLayer::ManifestBody),
+                ProofLayer::ManifestBody,
                 "cbor-non-shortest-int",
             ),
+            // A manifest **schema** rejection is layered too (D86): it names
+            // its own map, and the map coarsens to a layer. `sig_policy` is
+            // body key 6, so this is layer 3.
             (
                 SealProofError::Manifest {
                     source: ManifestError::SigPolicyEmpty,
                 },
-                None,
+                ProofLayer::ManifestBody,
                 "manifest-sig-policy-empty",
+            ),
+            // The envelope's own schema rejections stay at layer 2, which is
+            // what makes `manifest-unknown-key` there distinguishable from
+            // the same code at the body (D86 §2).
+            (
+                SealProofError::Manifest {
+                    source: ManifestError::UnknownKey {
+                        map: crate::manifest::MapId::Envelope,
+                        key: 24,
+                    },
+                },
+                ProofLayer::ManifestEnvelope,
+                "manifest-unknown-key",
+            ),
+            (
+                SealProofError::Manifest {
+                    source: ManifestError::UnknownKey {
+                        map: crate::manifest::MapId::Body,
+                        key: 24,
+                    },
+                },
+                ProofLayer::ManifestBody,
+                "manifest-unknown-key",
             ),
         ]
     }
@@ -259,10 +280,31 @@ mod tests {
             assert_eq!(err.code(), code, "{err}");
         }
         // All three layers are reachable.
-        let reached: Vec<ProofLayer> = exemplars().iter().filter_map(|(e, ..)| e.layer()).collect();
+        let reached: Vec<ProofLayer> = exemplars().iter().map(|(e, ..)| e.layer()).collect();
         for layer in ProofLayer::ALL {
             assert!(reached.contains(&layer), "{layer} unreachable");
         }
+    }
+
+    /// D86 §2, as a test: one code at two layers is two observables. Before
+    /// D86 both of these reported no layer, so `envelope-unknown-key` could
+    /// not prove it had hit the envelope.
+    #[test]
+    fn one_schema_code_at_two_layers_stays_two_observables() {
+        let at_envelope = SealProofError::Manifest {
+            source: ManifestError::UnknownKey {
+                map: crate::manifest::MapId::Envelope,
+                key: 24,
+            },
+        };
+        let at_body = SealProofError::Manifest {
+            source: ManifestError::UnknownKey {
+                map: crate::manifest::MapId::Body,
+                key: 24,
+            },
+        };
+        assert_eq!(at_envelope.code(), at_body.code());
+        assert_ne!(at_envelope.layer(), at_body.layer());
     }
 
     /// The same wrapped codec error at two different layers stays two
@@ -298,7 +340,7 @@ mod tests {
     #[test]
     fn from_conversions_target_the_right_arm() {
         let from_bundle: SealProofError = BundleError::UnitRevealedTwice { unit_id: 0 }.into();
-        assert_eq!(from_bundle.layer(), Some(ProofLayer::Bundle));
+        assert_eq!(from_bundle.layer(), ProofLayer::Bundle);
         let from_manifest: SealProofError = ManifestError::SigPolicyEmpty.into();
         assert!(matches!(from_manifest, SealProofError::Manifest { .. }));
     }

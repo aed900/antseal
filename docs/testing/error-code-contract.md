@@ -89,12 +89,22 @@ informative, while a tamper row is registered only where the code is not
 already claimed. Twenty fixtures, seven rows, and the difference is checked
 in both directions rather than asserted.
 
-Caveat a reader hits immediately, and F26 owns: the two accessors disagree
-about what a missing layer means. A bundle **schema** rejection still
-reports `Some(Bundle)` — a layer-1 failure is layer 1 by construction — while
-a manifest schema rejection reports `None`, because it names its own map,
-which is more precise. So `layer == null` means "schema rejection *inside the
-manifest*", not "schema rejection".
+The layer is **total** on both accessors (decision D86, 2026-07-28):
+`ManifestError::layer()` and `SealProofError::layer()` return a layer, not
+an `Option`, for schema rejections as well as canonicality ones. The
+manifest side derives it from `ManifestError::map()`, which names the
+registry map the decoder was reading; the envelope is layer 2 and every
+sub-map of the body byte string is layer 3. That is what makes the
+`(code, layer)` pair genuinely pairwise informative: before D86,
+`manifest-unknown-key` at the envelope and at the body were one
+observable, so `envelope-unknown-key` could not prove it hit the envelope.
+
+The decode layer is **failure context only**. It is not a field of
+`VerificationReport` and never will be: the report exists only for a
+bundle that passed (D27 §4), and `layer` is already the report's word for
+the evidence layer and the storage-linkage layer (MVP-SPEC.md lines
+118/119). If U30's `--json` failure envelope carries it (D65's call, M3),
+the field is named `decode_layer`.
 
 ### Recorded exception: the `fine-root-` family (ratified 2026-07-28)
 
@@ -520,6 +530,18 @@ kebab-case id, and never edit an existing row's expected code.
   to construct the shape — and therefore the span primitive **F25** records.
   It is a project-added row with no `pending` marker, so it never bore on the
   gate; **F22** owns it by title.
+
+- **2026-07-28 (M0 wave 6, F26/D86)** — **no code minted, no code changed.**
+  The two `layer()` accessors are reconciled by making the layer total on
+  both, deriving the manifest side from a new `ManifestError::map()`. The
+  finding that forced it was not the documented asymmetry but its
+  consequence: `body-unknown-key` and `envelope-unknown-key` were one
+  observable, so §2's claim that the `(code, layer)` pair is pairwise
+  informative had a counterexample in the committed fixture table. Three
+  `expected.layer` values in `testdata/tamper/format/FIXTURES.json` moved
+  from `null` to a layer; no digest, code, or row changed. D86 also closes
+  the report question permanently: the decode layer is failure context and
+  is never a report field.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

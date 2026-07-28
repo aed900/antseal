@@ -383,18 +383,20 @@ pub struct FormatFixture {
     /// The stable code the surface must report.
     pub code: &'static str,
     /// The decode layer the failure must be attributed to, when the surface
-    /// determines one (`ManifestError::layer` / `SealProofError::layer`).
+    /// is a layered decoder.
     ///
-    /// The two are **asymmetric**, and the fixture set is what makes that
-    /// visible: a layer-1 (bundle) failure is `Some("bundle")` even for a
-    /// schema rejection, because a `SealProofError::Bundle` is layer 1 by
-    /// construction, whereas a manifest *schema* rejection is `None`
-    /// because `ManifestError::layer` only attributes canonicality
-    /// failures — a schema error names its own map, which is more precise
-    /// than a layer. Both are recorded decisions; neither is a bug. The
-    /// consequence for a reader of the mapping table is that
-    /// `layer == null` means "schema rejection **inside the manifest**",
-    /// not "schema rejection".
+    /// `None` **iff** the surface is not one. Exactly one surface
+    /// qualifies: [`Surface::Canonical`], the schema-agnostic strict pass,
+    /// which has no notion of layers. `Manifest::decode` and
+    /// `SealProof::decode` attribute a layer to every rejection,
+    /// canonicality and schema alike, because a schema rejection names its
+    /// own map and the map coarsens to a layer (D86 §4.5).
+    ///
+    /// Before D86 the two accessors were asymmetric — a bundle schema
+    /// rejection was `Some("bundle")` while a manifest schema rejection was
+    /// `None` — so `layer == null` meant "schema rejection **inside the
+    /// manifest**", and `manifest-unknown-key` at the envelope was
+    /// indistinguishable from the same code at the body.
     pub layer: Option<&'static str>,
     /// Whether the fixture's bytes are committed under
     /// `testdata/tamper/format/`. False only for [`oversized_bundle`],
@@ -664,7 +666,7 @@ pub const FIXTURES: &[FormatFixture] = &[
         mutation: "append the body's first reserved key (8) with a zero value",
         surface: Surface::ManifestDecode,
         code: "manifest-reserved-key",
-        layer: None,
+        layer: Some("manifest body"),
         committed: true,
         row: Some("manifest-reserved-key"),
         build: body_reserved_key,
@@ -675,7 +677,7 @@ pub const FIXTURES: &[FormatFixture] = &[
         mutation: "append body key 24 — above the v1 band, never reserved",
         surface: Surface::ManifestDecode,
         code: "manifest-unknown-key",
-        layer: None,
+        layer: Some("manifest body"),
         committed: true,
         row: Some("manifest-unknown-key"),
         build: body_unknown_key,
@@ -720,7 +722,9 @@ pub const FIXTURES: &[FormatFixture] = &[
         mutation: "append envelope key 2 — the envelope is shape-frozen and reserves nothing",
         surface: Surface::ManifestDecode,
         code: "manifest-unknown-key",
-        layer: None,
+        // The layer is what distinguishes this fixture from
+        // `body-unknown-key`: same code, one layer out (D86 §2).
+        layer: Some("manifest envelope"),
         committed: true,
         row: None,
         build: envelope_unknown_key,
@@ -824,8 +828,8 @@ pub struct Observed {
     /// The stable machine-readable code, or `None` when the surface
     /// **accepted** the mutated bytes (always a failure for a fixture).
     pub code: Option<String>,
-    /// The layer the surface attributed the failure to, when it determines
-    /// one.
+    /// The layer the surface attributed the failure to — `None` only for
+    /// [`Surface::Canonical`], which is not a layered decoder (D86 §4.5).
     pub layer: Option<String>,
 }
 
@@ -846,7 +850,8 @@ pub fn run_surface(surface: Surface, bytes: &[u8]) -> Observed {
             },
             Err(err) => Observed {
                 code: Some(ManifestError::code(&err).to_owned()),
-                layer: err.layer().map(|l| l.to_string()),
+                // Total since D86: a layered decoder always reports a layer.
+                layer: Some(err.layer().to_string()),
             },
         },
         Surface::SealProofDecode => match SealProof::decode(bytes) {
@@ -856,7 +861,8 @@ pub fn run_surface(surface: Surface, bytes: &[u8]) -> Observed {
             },
             Err(err) => Observed {
                 code: Some(SealProofError::code(&err).to_owned()),
-                layer: err.layer().map(|l| l.to_string()),
+                // Total since D86: a layered decoder always reports a layer.
+                layer: Some(err.layer().to_string()),
             },
         },
     }

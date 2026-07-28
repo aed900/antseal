@@ -13,6 +13,16 @@
 //! `cbor-*` codes through unchanged — those errors genuinely *are* the
 //! codec layer's, merely re-labelled with the layer they occurred in.
 //!
+//! # Map and layer are total (D86)
+//!
+//! Every rejection here answers two questions besides its code:
+//! [`ManifestError::map`] names the registry map the decoder was reading,
+//! and [`ManifestError::layer`] coarsens that to one of registry §7.6.3's
+//! two manifest layers. Neither is an `Option`: a decoder always knows
+//! which map it is in, so "no layer" was only ever an absence standing in
+//! for the positive fact "this is a schema rejection", which the variant
+//! already says.
+//!
 //! # Outer vs inner layer (F6)
 //!
 //! [`ManifestError::Envelope`] and [`ManifestError::Body`] wrap the same
@@ -578,15 +588,133 @@ pub enum ManifestError {
 }
 
 impl ManifestError {
-    /// Which decode layer a wrapped codec error came from, or `None` for
-    /// a schema-level rejection (whose own payload names its map).
+    /// The registry map this rejection is about (registry §7).
+    ///
+    /// Total: every rejection is raised while decoding exactly one map,
+    /// and the raise sites already know which — `envelope.rs` and
+    /// `body.rs` each open with `const MAP: MapId = …`. Exposing it makes
+    /// the "a schema error names its own map" property (F6) reachable
+    /// programmatically instead of only by matching the variant.
+    ///
+    /// The exhaustive, wildcard-free match is the compile-time guard: a
+    /// new variant — or a new [`FixedLenField`]/[`CondField`]/
+    /// [`ContainerField`]/[`ManifestListKind`]/[`EnumId`]/[`AlgPosition`]
+    /// discriminant — fails compilation here until it is assigned a map.
+    ///
+    /// Every arm is cross-checked against `docs/format/registry-v1.json`
+    /// by `format_registry_draft.rs`'s `code_error_maps_match_the_registry`
+    /// (D86 §4.3): the test states only which registry *field* each
+    /// discriminant rejects, and derives the owning map from the registry,
+    /// so a hand-copied row cannot be enshrined here.
     #[must_use]
-    pub const fn layer(&self) -> Option<Layer> {
+    pub const fn map(&self) -> MapId {
         match self {
-            Self::Envelope { .. } => Some(Layer::Envelope),
-            Self::Body { .. } => Some(Layer::Body),
-            _ => None,
+            // The two layer-tagged codec wrappers: the layer *is* the map
+            // (registry §7.6.3 — layer 2 is the envelope, layer 3 the body).
+            Self::Envelope { .. } => MapId::Envelope,
+            Self::Body { .. } => MapId::Body,
+
+            // Key-space rejections already carry the map that raised them.
+            Self::UnknownKey { map, .. }
+            | Self::ReservedKey { map, .. }
+            | Self::MissingKey { map, .. } => *map,
+
+            // `MAX_MANIFEST_BYTES` bounds the **layer-2 input** (D10 §1),
+            // and the check is the first statement of the envelope decode.
+            Self::InputTooLarge { .. } => MapId::Envelope,
+
+            Self::WrongLength { field, .. } => match field {
+                // body key 2
+                FixedLenField::SealId => MapId::Body,
+                // file_entry keys 0, 1, 2, 5
+                FixedLenField::PathCommit
+                | FixedLenField::RawCommit
+                | FixedLenField::CanonCommit
+                | FixedLenField::FineRoot => MapId::FileEntry,
+                // unit_entry keys 4, 5, 6
+                FixedLenField::UnitCommit | FixedLenField::Nonce | FixedLenField::Address => {
+                    MapId::UnitEntry
+                }
+                // body key 5 `pubkeys` …
+                FixedLenField::Pubkey(_) => MapId::Body,
+                // … but envelope key 1 `signatures`: the two halves of one
+                // algorithm's material live in different maps, at different
+                // layers (registry §§7.1, 7.2).
+                FixedLenField::Signature(_) => MapId::Envelope,
+            },
+
+            // Both directions of every iff-rule name the same field, so the
+            // two variants share one table.
+            Self::UnexpectedField { field } | Self::MissingField { field } => match field {
+                // file_entry keys 2, 5
+                CondField::CanonCommit | CondField::FineRoot => MapId::FileEntry,
+                // canon_descriptor keys 2, 3
+                CondField::FineTreeDomain | CondField::UnicodeVersion => MapId::Descriptor,
+                // unit_entry key 4
+                CondField::UnitCommit => MapId::UnitEntry,
+            },
+
+            Self::EmptyContainer { field } => match field {
+                // body keys 7, 5
+                ContainerField::Files | ContainerField::Pubkeys => MapId::Body,
+                // file_entry key 6 — `NormalUnits` is that same key's D77
+                // rule, not a field of its own.
+                ContainerField::Units | ContainerField::NormalUnits => MapId::FileEntry,
+                // envelope key 1
+                ContainerField::Signatures => MapId::Envelope,
+            },
+
+            Self::ListTooLong { list, .. } => match list {
+                // body key 7
+                ManifestListKind::Files => MapId::Body,
+                // file_entry key 6
+                ManifestListKind::Units => MapId::FileEntry,
+            },
+
+            Self::UnknownEnumValue { enumeration, .. } => match enumeration {
+                // canon_descriptor keys 0, 2, 1 — `fine_tree_present` is a
+                // descriptor field, never a file-entry one.
+                EnumId::DescriptorKind | EnumId::FineTreeDomain | EnumId::FineTreeFlag => {
+                    MapId::Descriptor
+                }
+                // unit_entry key 1
+                EnumId::UnitKind => MapId::UnitEntry,
+            },
+
+            // unit_entry key 2 `range`
+            Self::WrongRangeArity { .. } => MapId::UnitEntry,
+            // canon_descriptor keys 0 and 2, read against each other
+            Self::DescriptorDomainMismatch { .. } => MapId::Descriptor,
+            // body key 0 — the discriminant sits inside the body bstr, so
+            // dispatch runs after the envelope decode (registry §9).
+            Self::UnsupportedFormatVersion { .. } => MapId::Body,
+            // body key 6
+            Self::SigPolicyEmpty => MapId::Body,
+
+            Self::DuplicateAlg { position, .. } | Self::UnregisteredAlg { position, .. } => {
+                match position {
+                    // body keys 6, 5
+                    AlgPosition::SigPolicy | AlgPosition::Pubkeys => MapId::Body,
+                    // envelope key 1
+                    AlgPosition::Signatures => MapId::Envelope,
+                }
+            }
+
+            // unit_entry key 0
+            Self::UnitIdMismatch { .. } => MapId::UnitEntry,
         }
+    }
+
+    /// Which decode layer rejected (registry §7.6.3).
+    ///
+    /// Total — see [`Self::map`]. Before D86 this returned
+    /// `Option<Layer>` with `None` for schema rejections, which made
+    /// `layer == null` mean "schema rejection *inside the manifest*" and
+    /// left `manifest-unknown-key` at the envelope indistinguishable from
+    /// the same code at the body (D86 §2).
+    #[must_use]
+    pub const fn layer(&self) -> Layer {
+        self.map().layer()
     }
 
     /// Stable machine-readable code, pairwise-distinct across every
@@ -942,9 +1070,12 @@ mod tests {
             inner_err.to_string(),
             "the two layers render differently"
         );
-        assert_eq!(outer_err.layer(), Some(Layer::Envelope));
-        assert_eq!(inner_err.layer(), Some(Layer::Body));
-        assert_eq!(ManifestError::SigPolicyEmpty.layer(), None);
+        assert_eq!(outer_err.layer(), Layer::Envelope);
+        assert_eq!(inner_err.layer(), Layer::Body);
+        // The layer is total (D86): a schema rejection reports the layer of
+        // the map it names, and `sig_policy` is body key 6.
+        assert_eq!(ManifestError::SigPolicyEmpty.map(), MapId::Body);
+        assert_eq!(ManifestError::SigPolicyEmpty.layer(), Layer::Body);
 
         // The wrapped error remains reachable as an `Error::source`, so
         // callers can inspect the codec position without string parsing.

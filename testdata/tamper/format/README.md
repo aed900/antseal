@@ -27,13 +27,11 @@ row}`.
   of registry §7.6.3).
 - **`expected.code`** is the stable machine-readable code
   (`../../docs/testing/error-code-contract.md`, D30).
-- **`expected.layer`** is which of the three strict layers the failure is
-  attributed to. It is `null` for a manifest **schema** rejection, which
-  names its own map rather than a layer — but *not* for a bundle schema
-  rejection, because a layer-1 failure is layer 1 by construction. That
-  asymmetry is two recorded decisions rather than a defect; the practical
-  reading is that `layer: null` means "schema rejection inside the
-  manifest".
+- **`expected.layer`** is which of the three strict layers of registry
+  §7.6.3 the failure is attributed to. It is `null` **iff** the fixture's
+  surface is not a layered decoder — only `check_canonical` qualifies.
+  `Manifest::decode` and `SealProof::decode` attribute a layer to every
+  rejection, canonicality and schema alike (D86).
 - **`source.kind`** is `file` (bytes committed here) or `synthesized` (a
   recipe). Exactly one fixture is synthesized — see below.
 - **`row`** names the Q7 tamper-matrix row this fixture is evidence for, or
