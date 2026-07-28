@@ -86,7 +86,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::canon::{CanonicalizeError, TextMode, canonicalize_v};
+use crate::canon::{UnicodeVersionError, canonicalize_v_forced};
 use crate::content::fixtures::{
     SYNTHETIC_FINE_SEED_LABEL, SYNTHETIC_FINE_SEEDS, golden_inputs, golden_model,
     model_invariant_violations,
@@ -684,10 +684,11 @@ fn check_case_behaviour(name: &str, model: &ContentModel<'_>) -> Result<(), Vect
 }
 
 /// The verifier-side canonicalization recompute, reached the way R4 reaches
-/// it: by the descriptor-recorded **version string**, in the total forced mode
-/// (decision D20).
-fn recompute_canonical(version: &str, raw: &[u8]) -> Result<Vec<u8>, CanonicalizeError> {
-    canonicalize_v(version, TextMode::Forced, raw).map(|canonical| canonical.as_bytes().to_vec())
+/// it: by the descriptor-recorded **version string**, through the narrowed
+/// total entry point (G22), whose error type cannot express an invalid-UTF-8
+/// failure at all.
+fn recompute_canonical(version: &str, raw: &[u8]) -> Result<Vec<u8>, UnicodeVersionError> {
+    canonicalize_v_forced(version, raw).map(|canonical| canonical.as_bytes().to_vec())
 }
 
 /// Shape coverage, asserted **structurally** — over what the committed cases

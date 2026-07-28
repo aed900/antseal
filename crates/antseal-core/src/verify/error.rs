@@ -635,10 +635,21 @@ pub enum VerifyError {
     /// old**, which must never be conflated with an integrity verdict
     /// (`crate::canon::CanonicalizeError` docs).
     ///
-    /// [`crate::canon::CanonicalizeError::InvalidUtf8`] is unreachable
-    /// from R4, which recomputes in [`crate::canon::TextMode::Forced`]
-    /// (decision D20) — a total transform. The arm still admits it for
-    /// defensive totality, with its own distinct `content-*` code.
+    /// "In practice exactly one condition" became **structurally exactly
+    /// one** at G22. R4's recompute now goes through
+    /// [`crate::canon::canonicalize_v_forced`], whose error type is
+    /// [`crate::canon::UnicodeVersionError`] — a type that cannot express
+    /// [`crate::canon::CanonicalizeError::InvalidUtf8`] — so this arm's
+    /// only reachable inhabitant is `UnknownVersion`, by the signatures
+    /// rather than by the argument R4 happens to pass. The seam's whole
+    /// code set is stated and tested as
+    /// [`super::file_stages::CANONICALIZATION_SEAM_CODES`].
+    ///
+    /// The **payload type is deliberately left wide**: narrowing it to
+    /// `UnicodeVersionError` would retire `content-canonicalize-invalid-utf8`
+    /// from R's code set, and codes are append-only (§3 of the error-code
+    /// contract). The variant stays admissible and coded; it simply has no
+    /// verifier-side producer.
     ///
     /// **Intentionally no `#[from]`** (the [`Self::Crypto`] rule): content
     /// disagreement is [`Self::RawMirrorCanonicalizationMismatch`], and an

@@ -69,12 +69,12 @@ pub use error::{
     VerifyError, VerifyFailures,
 };
 pub use file_stages::{
-    FileCanonMode, FileFineTree, FileRevealKind, FileRevealShape, FileRevealSummary,
-    FileStageBundleView, FileStageManifestView, FileUnitEntry, FileView, FullRevealEvidence,
-    FullRevealFineTree, FullRevealMaterialEntry, PartialRevealEvidence, RevealCensus,
-    VerifiedUnitBytes, check_concat_commit, check_file_stages, check_fine_root_rebuild,
-    check_full_reveal_content, check_raw_mirror, classify_file_reveal, concat_non_mirror_bytes,
-    participates_in_concat,
+    CANONICALIZATION_SEAM_CODES, FileCanonMode, FileFineTree, FileRevealKind, FileRevealShape,
+    FileRevealSummary, FileStageBundleView, FileStageManifestView, FileUnitEntry, FileView,
+    FullRevealEvidence, FullRevealFineTree, FullRevealMaterialEntry, PartialRevealEvidence,
+    RevealCensus, VerifiedUnitBytes, check_concat_commit, check_file_stages,
+    check_fine_root_rebuild, check_full_reveal_content, check_raw_mirror, classify_file_reveal,
+    concat_non_mirror_bytes, participates_in_concat,
 };
 pub use pipeline::{VerifyOptions, VerifyStage, verify_bundle, verify_bundle_collecting};
 pub use report::{

@@ -127,6 +127,19 @@
 //! is total and byte-identical to detected mode on valid UTF-8, so pinning
 //! it costs nothing on ordinary text.
 //!
+//! **G22 made that a property of the types.** The recompute now routes
+//! through [`canonicalize_v_forced`], whose error type is
+//! [`UnicodeVersionError`] — one variant, one code. So
+//! `content-canonicalize-invalid-utf8` is not merely *not passed* by this
+//! module, it is *not expressible* by it, and a future edit to the argument
+//! cannot quietly reintroduce it. The seam's complete code set is stated as
+//! [`CANONICALIZATION_SEAM_CODES`] and tested by
+//! `invalid_utf8_is_structurally_unreachable_from_the_verifier`, which is the
+//! citable answer when a reverse-coverage check asks who owns that code. (Its
+//! owner is the public strict-detection API contract — notably **not** the
+//! sealer, which detects with `is_text` and then forces, so no production
+//! call site in this workspace selects [`TextMode::Detected`] at all.)
+//!
 //! # What R4 deliberately does **not** check
 //!
 //! - **A raw mirror inside a partial reveal.** MVP-SPEC.md line 92's
@@ -238,7 +251,7 @@
 //! [`FineTree::Present`]: crate::manifest::body::FineTree::Present
 //! [`FineTree::Absent`]: crate::manifest::body::FineTree::Absent
 
-use crate::canon::{CanonicalBytes, CanonicalizeError, TextMode, canonicalize_v};
+use crate::canon::{CanonicalBytes, CanonicalizeError, UnicodeVersionError, canonicalize_v_forced};
 use crate::content::fine_tree::rebuild_fine_root;
 use crate::content::mirror::full_reveal_concat_exempt;
 use crate::content::unit::UnitKind as ContentUnitKind;
@@ -936,12 +949,50 @@ pub fn check_fine_root_rebuild(
 /// `--force-text` file's mirror bytes are not valid UTF-8, and a detected
 /// recompute would answer with a *decode error* on exactly the files this
 /// binding exists to bind.
+///
+/// # The error type is the enforcement (G22)
+///
+/// This returns [`UnicodeVersionError`], **not** the two-variant
+/// [`CanonicalizeError`], because forced mode is total: the only thing left
+/// to fail is resolving the descriptor-recorded version string. Routing
+/// through [`canonicalize_v_forced`] rather than
+/// `canonicalize_v(…, TextMode::Forced, …)` moves
+/// `content-canonicalize-invalid-utf8` from *unreachable because of the
+/// argument we pass* to *unreachable because the type cannot express it* —
+/// which survives a future edit that changes the argument.
+///
+/// The code is **not** retired (codes are append-only): it stays coded and
+/// producible on the seal-side/public strict-detection path. See
+/// [`CANONICALIZATION_SEAM_CODES`] for the tested statement of what this seam
+/// can and cannot report.
 fn recompute_canonical_from_mirror(
     unicode_version: &str,
     raw_bytes: &[u8],
-) -> Result<CanonicalBytes, CanonicalizeError> {
-    canonicalize_v(unicode_version, TextMode::Forced, raw_bytes)
+) -> Result<CanonicalBytes, UnicodeVersionError> {
+    canonicalize_v_forced(unicode_version, raw_bytes)
 }
+
+/// Every stable error code the verifier's **canonicalization seam** can
+/// report — the whole of it, and the citable answer to "who owns
+/// `content-canonicalize-invalid-utf8`?" (task G22).
+///
+/// [`check_raw_mirror`] is the sole constructor of [`VerifyError::Canon`],
+/// and it can only build one from
+/// [`recompute_canonical_from_mirror`]'s [`UnicodeVersionError`]. That type
+/// has exactly one variant, so this list is exhaustive **by construction**,
+/// and `content-canonicalize-invalid-utf8` is *structurally* absent from
+/// every verifier path — not merely absent from the paths anyone has thought
+/// to test.
+///
+/// A reverse-coverage check asking who owns that code should read this
+/// constant and the test beside it
+/// (`invalid_utf8_is_structurally_unreachable_from_the_verifier`): the code
+/// is owned by the **strict-detection contract of the public
+/// `canon::canonicalize`/`canonicalize_v` API**, exercised by G3's
+/// `tests/utf8_corpus.rs` — and, precisely, by *no* production call site in
+/// this workspace, since seal-side assembly canonicalizes through the total
+/// forced entry point too.
+pub const CANONICALIZATION_SEAM_CODES: &[&str] = &["content-unknown-unicode-version"];
 
 /// Rows 9–10 — the revealed raw mirror's two checks, in frozen order
 /// (MVP-SPEC.md lines 92, 121):
@@ -989,8 +1040,12 @@ pub fn check_raw_mirror(
         return Ok(());
     };
 
+    // The `Canon` wrapper still carries `CanonicalizeError` — narrowing R's
+    // error *set* would retire a code, which G22 explicitly must not do. What
+    // narrows is the SOURCE: `UnicodeVersionError` has one variant, so this
+    // conversion can only ever produce `UnknownVersion`.
     let recomputed = recompute_canonical_from_mirror(unicode_version, mirror_bytes)
-        .map_err(VerifyError::Canon)?;
+        .map_err(|error| VerifyError::Canon(CanonicalizeError::UnknownVersion(error)))?;
     if recomputed.as_bytes() == canonical {
         Ok(())
     } else {
@@ -1084,7 +1139,7 @@ fn len_u64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canon::{UNICODE_17_0_0, UnicodeVersion, canonicalize};
+    use crate::canon::{TextMode, UNICODE_17_0_0, UnicodeVersion, canonicalize, canonicalize_v};
     use crate::content::fine_tree::FineRoot;
     use crate::crypto::commit::{canon_commit, raw_commit};
     // Property tests need the proptest-bearing `test-util` tier, which the
@@ -1918,6 +1973,75 @@ mod tests {
             .expect_err("this build does not register that version");
         assert_eq!(err.code(), "content-unknown-unicode-version");
         assert!(matches!(err, VerifyError::Canon(_)));
+    }
+
+    /// **The G22 statement, tested rather than asserted in prose.**
+    ///
+    /// `content-canonicalize-invalid-utf8` is *structurally* unreachable
+    /// from the verifier, and this is what a reverse-coverage check (F23/F24)
+    /// should cite when it asks who owns the code. Four parts:
+    ///
+    /// 1. the recompute's error type — [`UnicodeVersionError`] — has exactly
+    ///    one code, so [`CANONICALIZATION_SEAM_CODES`] is the seam's whole
+    ///    universe and the invalid-UTF-8 code is not in it;
+    /// 2. the recompute is **total** on bytes that would make the strict mode
+    ///    fail, so there is nothing to report in the first place;
+    /// 3. the code is nonetheless still live and correctly coded — the strict
+    ///    public path produces it;
+    /// 4. and it is *not* the sealer that produces it: seal-side assembly
+    ///    detects with `is_text` and canonicalizes through the total forced
+    ///    entry point, so no production call site in this workspace selects
+    ///    [`TextMode::Detected`]. The owner is the public strict-detection
+    ///    API contract (G3's `tests/utf8_corpus.rs` is its conformance
+    ///    suite).
+    #[test]
+    fn invalid_utf8_is_structurally_unreachable_from_the_verifier() {
+        const CODE: &str = "content-canonicalize-invalid-utf8";
+        let bytes: &[u8] = b"alpha\xFF\xFEbeta\r\n";
+
+        // (1) The seam's whole code universe, exhaustive by construction.
+        let seam: Vec<&'static str> = [UnicodeVersionError::UnknownUnicodeVersion {
+            requested: "unicode-99.0.0".to_owned(),
+        }]
+        .iter()
+        .map(UnicodeVersionError::code)
+        .collect();
+        assert_eq!(
+            seam, CANONICALIZATION_SEAM_CODES,
+            "the recompute's error type gained a variant — re-derive the seam's code set"
+        );
+        assert!(!CANONICALIZATION_SEAM_CODES.contains(&CODE));
+
+        // (2) Totality: the very bytes the strict mode refuses come back Ok,
+        //     and byte-identically to the fallible forced form.
+        let recomputed = recompute_canonical_from_mirror(UNICODE_17_0_0, bytes)
+            .expect("forced-mode recompute is total over arbitrary bytes");
+        assert_eq!(
+            Ok(recomputed),
+            canonicalize_v(UNICODE_17_0_0, TextMode::Forced, bytes)
+        );
+
+        // (3) The code is not orphaned: the strict path still produces it, so
+        //     retiring it would break the append-only rule for no gain.
+        let strict = canonicalize_v(UNICODE_17_0_0, TextMode::Detected, bytes)
+            .expect_err("strict detection must refuse these bytes");
+        assert_eq!(strict.code(), CODE);
+
+        // (4) …and that path is NOT the sealer's. G14's assembly decides
+        //     text-ness with `is_text` and then forces, so bytes this hostile
+        //     assemble without any error at all.
+        assert!(!crate::canon::is_text(bytes));
+        let model = crate::content::assemble_content_model(
+            &[crate::content::FileInput::new(
+                bytes,
+                crate::content::FileFlags::new().with_force_text(),
+            )],
+            &|_| Seed32::from_bytes([7u8; 32]),
+        );
+        assert!(
+            model.file(0).and_then(|file| file.canonical()).is_some(),
+            "the seal side canonicalizes these bytes rather than erroring on them"
+        );
     }
 
     // ── structural properties of the classification ─────────────────────
