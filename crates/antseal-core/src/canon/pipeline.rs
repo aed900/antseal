@@ -312,6 +312,36 @@ pub fn canonicalize(
         TextMode::Forced => String::from_utf8_lossy(raw_bytes),
     };
 
+    Ok(canonicalize_decoded(version, &decoded))
+}
+
+/// [`canonicalize`] in [`TextMode::Forced`] — the **total** form, returning
+/// [`CanonicalBytes`] rather than a `Result`.
+///
+/// Forced mode cannot fail: its stage 1 is [`String::from_utf8_lossy`], and
+/// no later stage is fallible (decision D20 makes the transform total over
+/// arbitrary bytes). This entry point states that in the type, so the callers
+/// that *always* force — the seal-side content-model assembly (G14) and every
+/// verifier-side raw-mirror recompute (MVP-SPEC.md line 121, which D20
+/// requires to run [`TextMode::Forced`]) — carry no unreachable error arm and
+/// no unwrap.
+///
+/// Byte-identical to `canonicalize(version, TextMode::Forced, raw_bytes)` by
+/// construction: both run the identical stage-1 decode into the identical
+/// stages 2–5 (`forced_total_form_matches_the_fallible_one` asserts it over
+/// arbitrary bytes).
+#[must_use]
+pub fn canonicalize_forced(version: UnicodeVersion, raw_bytes: &[u8]) -> CanonicalBytes {
+    canonicalize_decoded(version, &String::from_utf8_lossy(raw_bytes))
+}
+
+/// Stages 2–5 of the frozen D21 pipeline, over an already-decoded scalar
+/// stream — the part that is total for *every* mode.
+///
+/// Keeping it in one place is what makes [`canonicalize_forced`]'s totality
+/// structural rather than a claim: the fallible step is stage 1 alone, and it
+/// is not in here.
+fn canonicalize_decoded(version: UnicodeVersion, decoded: &str) -> CanonicalBytes {
     // Stage 2 — strip ALL leading U+FEFF scalars (the contiguous run at
     // position 0; D21's deliberate strip-all-for-idempotence rule).
     let stripped = decoded.trim_start_matches('\u{FEFF}');
@@ -324,7 +354,7 @@ pub fn canonicalize(
 
     // Stage 5 — encode UTF-8, no BOM: a Rust `String` is exactly that, and
     // nothing is prepended.
-    Ok(CanonicalBytes(nfc))
+    CanonicalBytes(nfc)
 }
 
 /// Stage 3: one left-to-right pass over the scalar stream mapping
@@ -678,6 +708,29 @@ mod tests {
         assert_eq!(via_current_str, via_resolved);
     }
 
+    /// The total form agrees with the fallible one byte-for-byte on the KAT
+    /// corpus — including every invalid-UTF-8 row, where the fallible form's
+    /// `Forced` arm is the only one that succeeds.
+    #[test]
+    fn kat_forced_total_form_matches_the_fallible_one() {
+        for raw in [
+            b"".as_slice(),
+            b"plain ascii",
+            b"\xEF\xBB\xBF\xEF\xBB\xBFbom\r\n\r\r\ncrlf",
+            "e\u{0301} NFD".as_bytes(),
+            b"\xFF",
+            b"\xE2\x82",
+            b"\xC0\xAF",
+            b"caf\xC3",
+            b"\xED\xA0\x80",
+        ] {
+            let total = canonicalize_forced(UnicodeVersion::CURRENT, raw);
+            let fallible = canonicalize(UnicodeVersion::CURRENT, TextMode::Forced, raw)
+                .expect("forced mode is total");
+            assert_eq!(total, fallible, "input {raw:02X?}");
+        }
+    }
+
     #[test]
     fn is_text_is_strict_utf8_validity() {
         // Text.
@@ -758,6 +811,9 @@ mod tests {
             let result = canonicalize(UnicodeVersion::CURRENT, TextMode::Forced, &raw);
             prop_assert!(result.is_ok(), "forced-text canonicalization must be total (D20)");
             let once = result.expect("just asserted Ok");
+
+            // The total form is the same function (`canonicalize_forced`).
+            prop_assert_eq!(&canonicalize_forced(UnicodeVersion::CURRENT, &raw), &once);
 
             // Canonical-form invariant (D21): never begins with U+FEFF,
             // no CR, NFC under the applied version. (The leading-BOM check

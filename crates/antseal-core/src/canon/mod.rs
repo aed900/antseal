@@ -38,7 +38,8 @@ pub mod unicode;
 mod pipeline;
 
 pub use pipeline::{
-    CanonicalBytes, CanonicalizeError, TextMode, canonicalize, canonicalize_v, is_text,
+    CanonicalBytes, CanonicalizeError, TextMode, canonicalize, canonicalize_forced, canonicalize_v,
+    is_text,
 };
 pub use unicode::{UNICODE_17_0_0, UnicodeVersion, UnicodeVersionError};
 
