@@ -40,7 +40,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use antseal_core::test_util::vectors::KNOWN_KINDS;
-use sha2::{Digest, Sha256};
+
+/// The freeze-manifest format itself — model, directive parser and digest
+/// helper — shared with `format_freeze.rs` (Q50) so `#! status frozen` has
+/// exactly one meaning in this repo. The tests-of-the-test below cover the
+/// parser for both consumers.
+#[path = "freeze_manifest/mod.rs"]
+mod freeze_manifest;
+
+use freeze_manifest::{EntryPolicy, Pending, Status, hex_sha256, parse_manifest};
 
 /// The committed vector tree (workspace-relative via the crate manifest
 /// dir, so it holds on every OS and checkout location).
@@ -57,8 +65,16 @@ const MANIFEST_NAME: &str = "FROZEN.sha256";
 /// holds it to the tree, and it cross-checks against this manifest.
 const INDEX_NAME: &str = "INDEX.json";
 
-/// The manifest schema version this checker implements.
-const MANIFEST_VERSION: u64 = 1;
+/// Which files the vector freeze covers. Auxiliaries — `README.md`, the
+/// `*.py` reference generators and `INDEX.json` — are deliberately outside
+/// it: the generators are re-runnable cross-checks, and the JSON they
+/// produced is what the format commits to.
+const VECTOR_ENTRIES: EntryPolicy = EntryPolicy {
+    required_name_prefix: "",
+    allowed_suffixes: &[".json"],
+    excluded_paths: &[INDEX_NAME],
+    subject: "the golden-vector freeze",
+};
 
 /// **The must-exist vectors format v1 still owes**, pinned here as the
 /// second layer over the `#! pending` directives — deleting a directive
@@ -82,249 +98,6 @@ const MANIFEST_VERSION: u64 = 1;
 /// describes. An empty list is not a licence to stop checking: a *new*
 /// obligation added later must appear in both places again.
 const EXPECTED_PENDING_V1: &[(&str, &str)] = &[];
-
-// ---------------------------------------------------------------------------
-// manifest model + parser
-// ---------------------------------------------------------------------------
-
-/// Freeze status of one format version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Status {
-    /// Vectors may still be regenerated as a recorded, justified change.
-    PreFreeze,
-    /// Q14 has run: digests are permanent, additions only.
-    Frozen,
-}
-
-/// A must-exist vector the version still owes.
-#[derive(Debug, Clone)]
-struct Pending {
-    /// Stable slug naming the obligation.
-    slug: String,
-    /// Task id that must land it.
-    task: String,
-    /// What the vector must pin.
-    what: String,
-}
-
-/// One frozen vector file.
-#[derive(Debug, Clone)]
-struct Entry {
-    /// Lowercase-hex SHA-256 of the file's exact bytes.
-    digest: String,
-    /// Path relative to the version directory, forward slashes.
-    path: String,
-}
-
-/// A parsed `FROZEN.sha256`.
-#[derive(Debug)]
-struct Manifest {
-    format_version: String,
-    status: Status,
-    freeze_gate: String,
-    /// `kind name -> introducing task`.
-    kinds: BTreeMap<String, String>,
-    pending: Vec<Pending>,
-    entries: Vec<Entry>,
-}
-
-/// Parse a manifest. Every malformed construct is an error — nothing is
-/// tolerated, skipped, or defaulted.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one linear parser over one file format; splitting it would \
-              scatter the directive vocabulary across helpers"
-)]
-fn parse_manifest(text: &str, origin: &str) -> Result<Manifest, String> {
-    let mut manifest_version: Option<u64> = None;
-    let mut format_version: Option<String> = None;
-    let mut status: Option<Status> = None;
-    let mut freeze_gate: Option<String> = None;
-    let mut kinds: BTreeMap<String, String> = BTreeMap::new();
-    let mut pending: Vec<Pending> = Vec::new();
-    let mut entries: Vec<Entry> = Vec::new();
-
-    for (index, raw) in text.lines().enumerate() {
-        let lineno = index + 1;
-        let at = format!("{origin}:{lineno}");
-        // Trailing whitespace would silently corrupt a path; reject it.
-        if raw != raw.trim_end() {
-            return Err(format!("{at}: trailing whitespace"));
-        }
-        if raw.is_empty() {
-            continue;
-        }
-        if let Some(directive) = raw.strip_prefix("#!") {
-            let directive = directive.trim();
-            let (word, rest) = split_word(directive);
-            match word {
-                "manifest-version" => {
-                    let value: u64 = rest
-                        .parse()
-                        .map_err(|_| format!("{at}: manifest-version must be an integer"))?;
-                    set_once(&mut manifest_version, value, "manifest-version", &at)?;
-                }
-                "format-version" => {
-                    require_nonempty(rest, "format-version", &at)?;
-                    set_once(&mut format_version, rest.to_owned(), "format-version", &at)?;
-                }
-                "status" => {
-                    let value = match rest {
-                        "pre-freeze" => Status::PreFreeze,
-                        "frozen" => Status::Frozen,
-                        other => {
-                            return Err(format!(
-                                "{at}: status must be `pre-freeze` or `frozen`, got `{other}`"
-                            ));
-                        }
-                    };
-                    set_once(&mut status, value, "status", &at)?;
-                }
-                "freeze-gate" => {
-                    require_nonempty(rest, "freeze-gate", &at)?;
-                    set_once(&mut freeze_gate, rest.to_owned(), "freeze-gate", &at)?;
-                }
-                "kind" => {
-                    let (name, since) = split_word(rest);
-                    require_nonempty(name, "kind name", &at)?;
-                    require_nonempty(since, "kind introducing task", &at)?;
-                    if kinds.insert(name.to_owned(), since.to_owned()).is_some() {
-                        return Err(format!("{at}: kind `{name}` declared twice"));
-                    }
-                }
-                "pending" => {
-                    let (slug, rest) = split_word(rest);
-                    let (task, what) = split_word(rest);
-                    require_nonempty(slug, "pending slug", &at)?;
-                    require_nonempty(task, "pending owning task", &at)?;
-                    require_nonempty(what, "pending description", &at)?;
-                    if pending.iter().any(|p| p.slug == slug) {
-                        return Err(format!("{at}: pending slug `{slug}` declared twice"));
-                    }
-                    pending.push(Pending {
-                        slug: slug.to_owned(),
-                        task: task.to_owned(),
-                        what: what.to_owned(),
-                    });
-                }
-                other => {
-                    return Err(format!(
-                        "{at}: unknown directive `#! {other}` — the vocabulary is \
-                         manifest-version/format-version/status/freeze-gate/kind/pending \
-                         (a typo must never be silently ignored)"
-                    ));
-                }
-            }
-            continue;
-        }
-        if raw.starts_with('#') {
-            continue; // prose comment (also skipped by `sha256sum -c`)
-        }
-        entries.push(parse_entry(raw, &at)?);
-    }
-
-    let manifest_version =
-        manifest_version.ok_or_else(|| format!("{origin}: missing `#! manifest-version`"))?;
-    if manifest_version != MANIFEST_VERSION {
-        return Err(format!(
-            "{origin}: manifest-version {manifest_version} is not the {MANIFEST_VERSION} this \
-             checker implements"
-        ));
-    }
-    let manifest = Manifest {
-        format_version: format_version
-            .ok_or_else(|| format!("{origin}: missing `#! format-version`"))?,
-        status: status.ok_or_else(|| format!("{origin}: missing `#! status`"))?,
-        freeze_gate: freeze_gate.ok_or_else(|| format!("{origin}: missing `#! freeze-gate`"))?,
-        kinds,
-        pending,
-        entries,
-    };
-    if manifest.entries.is_empty() {
-        return Err(format!(
-            "{origin}: zero frozen entries — an empty freeze manifest asserts nothing and must \
-             fail loudly"
-        ));
-    }
-    if manifest.status == Status::Frozen && !manifest.pending.is_empty() {
-        return Err(format!(
-            "{origin}: status is `frozen` but {} `#! pending` must-exist vector(s) remain \
-             ({}); the freeze gate requires zero pending",
-            manifest.pending.len(),
-            manifest
-                .pending
-                .iter()
-                .map(|p| format!("{} ({})", p.slug, p.task))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    Ok(manifest)
-}
-
-/// One `<64-hex-digits><2 spaces><relative/path>` line, in the exact shape
-/// `sha256sum` emits and consumes.
-fn parse_entry(raw: &str, at: &str) -> Result<Entry, String> {
-    let (digest, path) = raw
-        .split_once("  ")
-        .ok_or_else(|| format!("{at}: not a `<sha256>  <path>` line (needs two spaces)"))?;
-    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!(
-            "{at}: digest must be 64 hex digits, got `{digest}`"
-        ));
-    }
-    if digest.bytes().any(|b| b.is_ascii_uppercase()) {
-        return Err(format!("{at}: digest must be lowercase hex"));
-    }
-    if path.is_empty() {
-        return Err(format!("{at}: empty path"));
-    }
-    // Path discipline: relative, forward slashes, no traversal. A manifest
-    // is committed data; an absolute or `..` path would let it reach
-    // outside the version directory it freezes.
-    if path.starts_with('/')
-        || path.contains('\\')
-        || path.split('/').any(|c| c == ".." || c == ".")
-    {
-        return Err(format!(
-            "{at}: path `{path}` must be relative to the version directory, forward-slashed, \
-             with no `.`/`..` components"
-        ));
-    }
-    if !path.ends_with(".json") || path == INDEX_NAME {
-        return Err(format!(
-            "{at}: `{path}` is not a vector file — only committed `*.json` vectors are frozen \
-             (READMEs, `*.py` generators and {INDEX_NAME} are auxiliaries by design)"
-        ));
-    }
-    Ok(Entry {
-        digest: digest.to_owned(),
-        path: path.to_owned(),
-    })
-}
-
-fn split_word(text: &str) -> (&str, &str) {
-    match text.split_once(char::is_whitespace) {
-        Some((head, tail)) => (head, tail.trim_start()),
-        None => (text, ""),
-    }
-}
-
-fn require_nonempty(value: &str, what: &str, at: &str) -> Result<(), String> {
-    if value.is_empty() {
-        Err(format!("{at}: {what} is empty"))
-    } else {
-        Ok(())
-    }
-}
-
-fn set_once<T>(slot: &mut Option<T>, value: T, what: &str, at: &str) -> Result<(), String> {
-    if slot.is_some() {
-        return Err(format!("{at}: `{what}` given twice"));
-    }
-    *slot = Some(value);
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // the checks
@@ -406,7 +179,7 @@ fn check_version_dir(dir: &Path, version: &str) -> Result<VersionReport, Vec<Str
         }
     };
     let origin = manifest_path.display().to_string();
-    let manifest = parse_manifest(&text, &origin).map_err(|e| vec![e])?;
+    let manifest = parse_manifest(&text, &origin, &VECTOR_ENTRIES).map_err(|e| vec![e])?;
 
     let mut failures = Vec::new();
     if manifest.format_version != version {
@@ -545,11 +318,6 @@ fn file_name(path: &Path) -> Result<String, String> {
 fn is_version_dirname(name: &str) -> bool {
     name.strip_prefix('v')
         .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-}
-
-fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn render(failures: &[String]) -> String {
@@ -857,5 +625,5 @@ fn vector_freeze_red_on_freezing_a_generator() {
     let digest = hex_sha256(b"print('x')\n");
     let text = format!("{MANIFEST_HEADER}{digest}  group/gen_vectors.py\n");
     fs::write(root.join("v1").join(MANIFEST_NAME), text).expect("write manifest");
-    expect_red(&root, "is not a vector file");
+    expect_red(&root, "is not part of the golden-vector freeze");
 }

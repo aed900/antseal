@@ -29,6 +29,13 @@ run clippy cargo clippy --workspace --all-targets --all-features --locked -- -D 
 run test   cargo test --workspace --all-features --locked
 run wasm32 cargo build -p antseal-core --target wasm32-unknown-unknown --locked
 
+# Q50 — the wire-registry freeze digest. Not folded into `test` because its
+# first layer is coreutils `sha256sum -c`, which shares no code with the crate
+# whose format it pins, and because the self-test must run first for a green
+# result to mean anything.
+run format-freeze scripts/format-freeze.sh --self-test
+run format-freeze scripts/format-freeze.sh
+
 # F14 — the independent cross-check (decision D31; contract:
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
 # it shares no code with the crate it checks.

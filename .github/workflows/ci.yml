@@ -21,6 +21,9 @@
 #   Q5:  wasm-bitmatch — LANDED: native<->WASM bit-match over every committed
 #        golden vector, built on P14's runner technique. Harness:
 #        crates/wasm-bitmatch (test-only). Doc: docs/wasm-toolchain.md
+#   Q50: format-freeze — the wire-registry freeze digest (a new
+#        required-status check): scripts/format-freeze.sh, checker
+#        crates/antseal-core/tests/format_freeze.rs.
 #   Q6:  vector-freeze — LANDED as a NEW lane (a new required-status
 #        context, +1 on the branch-protection payload — see
 #        docs/ci-verification.md). Per-version FROZEN.sha256 freeze +
@@ -427,6 +430,36 @@ jobs:
         run: ./scripts/vector-freeze.sh --self-test
       - name: Freeze + must-exist guard over every retained format version
         run: ./scripts/vector-freeze.sh
+
+  # Q50: the WIRE-REGISTRY freeze. `docs/format/registry-v1.md` IS format v1 —
+  # the normative text a third-party verifier implements from — and
+  # `registry-v1.json` is its machine mirror. Both sat outside every freeze
+  # mechanism in the project until this lane: vector-freeze covers
+  # testdata/vectors/ only.
+  #
+  # The gap this closes is that every registry fact — the 19 D10 caps, 68 map
+  # keys and their names, 13 scalar lengths, 5 enums, version dispatch — was
+  # pinned only by "code and JSON must agree". That is a CONSISTENCY check: a
+  # coordinated edit of both sides in one commit passes the whole suite,
+  # forever, and post-freeze that is a silent format change.
+  #
+  # Like vector-freeze, the lane SELF-TESTS FIRST: it mutates, deletes and
+  # under-declares registry files in a scratch copy and requires the digest
+  # check to go red, so a green run is trustworthy.
+  format-freeze:
+    name: format-freeze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Self-test — a mutated/deleted/unfrozen registry MUST turn the lane red
+        run: ./scripts/format-freeze.sh --self-test
+      - name: Freeze + must-exist guard over the v1 wire registry
+        run: ./scripts/format-freeze.sh
 
   # Q5 (live): WASM/native bit-match. Every committed golden vector is
   # executed through antseal_core::test_util::vectors on BOTH targets and the
