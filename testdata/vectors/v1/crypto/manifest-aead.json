@@ -1,0 +1,37 @@
+{
+  "schema": "antseal-golden-vector",
+  "schema_version": 1,
+  "format_version": "v1",
+  "kind": "manifest-aead",
+  "non_secret": "NON-SECRET test fixture (project rule 6): the master secret W is the documented fixed test seed, bytes 0x00..0x1f (testdata/README.md); every key, salt and seed here derives from it. Never real vault or wallet material.",
+  "description": "Manifest AEAD golden vectors (C16/C10): k_m = HKDF(W, \"manifest-key\", sentinel) with the sentinel id 0xffffffffffffffff, XChaCha20-Poly1305 over the plaintext manifest bytes with the frozen **empty** AAD (MVP-SPEC.md line 98).",
+  "inputs": {
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "expect": {
+    "k_m": "7ac2a2cd9c3696f2c75260d0bfa4da4ff62b422092fba8495e5009a397c0cd5c",
+    "vectors": [
+      {
+        "name": "manifest-blob",
+        "manifest_bytes": "a20058206d616e696665737420626f647920627974657320287374616e642d696e2901a0",
+        "aad": "",
+        "nonce": "8a11418524de8e83b19bb3e0a7365a499e83c67937465291",
+        "blob": "b41a58ec61e97d3e0f7596ae489625d6ec101db20b0f8c13104aad56a67e23b696dcfbf4490779b769dbac8ae2df2a0a0584f245"
+      },
+      {
+        "name": "empty-plaintext",
+        "manifest_bytes": "",
+        "aad": "",
+        "nonce": "0d936f51925a86a5abc396cbb9bd606c10abdaf5886f1e10",
+        "blob": "ff43dc7abf97b2d62731517a86489211"
+      },
+      {
+        "name": "single-byte",
+        "manifest_bytes": "00",
+        "aad": "",
+        "nonce": "a14ec927e6d1833b5a8a4183be5cb2ffc835e66040d8b53e",
+        "blob": "eea48310a6279a006898ac5311adc958d4"
+      }
+    ]
+  }
+}

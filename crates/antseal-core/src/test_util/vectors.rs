@@ -34,7 +34,13 @@ use crate::crypto::hkdf::{
     derive_manifest_key, derive_path_salt, derive_sig_ed25519_seed, derive_sig_mldsa65_seed,
     derive_unit_key, derive_unit_salt,
 };
+use crate::crypto::manifest_aead::{
+    MANIFEST_AAD, ManifestKey, decrypt_manifest, decrypt_manifest_with_key,
+};
 use crate::crypto::material::{FileSalt, MasterSecretRef, Salt16};
+use crate::crypto::padding::{PAD_BLOCK, apply_padding, padded_length};
+use crate::crypto::secrets::SealId;
+use crate::crypto::unit_aead::{Nonce24, UnitKey, decrypt_unit, decrypt_unit_with_key, unit_aad};
 
 /// The envelope `schema` discriminator string.
 pub const SCHEMA: &str = "antseal-golden-vector";
@@ -49,7 +55,7 @@ pub const NON_SECRET_MARKER: &str = "NON-SECRET";
 
 /// Registered vector kinds. Extending this list is a framework change
 /// (see the module docs), not a per-vector event.
-pub const KNOWN_KINDS: &[&str] = &["hkdf-labels", "commitments"];
+pub const KNOWN_KINDS: &[&str] = &["hkdf-labels", "commitments", "unit-aead", "manifest-aead"];
 
 /// Why a vector file failed. Every variant is a *loud* failure in the
 /// runner — nothing is skipped.
@@ -177,6 +183,8 @@ pub fn execute_vector_bytes(
     match envelope.kind.as_str() {
         "hkdf-labels" => execute_hkdf_labels(envelope),
         "commitments" => execute_commitments(envelope),
+        "unit-aead" => execute_unit_aead(envelope),
+        "manifest-aead" => execute_manifest_aead(envelope),
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }
@@ -613,6 +621,376 @@ fn verify_commitment_entry(
 }
 
 // ---------------------------------------------------------------------------
+// kind: unit-aead (C16 / C8 + C9)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitAeadInputs {
+    w: String,
+    seal_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitAeadExpect {
+    vectors: Vec<UnitAeadEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitAeadEntry {
+    name: String,
+    unit_id: String,
+    true_length: usize,
+    unit_bytes: String,
+    k_u: String,
+    aad: String,
+    padded_plaintext: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+const UNIT_AEAD_KIND: &str = "unit-aead";
+
+/// XChaCha20-Poly1305 tag length, in bytes.
+const AEAD_TAG_LEN: usize = 16;
+
+/// Execute a `unit-aead` vector (MVP-SPEC.md line 91; tasks/C.md C16).
+///
+/// # Why pinning the *decrypt* direction pins the ciphertext exactly
+///
+/// [`encrypt_unit`](crate::crypto::unit_aead::encrypt_unit) deliberately
+/// exposes no way to supply a nonce — the `(k_u, nonce)` single-use
+/// invariant is structural — so a committed vector cannot simply call the
+/// encryptor and compare. It does not need to: AEAD encryption is a
+/// *deterministic function* of `(key, nonce, aad, plaintext)`, and
+/// XChaCha20-Poly1305 is injective in the plaintext for a fixed triple
+/// (the ciphertext body is the keystream XOR, the tag is then determined).
+/// So a ciphertext that authenticates back to the pinned plaintext under
+/// the pinned `(k_u, nonce, aad)` **is** the ciphertext antseal would have
+/// produced, byte for byte. The independent implementation ran the encrypt
+/// direction; this runs the decrypt direction; agreement is exact.
+fn execute_unit_aead(envelope: Envelope) -> Result<VectorSummary, VectorError> {
+    let payload_err = |problem: String| VectorError::Payload {
+        kind: UNIT_AEAD_KIND,
+        problem,
+    };
+    let inputs: UnitAeadInputs =
+        serde_json::from_value(envelope.inputs).map_err(|e| payload_err(format!("inputs: {e}")))?;
+    let expect: UnitAeadExpect =
+        serde_json::from_value(envelope.expect).map_err(|e| payload_err(format!("expect: {e}")))?;
+
+    let w_array = require_test_master_secret(UNIT_AEAD_KIND, &inputs.w)?;
+    let w = MasterSecretRef::from_bytes(&w_array);
+    let seal_id = SealId::from_bytes(decode_hex_array::<{ SealId::LEN }>(
+        UNIT_AEAD_KIND,
+        "inputs.seal_id",
+        &inputs.seal_id,
+    )?);
+
+    // The C16-mandated boundary cases must be present, so the two lengths
+    // the padding formula is most easily got wrong on cannot go unvectored.
+    if !expect.vectors.iter().any(|v| v.true_length == 0) {
+        return Err(VectorError::Check {
+            kind: UNIT_AEAD_KIND,
+            check: "boundary-coverage",
+            problem: "no vector covers the empty unit (true_length 0 → 256-B plaintext)".to_owned(),
+        });
+    }
+    if !expect
+        .vectors
+        .iter()
+        .any(|v| v.true_length > 0 && v.true_length.is_multiple_of(PAD_BLOCK))
+    {
+        return Err(VectorError::Check {
+            kind: UNIT_AEAD_KIND,
+            check: "boundary-coverage",
+            problem: "no vector covers a 256-aligned unit".to_owned(),
+        });
+    }
+
+    for entry in &expect.vectors {
+        verify_unit_aead_entry(w, &seal_id, entry)?;
+    }
+
+    Ok(VectorSummary {
+        kind: UNIT_AEAD_KIND,
+        description: envelope.description,
+        items: expect.vectors.len(),
+    })
+}
+
+fn verify_unit_aead_entry(
+    w: MasterSecretRef<'_>,
+    seal_id: &SealId,
+    entry: &UnitAeadEntry,
+) -> Result<(), VectorError> {
+    let check_err = |check: &'static str, problem: String| VectorError::Check {
+        kind: UNIT_AEAD_KIND,
+        check,
+        problem,
+    };
+    let name = entry.name.as_str();
+
+    let unit_id = UnitId(parse_id64_for(UNIT_AEAD_KIND, name, &entry.unit_id)?);
+    let unit_bytes = decode_hex(UNIT_AEAD_KIND, "unit_bytes", &entry.unit_bytes)?;
+    if unit_bytes.len() != entry.true_length {
+        return Err(check_err(
+            "true-length",
+            format!(
+                "{name}: true_length {} but unit_bytes is {} bytes",
+                entry.true_length,
+                unit_bytes.len()
+            ),
+        ));
+    }
+
+    // k_u = HKDF(W, "unit-key", unit_id) — the chain from W is pinned.
+    let k_u: UnitKey = derive_unit_key(w, unit_id);
+    let expected_k_u = decode_hex(UNIT_AEAD_KIND, "k_u", &entry.k_u)?;
+    if k_u.as_bytes().as_slice() != expected_k_u {
+        return Err(check_err(
+            "unit-key-bytes",
+            format!(
+                "{name}: derived {}, vector pins {}",
+                hex(k_u.as_bytes()),
+                entry.k_u
+            ),
+        ));
+    }
+
+    // AAD = seal_id ‖ LE64(unit_id), 24 bytes.
+    let aad = unit_aad(seal_id, unit_id);
+    let expected_aad = decode_hex(UNIT_AEAD_KIND, "aad", &entry.aad)?;
+    if aad.as_slice() != expected_aad {
+        return Err(check_err(
+            "aad-bytes",
+            format!("{name}: computed {}, vector pins {}", hex(&aad), entry.aad),
+        ));
+    }
+
+    // The C8 padded plaintext, byte-exact (not merely the right length).
+    let padded = apply_padding(&unit_bytes);
+    let expected_padded = decode_hex(UNIT_AEAD_KIND, "padded_plaintext", &entry.padded_plaintext)?;
+    if padded != expected_padded {
+        return Err(check_err(
+            "padded-plaintext",
+            format!(
+                "{name}: padded to {} bytes, vector pins {} bytes (or the fill differs)",
+                padded.len(),
+                expected_padded.len()
+            ),
+        ));
+    }
+    if padded.len() != padded_length(entry.true_length) {
+        return Err(check_err(
+            "padded-length-formula",
+            format!(
+                "{name}: padded_length({}) is {}, padded plaintext is {}",
+                entry.true_length,
+                padded_length(entry.true_length),
+                padded.len()
+            ),
+        ));
+    }
+
+    // The ciphertext: exact length, then authenticated decryption back to
+    // the pinned plaintext (which pins its bytes — see the executor docs).
+    let nonce = Nonce24::from_bytes(decode_hex_array::<{ Nonce24::LEN }>(
+        UNIT_AEAD_KIND,
+        "nonce",
+        &entry.nonce,
+    )?);
+    let ciphertext = decode_hex(UNIT_AEAD_KIND, "ciphertext", &entry.ciphertext)?;
+    if ciphertext.len() != padded.len() + AEAD_TAG_LEN {
+        return Err(check_err(
+            "ciphertext-length",
+            format!(
+                "{name}: ciphertext is {} bytes, want padded {} + tag {AEAD_TAG_LEN}",
+                ciphertext.len(),
+                padded.len()
+            ),
+        ));
+    }
+
+    // Key-direct path (the verifier-side seam: a bundle supplies k_u, the
+    // verifier never holds W — spec line 114).
+    let via_key = decrypt_unit_with_key(
+        &k_u,
+        seal_id,
+        unit_id,
+        &nonce,
+        &ciphertext,
+        entry.true_length,
+    )
+    .map_err(|e| check_err("decrypt-with-key", format!("{name}: {e}")))?;
+    if via_key != unit_bytes {
+        return Err(check_err(
+            "plaintext-bytes",
+            format!("{name}: decrypted plaintext does not equal the pinned unit_bytes"),
+        ));
+    }
+    // W path (sealer-side restore/preview) — same implementation by
+    // delegation; running both pins that the delegation is real.
+    let via_w = decrypt_unit(w, seal_id, unit_id, &nonce, &ciphertext, entry.true_length)
+        .map_err(|e| check_err("decrypt-with-w", format!("{name}: {e}")))?;
+    if via_w != unit_bytes {
+        return Err(check_err(
+            "plaintext-bytes",
+            format!("{name}: the W path decrypted differently from the key-direct path"),
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// kind: manifest-aead (C16 / C10)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestAeadInputs {
+    w: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestAeadExpect {
+    k_m: String,
+    vectors: Vec<ManifestAeadEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestAeadEntry {
+    name: String,
+    manifest_bytes: String,
+    aad: String,
+    nonce: String,
+    blob: String,
+}
+
+const MANIFEST_AEAD_KIND: &str = "manifest-aead";
+
+/// Execute a `manifest-aead` vector (MVP-SPEC.md line 98; tasks/C.md C16).
+///
+/// Pins the sentinel-id `k_m` derivation, the **frozen empty AAD**, and the
+/// blob bytes (by the same decrypt-direction argument as
+/// [`execute_unit_aead`]). Every entry's `aad` field must be the empty
+/// string *and* [`MANIFEST_AAD`] must itself be empty: the vector would
+/// otherwise still pass if the constant ever grew a value, since the
+/// generator and the implementation would simply be wrong together.
+fn execute_manifest_aead(envelope: Envelope) -> Result<VectorSummary, VectorError> {
+    let payload_err = |problem: String| VectorError::Payload {
+        kind: MANIFEST_AEAD_KIND,
+        problem,
+    };
+    let inputs: ManifestAeadInputs =
+        serde_json::from_value(envelope.inputs).map_err(|e| payload_err(format!("inputs: {e}")))?;
+    let expect: ManifestAeadExpect =
+        serde_json::from_value(envelope.expect).map_err(|e| payload_err(format!("expect: {e}")))?;
+
+    let w_array = require_test_master_secret(MANIFEST_AEAD_KIND, &inputs.w)?;
+    let w = MasterSecretRef::from_bytes(&w_array);
+
+    // The frozen empty AAD, asserted against the constant itself.
+    if !MANIFEST_AAD.is_empty() {
+        return Err(VectorError::Check {
+            kind: MANIFEST_AEAD_KIND,
+            check: "manifest-aad-is-empty",
+            problem: "MANIFEST_AAD is no longer empty — that is a format event (spec line 98)"
+                .to_owned(),
+        });
+    }
+
+    // k_m = HKDF(W, "manifest-key", sentinel) — work-global, sentinel id.
+    let k_m: ManifestKey = derive_manifest_key(w);
+    let expected_k_m = decode_hex(MANIFEST_AEAD_KIND, "k_m", &expect.k_m)?;
+    if k_m.as_bytes().as_slice() != expected_k_m {
+        return Err(VectorError::Check {
+            kind: MANIFEST_AEAD_KIND,
+            check: "manifest-key-bytes",
+            problem: format!(
+                "derived {}, vector pins {}",
+                hex(k_m.as_bytes()),
+                expect.k_m
+            ),
+        });
+    }
+
+    for entry in &expect.vectors {
+        verify_manifest_aead_entry(w, &k_m, entry)?;
+    }
+
+    Ok(VectorSummary {
+        kind: MANIFEST_AEAD_KIND,
+        description: envelope.description,
+        items: expect.vectors.len(),
+    })
+}
+
+fn verify_manifest_aead_entry(
+    w: MasterSecretRef<'_>,
+    k_m: &ManifestKey,
+    entry: &ManifestAeadEntry,
+) -> Result<(), VectorError> {
+    let check_err = |check: &'static str, problem: String| VectorError::Check {
+        kind: MANIFEST_AEAD_KIND,
+        check,
+        problem,
+    };
+    let name = entry.name.as_str();
+
+    if !entry.aad.is_empty() {
+        return Err(check_err(
+            "empty-aad",
+            format!(
+                "{name}: aad is `{}`, but the manifest AAD is frozen empty (spec line 98)",
+                entry.aad
+            ),
+        ));
+    }
+
+    let manifest_bytes = decode_hex(MANIFEST_AEAD_KIND, "manifest_bytes", &entry.manifest_bytes)?;
+    let nonce = Nonce24::from_bytes(decode_hex_array::<{ Nonce24::LEN }>(
+        MANIFEST_AEAD_KIND,
+        "nonce",
+        &entry.nonce,
+    )?);
+    let blob = decode_hex(MANIFEST_AEAD_KIND, "blob", &entry.blob)?;
+    if blob.len() != manifest_bytes.len() + AEAD_TAG_LEN {
+        return Err(check_err(
+            "blob-length",
+            format!(
+                "{name}: blob is {} bytes, want plaintext {} + tag {AEAD_TAG_LEN}",
+                blob.len(),
+                manifest_bytes.len()
+            ),
+        ));
+    }
+
+    // Key-direct path (the bundle-side persistence check) and the W path.
+    let via_key = decrypt_manifest_with_key(k_m, &nonce, &blob)
+        .map_err(|e| check_err("decrypt-with-key", format!("{name}: {e}")))?;
+    if via_key != manifest_bytes {
+        return Err(check_err(
+            "plaintext-bytes",
+            format!("{name}: decrypted blob does not equal the pinned manifest_bytes"),
+        ));
+    }
+    let via_w = decrypt_manifest(w, &nonce, &blob)
+        .map_err(|e| check_err("decrypt-with-w", format!("{name}: {e}")))?;
+    if via_w != manifest_bytes {
+        return Err(check_err(
+            "plaintext-bytes",
+            format!("{name}: the W path decrypted differently from the key-direct path"),
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // shared field parsing (strict: canonical lowercase hex, 0x-prefixed ids)
 // ---------------------------------------------------------------------------
 
@@ -673,6 +1051,22 @@ fn decode_hex(
                 .map_err(|e| malformed(format!("bad hex byte at offset {i}: {e}")))
         })
         .collect()
+}
+
+/// [`decode_hex`] into an exactly-`N`-byte array — the fixed-width wire
+/// values (`seal_id`, nonces, keys). A wrong length is a malformed vector,
+/// reported rather than panicked on (defensive parsing).
+fn decode_hex_array<const N: usize>(
+    kind: &'static str,
+    field: &'static str,
+    hex_str: &str,
+) -> Result<[u8; N], VectorError> {
+    let bytes = decode_hex(kind, field, hex_str)?;
+    let len = bytes.len();
+    <[u8; N]>::try_from(bytes).map_err(|_| VectorError::Payload {
+        kind,
+        problem: format!("field `{field}`: expected {N} bytes, found {len}"),
+    })
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -1151,6 +1545,308 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // kinds: unit-aead / manifest-aead — tests-of-the-test
+    // -----------------------------------------------------------------
+
+    /// Fixture `seal_id` for the synthetic AEAD self-test documents.
+    const SELF_TEST_SEAL_ID: [u8; 16] = [0xA5; 16];
+
+    fn self_test_rng() -> rand_chacha::ChaCha20Rng {
+        use rand_core::SeedableRng as _;
+        rand_chacha::ChaCha20Rng::from_seed([0x16; 32])
+    }
+
+    /// Build a valid `unit-aead` document, including the two boundary
+    /// cases the executor requires (empty unit, 256-aligned unit).
+    fn valid_unit_aead_document() -> serde_json::Value {
+        let w = MasterSecretRef::from_bytes(&super::super::TEST_MASTER_SECRET_W);
+        let seal_id = SealId::from_bytes(SELF_TEST_SEAL_ID);
+        let mut rng = self_test_rng();
+
+        let cases: [(&str, u64, Vec<u8>); 3] = [
+            ("self-test-empty", 0, Vec::new()),
+            ("self-test-aligned", 1, vec![0x7E; PAD_BLOCK]),
+            ("self-test-ordinary", 2, b"unit bytes".to_vec()),
+        ];
+        let vectors: Vec<serde_json::Value> = cases
+            .iter()
+            .map(|(name, id, bytes)| {
+                let unit_id = UnitId(*id);
+                let (ciphertext, nonce) =
+                    crate::crypto::unit_aead::encrypt_unit(w, &seal_id, unit_id, bytes, &mut rng)
+                        .expect("seeded rng encrypts");
+                serde_json::json!({
+                    "name": name,
+                    "unit_id": format!("0x{id:016x}"),
+                    "true_length": bytes.len(),
+                    "unit_bytes": hex(bytes),
+                    "k_u": hex(derive_unit_key(w, unit_id).as_bytes()),
+                    "aad": hex(&unit_aad(&seal_id, unit_id)),
+                    "padded_plaintext": hex(&apply_padding(bytes)),
+                    "nonce": hex(nonce.as_bytes()),
+                    "ciphertext": hex(&ciphertext),
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "schema": SCHEMA,
+            "schema_version": SCHEMA_VERSION,
+            "format_version": "v1",
+            "kind": "unit-aead",
+            "non_secret": "NON-SECRET synthetic self-test document",
+            "description": "framework self-test",
+            "inputs": {
+                "w": hex(&super::super::TEST_MASTER_SECRET_W),
+                "seal_id": hex(&SELF_TEST_SEAL_ID),
+            },
+            "expect": { "vectors": vectors },
+        })
+    }
+
+    #[test]
+    fn self_consistent_unit_aead_document_executes_green() {
+        let summary = execute(&valid_unit_aead_document()).expect("valid document must execute");
+        assert_eq!(summary.kind, "unit-aead");
+        assert_eq!(summary.items, 3);
+    }
+
+    /// The load-bearing check: a flipped ciphertext byte must fail
+    /// authentication, which is what makes "decrypts to the pinned
+    /// plaintext" equivalent to pinning the ciphertext bytes.
+    #[test]
+    fn tampered_ciphertext_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        let mut ct = doc["expect"]["vectors"][0]["ciphertext"]
+            .as_str()
+            .expect("ciphertext is a string")
+            .to_owned();
+        let last = ct.pop().expect("non-empty");
+        ct.push(if last == '0' { '1' } else { '0' });
+        doc["expect"]["vectors"][0]["ciphertext"] = serde_json::json!(ct);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "decrypt-with-key",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_unit_key_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        doc["expect"]["vectors"][0]["k_u"] = serde_json::json!(hex(&[0xABu8; 32]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "unit-key-bytes",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_aad_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        doc["expect"]["vectors"][0]["aad"] = serde_json::json!(hex(&[0xABu8; 24]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "aad-bytes",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_padded_plaintext_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        // Correct length, wrong fill: a non-zero pad byte.
+        let mut padded = vec![0u8; PAD_BLOCK];
+        padded[PAD_BLOCK - 1] = 0xFF;
+        doc["expect"]["vectors"][0]["padded_plaintext"] = serde_json::json!(hex(&padded));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "padded-plaintext",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn inconsistent_true_length_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        // Entry 2 is the ordinary (non-boundary) case: mutating a boundary
+        // entry's length would trip `boundary-coverage` first, which runs
+        // before any per-entry check.
+        doc["expect"]["vectors"][2]["true_length"] = serde_json::json!(7);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "true-length",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// C16 accept names the empty unit and the 256-aligned unit explicitly;
+    /// dropping either must fail rather than quietly shrink coverage.
+    #[test]
+    fn missing_aead_boundary_case_fails_loudly() {
+        for drop_index in [0usize, 1] {
+            let mut doc = valid_unit_aead_document();
+            doc["expect"]["vectors"]
+                .as_array_mut()
+                .expect("vectors is an array")
+                .remove(drop_index);
+            let err = execute(&doc).expect_err("must fail");
+            assert!(
+                matches!(
+                    err,
+                    VectorError::Check {
+                        check: "boundary-coverage",
+                        ..
+                    }
+                ),
+                "dropping vector {drop_index}: {err}"
+            );
+        }
+    }
+
+    /// Build a valid `manifest-aead` document.
+    fn valid_manifest_aead_document() -> serde_json::Value {
+        let w = MasterSecretRef::from_bytes(&super::super::TEST_MASTER_SECRET_W);
+        let mut rng = self_test_rng();
+        let manifest: &[u8] = b"manifest bytes (self-test)";
+        let (blob, record) = crate::crypto::manifest_aead::encrypt_manifest(w, manifest, &mut rng)
+            .expect("seeded rng encrypts");
+
+        serde_json::json!({
+            "schema": SCHEMA,
+            "schema_version": SCHEMA_VERSION,
+            "format_version": "v1",
+            "kind": "manifest-aead",
+            "non_secret": "NON-SECRET synthetic self-test document",
+            "description": "framework self-test",
+            "inputs": { "w": hex(&super::super::TEST_MASTER_SECRET_W) },
+            "expect": {
+                "k_m": hex(derive_manifest_key(w).as_bytes()),
+                "vectors": [{
+                    "name": "self-test-manifest",
+                    "manifest_bytes": hex(manifest),
+                    "aad": "",
+                    "nonce": hex(record.nonce().as_bytes()),
+                    "blob": hex(&blob),
+                }],
+            },
+        })
+    }
+
+    #[test]
+    fn self_consistent_manifest_aead_document_executes_green() {
+        let summary =
+            execute(&valid_manifest_aead_document()).expect("valid document must execute");
+        assert_eq!(summary.kind, "manifest-aead");
+        assert_eq!(summary.items, 1);
+    }
+
+    /// The frozen empty AAD (spec line 98): a vector claiming any other AAD
+    /// is rejected outright, so the constant cannot drift unnoticed.
+    #[test]
+    fn non_empty_manifest_aad_field_fails_loudly() {
+        let mut doc = valid_manifest_aead_document();
+        doc["expect"]["vectors"][0]["aad"] = serde_json::json!("00");
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "empty-aad",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_manifest_key_fails_loudly() {
+        let mut doc = valid_manifest_aead_document();
+        doc["expect"]["k_m"] = serde_json::json!(hex(&[0xABu8; 32]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "manifest-key-bytes",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_manifest_blob_fails_loudly() {
+        let mut doc = valid_manifest_aead_document();
+        let mut blob = doc["expect"]["vectors"][0]["blob"]
+            .as_str()
+            .expect("blob is a string")
+            .to_owned();
+        let last = blob.pop().expect("non-empty");
+        blob.push(if last == '0' { '1' } else { '0' });
+        doc["expect"]["vectors"][0]["blob"] = serde_json::json!(blob);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "decrypt-with-key",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// Fixed-width fields reject a wrong length rather than panicking
+    /// (defensive parsing — `decode_hex_array`).
+    #[test]
+    fn wrong_length_fixed_width_field_fails_loudly() {
+        let mut doc = valid_unit_aead_document();
+        doc["expect"]["vectors"][0]["nonce"] = serde_json::json!(hex(&[0u8; 23]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(matches!(err, VectorError::Payload { .. }), "{err}");
+
+        let mut doc = valid_unit_aead_document();
+        doc["inputs"]["seal_id"] = serde_json::json!(hex(&[0u8; 15]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(matches!(err, VectorError::Payload { .. }), "{err}");
     }
 
     #[test]

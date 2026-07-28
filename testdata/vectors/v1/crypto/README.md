@@ -23,6 +23,8 @@ agreement. Per surface, the vehicle and why it is genuinely independent:
 | --- | --- | --- |
 | HKDF (C2) | `../hkdf/gen_vectors.py` (C3) — RFC 5869 from Python stdlib `hmac`/`hashlib` | Different language, different HMAC implementation, no shared code with `hkdf`/`sha2`. Landed at C3; C16 extends its *coverage* — the salts, keys and seeds every vector below chains through are re-derived here at **new (label, id) pairs** beyond C3's one-id-per-label file. |
 | Commitments (C6) | `reference.py` — SHA-256 over `tag ‖ salt ‖ msg`, Python stdlib | Different language and hash implementation; the preimage assembly is written from MVP-SPEC.md line 79 rather than shared with `tagged_sha256`. |
+| Padding (C8) | `reference.py` — the formula written out from MVP-SPEC.md line 91 | Different language; the padded plaintexts are pinned **byte-exact** inside the unit-AEAD vectors, so both the bucket arithmetic and the all-zero fill are cross-checked. |
+| Unit + manifest AEAD (C9/C10) | `reference.py` — XChaCha20-Poly1305 written from scratch (ChaCha20 block function, Poly1305, HChaCha20, the RFC 8439 §2.8 AEAD construction), Python stdlib only | A **from-scratch implementation of the cipher**, not a binding to a library: no shared code with RustCrypto's `chacha20poly1305`. Corroborated by libsodium (`crypto_aead_xchacha20poly1305_ietf_encrypt`) in the self-test, so three independent implementations agree. |
 
 `reference.py` is **not** trusted on assertion alone: it validates every
 primitive it implements against that primitive's *published known-answer
@@ -44,6 +46,11 @@ full XChaCha20-Poly1305 AEAD), RFC 8032 §7.1 (Ed25519).
   (`unit`/`raw`/`canon`/`path`), each with its frozen domain tag, its HKDF
   salt label, the derived salt, the message, and the digest
   (MVP-SPEC.md lines 79, 93–95).
+- `unit-aead.json` — kind `unit-aead`: per unit, `k_u`, the 24-byte
+  `AAD = seal_id ‖ LE64(unit_id)`, the C8 padded plaintext, the nonce, and
+  the ciphertext (MVP-SPEC.md line 91).
+- `manifest-aead.json` — kind `manifest-aead`: the sentinel-id `k_m`, the
+  frozen **empty** AAD, and the encrypted blob (MVP-SPEC.md line 98).
 - `reference.py` — the independent reference implementations (Python
   standard library only) plus their known-answer self-test.
 - `gen_vectors.py` — emits the vector files from `reference.py`. Runs the
@@ -59,7 +66,9 @@ to *verify*:
 
 ```sh
 cd testdata/vectors/v1/crypto
-python3 gen_vectors.py commitments | diff - commitments.json
+python3 gen_vectors.py commitments   | diff - commitments.json
+python3 gen_vectors.py unit-aead     | diff - unit-aead.json
+python3 gen_vectors.py manifest-aead | diff - manifest-aead.json
 ```
 
 `gen_vectors.py` sets `sys.dont_write_bytecode` so running it never drops a
@@ -89,3 +98,38 @@ commitments share one `file_salt` while `path_commit` does not
 (MVP-SPEC.md line 95). Each entry carries its domain tag and salt label as
 their own fields, so a tag renumbering or a salt-label swap breaks the
 vector instead of being silently re-derived from it.
+
+**AEAD — why the vectors pin the *decrypt* direction.** `encrypt_unit` and
+`encrypt_manifest` deliberately expose no way to supply a nonce (the
+`(k, nonce)` single-use invariant is structural, not a convention), so a
+vector cannot call the encryptor and byte-compare. It does not need to:
+AEAD encryption is a deterministic function of `(key, nonce, aad,
+plaintext)` and XChaCha20-Poly1305 is injective in the plaintext for a
+fixed triple — the ciphertext body is the keystream XOR and the tag is then
+determined. So a ciphertext that authenticates back to the pinned plaintext
+under the pinned `(key, nonce, aad)` **is** the ciphertext antseal would
+have produced, byte for byte. The independent implementation ran the
+encrypt direction; the executor runs the decrypt direction. Both the
+key-direct entry point (the verifier seam — a bundle supplies `k_u`, the
+verifier never holds `W`) and the `W` path are exercised on every entry.
+
+Nonces are fixture values derived as
+`SHA-256("antseal-c16-fixture-nonce/" ‖ domain ‖ LE64(id))[..24]` — a
+documented deterministic function, never an RNG draw, since committed
+fixtures must not depend on any RNG (`testdata/README.md` rule 2). Nonces
+are public data anyway: the manifest unit table is their authoritative home
+(MVP-SPEC.md line 91).
+
+**Unit AEAD coverage.** The C16-mandated boundaries — the empty unit
+(`true_length` 0 → a 256-byte plaintext) and a 256-aligned unit (→ 512) —
+plus both bucket edges either side of each (255/257, 511/512), a unit with
+genuine trailing `0x00` content (length-first stripping must preserve it),
+and a large `unit_id` so `LE64(unit_id)` is visible in the AAD tail. The
+executor *enforces* that the empty and 256-aligned cases are present, so
+coverage cannot quietly shrink.
+
+**Manifest AEAD coverage.** A CBOR-shaped manifest, the empty plaintext and
+a single byte. Every entry's `aad` field must be the empty string **and**
+the executor asserts `MANIFEST_AAD` is itself empty — otherwise the vector
+would still pass if the constant ever grew a value, with generator and
+implementation simply wrong together.

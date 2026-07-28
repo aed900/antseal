@@ -56,3 +56,25 @@ fn execute_committed(file: &str, expected_kind: &str, expected_items: usize) {
 fn vector_committed_commitments_file_verifies() {
     execute_committed("commitments.json", "commitments", 12);
 }
+
+/// C16 accept (unit AEAD): the committed unit-AEAD vectors — ciphertexts
+/// produced by the independent pure-Python XChaCha20-Poly1305 in
+/// `reference.py` — decrypt back to their pinned plaintexts through this
+/// crate's C9 API, with `k_u`, the 24-byte AAD, and the C8 padded plaintext
+/// each recomputed and byte-compared (MVP-SPEC.md line 91).
+///
+/// Includes the C16-mandated boundary cases: the empty unit (256-byte
+/// plaintext) and a 256-aligned unit (512-byte plaintext) — their presence
+/// is enforced by the executor, not merely by this file's entry count.
+#[test]
+fn vector_committed_unit_aead_file_verifies() {
+    execute_committed("unit-aead.json", "unit-aead", 9);
+}
+
+/// C16 accept (manifest AEAD): the committed manifest-AEAD vectors,
+/// pinning the sentinel-id `k_m` derivation and the **frozen empty AAD**
+/// (MVP-SPEC.md line 98).
+#[test]
+fn vector_committed_manifest_aead_file_verifies() {
+    execute_committed("manifest-aead.json", "manifest-aead", 3);
+}

@@ -90,7 +90,8 @@ def fixture_nonce(domain: str, ident: int) -> bytes:
     Nonces are public data (the manifest unit table is their authoritative
     home, MVP-SPEC.md line 91) — nothing here is secret.
     """
-    return hashlib.sha256(b"antseal-c16-fixture-nonce/" + domain.encode() + ref.le64(ident))[:24]
+    seed = b"antseal-c16-fixture-nonce/" + domain.encode() + ref.le64(ident)
+    return hashlib.sha256(seed).digest()[:24]
 
 
 # ---------------------------------------------------------------------------
