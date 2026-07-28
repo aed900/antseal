@@ -18,6 +18,9 @@
 //!   only (C5).
 //! - [`commit`] — the four salted commitments, compute + constant-time
 //!   verify (C6).
+//! - [`confirmation_attack`] — *why* they are salted: the confirmation
+//!   attack executed against deliberately-unsalted toy variants and defeated
+//!   by the production ones, as doc-tests that run on every CI run (C19).
 //! - [`disclosure`] — the commitment-mode and salt-disclosure rules as
 //!   unrepresentable-misuse API shapes (C7).
 //! - [`padding`] — the v1 unit padding codec: formula, apply, length-first
@@ -70,6 +73,7 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod commit;
+pub mod confirmation_attack;
 pub mod disclosure;
 pub mod domain;
 pub mod error;
