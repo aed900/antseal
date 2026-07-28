@@ -851,13 +851,13 @@ mod tests {
     /// Q8's `MATRIX.json` holds the same gap against the *spec's* case list;
     /// this holds it against the *error enum*, which is the direction that
     /// catches an invariant nobody wrote a spec case for.
-    const OWED_BY_ANOTHER_TASK: &[(&str, &str)] = &[
-        ("unit-decrypt-failed", "R8 — flipped ciphertext byte"),
-        (
-            "unit-commit-mismatch",
-            "R8 — altered manifest field, non-covered unit",
-        ),
-    ];
+    ///
+    /// **Empty since R8**, which landed the last two
+    /// (`unit-decrypt-failed`, `unit-commit-mismatch`). Every code in R's
+    /// unprefixed namespace is now claimed by a row somewhere. Keeping the
+    /// list rather than deleting it keeps the third option available — and
+    /// deliberate — the next time a code arrives ahead of its row.
+    const OWED_BY_ANOTHER_TASK: &[(&str, &str)] = &[];
 
     /// **R7 Accept bullet 2.** Every code R's own (unprefixed) namespace can
     /// emit is accounted for: claimed by a row here, by a Q7 seed row, or
@@ -887,8 +887,12 @@ mod tests {
             if owned_prefixes.iter().any(|prefix| code.starts_with(prefix)) {
                 continue;
             }
+            // R8's slice is consulted directly rather than through a
+            // hand-kept list: both slices are R's own unprefixed namespace,
+            // and a list would go stale silently the moment R8 added a row.
             let claimed_here = ROWS
                 .iter()
+                .chain(crate::test_util::tamper_rows_pipeline::ROWS)
                 .any(|row| row.expected == ExpectedOutcome::ErrorCode(code));
             let seeded = COVERED_BY_SEED_ROWS.contains(&code);
             let owed = OWED_BY_ANOTHER_TASK.iter().any(|(owed, _)| *owed == code);

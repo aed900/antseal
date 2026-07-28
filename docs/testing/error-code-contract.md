@@ -376,5 +376,35 @@ kebab-case id, and never edit an existing row's expected code.
   id — and both the non-row set and the discharged-case set are pinned
   outside the registry.
 
+  **A third collision, found while implementing R8, of the same shape one
+  commitment layer up.** R8's task text also names `wrong unit_salt →
+  unit_commit mismatch`, which lands on `unit-commit-mismatch` — the code
+  R8's own `altered manifest field, non-covered unit` row claims. It is the
+  same argument as D81's, and it is worth stating because it generalises
+  past the AEAD: **a salted commitment opening is one bit too.** The
+  verifier recomputes `SHA-256(0x02 ‖ unit_salt ‖ bytes)` and compares it
+  with the manifest's stored value; a mismatch says the *triple* is
+  inconsistent and cannot attribute itself to a substituted bundle salt
+  rather than to an altered manifest commit, because both are inputs to the
+  one comparison. `VerifyError::UnitCommitMismatch` carries only `unit_id`,
+  and a cause field would be reporting a sub-comparison that does not
+  exist. The spec's `wrong-salt/unit-commit` case is in any event already
+  discharged by C's primitive-level row, so a pipeline-level salt row would
+  be a project addition claiming an owned outcome. Recorded as the non-row
+  `pipeline-level-wrong-unit-salt` with a named test.
+
+  The generalisation worth carrying forward: **the codes in R's namespace
+  name the check that failed, not the field that was wrong.** Wherever a
+  check is a single comparison over several inputs — an AEAD tag, a
+  commitment opening, a Merkle root — asking for a cause discriminator is
+  asking the verifier for information the comparison does not produce.
+
+  R8 also brought R's unprefixed namespace to **full row coverage**: R7's
+  `every_unprefixed_verify_code_has_a_row_or_a_named_owner` had two codes
+  standing on `OWED_BY_ANOTHER_TASK` (`unit-decrypt-failed`,
+  `unit-commit-mismatch`) and both are now rows, so that list is empty. It
+  is kept rather than deleted, so the "named owner" escape stays available
+  and deliberate the next time a code lands ahead of its row.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

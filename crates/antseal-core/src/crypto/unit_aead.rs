@@ -472,6 +472,64 @@ mod tests {
         assert_eq!(plaintext, aligned);
     }
 
+    /// **The AAD's `unit_id` component, isolated** (decision D81, for R8).
+    ///
+    /// [`decrypt_failure_classes_are_distinct`] below covers a wrong
+    /// `unit_id`, but it goes through [`decrypt_unit`], which derives
+    /// `k_u = HKDF(W, "unit-key", unit_id)` — so that case changes the
+    /// **key and the AAD together** and cannot show which one rejected it.
+    /// It isolates the `seal_id` component the same way this test isolates
+    /// `unit_id`, and the asymmetry was the gap.
+    ///
+    /// [`decrypt_unit_with_key`] takes `k_u` explicitly — the verifier-side
+    /// entry point, because a `.sealproof` recipient never holds `W` — so
+    /// it is the one call shape where the `unit_id` can be varied **alone**.
+    /// Holding the key, nonce and ciphertext fixed and changing only the
+    /// `unit_id` proves that `AAD = seal_id ‖ LE64(unit_id)` is what
+    /// rejects a swapped unit, and that no commitment is involved.
+    ///
+    /// That claim is the entire content of R8's `swapped-unit` mutation,
+    /// which is why it is a recorded non-row plus this test rather than a
+    /// tamper row: a row binds a *code*, and the code cannot express a
+    /// mechanism. The pipeline-level companion is
+    /// `r8_swapped_unit_ciphertext_is_rejected`.
+    #[test]
+    fn aad_unit_id_binding_rejects_a_foreign_unit_id() {
+        let mut rng = rng();
+        let content = b"unit A's bytes, presented under unit B's entry";
+        let unit_a = UnitId(9);
+        let unit_b = UnitId(10);
+        let (ciphertext, nonce) =
+            encrypt_unit(w(), &seal_id(), unit_a, content, &mut rng).expect("encrypts");
+        let k_a = derive_unit_key(w(), unit_a);
+
+        // The control: the identical call with A's own `unit_id` succeeds,
+        // so the rejection below is attributable to the `unit_id` and to
+        // nothing else in the call.
+        assert_eq!(
+            decrypt_unit_with_key(&k_a, &seal_id(), unit_a, &nonce, &ciphertext, content.len())
+                .expect("A's own AAD opens it"),
+            content
+        );
+
+        // The isolation: same key, same nonce, same ciphertext, same
+        // `seal_id`, same `true_length` — only the AAD's `unit_id` differs.
+        assert_eq!(
+            decrypt_unit_with_key(&k_a, &seal_id(), unit_b, &nonce, &ciphertext, content.len())
+                .expect_err("a foreign unit_id must not authenticate"),
+            CryptoError::AeadDecryptFailed
+        );
+
+        // And the mirror image — B's key with A's `unit_id` — so the test
+        // cannot pass by the key happening to be the discriminating input.
+        let k_b = derive_unit_key(w(), unit_b);
+        assert_eq!(
+            decrypt_unit_with_key(&k_b, &seal_id(), unit_a, &nonce, &ciphertext, content.len())
+                .expect_err("a foreign key must not authenticate either"),
+            CryptoError::AeadDecryptFailed
+        );
+    }
+
     /// C9 accept: decryption fails with `AeadDecryptFailed` on wrong
     /// `seal_id` (AAD-only mismatch — `k_u` does not depend on `seal_id`),
     /// wrong `unit_id`, wrong nonce, flipped ciphertext/tag byte, and wrong

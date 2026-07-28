@@ -99,17 +99,6 @@ const REGISTRY_VERSION: u64 = 1;
 /// Source: MVP-SPEC.md line 168, cross-read against tasks/F.md F15,
 /// tasks/G.md G19 and tasks/R.md R7/R8, which own the unwritten rows.
 const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[
-    (
-        "flipped-ciphertext-byte/flipped-ciphertext-byte",
-        "R8",
-        "verify-flipped-ciphertext-byte",
-    ),
-    (
-        "altered-manifest-field/non-covered-unit-fails-unit-commit",
-        "R8",
-        "verify-non-covered-unit-commit-mismatch",
-    ),
-    ("swapped-unit/swapped-unit", "R8", "verify-swapped-unit"),
     ("oversized-or-deep-cbor/oversized", "F15", "cbor-oversized"),
     (
         "oversized-or-deep-cbor/deep",
@@ -138,6 +127,9 @@ const EXPECTED_NON_ROWS: &[&str] = &[
     "full-reveal-unit-strip-downgrade",
     "crypto-level-ggm-seed-length",
     "full-reveal-cover-seed-not-descending-from-s-root",
+    "swapped-unit-ciphertext",
+    "pipeline-level-wrong-unit-key",
+    "pipeline-level-wrong-unit-salt",
 ];
 
 /// **Every M0 spec case discharged by a recorded non-row**, as
@@ -150,9 +142,13 @@ const EXPECTED_NON_ROWS: &[&str] = &[
 /// here is the review moment where someone has to agree that the case
 /// genuinely cannot have a row.
 ///
-/// Empty until R8 lands D81's `swapped-unit` discharge: the checker gains
-/// the capability first, so the widening is reviewable on its own.
-const EXPECTED_M0_NON_ROW_CASES: &[(&str, &str)] = &[];
+/// One entry, and D81 is the record that justifies it: the spec's
+/// `swapped unit` mutation is observationally identical to the flipped
+/// ciphertext byte, because an AEAD authentication failure is one bit by
+/// construction. It is asserted by two named tests and an R10 property
+/// instead.
+const EXPECTED_M0_NON_ROW_CASES: &[(&str, &str)] =
+    &[("swapped-unit/swapped-unit", "swapped-unit-ciphertext")];
 
 // ---------------------------------------------------------------------------
 // model
@@ -1103,14 +1099,35 @@ fn expect_red(root: &Value, needle: &str) {
     }
 }
 
-/// Mutable access to `families[family].cases[case]`.
-fn case_mut(root: &mut Value, family: usize, case: usize) -> &mut Value {
+/// Mutable access to a case, **by its `family/case` path**.
+///
+/// Deliberately not by array index: the cases below need a case in a
+/// *particular state* (pending, or implemented), and a case's state changes
+/// as the matrix is populated. Index-anchored fixtures broke every time a
+/// row landed and said nothing useful when they did; a path that no longer
+/// resolves fails with the path in the message.
+fn case_mut<'a>(root: &'a mut Value, path: &str) -> &'a mut Value {
+    let (family_id, case_id) = path.split_once('/').expect("path is `family/case`");
     root.get_mut("families")
-        .and_then(|f| f.get_mut(family))
-        .and_then(|f| f.get_mut("cases"))
-        .and_then(|c| c.get_mut(case))
-        .expect("family/case exists")
+        .and_then(Value::as_array_mut)
+        .expect("families array")
+        .iter_mut()
+        .find(|family| family.get("id").and_then(Value::as_str) == Some(family_id))
+        .and_then(|family| family.get_mut("cases"))
+        .and_then(Value::as_array_mut)
+        .expect("family exists and has cases")
+        .iter_mut()
+        .find(|case| case.get("id").and_then(Value::as_str) == Some(case_id))
+        .unwrap_or_else(|| panic!("no case `{path}` in the committed registry"))
 }
+
+/// A case the committed registry currently holds as **pending**. The
+/// pending-marker fixtures below need one, and this is where that
+/// dependency is stated once.
+const A_PENDING_CASE: &str = "oversized-or-deep-cbor/oversized";
+
+/// A case the committed registry currently holds as **implemented**.
+const AN_IMPLEMENTED_CASE: &str = "wrong-salt/unit-commit";
 
 /// The positive control: the committed registry passes through the same
 /// text path every red case below uses.
@@ -1127,7 +1144,7 @@ fn completeness_committed_registry_is_green() {
 #[test]
 fn completeness_red_on_a_case_with_no_coverage_and_no_pending_marker() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .as_object_mut()
         .expect("case object")
         .remove("pending");
@@ -1141,7 +1158,7 @@ fn completeness_red_on_a_case_with_no_coverage_and_no_pending_marker() {
 #[test]
 fn completeness_green_on_a_case_discharged_by_a_recorded_non_row() {
     let mut root = committed_value();
-    let case = case_mut(&mut root, 0, 0)
+    let case = case_mut(&mut root, A_PENDING_CASE)
         .as_object_mut()
         .expect("case object");
     case.remove("pending");
@@ -1164,7 +1181,7 @@ fn completeness_green_on_a_case_discharged_by_a_recorded_non_row() {
 #[test]
 fn completeness_red_on_a_case_discharged_by_an_unrecorded_non_row() {
     let mut root = committed_value();
-    let case = case_mut(&mut root, 0, 0)
+    let case = case_mut(&mut root, A_PENDING_CASE)
         .as_object_mut()
         .expect("case object");
     case.remove("pending");
@@ -1180,7 +1197,7 @@ fn completeness_red_on_a_case_discharged_by_an_unrecorded_non_row() {
 #[test]
 fn completeness_red_on_a_case_in_two_states_at_once() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .as_object_mut()
         .expect("case object")
         .insert(
@@ -1195,8 +1212,7 @@ fn completeness_red_on_a_case_in_two_states_at_once() {
 #[test]
 fn completeness_red_on_a_stale_pending_marker() {
     let mut root = committed_value();
-    // families[2] = wrong-salt, case 0 = unit-commit: implemented.
-    case_mut(&mut root, 2, 0)
+    case_mut(&mut root, AN_IMPLEMENTED_CASE)
         .as_object_mut()
         .expect("case object")
         .insert(
@@ -1216,7 +1232,7 @@ fn completeness_red_on_a_stale_pending_marker() {
 #[test]
 fn completeness_red_on_a_case_naming_a_nonexistent_row() {
     let mut root = committed_value();
-    case_mut(&mut root, 2, 0)
+    case_mut(&mut root, AN_IMPLEMENTED_CASE)
         .as_object_mut()
         .expect("case object")
         .insert(
@@ -1271,7 +1287,7 @@ fn completeness_red_on_a_deleted_family() {
 #[test]
 fn completeness_red_on_a_pending_row_colliding_with_an_implemented_one() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .get_mut("pending")
         .and_then(Value::as_object_mut)
         .expect("pending object")
@@ -1281,36 +1297,69 @@ fn completeness_red_on_a_pending_row_colliding_with_an_implemented_one() {
 }
 
 /// Two pending rows claiming one outcome is the same collision, earlier.
-/// The committed registry has exactly one such pair (flipped ciphertext
-/// byte vs swapped unit, both `unit-decrypt-failed`) and it carries a
-/// `collision_note`; removing the note must turn the check red.
+///
+/// **Synthesized rather than borrowed from the registry.** Until R8 the
+/// committed registry happened to contain such a pair (flipped ciphertext
+/// byte vs swapped unit, both `unit-decrypt-failed`) carrying a
+/// `collision_note`, and this test worked by stripping it. D81 resolved
+/// that pair — the swap became a recorded non-row — so there is no longer
+/// any collision to borrow, and a test that depended on one would have to
+/// be deleted or kept alive by leaving a collision in place. Building the
+/// pair here instead makes the rule permanently testable and independent of
+/// what the matrix happens to contain.
+///
+/// Both directions are checked, because "red without a note" is only
+/// meaningful if "green with one" also holds — otherwise the check could be
+/// rejecting the collision itself rather than the missing note. The note
+/// goes on the **second** claimant in registry order, which is the one the
+/// checker reports against.
 #[test]
 fn completeness_red_when_two_pending_rows_collide_without_a_note() {
-    let mut root = committed_value();
-    let mut found = false;
-    for family in root
-        .get_mut("families")
-        .and_then(Value::as_array_mut)
-        .expect("families array")
-    {
-        for case in family
-            .get_mut("cases")
-            .and_then(Value::as_array_mut)
-            .expect("cases array")
-        {
-            if let Some(pending) = case.get_mut("pending").and_then(Value::as_object_mut)
-                && pending.remove("collision_note").is_some()
-            {
-                found = true;
-            }
-        }
+    /// The later claimant of the synthesized collision.
+    const SECOND_CLAIMANT: &str = "oversized-or-deep-cbor/deep";
+
+    /// Make `A_PENDING_CASE` claim the outcome `SECOND_CLAIMANT` reserves.
+    fn collide(root: &mut Value) {
+        case_mut(root, A_PENDING_CASE)
+            .as_object_mut()
+            .expect("case object")
+            .insert(
+                "pending".to_owned(),
+                serde_json::json!({
+                    "task": "R99",
+                    "row_id": "verify-a-second-row-for-one-outcome",
+                    "outcome_kind": "error",
+                    "expected": "cbor-nesting-too-deep",
+                    "why": "synthetic: claims the outcome the `deep` case already reserves"
+                }),
+            );
     }
-    assert!(
-        found,
-        "the committed registry must carry at least one `collision_note` — the \
-         flipped-ciphertext-byte / swapped-unit pair both surface as `unit-decrypt-failed`"
-    );
+
+    let mut root = committed_value();
+    collide(&mut root);
     expect_red(&root, "is also claimed by pending case");
+
+    // The same collision, declared: accepted, because the registry has said
+    // out loud that it knows.
+    let mut root = committed_value();
+    collide(&mut root);
+    case_mut(&mut root, SECOND_CLAIMANT)
+        .get_mut("pending")
+        .and_then(Value::as_object_mut)
+        .expect("pending object")
+        .insert(
+            "collision_note".to_owned(),
+            serde_json::json!("synthetic: deliberate, and this is the note"),
+        );
+    let text = serde_json::to_string(&root).expect("serialize");
+    let failures = check_text(&text, &live_rows()).err().unwrap_or_default();
+    assert!(
+        !failures
+            .iter()
+            .any(|f| f.contains("is also claimed by pending case")),
+        "a declared collision must not be reported: {}",
+        render(&failures)
+    );
 }
 
 /// A pending marker reserving a row id that already exists means the case
@@ -1318,7 +1367,7 @@ fn completeness_red_when_two_pending_rows_collide_without_a_note() {
 #[test]
 fn completeness_red_on_a_pending_marker_reserving_a_live_row_id() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .get_mut("pending")
         .and_then(Value::as_object_mut)
         .expect("pending object")
@@ -1330,7 +1379,7 @@ fn completeness_red_on_a_pending_marker_reserving_a_live_row_id() {
 #[test]
 fn completeness_red_on_a_pending_marker_without_a_task_id() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .get_mut("pending")
         .and_then(Value::as_object_mut)
         .expect("pending object")
@@ -1371,7 +1420,7 @@ fn completeness_red_on_a_project_addition_without_a_justification() {
 #[test]
 fn completeness_red_on_an_unknown_field() {
     let mut root = committed_value();
-    case_mut(&mut root, 0, 0)
+    case_mut(&mut root, A_PENDING_CASE)
         .as_object_mut()
         .expect("case object")
         .insert("rowz".to_owned(), serde_json::json!([]));

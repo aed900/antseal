@@ -437,6 +437,38 @@ pub struct Tweak {
     pub touch_without_reveal: Option<u64>,
     /// Flip a bit of this revealed unit's embedded ciphertext.
     pub corrupt_ciphertext: Option<u64>,
+    /// Flip a bit of this **non-covered** unit's manifest `unit_commit`,
+    /// leaving its bytes and its salt alone (R8's *altered manifest field*
+    /// mutation, non-covered arm).
+    ///
+    /// The manifest is signed, so this also invalidates the signature — and
+    /// that is exactly what the row proves: the frozen stage order puts
+    /// Units (3) and Files (4) before Signatures (5), so a bundle whose
+    /// content contradicts its manifest is reported as a content failure
+    /// rather than as a signature failure.
+    pub corrupt_unit_commit: Option<u64>,
+    /// Present the **first** unit's ciphertext under the **second** unit's
+    /// bundle entry, keeping the second's key, nonce and `unit_id` (R8's
+    /// *swapped unit*; decision D81's recorded non-row).
+    ///
+    /// Both must be revealed. The AAD's `unit_id` binding, not a
+    /// commitment, is what rejects it — see the C-level
+    /// `aad_unit_id_binding_rejects_a_foreign_unit_id`, which varies the
+    /// AAD alone.
+    pub swap_ciphertext_into: Option<(u64, u64)>,
+    /// Ship this revealed unit's entry with **another unit's** `k_u`
+    /// (D81's second recorded non-row: pipeline-level wrong key).
+    ///
+    /// The substitute is a genuinely derived key, not a junk buffer, so the
+    /// mutation is the one a relay could actually perform — and the
+    /// donor id is the knob's second field.
+    pub wrong_unit_key: Option<(u64, u64)>,
+    /// Ship this **non-covered** revealed unit's entry with another unit's
+    /// `unit_salt`, so its `unit_commit` recomputation fails.
+    ///
+    /// A genuinely derived salt for the same reason as `wrong_unit_key`,
+    /// and 16 bytes long so R3's length group cannot claim it first.
+    pub wrong_unit_salt: Option<(u64, u64)>,
     /// Omit this file's `touched_files` entry even though the reveal shows
     /// units of it (D80).
     pub drop_touched_file: Option<u64>,
@@ -932,7 +964,7 @@ fn encode_manifest(
                 fine_tree,
                 file_units
                     .into_iter()
-                    .map(|index| manifest_entry(&units[index]))
+                    .map(|index| manifest_entry(&units[index], tweak))
                     .collect(),
             )
             .expect("fixture file entry is well formed")
@@ -961,12 +993,16 @@ fn encode_manifest(
     encode_envelope(&body_bytes, &signatures).expect("fixture envelope encodes")
 }
 
-fn manifest_entry(unit: &PlannedUnit) -> UnitEntry {
+fn manifest_entry(unit: &PlannedUnit, tweak: &Tweak) -> UnitEntry {
     let binding = if unit.covered {
         UnitBinding::FineTreeCovered
     } else {
+        let mut commit = unit_commit(&derive_unit_salt(w(), UnitId(unit.unit_id)), &unit.bytes);
+        if tweak.corrupt_unit_commit == Some(unit.unit_id) {
+            commit = flip(&commit);
+        }
         UnitBinding::NonCovered {
-            unit_commit: unit_commit(&derive_unit_salt(w(), UnitId(unit.unit_id)), &unit.bytes),
+            unit_commit: commit,
         }
     };
     UnitEntry::new(
@@ -1006,7 +1042,25 @@ fn assemble(
         if tweak.corrupt_ciphertext == Some(unit.unit_id) {
             ciphertext[0] ^= 0x01;
         }
-        let k_u = derive_unit_key(w(), UnitId(unit.unit_id));
+        // Swapped unit: the donor's ciphertext under the recipient's entry.
+        // Everything else about the entry — key, nonce, `unit_id` — stays
+        // the recipient's, so the AAD's `unit_id` binding is what fails.
+        if let Some((donor, recipient)) = tweak.swap_ciphertext_into
+            && recipient == unit.unit_id
+        {
+            ciphertext = units
+                .iter()
+                .find(|other| other.unit_id == donor)
+                .expect("`swap_ciphertext_into` names a unit the work has")
+                .ciphertext
+                .clone();
+        }
+        // Wrong `k_u`: another unit's genuinely derived key.
+        let key_owner = match tweak.wrong_unit_key {
+            Some((victim, donor)) if victim == unit.unit_id => donor,
+            _ => unit.unit_id,
+        };
+        let k_u = derive_unit_key(w(), UnitId(key_owner));
 
         // The reveal-section rule (R5 coherence): a unit belongs in the
         // section its manifest binding dictates. These two knobs put it in
@@ -1069,12 +1123,18 @@ fn assemble(
                 .expect("fixture covered reveal"),
             );
         } else {
+            // Wrong `unit_salt`: another unit's genuinely derived salt, so
+            // it is the right length and only the commitment opening fails.
+            let salt_owner = match tweak.wrong_unit_salt {
+                Some((victim, donor)) if victim == unit.unit_id => donor,
+                _ => unit.unit_id,
+            };
             noncovered_reveals.push(
                 NonCoveredReveal::new(
                     unit.unit_id,
                     k_u,
                     OpaqueBytes::from_vec(ciphertext),
-                    derive_unit_salt(w(), UnitId(unit.unit_id)),
+                    derive_unit_salt(w(), UnitId(salt_owner)),
                 )
                 .expect("fixture non-covered reveal"),
             );

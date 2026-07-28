@@ -53,14 +53,8 @@
       "cases": [
         {
           "id": "flipped-ciphertext-byte",
-          "what": "flip one byte of a revealed unit's ciphertext in the bundle",
-          "pending": {
-            "task": "R8",
-            "row_id": "verify-flipped-ciphertext-byte",
-            "outcome_kind": "error",
-            "expected": "unit-decrypt-failed",
-            "why": "R8 owns pipeline-integration rows through `verify_bundle` (tasks/R.md R8). C's primitive-level AEAD rejection is already a row (`crypto-unit-aead-wrong-key`), but it binds the C code `crypto-aead-decrypt-failed`, so it does not cover this pipeline row."
-          }
+          "what": "flip one byte of a revealed unit's ciphertext in the bundle — body or tag, the same outcome either way, since the tag covers both",
+          "rows": ["verify-flipped-ciphertext-byte"]
         }
       ]
     },
@@ -80,14 +74,8 @@
         },
         {
           "id": "non-covered-unit-fails-unit-commit",
-          "what": "alter a non-covered (`--no-fine-tree` / raw-mirror) unit's bytes; `unit_commit` must fail",
-          "pending": {
-            "task": "R8",
-            "row_id": "verify-non-covered-unit-commit-mismatch",
-            "outcome_kind": "error",
-            "expected": "unit-commit-mismatch",
-            "why": "R8 accept: covered-unit vs non-covered-unit alteration must fail at their respective single authoritative commitment (tasks/R.md R8)."
-          }
+          "what": "alter a non-covered (`--no-fine-tree` / raw-mirror) unit's signed `unit_commit`; the recomputation over its bytes must fail. Landed on unit 5 of R6's multi-file work — file 2's only normal unit, its file carrying no fine tree, so `unit_commit` is its single authoritative commitment and no second binding can claim the verdict first. The mutation also breaks the manifest signature, and the row still reports the content failure: Files (stage 4) run before Signatures (stage 5).",
+          "rows": ["verify-non-covered-unit-commit-mismatch"]
         }
       ]
     },
@@ -208,14 +196,7 @@
         {
           "id": "swapped-unit",
           "what": "present unit A's ciphertext under unit B's entry; the AAD's `unit_id` binding — not a commitment — is what catches it first",
-          "pending": {
-            "task": "R8",
-            "row_id": "verify-swapped-unit",
-            "outcome_kind": "error",
-            "expected": "unit-decrypt-failed",
-            "why": "R8's own task text: swapped unit → decrypt failure via the AAD's `unit_id` binding (tasks/R.md R8).",
-            "collision_note": "Claims the SAME outcome as this registry's `flipped-ciphertext-byte` pending row (`unit-decrypt-failed`), because `VerifyError::UnitDecryptFailed` carries no cause discriminator. `check_registry` will refuse both rows. R8 must either mint a discriminated code so the two mutations are genuinely distinguishable — which is what the error-code contract §4 says a layer-2 collision means — or keep one as a registry row and assert the other as an R10 property, following the D28 precedent in non_rows. Do NOT resolve it by editing an expected code (contract §3)."
-          }
+          "non_row": "swapped-unit-ciphertext"
         }
       ]
     },
@@ -756,6 +737,39 @@
       "instead": "Asserted as a named R5 pipeline test, `d75_a_cover_seed_not_descending_from_s_root_is_rejected` in `crates/antseal-core/src/verify/pipeline.rs`, paired with `d75_an_s_root_that_does_not_rebuild_fine_root_is_rejected` (`fine-root-rebuild-mismatch`) so both directions of the agreement are pinned with distinct codes from distinct stages.",
       "record": "docs/decisions/D75-full-reveal-cover-shape.md, section `Consequences`; the discharge is recorded in the R5 pipeline module docs.",
       "warning": "Adding this as a row will break Q7's distinctness assertion against G19's `content-fine-root-binding-failed`, which is now IMPLEMENTED (crates/antseal-core/src/test_util/tamper_rows_fine_tree.rs) rather than pending — so the collision is live, not prospective. That is the harness working, not a bug to route around."
+    },
+    {
+      "id": "swapped-unit-ciphertext",
+      "milestone": "M0",
+      "owner": "R",
+      "mutation": "present unit A's ciphertext under unit B's entry in the bundle (MVP-SPEC.md line 168, family `swapped-unit`)",
+      "collides_with": "verify-flipped-ciphertext-byte",
+      "why": "An AEAD authentication failure is one bit by construction: a single Poly1305 tag comparison covers key, nonce, AAD, ciphertext and lengths, so `decrypt_unit_with_key` can only report `AeadDecryptFailed` and R2 can only report `unit-decrypt-failed` — the same outcome the flipped-ciphertext row claims. Outside the AEAD the verifier holds nothing that separates the two: it never holds `W`, so a bundle-supplied `k_u` is unverifiable; the AAD's `unit_id` binding is an input to the failing check, not an output of it; ciphertext length distinguishes only swaps between different 256-B padding buckets, so it is fixture-dependent rather than a discriminator; and the content commitments that would tell the two apart need a plaintext that does not exist. Decision D81 evaluated and rejected the address-recompute and speculative-re-decryption discriminators.",
+      "instead": "Three assertions, none of them a row: (1) the named R8 pipeline test `r8_swapped_unit_ciphertext_is_rejected` in `crates/antseal-core/src/test_util/tamper_rows_pipeline.rs`, asserting `unit-decrypt-failed`; (2) the AAD-isolating C-level test `aad_unit_id_binding_rejects_a_foreign_unit_id` in `crates/antseal-core/src/crypto/unit_aead.rs`, which calls `decrypt_unit_with_key` with unit A's key, nonce and ciphertext but unit B's `unit_id` — the one call shape that varies the AAD alone — proving the AAD, not the key, is what rejects a swap; (3) the R10 property: for every ordered pair of distinct revealed units of a valid bundle, moving A's ciphertext into B's entry never verifies.",
+      "record": "docs/decisions/D81-unit-decrypt-cause.md",
+      "warning": "Adding this as a row will break Q7's distinctness assertion against `verify-flipped-ciphertext-byte`. That is the harness working, not a bug to route around; the fix is never an edited expected code (error-code contract §3)."
+    },
+    {
+      "id": "pipeline-level-wrong-unit-key",
+      "milestone": "M0",
+      "owner": "R",
+      "mutation": "replace a revealed unit's bundle-supplied `k_u` with another key and verify through `verify_bundle` (tasks/R.md R8's `wrong k_u` mutation)",
+      "collides_with": "verify-flipped-ciphertext-byte",
+      "why": "Same collapse as `swapped-unit-ciphertext`, and the spec's `wrong key` family is already discharged by C's primitive-level row `crypto-unit-aead-wrong-key`, which binds the distinct C code `crypto-aead-decrypt-failed`. A pipeline-level wrong-key row would be a project addition claiming `unit-decrypt-failed`, already owned.",
+      "instead": "The named R5 pipeline test `wrong_key_fails_before_padding_checks` already exercises the wrong-key path at the stage boundary (`crates/antseal-core/src/verify/unit_stages.rs`); R8 adds `r8_pipeline_level_wrong_unit_key_is_rejected` for the whole-pipeline route, and R10's property covers it: no substitution of a revealed unit's `k_u` ever verifies.",
+      "record": "docs/decisions/D81-unit-decrypt-cause.md",
+      "warning": "Adding this as a row will break Q7's distinctness assertion against `verify-flipped-ciphertext-byte`."
+    },
+    {
+      "id": "pipeline-level-wrong-unit-salt",
+      "milestone": "M0",
+      "owner": "R",
+      "mutation": "replace a non-covered revealed unit's bundle-supplied `unit_salt` with another unit's genuinely derived 16-byte salt and verify through `verify_bundle` (tasks/R.md R8's `wrong unit_salt -> unit_commit mismatch` mutation)",
+      "collides_with": "verify-non-covered-unit-commit-mismatch",
+      "why": "Found at R8; it is D81's argument one commitment layer up. A salted commitment opening is one bit for the same reason an AEAD tag comparison is: the verifier recomputes `SHA-256(0x02 || unit_salt || bytes)` and compares it with the manifest's stored value, and a mismatch says the TRIPLE is inconsistent — it cannot attribute itself to a substituted bundle salt rather than to an altered manifest commit, because both are inputs to the one comparison. `VerifyError::UnitCommitMismatch` carries only `unit_id`, and giving it a cause would mean reporting the result of a sub-comparison that does not exist. The salt is also the right length, so R3's length group cannot claim it first. Note the spec's own `wrong-salt/unit-commit` case is separately discharged by C's primitive-level row `crypto-unit-commit-wrong-salt`, which binds the distinct C code — so a pipeline-level salt row would be a project addition claiming an outcome `verify-non-covered-unit-commit-mismatch` already owns. The manifest-alteration keeps the row because that is the mutation the spec case at `altered-manifest-field/non-covered-unit-fails-unit-commit` names.",
+      "instead": "The named R8 test `the_wrong_unit_salt_route_reaches_the_same_code` in `crates/antseal-core/src/test_util/tamper_rows_pipeline.rs`, which pins that this route reaches `unit-commit-mismatch` — so if the two ever became distinguishable the demotion is up for review rather than silently stale.",
+      "record": "This registry, and `docs/decisions/D81-unit-decrypt-cause.md` for the argument's shape. If a cause discriminator is ever wanted, it needs a decision that first says what the verifier holds, outside the commitment, that separates the two — the same question D81 answers for the AEAD. Never an edited expected code (error-code contract §3).",
+      "warning": "Adding this as a row will break Q7's distinctness assertion against `verify-non-covered-unit-commit-mismatch`."
     }
   ]
 }

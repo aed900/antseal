@@ -392,12 +392,14 @@ const ROWS: &[TamperRow] = &[
 /// both sit in one registry.
 ///
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
-/// tree) and R7 (structural) are present; F15, A21 and R8 follow.
+/// tree), R7 (structural) and R8 (pipeline integration) are present; F15
+/// and A21 follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
     rows
 }
 
