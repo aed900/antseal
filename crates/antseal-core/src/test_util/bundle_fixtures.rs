@@ -1492,6 +1492,13 @@ pub mod shapes {
     pub const NFD_TEXT: &[u8] = b"cafe\xCC\x81 and more\n";
     /// Raw bytes that are already canonical, so no mirror is emitted.
     pub const CANONICAL_TEXT: &[u8] = b"already canonical\nno mirror needed\n";
+    /// The **odd-length** CRLF source (R37): 38 raw bytes canonicalizing to
+    /// **35**, so `d = 6` and the file tiles into odd-boundary units.
+    ///
+    /// Every other text constant here canonicalizes to an even length, which
+    /// is why no committed fixture produced a `level == d` GGM cover node
+    /// before R37 (D83 §1 Fact 2). One odd number unlocks the class.
+    pub const ODD_CRLF_TEXT: &[u8] = b"odd length line\r\nsecond\r\nthird piece\r\n";
 
     /// A single text file with a raw mirror, fine tree, one unit.
     #[must_use]
@@ -1521,6 +1528,25 @@ pub mod shapes {
         WorkSpec::new(
             "split multi unit",
             vec![FileSpec::text("notes/split.md", CRLF_TEXT).split(vec![12, 12, 10])],
+        )
+    }
+
+    /// The **odd-boundary** twin of [`split_multi_unit`] (R37): 35 canonical
+    /// bytes split 11 / 11 / 13, plus a raw mirror.
+    ///
+    /// This is the shape whose *full* reveal ships `level == d` cover nodes.
+    /// It is not enough for the file to be odd-length: by D83 §1 Fact 1 a
+    /// whole-file cover `[0, n)` is the single root node for **every** `n`,
+    /// so an unsplit odd file discloses no leaf-level node at all (except at
+    /// `n == 1`). What produces one is an odd **unit** boundary, which is
+    /// what D75-BOTH then exposes once per unit — units `[0, 11)` and
+    /// `[11, 22)` each contribute one here, at `(6, 10)` and `(6, 11)`,
+    /// exactly reproducing D83 §1 Fact 5's `n = 35, split 11/11/13` row.
+    #[must_use]
+    pub fn odd_split_multi_unit() -> WorkSpec {
+        WorkSpec::new(
+            "odd split multi unit",
+            vec![FileSpec::text("notes/odd-split.md", ODD_CRLF_TEXT).split(vec![11, 11, 13])],
         )
     }
 
@@ -1573,6 +1599,24 @@ pub mod shapes {
         WorkSpec::new(
             "unbalanced n6",
             vec![FileSpec::binary("data/n6.bin", vec![0, 1, 2, 3, 4, 5]).split(vec![2, 2, 2])],
+        )
+    }
+
+    /// [`unbalanced_n6`] retiled **2 / 1 / 3** (R37, G24): the same six
+    /// leaves on the same `d = 3` grid, with odd unit boundaries.
+    ///
+    /// Unit 1 is the single leaf `[2, 3)`, whose minimal cover is exactly the
+    /// one node `(3, 2)` — G11's own normative KAT (`minimal_cover`'s
+    /// doc-test, `verify_range`'s precedence fixture, and D83's committed
+    /// proptest counterexample all use it), reachable at **bundle** level for
+    /// the first time here. Unit 2 is `[3, 6)`, which contributes `(3, 3)`,
+    /// so the work's full reveal carries two leaf-level nodes and its
+    /// single-unit reveal carries one.
+    #[must_use]
+    pub fn unbalanced_n6_odd_split() -> WorkSpec {
+        WorkSpec::new(
+            "unbalanced n6 odd split",
+            vec![FileSpec::binary("data/n6-odd.bin", vec![0, 1, 2, 3, 4, 5]).split(vec![2, 1, 3])],
         )
     }
 
@@ -1695,6 +1739,23 @@ pub mod shapes {
                 split_multi_unit(),
                 Selection::all(1),
             ),
+            // R37 — the leaf-level (`level == d`) cover class, which no
+            // fixture produced before: 35 canonical bytes split 11/11/13.
+            // The full reveal ships one `level == d` node per odd-boundary
+            // unit under D75-BOTH; the partial reveal ships one on its own,
+            // so the shape is not reachable only through a whole-file
+            // disclosure. Asserted directly — never inferred from the file
+            // length — by `tests/leaf_level_cover_shapes.rs`.
+            case(
+                "odd-split-multi-unit/all",
+                odd_split_multi_unit(),
+                Selection::all(1),
+            ),
+            case(
+                "odd-split-multi-unit/partial",
+                odd_split_multi_unit(),
+                Selection(vec![FileSelection::Units(vec![1])]),
+            ),
             case("no-fine-tree/full", no_fine_tree(), Selection::all(1)),
             case(
                 "raw-mirror-sources/all",
@@ -1725,6 +1786,19 @@ pub mod shapes {
                 "unbalanced-n6/unit-2",
                 unbalanced_n6(),
                 Selection(vec![FileSelection::Units(vec![2])]),
+            ),
+            // The same six leaves retiled 2/1/3 (R37, G24). Unit 1 is the
+            // lone leaf [2, 3), so its cover is the single node (3, 2) —
+            // G11's normative KAT, and the shape D83's tamper row names.
+            case(
+                "unbalanced-n6-odd-split/unit-1",
+                unbalanced_n6_odd_split(),
+                Selection(vec![FileSelection::Units(vec![1])]),
+            ),
+            case(
+                "unbalanced-n6-odd-split/all",
+                unbalanced_n6_odd_split(),
+                Selection::all(1),
             ),
             case(
                 "multi-file/mixed",
@@ -2019,8 +2093,9 @@ mod tests {
     // bundles
     // -----------------------------------------------------------------
     //
-    // R9 pins the same property over *committed* vectors, for the 21
-    // catalogue shapes its document names. This is the constructed half,
+    // R9 pins the same property over *committed* vectors, for the 21 of the
+    // catalogue's shapes its own document names (adding a shape here never
+    // moves that vector — `tests/report_vectors.rs`'s `CASES` says so). This is the constructed half,
     // and it asserts over `shapes::catalogue()` **directly**, so a shape
     // added to R6 is covered from the moment it exists rather than at the
     // next vector re-emit (R9's rider on R30).
@@ -2105,6 +2180,14 @@ mod tests {
             "36790a0147430d67ea3ac09ba62d20c55b0959b4d340ff3478a8d3297bf20d3b",
         ),
         (
+            "odd-split-multi-unit/all",
+            "fd2d0e230820bdcc7696ec307e3acd68c587f97c006453bc039c6d7895095c33",
+        ),
+        (
+            "odd-split-multi-unit/partial",
+            "308f4977d8d60a9d3429e1c3f4954a68a21060ae6e311a3e575d8044a3c87025",
+        ),
+        (
             "no-fine-tree/full",
             "e1c790e17196ac4ea1827c5e5759a9c829bace88f49012cda3e6c91c2769b3f8",
         ),
@@ -2139,6 +2222,14 @@ mod tests {
         (
             "unbalanced-n6/unit-2",
             "5e6d96f0c17321e4719f1fccf5e7f3a2d6f80a8f0d56b5e27da7ad648fcaf543",
+        ),
+        (
+            "unbalanced-n6-odd-split/unit-1",
+            "44029b3a35bcf3e7ad41bf4278db0a3e08711851c27a8aae353a79a4d9f2267f",
+        ),
+        (
+            "unbalanced-n6-odd-split/all",
+            "d610bf71358b2b714aa93425fc4ca8dc63b0a5c58813d8c527979fa8cff79781",
         ),
         (
             "multi-file/mixed",

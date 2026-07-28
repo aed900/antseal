@@ -438,7 +438,7 @@ fn push_unique(seeds: &mut Vec<Seed>, id: String, bytes: Vec<u8>) {
 /// envelope R6 builds, plus F15's manifest-family tamper fixtures.
 ///
 /// The manifest is a function of the work alone — not of what a reveal shows
-/// — so the catalogue's 21 cases collapse to far fewer distinct envelopes,
+/// — so the catalogue's 25 cases collapse to far fewer distinct envelopes,
 /// and [`push_unique`] does that collapsing rather than a hand-maintained
 /// list that would drift the day a shape is added.
 #[must_use]

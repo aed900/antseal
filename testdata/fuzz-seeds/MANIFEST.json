@@ -21,8 +21,8 @@
   ],
   "corpora": [
     {
-      "bytes": 58500,
-      "count": 24,
+      "bytes": 70247,
+      "count": 26,
       "seeds": [
         {
           "file": "manifest_decode/single-text-with-mirror--full.bin",
@@ -41,6 +41,12 @@
           "id": "split-multi-unit--partial",
           "len": 5950,
           "sha256": "3866a78e6f79aa48325341168ba1836b7419829767f6c614054e389502eddab3"
+        },
+        {
+          "file": "manifest_decode/odd-split-multi-unit--all.bin",
+          "id": "odd-split-multi-unit--all",
+          "len": 5953,
+          "sha256": "8670a817a040822992f893f23bd22917aa2305bcc4eaa403cfb0d3b4c291e6e8"
         },
         {
           "file": "manifest_decode/no-fine-tree--full.bin",
@@ -71,6 +77,12 @@
           "id": "unbalanced-n6--all",
           "len": 5784,
           "sha256": "8a12c0a756e75e7749b177f4b80e5e8e77b9f38c3dec247835da640e6b555917"
+        },
+        {
+          "file": "manifest_decode/unbalanced-n6-odd-split--unit-1.bin",
+          "id": "unbalanced-n6-odd-split--unit-1",
+          "len": 5794,
+          "sha256": "d2115322ebab0c8ef146d1fa2fae08e73c018e48405f0d8cc7de2b868902e440"
         },
         {
           "file": "manifest_decode/multi-file--mixed.bin",
@@ -172,8 +184,8 @@
       "target": "manifest_decode"
     },
     {
-      "bytes": 163218,
-      "count": 28,
+      "bytes": 192106,
+      "count": 32,
       "seeds": [
         {
           "file": "bundle_decode/single-text-with-mirror--full.bin",
@@ -222,6 +234,18 @@
           "id": "split-multi-unit--all",
           "len": 8002,
           "sha256": "318af094e958ff721c3f1b3f7ac14cd43ad781251560a3297541806fc8db60e7"
+        },
+        {
+          "file": "bundle_decode/odd-split-multi-unit--all.bin",
+          "id": "odd-split-multi-unit--all",
+          "len": 8305,
+          "sha256": "3ef9c032b9529b1e36359df63ecb3fcdc36806f6479ae20d9b3f841d64970648"
+        },
+        {
+          "file": "bundle_decode/odd-split-multi-unit--partial.bin",
+          "id": "odd-split-multi-unit--partial",
+          "len": 6800,
+          "sha256": "d23ee5fbb6b831bfe36a8250319fec9e327011b754affd77d4d33e773727f859"
         },
         {
           "file": "bundle_decode/no-fine-tree--full.bin",
@@ -276,6 +300,18 @@
           "id": "unbalanced-n6--unit-2",
           "len": 6328,
           "sha256": "2c3781ee5754b5c6e42ef72554bb79a79f9fc76cf5eea8b0ca9e40d26ad71e59"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6-odd-split--unit-1.bin",
+          "id": "unbalanced-n6-odd-split--unit-1",
+          "len": 6416,
+          "sha256": "969dce90a24023afc45d6bc55dd1ad4b880569cd2c20b870204d81d481716c99"
+        },
+        {
+          "file": "bundle_decode/unbalanced-n6-odd-split--all.bin",
+          "id": "unbalanced-n6-odd-split--all",
+          "len": 7367,
+          "sha256": "5dacc81f5879751cc2fd33f8d4ded0811aed3978a2db90f6ed96a0a8f08900db"
         },
         {
           "file": "bundle_decode/multi-file--mixed.bin",
