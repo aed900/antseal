@@ -347,7 +347,14 @@ pub struct FileStageManifestView<'a> {
 /// classified the material moves into [`FullRevealEvidence`], where it is no
 /// longer optional and no longer untyped — a `Full` shape without its
 /// `file_salt` is unrepresentable from that point on.
-#[derive(Debug, Clone, Copy)]
+///
+/// `Debug` is **redacted by hand**, not derived: this is the one type in the
+/// stage that holds raw `file_salt`/`s_root` bytes, and on the path that
+/// matters most — a *partial* reveal that leaked them — a derived `Debug`
+/// would print the leaked salt straight into whatever log or panic message
+/// rendered the view (project rule 6). It shows presence and length, which
+/// is all the classification consumes.
+#[derive(Clone, Copy)]
 pub struct FullRevealMaterialEntry<'a> {
     /// The file this entry claims to describe.
     pub file_id: u64,
@@ -355,6 +362,23 @@ pub struct FullRevealMaterialEntry<'a> {
     pub file_salt: Option<&'a [u8]>,
     /// The disclosed 32-byte GGM fine-seed root `s_root`, if any.
     pub s_root: Option<&'a [u8]>,
+}
+
+impl core::fmt::Debug for FullRevealMaterialEntry<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        /// Presence + length only — never the bytes.
+        fn shape(field: Option<&[u8]>) -> String {
+            field.map_or_else(
+                || "absent".to_owned(),
+                |bytes| format!("<redacted; {} B>", bytes.len()),
+            )
+        }
+        f.debug_struct("FullRevealMaterialEntry")
+            .field("file_id", &self.file_id)
+            .field("file_salt", &shape(self.file_salt))
+            .field("s_root", &shape(self.s_root))
+            .finish()
+    }
 }
 
 /// The bundle side of the file-level view.
@@ -395,7 +419,13 @@ impl<'a> FileStageBundleView<'a> {
 /// (AEAD), padding-checked, stripped to `true_length`, bound to
 /// `true_length == range_width`, and bound to their single content
 /// commitment. R4 never re-derives them.
-#[derive(Debug, Clone, Copy)]
+///
+/// `Debug` renders the byte **length**, not the bytes. They are not secret —
+/// the bundle discloses them by design — but a derived `Debug` would dump a
+/// whole document into any log line or panic message that formatted the
+/// stage's inputs, which is not a thing a verifier should be able to do by
+/// accident.
+#[derive(Clone, Copy)]
 pub struct VerifiedUnitBytes<'a> {
     /// Work-global `unit_id`.
     pub unit_id: u64,
@@ -407,6 +437,18 @@ pub struct VerifiedUnitBytes<'a> {
     pub range_start: u64,
     /// The unit's exact verified bytes.
     pub bytes: &'a [u8],
+}
+
+impl core::fmt::Debug for VerifiedUnitBytes<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VerifiedUnitBytes")
+            .field("unit_id", &self.unit_id)
+            .field("file_id", &self.file_id)
+            .field("kind", &self.kind)
+            .field("range_start", &self.range_start)
+            .field("bytes", &format_args!("<{} B>", self.bytes.len()))
+            .finish()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2000,11 +2042,18 @@ mod tests {
         run(&fixture, 1, &[0], &material).expect("the dangling entry is R3's to reject");
     }
 
-    /// No secret material in any `Debug` rendering of the evidence types
-    /// (project rule 6): `FileSalt`/`Seed32` are redacted by construction,
-    /// and this asserts the wrapper types do not undo that.
+    /// No secret material in any `Debug` rendering this stage can produce
+    /// (project rule 6). Three surfaces: the classified evidence (whose
+    /// `FileSalt`/`Seed32` are redacted by construction — asserted here so a
+    /// wrapper type cannot undo it), the **input** material view (the one
+    /// place raw salt bytes exist, hand-redacted), and the verified-bytes
+    /// view (content, rendered as a length).
+    ///
+    /// The patterns below are the byte fixtures rendered the two ways a
+    /// `Debug` impl could emit them: hex (`11`, `33`) and decimal (`17`,
+    /// `51`), the latter being what a derived `Debug` on `&[u8]` prints.
     #[test]
-    fn evidence_debug_output_carries_no_secret_material() {
+    fn no_debug_surface_of_this_stage_carries_secret_material() {
         let fixture = Fixture::text(0, b"alpha\r\nbeta\r\n", true);
         let files = [fixture.view()];
         let units = fixture.units(1);
@@ -2016,14 +2065,55 @@ mod tests {
         )
         .expect("classifies");
 
-        let rendered = format!("{shape:?}");
-        for secret in ["1111111111111111", "3333333333333333", "11, 11", "51, 51"] {
-            assert!(
-                !rendered.contains(secret),
-                "secret pattern {secret} leaked into {rendered}"
-            );
+        // The isolation path is where a leaked salt would be *most* likely
+        // to reach a log: the bundle carries it, and the stage rejects.
+        let leak = FullRevealMaterialEntry {
+            file_id: 0,
+            file_salt: Some(&TEST_FILE_SALT),
+            s_root: Some(&TEST_S_ROOT),
+        };
+        let verified = fixture.verified(1);
+
+        let surfaces = [
+            format!("{shape:?}"),
+            format!("{leak:?}"),
+            format!("{:?}", bundle(&[0], core::slice::from_ref(&leak))),
+            format!("{verified:?}"),
+        ];
+
+        for rendered in &surfaces {
+            for secret in [
+                "1111111111111111", // file_salt, hex
+                "3333333333333333", // s_root, hex
+                "17, 17",           // file_salt, decimal (derived &[u8] Debug)
+                "51, 51",           // s_root, decimal
+            ] {
+                assert!(
+                    !rendered.contains(secret),
+                    "secret pattern {secret} leaked into {rendered}"
+                );
+            }
         }
-        assert!(rendered.contains("redacted"), "{rendered}");
+
+        assert!(surfaces[0].contains("redacted"), "{}", surfaces[0]);
+        assert!(surfaces[1].contains("redacted; 16 B"), "{}", surfaces[1]);
+        assert!(surfaces[1].contains("redacted; 32 B"), "{}", surfaces[1]);
+        // Content is rendered as a length, never as bytes.
+        assert!(surfaces[3].contains(" B>"), "{}", surfaces[3]);
+        assert!(
+            !surfaces[3].contains("alpha"),
+            "content leaked into {}",
+            surfaces[3]
+        );
+
+        // …and absence renders as absence, not as an empty byte string.
+        let absent = FullRevealMaterialEntry {
+            file_id: 0,
+            file_salt: None,
+            s_root: None,
+        };
+        let rendered = format!("{absent:?}");
+        assert!(rendered.contains("absent"), "{rendered}");
     }
 
     // ── properties ──────────────────────────────────────────────────────
