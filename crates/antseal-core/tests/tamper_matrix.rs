@@ -31,6 +31,21 @@
 /// registry it checks against — [`all_rows`] — is this file's.
 mod tamper_completeness;
 
+/// F20's anchor-schema rows. They live in this target rather than in
+/// `test_util` because their base is [`bundle_wire`], the hand-rolled
+/// canonical writer — the only route to a shape F8 deliberately made
+/// **unrepresentable** in the typed API (module docs).
+mod tamper_rows_anchor;
+
+/// The hand-rolled CBOR writers F20's rows are built on. `bundle_wire`
+/// depends on `manifest_wire` for its primitive item writers, so both are
+/// declared here.
+#[path = "manifest_wire/mod.rs"]
+mod manifest_wire;
+
+#[path = "bundle_wire/mod.rs"]
+mod bundle_wire;
+
 use antseal_core::codec::decode::check_canonical;
 use antseal_core::crypto::commit::path_commit;
 use antseal_core::crypto::error::CryptoError;
@@ -412,6 +427,7 @@ fn all_rows() -> Vec<TamperRow> {
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_version::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
+    rows.extend_from_slice(tamper_rows_anchor::ROWS);
     rows
 }
 
