@@ -465,8 +465,18 @@ Enforcement: `crates/antseal-core/tests/verify_fuzz.rs`
 `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`). A
 crash-free fuzz run says nothing about this; the equality does.
 
+**Secret residue in dropped hashers (D88).** Enabling `sha2`'s non-default
+`zeroize` feature makes every dropped `Sha256`/`Hmac<Sha256>` wipe its
+chaining state and block buffer. This matters to class 3 (GGM PRG hiding)
+more than to the HKDF finding that prompted it: before D88, every
+`child_seed` call left its parent seed recoverable in a dropped hasher, and
+a leaked ancestor seed opens leaves a reveal deliberately withheld. The
+assumption itself is unchanged — this is about whether the secret the
+assumption is stated over survives its own function call.
+
 **Related records.** `docs/threat-model.md` (Q12, this block verbatim plus
 the M4 threat sections), `docs/zeroization-audit.md` (C21),
+`docs/decisions/D88-*` (the R1 disposition),
 `docs/decisions/D74-*`, `D75-*` (GGM cover shape), `docs/decisions/D13-*`,
 `D14-*`, `D15-*` (signature pins and signing mode),
 `docs/format/registry-v1.md` (the wire registry these assumptions apply to).

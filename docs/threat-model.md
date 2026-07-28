@@ -535,11 +535,19 @@ on the crypto module root, `crates/antseal-core/src/crypto.rs`.
 
 ### Why not
 
-Every secret-bearing type in `antseal-core::crypto` is `ZeroizeOnDrop`, and
-those impls run under `wasm32` exactly as they do natively: the writes are
-volatile and cannot be optimised away. But that is a promise about **one
-linear-memory allocation**, not about the machine underneath it. Outside that
-allocation the runtime does things Rust cannot see or undo:
+Every secret-bearing type this crate *defines* is `ZeroizeOnDrop`, and those
+impls run under `wasm32` exactly as they do natively: the writes are volatile
+and cannot be optimised away. Third-party hasher state is wiped too, but by a
+different mechanism — ordinary drop glue gated on `sha2`'s non-default
+`zeroize` feature, **not** a `ZeroizeOnDrop` bound ([D88](decisions/D88-hkdf-hmac-zeroization.md);
+`docs/zeroization-audit.md` R1). Two documented exceptions remain by design:
+`PartialRevealDisclosure`'s growing `Vec` (audit R2) and a handful of
+`Drop`-less stack temporaries inside `hkdf`/`hmac` (audit R1's narrowed
+residue).
+
+None of that is the point of this section, because all of it is a promise
+about **one linear-memory allocation**, not about the machine underneath it.
+Outside that allocation the runtime does things Rust cannot see or undo:
 
 - the bundle bytes were almost certainly copied into engine-owned buffers
   before they ever reached linear memory — a `fetch` response, a `File` read,

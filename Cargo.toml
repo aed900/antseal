@@ -77,7 +77,31 @@ serde_json = "=1.0.151"
 # patched >= 0.9.8; 0.11.0 unaffected); hkdf/hmac — no advisories on record.
 # default-features = false on sha2 drops `alloc`/`oid` (unneeded; keeps the
 # wasm32 surface minimal).
-sha2 = { version = "=0.11.0", default-features = false }
+#
+# The NON-DEFAULT `zeroize` feature is LOAD-BEARING (decision D88,
+# docs/decisions/D88-hkdf-hmac-zeroization.md; task C22). It is what makes
+# every dropped `Sha256`/`Hmac<Sha256>` wipe its chaining state and its block
+# buffer, via real `Drop` impls on `Sha256VarCore` and (through
+# `digest/zeroize` → `block-buffer/zeroize`) on `BlockBuffer`. Without it,
+# measured on this exact pin: a dropped `Hkdf<Sha256>` leaves 114 of 144 bytes
+# of PRK-keyed HMAC state readable, the HKDF extract context leaves the master
+# secret `W` recoverable VERBATIM from its uncompressed block buffer, and every
+# `content::ggm::child_seed` call strands its parent GGM seed in a dropped
+# hasher — a direct contradiction of MVP-SPEC.md line 143.
+#
+# There is NO compile-time detector: the wipe is drop glue, not a trait bound,
+# so `crypto.rs::zeroization_sweep`'s `ZeroizeOnDrop` assertions cannot see it
+# (`digest`'s `buffer_fixed!` `ZeroizeOnDrop` arm is a marker impl with no
+# `Drop`). Removing this feature would silently un-fix all of the above.
+# `crates/antseal-core/tests/zeroization_residue.rs` is the only guard, and
+# `feature_pins.rs` asserts this line still says what it says. Treat removal
+# as a version bump under docs/dependency-policy.md §4.
+#
+# Cost, re-measured at C22: ~4-6% on hash-bound work, below D88 §5's 10%
+# escalation gate against G18's budget. `hmac`'s own `zeroize` feature is
+# deliberately left OFF — it adds nothing once this one is on (D88 §2), and an
+# inert feature is a maintenance claim we would have to keep defending.
+sha2 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
 hkdf = "=0.13.0"
 # hmac is hkdf 0.13's underlying HMAC implementation (already in the locked
 # graph via hkdf's `hmac ^0.13`). Declared and exact-pinned here because it

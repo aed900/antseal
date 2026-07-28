@@ -32,6 +32,16 @@ lands):
 | `rand_core` — **pinned `=0.10.1` 2026-07-27 (C5)** (current stable; RUSTSEC-2019-0035 and RUSTSEC-2021-0023 affect only <0.4.2 / 0.6.0–0.6.1). The injected-CSPRNG **trait contract** of every generation/nonce path (`MasterSecret`/`SealId` generation, C9 nonce drawing): trait-surface changes alter the public API and test determinism, hence exact-pinned. 0.10 is a pure trait crate — zero deps, zero features — so it structurally cannot pull `getrandom` into antseal-core (0.10 renamed 0.6's `CryptoRngCore` to `CryptoRng`/`TryCryptoRng`; we bound on `TryCryptoRng` and map failures to `CryptoError::RngFailure`) | injected-RNG API contract | C (C5/C9) |
 | `serde` + `serde_json` (pinned `=1.0.229` / `=1.0.151` at R1) | the serialized `VerificationReport` is the R9/Q4/Q5 native↔WASM bit-match vector byte format, retained forever — serializer output drift is a silent vector break ([D29](decisions/D29-report-byte-format.md)) | R1 |
 
+**Note on the AEAD/HKDF/SHA-2 stack row.** `sha2`'s **`zeroize` feature is
+load-bearing** (D88): dropping it silently restores recoverable `W` and
+GGM-seed residue in dropped hashers. Treat feature removal as a version bump
+under §4, and note that the compile-time `ZeroizeOnDrop` assertions in
+`crypto.rs::zeroization_sweep` do **not** catch it — the wipe is drop glue,
+not a trait bound. `crates/antseal-core/tests/zeroization_residue.rs` is the
+only behavioural guard. The stack's other feature selections are ordinary
+consumption shape; this one is a security property with no compile-time
+detector, which is why it is called out here rather than left in the row.
+
 **This list grows — it is a floor, not a ceiling.** G nominates the
 Unicode/NFC crate (with its exact Unicode data version) at M0, and C
 nominates the concrete AEAD/HKDF/SHA-2 crates at M0. Any new dependency
