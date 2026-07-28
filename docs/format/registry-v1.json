@@ -15,7 +15,8 @@
     "D23": "RESOLVED 2026-07-27 — a file's raw mirror is that file's last unit; at most one per file. Seal-side construction rule; parse position-agnostic.",
     "D28": "RESOLVED 2026-07-28 — full-reveal strictness is STRICT (hard-fail): a bundle revealing every kind=Normal unit of a file MUST carry that file's file_salt, plus s_root iff the file has a fine tree. Rider 1 (binding on F8): reveal shape is DERIVED from the signed unit table and the revealed set, NEVER declared — the bundle carries no reveal-shape discriminant. docs/decisions/D28-full-reveal-strictness.md",
     "D77": "RESOLVED 2026-07-28 — a zero-non-mirror-unit (mirror-only) file is REJECTED at F5 (manifest schema), code manifest-empty-normal-units via ContainerField::NormalUnits, checked in FileEntry::new AFTER the units.is_empty() check and BEFORE the coverage loop. This DOES change the registry, correcting the fed_but_not_resolved_here note that assumed otherwise: maps.file_entry key 6 gains 'at least one kind=normal unit [P]'. D28's anti-vacuity clause and C7's attest refusal stay as defence-in-depth (R's view types are hand-populated, so no F5 check can constrain them). docs/decisions/D77-zero-unit-file.md",
-    "D10": "RESOLVED 2026-07-28 — 19 frozen parser resource caps, one universal clamp rule min(claimed_length, remaining_input) applied at every pre-allocation whether or not a cap covers it, 18 new bundle-/manifest- codes plus the existing cbor-nesting-too-deep; all enforced inside verify stage 1 (decode), ahead of every AEAD, hash and signature operation; u64 everywhere so wasm32 and native cannot diverge. Mirrored in the top-level `caps` object and in registry-v1.md section 11. docs/decisions/D10-parser-caps.md"
+    "D10": "RESOLVED 2026-07-28 — 19 frozen parser resource caps, one universal clamp rule min(claimed_length, remaining_input) applied at every pre-allocation whether or not a cap covers it, 18 new bundle-/manifest- codes plus the existing cbor-nesting-too-deep; all enforced inside verify stage 1 (decode), ahead of every AEAD, hash and signature operation; u64 everywhere so wasm32 and native cannot diverge. Mirrored in the top-level `caps` object and in registry-v1.md section 11. docs/decisions/D10-parser-caps.md",
+    "D83": "RESOLVED 2026-07-28 — canonical leaf-level GGM payload; option B. A disclosed GGM payload at level == d is salt_i || 0x00*16; the length stays 32 and stays tier P, and the zero tail is a tier R value rule. BINDS: cover_entry element 2 at level == d (section 5, section 7.11 key 3), and full_reveal key 2 at n == 1 (section 7.14), where d == 0 makes the grid root itself a leaf. One new code, fine-root-leaf-seed-tail-not-zero, surfaced from both sites; no CBOR type, length, key assignment or reserved slot changes, so format_version stays 1. Mirrored on the cover_entry tuple's element 2 and on full_reveal key 2 as `canonical_leaf_payload`, and in registry-v1.md sections 2, 5, 7.11 and 7.14. docs/decisions/D83-leaf-cover-seed-tail-malleability.md"
   },
   "fed_but_not_resolved_here": [
     { "decision": "D74", "topic": "extraneous s_root on a FineTree::Absent full reveal", "bites_at": "full_reveal key 2", "contribution": "the violation row is left unassigned; the permissive reading is explicitly not encoded. Recommendation on record: reject as full-reveal-s-root-without-fine-tree", "owner": "R4/F8" },
@@ -239,7 +240,7 @@
       "elements": [
         { "index": 0, "name": "level", "type": "uint" },
         { "index": 1, "name": "index", "type": "uint" },
-        { "index": 2, "name": "seed", "type": "bstr", "length": 32 }
+        { "index": 2, "name": "seed", "type": "bstr", "length": 32, "canonical_leaf_payload": "at level == d the value is salt_i || 0x00*16 (D83); at level < d it is the raw GGM seed. Length 32 either way, tier P; the zero tail is tier R." }
       ]
     },
     {
@@ -479,7 +480,7 @@
       "fields": [
         { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "proposed", "notes": "in-range (R); must also appear in touched_files (X)" },
         { "key": 1, "name": "file_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "tier": "P", "status": "proposed", "notes": "opens raw_commit/canon_commit; disclosed ONLY on a full reveal (line 95)" },
-        { "key": 2, "name": "s_root", "type": "bstr", "presence": "optional", "rule": "biconditional [R]: present iff full(F) AND file fine_tree == Present", "length": 32, "tier": "R", "status": "proposed", "notes": "full [0, n) cover; discloses nothing since every leaf is revealed (line 114)" }
+        { "key": 2, "name": "s_root", "type": "bstr", "presence": "optional", "rule": "biconditional [R]: present iff full(F) AND file fine_tree == Present", "length": 32, "tier": "R", "status": "proposed", "notes": "full [0, n) cover; discloses nothing since every leaf is revealed (line 114)", "canonical_leaf_payload": "at n == 1 (d == 0) the grid root is a leaf, so this field is salt_0 || 0x00*16 and a non-zero upper half is rejected (D83, tier R)" }
       ],
       "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     }

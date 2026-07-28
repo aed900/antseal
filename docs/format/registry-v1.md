@@ -169,6 +169,17 @@ Consequences, recorded as rules:
 | 1952 | ML-DSA-65 public key (FIPS 204 Table 2) — *pending-D17 confirm* | line 97 |
 | 3309 | ML-DSA-65 signature (FIPS 204 Table 2) — *pending-D17 confirm* | line 97 |
 
+**Canonical leaf-level GGM payload (D83).** The 32-byte length above is
+unconditional, but at the grid's leaf level only half of it is read. A
+disclosed GGM value for a node at **`level == d`** (`d = ⌈log₂ n⌉`) is
+`salt_i ‖ 0x00·16`: the verifier takes `salt_i = payload[..16]` with no
+descent (MVP-SPEC.md line 96), so bytes `16..32` are significant only as a
+canonicality rule. **A non-zero upper half is a rejection**
+(`fine-root-leaf-seed-tail-not-zero`), tier **[R]** — it needs `n` from the
+embedded manifest. This binds `cover_entry` (§5, §7.11 key 3) at
+`level == d` and `full_reveal.s_root` (§7.14 key 2) at `n == 1`, the one
+case where the grid root is itself a leaf.
+
 Derived 32-B values that are **not** wire fields (never stored, always
 recomputed): `work_id` = SHA-256(body bytes), `anchor_digest` = SHA-256(full
 manifest bytes) — line 75; see §12 checklist.
@@ -320,10 +331,39 @@ covers (line 96). Validity: a content-tree address must satisfy
 `index · 2^(d−level) < n` and the deepest-slot rule; both are R-side
 checks (the leaf-exact-cover check subsumes them for covers).
 
+### Canonical leaf-level payload — status: proposed (D83 RESOLVED — option B)
+
+A cover node at `level == d` covers exactly one leaf slot, so a verifier
+descends `d − level = 0` levels and reads `salt_i = payload[..16]`
+directly (MVP-SPEC.md line 96). Bytes `16..32` are therefore never an input
+to any hash. v1 fixes them at **zero** and requires the verifier to check
+them, so that one proof has exactly one encoding.
+
+Incidence, for sizing and for test design: a cover for `[a, b)` contains a
+`level == d` node **iff `d == 0 ∨ a odd ∨ (b odd ∧ b < n)`** — about ¾ of
+all ranges. A whole-file cover `[0, n)` is always the single root node and
+so carries one only at `n == 1`; under D75 a *split* file's full reveal
+ships one cover per unit and is governed by unit-boundary parity, not by
+file size. At most **2** such nodes occur in any one cover.
+
+The same rule governs `full_reveal.s_root` (§7.14 key 2) at `n == 1`,
+where `d == 0` makes the grid root a leaf and MVP-SPEC.md line 96 states
+`salt_0 = s_root[..16]` outright. At that size the two fields are
+byte-identical by rule, which is how D75's "the two routes must agree"
+rider is discharged.
+
+Rejected alternatives are recorded in
+`docs/decisions/D83-leaf-cover-seed-tail-malleability.md`: a 16-byte
+payload at `level == d` would contradict MVP-SPEC.md lines 96/121 and drop
+two exact byte lengths from tier [P] to [R] for a ≤ 0.95 % wire saving.
+
 ### Tuple shapes (D9-decided)
 
 - **`cover_entry` = `[level, index, seed]`** — `uint, uint, bstr(32)`.
-  One disclosed GGM seed of the leaf-exact sub-cover.
+  One disclosed GGM seed of the leaf-exact sub-cover. At `level == d` the
+  third element is **not** the raw seed but the canonical leaf-level
+  payload `salt_i ‖ 0x00·16` (D83); at `level < d` it is the seed itself.
+  The length is 32 either way and stays a **[P]** check.
 - **`path_node` = `[level, index, hash]`** — `uint, uint, bstr(32)`. One
   boundary Merkle sibling node hash.
 
@@ -769,7 +809,7 @@ slot can promote it, and none should be read as promising to.
 | 0 | `unit_id` | uint | req | must resolve into the embedded manifest's unit table **[R]** | proposed |
 | 1 | `k_u` | bstr | req | 32 **[P]** — the unit key, disclosed per reveal so the verifier decrypts without ever holding `W` (line 114) | proposed |
 | 2 | `ciphertext` | bstr | req | var; `len ≡ 16 (mod 256)` and `len ≥ 272` **[P]** (§2). The exact `len == padded_length(true_length) + 16` is **[R]** — it needs the manifest's `true_length` | proposed |
-| 3 | `cover` | array | req **(D75 RESOLVED — "both"; see below)** | `cover_entry` tuples (§5), **non-empty [P]** (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree, §7.4), strictly ascending interval start **[X]**; leaf-exactness and the no-ancestor-seed rule are **[R]** | proposed |
+| 3 | `cover` | array | req **(D75 RESOLVED — "both"; see below)** | `cover_entry` tuples (§5), **non-empty [P]** (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree, §7.4), strictly ascending interval start **[X]**; leaf-exactness, the no-ancestor-seed rule and the **canonical leaf-level payload (D83: an entry at `level == d` must carry `salt_i ‖ 0x00·16`)** are **[R]** | proposed |
 | 4 | `paths` | array | req, may be empty | `path_node` tuples (§5), strictly ascending interval start **[X]**; empty exactly when the unit spans `[0, n)` (no boundary siblings) — the *exactly* is **[R]** | proposed |
 | 5–23 | — | — | — | reserved | proposed |
 
@@ -880,7 +920,7 @@ be merged into one salt field in a future version.
 | --- | --- | --- | --- | --- | --- |
 | 0 | `file_id` | uint | req | in-range **[R]**; must also appear in `touched_files` **[X]** (§7.6) | proposed |
 | 1 | `file_salt` | bstr | req | 16 **[P]** — opens `raw_commit`/`canon_commit`; disclosed **only** on a full reveal (line 95) | proposed |
-| 2 | `s_root` | bstr | **opt — biconditional, [R]: present iff `full(F) ∧ fine_tree = Present`** | 32 — the full `[0, n)` cover (line 114); a `--no-fine-tree` or empty file has no fine tree, hence no `s_root` | proposed |
+| 2 | `s_root` | bstr | **opt — biconditional, [R]: present iff `full(F) ∧ fine_tree = Present`** | 32 — the full `[0, n)` cover (line 114); a `--no-fine-tree` or empty file has no fine tree, hence no `s_root`. At **`n == 1`** the grid root is a leaf, so this field is the canonical leaf-level payload `salt_0 ‖ 0x00·16` and a non-zero upper half is rejected **[R]** (D83) | proposed |
 | 3–23 | — | — | — | reserved | proposed |
 
 #### The entry's own presence is derived, never declared (D28)
