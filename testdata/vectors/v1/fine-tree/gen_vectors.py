@@ -24,7 +24,18 @@ Committed vectors are retained forever (Q6 freezes them): a byte change here
 is a **format event**, justified explicitly, never a silent regeneration.
 Run only to *verify*:
 
-    python3 gen_vectors.py | diff - fine-tree.json
+    python3 gen_vectors.py --check
+
+`--check` is the uniform entry point every reference generator carries (D31
+section 6a): it re-derives, diffs against the committed bytes, prints a
+per-file verdict, and exits non-zero on any difference. It is the only thing
+`scripts/cross-check.sh` calls. Bare (no `--check`) still writes the document
+to stdout, so the historical `| diff - fine-tree.json` recipe keeps working.
+
+The tiny `check_committed` helper below is duplicated verbatim in the sibling
+generators rather than shared through a common module. That is deliberate:
+this file is an *independent* cross-check vehicle (D31 tier T1), and a shared
+helper would be shared code between the vehicles it is meant to keep apart.
 
 The Rust side has its own regenerator (`vector_fine_tree_document_regenerates`
 in crates/antseal-core/tests/fine_tree_vectors.rs), which rebuilds this
@@ -32,9 +43,14 @@ document from antseal-core's public API and diffs it against the committed
 file. Two regenerators, one committed artifact.
 """
 
+import argparse
+import difflib
 import hashlib
 import json
+import pathlib
 import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
 
 # ── fixture inputs (all NON-SECRET) ────────────────────────────────────────
 
@@ -457,10 +473,10 @@ def selftest(root: bytes) -> None:
     print("reference self-test: OK", file=sys.stderr)
 
 
-def main() -> None:
+def build_document() -> dict:
     root = s_root()
     selftest(root)
-    document = {
+    return {
         "schema": "antseal-golden-vector",
         "schema_version": 1,
         "format_version": "v1",
@@ -487,8 +503,58 @@ def main() -> None:
             "cases": [build_case(root, *case) for case in CASES],
         },
     }
-    print(json.dumps(document, indent=2))
+
+
+def check_committed(path: pathlib.Path, produced: str) -> int:
+    """Diff freshly derived bytes against a committed vector file (D31 6a).
+
+    Returns 0 on byte equality, 1 otherwise, and prints a bounded unified diff
+    so a disagreement is legible without a second command.
+    """
+    name = path.name
+    if not path.exists():
+        print(f"FAIL  {name}: committed vector is missing", file=sys.stderr)
+        return 1
+    committed = path.read_text(encoding="utf-8")
+    if committed == produced:
+        print(f"OK    {name}")
+        return 0
+    print(
+        f"FAIL  {name}: re-derived bytes differ from the committed vector. "
+        "This is a format event or a real disagreement — never regenerate to "
+        "make it agree (D31 section 11 item 5).",
+        file=sys.stderr,
+    )
+    diff = difflib.unified_diff(
+        committed.splitlines(),
+        produced.splitlines(),
+        fromfile=f"committed/{name}",
+        tofile=f"rederived/{name}",
+        lineterm="",
+        n=2,
+    )
+    for line in list(diff)[:60]:
+        print(f"  {line}", file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Regenerate or verify the G15 GGM/fine-tree golden vectors."
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="re-derive and byte-compare the committed vector instead of writing it",
+    )
+    args = parser.parse_args()
+
+    produced = json.dumps(build_document(), indent=2) + "\n"
+    if args.check:
+        return check_committed(HERE / "fine-tree.json", produced)
+    sys.stdout.write(produced)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

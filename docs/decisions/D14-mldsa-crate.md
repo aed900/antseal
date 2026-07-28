@@ -119,3 +119,74 @@ decision entry here, never a drive-by.
   and the wasm verifier surface are unaffected either way, and
   deterministic signatures are cross-implementation byte-identical (C16
   vector shape).
+
+## Addendum — 2026-07-28: `fips204` moves from declaration-only to a dev-dependency (Q11/D31)
+
+D31 consequence 4 requires this to be recorded rather than landed silently:
+it is a change to a **consumption shape this decision fixed**, and a later
+reader must not mistake it for the fallback having been activated.
+
+**It has not been.** `ml-dsa =0.1.1` remains the primary and the only
+implementation antseal ships. The fallback trigger above is unchanged and
+untripped.
+
+### What changed
+
+| | before | after |
+| --- | --- | --- |
+| root `[workspace.dependencies]` | `fips204 = "=0.4.6"` | `fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-65"] }` |
+| consumed by | no crate | `antseal-core` `[dev-dependencies]`, native-only |
+| consumed where | — | `crates/antseal-core/tests/mldsa_fallback_equivalence.rs` |
+
+The feature shape is now written down as **exactly the consumption shape this
+record already documented** for the triggered case (no `default-rng`;
+deterministic signing via `try_sign_with_seed`), so the equivalence test
+exercises the shape a real swap would ship rather than a convenient
+approximation.
+
+### Why the "pinned-unconsumed" property survives
+
+This record's Consequences say `fips204` is "pinned and probe-covered but
+consumed by no crate", and the `core-dep-graph` lane depends on antseal-core's
+*normal* graph staying I/O-free and predictable. A `[dev-dependencies]` edge is
+not a consumed runtime dependency: it never enters `cargo tree -e normal`, and
+nothing it pulls can reach a shipped artifact.
+
+Verified at landing by cargo-tree diff:
+
+```
+cargo tree -p antseal-core -e normal --prefix none --locked
+```
+
+is **byte-identical** before and after, 102 lines, and `fips204` does not
+appear in it. The `core-dep-graph` lane is unperturbed.
+
+### What did change: `Cargo.lock`
+
+Twelve packages are added, all dev-only and all reachable only through
+`fips204`: `fips204 0.4.6` itself plus the RustCrypto 0.10-generation stack it
+builds on — `sha2 0.10.9`, `sha3 0.10.9`, `digest 0.10.7`, `crypto-common
+0.1.7`, `block-buffer 0.10.4`, `generic-array 0.14.7`, `keccak 0.1.6`,
+`rand_core 0.6.4`, `cpufeatures 0.2.17`, `version_check 0.9.5`,
+`zeroize_derive 1.5.0`. No package was removed and no existing version moved.
+
+**This adds duplicate-version pairs** (`sha2` 0.10.9 beside our pinned
+=0.11.0, `crypto-common` 0.1.7 beside 0.2.2, `rand_core` 0.6.4 beside the
+0.9 line). `deny.toml` sets `multiple-versions = "warn"`, so the lane warns
+rather than fails, which is the correct verdict here: the duplicates are
+confined to the dev graph and cannot ship. If that setting is ever tightened
+to `deny`, this is the entry that explains the exemption these pairs need.
+
+### The distinction that matters, restated
+
+D31 §4a settles the register's long-open question about whether an
+`ml-dsa`↔`fips204` comparison counts as the independent cross-check. **It does
+not.** Both crates are Rust, both implement FIPS 204, both come from the same
+small community: their agreement is **T2** and cannot detect a shared
+misreading of FIPS 204. The independent cross-check for ML-DSA-65 is NIST ACVP
+(`crates/antseal-core/tests/acvp_ml_dsa.rs`, tier **T0**, 115 cases, zero
+disagreements at the freeze commit).
+
+So the new test is evidence for **this record's fallback claim and nothing
+else**, and it says so in its own module docs. The two must never be conflated
+in a freeze report, and `docs/testing/cross-check.md` labels them separately.
