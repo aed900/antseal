@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d617a082a8e45f4de44bd15156fd4630ffee0782779aa36605ec2d545af0ad9b # shrinks to n = 101, raw_start = 1438889277633465220, raw_length = 103434758252173152, content_seed = 0, root_bytes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], mutations = [FlipByte { at: 0, byte: 326408941925431824, mask: 1 }], mutate_boundary = false

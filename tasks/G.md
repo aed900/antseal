@@ -266,6 +266,18 @@
   - R4's recompute returns the one-variant error type; the `InvalidUtf8` arm no longer exists at that call site
   - `content-canonicalize-invalid-utf8` remains reachable (and coded) from the seal-side path only
   - No change to any committed vector or to D30's code set — this narrows a type, it does not retire a code
+### G23 — Resolve D83: the inert upper 16 bytes of a leaf-level cover seed
+- Milestone: M0 (must land before the Q14 freeze)
+- Size: S (decision) + S–M (whichever option is chosen)
+- Deps: G11, G13; F: the wire encoding of `cover_entry` (`docs/format/registry-v1.md` §5); joint decision with F
+- Spec: GGM cover contents (line 114), the 32-byte length rule (line 121), `salt_i = leaf_seed[..16]` (line 96), format stability (line 123)
+- Found: 2026-07-28 by G20's proof-mutation property at `PROPTEST_CASES=1024`; counterexample committed at `crates/antseal-core/proptest-regressions/content_properties.txt` and restated as the named case `d83_leaf_level_cover_seed_tail_is_inert_committed_counterexample`
+- Do: A cover node at `level == d` covers exactly one leaf, so the verifier descends zero levels and reads `salt_i = seed[..16]` — **bytes 16..32 of that node's disclosed 32-byte seed are never examined**, and a bundle may carry anything there and still verify. Not a soundness or confidentiality break (the tail conveys nothing about unrevealed leaves and cannot forge a byte), but it makes `.sealproof` bytes non-unique for a given proof, blocks a `bundle-cover-seed-bitflip` tamper row from ever being landable as written, and wastes 16 bytes per leaf-level cover node — and leaf-level nodes appear in most partial reveals. Decide between (A) accept + document in registry §5, (B) require a fixed canonical tail, (C) encode a `level == d` cover payload as **16 bytes** and keep 32 for `level < d`. Full analysis, including why the verifier cannot check the tail against the truth: `docs/decisions/D83-leaf-cover-seed-tail-malleability.md` (recommendation: C, fallback A).
+- Accept:
+  - D83 resolved and recorded; `docs/format/registry-v1.md` §5 states the leaf-level cover payload's length and its significant bytes explicitly
+  - G20's `significant()` projection and the `d83_…` regression case updated to state whichever rule was chosen (they are the executable statement of it)
+  - If B or C: a G19/R7 tamper row for the previously-inert bytes, with its own distinct error code
+- Notes: **Format event either way** — must be settled before Q14, and cannot be a drive-by. No constant, code path, or length rule has been minted; only the test and the decision record exist.
 
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).

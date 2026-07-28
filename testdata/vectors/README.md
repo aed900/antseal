@@ -101,6 +101,7 @@ kind with no further wiring.
 | `manifest-aead` | M0 (C16) | `w` (as above) | `k_m` (hex) plus `vectors`: `name`, `manifest_bytes` (hex), `aad` (must be `""`), `nonce` (hex), `blob` (hex) | `MANIFEST_AAD` asserted empty and every entry's `aad` required empty (the frozen empty-AAD rule), `k_m` re-derived at the sentinel id, blob length checked, and the blob decrypted back to `manifest_bytes` through both entry points |
 | `signatures` | M0 (C16) | `w` (as above), `body` (hex), `context` (hex; must equal the frozen `SIG_CONTEXT`) | `ed25519` (`seed`, `public_key`, `signing_message`, `signature`), `mldsa65` (`seed`, `public_key`, `signature`), `hybrid` (`policy_ids`, `policy_label`) | frozen context checked; per algorithm the seed, public key and signature bytes re-derived and byte-compared, then verified; the hybrid leg rebuilds keys and signatures through C14's policy path, requires the identical bytes, and runs `verify_body` under the policy |
 | `sig-reject` | M0 (C15) | `w`, `alg` (`ed25519`\|`ml-dsa-65`), `ctx` (must equal the frozen signature context), `body` (hex) | `base` (honest `public_key`/`signature` hex) + `cases`: per case an `id`, a `class`, a `why`, a **source** recipe for the key and the signature bytes, and the `expect`ed outcome (`accept` or a stable `crypto-…` code) | `base` re-derived and byte-compared; per-algorithm class coverage; expected codes checked against the real `CryptoError` code set; every case's bytes rebuilt from its recipe and run through C14's full verification path (`sig_policy::verify_body`). Format doc: `v1/sig-reject/README.md` |
+| `fine-tree` | M0 (G15) | `w`, `s_root_label` (the documented synthetic-seed label) + `cases`: per case a `name`, the file `content` (hex; its length **is** `n`) and the `openings` to prove (`name`, `start`, `length`) | `s_root` (hex) + per case `n`, `depth`, `slot_count`, `ggm_nodes` (every used grid node's seed), `salts` (every `salt_i`), `merkle_nodes` (every RFC 6962 content-tree node with its canonical slot and hash), `fine_root`, and per opening the full range proof — `cover` (leaf-exact, with seeds), `boundary` (with hashes), `revealed_bytes`, `releases_s_root` | the **whole** `expect` object is recomputed from `inputs` through the public API and compared as one value, so a missing/extra/reordered entry fails like a wrong byte; then the assertions a value comparison cannot state: each leaf is *also* derived LSB-first and must differ (the MSB-first pin), every wholly-unused grid slot must be refused by `SaltTree::seed_at`, every opening is run back through `verify_range`, and `n = 0` must be declined by all four entry points. Format doc: `v1/fine-tree/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a
@@ -121,8 +122,6 @@ changes):
 - `anchor` (A, M2): recorded `.ots`/TSA-token fixtures with expected
   per-anchor verdict states — slots in as a kind with no envelope change
   (an explicit Q4 accept: M2 anchor vectors need no redesign).
-- `fine-tree` (G15): range-proof openings incl. the unbalanced n=6
-  MSB-first vector.
 
 ## Adding a vector (no harness change)
 
@@ -293,8 +292,8 @@ typo is never silently ignored):
 
 **Kinds freeze at Q14** — the kind *name* and its `inputs`/`expect` payload
 shape, not the shared envelope (which carries its own `schema_version`).
-Six kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
-`manifest-aead`, `signatures`, `sig-reject`.
+Seven kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
+`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`.
 
 ### Retention: per version, indefinite
 
