@@ -247,8 +247,14 @@ mod tests {
     use crate::crypto::hkdf::{FileId, derive_fine_seed};
     use crate::crypto::material::MasterSecretRef;
     use crate::test_util::TEST_MASTER_SECRET_W;
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use crate::test_util::strategies::proptest_config;
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-util")]
     use proptest::test_runner::TestCaseError;
 
     /// A split witness. The witness carries no size or content — it only
@@ -546,6 +552,7 @@ mod tests {
     /// The output contract: sorted, non-overlapping, exactly tiling
     /// `[0, len)`, never empty, and (for non-empty input) with no empty unit
     /// and every interior boundary one byte past an LF.
+    #[cfg(feature = "test-util")]
     fn check_contract(ranges: &[ByteRange], len: u64) -> Result<(), TestCaseError> {
         prop_assert!(!ranges.is_empty(), "a file always has at least one unit");
         prop_assert_eq!(ranges[0].start(), 0, "tiling starts at 0");
@@ -565,6 +572,7 @@ mod tests {
     /// Text that exercises the rule: LF-heavy, with both halves of the blank
     /// alphabet, the near-miss whitespace scalars D22 excludes, CR (which
     /// canonicalization removes), and ordinary content.
+    #[cfg(feature = "test-util")]
     fn splitty_text() -> impl Strategy<Value = String> {
         proptest::collection::vec(
             prop_oneof![
@@ -584,6 +592,7 @@ mod tests {
         .prop_map(|chars| chars.into_iter().collect())
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(proptest_config(0x0064_0006))]
 

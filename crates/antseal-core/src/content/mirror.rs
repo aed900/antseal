@@ -219,7 +219,12 @@ mod tests {
         ByteRange, FileLengths, SplitEligibleText, assign_unit_ids, is_fine_tree_covered,
         requires_unit_commit,
     };
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use crate::test_util::strategies::proptest_config;
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
 
     /// Canonicalize with G2 — every fixture below derives its canonical bytes
@@ -533,6 +538,7 @@ mod tests {
 
     /// Bytes that canonicalization often changes: CR, BOM, combining marks,
     /// plus ordinary content.
+    #[cfg(feature = "test-util")]
     fn mirror_prone_text() -> impl Strategy<Value = String> {
         proptest::collection::vec(
             prop_oneof![
@@ -549,6 +555,7 @@ mod tests {
         .prop_map(|chars| chars.into_iter().collect())
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(proptest_config(0x0064_0007))]
 
