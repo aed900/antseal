@@ -242,6 +242,11 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
    a PR event — confirm the mount lanes and cross-OS lanes report there
    too.
 5. **Branch protection — only now.** Required contexts = the lane names.
+   **[wave-7 note] THIS STEP IS BLOCKED BY GITHUB PLAN — see the dated
+   section at the end of this file. It is not pending; it is unavailable
+   on a private repository on GitHub Free (403, verified on both the
+   classic API and rulesets). The payload below is also stale at 13
+   contexts; the current set is 19.**
    **[wave-2 note]** The payload below predates Q2's `secret-guard` lane —
    use the updated 14-context payload in the wave-2 section at the end of
    this file; everything else about this step (ordering, verification,
@@ -1157,3 +1162,89 @@ Execution on the runner image, `actions/cache` round trips,
 `actions/upload-artifact`, the `schedule:` trigger, and the matrix expansion
 on the macOS and Windows runners. Those remain first-run-on-the-remote
 risks — which is precisely why the shell inside them no longer is.
+
+---
+
+## Branch protection is BLOCKED BY PLAN — verified 2026-07-28 (wave 7)
+
+**Runbook step 5 has never been executable, and the runbook did not say so.**
+It has sat in the maintainer-actions list across several waves as though it
+were merely pending. It is not pending; it is unavailable on this repository
+as currently hosted. Verified directly, both mechanisms:
+
+```
+$ gh api repos/aed900/antseal/branches/main/protection
+{"message":"Upgrade to GitHub Pro or make this repository public to enable
+ this feature.", "status":"403"}
+
+$ gh api repos/aed900/antseal/rulesets
+  … same 403.
+```
+
+`aed900/antseal` is a **private repository on GitHub Free**, and GitHub gates
+both classic protected branches and the newer rulesets behind a paid plan for
+private repositories. Three options, and the second has a consequence far
+larger than the CI question that raises it:
+
+1. **GitHub Pro** (~$4/month) — unlocks both. Smallest change.
+2. **Make the repository public** — free, and it publishes the entire history
+   in one step. **This triggers Q65** (publish-scope decision + pre-public
+   scrub), which must be executed *before* the visibility change, never after.
+   Do not take this option for a CI reason without taking Q65 first.
+3. **Do without**, which is the current state and costs less than it sounds —
+   see below.
+
+### Why option 3 is defensible here
+
+Branch protection buys *"a red lane blocks the merge"*. Nearly every guard
+this project relies on is **in-repo** rather than in GitHub, and fires with no
+network and no platform feature:
+
+- `testdata/vectors/v1/FROZEN.sha256` and `docs/format/FROZEN.sha256` refuse a
+  changed digest — that is what makes the format freeze real
+- `testdata/error-codes/v1/CODES.txt` (Q52) catches a renamed error code
+- `scripts/ci-lanes.sh` + `scripts/check-ci-shell.py` (Q43) run the CI shell
+  **locally, before a push** — which is how the malformed `tamper-matrix`
+  counter was caught
+- `scripts/local-gate.sh` gates fmt/clippy/tests/wasm32/cross-check/
+  format-freeze before anything leaves the machine
+
+With a single maintainer pushing directly, protection would add little: it
+cannot block a push it never sees, and the payload's own
+`"enforce_admins": false` leaves the admin a bypass regardless. What it *would*
+genuinely add — and what is currently unprotected — is **force-push and branch
+deletion protection**, which matters more now that a published freeze tag
+exists.
+
+### The payload, generated rather than hand-maintained
+
+**19 contexts from 17 jobs** at this commit (`cross-os` is a three-way
+matrix). The payload in runbook step 5 lists **13** and the wave-2 note
+promises 14; both are stale. Regenerate rather than copy — that is Q56:
+
+```sh
+awk '/^jobs:/{j=1;next} j && /^  [a-z0-9-]+:$/{gsub(/[ :]/,"");print}' \
+  .github/workflows/ci.yml     # 17 job ids; expand any matrix job's labels
+```
+
+```bash
+gh api -X PUT repos/aed900/antseal/branches/main/protection --input - <<'EOF'
+{ "required_status_checks": { "strict": true, "checks": [
+    {"context":"fmt"},{"context":"clippy"},{"context":"test"},
+    {"context":"wasm32-core"},{"context":"wasm32-core-tests"},
+    {"context":"core-dep-graph"},
+    {"context":"cross-os-linux"},{"context":"cross-os-macos"},
+    {"context":"cross-os-windows"},
+    {"context":"golden-vectors"},{"context":"cross-check"},
+    {"context":"vector-freeze"},{"context":"format-freeze"},
+    {"context":"wasm-bitmatch"},{"context":"tamper-matrix"},
+    {"context":"fuzz-smoke"},{"context":"audit-deny"},
+    {"context":"secret-guard"},{"context":"traceability"} ] },
+  "enforce_admins": false, "required_pull_request_reviews": null,
+  "restrictions": null }
+EOF
+```
+
+Precondition unchanged from step 5: every listed context must have passed on
+`main` at least once first. A required context that has never run blocks the
+next push, including the maintainer's own.
