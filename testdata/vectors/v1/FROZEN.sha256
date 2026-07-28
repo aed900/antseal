@@ -45,7 +45,7 @@
 #
 #! manifest-version 1
 #! format-version v1
-#! status pre-freeze
+#! status frozen
 #! freeze-gate Q14
 #
 # Frozen vector kinds (kind name + payload shape freeze at Q14; the Q4

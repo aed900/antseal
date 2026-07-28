@@ -29,6 +29,14 @@ wallets/
 *wallet*.json
 .secrets/
 
+# Python bytecode. The repo carries dev tooling in scripts/ and
+# testdata/vectors/v1/ (the cross-check checkers, the generators), and a
+# `python3 scripts/…` run or an importlib load drops __pycache__ beside it.
+# One such file reached a commit during the wave-7 freeze before this rule
+# existed.
+__pycache__/
+*.py[cod]
+
 # Editor droppings
 .idea/
 .vscode/

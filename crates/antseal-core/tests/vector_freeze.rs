@@ -412,11 +412,30 @@ fn vector_freeze_pending_must_exist_list_is_complete() {
     // Q14's gate condition, stated where it is checked rather than only in
     // prose: the freeze may not be executed while obligations remain, and
     // `parse_manifest` refuses `status frozen` with a non-empty pending set.
+    //
+    // **Flipped at Q14, 2026-07-28.** This asserted `PreFreeze`
+    // *unconditionally*, which was a snapshot of the then-current state rather
+    // than the rule its own comment describes — so it fired on the freeze
+    // itself, with the self-contradicting message "still owes 0 must-exist
+    // vector(s); it cannot be `frozen`". Owing zero is precisely the condition
+    // that permits freezing. Both directions are now asserted separately:
+    if !v1.pending.is_empty() {
+        assert_eq!(
+            v1.status,
+            Status::PreFreeze,
+            "v1 still owes {} must-exist vector(s); it cannot be `frozen`",
+            v1.pending.len()
+        );
+    }
+    // …and the post-freeze state is pinned, so a silent un-freeze is a failure
+    // rather than a return to a permissive mode. Editing this line is how a
+    // v2-style re-open would have to announce itself.
     assert_eq!(
         v1.status,
-        Status::PreFreeze,
-        "v1 still owes {} must-exist vector(s); it cannot be `frozen`",
-        v1.pending.len()
+        Status::Frozen,
+        "v1 is `{:?}`; the format-v1 freeze (Q14) set it to `frozen` on 2026-07-28 \
+         and nothing since may relax it — line 123 makes v1 verifiable forever",
+        v1.status
     );
 }
 

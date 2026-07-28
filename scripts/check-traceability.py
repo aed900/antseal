@@ -180,10 +180,11 @@ def check_freeze_boundary(failures: Failures) -> None:
             "vacuous below two copies",
         )
 
-    if seen and all(block == source for block in seen.values()):
+    if seen and all(blank_gate_state(b) == source_text for b in seen.values()):
         print(
-            f"[{check}] ok — {len(seen)} copies byte-identical to "
-            f"{BOUNDARY_SOURCE} §7 ({len(source)} bytes)"
+            f"[{check}] ok — {len(seen)} copies identical to "
+            f"{BOUNDARY_SOURCE} §7 ({len(source_text)} bytes of rule text; "
+            f"checkbox state excluded, Q49)"
         )
 
 

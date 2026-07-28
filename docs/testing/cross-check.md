@@ -364,7 +364,7 @@ byte-identical across them.
 | 3 | HKDF-SHA256 + the 8-label registry | `hkdf/gen_vectors.py` | stdlib | all committed cases | T1 on a **T0** anchor (RFC 5869 App. A) |
 | 4 | Salted commitments, unit padding | `crypto/gen_vectors.py` | stdlib | all committed cases | **T1 with no T0 anchor and none possible** — the construction is ours |
 | 5 | XChaCha20-Poly1305 | from-scratch Python cipher | stdlib | 12 ciphertexts | T1, corroborated against libsodium |
-| 6 | Ed25519 | RFC 8032 §6 reference formulation | stdlib | 21 reject cases + keygen | T1 on a **T0** anchor (RFC 8032 §7.1) |
+| 6 | Ed25519 | RFC 8032 §6 reference formulation | stdlib | keygen + signing over the committed `signatures.json` cases | T1 on a **T0** anchor (RFC 8032 §7.1) |
 | 7 | ML-DSA-65 | **NIST ACVP**, replayed by `tests/acvp_ml_dsa.rs` | ACVP-Server `2972def` | 115 cases | **T0** |
 | 8 | ML-DSA-65 vector file completeness | `gen_vectors.py::check_mldsa_half` (**C27**) | stdlib | ρ per FIPS 204 Alg 6, HintBitUnpack per Alg 21, lengths, residue | T1 — completeness, not soundness; row 7 is the soundness evidence |
 | 9 | GGM fine tree | `fine-tree/gen_vectors.py` | stdlib | all committed cases | **T1 with no T0 anchor and none possible** |
@@ -372,6 +372,24 @@ byte-identical across them.
 | 11 | Verification-report byte format (**Q38**) | `scripts/crosscheck-report.py` | stdlib `json` only | 21 pinned strings, 69 enum values, 9 properties + 3 envelope checks each | **T1 with no T0 anchor** — the contract is ours |
 | 12 | External-fixture provenance (**Q41**) | `scripts/crosscheck-provenance.py` | stdlib | digests parsed from each `PROVENANCE.md`, offline | T1 |
 | 13 | `ml-dsa` ↔ `fips204` | `tests/mldsa_fallback_equivalence.rs` | `fips204 =0.4.6` | keygen + deterministic sign | **T2 — does NOT count toward this row** (D14 fallback evidence, per D31 §10) |
+
+| 14 | `sig-reject` vectors (21 Ed25519 + 15 ML-DSA-65 reject cases) | **none** | — | not read by any cross-check vehicle | **NO VEHICLE — recorded, not claimed** |
+| 15 | `content-model` vectors | **none** | — | not read by any cross-check vehicle | **NO VEHICLE — recorded, not claimed** |
+
+**Rows 14 and 15 are the honest entry this report would otherwise omit.** Two
+of the eleven registered vector kinds have no independent vehicle at all.
+Neither is unchecked — `sig-reject` is executed by
+`crates/antseal-core/tests/sig_reject_suite.rs` and both are byte-pinned by
+`FROZEN.sha256` and re-executed identically on wasm32 — but *this* document's
+subject is independent agreement, and for these two there is none. Stating
+them as rows rather than leaving them out is the difference between a report
+that is complete and one that merely looks it. **Q54** owns making "every kind
+has a named vehicle or a recorded reason" a checked property rather than a
+thing a reader must notice.
+
+A correction to row 6 while writing this: it first read *"21 reject cases +
+keygen"*. `crypto/reference.py` never opens `sig-reject/*.json` — the reject
+suites are Rust-side. The row now says what the vehicle actually reads.
 
 ### Environment, because two counts depend on it
 
