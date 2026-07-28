@@ -15,10 +15,17 @@
 //!   manifest order (MVP-SPEC.md line 76), the file-table `size` semantics
 //!   (line 98), and the `is_fine_tree_covered` predicate that decides whether a
 //!   unit carries its own `unit_commit` (line 94).
+//! - [`split`] (G6, decision D22) — `--split blank-lines`: the frozen
+//!   blank-line paragraph-boundary semantics, over canonical bytes so the
+//!   result is platform-stable (MVP-SPEC.md line 84).
+//! - [`mirror`] (G7, decision D23) — the raw mirror: when a text file needs
+//!   one, how its entry is built, the `kind`-based tiling/concatenation
+//!   exemptions, and the rule that a mirror is never selectable by a bare
+//!   `--units` id (MVP-SPEC.md line 92).
 //! - [`ggm`] (G8) — the GGM salt tree: `s_root` → per-leaf 16-byte salts over a
 //!   complete depth-`d` dyadic grid, with the canonical node-address type
 //!   shared by covers and boundary paths (MVP-SPEC.md line 96).
-//! - [`error`] — the `content-`-coded error taxonomy these three share.
+//! - [`error`] — the `content-`-coded error taxonomy these share.
 //!
 //! # Where the boundaries are
 //!
@@ -34,11 +41,18 @@
 pub mod descriptor;
 pub mod error;
 pub mod ggm;
+pub mod mirror;
+pub mod split;
 pub mod unit;
 
 pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, FineTreeOptOut};
 pub use error::ContentError;
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
+pub use mirror::{
+    RevealSelection, full_reveal_concat_exempt, mirror_selectable, needs_mirror, tiling_exempt,
+    unit_selectable, with_raw_mirror_if_needed,
+};
+pub use split::{is_blank_line, plan_blank_line_split, split_blank_lines};
 pub use unit::{
     ByteRange, FileLengths, FileUnitPlan, SplitEligibleText, Unit, UnitKind, assign_unit_ids,
     is_fine_tree_covered, requires_unit_commit,
@@ -184,5 +198,92 @@ mod tests {
         // No fine tree ⇒ nothing derives a salt for it; the file's `s_root`
         // is simply never used.
         assert_eq!(depth_for_leaf_count(0), None);
+    }
+
+    /// Worked example for the `--split blank-lines` shape: G2 → G6 → G7 → G5,
+    /// the second sequence G14's assembly performs. A CRLF file with two
+    /// paragraphs becomes two canonical-domain units plus a raw-mirror unit,
+    /// and every cross-layer rule lands at once — split ranges tile the
+    /// canonical bytes, the mirror is last and exempt, ids are work-global.
+    #[test]
+    fn worked_example_split_text_with_mirror() {
+        // ── G2 ──────────────────────────────────────────────────────────
+        let raw = b"alpha\r\n\r\nbeta\r\n";
+        let canonical =
+            canonicalize(UnicodeVersion::CURRENT, TextMode::Detected, raw).expect("valid UTF-8");
+        assert_eq!(canonical.as_str(), "alpha\n\nbeta\n");
+
+        let lengths = FileLengths::Text {
+            canonical: canonical.len() as u64,
+            raw: raw.len() as u64,
+        };
+        let descriptor = CanonDescriptor::describe_file(
+            ContentKind::Text(UnicodeVersion::CURRENT),
+            lengths.size_field(),
+            FineTreeOptOut::NotRequested,
+        );
+        assert_eq!(descriptor.validate_with_size(lengths.size_field()), Ok(()));
+
+        // ── G6 → G5: split, then G7: mirror, appended last (D23) ────────
+        let eligible = SplitEligibleText::of(&descriptor).expect("covered text file");
+        let plan =
+            with_raw_mirror_if_needed(plan_blank_line_split(eligible, &canonical), raw, &canonical);
+        let units = assign_unit_ids(&[plan]);
+        assert_eq!(units.len(), 3);
+
+        // The two paragraph units: the blank separator rides with the first.
+        assert_eq!(units[0].byte_range(), ByteRange::new(0, 7));
+        assert_eq!(units[1].byte_range(), ByteRange::new(7, 5));
+        for unit in &units[..2] {
+            assert_eq!(unit.kind(), UnitKind::Normal);
+            assert!(is_fine_tree_covered(unit, &descriptor));
+            assert!(
+                !requires_unit_commit(unit, &descriptor),
+                "fine_root is the sole content commitment (spec line 94)"
+            );
+            assert!(!tiling_exempt(unit.kind()));
+            assert!(!full_reveal_concat_exempt(unit.kind()));
+        }
+
+        // The mirror: last, raw domain, own id, exempt, commit-carrying.
+        let mirror = units[2];
+        assert_eq!(mirror.unit_id(), 2);
+        assert_eq!(mirror.kind(), UnitKind::RawMirror);
+        assert_eq!(mirror.byte_range(), ByteRange::new(0, lengths.raw()));
+        assert_eq!(mirror.true_length(), 15);
+        assert!(!is_fine_tree_covered(&mirror, &descriptor));
+        assert!(requires_unit_commit(&mirror, &descriptor));
+        assert!(tiling_exempt(mirror.kind()));
+        assert!(full_reveal_concat_exempt(mirror.kind()));
+
+        // The invariants R re-checks (spec line 121), stated over this work:
+        // the NON-mirror units tile [0, size) exactly, and their concatenation
+        // is the canonical rendition. The mirror joins neither, by kind.
+        let tiling: Vec<&Unit> = units.iter().filter(|u| !tiling_exempt(u.kind())).collect();
+        let mut next = 0u64;
+        let mut concatenated: Vec<u8> = Vec::new();
+        for unit in &tiling {
+            assert_eq!(unit.byte_range().start(), next, "sorted, no gap/overlap");
+            next = unit.byte_range().end().expect("no overflow");
+            let range = unit.byte_range();
+            concatenated
+                .extend_from_slice(&canonical.as_bytes()[range.start() as usize..next as usize]);
+        }
+        assert_eq!(next, lengths.size_field(), "exact tiling of [0, size)");
+        assert_eq!(
+            concatenated.as_slice(),
+            canonical.as_bytes(),
+            "full-reveal concatenation reproduces the canonical bytes"
+        );
+
+        // Selection: the paragraphs are reachable by id, the mirror is not.
+        assert_eq!(unit_selectable(&units[0], RevealSelection::UnitIds), Ok(()));
+        assert_eq!(
+            unit_selectable(&mirror, RevealSelection::UnitIds),
+            Err(ContentError::RawMirrorNotUnitSelectable)
+        );
+        assert_eq!(unit_selectable(&mirror, RevealSelection::WholeFile), Ok(()));
+        assert_eq!(mirror_selectable(RevealSelection::All), Ok(()));
+        assert!(needs_mirror(raw, &canonical));
     }
 }

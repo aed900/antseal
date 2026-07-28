@@ -1,4 +1,4 @@
-//! Content-model error taxonomy (tasks/G.md G4/G5/G8) — one distinct variant,
+//! Content-model error taxonomy (tasks/G.md G4/G5/G7/G8) — one distinct variant,
 //! and one distinct stable `content-`-prefixed code, per illegal state the
 //! content model can be asked to hold.
 //!
@@ -108,6 +108,24 @@ pub enum ContentError {
     )]
     FineTreePresentOnEmptyFile,
 
+    // ── Raw mirror (G7; MVP-SPEC.md line 92) ────────────────────────────
+    /// A reveal selection named a **raw-mirror** unit by its `unit_id`. A
+    /// mirror holds a file's exact original bytes, so the spec makes it
+    /// includable only through a whole-file reveal or `--all` (MVP-SPEC.md
+    /// line 92) — never by a bare `--units <mirror-id>`, so a mistyped id can
+    /// never disclose a raw file.
+    ///
+    /// Unlike its neighbours this one is not only a decode-side error: it is
+    /// the seal/reveal-side selection rule
+    /// ([`mirror_selectable`](super::mirror::mirror_selectable)) that U's
+    /// `reveal` surfaces and R re-checks on the bundle it receives.
+    #[error(
+        "unit selection: a raw-mirror unit is not selectable by unit id \
+         (a raw mirror is includable only via a whole-file reveal or --all, \
+         so a mistyped id cannot disclose the original file)"
+    )]
+    RawMirrorNotUnitSelectable,
+
     // ── GGM salt tree (G8; MVP-SPEC.md line 96) ─────────────────────────
     /// A node address names a level deeper than any representable tree.
     /// `n <= u64::MAX` bounds `d = ceil(log2 n)` at
@@ -184,6 +202,7 @@ impl ContentError {
             Self::FineTreePresentWithoutDomain => "content-fine-tree-present-without-domain",
             Self::FineTreeAbsentWithDomain => "content-fine-tree-absent-with-domain",
             Self::FineTreePresentOnEmptyFile => "content-fine-tree-present-on-empty-file",
+            Self::RawMirrorNotUnitSelectable => "content-raw-mirror-not-unit-selectable",
             Self::NodeAddressLevelTooDeep { .. } => "content-node-address-level-too-deep",
             Self::NodeAddressIndexOutOfRange { .. } => "content-node-address-index-out-of-range",
             Self::NodeAddressLevelExceedsDepth { .. } => "content-node-address-level-exceeds-depth",
@@ -208,6 +227,7 @@ pub(crate) fn all_code_exemplars() -> Vec<ContentError> {
         E::FineTreePresentWithoutDomain,
         E::FineTreeAbsentWithDomain,
         E::FineTreePresentOnEmptyFile,
+        E::RawMirrorNotUnitSelectable,
         E::NodeAddressLevelTooDeep { level: 65, max: 64 },
         E::NodeAddressIndexOutOfRange { level: 3, index: 8 },
         E::NodeAddressLevelExceedsDepth { level: 4, depth: 3 },
@@ -235,7 +255,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            11,
+            12,
             "one exemplar per variant — keep exhaustive when adding variants"
         );
 
