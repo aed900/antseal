@@ -67,6 +67,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     super::vectors_sig_reject::KIND,
     super::vectors_fine_tree::KIND,
     super::vectors_manifest::KIND,
+    super::vectors_bundle::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -238,6 +239,11 @@ pub fn execute_vector_bytes(
         // F12's manifest bytes + diagnostic sidecars + work_id/anchor_digest.
         super::vectors_manifest::KIND => {
             super::vectors_manifest::execute(envelope.inputs, envelope.expect, envelope.description)
+        }
+        // F13's `.sealproof` bytes, three-layer sidecars and reveal
+        // structure — including the empty-anchor (UNANCHORED) bundle.
+        super::vectors_bundle::KIND => {
+            super::vectors_bundle::execute(envelope.inputs, envelope.expect, envelope.description)
         }
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }

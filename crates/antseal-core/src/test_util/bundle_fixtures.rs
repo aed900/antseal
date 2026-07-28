@@ -22,6 +22,7 @@
 //! | unbalanced `n = 6` | a 6-byte fine-tree file — the *leaf* count is what is unbalanced, not the unit count |
 //! | full / partial / `--all` selections | [`FileSelection`] and [`Selection::all`] |
 //! | empty anchors | [`AnchorSet::Empty`] — the UNANCHORED bundle |
+//! | every anchor kind + optional slot | [`AnchorSet::EveryKind`], receipt in or out (F13) |
 //!
 //! [`shapes`] holds one named constructor per row, so R7/R9/R10 name a shape
 //! rather than re-deriving one, and a shape's bytes can only change in one
@@ -118,7 +119,7 @@
 
 use crate::bundle::{
     AnchorStatus, BundleParts, BundleV1, CoverEntry as BundleCoverEntry, CoveredReveal, FullReveal,
-    NonCoveredReveal, OpaqueBytes, OtsAnchor, PathNode, StorageRecord,
+    NonCoveredReveal, OpaqueBytes, OtsAnchor, OtsUpgrade, PathNode, ReceiptRecord, StorageRecord,
     TouchedFile as BundleTouchedFile, TsaAnchor, encode_bundle,
 };
 use crate::canon::{TextMode, UNICODE_17_0_0, canonicalize_v};
@@ -166,6 +167,12 @@ pub const FIXTURE_SEAL_ID: [u8; 16] = [
 /// The default [`WorkSpec::seed`]. Any `u64` works; this is the value the
 /// [`shapes`] constructors are reproducible under.
 pub const DEFAULT_SEED: u64 = 0x5EED_0006;
+
+/// The placeholder Arbitrum One block number a fixture receipt records.
+///
+/// A receipt is *supporting evidence only* at M0 — no on-chain datum contains
+/// `anchor_digest`, so nothing here can carry a proven time (registry §7.10).
+pub const FIXTURE_BLOCK_NUMBER: u64 = 300_000_000;
 
 // ---------------------------------------------------------------------------
 // the work specification
@@ -269,12 +276,38 @@ impl FileSpec {
 /// the empty-versus-populated section, which is the M0 requirement
 /// (line 153's empty-anchor vector).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum AnchorSet {
     /// Both anchor sections empty — the **UNANCHORED** bundle.
     #[default]
     Empty,
-    /// One OTS artifact and two TSA artifacts (the spec's ≥2-TSA shape).
+    /// One OTS artifact and two TSA artifacts (the spec's ≥2-TSA shape),
+    /// each with its optional sub-structure **absent**: no OTS upgrade
+    /// group, no TSA intermediates, no `source`, no receipt.
     OneOtsTwoTsa,
+    /// **Every anchor kind and every optional slot the F8 schema defines**,
+    /// populated with opaque placeholder bytes (F13):
+    ///
+    /// - two OTS artifacts — one carrying the D79 upgrade group (block
+    ///   height, the 80-byte header, fetch date), one without it;
+    /// - two TSA artifacts — one with intermediates and a recorded `source`,
+    ///   one with neither;
+    /// - the Arbitrum receipt record when `receipt`.
+    ///
+    /// `receipt: false` is the receipt-**excluded** twin of the same shape,
+    /// so the pair is a one-section diff. Presence *is* the sealer's
+    /// `--include-receipt` choice (registry §7.10) and carries no verdict,
+    /// which is exactly why both need a committed vector.
+    ///
+    /// Added by F13: `OneOtsTwoTsa` leaves the upgrade group, the
+    /// intermediate list, `source` and the whole receipt section unexercised
+    /// by any committed artifact, and *"a bundle with every anchor kind
+    /// populated"* plus *"receipt-included and receipt-excluded variants"*
+    /// are named F13 vectors.
+    EveryKind {
+        /// Whether the receipt section is present.
+        receipt: bool,
+    },
 }
 
 /// A whole synthetic work.
@@ -1174,8 +1207,71 @@ fn assemble(
     }
     full_reveals.sort_by_key(FullReveal::file_id);
 
-    let (ots_anchors, tsa_anchors) = match spec.anchors {
-        AnchorSet::Empty => (Vec::new(), Vec::new()),
+    let (ots_anchors, tsa_anchors, receipt) = anchors(spec.anchors);
+
+    let bundle = BundleV1::new(BundleParts {
+        manifest: manifest_bytes,
+        storage_record: StorageRecord::new(
+            ContentAddress::from_bytes([0x5E; 32]),
+            ManifestNonce::from_bytes([0x5A; 24]),
+            crate::crypto::material::Key32::from_bytes([0x5C; 32]),
+        ),
+        ots_anchors,
+        tsa_anchors,
+        receipt,
+        covered_reveals,
+        noncovered_reveals,
+        touched_files: touched,
+        full_reveals,
+    })
+    .expect("fixture bundle is well formed");
+
+    encode_bundle(&bundle).expect("fixture bundle encodes")
+}
+
+fn touches(units: &[PlannedUnit], unit_id: u64, file_id: u64) -> bool {
+    units
+        .iter()
+        .any(|unit| unit.unit_id == unit_id && unit.file_id == file_id)
+}
+
+// ---------------------------------------------------------------------------
+// anchor artifacts (opaque placeholders until A's M2 recorded fixtures)
+// ---------------------------------------------------------------------------
+
+/// The placeholder 80-byte "Bitcoin block header" the D79 upgrade group
+/// carries.
+///
+/// **Deliberately self-labelling ASCII**, zero-padded to the schema's exact
+/// 80 bytes: anyone who hexdumps a fixture bundle reads what it is instead of
+/// mistaking a synthetic ramp for a recorded header. The format layer
+/// enforces only the length (F8); the header's *meaning* is A's, and A swaps
+/// in recorded real bytes at M2 with **no schema change** (tasks/F.md F13
+/// notes).
+pub const FIXTURE_BLOCK_HEADER: [u8; 80] = {
+    let label = b"antseal M0 placeholder - NOT a real Bitcoin header";
+    let mut header = [0u8; 80];
+    let mut i = 0;
+    while i < label.len() {
+        header[i] = label[i];
+        i += 1;
+    }
+    header
+};
+
+/// The placeholder Bitcoin block height an upgraded OTS artifact records.
+pub const FIXTURE_BLOCK_HEIGHT: u64 = 900_000;
+
+/// Build the anchor sections for an [`AnchorSet`].
+///
+/// Every artifact byte string here is a **schema-opaque placeholder**: the M0
+/// format layer treats `.ots`, DER tokens, certificates and receipt payloads
+/// as opaque `bstr`s by design (F8), and A parses them at M2. What the shapes
+/// exercise is the *section structure* — empty versus populated, each
+/// optional slot present versus absent.
+fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRecord>) {
+    match set {
+        AnchorSet::Empty => (Vec::new(), Vec::new(), None),
         AnchorSet::OneOtsTwoTsa => (
             vec![OtsAnchor::new(
                 AnchorStatus::Pending,
@@ -1198,33 +1294,58 @@ fn assemble(
                     None,
                 ),
             ],
+            None,
         ),
-    };
-
-    let bundle = BundleV1::new(BundleParts {
-        manifest: manifest_bytes,
-        storage_record: StorageRecord::new(
-            ContentAddress::from_bytes([0x5E; 32]),
-            ManifestNonce::from_bytes([0x5A; 24]),
-            crate::crypto::material::Key32::from_bytes([0x5C; 32]),
+        AnchorSet::EveryKind { receipt } => (
+            vec![
+                // The D79 upgrade group present — all three fields or none.
+                OtsAnchor::new(
+                    AnchorStatus::Attested,
+                    OpaqueBytes::from_vec(b"fixture .ots artifact, upgraded".to_vec()),
+                    Some(OtsUpgrade::new(
+                        FIXTURE_BLOCK_HEIGHT,
+                        FIXTURE_BLOCK_HEADER,
+                        FIXTURE_CLAIMED_TIME,
+                    )),
+                ),
+                // …and absent, in the same bundle.
+                OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(b"fixture .ots artifact, pending".to_vec()),
+                    None,
+                ),
+            ],
+            vec![
+                // Intermediates and a recorded source…
+                TsaAnchor::new(
+                    AnchorStatus::Proven,
+                    OpaqueBytes::from_vec(b"fixture TSA token A".to_vec()),
+                    vec![
+                        OpaqueBytes::from_vec(b"fixture TSA intermediate A1".to_vec()),
+                        OpaqueBytes::from_vec(b"fixture TSA intermediate A2".to_vec()),
+                    ],
+                    FIXTURE_CLAIMED_TIME,
+                    Some("https://tsa.invalid/fixture".to_owned()),
+                ),
+                // …and neither, so both optional shapes are committed.
+                TsaAnchor::new(
+                    AnchorStatus::ValidAtStampingCertSinceExpired,
+                    OpaqueBytes::from_vec(b"fixture TSA token B".to_vec()),
+                    Vec::new(),
+                    FIXTURE_CLAIMED_TIME,
+                    None,
+                ),
+            ],
+            receipt.then(|| {
+                ReceiptRecord::new(
+                    vec![[0xE1; 32], [0xE2; 32]],
+                    FIXTURE_BLOCK_NUMBER,
+                    OpaqueBytes::from_vec(b"fixture Arbitrum receipt payload (opaque)".to_vec()),
+                )
+                .expect("fixture receipt has transaction hashes")
+            }),
         ),
-        ots_anchors,
-        tsa_anchors,
-        receipt: None,
-        covered_reveals,
-        noncovered_reveals,
-        touched_files: touched,
-        full_reveals,
-    })
-    .expect("fixture bundle is well formed");
-
-    encode_bundle(&bundle).expect("fixture bundle encodes")
-}
-
-fn touches(units: &[PlannedUnit], unit_id: u64, file_id: u64) -> bool {
-    units
-        .iter()
-        .any(|unit| unit.unit_id == unit_id && unit.file_id == file_id)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1348,6 +1469,21 @@ pub mod shapes {
     #[must_use]
     pub fn multi_file_anchored() -> WorkSpec {
         multi_file().with_anchors(AnchorSet::OneOtsTwoTsa)
+    }
+
+    /// [`multi_file`] with **every** anchor kind and optional slot populated,
+    /// receipt included (F13).
+    #[must_use]
+    pub fn multi_file_every_anchor_kind() -> WorkSpec {
+        multi_file().with_anchors(AnchorSet::EveryKind { receipt: true })
+    }
+
+    /// The receipt-**excluded** twin of [`multi_file_every_anchor_kind`] — a
+    /// one-section diff, since receipt presence *is* the sealer's opt-in and
+    /// carries no verdict (registry §7.10).
+    #[must_use]
+    pub fn multi_file_every_anchor_kind_no_receipt() -> WorkSpec {
+        multi_file().with_anchors(AnchorSet::EveryKind { receipt: false })
     }
 
     /// The selection [`multi_file`] is usually built with: file 0 fully

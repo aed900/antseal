@@ -125,6 +125,7 @@ kind with no further wiring.
 | `sig-reject` | M0 (C15) | `w`, `alg` (`ed25519`\|`ml-dsa-65`), `ctx` (must equal the frozen signature context), `body` (hex) | `base` (honest `public_key`/`signature` hex) + `cases`: per case an `id`, a `class`, a `why`, a **source** recipe for the key and the signature bytes, and the `expect`ed outcome (`accept` or a stable `crypto-…` code) | `base` re-derived and byte-compared; per-algorithm class coverage; expected codes checked against the real `CryptoError` code set; every case's bytes rebuilt from its recipe and run through C14's full verification path (`sig_policy::verify_body`). Format doc: `v1/sig-reject/README.md` |
 | `fine-tree` | M0 (G15) | `w`, `s_root_label` (the documented synthetic-seed label) + `cases`: per case a `name`, the file `content` (hex; its length **is** `n`) and the `openings` to prove (`name`, `start`, `length`) | `s_root` (hex) + per case `n`, `depth`, `slot_count`, `ggm_nodes` (every used grid node's seed), `salts` (every `salt_i`), `merkle_nodes` (every RFC 6962 content-tree node with its canonical slot and hash), `fine_root`, and per opening the full range proof — `cover` (leaf-exact, with seeds), `boundary` (with hashes), `revealed_bytes`, `releases_s_root` | the **whole** `expect` object is recomputed from `inputs` through the public API and compared as one value, so a missing/extra/reordered entry fails like a wrong byte; then the assertions a value comparison cannot state: each leaf is *also* derived LSB-first and must differ (the MSB-first pin), every wholly-unused grid slot must be refused by `SaltTree::seed_at`, every opening is run back through `verify_range`, and `n = 0` must be declined by all four entry points. Format doc: `v1/fine-tree/README.md` |
 | `manifest` | M0 (F12) | `w`, `seal_id`, `app_version`, `claimed_time` (each required to equal its published fixture constant) + `cases`: per case a `name`, `title`, `policy` (`hybrid`\|`ed25519-only`), `seed`, and `files` (`path`, `kind`, `raw` hex, `fine_tree`, `split` widths) — a declarative work driven through R6's fixture constructor | per case `manifest_bytes` (hex, the canonical envelope), `work_id`, `anchor_digest`, `diagnostic` (`envelope` + `body`, rendered by the [sidecar rules](#the-diagnostic-sidecar-manifest--bundle)) and `decoded` (the schema-layer reading, field by named field; large blobs as `{len, sha256}`) | the **whole** `expect` is recomputed from `inputs` and compared as one value; then, against the **committed** bytes: the F6 envelope round-trip, the F5/F2 body round-trip, both F7 digests, F7's separation property (a mutated signature container moves `anchor_digest` and leaves `work_id`), and the sidecar re-rendered from the committed bytes. Shape coverage is asserted structurally, not by case name. Format doc: `v1/manifest/README.md` |
+| `bundle` | M0 (F13) | the `manifest` inputs, plus per case an `anchors` set (`empty`\|`one-ots-two-tsa`\|`every-kind`\|`every-kind-no-receipt`), a `selection` (one of `"untouched"`\|`"full"`\|`"full-no-mirror"`\|`{"units":[…]}` per file) and the `work` | per case `bundle_bytes` (hex, the canonical `.sealproof`), `work_id`, `anchor_digest`, `diagnostic` (`bundle` + `manifest` + `body` — **all three** strict-decode layers) and `decoded` (storage record, anchors, receipt, covered/non-covered reveals with covers and boundary paths, touched files, full reveals) | the whole `expect` recomputed and compared; then, against the **committed** bytes: `SealProof::decode`'s three strict layers, `encode_bundle` round-trip byte-identity, the zero-copy `anchor_digest` pre-image seam, both manifest digests over the *embedded* bytes, the sidecar re-rendered per layer, and **`verify_bundle` accepts it** (F13's R handshake — report *bytes* are R9's kind). Coverage is structural and includes the **empty-anchor** requirement. Format doc: `v1/bundle/README.md` |
 
 ## The diagnostic sidecar (`manifest` + `bundle`)
 
@@ -165,9 +166,6 @@ change** — each kind defines its own `inputs`/`expect` objects; adding a
 kind = one new dispatch arm + executor in `test_util::vectors`, zero runner
 changes):
 
-- `bundle` (F13, M3): as `manifest` plus reveal selection; `expect` adds
-  bundle bytes and the redaction structure. Includes the **empty-anchor**
-  must-exist vector (MVP-SPEC.md line 153).
 - `report` (R/Q5): `inputs` = a bundle (hex or by reference to a sibling
   `bundle` vector id); `expect` = the canonical verification-report bytes
   (hex of the D29 compact-JSON encoding) — the native↔WASM bit-match
@@ -282,9 +280,10 @@ silently ignored.
 
 ### Registration contract for downstream vector tasks
 
-**F13** (`bundle`) and **R9** (`report`) each land a kind that is currently a
-`pending` entry; **G15** (`fine-tree`) and **F12** (`manifest`) have already
-made the move. It is one commit:
+**R9** (`report`) is the one kind still sitting as a `pending` entry;
+**G15** (`fine-tree`), **F12** (`manifest`) and **F13** (`bundle`) have each
+made the move already, and with F13 the v1 **must-exist set is empty** — the
+Q14 gate condition on `FROZEN.sha256`. It is one commit:
 
 1. Commit the vector file(s) under `v1/<component>/`.
 2. Add the kind's payload types + executor arm in
@@ -345,8 +344,9 @@ typo is never silently ignored):
 
 **Kinds freeze at Q14** — the kind *name* and its `inputs`/`expect` payload
 shape, not the shared envelope (which carries its own `schema_version`).
-Eight kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
-`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`, `manifest`.
+Nine kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
+`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`, `manifest`,
+`bundle`.
 
 ### Retention: per version, indefinite
 

@@ -54,6 +54,10 @@
 //!   manifest bytes, their two-layer diagnostic sidecars, and the
 //!   `work_id`/`anchor_digest` each hashes to — which is also where F7's
 //!   deferred committed-digest artifact lands.
+//! - [`vectors_bundle`] — the `bundle` vector kind (F13): the committed
+//!   `.sealproof` bytes, their **three**-layer diagnostic sidecars and the
+//!   reveal structure each discloses — including the empty-anchor
+//!   (UNANCHORED) bundle, a named M0 milestone artifact.
 //! - [`vectors_fine_tree`] — the `fine-tree` vector kind (G15): the
 //!   fine-tree/GGM golden vectors, whose reason for existing is to pin
 //!   **MSB-first** GGM leaf indexing at the unbalanced `n = 6` case
@@ -96,6 +100,7 @@ pub mod tamper_rows_fine_tree;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_structural;
 pub mod vectors;
+pub mod vectors_bundle;
 pub mod vectors_cbor_diag;
 pub mod vectors_fine_tree;
 pub mod vectors_manifest;

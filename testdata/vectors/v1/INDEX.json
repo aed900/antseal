@@ -6,6 +6,13 @@
   "note": "The per-version vector roster (F10). Machine-readable; consumed by crates/antseal-core/tests/vector_index.rs. Contract + registration procedure: ../README.md, section 'The per-version index'. This file is an AUXILIARY: it is not itself a golden vector and is not frozen by FROZEN.sha256 — it is the roster, FROZEN.sha256 is the freeze.",
   "vectors": [
     {
+      "slug": "bundle-empty-anchor",
+      "path": "bundle/bundle.json",
+      "kind": "bundle",
+      "task": "F13",
+      "pins": "bundle kind: canonical .sealproof bytes for eight reveal shapes with three-layer diagnostic sidecars — INCLUDING the empty-anchor (UNANCHORED) bundle, a .sealproof carrying no OTS artifact, no TSA artifact and no receipt, which is the named M0 milestone artifact this slug's must-exist obligation owed (MVP-SPEC.md lines 112-114, 153)"
+    },
+    {
       "slug": "crypto-commitments",
       "path": "crypto/commitments.json",
       "kind": "commitments",
@@ -70,13 +77,6 @@
     }
   ],
   "pending": [
-    {
-      "slug": "bundle-empty-anchor",
-      "kind": "bundle",
-      "task": "F13",
-      "must_exist_before_freeze": true,
-      "pins": "bundle kind incl. the empty-anchor (UNANCHORED) vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153)"
-    },
     {
       "slug": "verification-reports",
       "kind": "report",
