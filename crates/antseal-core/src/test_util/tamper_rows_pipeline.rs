@@ -32,7 +32,7 @@
 //! | wrong `path_salt`/path → `path_commit` mismatch | **R7/Q7's row** `verify-path-commit-mismatch` | already implemented; a second row would collide |
 //! | swapped unit | **non-row** `swapped-unit-ciphertext` | decision D81 |
 //! | wrong `k_u` | **non-row** `pipeline-level-wrong-unit-key` | decision D81 |
-//! | wrong `unit_salt` → `unit_commit` mismatch | **non-row** `pipeline-level-wrong-unit-salt` | found at R8; see below |
+//! | wrong `unit_salt` → `unit_commit` mismatch | **non-row** `pipeline-level-wrong-unit-salt` | found at R8; decision **D85** |
 //!
 //! ## The AEAD collapse (decision D81)
 //!
@@ -71,6 +71,17 @@
 //! row, because that is the mutation the spec case names; the salt
 //! substitution is a recorded non-row plus
 //! [`the_wrong_unit_salt_route_reaches_the_same_code`].
+//!
+//! Ratified as **decision D85**
+//! (`docs/decisions/D85-unit-commit-cause.md`), which also answers the
+//! objection this collapse invites and D81's did not: the manifest is
+//! signed, so a signature-first verifier *looks* able to attribute the
+//! fault to a side. It cannot — "signature valid" leaves two bundle-side
+//! candidates (the salt and the plaintext, since a bundle holder can
+//! re-encrypt under the supplied `k_u`), and "signature invalid" names no
+//! field. D85 extends the rule to `path_commit`, `canon_commit` and
+//! `raw_commit`; the named salt-route tests that would assert it at those
+//! three sites are task **R51**, not part of the ratification.
 //!
 //! # What the `unit_commit` row proves about the stage order
 //!
