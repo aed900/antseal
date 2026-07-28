@@ -110,8 +110,15 @@ the code set of frozen surfaces is permanent.
    expect the same outcome, across domains. This is where a genuine
    cross-domain collision surfaces, because rows from F, C, and R sit in one
    registry.
-3. **Q8 completeness** — the 1:1 check that every row in the spec's M0 list
-   exists in the registry (Q8's task, built on this harness).
+3. **Q8 completeness** — `testdata/tamper/MATRIX.json` maps the spec's
+   M0/M2 enumeration 1:1 onto implemented rows, and the check refuses a spec
+   case that has neither a row nor an owned `pending` marker. It also
+   applies the distinctness rule **ahead of implementation**: a pending
+   row whose expected code is already claimed — by an implemented row or by
+   another pending row — fails the registry unless the entry records the
+   collision explicitly. That surfaces "these two mutations are one
+   observable failure" while it is still cheap to fix, instead of at the
+   moment `check_registry` refuses the pair.
 
 A collision found at layer 2 is **not** fixed by editing the registry: it
 means two mutations are genuinely indistinguishable to a verifier, and the
@@ -161,5 +168,25 @@ kebab-case id, and never edit an existing row's expected code.
   — completing D28's five-arm violation table (R total 71 → 72).
   **D80** fixes a further rule whose code R4/R5 still owes:
   `revealed-unit-file-not-touched` (recommended spelling).
+- **2026-07-28** — Q8 landed the completeness registry
+  (`testdata/tamper/MATRIX.json`, checker
+  `crates/antseal-core/tests/tamper_completeness/mod.rs`, CI lane
+  `tamper-matrix`): **37 M0 spec cases across 17 families** — 24
+  implemented, **13 pending** with named owners (F15 ×2, G19 ×2, R7 ×6, R8
+  ×3) — plus 9 declared project-added rows, 2 recorded non-rows, and 7 M2
+  anchor cases pre-registered for Q18. Two collisions surfaced by the
+  ahead-of-implementation distinctness check and recorded rather than
+  resolved by Q8: (a) `flipped ciphertext byte` and `swapped unit` both
+  surface as `unit-decrypt-failed`, because `VerifyError::UnitDecryptFailed`
+  carries no cause discriminator — R8 must mint a discriminator or make one
+  of the two an R10 property; (b) a C-level GGM-covering-seed length row
+  would claim `crypto-seed-length`, already held by the `s_root` row,
+  because `CryptoError::SeedLength` has no kind discriminator — the R-level
+  code set *does* discriminate, so that sub-variant is owned by R7 and the
+  C-level row is a recorded non-row. Two further hazards are noted on
+  pending cases: a G19 row and an R8/R7 row would collide on
+  `fine-root-binding-failed` and on `fine-root-over-broad-cover`
+  respectively, because R's wrapper arms surface the inner code unchanged
+  (§2).
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

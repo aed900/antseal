@@ -21,9 +21,16 @@
 #   Q5:  wasm-bitmatch — LANDED: native<->WASM bit-match over every committed
 #        golden vector, built on P14's runner technique. Harness:
 #        crates/wasm-bitmatch (test-only). Doc: docs/wasm-toolchain.md
-#   Q6:  vector-freeze guard (append-only FROZEN.sha256 check) — new job,
-#        lands at Q6
-#   Q7:  tamper-matrix — distinct-error tamper harness (mount point below)
+#   Q6:  vector-freeze — LANDED as a NEW lane (a new required-status
+#        context, +1 on the branch-protection payload — see
+#        docs/ci-verification.md). Per-version FROZEN.sha256 freeze +
+#        must-exist guard over testdata/vectors/v<n>/; driver
+#        scripts/vector-freeze.sh, checker
+#        crates/antseal-core/tests/vector_freeze.rs
+#   Q7/Q8: tamper-matrix — LANDED (mount point claimed at Q8; job id and
+#        `name:` unchanged, so the required-status context is unaffected).
+#        Q7's distinct-error harness plus Q8's completeness registry
+#        (testdata/tamper/MATRIX.json) mapped 1:1 onto MVP-SPEC.md line 168
 #   Q9:  fuzz-smoke — per-PR cargo-fuzz smoke, fixed budget (mount point
 #        below); the nightly long run is a separate scheduled workflow, and
 #        cargo-fuzz needs its own nightly-toolchain pin, independent of
@@ -296,6 +303,37 @@ jobs:
             exit 1
           fi
 
+  # Q6 (live): the golden-vector FREEZE + must-exist guard. Each
+  # testdata/vectors/v<n>/FROZEN.sha256 pins the exact bytes of every
+  # committed vector of that format version AND is that version's must-exist
+  # list — the `golden-vectors` lane above can only fail on files it finds,
+  # so a DELETED vector is invisible to it and is caught here. Two
+  # independent layers run: coreutils `sha256sum -c` (shares no code with
+  # antseal) and the authoritative checker
+  # crates/antseal-core/tests/vector_freeze.rs (directive vocabulary,
+  # unfrozen/misfiled/stray classes, per-version retention, and the `#!
+  # pending` must-exist obligations whose emptiness is Q14's gate
+  # condition). New vectors need no lane change: discovery is a directory
+  # walk, and the manifest line is appended with `--update`.
+  #
+  # Like `secret-guard` and `wasm-bitmatch`, the lane SELF-TESTS FIRST: it
+  # mutates and deletes a vector in a scratch copy of the tree and requires
+  # the digest check to go red, so a green run is trustworthy.
+  vector-freeze:
+    name: vector-freeze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Self-test — a mutated/deleted frozen vector MUST turn the lane red
+        run: ./scripts/vector-freeze.sh --self-test
+      - name: Freeze + must-exist guard over every retained format version
+        run: ./scripts/vector-freeze.sh
+
   # Q5 (live): WASM/native bit-match. Every committed golden vector is
   # executed through antseal_core::test_util::vectors on BOTH targets and the
   # resulting transcripts — report bytes + the per-vector recomputed digests —
@@ -328,19 +366,43 @@ jobs:
       - name: Native <-> wasm32 bit-match over every committed golden vector
         run: ./scripts/wasm-bitmatch.sh
 
-  # Q7: tamper-matrix harness — every registered mutation row must produce
-  # exactly its expected stable error code / verdict state, expected outcomes
-  # are pairwise distinct, and no row may panic. Q8's completeness tracker
-  # (spec M0 row list) joins this lane.
+  # Q7 + Q8 (live): the tamper matrix, both halves.
+  #
+  # Q7 (harness): every registered mutation row produces exactly its expected
+  # stable error code / verdict state, expected outcomes are pairwise
+  # distinct across domains, and no row may panic.
+  #
+  # Q8 (completeness): testdata/tamper/MATRIX.json maps MVP-SPEC.md line
+  # 168's enumeration 1:1 onto implemented rows. Each family's `spec_quote`
+  # must be a literal substring of that line, so a family cannot be invented
+  # and a reworded spec turns this red rather than drifting. Every spec case
+  # is implemented or carries a `pending` marker naming the owning task
+  # (F15/G19/R7/R8); every implemented row is either mapped to a spec case
+  # or declared in `project_added` with a justification; and mutations that
+  # deliberately will NOT become rows are recorded with their reasons.
+  # **Zero pending is Q14's gate condition**, printed by this lane every run.
   tamper-matrix:
     name: tamper-matrix
     runs-on: ubuntu-latest
     steps:
-      - name: Mount point — content lands at Q7
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
-          echo "MOUNT POINT (Q1): required-status context 'tamper-matrix' is reserved."
-          echo "No tamper harness exists yet. Green here asserts NOTHING until Q7 lands it."
-          echo "Q7: replace this step's body; never rename the job (branch-protection context)."
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Tamper harness self-tests (colliding codes, panicking row)
+        run: cargo test -p antseal-core --locked --lib -- test_util::tamper
+      - name: Tamper registry + Q8 completeness (--nocapture prints the Q14 gate)
+        run: |
+          set -u
+          cargo test -p antseal-core --locked --test tamper_matrix --test tamper_crypto -- --nocapture
+          matched="$(cargo test -p antseal-core --locked --test tamper_matrix --list 2>/dev/null | grep -c ': test$' || true)"
+          echo "tamper-matrix suite: matched ${matched} test(s) in the registry target"
+          if [ "${matched}" -eq 0 ]; then
+            echo "::error::tamper-matrix registry target is EMPTY — the harness or the completeness check is broken"
+            exit 1
+          fi
 
   # Q9: per-PR cargo-fuzz smoke — fixed seconds per target (e.g. 90 s), F's
   # manifest/bundle CBOR targets first, A's DER/`.ots` targets at M2 (Q17).
