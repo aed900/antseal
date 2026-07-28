@@ -59,22 +59,47 @@ Two consequences run through everything below:
 | 12 | **ML-DSA-65 keyGen / sigGen / sigVer** | **NIST ACVP**, replayed against `ml-dsa` | ACVP `2972def`, `ml-dsa =0.1.1` | **T0** | *is* the oracle | `testdata/acvp/`, `crates/antseal-core/tests/acvp_ml_dsa.rs` |
 | 13 | ML-DSA-65 `ctx` absorption (`M′ = 0x00 ‖ len(ctx) ‖ ctx ‖ M`) | **NIST ACVP external-interface groups** | same | **T0** | *is* the oracle | same |
 | 14 | `fips204` byte-identity (D14's fallback claim) | `fips204` | `=0.4.6` | **T2 — excluded from the independence claim** | n/a | `crates/antseal-core/tests/mldsa_fallback_equivalence.rs` |
+| 15 | **Verification-report byte format** (D29 rules 1, 3, 5, 6, 7, 8) | stdlib `json` reader written from D29 | in-repo | **T1** | **none possible — the contract is ours** | `scripts/crosscheck-report.py` |
+| 16 | ML-DSA-65 public key ↔ its HKDF seed (`ρ` leg), signature hint encoding | `hashlib.shake_256`, FIPS 204 Alg 6 + Alg 21 | stdlib | T1 | ACVP already covers the primitive at T0 (rows 12/13); this is completeness of the *checker* | `testdata/vectors/v1/crypto/gen_vectors.py::check_mldsa_half` |
+| — | **Externally-sourced fixture integrity** | our own digest enforcer, reading the claims out of `PROVENANCE.md` | in-repo | **not a tier** | n/a | `scripts/crosscheck-provenance.py` |
 
-**Rows 1–13 are all present at T0 or T1. Row 14 is T2 and does not count.**
+**Rows 1–13 and 15–16 are all present at T0 or T1. Row 14 is T2 and does not
+count.**
+
+The last row is deliberately outside the tier scheme, because it is not a
+second implementation of anything. It is what makes rows **10, 12 and 13**
+mean what they say: those three are the T0 anchors, their expected values live
+in bytes that came from outside this repository, and until wave 7 nothing
+checked that those bytes were still the ones NIST and Unicode published. An
+un-enforced oracle is not an oracle. It runs **first** in the lane for the same
+reason `reference.py` does.
 
 ### Surfaces at T1 with no T0 anchor, named plainly
 
-Rows **5** (domain-tagged salted commitments), **6** (unit padding) and **9**
+Rows **5** (domain-tagged salted commitments), **6** (unit padding), **9**
 (the GGM salt tree — its Merkle promotion rule is RFC 6962, but the tree
-itself is not) have no external oracle **because the constructions are
-antseal's own**. No published test vectors exist for them and none can. T1 —
-a stdlib Python re-implementation written from the spec, sharing no code with
-the Rust — is the honest ceiling, and it is what they have.
+itself is not) and **15** (the verification-report byte format) have no
+external oracle **because the constructions are antseal's own**. No published
+test vectors exist for them and none can. T1 — a stdlib Python
+re-implementation written from the spec, sharing no code with the Rust — is
+the honest ceiling, and it is what they have.
 
-This is a real limit on what this report proves for those three rows: a
-misreading of MVP-SPEC.md shared between the Rust and the Python would survive
-it. The mitigations are elsewhere and are not cross-checks: the spec text
-itself, the tamper matrix, and review.
+This is a real limit on what this report proves for those four rows: a
+misreading of MVP-SPEC.md — or, for row 15, of D29 — shared between the Rust
+and the Python would survive it. The mitigations are elsewhere and are not
+cross-checks: the spec text itself, the tamper matrix, and review.
+
+Row 15 carries a second, narrower limit worth stating in the register rather
+than only in the script: **it cannot detect a key reordering.** Its
+round-trip property re-serialises in the order the received bytes carried, so
+a reordering applied uniformly across the format round-trips cleanly. An
+*inconsistent* order is caught, and `report_version` leaving the front is
+caught, but a global reorder would survive both. Detecting it would need a
+reader that independently knew the Rust struct declaration order, and
+regex-parsing that out of `report.rs` is the kind of brittleness that produces
+a false red at a freeze gate. What actually holds the line there is not a
+cross-check: reordering a field moves all 21 pinned strings at once, so
+`vector-freeze` and the native↔WASM bit-match both go red.
 
 ## 3. Freeze report — 2026-07-28
 
@@ -143,6 +168,66 @@ The truncation guard was exercised separately: cutting the
 its 1 200 floor and exit non-zero, so a stale interpreter or a truncated
 fixture cannot produce a vacuous pass.
 
+## 3b. Freeze report — 2026-07-28, wave 7 addendum
+
+A **new dated section**, per §6: the report above is the record of what was
+true at commit `788519b` and is not rewritten. This one covers the three
+surfaces wave 7 added before the Q14 freeze (Q38, Q41, C27). Same interpreter,
+same host.
+
+| # | Surface | What ran | Count | Discrepancies |
+| --- | --- | --- | --- | --- |
+| — | External-fixture provenance (runs first) | committed bytes vs their `PROVENANCE.md` digest + byte count | **4 fixtures**, 2 directories | **0** |
+| 15 | Verification-report byte format (T1, no T0 anchor) | 9 byte-level properties + 3 envelope checks per pinned string | **21 strings** | **0** |
+| 16 | ML-DSA-65 pk↔seed and hint encoding | 4 legs over `signatures.json`'s ML-DSA half | 1 vector | **0** |
+
+### Total discrepancies: 0
+
+### Proven able to fail
+
+| surface | planted faults | result |
+| --- | --- | --- |
+| `crosscheck-report.py` | **17 faults + 1 control**, one per property: truncation, invalid UTF-8, duplicate key, non-compact separators, a space after a colon, a float, uppercase hex, odd-length hex, a kebab-case key, `report_version` demoted, `report_version` bumped, a non-kebab enum, one key set in two orders, a case missing `report_json`, uppercased envelope hex, a wrong `report_len`, a declared version disagreeing with the Rust constant | red ×17, green ×1 |
+| `crosscheck-provenance.py` | **8 faults + 1 control** across 6 claim classes: a flipped fixture byte, an edited digest claim, an edited byte count, a deleted digest row, an unrecorded fixture, a stripped upstream URL, one deleted `PROVENANCE.md`, all deleted | red ×8, green ×1 |
+| `gen_vectors.py` ML-DSA half (C27) | `mldsa65.public_key` and `.signature`, one nibble each | red ×2 — **and the byte-diff leg stays green**, which is the proof it is `check_mldsa_half` doing the catching |
+
+Every one of these is a **standing** part of `./scripts/cross-check.sh
+--self-test`, not a one-off note here.
+
+### Findings
+
+**3b-a. Q38's own task text specified a property that would have failed on
+correct bytes.** Its key regex `^[a-z0-9]+(-[a-z0-9]+)*$` is D29 rule 7's
+*enum* clause applied to *keys*. D29 rule 7 has two clauses and the second is
+"Field names are the Rust snake_case names, unrenamed." Run as written the
+regex rejects **20 of the 34 keys** in the committed reports. At a freeze
+gate, with a checker asserting it and 21 vectors failing, the tempting fix is
+the bytes. Split into two properties (snake_case keys, kebab-case enum
+values); the planted-fault suite carries a kebab-case-key fault permanently.
+
+**3b-b. Q41's claim held exactly.** The four externally-sourced fixtures'
+digests appeared in one place each — the prose of their `PROVENANCE.md` — and
+nowhere else in the tree. `FROZEN.sha256` does not and cannot cover them: it
+is per-format-version and scoped to `testdata/vectors/v<n>/*.json`.
+
+**3b-c. C27's claim held exactly, and is smaller than it sounds.**
+`gen_vectors.py --check` read the two ML-DSA fields out of the committed file
+and compared the result against that same file. Confirmed by planting a
+fault: green. But `signatures.json` is frozen by `FROZEN.sha256` and ML-DSA-65
+is covered at T0 by ACVP, so the tamper was never invisible to CI as a whole —
+only to this checker. Completeness, not soundness, and the record should not
+be read as more.
+
+**3b-d. Discovery-by-marker had the failure mode it was guarding against.**
+The provenance enforcer defines an external-fixture directory as one holding a
+`PROVENANCE.md`. Its own self-test showed that **deleting** that file removes
+the directory from discovery entirely, un-enforcing every fixture in it while
+the lane stays green. Closed with a written-down must-exist list, the same
+device `FROZEN.sha256` uses for deleted vectors: discovery may return a
+superset, never a subset. Worth generalising — every discovery-by-marker
+scheme in this repo has this shape, and only the ones with a separate
+must-exist list are safe.
+
 ## 4. Findings
 
 Three, all recorded rather than quietly fixed.
@@ -209,9 +294,11 @@ ourselves.
 
 | gap | status |
 | --- | --- |
-| Rows 5, 6, 9 have no T0 anchor | **permanent and inherent** — the constructions are ours (§2). |
-| The verification-report byte format (D29) has no cross-check at all | **out of Q11's scope**, registered as **Q38**. D29 freezes a v1 format at Q14 with 21 byte-pinned strings and no independent implementation checking any of it. Not a blocker for this report, but it is a hole in a v1 format. |
-| `expect.mldsa65.public_key` / `.signature` in `signatures.json` are not re-derived by Python | **by design** — no Python ML-DSA exists. Those two fields are covered by row 12/13's ACVP replay at T0, which is strictly stronger. `gen_vectors.py --check` prints the scope so it cannot be silently overread. Every other field, `mldsa65.seed` included, is re-derived. |
+| Rows 5, 6, 9, 15 have no T0 anchor | **permanent and inherent** — the constructions are ours (§2). |
+| ~~The verification-report byte format (D29) has no cross-check at all~~ | **CLOSED 2026-07-28 by Q38** (row 15). D29's contract is syntactic, so `scripts/crosscheck-report.py` asserts nine properties per pinned string with a stdlib JSON reader. What remains is the narrower limit in §2: it cannot see a key reordering applied uniformly across the format. |
+| ~~`expect.mldsa65.public_key` / `.signature` in `signatures.json` are not re-derived by Python~~ | **CORRECTED 2026-07-28 by C27** (row 16). The old status read "by design", and the design was sound but the consequence was not stated: the two fields were read back from the committed file and re-emitted, so `--check` compared them against themselves and a tamper stayed green. Now checked in four legs — lengths, `ρ = SHAKE256(seed ‖ 06 ‖ 05, 128)[0:32]` from FIPS 204 Alg 6, `HintBitUnpack` from Alg 21, and a residue digest. The original point stands unchanged: **ACVP at T0 (rows 12/13) is the real vehicle**, and C27 is completeness of this checker, not a soundness fix. Full re-derivation is still impossible — there is no Python ML-DSA. |
+| A directory of externally-sourced bytes with no `PROVENANCE.md` is invisible to the provenance enforcer | **permanent and inherent.** Nothing automatic distinguishes "fixture we generated" from "fixture we downloaded" by inspection. `REQUIRED_DIRS` stops a *known* record being deleted; a *new* undeclared one is a review matter, caught by `testdata/README.md`'s per-directory ownership table. |
+| `requirements-crosscheck.txt`'s `cbor2` wheel hashes are not enforced offline | **out of scope, deliberately.** They are enforced by `pip --require-hashes` at install time and the wheel is not committed, so there is nothing offline to compare against. A locally-provisioned cache under `~/.cache/antseal/` is a dev-machine artifact, not committed test data. |
 
 ## 6. Retention
 
@@ -221,6 +308,16 @@ vectors are retained forever (spec line 123, Q19): a v2 format will add
 reasoned about again. `scripts/cross-check.sh` globs `testdata/vectors/v*/`
 and `*/gen_vectors.py`, never a hard-coded version or component list, and
 fails loudly if any surface class discovers nothing.
+
+The two repo-level checkers added in wave 7 are permanent on the same terms
+and are version-general by construction: `crosscheck-report.py` walks
+`testdata/vectors/v*/report/` and `crosscheck-provenance.py` walks
+`testdata/*/PROVENANCE.md`, so neither needs a copy per format version and
+neither needs wiring when new data lands. `scripts/cross-check.sh` finds them
+by glob (`scripts/crosscheck-*.py`) rather than by name, so a third checker
+cannot be added and silently left out of `--check` or `--self-test` — with the
+two required ones written down as a must-exist list, because a glob can only
+fail on what it finds.
 
 This document gains a **new dated section** at each format freeze. Earlier
 sections are never rewritten — they are the record of what was true then.
