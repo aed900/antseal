@@ -12,10 +12,21 @@ lives, **how** that artifact is rendered, and **which** four checks it owes.
 F12/F13 settled all three when they landed the `manifest` and `bundle`
 vectors; this is that settlement written down where F14 reads it.
 
-Implementation: `scripts/cbor_crosscheck.py`, driven by
-`scripts/cbor-crosscheck.sh`. The Rust side of the same rendering is
-`antseal_core::test_util::vectors_cbor_diag`. Neither is allowed to know
-about the other's code — see [§6](#6-what-independence-means-here).
+Implementation: `testdata/vectors/v1/crosscheck_cbor.py` (a `*.py` auxiliary,
+which Q4's discovery contract admits — one copy per format version, each
+checking its own directory), driven by `scripts/cross-check.sh`. The Rust side
+of the same rendering is
+`crates/antseal-core/src/test_util/vectors_cbor_diag.rs`. Neither is allowed
+to know about the other's code — see [§6](#6-what-independence-means-here).
+
+**Decision D31 splits the vehicle's role, and the split is normative.**
+`cbor2` **decodes only**. The RFC 8949 §4.2.1 canonical **encoder is ours**,
+written in the checker: cbor2's canonical mode orders map keys RFC 7049
+length-first, which merely *coincides* with §4.2.1 over today's
+unsigned-integer keys, so using it would have imported that coincidence as a
+permanent documented exception. Writing the encoder retires the caveat, and
+makes the encoding authority ours-versus-minicbor rather than one library's
+canonical mode versus another's.
 
 ## 1. The sidecar is in-file, and it could not have been anything else
 
@@ -62,7 +73,7 @@ One canonical CBOR item renders by these rules **and no others**. The table
 is duplicated in three places on purpose — here, in
 `testdata/vectors/README.md` § "The diagnostic sidecar", and in the
 `vectors_cbor_diag` module docs — and a drift test binds them together
-(§7).
+(§8).
 
 | CBOR item | JSON |
 | --- | --- |
@@ -71,7 +82,7 @@ is duplicated in three places on purpose — here, in
 | byte string (major 2) | `{"b": "<lowercase hex>"}` |
 | text string (major 3) | a JSON string |
 | array (major 4) | a JSON array |
-| map (major 5) | `{"m": [[key, value], …]}`, entries in **wire order** |
+| map (major 5) | `{"m": [[key, value], …]}`, entries in wire order |
 
 Three consequences a second implementer must not rediscover the hard way:
 
@@ -103,8 +114,9 @@ Per located layer:
    decoder agree with each other and are both wrong".
 2. **Re-encode and compare.** Rebuild the item from the **committed**
    `diagnostic[layer]` (not from the checker's own decode — that would close
-   the loop through one implementation) and re-encode it per RFC 8949
-   §4.2.1; require byte-equality with the committed bytes.
+   the loop through one implementation) and re-encode it with the checker's
+   **own** RFC 8949 §4.2.1 encoder (D31 row 1); require byte-equality with
+   the committed bytes.
 
 Per case:
 
@@ -155,11 +167,44 @@ shares no code with what it checks. Concretely, F14:
 
 The independence claim itself has one recorded correction: cbor2 **6.x is a
 Rust/PyO3 extension** (`_cbor2`, pyo3 0.29) with **no pure-Python
-fallback**, so D12's "different language" leg does not hold. Different
-author, different codebase, different lineage all still hold, and those
-carry the argument.
+fallback**, so D12's "different language" leg does not hold. What does hold,
+and was checked rather than assumed: different author, different codebase,
+and **zero shared code** — `minicbor 2.3.0` has no dependencies at all,
+while cbor2's core pulls `pyo3`, `half`, `num-bigint` and `bigdecimal`. "No
+shared code" was always doing the work that "different language" appeared
+to.
 
-## 7. Keeping the two implementations from drifting
+D31 grades this tier **T1** — an independent re-implementation — and is
+explicit that T1 cannot catch a **shared misreading of the spec**. So the
+checker opens with a **T0 external oracle**: the worked examples of RFC 8949
+Appendix A, encoded by our encoder and decoded by cbor2, both compared to
+bytes the RFC itself publishes. Those bytes are the one thing here that no
+amount of agreement between our two implementations could manufacture.
+
+## 7. What this check does *not* cover
+
+Stated so a reader of a green lane knows what green means.
+
+- **A kind that commits format CBOR without a sidecar is silently out of
+  scope.** Scope is "the case carries a `diagnostic`", which is what makes
+  the checker generic over vectors that have not been written yet — but it
+  means the *absence* of a sidecar reads identically to "this kind commits
+  no CBOR". The lane cannot tell those apart, and it prints the neutral
+  wording rather than claiming the stronger one. Closing this needs a
+  registry-level flag on the kind (a `KNOWN_KINDS` change), not a change
+  here.
+- **Canonical JSON is a different surface.** The `report` kind pins
+  `report_json` under D29, not CBOR. D31 §7 registered that gap as **Q38**;
+  nothing in this document covers it.
+- **Resource caps are not canonicality.** `cbor-nesting-too-deep` (F11) and
+  `bundle-too-large` (D10) are antseal limits; arbitrarily deep or large
+  CBOR is perfectly canonical, so the tamper sweep records them as out of
+  scope rather than pretending to confirm them.
+- **T1 cannot see a shared misreading of the spec.** That is what the RFC
+  8949 Appendix A anchor is for, and it covers only the profile's own
+  surface — integers, byte and text strings, arrays, maps.
+
+## 8. Keeping the two implementations from drifting
 
 The rendering table exists twice as executable code (Rust and Python) and
 three times as prose. That is a drift hazard, so it is **tested, not

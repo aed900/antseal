@@ -175,6 +175,13 @@ and `test_util::vectors_cbor_diag` are three statements of one rule; a drift
 test (`crates/antseal-core/tests/cbor_crosscheck_contract.rs`) keeps them
 pointing at each other.
 
+The second implementation itself is `v<n>/crosscheck_cbor.py` — one per
+format version, each checking its own directory, run by
+`scripts/cross-check.sh` (CI lane `cross-check`). It is a `*.py`
+**auxiliary** under the directory contract above, so it is never executed as
+a vector. Per decision D31 it uses `cbor2` to **decode only**; the RFC 8949
+§4.2.1 canonical encoder and the canonicality judgement are its own.
+
 | `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no

@@ -303,6 +303,62 @@ jobs:
             exit 1
           fi
 
+  # F14 (Q11-co-owned): the INDEPENDENT CROSS-CHECK lane (decision D31), and
+  # an input to the Q14 format freeze. No path filter — deliberately, per D31
+  # §8: no job in this workflow has one, and a filter here breaks silently the
+  # first time a vector directory moves.
+  #
+  # Today it carries F14's CBOR half. A second implementation decodes every
+  # committed vector that carries a diagnostic sidecar, renders it per the
+  # normative table, re-encodes it with OUR OWN RFC 8949 §4.2.1 encoder, and
+  # re-derives work_id/anchor_digest — all against the COMMITTED bytes, never
+  # against fresh output from our codec. Contract:
+  # docs/testing/cbor-cross-check.md.
+  #
+  # D31's role split is what makes this evidence rather than a round-trip:
+  # cbor2 DECODES only (its canonical mode is RFC 7049 length-first key order,
+  # which merely coincides with §4.2.1 over today's uint keys), and the
+  # encoder plus the canonicality judgement are ours. That is tier T1, an
+  # independent re-implementation — which cannot see a SHARED MISREADING of
+  # the spec, so the run opens with a T0 external oracle: the RFC 8949
+  # Appendix A worked examples, in both directions.
+  #
+  # cbor2 is a DEV TOOL, hash-pinned in requirements-crosscheck.txt, and never
+  # enters any Rust dependency graph (docs/dependency-policy.md §5) — the
+  # drift-guard step below refuses to let its name appear in a Cargo manifest.
+  #
+  # Like vector-freeze and secret-guard, the lane SELF-TESTS FIRST: eight
+  # planted faults (seven in-memory mutations of a real committed case —
+  # including a sidecar whose map entries are correct but REORDERED, the
+  # mutation a set comparison would wave through — plus a deliberately wrong
+  # RFC expectation) must each go red before a green cross-check is trusted.
+  #
+  # New vectors need no lane change: discovery is a directory walk, scope is
+  # "commits a diagnostic sidecar", and scripts/cross-check.sh iterates
+  # testdata/vectors/v*/ so a future v2/ is picked up automatically.
+  #
+  # Q11 (D31 §6a) adds the remaining surfaces to scripts/cross-check.sh once
+  # the existing reference generators grow a --check mode; they are listed in
+  # that script so the gap is visible rather than absent.
+  cross-check:
+    name: cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned independent CBOR implementation (D7 §D12, D31)
+        run: pip install --require-hashes -r requirements-crosscheck.txt
+      - name: Self-test — prove the cross-check can go red
+        run: ./scripts/cross-check.sh --self-test --require
+      - name: Independent cross-check over every committed vector
+        run: ./scripts/cross-check.sh --check --require
+      - name: Drift guard — the two implementations of the rendering table agree
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          cargo test -p antseal-core --all-features --locked --test cbor_crosscheck_contract
+
   # Q6 (live): the golden-vector FREEZE + must-exist guard. Each
   # testdata/vectors/v<n>/FROZEN.sha256 pins the exact bytes of every
   # committed vector of that format version AND is that version's must-exist

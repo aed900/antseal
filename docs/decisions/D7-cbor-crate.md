@@ -179,6 +179,51 @@ tree. Justification:
 D12 itself (the cross-check *vehicle and wiring*) is closed by F14/Q11;
 this record supplies its named, pinned implementation.
 
+### Amendment — 2026-07-28 (F14, on landing the checker)
+
+Sourcing the pin surfaced a **factual error in the first bullet above**, and
+one fact that strengthens it. The verdict does not change; the reasoning
+must, because a decision record that argues from a wrong premise cannot be
+re-examined honestly later.
+
+- **`cbor2` 6.x is not "C-accelerated Python with a pure-Python fallback".**
+  It is a compiled **Rust** extension built with PyO3 0.29 (`rust/lib.rs`,
+  `crate-type = ["cdylib"]`, module `_cbor2`), and `python/cbor2/__init__.py`
+  is a pure re-export shim. **There is no pure-Python fallback at all** —
+  6.x removed it. So the "**different language**" leg of the independence
+  argument is simply false: both implementations are Rust.
+- **What survives, and it is enough.** Different author (agronholm vs
+  twittner), different codebase, different lineage — and, checked rather
+  than assumed: **zero shared code.** `minicbor 2.3.0` has *no*
+  dependencies whatsoever in our `Cargo.lock`; cbor2's core pulls `pyo3`,
+  `half`, `num-bigint` and `bigdecimal`, none of which minicbor uses. The
+  two share no crate, so a common implementation bug still has no vector.
+  "Different language" was never doing the work that "no shared code" does.
+- **Provisioning consequence.** A Rust extension with no fallback cannot be
+  installed from source without a Rust toolchain, Python dev headers and a
+  network cargo fetch — and the reference machine has neither `pip` nor
+  `ensurepip`. F14 therefore pins every artifact PyPI publishes for 6.1.3 by
+  SHA-256 in `requirements-crosscheck.txt` (D31's named pin file, pip
+  `--require-hashes`), and the same rows drive a pip-less bootstrap that
+  unpacks a verified wheel — a zip — into a cache outside the repo. Setup is
+  one command; the cross-check itself never touches the network.
+- **`__version__` is gone too**, for the same reason (the shim exports only
+  what `_cbor2` provides), so the version assertion reads the distribution
+  metadata instead. That is not cosmetic: an unpinned cbor2 silently
+  substituting itself is precisely what the `==` pin exists to prevent.
+- **The ordering caveat is now retired rather than honoured — see D31.**
+  This record's third bullet planned for the checker to encode with `cbor2`
+  and merely *avoid* its canonical mode. **D31 §8 overturned that design
+  point**: `cbor2` is a **decode-only** vehicle, and the RFC 8949 §4.2.1
+  canonical encoder is written in the checker itself. The caveat then stops
+  being a permanent documented exception (one that would have silently
+  ceased to be a check the moment a non-integer key broke the coincidence),
+  and the encoding authority becomes ours-versus-minicbor rather than one
+  library's canonical mode versus another's. The D12 byte-compatibility
+  evidence (`{1:0,2:0,10:0,24:0}` → `a4010002000a00181800`) is **replayed on
+  every run** in the checker's preflight — now against *our* encoder — so
+  this record cannot rot unnoticed.
+
 ## Consequences
 
 - **P13/Q29 (deny.toml)**: BlueOak-1.0.0 needs an explicit license
@@ -188,7 +233,13 @@ this record supplies its named, pinned implementation.
   codec — it must stay green and unmodified across any future bump, or the
   contingency question is opened.
 - **F14**: install `cbor2==6.1.3` exact-pinned wherever the checker runs
-  (dependency-policy §5 dev-tool rule).
+  (dependency-policy §5 dev-tool rule). **[2026-07-28] LANDED** as
+  `requirements-crosscheck.txt` + `testdata/vectors/v1/crosscheck_cbor.py`,
+  driven by `scripts/cross-check.sh`, CI lane `cross-check` (paths and lane
+  name per D31); contract in `docs/testing/cbor-cross-check.md`. The
+  `the_cbor2_pin_is_exact_and_dev_tool_only` test refuses to let the name
+  `cbor2` appear in a Cargo manifest, so "never enters any Rust dependency
+  tree" is enforced rather than remembered.
 - **dependency-policy.md**: exact-pin table row updated from "candidate"
   to the landed pin; `cbor2` added to the §5 dev-tool list.
 - **Format identifier strings** (P10 note): F consumes the crate name
