@@ -413,13 +413,27 @@ pub enum ManifestError {
     },
 
     // ── Version ─────────────────────────────────────────────────────
-    /// `format_version` is not 1. F10 owns version *dispatch* (reading
-    /// key 0 before selecting a schema); until it lands, the v1 body
-    /// decoder rejects anything else here, keyed by this same error.
-    #[error("unsupported manifest format_version {found} (this decoder implements v1)")]
+    /// The body declares a `format_version` with no decoder in this build
+    /// (F10). Raised by [`crate::format::VersionDispatch`] **before** any
+    /// schema decode, so a newer-than-this-verifier manifest is never
+    /// reported as corrupt: it is neither a canonicality error nor an
+    /// unknown-key error, which is the whole point of the class.
+    ///
+    /// Per the line-123 stability contract a released version is decodable
+    /// forever, so this can only ever mean "this artifact is newer than
+    /// this build" — never "that version was dropped".
+    #[error(
+        "unsupported manifest format_version {found}; this build decodes {}",
+        crate::format::supported_versions_str(supported)
+    )]
     UnsupportedFormatVersion {
         /// The version the body declares.
         found: u64,
+        /// Every version this build *can* decode
+        /// ([`crate::format::SUPPORTED_VERSIONS`]) — carried as data so a
+        /// caller can render an actionable "upgrade to a build that
+        /// supports v{found}" message without reaching into the crate.
+        supported: &'static [u64],
     },
 
     // ── sig_policy (MVP-SPEC.md line 97) ────────────────────────────
@@ -570,6 +584,15 @@ impl ManifestError {
     }
 }
 
+/// F10: the manifest family's unsupported-version rejection, so
+/// [`crate::format::VersionDispatch`] can raise it without knowing anything
+/// about the manifest schema.
+impl crate::format::VersionRejection for ManifestError {
+    fn unsupported_version(found: u64, supported: &'static [u64]) -> Self {
+        Self::UnsupportedFormatVersion { found, supported }
+    }
+}
+
 /// One exemplar per distinct schema-level [`ManifestError::code`] — every
 /// (variant, discriminant) pair exactly once, with pairwise-distinct
 /// `Display` renderings.
@@ -639,7 +662,10 @@ pub(crate) fn all_code_exemplars() -> Vec<ManifestError> {
             implied: super::registry::FineTreeDomain::Raw,
             found: super::registry::FineTreeDomain::Canonical,
         },
-        E::UnsupportedFormatVersion { found: 2 },
+        E::UnsupportedFormatVersion {
+            found: 2,
+            supported: crate::format::SUPPORTED_VERSIONS,
+        },
         E::SigPolicyEmpty,
         E::UnitIdMismatch {
             expected: 4,
@@ -747,7 +773,10 @@ mod tests {
                 implied: super::super::registry::FineTreeDomain::Canonical,
                 found: super::super::registry::FineTreeDomain::Raw,
             },
-            ManifestError::UnsupportedFormatVersion { found: 2 },
+            ManifestError::UnsupportedFormatVersion {
+                found: 2,
+                supported: crate::format::SUPPORTED_VERSIONS,
+            },
             ManifestError::SigPolicyEmpty,
             ManifestError::DuplicateAlg {
                 position: AlgPosition::SigPolicy,
@@ -885,8 +914,11 @@ mod tests {
                 "descriptor kind binary implies fine-tree domain raw, but canonical is recorded",
             ),
             (
-                ManifestError::UnsupportedFormatVersion { found: 2 },
-                "unsupported manifest format_version 2 (this decoder implements v1)",
+                ManifestError::UnsupportedFormatVersion {
+                    found: 2,
+                    supported: crate::format::SUPPORTED_VERSIONS,
+                },
+                "unsupported manifest format_version 2; this build decodes v1",
             ),
             (ManifestError::SigPolicyEmpty, "sig_policy is empty"),
             (

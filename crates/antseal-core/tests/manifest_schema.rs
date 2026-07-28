@@ -694,7 +694,13 @@ fn reject_unit_id_that_is_not_its_manifest_order_ordinal() {
 fn reject_unsupported_format_version() {
     let mut body = w::default_body();
     w::set(&mut body, key::body::FORMAT_VERSION, w::uint(2));
-    reject(&body, &ManifestError::UnsupportedFormatVersion { found: 2 });
+    reject(
+        &body,
+        &ManifestError::UnsupportedFormatVersion {
+            found: 2,
+            supported: antseal_core::format::SUPPORTED_VERSIONS,
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------

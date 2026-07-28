@@ -18,6 +18,7 @@ pub mod canon;
 pub mod codec;
 pub mod content;
 pub mod crypto;
+pub mod format;
 pub mod manifest;
 // `test-util` implies `test-vectors` (see Cargo.toml), so gating the module
 // on the smaller feature admits both surfaces; the proptest-bearing
