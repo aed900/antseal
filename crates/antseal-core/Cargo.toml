@@ -96,6 +96,21 @@ rand_chacha.workspace = true
 #   antseal-core = { workspace = true, features = ["test-util"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 antseal-core = { workspace = true, features = ["test-util"] }
+# D14's fallback implementation, consumed ONLY by
+# `tests/mldsa_fallback_equivalence.rs` (Q11/D31 §9 step 6). That test is
+# **T2** — same-ecosystem agreement — and is evidence for D14's fallback
+# claim, never for the independent cross-check (NIST ACVP is that; see
+# `tests/acvp_ml_dsa.rs`).
+#
+# A dev-dependency edge is not a consumed runtime dependency: `fips204` stays
+# absent from `cargo tree -p antseal-core -e normal`, so D14's
+# "pinned-unconsumed" property and the `core-dep-graph` lane are both
+# unaffected (verified by cargo-tree diff at landing).
+#
+# TARGET-SPLIT for the same reason the antseal-core self-edge is: the wasm32
+# lanes must not gain a dependency they have no use for. The test itself
+# carries `#![cfg(not(target_arch = "wasm32"))]` to match.
+fips204.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 antseal-core = { workspace = true, features = ["test-vectors"] }

@@ -122,10 +122,17 @@ ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "z
 # ML-DSA fallback implementation (decision D14; dormant upstream since
 # 2024-12 — accepted for a fallback). Kept pinned and probe-covered
 # (keygen/sign byte-identical to ml-dsa, probe bits 12-13) so a swap needs
-# no re-derivation work; normally never consumed by any crate. Consumption
-# shape if triggered: default-features = false, features = ["ml-dsa-65"]
-# (no default-rng; deterministic signing via try_sign_with_seed).
-fips204 = "=0.4.6"
+# no re-derivation work. Since Q11/D31 it is a **dev-dependency of
+# antseal-core** (native-only), consumed solely by
+# `tests/mldsa_fallback_equivalence.rs`, which is D14's fallback-equivalence
+# evidence and is labelled T2 — explicitly NOT the independent cross-check
+# (that is NIST ACVP; D31 §4a). A `[dev-dependencies]` edge is not a
+# consumed runtime dependency, so D14's "pinned-unconsumed" property and the
+# `core-dep-graph` verdict both survive; see D14's 2026-07-28 addendum.
+# The feature shape here IS D14's documented consumption shape if the
+# fallback is ever triggered: no default-rng, deterministic signing via
+# try_sign_with_seed.
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-65"] }
 
 # XChaCha20-Poly1305 AEAD (exact-pin class: ciphertext format), nominated at
 # C9 completing the policy-table AEAD row. Every unit/manifest ciphertext
