@@ -726,6 +726,94 @@ the registry. Landed as **`content-fine-root-leaf-seed-tail-not-zero`**; the
 
 ---
 
+# WIRE-LEVEL AMENDMENT — 2026-07-28 (R37 / G24 / R36)
+
+G23 landed the rule; this wave landed the fixtures that exercise it, which
+closes three obligations this document left open and corrects one thing it
+got right that its *consumers* then got wrong.
+
+## B1. §6's standing obligation is DISCHARGED — `bundle/bundle.json` moved
+
+The "must NOT change" table (§6) is explicit that it holds only while every
+committed bundle fixture has even unit boundaries, and that the commit adding
+an odd one must say the digest moved for D83 reasons. G24 is that commit:
+
+```text
+26fbc38ff52bce11e9580c5cfaccab21de69061923b9666dbb3d6d97ba2af20d
+    -> 5d8704932e6d60fb91e6e505af746031118938fb1902dcbe806cbb510a3713b6
+```
+
+The move is a pure **extension**, verified rather than assumed: all eight
+pre-existing cases are byte-identical in both `inputs` and `expect`; only the
+document's description string and two appended cases differ. The new cases are
+`leaf-level-cover-partial-reveal` (`n = 6` retiled 2/1/3, reveal unit 1 =
+leaf `[2, 3)`, cover exactly `(3, 2)`) and `one-byte-fine-tree-full-reveal`
+(`n == 1`, where `cover[0][2]` and `full_reveal.s_root` are the same 32
+bytes). No other frozen digest moved — `FROZEN.sha256`'s diff is one line.
+
+Two further §6 predictions held on re-check: `testdata/tamper/format`'s 22
+digests are unchanged, and `report/verification-reports.json` did **not**
+move a second time, because R9's report vector names its shapes through a
+hand-maintained `CASES` list rather than iterating the catalogue.
+
+## B2. §9.6's obligation is DISCHARGED — Fact 2 verified far past `n ≤ 24`
+
+§9 asked for a proptest to `n ≤ 2^12`. What landed is an **exhaustive** sweep,
+which is stronger than sampling for a rule of this shape: every sub-range
+`[a, b)` of every `n ≤ 128` is checked against `minimal_cover` in the default
+lane (`tests/leaf_level_cover_shapes.rs::the_incidence_rule_holds_over_the_grid`),
+and the same sweep was run to `n = 512` while landing R37 — 22.4 M covers,
+**zero mismatches**. The exhaustive form is deliberately preferred over
+`n ≤ 2^12` sampled: the rule's interesting cases are all at small `n` and at
+range boundaries, which sampling at large `n` reaches only by luck.
+
+Fact 2 stands exactly as written. No counterexample exists to record.
+
+## B3. What the consumers got wrong, and where it is corrected
+
+§1 says the orchestrator's hand-off rule ("the `[0, n)` cover decomposition
+contains a size-1 block iff `n` is odd") is wrong. It was right to say so, and
+the correction did not propagate: **`tasks/R.md`'s R36 and R37 entries both
+restate the false rule**, having been written before this decision resolved.
+Both are amended at source in the same wave. The false rule matters because it
+is *actionable* and wrong in the expensive direction — someone acting on it
+would add an unsplit odd-length file, observe a cover of `[(0,0)]`, and
+conclude the class does not exist.
+
+The rule that governs, restated once more for anyone reading only this
+section: a leaf-level node's incidence is a property of **unit boundaries**,
+not of file parity, because a whole-file cover never decomposes (Fact 1).
+
+## B4. §7's "second fixture" is now three, at two layers
+
+§7 anticipated one row and a second fixture at `full_reveal.s_root`. The
+landed set is:
+
+| fixture | layer | site | shape |
+| --- | --- | --- | --- |
+| `content-fine-root-leaf-seed-tail-not-zero` (the row) | `verify_range` | cover entry | `n = 6`, reveal `{2}`, node `(3, 2)` |
+| `leaf_level_s_root_tail_flipped` | `check_leaf_level_payload` | `s_root` | `n == 1` |
+| `a_dirty_cover_tail_is_rejected_at_depth_three` | `verify_bundle` | cover entry | `n = 6` odd-split bundle, node `(3, 2)` |
+
+The third is the one G24's Accept required and is new here: the first drives
+`verify_range` directly, so until now **no committed artifact exercised the
+rule through the whole pipeline at a depth where the `level == depth`
+predicate is discriminating** — at `n == 1` every node satisfies it
+vacuously. Still one code; the three are separated by `(code, layer)`, per
+§4.1.
+
+## B5. The rule is enforced on every byte, measured rather than argued
+
+R36's authentication-boundary test now flips **all 32 bytes** of a real
+leaf-level payload inside a real bundle and asserts the rejection *class* per
+half: `0..16` -> `fine-root-binding-failed`, `16..32` ->
+`fine-root-leaf-seed-tail-not-zero`. All 32 reject. So the answer to the
+question §1 raised — are those 16 bytes still a third unauthenticated region?
+— is **no, measured**, and R10's `88 + 67` bound stays two-term for that
+reason rather than by omission.
+
+---
+
 # ORIGINAL RECORD (2026-07-28) — retained as the analysis that framed the decision
 
 The material below is the record as written when G20 surfaced the finding. It
