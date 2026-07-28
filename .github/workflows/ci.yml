@@ -374,6 +374,23 @@ jobs:
   # (D31 §4a) and is D14's fallback evidence, never this lane's independence
   # claim.
   #
+  # Wave 7 folded two more surfaces into the SAME script, so this lane gained
+  # coverage without gaining a required context (CONTRIBUTING.md "CI lanes":
+  # prefer extending a lane over adding one, because the context set is a
+  # branch-protection change):
+  #
+  #   Q41  scripts/crosscheck-provenance.py — runs FIRST, before even
+  #        reference.py. The ACVP subsets and the Unicode sample ARE the T0
+  #        anchors under rows 10/12/13, and their digests lived in prose that
+  #        nothing read. Offline: it checks committed bytes against
+  #        PROVENANCE.md, never contacts upstream.
+  #   Q38  scripts/crosscheck-report.py — the only reader of the D29 report
+  #        byte format outside antseal-core. T1 with NO T0 anchor, because
+  #        the contract is ours.
+  #
+  # Both carry per-property planted faults, so --self-test proves them able
+  # to go red on every run like every other surface here.
+  #
   # NO PATH FILTER, deliberately (D31 §8): no job in this workflow has one,
   # and a filter here would be a foot-gun the first time a vector directory
   # is renamed. This is also the first lane in the workflow that requires

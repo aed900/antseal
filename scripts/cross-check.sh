@@ -122,11 +122,18 @@ fi
 for path in "${root}"/testdata/vectors/v*/crosscheck_cbor.py; do
   [ -f "${path}" ] && cbor_checkers+=("${path}")
 done
-# Q38's report-format reader. One script for every format version — it walks
-# `testdata/vectors/v*/report/` itself rather than being copied per version,
-# because its subject is a decision record (D29) shared across versions, not
-# a per-version artifact.
-report_checker="${root}/scripts/crosscheck-report.py"
+# The repo-level checkers: Q38's report-format reader and Q41's provenance
+# enforcer. Discovered by glob, not named, for the same reason every other
+# surface above is — a third one added later is picked up with no edit here,
+# and cannot be silently left out of `--check` or `--self-test`.
+#
+# One script serves every format version: both walk `testdata/` themselves
+# rather than being copied per version, because their subjects (a decision
+# record and a provenance record) are shared across versions.
+repo_checkers=()
+for path in "${root}"/scripts/crosscheck-*.py; do
+  [ -f "${path}" ] && repo_checkers+=("${path}")
+done
 
 if [ "${#references[@]}" -eq 0 ]; then
   echo "::error::no testdata/vectors/v*/crypto/reference.py found — the T0 known-answer" \
@@ -144,16 +151,17 @@ if [ "${#cbor_checkers[@]}" -eq 0 ]; then
        "pass vacuously. Discovery is broken, or the checker was deleted." >&2
   exit 1
 fi
-if [ ! -f "${report_checker}" ]; then
-  echo "::error::scripts/crosscheck-report.py is missing — the D29 report byte format" \
-       "would have no independent reader at all, which is the hole Q38 closed." >&2
-  exit 1
-fi
-if [ ! -f "${root}/scripts/crosscheck-provenance.py" ]; then
-  echo "::error::scripts/crosscheck-provenance.py is missing — the externally-sourced" \
-       "fixtures would be unenforced again, which is the hole Q41 closed." >&2
-  exit 1
-fi
+# The must-exist half of the glob above: discovery can only fail on what it
+# finds, so the checkers that must exist are written down.
+for required in crosscheck-report.py crosscheck-provenance.py; do
+  if [ ! -f "${root}/scripts/${required}" ]; then
+    echo "::error::scripts/${required} is missing. crosscheck-report.py is the only" \
+         "implementation outside antseal-core that reads the D29 report byte format (Q38);" \
+         "crosscheck-provenance.py is the only thing that enforces the externally-sourced" \
+         "fixtures' digests (Q41). Without either, the lane passes over a hole." >&2
+    exit 1
+  fi
+done
 
 rel() { printf '%s' "${1#"${root}"/}"; }
 
@@ -190,13 +198,18 @@ if [ "${mode}" = "check" ]; then
     merge_rc $?
   done
 
-  note "cross-check: verification-report byte format (T1, no T0 anchor) — scripts/crosscheck-report.py"
-  "$python" "${report_checker}" --check
-  merge_rc $?
+  for path in "${repo_checkers[@]}"; do
+    case "${path}" in
+      */crosscheck-provenance.py) continue ;;  # already ran, first
+    esac
+    note "cross-check: $(rel "${path}") --check"
+    "$python" "${path}" --check
+    merge_rc $?
+  done
 
   if [ "${status}" -eq 0 ]; then
-    printf '\ncross-check PASSED: provenance + %d reference self-test(s), %d generator(s), %d CBOR checker(s), report byte format\n' \
-      "${#references[@]}" "${#generators[@]}" "${#cbor_checkers[@]}"
+    printf '\ncross-check PASSED: %d reference self-test(s), %d generator(s), %d CBOR checker(s), %d repo checker(s)\n' \
+      "${#references[@]}" "${#generators[@]}" "${#cbor_checkers[@]}" "${#repo_checkers[@]}"
   fi
   exit "${status}"
 fi
@@ -398,7 +411,7 @@ done
 #      enforced record plus the roster-drift guards), for the same reason
 #      F14 does: one generic "flip a hex digit" fault would prove a single
 #      property and leave the rest unobserved.
-for extra in "${report_checker}" "${root}/scripts/crosscheck-provenance.py"; do
+for extra in "${repo_checkers[@]}"; do
   note "self-test: $(rel "${extra}") (built-in)"
   "$python" "${extra}" --self-test
   rc=$?
