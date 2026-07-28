@@ -245,6 +245,28 @@
   - Regression-case files committed for any counterexample ever found
   - Suite runs (possibly size-reduced) under wasm32 (dep Q)
 
+### G21 — ContentModel golden vector under `testdata/vectors/` (native↔WASM bit-match)
+- Milestone: M0
+- Size: S
+- Deps: G14 (landed), G15; Q: the Q5 bit-match harness + vector-freeze lane; F: the vector envelope schema
+- Spec: M0 milestone (line 153), Verification (line 169), testdata (line 57)
+- Do: G14's golden end-to-end fixture is committed as **Rust constants** (`crates/antseal-core/src/content/fixtures.rs`, `test-vectors` tier), which the wasm32 `--lib` lane executes — but the Q5 **bit-match** harness compares committed *vector files* byte-for-byte between native and WASM, and the assembly's derived values (per-file `fine_root`, unit ranges/ids, `size`, descriptor fields) are not in that lane. Emit the golden model as a `content-model` vector kind through `test_util::vectors`, so an assembly divergence between the two targets fails the bit-match job rather than only the unit tests. G15's fine-tree vectors cover the tree primitives; this covers the *composition* above them.
+- Accept:
+  - Vector committed under `testdata/vectors/v1/` and registered in `FROZEN.sha256` via `scripts/vector-freeze.sh`
+  - Executor runs it on native and wasm32 with byte-identical output (Q5 lane)
+  - Fixture material is the existing clearly-labelled synthetic seed supplier — no vault-derived values (project rule 6)
+
+### G22 — Narrow the verifier-side canonicalization error type to the reachable class
+- Milestone: M0
+- Size: S
+- Deps: G2 (`canonicalize_forced` landed with G14), R4
+- Spec: Verification (line 121), decision D20
+- Do: G14 added `canon::canonicalize_forced` — the **total** forced-mode entry point (D20 makes forced mode total; stages 2–5 are now a shared private `canonicalize_decoded`, so the totality is structural rather than a claim). The *resolved-version* path therefore has no error arm at all. The **string-version** path R4 uses (`canonicalize_v`) still returns the two-variant `CanonicalizeError`, of which only `UnknownVersion` ("verifier too old") is reachable: `InvalidUtf8` cannot occur because R4 fixes the mode to `Forced`. Add `canonicalize_v_forced(version: &str, raw) -> Result<CanonicalBytes, UnicodeVersionError>` and route R4's `recompute_canonical_from_mirror` through it, so `content-canonicalize-invalid-utf8` becomes structurally unreachable from every verifier path instead of unreachable-by-argument.
+- Accept:
+  - R4's recompute returns the one-variant error type; the `InvalidUtf8` arm no longer exists at that call site
+  - `content-canonicalize-invalid-utf8` remains reachable (and coded) from the seal-side path only
+  - No change to any committed vector or to D30's code set — this narrows a type, it does not retire a code
+
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
 - Canonicalization micro-semantics: lone CR → LF (in addition to CRLF), strip exactly one leading BOM with interior U+FEFF preserved, and the fixed pipeline order (BOM → EOL → NFC). Blocks G2, G3. M0. — **[2026-07-27]** RESOLVED (D21) with one recorded deviation from this entry's proposal: strip **ALL** leading U+FEFF (contiguous run), not exactly one — strip-exactly-one violates G2's normative idempotence proptest on multi-BOM inputs; interior U+FEFF preserved; one-pass EOL (CR CR LF → LF LF); order decode → BOM → EOL → NFC frozen (docs/decisions/D21-canonicalization-micro-semantics.md). G3 must pin the double-BOM and BOM-only-file fixtures.

@@ -57,19 +57,14 @@
       "milestone": "M0",
       "owner": "G+R",
       "spec_quote": "altered manifest field — a covered unit's bytes must fail the `fine_root` leaf-range/boundary-path check, a non-covered (`--no-fine-tree`/raw-mirror) unit's bytes must fail `unit_commit`",
-      "note": "The spec splits this family by the single authoritative commitment for the unit's coverage class. Both routes are separate rows.",
+      "note": "The spec splits this family by the single authoritative commitment for the unit's coverage class. Both routes are separate rows. The covered-unit route landed with G19 (crates/antseal-core/src/test_util/tamper_rows_fine_tree.rs): one bit of a covered unit's revealed content is flipped against the known-good opening of G14's golden work, leaving range, cover and boundary path honest so the fault surfaces exactly at the fine_root binding. That resolves the hazard the pending marker recorded, in G's favour: this is the registry row, so R8's same-route mutation through `verify_bundle` must be an R10 property assertion rather than a second row — R's wrapper arm surfaces the inner code unchanged (error-code contract §2) and `check_registry` would refuse the pair.",
       "cases": [
         {
           "id": "covered-unit-fails-fine-root",
           "what": "alter a fine-tree-covered unit's bytes; the leaf-range/boundary-path check against `fine_root` must fail",
-          "pending": {
-            "task": "G19",
-            "row_id": "content-fine-root-binding-failed",
-            "outcome_kind": "error",
-            "expected": "fine-root-binding-failed",
-            "why": "G19 row (1): flip a byte of a covered unit's revealed content against a known-good opening fixture (tasks/G.md G19).",
-            "hazard": "R8's task text names the same route through `verify_bundle`. R's wrapper arm surfaces the INNER code unchanged (error-code contract §2), so a G19 row and an R8 row would both claim `fine-root-binding-failed` and `check_registry` would refuse the pair. One of the two is the registry row; the other belongs in an R10 property. Coordinate before writing both — see non_rows for the same shape already settled by D28."
-          }
+          "rows": [
+            "content-fine-root-binding-failed"
+          ]
         },
         {
           "id": "non-covered-unit-fails-unit-commit",
@@ -415,18 +410,14 @@
       "milestone": "M0",
       "owner": "G",
       "spec_quote": "over-broad GGM cover whose node spans an unrevealed real leaf",
+      "note": "Landed by G19 (crates/antseal-core/src/test_util/tamper_rows_fine_tree.rs): the honest single-node cover of [16, 24) is replaced by its parent, which spans real leaves [16, 32) and therefore commits eight leaves the reveal does not show. The substituted node carries its GENUINE s_root-derived seed at a valid grid address, so the only fault is over-broadness and G13 cannot reject it on a length or shape ground instead. The construction helper is `over_broad_cover` in that module — the single one in the workspace. That resolves the hazard the pending marker recorded, in G's favour: R7 consumes that helper for a pipeline-level property instead of registering a colliding row.",
       "cases": [
         {
           "id": "over-broad-ggm-cover",
           "what": "substitute a dyadically-valid but over-broad GGM cover whose node spans an unrevealed real leaf (spec line 96's leaf-exact-cover rule)",
-          "pending": {
-            "task": "G19",
-            "row_id": "content-fine-root-over-broad-cover",
-            "outcome_kind": "error",
-            "expected": "fine-root-over-broad-cover",
-            "why": "G19 row (2), against a known-good opening fixture (tasks/G.md G19). The code already exists in G13's taxonomy.",
-            "hazard": "R7 also lists this mutation `constructed via G, rejected through the pipeline`. As with the covered-unit route above, R's wrapper surfaces the inner code unchanged, so a G-level and an R-level row would collide on `fine-root-over-broad-cover`. One row, one owner; the other layer asserts it as a property."
-          }
+          "rows": [
+            "content-fine-root-over-broad-cover"
+          ]
         }
       ]
     },
@@ -697,7 +688,7 @@
       "why": "D75 kept both routes to `fine_root` — each unit's own leaf-exact GGM sub-cover (R2) and the file's `s_root` (R4) — and left an owed check that they agree. They already do, transitively: a cover seed that does not descend from `s_root` derives different leaf salts, hence different leaves, hence a different folded root, so R2's per-unit binding rejects it as `fine-root-binding-failed`; reaching the signed `fine_root` anyway would be a Merkle collision. The observable outcome is therefore the code G19's pending row already claims, and `check_registry` would correctly refuse the pair. An explicit cover-vs-`s_root` comparison would not help: placed after R4 it is unreachable behind the same fold, and placed before R4 it would displace the spec-mandated `partial-reveal-salt-leak-s-root` verdict on a bundle that both leaks `s_root` and ships an inconsistent cover.",
       "instead": "Asserted as a named R5 pipeline test, `d75_a_cover_seed_not_descending_from_s_root_is_rejected` in `crates/antseal-core/src/verify/pipeline.rs`, paired with `d75_an_s_root_that_does_not_rebuild_fine_root_is_rejected` (`fine-root-rebuild-mismatch`) so both directions of the agreement are pinned with distinct codes from distinct stages.",
       "record": "docs/decisions/D75-full-reveal-cover-shape.md, section `Consequences`; the discharge is recorded in the R5 pipeline module docs.",
-      "warning": "Adding this as a row will break Q7's distinctness assertion against G19's `content-fine-root-binding-failed`. That is the harness working, not a bug to route around."
+      "warning": "Adding this as a row will break Q7's distinctness assertion against G19's `content-fine-root-binding-failed`, which is now IMPLEMENTED (crates/antseal-core/src/test_util/tamper_rows_fine_tree.rs) rather than pending — so the collision is live, not prospective. That is the harness working, not a bug to route around."
     }
   ]
 }

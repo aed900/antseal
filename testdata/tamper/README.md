@@ -35,7 +35,7 @@ reworded spec line turns the check red instead of drifting. Family counts,
 the exact pending set, and the non-row set are pinned in the checker as a
 second layer, so nothing can be deleted to make a run green.
 
-**Pending markers.** F15, G19, R7 and R8 have not run, so the M0 matrix is
+**Pending markers.** F15, R7 and R8 have not run, so the M0 matrix is
 genuinely incomplete. The gap is held as enumerated markers — task, row id,
 and the outcome the row will bind — not by weakening the check. **Q14's
 gate condition is zero pending**, printed by the lane every run.
