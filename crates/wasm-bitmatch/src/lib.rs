@@ -51,7 +51,9 @@ pub mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded_vectors.rs"));
 }
 
-pub use embedded::{EMBEDDED_VECTORS, EmbeddedVector};
+pub use embedded::{
+    EMBEDDED_BYTES_BY_VERSION, EMBEDDED_VECTORS, EmbeddedVector, MAX_EMBEDDED_BYTES_PER_VERSION,
+};
 
 /// Transcript format version. `0` while D29 is a recommendation; Q14 freezes
 /// the report byte format and this becomes `1`.

@@ -33,7 +33,7 @@ Requires the pinned toolchain (which installs the wasm32 target) and node ≥
 
 | Piece | Role |
 | --- | --- |
-| `build.rs` | Walks `testdata/vectors/` — **no hardcoded lists** — and emits an `include_bytes!` table. `cargo::rerun-if-changed` on the tree keeps it fresh. Enforces the same discovery contract as the Q4 runner (`testdata/vectors/README.md`); a stray or misfiled file fails the **build**. |
+| `build.rs` | Walks `testdata/vectors/` — **no hardcoded lists** — and emits an `include_bytes!` table. `cargo::rerun-if-changed` on the tree keeps it fresh. Enforces the same discovery contract as the Q4 runner (`testdata/vectors/README.md`); a stray or misfiled file fails the **build**. Also enforces D87's budget: **2 MiB of embedded bytes per `v<n>/` directory**, over which the build fails with the reason and the sanctioned fix. |
 | `src/lib.rs` | `transcript()` executes every embedded vector through `antseal_core`'s executor and serialises the outcomes; `transcript_bytes()` is the byte contract. Failures are **recorded** (`status: "failed"` + error text), never raised, so the function is total and a divergence is a diffable byte difference rather than a trap. |
 | `src/bin/bitmatch-emit.rs` | Native side: writes `transcript_bytes()` to a file. |
 | wasm exports | `bitmatch_len()`, `bitmatch_ptr()`, `bitmatch_transcript_version()` — a raw C ABI over two integers. The module has **zero imports** (asserted by the runner). |
@@ -75,6 +75,18 @@ executor recomputed (length-prefixed and domain-separated). That is Q5's
 the recomputation changes the digest even where it would not (yet) flip a
 pass/fail verdict. Only the digest is ever surfaced — the recomputed key
 material never leaves the executor (project rule 6).
+
+### Why the vectors are embedded rather than read at run time (D87)
+
+Measured at `aa169ac`: the embedded vectors are **2.32 %** of the 25.5 MB
+debug artifact (whose 83.7 % is DWARF) and **0.73 %** of the lane's
+13.71 s, while *executing* them is **90.1 %**. Reading the tree through
+the Node host would buy back 0.10 s and cost the three properties this
+harness is built on — zero imports, zero unsafe operations, and "both
+sides execute identical bytes" as a link-time fact rather than a claim
+about the runner's plumbing. The budget is per **format version**, not
+global: Q6 retains every released version forever, so v2 arriving beside
+v1 is the contract working.
 
 ## Adding vectors, kinds, and format versions
 

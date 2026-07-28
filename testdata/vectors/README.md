@@ -371,6 +371,14 @@ future `v2/` gets its own `FROZEN.sha256` and neither disturbs nor releases
 wiring — but a version directory **without** a manifest is a hard failure,
 because its vectors would be unfrozen and deletable in silence.
 
+**Budget (D87).** `crates/wasm-bitmatch/build.rs` embeds every vector into
+the bit-match artifact and enforces a ceiling of **2 MiB of embedded bytes
+per `v<n>/` directory** (`*.json` less `INDEX.json`). It is per version on
+purpose — retention is per version, so a new version gets its own budget
+and never competes with an older one's. A breach fails the build; the fix
+is a reviewed raise in `build.rs` and D87, never deleting or shrinking a
+committed vector. Today `v1` uses 590 280 B, 28.15 % of its budget.
+
 ### What changes at Q14
 
 | | now (`status pre-freeze`) | after Q14 (`status frozen`) |
