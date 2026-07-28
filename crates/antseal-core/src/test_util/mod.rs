@@ -69,7 +69,10 @@
 //!   dispatch, and execution (schema doc: `testdata/vectors/README.md`).
 //!   Deliberately WASM-safe (parses/executes **bytes**; zero I/O) so the
 //!   Q5 native↔WASM bit-match lane reuses the identical execution path —
-//!   only file discovery lives in the native runner test.
+//!   only file discovery lives in the native runner test. Also the home of
+//!   the **cross-kind** helpers — hex coding and
+//!   [`first_difference`](vectors::first_difference), the JSON diff locator
+//!   every executor and regenerator reports a mismatch through (R31).
 //! - [`vectors_cbor_diag`] — the **diagnostic sidecar** renderer the
 //!   `manifest` and `bundle` kinds share (F12): one canonical CBOR item,
 //!   rendered structurally as JSON. It is the artifact F14's independent

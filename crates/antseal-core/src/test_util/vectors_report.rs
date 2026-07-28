@@ -75,11 +75,9 @@ use super::TEST_MASTER_SECRET_W;
 use super::bundle_fixtures::{
     BuiltFixture, DEFAULT_SEED, FIXTURE_APP_VERSION, FIXTURE_SEAL_ID, build, shapes,
 };
-use super::vectors::{RECOMPUTED_DIGEST_DOMAIN, VectorError, VectorSummary, decode_hex, hex};
-// A generic JSON diff locator that happens to live in G15's module. Shared
-// rather than re-implemented; R31 hoists it into `vectors.rs` beside the other
-// cross-kind helpers once this wave's concurrent edits to that file settle.
-use super::vectors_fine_tree::first_difference;
+use super::vectors::{
+    RECOMPUTED_DIGEST_DOMAIN, VectorError, VectorSummary, decode_hex, first_difference, hex,
+};
 
 /// The registered kind name.
 pub const KIND: &str = "report";

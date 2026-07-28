@@ -39,7 +39,7 @@ use antseal_core::test_util::bundle_fixtures::{
     DEFAULT_SEED, FIXTURE_APP_VERSION, FIXTURE_CLAIMED_TIME, FIXTURE_SEAL_ID, Selection, WorkSpec,
     build, shapes,
 };
-use antseal_core::test_util::vectors_fine_tree::first_difference;
+use antseal_core::test_util::vectors::first_difference;
 use antseal_core::test_util::vectors_manifest::{KIND, regenerate_expect};
 use serde_json::{Value, json};
 

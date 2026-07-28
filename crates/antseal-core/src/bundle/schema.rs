@@ -1505,6 +1505,38 @@ impl<'b> BundleV1<'b> {
         })
     }
 
+    /// Destructure a validated bundle back into its section set — the exact
+    /// inverse of [`Self::new`], and R34's **re-assembly seam**.
+    ///
+    /// The parts bag holds whatever a builder assembled and validation
+    /// happens on the way *out* of it (see [`BundleParts`]); this is the way
+    /// back *in*, so a caller can move a whole section between two decoded
+    /// bundles — one work's reveals under another work's manifest, one
+    /// work's anchors grafted onto another's — and re-encode. That class of
+    /// input is what a hostile relay holding two bundles can cheaply
+    /// produce, and byte-level mutation reaches it only by luck.
+    ///
+    /// **Safe by construction, not by care.** Every field moves out
+    /// untouched, and the only route back to a `BundleV1` is [`Self::new`],
+    /// which re-runs every tier-`[X]` rule. So a recombination either
+    /// produces a bundle that decodes, or is refused by the checks this type
+    /// already owns — there is no way to manufacture an
+    /// invariant-violating `BundleV1` through here.
+    #[must_use]
+    pub fn into_parts(self) -> BundleParts<'b> {
+        BundleParts {
+            manifest: self.manifest,
+            storage_record: self.storage_record,
+            ots_anchors: self.ots_anchors,
+            tsa_anchors: self.tsa_anchors,
+            receipt: self.receipt,
+            covered_reveals: self.covered_reveals,
+            noncovered_reveals: self.noncovered_reveals,
+            touched_files: self.touched_files,
+            full_reveals: self.full_reveals,
+        }
+    }
+
     /// The **exact** bytes of the embedded plaintext manifest envelope,
     /// borrowed from the bundle input — the pre-image of `anchor_digest`
     /// (spec line 75) and the input F9's layer 2 decodes.

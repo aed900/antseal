@@ -18,8 +18,8 @@ use antseal_core::test_util::bundle_fixtures::{
     DEFAULT_SEED, FIXTURE_APP_VERSION, FIXTURE_CLAIMED_TIME, FIXTURE_SEAL_ID, FileSelection,
     Selection, WorkSpec, build, shapes,
 };
+use antseal_core::test_util::vectors::first_difference;
 use antseal_core::test_util::vectors_bundle::{KIND, regenerate_expect};
-use antseal_core::test_util::vectors_fine_tree::first_difference;
 use serde_json::{Value, json};
 
 const VECTOR_PATH: &str = concat!(
