@@ -68,6 +68,7 @@ discovery/reading is native and lives in the runner test.
 | `kind` | Since | `inputs` | `expect` | Executed as |
 | --- | --- | --- | --- | --- |
 | `hkdf-labels` | M0 (C3) | `w` (32-byte hex; must equal the documented fixed test seed) | `vectors`: one entry per registered HKDF label — `label`, `id` (`0x…` LE64 value), `id_domain` (`unit_id`\|`file_id`\|`sentinel`), `info` (hex), `okm` (hex) | full-registry coverage check, then per label: registry `id_domain`/output-length match, `info` re-encoded and compared, `okm` re-derived through the typed API and byte-compared |
+| `commitments` | M0 (C16) | `w` (as above) | `vectors`: `name`, `commitment` (`unit`\|`raw`\|`canon`\|`path`), `domain_tag` (1-byte hex), `salt_label`, `id` (`0x…` LE64), `salt` (hex), `message` (hex), `digest` (hex) | all four commitment kinds covered, then per entry: frozen `(domain_tag, salt_label)` pair checked against the registry, `salt` re-derived through C2's typed API, `digest` recomputed through C6's public API and byte-compared, and the matching `verify_*_commit` accepts the same inputs |
 
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a

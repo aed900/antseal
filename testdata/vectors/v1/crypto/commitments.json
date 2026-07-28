@@ -1,0 +1,135 @@
+{
+  "schema": "antseal-golden-vector",
+  "schema_version": 1,
+  "format_version": "v1",
+  "kind": "commitments",
+  "non_secret": "NON-SECRET test fixture (project rule 6): the master secret W is the documented fixed test seed, bytes 0x00..0x1f (testdata/README.md); every key, salt and seed here derives from it. Never real vault or wallet material.",
+  "description": "Salted-commitment golden vectors (C16/C6): commit = SHA-256(domain_tag || salt || message) with the salt derived as HKDF-SHA256(W, salt_label, id) (MVP-SPEC.md lines 79, 93-95); all four commitment kinds, empty and non-empty messages, non-ASCII paths, and a raw/canon pair sharing one file_salt.",
+  "inputs": {
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "expect": {
+    "vectors": [
+      {
+        "name": "unit-empty",
+        "commitment": "unit",
+        "domain_tag": "02",
+        "salt_label": "unit-salt",
+        "id": "0x0000000000000000",
+        "salt": "c9df9ffe15ec4515625e08ebfe0f3fd5",
+        "message": "",
+        "digest": "a99079f116fa2be329da0807eb07fa07f628653001aba05573b113c427a1075b"
+      },
+      {
+        "name": "unit-short",
+        "commitment": "unit",
+        "domain_tag": "02",
+        "salt_label": "unit-salt",
+        "id": "0x0000000000000001",
+        "salt": "b7ef5515ac4d5d27022f425368b48a55",
+        "message": "74686520756e697420627974657320756e64657220636f6d6d69746d656e74",
+        "digest": "71821aed865d57867db3ddf79d6c258e3384b6f56b1b0bef19e7e81d4316b50b"
+      },
+      {
+        "name": "unit-trailing-zeros",
+        "commitment": "unit",
+        "domain_tag": "02",
+        "salt_label": "unit-salt",
+        "id": "0x0123456789abcdef",
+        "salt": "4b0ddf9eeb57760b61a1158aed0cdfb1",
+        "message": "656e647320696e207a65726f73000000",
+        "digest": "a9286fe2002fe3e0d5877da571763e1a677f0c5c3845f4f5191e07ed59013f43"
+      },
+      {
+        "name": "unit-256-bytes",
+        "commitment": "unit",
+        "domain_tag": "02",
+        "salt_label": "unit-salt",
+        "id": "0x0000000000000002",
+        "salt": "711912682573489e9b53dd9ee05561ca",
+        "message": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "digest": "05df15df11f55577b7f37e9a2656eb9309be9c0e550799f886d01b957ff66e9d"
+      },
+      {
+        "name": "raw-binary",
+        "commitment": "raw",
+        "domain_tag": "03",
+        "salt_label": "file-salt",
+        "id": "0x0000000000000000",
+        "salt": "b7187c447b12ae02eb06935169460397",
+        "message": "89504e470d0a1a0a0000000d49484452",
+        "digest": "0b6aff5f98910391dd7c82344c506a56ef761215e94416adf2ed1fe0855f9a91"
+      },
+      {
+        "name": "raw-empty-file",
+        "commitment": "raw",
+        "domain_tag": "03",
+        "salt_label": "file-salt",
+        "id": "0x000000000000002a",
+        "salt": "2f656d7c2eb53064d9d2ae79684b8a90",
+        "message": "",
+        "digest": "ca0e806db6d3bf2b52b286a214289466d8410751e452eae36d1c2bfbd672f1b1"
+      },
+      {
+        "name": "canon-text",
+        "commitment": "canon",
+        "domain_tag": "04",
+        "salt_label": "file-salt",
+        "id": "0x0000000000000000",
+        "salt": "b7187c447b12ae02eb06935169460397",
+        "message": "6669727374206c696e650a7365636f6e64206c696e650a",
+        "digest": "93433668e55ebef0b06a4d7957a779500bcea64bfeca13f2ecb8dd10a7d8e231"
+      },
+      {
+        "name": "raw-text-same-file",
+        "commitment": "raw",
+        "domain_tag": "03",
+        "salt_label": "file-salt",
+        "id": "0x0000000000000000",
+        "salt": "b7187c447b12ae02eb06935169460397",
+        "message": "6669727374206c696e650d0a7365636f6e64206c696e65",
+        "digest": "e4f8f3fa216352f784d1ca533728a798fd3d59eda64d2d1ae2949a6c6e6b99a9"
+      },
+      {
+        "name": "canon-nfc-text",
+        "commitment": "canon",
+        "domain_tag": "04",
+        "salt_label": "file-salt",
+        "id": "0x000000000000002a",
+        "salt": "2f656d7c2eb53064d9d2ae79684b8a90",
+        "message": "65cc81206973204e46432d636f6d706f73656420746f20c3a90a",
+        "digest": "c7e0b1beae2249143bfa1a00b8e72713ad235c1db54724ebe14dd4e6d7590bc7"
+      },
+      {
+        "name": "path-ascii",
+        "commitment": "path",
+        "domain_tag": "05",
+        "salt_label": "path-salt",
+        "id": "0x0000000000000000",
+        "salt": "d534c94d4939156629c3a50fb2f00c02",
+        "message": "646f63732f636861707465722d6f6e652e6d64",
+        "digest": "ce602df831d1fd09de277388e929c4be8ed9e4e4f3e39bfb23c1ba2a4b9ab235"
+      },
+      {
+        "name": "path-non-ascii",
+        "commitment": "path",
+        "domain_tag": "05",
+        "salt_label": "path-salt",
+        "id": "0x000000000000002a",
+        "salt": "fd2ae1cf359137fb6fa0e63385e85419",
+        "message": "6e6f7465732fc3a974c3a92fe697a5e8a8982e747874",
+        "digest": "2da5ecfe3ed1331006af987df3f9385aab73e063d858e12417ce62faf7fd0365"
+      },
+      {
+        "name": "path-empty",
+        "commitment": "path",
+        "domain_tag": "05",
+        "salt_label": "path-salt",
+        "id": "0x0000000000000007",
+        "salt": "72d7fb4d4f71043704a85d61c392bdfe",
+        "message": "",
+        "digest": "61cf3888afea4fcdc6ef717c9eeeb1457f2073dfe5dee63701dbe734f6f636c1"
+      }
+    ]
+  }
+}
