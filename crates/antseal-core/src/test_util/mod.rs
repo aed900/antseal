@@ -41,6 +41,14 @@
 //!   mutations decision D81 and R8 demoted to recorded non-rows, since an
 //!   AEAD tag comparison and a commitment opening are each one bit and
 //!   cannot attribute a cause.
+//! - [`bundle_mutators`] — R10's hostile-bundle generator: the structure-
+//!   aware mutation set, the seed corpus (valid R6 shapes + R7/R8 tamper
+//!   fixtures), and the `verify_bundle` driver. Shared verbatim by R10's
+//!   in-suite proptest and the cargo-fuzz target, so the mutators are
+//!   exercised on every CI build rather than only when someone fuzzes, and
+//!   a fuzzer crash reproduces through the identical code path. Takes raw
+//!   entropy rather than an `Arbitrary` impl, so no fuzzing dependency
+//!   enters this crate.
 //! - [`bundle_fixtures`] — R6's seeded, deterministic constructor for valid
 //!   works and `.sealproof` bundles of every M0 shape. The substrate R7–R10
 //!   mutate and R9's golden vectors pin; the M3 production builder (R13)
@@ -82,6 +90,8 @@
 //! whole workspace.
 
 pub mod bundle_fixtures;
+#[cfg(feature = "test-util")]
+pub mod bundle_mutators;
 pub mod fixture_rng;
 #[cfg(feature = "test-util")]
 pub mod strategies;

@@ -421,9 +421,49 @@ discovered as a surprise. Class 5 is the only class where the hybrid
 structure means two independent assumptions must *both* fail.
 
 **Relationship to the tamper matrix.** The tamper matrix (Q7/Q8) exercises
-the *binding* side: a wrong salt, a wrong seed, an altered manifest field or
-a swapped unit must each fail with a distinct error. The confirmation-attack
-doc-tests exercise the *hiding* side. Neither substitutes for the other.
+the *binding* side: every mutation of a valid artifact must fail. The
+confirmation-attack doc-tests exercise the *hiding* side. Neither
+substitutes for the other.
+
+An earlier version of this note said each such mutation must fail with a
+**distinct** error, and named "a swapped unit" among them. That is now
+wrong in an instructive way, and class 4 is why. Decision D81 established
+that a swapped unit, a flipped ciphertext byte and a wrong `k_u` are **one
+observable failure**: a non-committing AEAD's verdict is a single Poly1305
+tag comparison over key, nonce, AAD, ciphertext and lengths, so it produces
+one bit and cannot attribute a cause. The matrix keeps one row and records
+the others as non-rows with named tests. R8 then found the same collapse at
+the commitment layer — a salted opening is one bit too, so a substituted
+`unit_salt` and an altered `unit_commit` are indistinguishable. The
+generalisation, now in `docs/testing/error-code-contract.md`: **error codes
+name the check that failed, not the field that was wrong**, and any check
+that is a single comparison over several inputs cannot carry a cause. Every
+mutation must still *fail*; only the distinctness claim was too strong.
+
+**The M0 authentication boundary, measured.** R10 swept every single-byte
+mutation of a valid `.sealproof` bundle and recorded which ones still
+verify. The answer is exact and small: the **storage record** (32-byte
+content address + 24-byte manifest nonce + 32-byte manifest key = 88 bytes)
+and, in an anchored bundle, the **anchor artifacts** (67 bytes across the
+three fixture artifacts). Every other byte is authenticated — by the
+manifest signature where it is manifest-side, and by a commitment or the
+AEAD where it is bundle-side.
+
+Both exemptions are deliberate and both are stated elsewhere, but the
+measurement is worth keeping because it is the only place the boundary is
+asserted as an *equality* rather than as an intention:
+
+- the storage record is M3 linkage, and MVP-SPEC.md line 119 makes storage
+  the product's bonus rather than its proof — R20 renders it as a layer
+  without letting it gate a verdict;
+- the anchor artifacts are inert only until **R12** wires the anchor stage
+  at M2. That one is a moving boundary, so the test that pins it is written
+  to go red when R12 lands, with the instruction to invert it.
+
+Enforcement: `crates/antseal-core/tests/verify_fuzz.rs`
+(`the_unauthenticated_region_at_m0_is_exactly_the_storage_record`,
+`m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`). A
+crash-free fuzz run says nothing about this; the equality does.
 
 **Related records.** `docs/threat-model.md` (Q12, this block verbatim plus
 the M4 threat sections), `docs/zeroization-audit.md` (C21),
