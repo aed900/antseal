@@ -340,6 +340,30 @@
   - Release checklist (with Q) includes the per-version vector gate
   - Page displays the verified bundle's format version for every historical vector
 
+### R29 — Retire R5's hand-built smoke fixture in favour of R6's constructor
+- Milestone: M0
+- Size: S
+- Deps: R6 (landed)
+- Spec: Verification (lines 167–169) — one source of truth for "what a valid bundle looks like"
+- Do: `verify::pipeline::tests::fixture` is ~280 lines of hand-built work that predates R6 and, by its own module comment, lives outside `test_util` deliberately so "nothing outside R5 can depend on it and R6 has nothing to unpick". R6 now exists and covers a strict superset of its shapes (its three-file work *is* R6's `shapes::multi_file`). Decide whether to (a) rewrite R5's tests against R6's shapes and delete the hand-built fixture, or (b) keep it as a deliberate independent construction and add an assertion that the two agree. Either is defensible; what is not defensible is leaving two unrelated definitions of a valid bundle drifting apart, since a bug that reached both would be invisible to both.
+- Accept:
+  - One of the two options implemented, with the reasoning recorded
+  - If (b): a test asserting R5's fixture and the corresponding R6 shape produce the same verification report shape (not the same bytes — the RNG seeds differ by design)
+  - R5's stage-order pins keep working unchanged either way; they are the reason the fixture exists and must not be weakened to make the merge easier
+- Notes: Surfaced at R6/R7 (M0 wave 5). Low risk, and cheapest to do before R9's vectors bind either fixture's bytes.
+
+### R30 — Assert the report's native↔wasm32 byte-match over R6-constructed bundles
+- Milestone: M0
+- Size: S
+- Deps: R6 (landed), R9; Q: the wasm32 execution lane (P14/Q5, landed)
+- Spec: Verification — WASM bit-match (line 169); M0 milestone (line 153)
+- Do: R6 is `test-vectors`-gated precisely so the wasm32 lane can build bundles *in-process*, and today the wasm32 lane runs its unit tests (including R6's own) but nothing asserts that a report serialized on wasm32 is byte-identical to the native one for the same input. R9 will assert this over *committed* vectors; this asserts it over *constructed* ones, which covers shapes no vector file pins and costs nothing extra to run. Add a test that, for each named R6 shape, serializes the `VerificationReport` canonically and compares against a value the native lane computed — or, more cheaply, compares a digest of the serialized report against a committed per-shape constant that both lanes check.
+- Accept:
+  - Every named R6 shape has a report digest asserted on both native and wasm32
+  - A shape whose bytes change fails both lanes with the same message, so a drift is diagnosed once rather than twice
+  - No committed artifact carries secret material beyond what the bundle legitimately discloses (R6's existing hygiene assertion extends to it)
+- Notes: Surfaced at R6 (M0 wave 5). Deliberately *not* folded into R9: R9 owns the committed-vector contract and its retention policy, whereas this is an in-process property with no artifact to retain. Sequence it after R9 so the report serialization it digests is the frozen one.
+
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.

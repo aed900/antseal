@@ -242,9 +242,9 @@ kebab-case id, and never edit an existing row's expected code.
      applies to the other five `wrong-length-*` classes.
 
 - **2026-07-28 (M0 wave 5, R6/R7)** — R7 landed R's structural registry slice
-  (`antseal_core::test_util::tamper_rows_structural`): **22 rows**, merged
+  (`antseal_core::test_util::tamper_rows_structural`): **24 rows**, merged
   into `tests/tamper_matrix.rs` so the layer-2 cross-domain sweep now runs
-  over **56 rows**. **No code was minted.** Every row binds a code R1–R5 had
+  over **58 rows**. **No code was minted.** Every row binds a code R1–R5 had
   already shipped, which is the outcome the contract is meant to produce: a
   task whose whole job is writing rows should find the taxonomy already
   adequate, and a row that could not find a distinct code would have been a
@@ -276,10 +276,13 @@ kebab-case id, and never edit an existing row's expected code.
      `every_unprefixed_verify_code_has_a_row_or_a_named_owner`, which maps
      the *error enum* onto rows. Every code in R's unprefixed namespace must
      be claimed by a row, by a Q7 seed row, or by an entry naming the task
-     that owes it (four codes, all R8's). Adding a structural invariant
+     that owes it (**two** codes, both R8's). Adding a structural invariant
      without one of the three now fails CI — the direction Q8 structurally
      cannot check, because it catches an invariant nobody wrote a spec case
-     for.
+     for. It immediately earned itself: it surfaced that R's *pipeline-level*
+     `padded-length-mismatch` and `non-zero-padding` had no row and no owner
+     — C's seed rows pin the `strip_padding` primitive under different codes,
+     and no task's text named the pipeline pair — so R7 added them.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

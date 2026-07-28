@@ -185,6 +185,35 @@ fn true_length_range_mismatch() -> ActualOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// (2b) padding, END TO END through the pipeline
+// ---------------------------------------------------------------------------
+//
+// Q7's seed rows already pin C8's `strip_padding` primitive
+// (`crypto-padding-length-mismatch`, `crypto-non-zero-padding`). These are the
+// R-level codes the *pipeline* raises for the same two defects, and they are
+// genuinely distinct outcomes: R's payload is recomputed from the manifest's
+// `true_length` in wide arithmetic so the rendered error is identical on
+// native and wasm32, which is a claim only a pipeline row can exercise.
+//
+// The mis-encryption is C9's own (`crypto::unit_aead::mis_encrypt`), so both
+// rows prove the ordering that matters: the padding rejections fire strictly
+// AFTER the AEAD authenticates, never as a length heuristic before it.
+
+fn padded_length_mismatch() -> ActualOutcome {
+    pipeline(&mixed(&Tweak {
+        over_pad: Some(3),
+        ..Tweak::default()
+    }))
+}
+
+fn non_zero_padding() -> ActualOutcome {
+    pipeline(&mixed(&Tweak {
+        non_zero_pad: Some(3),
+        ..Tweak::default()
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // (3) referential integrity
 // ---------------------------------------------------------------------------
 
@@ -467,6 +496,20 @@ pub const ROWS: &[TamperRow] = &[
         mutation: "record true_length = range width + 1 for a revealed unit",
         expected: ExpectedOutcome::ErrorCode("true-length-range-mismatch"),
         exercise: true_length_range_mismatch,
+    },
+    TamperRow {
+        id: "verify-padded-length-mismatch",
+        base: "r6-multi-file-mixed",
+        mutation: "encrypt a revealed unit one 256-byte pad bucket too long",
+        expected: ExpectedOutcome::ErrorCode("padded-length-mismatch"),
+        exercise: padded_length_mismatch,
+    },
+    TamperRow {
+        id: "verify-non-zero-padding",
+        base: "r6-multi-file-mixed",
+        mutation: "encrypt a revealed unit with a non-zero final pad byte",
+        expected: ExpectedOutcome::ErrorCode("non-zero-padding"),
+        exercise: non_zero_padding,
     },
     // ── referential integrity ──
     TamperRow {
@@ -786,8 +829,6 @@ mod tests {
     /// catches an invariant nobody wrote a spec case for.
     const OWED_BY_ANOTHER_TASK: &[(&str, &str)] = &[
         ("unit-decrypt-failed", "R8 — flipped ciphertext byte"),
-        ("padded-length-mismatch", "R8 — over-padded unit end to end"),
-        ("non-zero-padding", "R8 — non-zero pad byte end to end"),
         (
             "unit-commit-mismatch",
             "R8 — altered manifest field, non-covered unit",

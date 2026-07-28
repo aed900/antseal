@@ -686,6 +686,16 @@
       "why": "D28 row 9. On a TEXT file the concatenation check opens `canon_commit`, so a corrupt `raw_commit` survives row 7 and is caught by the raw-mirror binding instead — the same corrupted field reaching a different code by a different route, which is exactly why both rows exist."
     },
     {
+      "row_id": "verify-padded-length-mismatch",
+      "owner": "R",
+      "why": "The pipeline-level counterpart of the `over-padded-unit` spec case, whose row (`crypto-padding-length-mismatch`) pins C8's `strip_padding` primitive. R's code is a genuinely different outcome: its payload is recomputed from the manifest's `true_length` in wide arithmetic so the rendered error is byte-identical on native and wasm32 (spec line 169), which only a pipeline row exercises. Uses C9's own mis-encryptor, so the row also proves the padding rejection fires strictly AFTER the AEAD authenticates."
+    },
+    {
+      "row_id": "verify-non-zero-padding",
+      "owner": "R",
+      "why": "Same basis, other arm: a pad byte that is non-zero at the correct length. `crypto-non-zero-padding` (itself a project addition) pins the primitive; this pins the pipeline verdict."
+    },
+    {
       "row_id": "verify-revealed-unit-file-not-touched",
       "owner": "R",
       "why": "D80's rule (docs/decisions/D80-revealed-unit-touched-file.md), landed at R5: a revealed unit's file MUST appear in `touched_files`. Not in line 168's enumeration because the rule did not exist when the line was written. Needs both layers decoded at once to observe, which is why R5 was the first task that could."

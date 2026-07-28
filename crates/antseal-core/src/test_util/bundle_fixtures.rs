@@ -442,6 +442,18 @@ pub struct Tweak {
     pub drop_touched_file: Option<u64>,
     /// Ship this fine-tree-covered unit in `noncovered_reveals` instead.
     pub misplace_covered_unit: Option<u64>,
+    /// Encrypt this unit one 256-byte pad bucket too long, so it
+    /// authenticates and then fails the `padded_length` recompute.
+    ///
+    /// `test-util` only: C9's mis-encryptors live behind that feature, and a
+    /// knob that were silently ignored on the smaller feature tier would be
+    /// worse than an absent one.
+    #[cfg(feature = "test-util")]
+    pub over_pad: Option<u64>,
+    /// Encrypt this unit with a non-zero final pad byte, so it
+    /// authenticates at the right length and then fails the all-zero check.
+    #[cfg(feature = "test-util")]
+    pub non_zero_pad: Option<u64>,
     /// Ship this non-covered unit in `covered_reveals` instead.
     ///
     /// A covered reveal must carry a non-empty cover, so the entry borrows
@@ -680,9 +692,7 @@ pub fn build_tweaked(spec: &WorkSpec, selection: &Selection, tweak: &Tweak) -> B
             // not the raw mirror (the mirror lives in the raw domain, spec
             // line 94) — the single rule `FileEntry::new` re-checks.
             let covered = planned.fine_tree && kind == UnitKind::Normal;
-            let (ciphertext, nonce) =
-                encrypt_unit(w(), &seal_id(), UnitId(unit_id), &bytes, &mut rng)
-                    .expect("fixture encryption succeeds");
+            let (ciphertext, nonce) = encrypt_for(tweak, unit_id, &bytes, &mut rng);
             let index_in_units = units.len();
             match kind {
                 UnitKind::Normal => planned.normal_units.push(index_in_units),
@@ -784,6 +794,46 @@ pub fn build_tweaked(spec: &WorkSpec, selection: &Selection, tweak: &Tweak) -> B
         files: facts,
         revealed_unit_ids: revealed,
     }
+}
+
+/// Encrypt one unit, honouring the two padding mis-encryption knobs.
+///
+/// The mis-encryptors are C9's own (`crypto::unit_aead::mis_encrypt`), never
+/// a second padding implementation here: a fixture that padded wrongly by
+/// its own arithmetic would stop proving anything about the real formula the
+/// day that formula changed.
+fn encrypt_for(
+    tweak: &Tweak,
+    unit_id: u64,
+    bytes: &[u8],
+    rng: &mut FixtureRng,
+) -> (Vec<u8>, crate::crypto::unit_aead::Nonce24) {
+    #[cfg(feature = "test-util")]
+    {
+        use crate::crypto::unit_aead::mis_encrypt;
+        if tweak.over_pad == Some(unit_id) {
+            return mis_encrypt::encrypt_unit_overpadded(
+                w(),
+                &seal_id(),
+                UnitId(unit_id),
+                bytes,
+                rng,
+            )
+            .expect("fixture mis-encryption succeeds");
+        }
+        if tweak.non_zero_pad == Some(unit_id) {
+            return mis_encrypt::encrypt_unit_nonzero_padding(
+                w(),
+                &seal_id(),
+                UnitId(unit_id),
+                bytes,
+                rng,
+            )
+            .expect("fixture mis-encryption succeeds");
+        }
+    }
+    let _ = tweak;
+    encrypt_unit(w(), &seal_id(), UnitId(unit_id), bytes, rng).expect("fixture encryption succeeds")
 }
 
 /// The tweaks that alter what the **manifest** claims about a unit's extent.
