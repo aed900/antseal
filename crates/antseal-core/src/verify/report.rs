@@ -155,6 +155,21 @@ pub enum SignatureScheme {
     HybridPq,
     /// Ed25519-only `sig_policy` (the ML-DSA WASM-probe fallback).
     Ed25519Only,
+    /// A `sig_policy` that is registered and satisfied but is neither of
+    /// the two named shapes — today only ML-DSA-65 alone, tomorrow any
+    /// future registered algorithm set.
+    ///
+    /// It exists because [`PolicyLabel::Other`] exists and is reachable:
+    /// F5 accepts any non-empty, duplicate-free, registered policy, so a
+    /// manifest may legitimately declare `sig_policy = [ml-dsa-65]`.
+    /// Collapsing that into [`Self::NotEvaluated`] would report "we did
+    /// not check the signatures" about a bundle whose signatures were
+    /// checked and passed — the one thing a verdict label must never do.
+    /// R18 renders it as the policy's own algorithm list rather than a
+    /// slogan.
+    ///
+    /// [`PolicyLabel::Other`]: crate::crypto::sig_policy::PolicyLabel::Other
+    Other,
 }
 
 /// Evidence-layer outcome (MVP-SPEC.md line 118). A report is only

@@ -35,25 +35,38 @@
 //!   runs this stage **after** the per-unit stages, since it consumes
 //!   their verified bytes.
 //!
-//! The orchestration itself —
-//! `verify_bundle(bytes, opts) -> Result<VerificationReport, VerifyError>`
-//! and `verify_bundle_collecting(..) -> Result<_, VerifyFailures>` — is
-//! task R5 and lands here later, over the stage order of MVP-SPEC.md
-//! lines 116–118: F strict decode → [`check_structural`] (R3) →
-//! [`verify_revealed_unit`] per revealed unit (R2) →
-//! [`check_file_stages`] (R4) → `sig_policy`/signature stage (C14) →
-//! anchor stage. Everything in this module is WASM-safe: pure data, no
-//! I/O, no async.
+//! - [`coherence`] (task R5) — the bundle ↔ manifest rules neither F8
+//!   nor F5 can decide alone ([`check_coherence`]): decision D80's
+//!   touched-file coverage, and the agreement between a unit's reveal
+//!   section and the way the signed manifest binds it. Runs as the tail
+//!   of the structural stage.
+//!
+//! - [`pipeline`] (task R5) — the orchestration itself:
+//!   [`verify_bundle`] (fail-fast, normative) and
+//!   [`verify_bundle_collecting`] (rendering), over the **frozen** stage
+//!   order of MVP-SPEC.md lines 116–118: F strict decode →
+//!   [`check_structural`] + [`check_coherence`] →
+//!   [`verify_revealed_unit`] per revealed unit (R2) →
+//!   [`check_file_stages`] (R4) → `sig_policy`/signature stage (C14) →
+//!   anchor stage (M0: `absent` per artifact). [`VerifyStage`] is that
+//!   order as a value. Everything in this module is WASM-safe: pure
+//!   data, no I/O, no async.
 
+pub mod coherence;
 pub mod error;
 pub mod file_stages;
+pub mod pipeline;
 pub mod report;
 pub mod structural;
 pub mod unit_stages;
 
+pub use coherence::{
+    CoherenceBundleView, CoherenceUnit, RevealSection, RevealedUnitRef, check_coherence,
+    check_reveal_sections, check_touched_coverage,
+};
 pub use error::{
-    ContentCommitKind, FullRevealMaterial, LengthField, TilingViolationKind, VerifyError,
-    VerifyFailures,
+    BindingMode, ContentCommitKind, FullRevealMaterial, LengthField, TilingViolationKind,
+    VerifyError, VerifyFailures,
 };
 pub use file_stages::{
     FileCanonMode, FileFineTree, FileRevealKind, FileRevealShape, FileRevealSummary,
@@ -63,6 +76,7 @@ pub use file_stages::{
     check_full_reveal_content, check_raw_mirror, classify_file_reveal, concat_non_mirror_bytes,
     participates_in_concat,
 };
+pub use pipeline::{VerifyOptions, VerifyStage, verify_bundle, verify_bundle_collecting};
 pub use report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
     REPORT_VERSION, RawMirrorReveal, ReportEncodeError, RevealSet, SignatureScheme,
