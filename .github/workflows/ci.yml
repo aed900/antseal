@@ -31,6 +31,16 @@
 #        `name:` unchanged, so the required-status context is unaffected).
 #        Q7's distinct-error harness plus Q8's completeness registry
 #        (testdata/tamper/MATRIX.json) mapped 1:1 onto MVP-SPEC.md line 168
+#   Q13/Q37: traceability — LANDED as a NEW lane. It is a NEW
+#        required-status context: docs/ci-verification.md needs its row and
+#        the branch-protection payload needs +1. NEITHER IS DONE HERE —
+#        that file was held by another lane in this wave, and changing
+#        branch protection is an external action requiring express consent.
+#        Both are reported as outstanding. Python-only, no cargo. Checks the
+#        verification-coverage matrix (docs/testing/verification-matrix.md)
+#        resolves every test it names, and that D84 section 7's freeze-boundary
+#        rows have not drifted between their copies. Script:
+#        scripts/check-traceability.py (self-tests first, every run)
 #   Q9:  fuzz-smoke — per-PR cargo-fuzz smoke, fixed budget (mount point
 #        below); the nightly long run is a separate scheduled workflow, and
 #        cargo-fuzz needs its own nightly-toolchain pin, independent of
@@ -575,3 +585,38 @@ jobs:
             exit 1
           fi
           echo "OK: no vault-export/wallet-key signatures in the tree."
+
+  # Q13 (live) + Q37: the two checks over documented claims that nothing else
+  # verifies. Neither needs cargo, so this lane is seconds, not minutes.
+  #
+  #   --matrix           docs/testing/verification-matrix.md maps every
+  #                      Verification-section bullet (MVP-SPEC.md lines
+  #                      165-175) to named tests. The check asserts every
+  #                      reference RESOLVES: a named Rust test is defined in
+  #                      the named file, a doc-test line lands on a fence, a
+  #                      named path exists. Rows are referenced BY NAME, never
+  #                      by line number, because D83 will move the GGM
+  #                      cover-node encoding and its tests with it.
+  #   --freeze-boundary  D84 section 7's v1-freeze-boundary rows are carried
+  #                      byte-identically by tasks/Q.md (the Q14 checklist)
+  #                      and docs/format/anchor-artifact-limits.md (what A5
+  #                      and A11 read). The check re-cuts the text from the
+  #                      decision record and byte-compares every copy.
+  #
+  # Like secret-guard, vector-freeze and wasm-bitmatch, the lane SELF-TESTS
+  # FIRST: it corrupts each target in a scratch copy of the tree and requires
+  # red, so a green run is trustworthy rather than merely green.
+  traceability:
+    name: traceability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test (prove both checks can fail), then check
+        run: |
+          set -u
+          python3 --version
+          if ! python3 scripts/check-traceability.py --self-test; then
+            echo "::error::traceability self-test FAILED — a check stayed green over corrupted input, so a green run below would prove nothing"
+            exit 1
+          fi
+          python3 scripts/check-traceability.py
