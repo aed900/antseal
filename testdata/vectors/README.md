@@ -103,6 +103,8 @@ kind with no further wiring.
 | `sig-reject` | M0 (C15) | `w`, `alg` (`ed25519`\|`ml-dsa-65`), `ctx` (must equal the frozen signature context), `body` (hex) | `base` (honest `public_key`/`signature` hex) + `cases`: per case an `id`, a `class`, a `why`, a **source** recipe for the key and the signature bytes, and the `expect`ed outcome (`accept` or a stable `crypto-…` code) | `base` re-derived and byte-compared; per-algorithm class coverage; expected codes checked against the real `CryptoError` code set; every case's bytes rebuilt from its recipe and run through C14's full verification path (`sig_policy::verify_body`). Format doc: `v1/sig-reject/README.md` |
 | `fine-tree` | M0 (G15) | `w`, `s_root_label` (the documented synthetic-seed label) + `cases`: per case a `name`, the file `content` (hex; its length **is** `n`) and the `openings` to prove (`name`, `start`, `length`) | `s_root` (hex) + per case `n`, `depth`, `slot_count`, `ggm_nodes` (every used grid node's seed), `salts` (every `salt_i`), `merkle_nodes` (every RFC 6962 content-tree node with its canonical slot and hash), `fine_root`, and per opening the full range proof — `cover` (leaf-exact, with seeds), `boundary` (with hashes), `revealed_bytes`, `releases_s_root` | the **whole** `expect` object is recomputed from `inputs` through the public API and compared as one value, so a missing/extra/reordered entry fails like a wrong byte; then the assertions a value comparison cannot state: each leaf is *also* derived LSB-first and must differ (the MSB-first pin), every wholly-unused grid slot must be refused by `SaltTree::seed_at`, every opening is run back through `verify_range`, and `n = 0` must be declined by all four entry points. Format doc: `v1/fine-tree/README.md` |
 
+| `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
+
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a
 kind = one new dispatch arm + executor in `test_util::vectors`, zero runner
@@ -115,10 +117,6 @@ changes):
 - `bundle` (F13, M3): as `manifest` plus reveal selection; `expect` adds
   bundle bytes and the redaction structure. Includes the **empty-anchor**
   must-exist vector (MVP-SPEC.md line 153).
-- `report` (R/Q5): `inputs` = a bundle (hex or by reference to a sibling
-  `bundle` vector id); `expect` = the canonical verification-report bytes
-  (hex of the D29 compact-JSON encoding) — the native↔WASM bit-match
-  medium.
 - `anchor` (A, M2): recorded `.ots`/TSA-token fixtures with expected
   per-anchor verdict states — slots in as a kind with no envelope change
   (an explicit Q4 accept: M2 anchor vectors need no redesign).
@@ -230,8 +228,9 @@ silently ignored.
 ### Registration contract for downstream vector tasks
 
 **F12** (`manifest`), **F13** (`bundle`), **G15** (`fine-tree`) and **R9**
-(`report`) each land a kind that is currently a `pending` entry. The move
-from pending → landed is one commit:
+(`report`) each land a kind that starts life as a `pending` entry — G15 and
+R9 have done so; F12 and F13 are still owed. The move from pending → landed
+is one commit:
 
 1. Commit the vector file(s) under `v1/<component>/`.
 2. Add the kind's payload types + executor arm in

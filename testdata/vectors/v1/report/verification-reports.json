@@ -1,0 +1,1353 @@
+{
+  "schema": "antseal-golden-vector",
+  "schema_version": 1,
+  "format_version": "v1",
+  "kind": "report",
+  "non_secret": "NON-SECRET test fixture (project rule 6): every bundle below is built by R6's constructor from the documented fixed test seed W = bytes 0x00..0x1f (testdata/README.md) under the fixed fixture seal_id, RNG seed and app_version pinned in `inputs`. Reports carry only public statement data — ids, sizes, spans, states — and the executor re-derives every k_u, unit_salt, path_salt, file_salt and s_root of each work and requires none of them to appear in the pinned bytes. Never real vault material.",
+  "description": "Verification-report golden vectors (R9): every M0 shape's canonical bundle mapped to the byte-exact serialized VerificationReport that `verify_bundle` produces for it — full text reveal, partial reveal with leaf-exact covers, per-unit reveal at unbalanced n = 6 (MSB-first GGM indexing through the pipeline), binary file, --no-fine-tree file, raw-mirror full reveal, empty file, one-byte file, multi-file with an unrevealed committed-placeholder file, and the empty-anchor (UNANCHORED) bundle. `report_json` is the D29 compact-JSON encoding and is the medium the native<->WASM bit-match lane compares (MVP-SPEC.md lines 153, 167, 169).",
+  "inputs": {
+    "app_version": "antseal-fixture/1",
+    "cases": [
+      {
+        "pins": "raw-mirror full reveal: the mirror rides along with a whole-file text reveal (MVP-SPEC.md line 92)",
+        "shape": "single-text-with-mirror/full"
+      },
+      {
+        "pins": "full text reveal with the raw mirror withheld — still a full reveal, mirrors being exempt by kind",
+        "shape": "single-text-with-mirror/full-no-mirror"
+      },
+      {
+        "pins": "a bundle that proves the work exists and shows none of it: one committed placeholder, no touched files",
+        "shape": "single-text-with-mirror/untouched"
+      },
+      {
+        "pins": "binary file: offsets are raw-byte offsets, no canonical rendition and no mirror (MVP-SPEC.md line 83)",
+        "shape": "single-binary/full"
+      },
+      {
+        "pins": "partial reveal with a leaf-exact cover: one --split unit of three, the middle one",
+        "shape": "split-multi-unit/partial"
+      },
+      {
+        "pins": "partial reveal spanning two disjoint covers, so the blackout block sits between two revealed spans",
+        "shape": "split-multi-unit/partial-two-of-three"
+      },
+      {
+        "pins": "full reveal derived from an enumerated unit list rather than declared (D28 rider 1)",
+        "shape": "split-multi-unit/full-via-enumerated-units"
+      },
+      {
+        "pins": "--all over a --split file: every normal unit plus the raw mirror",
+        "shape": "split-multi-unit/all"
+      },
+      {
+        "pins": "--no-fine-tree file: one whole-file unit bound by unit_commit, no fine_root (MVP-SPEC.md lines 84, 94)",
+        "shape": "no-fine-tree/full"
+      },
+      {
+        "pins": "the other two raw-mirror sources — a BOM-bearing and an NFD-bearing text file — revealed together",
+        "shape": "raw-mirror-sources/all"
+      },
+      {
+        "pins": "empty file: size 0, one empty unit, no fine tree (MVP-SPEC.md line 153; G4)",
+        "shape": "empty-file/full"
+      },
+      {
+        "pins": "empty file as a committed placeholder: the size-only rendering at size 0 (MVP-SPEC.md line 121)",
+        "shape": "empty-file/untouched"
+      },
+      {
+        "pins": "one-byte file: the smallest non-empty tiling domain (MVP-SPEC.md line 153)",
+        "shape": "one-byte-file/full"
+      },
+      {
+        "pins": "full reveal at unbalanced n = 6, which releases s_root and rebuilds the whole fine tree",
+        "shape": "unbalanced-n6/all"
+      },
+      {
+        "pins": "per-unit reveal at unbalanced n = 6, leaves {0,1}: MSB-first GGM indexing through the pipeline (MVP-SPEC.md lines 96, 169)",
+        "shape": "unbalanced-n6/unit-0"
+      },
+      {
+        "pins": "per-unit reveal at unbalanced n = 6, leaves {2,3}: MSB-first GGM indexing through the pipeline (MVP-SPEC.md lines 96, 169)",
+        "shape": "unbalanced-n6/unit-1"
+      },
+      {
+        "pins": "per-unit reveal at unbalanced n = 6, leaves {4,5}: MSB-first GGM indexing through the pipeline (MVP-SPEC.md lines 96, 169)",
+        "shape": "unbalanced-n6/unit-2"
+      },
+      {
+        "pins": "multi-file work with an unrevealed committed-placeholder file, and the EMPTY-ANCHOR (UNANCHORED) bundle (MVP-SPEC.md lines 121, 153)",
+        "shape": "multi-file/mixed"
+      },
+      {
+        "pins": "the same multi-file work fully revealed, so nothing renders as a placeholder",
+        "shape": "multi-file/all"
+      },
+      {
+        "pins": "the populated anchor section: one OTS and two TSA artifacts, each an absent M0 slot (MVP-SPEC.md line 153)",
+        "shape": "multi-file-anchored/mixed"
+      },
+      {
+        "pins": "the Ed25519-only sig_policy fallback, so the signature-scheme datum has both of its named shapes pinned (MVP-SPEC.md line 97)",
+        "shape": "ed25519-only-policy/full"
+      }
+    ],
+    "seal_id": "b6000102030405060708090a0b0c0d0e",
+    "seed": "0x000000005eed0006",
+    "w": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "expect": {
+    "cases": [
+      {
+        "bundle_len": 6710,
+        "bundle_sha256": "1c4abff253f40e6ffdac2ea42a435e50ec2b959bf13555bb5b3f6bd1e02e669a",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 2
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/intro.md",
+                "raw_mirror": {
+                  "raw_size": 37,
+                  "unit_id": 1
+                },
+                "revealed_spans": [
+                  {
+                    "end": 34,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "single text with mirror",
+            "work_id": "057b41b0c960a606ebe2126b83fd9adc2d844b775c93fdb1151af9d6fe49c4c4"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2230353762343162306339363061363036656265323132366238336664396164633264383434623737356339336664623131353161663964366665343963346334222c227469746c65223a2273696e676c6520746578742077697468206d6972726f72222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a327d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f696e74726f2e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a312c227261775f73697a65223a33377d7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 627,
+        "revealed_unit_ids": [
+          0,
+          1
+        ],
+        "shape": "single-text-with-mirror/full"
+      },
+      {
+        "bundle_len": 6378,
+        "bundle_sha256": "363e8117c3871ce20c2be3bd5637f3eedb2d79e141ee31ba0b29cc23b6327e12",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/intro.md",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 34,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "single text with mirror",
+            "work_id": "057b41b0c960a606ebe2126b83fd9adc2d844b775c93fdb1151af9d6fe49c4c4"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2230353762343162306339363061363036656265323132366238336664396164633264383434623737356339336664623131353161663964366665343963346334222c227469746c65223a2273696e676c6520746578742077697468206d6972726f72222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f696e74726f2e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 604,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "single-text-with-mirror/full-no-mirror"
+      },
+      {
+        "bundle_len": 5930,
+        "bundle_sha256": "761349405228166362deef9fc184b4a43c5d100adb1856e99755c1b1189e142c",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 0
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [],
+            "unrevealed_files": [
+              {
+                "file_id": 0,
+                "size": 34
+              }
+            ]
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "single text with mirror",
+            "work_id": "057b41b0c960a606ebe2126b83fd9adc2d844b775c93fdb1151af9d6fe49c4c4"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2230353762343162306339363061363036656265323132366238336664396164633264383434623737356339336664623131353161663964366665343963346334222c227469746c65223a2273696e676c6520746578742077697468206d6972726f72222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a307d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b5d2c22756e72657665616c65645f66696c6573223a5b7b2266696c655f6964223a302c2273697a65223a33347d5d7d7d",
+        "report_len": 460,
+        "revealed_unit_ids": [],
+        "shape": "single-text-with-mirror/untouched"
+      },
+      {
+        "bundle_len": 6206,
+        "bundle_sha256": "4e4101aadbb4bb1f9526234472a1197a640e89c5e0603dbe58db2b58816369fa",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "data/blob.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 64,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 64,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "single binary",
+            "work_id": "15fdc82e95bb1663bd1e4ae340a51e298214cfdd06415509ce68030a4b78043e"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2231356664633832653935626231363633626431653461653334306135316532393832313463666464303634313535303963653638303330613462373830343365222c227469746c65223a2273696e676c652062696e617279222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f626c6f622e62696e222c22746f74616c5f73697a65223a36342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a36347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 593,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "single-binary/full"
+      },
+      {
+        "bundle_len": 6645,
+        "bundle_sha256": "c96cfd9b1af32ad5e20eeebd66ff200b80898a3cb169e152738fe8bcc3ddf24e",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": false,
+                "path": "notes/split.md",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 24,
+                    "start": 12,
+                    "unit_id": 1
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": [
+                  {
+                    "end": 12,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 34,
+                    "start": 24,
+                    "unit_id": 2
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "split multi unit",
+            "work_id": "986a6e4297dade15e3ab93ea285fe37f455bdd886915075d9d579418cdb142c5"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239383661366534323937646164653135653361623933656132383566653337663435356264643838363931353037356439643537393431386364623134326335222c227469746c65223a2273706c6974206d756c746920756e6974222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f73706c69742e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a312c227374617274223a31322c22656e64223a32347d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a31327d2c7b22756e69745f6964223a322c227374617274223a32342c22656e64223a33347d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 665,
+        "revealed_unit_ids": [
+          1
+        ],
+        "shape": "split-multi-unit/partial"
+      },
+      {
+        "bundle_len": 7074,
+        "bundle_sha256": "e46ac4832f7eae95dc4638bfb86a5e0edb8332e29af9a57e69acf13a89e7d389",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 2
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": false,
+                "path": "notes/split.md",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 12,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 34,
+                    "start": 24,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": [
+                  {
+                    "end": 24,
+                    "start": 12,
+                    "unit_id": 1
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "split multi unit",
+            "work_id": "986a6e4297dade15e3ab93ea285fe37f455bdd886915075d9d579418cdb142c5"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239383661366534323937646164653135653361623933656132383566653337663435356264643838363931353037356439643537393431386364623134326335222c227469746c65223a2273706c6974206d756c746920756e6974222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a327d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f73706c69742e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a31327d2c7b22756e69745f6964223a322c227374617274223a32342c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a312c227374617274223a31322c22656e64223a32347d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 665,
+        "revealed_unit_ids": [
+          0,
+          2
+        ],
+        "shape": "split-multi-unit/partial-two-of-three"
+      },
+      {
+        "bundle_len": 7670,
+        "bundle_sha256": "58f3362240866af2f40b43d7c289c939cb1aa984c2f24e7bbcf826e8e9eda8bd",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 3
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/split.md",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 12,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 24,
+                    "start": 12,
+                    "unit_id": 1
+                  },
+                  {
+                    "end": 34,
+                    "start": 24,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "split multi unit",
+            "work_id": "986a6e4297dade15e3ab93ea285fe37f455bdd886915075d9d579418cdb142c5"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239383661366534323937646164653135653361623933656132383566653337663435356264643838363931353037356439643537393431386364623134326335222c227469746c65223a2273706c6974206d756c746920756e6974222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a337d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f73706c69742e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a31327d2c7b22756e69745f6964223a312c227374617274223a31322c22656e64223a32347d2c7b22756e69745f6964223a322c227374617274223a32342c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 665,
+        "revealed_unit_ids": [
+          0,
+          1,
+          2
+        ],
+        "shape": "split-multi-unit/full-via-enumerated-units"
+      },
+      {
+        "bundle_len": 8002,
+        "bundle_sha256": "318af094e958ff721c3f1b3f7ac14cd43ad781251560a3297541806fc8db60e7",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 4
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/split.md",
+                "raw_mirror": {
+                  "raw_size": 37,
+                  "unit_id": 3
+                },
+                "revealed_spans": [
+                  {
+                    "end": 12,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 24,
+                    "start": 12,
+                    "unit_id": 1
+                  },
+                  {
+                    "end": 34,
+                    "start": 24,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "split multi unit",
+            "work_id": "986a6e4297dade15e3ab93ea285fe37f455bdd886915075d9d579418cdb142c5"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239383661366534323937646164653135653361623933656132383566653337663435356264643838363931353037356439643537393431386364623134326335222c227469746c65223a2273706c6974206d756c746920756e6974222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a347d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f73706c69742e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a31327d2c7b22756e69745f6964223a312c227374617274223a31322c22656e64223a32347d2c7b22756e69745f6964223a322c227374617274223a32342c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a332c227261775f73697a65223a33377d7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 688,
+        "revealed_unit_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "shape": "split-multi-unit/all"
+      },
+      {
+        "bundle_len": 6198,
+        "bundle_sha256": "959a2b9b79befcf643213bd02feaf82fbf636dce2c3a46f85a3a52457e813cb7",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "archive/old.txt",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 35,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 35,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "no fine tree",
+            "work_id": "f6adcb8eb9dac7a51e4e131c0568a6218f25c9456fb880048dc909d97fdd3ccd"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2266366164636238656239646163376135316534653133316330353638613632313866323563393435366662383830303438646339303964393766646433636364222c227469746c65223a226e6f2066696e652074726565222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22617263686976652f6f6c642e747874222c22746f74616c5f73697a65223a33352c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33357d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 594,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "no-fine-tree/full"
+      },
+      {
+        "bundle_len": 7832,
+        "bundle_sha256": "d4be56237262fe7bd9d04e79304dd7bc466a354d966bb81c9c64de8f6c1c2e9a",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 4
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "mirror/bom.txt",
+                "raw_mirror": {
+                  "raw_size": 26,
+                  "unit_id": 1
+                },
+                "revealed_spans": [
+                  {
+                    "end": 23,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 23,
+                "unrevealed_spans": []
+              },
+              {
+                "file_id": 1,
+                "fully_revealed": true,
+                "path": "mirror/nfd.txt",
+                "raw_mirror": {
+                  "raw_size": 16,
+                  "unit_id": 3
+                },
+                "revealed_spans": [
+                  {
+                    "end": 15,
+                    "start": 0,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 15,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "raw mirror sources",
+            "work_id": "fb087b49c5d57196978a4452dae818d4a18054dc2c4ee541b657c9f4b36aa176"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2266623038376234396335643537313936393738613434353264616538313864346131383035346463326334656535343162363537633966346233366161313736222c227469746c65223a22726177206d6972726f7220736f7572636573222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a347d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226d6972726f722f626f6d2e747874222c22746f74616c5f73697a65223a32332c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a32337d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a312c227261775f73697a65223a32367d7d2c7b2266696c655f6964223a312c2270617468223a226d6972726f722f6e66642e747874222c22746f74616c5f73697a65223a31352c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a322c227374617274223a302c22656e64223a31357d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a332c227261775f73697a65223a31367d7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 813,
+        "revealed_unit_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "shape": "raw-mirror-sources/all"
+      },
+      {
+        "bundle_len": 6141,
+        "bundle_sha256": "8bb99cc116b5dde89094d060e44e54e2e92eb1a4b632d419d5e792d407ce3f9e",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "data/empty.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 0,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 0,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "empty file",
+            "work_id": "9b5f060e30e480be13f66efa2457b037aa84b54e50dc013a3a830d3b55f5f458"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239623566303630653330653438306265313366363665666132343537623033376161383462353465353064633031336133613833306433623535663566343538222c227469746c65223a22656d7074792066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f656d7074792e62696e222c22746f74616c5f73697a65223a302c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a307d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 589,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "empty-file/full"
+      },
+      {
+        "bundle_len": 5751,
+        "bundle_sha256": "18b3bcf0822a33b6e1d05d45b56ef72d0600599b709cae0a429c81c51d7c7a3b",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 0
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [],
+            "unrevealed_files": [
+              {
+                "file_id": 0,
+                "size": 0
+              }
+            ]
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "empty file",
+            "work_id": "9b5f060e30e480be13f66efa2457b037aa84b54e50dc013a3a830d3b55f5f458"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239623566303630653330653438306265313366363665666132343537623033376161383462353465353064633031336133613833306433623535663566343538222c227469746c65223a22656d7074792066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a307d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b5d2c22756e72657665616c65645f66696c6573223a5b7b2266696c655f6964223a302c2273697a65223a307d5d7d7d",
+        "report_len": 446,
+        "revealed_unit_ids": [],
+        "shape": "empty-file/untouched"
+      },
+      {
+        "bundle_len": 6202,
+        "bundle_sha256": "9bf905fa657ac8fde042fbad4bfa11e47c050869162c0ae9b55f74d016f1a74b",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "data/one.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 1,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 1,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "one byte file",
+            "work_id": "1b24ad21bd55821bd571d691f982e36355d30035914edca514817d7755f53cf7"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2231623234616432316264353538323162643537316436393166393832653336333535643330303335393134656463613531343831376437373535663533636637222c227469746c65223a226f6e6520627974652066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f6f6e652e62696e222c22746f74616c5f73697a65223a312c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a317d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 590,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "one-byte-file/full"
+      },
+      {
+        "bundle_len": 7242,
+        "bundle_sha256": "b974e0b9eee4c1ac14619c53630f5928656d8fb3a5d0172e791fd2027c928f4a",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 3
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "data/n6.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 2,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 4,
+                    "start": 2,
+                    "unit_id": 1
+                  },
+                  {
+                    "end": 6,
+                    "start": 4,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 6,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "unbalanced n6",
+            "work_id": "9dffa37fcf00a6e11c4183a21fd828f02767497be9f58966d4a9533a59dee860"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239646666613337666366303061366531316334313833613231666438323866303237363734393762653966353839363664346139353333613539646565383630222c227469746c65223a22756e62616c616e636564206e36222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a337d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f6e362e62696e222c22746f74616c5f73697a65223a362c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a327d2c7b22756e69745f6964223a312c227374617274223a322c22656e64223a347d2c7b22756e69745f6964223a322c227374617274223a342c22656e64223a367d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 653,
+        "revealed_unit_ids": [
+          0,
+          1,
+          2
+        ],
+        "shape": "unbalanced-n6/all"
+      },
+      {
+        "bundle_len": 6365,
+        "bundle_sha256": "342b3907daeae5923f59802668637daeead9c57f35d7f5b0bf821991aaf3ddc0",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": false,
+                "path": "data/n6.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 2,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 6,
+                "unrevealed_spans": [
+                  {
+                    "end": 4,
+                    "start": 2,
+                    "unit_id": 1
+                  },
+                  {
+                    "end": 6,
+                    "start": 4,
+                    "unit_id": 2
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "unbalanced n6",
+            "work_id": "9dffa37fcf00a6e11c4183a21fd828f02767497be9f58966d4a9533a59dee860"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239646666613337666366303061366531316334313833613231666438323866303237363734393762653966353839363664346139353333613539646565383630222c227469746c65223a22756e62616c616e636564206e36222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f6e362e62696e222c22746f74616c5f73697a65223a362c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a327d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a312c227374617274223a322c22656e64223a347d2c7b22756e69745f6964223a322c227374617274223a342c22656e64223a367d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 653,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "unbalanced-n6/unit-0"
+      },
+      {
+        "bundle_len": 6365,
+        "bundle_sha256": "14f657285c809bedcfe3798eee35b48b04ea65030e255c7592485542472ec502",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": false,
+                "path": "data/n6.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 4,
+                    "start": 2,
+                    "unit_id": 1
+                  }
+                ],
+                "total_size": 6,
+                "unrevealed_spans": [
+                  {
+                    "end": 2,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 6,
+                    "start": 4,
+                    "unit_id": 2
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "unbalanced n6",
+            "work_id": "9dffa37fcf00a6e11c4183a21fd828f02767497be9f58966d4a9533a59dee860"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239646666613337666366303061366531316334313833613231666438323866303237363734393762653966353839363664346139353333613539646565383630222c227469746c65223a22756e62616c616e636564206e36222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f6e362e62696e222c22746f74616c5f73697a65223a362c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a312c227374617274223a322c22656e64223a347d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a327d2c7b22756e69745f6964223a322c227374617274223a342c22656e64223a367d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 653,
+        "revealed_unit_ids": [
+          1
+        ],
+        "shape": "unbalanced-n6/unit-1"
+      },
+      {
+        "bundle_len": 6328,
+        "bundle_sha256": "2c3781ee5754b5c6e42ef72554bb79a79f9fc76cf5eea8b0ca9e40d26ad71e59",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": false,
+                "path": "data/n6.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 6,
+                    "start": 4,
+                    "unit_id": 2
+                  }
+                ],
+                "total_size": 6,
+                "unrevealed_spans": [
+                  {
+                    "end": 2,
+                    "start": 0,
+                    "unit_id": 0
+                  },
+                  {
+                    "end": 4,
+                    "start": 2,
+                    "unit_id": 1
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "unbalanced n6",
+            "work_id": "9dffa37fcf00a6e11c4183a21fd828f02767497be9f58966d4a9533a59dee860"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2239646666613337666366303061366531316334313833613231666438323866303237363734393762653966353839363664346139353333613539646565383630222c227469746c65223a22756e62616c616e636564206e36222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f6e362e62696e222c22746f74616c5f73697a65223a362c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a322c227374617274223a342c22656e64223a367d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a327d2c7b22756e69745f6964223a312c227374617274223a322c22656e64223a347d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 653,
+        "revealed_unit_ids": [
+          2
+        ],
+        "shape": "unbalanced-n6/unit-2"
+      },
+      {
+        "bundle_len": 7891,
+        "bundle_sha256": "c73af6fa8935847ed338736e67242b76a889e1a9c288bfc736cb0bfcd5f74aae",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 3
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/intro.md",
+                "raw_mirror": {
+                  "raw_size": 37,
+                  "unit_id": 1
+                },
+                "revealed_spans": [
+                  {
+                    "end": 34,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              },
+              {
+                "file_id": 1,
+                "fully_revealed": false,
+                "path": "data/blob.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 20,
+                    "start": 10,
+                    "unit_id": 3
+                  }
+                ],
+                "total_size": 30,
+                "unrevealed_spans": [
+                  {
+                    "end": 10,
+                    "start": 0,
+                    "unit_id": 2
+                  },
+                  {
+                    "end": 30,
+                    "start": 20,
+                    "unit_id": 4
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": [
+              {
+                "file_id": 2,
+                "size": 35
+              }
+            ]
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "multi file",
+            "work_id": "d6d7625f5d1cd0c5d82afcbe6dafb479fd15962b93e281ecc4004b848c890385"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2264366437363235663564316364306335643832616663626536646166623437396664313539363262393365323831656363343030346238343863383930333835222c227469746c65223a226d756c74692066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a337d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f696e74726f2e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a312c227261775f73697a65223a33377d7d2c7b2266696c655f6964223a312c2270617468223a22646174612f626c6f622e62696e222c22746f74616c5f73697a65223a33302c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a332c227374617274223a31302c22656e64223a32307d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a322c227374617274223a302c22656e64223a31307d2c7b22756e69745f6964223a342c227374617274223a32302c22656e64223a33307d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b7b2266696c655f6964223a322c2273697a65223a33357d5d7d7d",
+        "report_len": 872,
+        "revealed_unit_ids": [
+          0,
+          1,
+          3
+        ],
+        "shape": "multi-file/mixed"
+      },
+      {
+        "bundle_len": 9307,
+        "bundle_sha256": "d4bea86d90758840c848eb18f2d23de0b882b11d3fae902041f306ad75645f5d",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 6
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/intro.md",
+                "raw_mirror": {
+                  "raw_size": 37,
+                  "unit_id": 1
+                },
+                "revealed_spans": [
+                  {
+                    "end": 34,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              },
+              {
+                "file_id": 1,
+                "fully_revealed": true,
+                "path": "data/blob.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 10,
+                    "start": 0,
+                    "unit_id": 2
+                  },
+                  {
+                    "end": 20,
+                    "start": 10,
+                    "unit_id": 3
+                  },
+                  {
+                    "end": 30,
+                    "start": 20,
+                    "unit_id": 4
+                  }
+                ],
+                "total_size": 30,
+                "unrevealed_spans": []
+              },
+              {
+                "file_id": 2,
+                "fully_revealed": true,
+                "path": "archive/old.txt",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 35,
+                    "start": 0,
+                    "unit_id": 5
+                  }
+                ],
+                "total_size": 35,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "multi file",
+            "work_id": "d6d7625f5d1cd0c5d82afcbe6dafb479fd15962b93e281ecc4004b848c890385"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2264366437363235663564316364306335643832616663626536646166623437396664313539363262393365323831656363343030346238343863383930333835222c227469746c65223a226d756c74692066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a367d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f696e74726f2e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a312c227261775f73697a65223a33377d7d2c7b2266696c655f6964223a312c2270617468223a22646174612f626c6f622e62696e222c22746f74616c5f73697a65223a33302c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a322c227374617274223a302c22656e64223a31307d2c7b22756e69745f6964223a332c227374617274223a31302c22656e64223a32307d2c7b22756e69745f6964223a342c227374617274223a32302c22656e64223a33307d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d2c7b2266696c655f6964223a322c2270617468223a22617263686976652f6f6c642e747874222c22746f74616c5f73697a65223a33352c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a352c227374617274223a302c22656e64223a33357d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 1018,
+        "revealed_unit_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "shape": "multi-file/all"
+      },
+      {
+        "bundle_len": 7981,
+        "bundle_sha256": "5921ff87adfafc9bd6c345ee922384f633040e53473c6c561374a151df9214b0",
+        "report": {
+          "anchors": [
+            {
+              "fetch_date": null,
+              "kind": "ots",
+              "source": null,
+              "state": "absent",
+              "verified_time_unix": null
+            },
+            {
+              "fetch_date": null,
+              "kind": "tsa",
+              "source": null,
+              "state": "absent",
+              "verified_time_unix": null
+            },
+            {
+              "fetch_date": null,
+              "kind": "tsa",
+              "source": null,
+              "state": "absent",
+              "verified_time_unix": null
+            }
+          ],
+          "evidence": {
+            "passed": true,
+            "units_verified": 3
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "notes/intro.md",
+                "raw_mirror": {
+                  "raw_size": 37,
+                  "unit_id": 1
+                },
+                "revealed_spans": [
+                  {
+                    "end": 34,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 34,
+                "unrevealed_spans": []
+              },
+              {
+                "file_id": 1,
+                "fully_revealed": false,
+                "path": "data/blob.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 20,
+                    "start": 10,
+                    "unit_id": 3
+                  }
+                ],
+                "total_size": 30,
+                "unrevealed_spans": [
+                  {
+                    "end": 10,
+                    "start": 0,
+                    "unit_id": 2
+                  },
+                  {
+                    "end": 30,
+                    "start": 20,
+                    "unit_id": 4
+                  }
+                ]
+              }
+            ],
+            "unrevealed_files": [
+              {
+                "file_id": 2,
+                "size": 35
+              }
+            ]
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "hybrid-pq",
+            "title": "multi file",
+            "work_id": "d6d7625f5d1cd0c5d82afcbe6dafb479fd15962b93e281ecc4004b848c890385"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2264366437363235663564316364306335643832616663626536646166623437396664313539363262393365323831656363343030346238343863383930333835222c227469746c65223a226d756c74692066696c65222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a226879627269642d7071227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a337d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b7b226b696e64223a226f7473222c227374617465223a22616273656e74222c2276657269666965645f74696d655f756e6978223a6e756c6c2c22736f75726365223a6e756c6c2c2266657463685f64617465223a6e756c6c7d2c7b226b696e64223a22747361222c227374617465223a22616273656e74222c2276657269666965645f74696d655f756e6978223a6e756c6c2c22736f75726365223a6e756c6c2c2266657463685f64617465223a6e756c6c7d2c7b226b696e64223a22747361222c227374617465223a22616273656e74222c2276657269666965645f74696d655f756e6978223a6e756c6c2c22736f75726365223a6e756c6c2c2266657463685f64617465223a6e756c6c7d5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a226e6f7465732f696e74726f2e6d64222c22746f74616c5f73697a65223a33342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a33347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a7b22756e69745f6964223a312c227261775f73697a65223a33377d7d2c7b2266696c655f6964223a312c2270617468223a22646174612f626c6f622e62696e222c22746f74616c5f73697a65223a33302c2266756c6c795f72657665616c6564223a66616c73652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a332c227374617274223a31302c22656e64223a32307d5d2c22756e72657665616c65645f7370616e73223a5b7b22756e69745f6964223a322c227374617274223a302c22656e64223a31307d2c7b22756e69745f6964223a342c227374617274223a32302c22656e64223a33307d5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b7b2266696c655f6964223a322c2273697a65223a33357d5d7d7d",
+        "report_len": 1141,
+        "revealed_unit_ids": [
+          0,
+          1,
+          3
+        ],
+        "shape": "multi-file-anchored/mixed"
+      },
+      {
+        "bundle_len": 936,
+        "bundle_sha256": "86ef0c8341e72b9526fd1e366b6668186af8451068dc205334f18aa98df7ce69",
+        "report": {
+          "anchors": [],
+          "evidence": {
+            "passed": true,
+            "units_verified": 1
+          },
+          "report_version": 0,
+          "reveal": {
+            "files": [
+              {
+                "file_id": 0,
+                "fully_revealed": true,
+                "path": "data/blob.bin",
+                "raw_mirror": null,
+                "revealed_spans": [
+                  {
+                    "end": 64,
+                    "start": 0,
+                    "unit_id": 0
+                  }
+                ],
+                "total_size": 64,
+                "unrevealed_spans": []
+              }
+            ],
+            "unrevealed_files": []
+          },
+          "storage_linkage": "not-evaluated",
+          "supporting_evidence": "none",
+          "work": {
+            "app_version": "antseal-fixture/1",
+            "claimed_time_informational_only": "1767225600",
+            "format_version": 1,
+            "signature_scheme": "ed25519-only",
+            "title": "single binary",
+            "work_id": "fb918a17bb8b692150b179017584e2e568ca1a1ffe108c740695fbe03c530e16"
+          }
+        },
+        "report_json": "7b227265706f72745f76657273696f6e223a302c22776f726b223a7b22776f726b5f6964223a2266623931386131376262386236393231353062313739303137353834653265353638636131613166666531303863373430363935666265303363353330653136222c227469746c65223a2273696e676c652062696e617279222c22666f726d61745f76657273696f6e223a312c226170705f76657273696f6e223a22616e747365616c2d666978747572652f31222c22636c61696d65645f74696d655f696e666f726d6174696f6e616c5f6f6e6c79223a2231373637323235363030222c227369676e61747572655f736368656d65223a22656432353531392d6f6e6c79227d2c2265766964656e6365223a7b22706173736564223a747275652c22756e6974735f7665726966696564223a317d2c2273746f726167655f6c696e6b616765223a226e6f742d6576616c7561746564222c22616e63686f7273223a5b5d2c22737570706f7274696e675f65766964656e6365223a226e6f6e65222c2272657665616c223a7b2266696c6573223a5b7b2266696c655f6964223a302c2270617468223a22646174612f626c6f622e62696e222c22746f74616c5f73697a65223a36342c2266756c6c795f72657665616c6564223a747275652c2272657665616c65645f7370616e73223a5b7b22756e69745f6964223a302c227374617274223a302c22656e64223a36347d5d2c22756e72657665616c65645f7370616e73223a5b5d2c227261775f6d6972726f72223a6e756c6c7d5d2c22756e72657665616c65645f66696c6573223a5b5d7d7d",
+        "report_len": 596,
+        "revealed_unit_ids": [
+          0
+        ],
+        "shape": "ed25519-only-policy/full"
+      }
+    ],
+    "report_version": 0
+  }
+}

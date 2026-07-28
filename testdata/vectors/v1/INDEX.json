@@ -60,6 +60,13 @@
       "kind": "fine-tree",
       "task": "G15",
       "pins": "fine-tree kind: the unbalanced n=6 opening that pins MSB-first GGM indexing, with every intermediate exposed — GGM node seeds, per-leaf salts, RFC 6962 unbalanced promotion, fine_root, and covers + boundary paths for reveal {2}, [4,6) and full [0,6); plus n=1, n=0 and n=5 (MVP-SPEC.md lines 96, 169)"
+    },
+    {
+      "slug": "verification-reports",
+      "path": "report/verification-reports.json",
+      "kind": "report",
+      "task": "R9",
+      "pins": "report kind: every M0 shape's canonical bundle mapped to the byte-exact serialized VerificationReport verify_bundle produces for it — full text reveal, partial reveal with leaf-exact covers, per-unit reveal at unbalanced n=6 (MSB-first GGM indexing through the pipeline), binary, --no-fine-tree, raw-mirror full reveal, empty and one-byte files, multi-file with an unrevealed committed placeholder, and the empty-anchor (UNANCHORED) bundle; report_json is the D29 encoding and the native<->WASM bit-match medium, and the set R28's multi-version suite extends per released version (MVP-SPEC.md lines 153, 167, 169)"
     }
   ],
   "pending": [
@@ -76,13 +83,6 @@
       "task": "F13",
       "must_exist_before_freeze": true,
       "pins": "bundle kind incl. the empty-anchor (UNANCHORED) vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153)"
-    },
-    {
-      "slug": "verification-reports",
-      "kind": "report",
-      "task": "R9",
-      "must_exist_before_freeze": false,
-      "pins": "report kind: canonical bundle -> serialized VerificationReport for every M0 shape; the native<->WASM bit-match medium and the set R28's multi-version suite extends per released version (MVP-SPEC.md lines 167, 169)"
     }
   ]
 }
