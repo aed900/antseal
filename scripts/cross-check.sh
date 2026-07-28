@@ -25,6 +25,9 @@
 #                                     + Unicode NormalizationTest    (T0)
 #   6. crosscheck_cbor.py             canonical CBOR, work_id        (T1)
 #                                     + RFC 8949 Appendix A          (T0)
+#   7. crosscheck-report.py           verification-report byte
+#                                     format, D29's nine syntactic
+#                                     rules                     (T1, no T0)
 #
 # `reference.py` runs FIRST and unconditionally: if the reference's own known
 # answers fail, every downstream agreement is worthless, and this ordering
@@ -119,6 +122,11 @@ fi
 for path in "${root}"/testdata/vectors/v*/crosscheck_cbor.py; do
   [ -f "${path}" ] && cbor_checkers+=("${path}")
 done
+# Q38's report-format reader. One script for every format version — it walks
+# `testdata/vectors/v*/report/` itself rather than being copied per version,
+# because its subject is a decision record (D29) shared across versions, not
+# a per-version artifact.
+report_checker="${root}/scripts/crosscheck-report.py"
 
 if [ "${#references[@]}" -eq 0 ]; then
   echo "::error::no testdata/vectors/v*/crypto/reference.py found — the T0 known-answer" \
@@ -136,11 +144,30 @@ if [ "${#cbor_checkers[@]}" -eq 0 ]; then
        "pass vacuously. Discovery is broken, or the checker was deleted." >&2
   exit 1
 fi
+if [ ! -f "${report_checker}" ]; then
+  echo "::error::scripts/crosscheck-report.py is missing — the D29 report byte format" \
+       "would have no independent reader at all, which is the hole Q38 closed." >&2
+  exit 1
+fi
+if [ ! -f "${root}/scripts/crosscheck-provenance.py" ]; then
+  echo "::error::scripts/crosscheck-provenance.py is missing — the externally-sourced" \
+       "fixtures would be unenforced again, which is the hole Q41 closed." >&2
+  exit 1
+fi
 
 rel() { printf '%s' "${1#"${root}"/}"; }
 
 # ── --check ────────────────────────────────────────────────────────────────
 if [ "${mode}" = "check" ]; then
+  # Q41 runs BEFORE everything, for the same reason reference.py runs before
+  # the generators: every T0 claim in this lane rests on externally-sourced
+  # bytes being the bytes NIST and Unicode actually published. If those have
+  # drifted, the agreements downstream are agreements with a forgery, and
+  # that must be legible instead of showing up as a passing lane.
+  note "cross-check: external-fixture provenance (Q41) — scripts/crosscheck-provenance.py"
+  "$python" "${root}/scripts/crosscheck-provenance.py" --check
+  merge_rc $?
+
   for path in "${references[@]}"; do
     note "cross-check: reference known answers (T0) — $(rel "${path}")"
     "$python" "${path}"
@@ -163,8 +190,12 @@ if [ "${mode}" = "check" ]; then
     merge_rc $?
   done
 
+  note "cross-check: verification-report byte format (T1, no T0 anchor) — scripts/crosscheck-report.py"
+  "$python" "${report_checker}" --check
+  merge_rc $?
+
   if [ "${status}" -eq 0 ]; then
-    printf '\ncross-check PASSED: %d reference self-test(s), %d generator(s), %d CBOR checker(s)\n' \
+    printf '\ncross-check PASSED: provenance + %d reference self-test(s), %d generator(s), %d CBOR checker(s), report byte format\n' \
       "${#references[@]}" "${#generators[@]}" "${#cbor_checkers[@]}"
   fi
   exit "${status}"
@@ -322,6 +353,21 @@ for path in "${cbor_checkers[@]}"; do
     0) ;;
     1) selftest_status=1 ;;
     *) [ "${selftest_status}" -eq 0 ] && selftest_status="${rc}" ;;
+  esac
+done
+
+# 6-7. The report-format reader and the provenance enforcer both carry their
+#      own per-property planted faults (Q38: 12 properties, Q41: one per
+#      enforced record plus the roster-drift guards), for the same reason
+#      F14 does: one generic "flip a hex digit" fault would prove a single
+#      property and leave the rest unobserved.
+for extra in "${report_checker}" "${root}/scripts/crosscheck-provenance.py"; do
+  note "self-test: $(rel "${extra}") (built-in)"
+  "$python" "${extra}" --self-test
+  rc=$?
+  case "${rc}" in
+    0) ;;
+    *) selftest_status=1 ;;
   esac
 done
 
