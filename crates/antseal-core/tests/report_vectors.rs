@@ -172,8 +172,8 @@ fn committed_document() -> serde_json::Value {
 #[test]
 fn vector_report_document_regenerates() {
     let document = committed_document();
-    let recomputed =
-        vectors_report::regenerate_expect(&document).unwrap_or_else(|e| panic!("regeneration: {e}"));
+    let recomputed = vectors_report::regenerate_expect(&document)
+        .unwrap_or_else(|e| panic!("regeneration: {e}"));
     let committed = document
         .get("expect")
         .unwrap_or_else(|| panic!("the vector has no `expect` object"));

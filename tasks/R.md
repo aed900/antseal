@@ -351,6 +351,7 @@
   - If (b): a test asserting R5's fixture and the corresponding R6 shape produce the same verification report shape (not the same bytes — the RNG seeds differ by design)
   - R5's stage-order pins keep working unchanged either way; they are the reason the fixture exists and must not be weakened to make the merge easier
 - Notes: Surfaced at R6/R7 (M0 wave 5). Low risk, and cheapest to do before R9's vectors bind either fixture's bytes.
+- Rider (R9): R9 landed and binds **R6's** bundle bytes (`bundle_sha256`) and the reports derived from them, for 21 shapes. It does not touch R5's fixture, so neither option is blocked and the cost of R29 is unchanged — but the asymmetry it warned about is now concrete: one of the two definitions of "a valid bundle" is a frozen, CI-enforced artifact and the other is unpinned hand-built code. A bug reaching both is still invisible to both, and the frozen half now lends it false authority. Option (b) got cheaper in one respect (the R6 side of the agreement assertion is a committed artifact, not just live code) and option (a) got slightly dearer (deleting R5's fixture must not disturb the stage-order pins that R9's vectors do *not* cover — R9 pins outputs, R5 pins the order they are produced in). Verdict: more urgent, not more expensive.
 
 ### R30 — Assert the report's native↔wasm32 byte-match over R6-constructed bundles
 - Milestone: M0
@@ -363,6 +364,31 @@
   - A shape whose bytes change fails both lanes with the same message, so a drift is diagnosed once rather than twice
   - No committed artifact carries secret material beyond what the bundle legitimately discloses (R6's existing hygiene assertion extends to it)
 - Notes: Surfaced at R6 (M0 wave 5). Deliberately *not* folded into R9: R9 owns the committed-vector contract and its retention policy, whereas this is an in-process property with no artifact to retain. Sequence it after R9 so the report serialization it digests is the frozen one.
+- Rider (R9): R9's committed vectors now assert exactly this over 21 of R6's shapes — every named catalogue entry except the three the vector deliberately omits. R30's remaining value is therefore the *constructed* half: it should assert over `shapes::catalogue()` directly, so a shape added to R6 after R9's file was frozen is covered from the moment it exists rather than at the next re-emit.
+
+### R31 — Hoist the golden-vector JSON diff locator out of the `fine-tree` kind
+- Milestone: M0
+- Size: XS
+- Deps: G15 (landed), R9 (landed)
+- Spec: n/a — internal test-infrastructure tidy
+- Do: `test_util::vectors_fine_tree::first_difference` is a *generic* JSON structural-diff locator (path + both sides) with nothing fine-tree-specific about it, and R9's `vectors_report` executor and its regenerator test both import it from G15's module because re-implementing it would be worse. Move it to `test_util::vectors` beside the other cross-kind helpers (`hex`, `decode_hex`, `prefix_len`) and leave a re-export or update the two call sites. Deliberately deferred out of R9: `vectors.rs` had three concurrent editors in M0 wave 5 (F12, F13, R9) and a gratuitous move there would have cost a merge for no functional gain.
+- Accept:
+  - `first_difference` lives in `test_util::vectors`; `vectors_fine_tree` and `vectors_report` both use it from there
+  - Its own unit test (`first_difference_locates_the_field`) moves with it
+  - No behaviour change: every vector executes identically, digests unchanged
+- Notes: Surfaced at R9 (M0 wave 5).
+
+### R32 — Bump `REPORT_VERSION` to 1 and re-emit R9's vectors at the format freeze
+- Milestone: M0
+- Size: S
+- Deps: R9 (landed); Q14 (the freeze gate); D29
+- Spec: Format stability (line 123); M0 milestone (line 153); Verification — golden vectors (line 167)
+- Do: `REPORT_VERSION` is `0` today and D29 §8 says plainly that **Q14 freezes `1`**. `report_version` is the first field of every serialized report, so that bump changes the pinned bytes of **every** case in `testdata/vectors/v1/report/verification-reports.json` — 21 of them. Q14's checklist (tasks/Q.md) currently says "all M0 golden vectors committed and frozen" without naming this one coupled edit, which is exactly the kind of thing a freeze gate discovers at the worst moment. Bump the constant, re-emit (`cargo test -p antseal-core --features test-util --test report_vectors -- --ignored emit_report_vector_document`), re-run `scripts/vector-freeze.sh --update`, and add the row to Q14's checklist so the ordering is recorded rather than remembered.
+- Accept:
+  - `REPORT_VERSION == 1` and every committed report vector pins bytes beginning `{"report_version":1`
+  - The freeze manifest shows 21 *changed* digests in one commit whose message names D29 §8 as the cause — a changed digest is a format event and must read as one
+  - Q14's checklist carries the row, so a future report-format bump cannot land without its vector re-emit
+- Notes: Surfaced at R9 (M0 wave 5). Must land **before** Q14 flips `status frozen`, since after the freeze `--update` refuses to modify an existing digest and the same change becomes a report-format version bump instead of a pre-freeze re-snapshot.
 
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
