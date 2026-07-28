@@ -27,14 +27,26 @@
 //!   vs the G13 `fine_root` seam), in the normative order of MVP-SPEC.md
 //!   lines 91/114/118/121.
 //!
+//! - [`file_stages`] (task R4) — the file-level stage
+//!   ([`check_file_stages`]): reveal-shape classification (derived, never
+//!   declared — decision D28), partial-reveal isolation, the full-reveal
+//!   cross-checks (concatenation → `canon_commit`/`raw_commit`, fine-tree
+//!   rebuild → `fine_root`), and the raw-mirror ↔ canonical binding. R5
+//!   runs this stage **after** the per-unit stages, since it consumes
+//!   their verified bytes.
+//!
 //! The orchestration itself —
 //! `verify_bundle(bytes, opts) -> Result<VerificationReport, VerifyError>`
 //! and `verify_bundle_collecting(..) -> Result<_, VerifyFailures>` — is
 //! task R5 and lands here later, over the stage order of MVP-SPEC.md
-//! lines 116–118. Everything in this module is WASM-safe: pure data, no
+//! lines 116–118: F strict decode → [`check_structural`] (R3) →
+//! [`verify_revealed_unit`] per revealed unit (R2) →
+//! [`check_file_stages`] (R4) → `sig_policy`/signature stage (C14) →
+//! anchor stage. Everything in this module is WASM-safe: pure data, no
 //! I/O, no async.
 
 pub mod error;
+pub mod file_stages;
 pub mod report;
 pub mod structural;
 pub mod unit_stages;
@@ -42,6 +54,14 @@ pub mod unit_stages;
 pub use error::{
     ContentCommitKind, FullRevealMaterial, LengthField, TilingViolationKind, VerifyError,
     VerifyFailures,
+};
+pub use file_stages::{
+    FileCanonMode, FileFineTree, FileRevealKind, FileRevealShape, FileRevealSummary,
+    FileStageBundleView, FileStageManifestView, FileUnitEntry, FileView, FullRevealEvidence,
+    FullRevealFineTree, FullRevealMaterialEntry, PartialRevealEvidence, RevealCensus,
+    VerifiedUnitBytes, check_concat_commit, check_file_stages, check_fine_root_rebuild,
+    check_full_reveal_content, check_raw_mirror, classify_file_reveal, concat_non_mirror_bytes,
+    participates_in_concat,
 };
 pub use report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,

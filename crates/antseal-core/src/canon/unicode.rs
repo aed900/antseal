@@ -162,6 +162,29 @@ pub enum UnicodeVersionError {
     },
 }
 
+impl UnicodeVersionError {
+    /// Stable machine-readable code (decision D30,
+    /// `docs/testing/error-code-contract.md`), `content-` prefixed because
+    /// canonicalization is G's domain.
+    ///
+    /// Surfaced **unchanged** through
+    /// [`crate::canon::CanonicalizeError::code`] and, one layer up, through
+    /// R's `VerifyError::Canon` wrapper arm — so an aging bundle naming a
+    /// Unicode version this build does not register reports
+    /// `content-unknown-unicode-version` ("upgrade the verifier"), never an
+    /// integrity code. That separation is the whole reason this enum is not
+    /// merged into any other (enum docs).
+    ///
+    /// The match is wildcard-free: a new variant fails compilation here
+    /// until it receives its own distinct code.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::UnknownUnicodeVersion { .. } => "content-unknown-unicode-version",
+        }
+    }
+}
+
 /// Bound an adversarial string for echoing inside an error message
 /// (UTF-8-boundary-safe truncation, with an explicit marker).
 fn truncate_for_echo(s: &str) -> String {

@@ -167,7 +167,9 @@ impl fmt::Display for ContentCommitKind {
 /// [`Self::NonZeroPadding`]; non-mirror tiling →
 /// [`Self::TilingViolation`] / [`Self::RawMirrorInTilingSet`];
 /// full-reveal concat + tree rebuild → [`Self::ConcatCommitMismatch`],
-/// [`Self::FineRootRebuildMismatch`], [`Self::FullRevealMaterialMissing`];
+/// [`Self::FineRootRebuildMismatch`], [`Self::FullRevealMaterialMissing`]
+/// (and, per D74, [`Self::FullRevealSRootWithoutFineTree`] for the
+/// symmetric *unexpected-material* direction);
 /// raw-mirror ↔ canonical binding →
 /// [`Self::RawMirrorCanonicalizationMismatch`] (plus
 /// [`Self::RawCommitMismatch`] for the mirror's `raw_commit` opening);
@@ -213,11 +215,18 @@ impl fmt::Display for ContentCommitKind {
 ///   cover rejection surfaces distinctly through R2's covered-unit
 ///   stage.
 ///
+/// - [`Self::Canon`] — G (landed with R4): canonicalization failures
+///   outside the fine tree — descriptor-version dispatch and the
+///   `canonicalize_v` recompute of the raw-mirror ↔ canonical binding.
+///   Codes are `content-`-prefixed, delegated from
+///   [`crate::canon::CanonicalizeError::code`]. Like [`Self::Crypto`] it
+///   has **no** `#[from]`: R4's binding stage maps *content disagreement*
+///   to [`Self::RawMirrorCanonicalizationMismatch`], and only a genuine
+///   canonicalization failure (an unregistered Unicode version — "upgrade
+///   the verifier", never an integrity verdict) travels through this arm.
+///
 /// **Still pending — the integrator adds these at merge:**
 ///
-/// - `Canon(…)` — G: canonicalization failures outside the fine tree
-///   (descriptor-version dispatch, `canonicalize_v` recompute), consumed
-///   by R4's raw-mirror ↔ canonical binding stage.
 /// - `Anchor(…)` — A: anchor-artifact **structural** failures only.
 ///   NOTE: most anchor outcomes are per-anchor report *states*
 ///   (`invalid`, `internally-consistent-only`, …), not errors — Q7
@@ -395,14 +404,41 @@ pub enum VerifyError {
     /// A full-file reveal is missing its `file_salt` (or its `s_root`,
     /// when the descriptor records a fine tree), so the mandatory
     /// full-reveal cross-checks of MVP-SPEC.md line 121 ("the verifier
-    /// MUST rebuild") cannot run. Strictness confirmation is R4's M0
-    /// freeze decision.
+    /// MUST rebuild") cannot run.
+    ///
+    /// Strictness is resolved by **D28**
+    /// (`docs/decisions/D28-full-reveal-strictness.md`): format v1 has no
+    /// "reveal every unit but withhold the whole-file openings" shape, so
+    /// omission is a hard failure rather than a weaker-but-valid reveal.
     #[error("file {file_id}: full reveal is missing its {material}")]
     FullRevealMaterialMissing {
         /// The fully revealed file with absent material.
         file_id: u64,
         /// Which required material is absent.
         material: FullRevealMaterial,
+    },
+
+    /// A full-file reveal carries an `s_root` for a file whose manifest
+    /// records **no** fine tree (`--no-fine-tree`, or an empty file —
+    /// [`crate::manifest::body::FineTree::Absent`]).
+    ///
+    /// The symmetric *unexpected* direction of
+    /// [`Self::FullRevealMaterialMissing`], resolved by **D74** as a hard
+    /// rejection: R4's typed classifier has nowhere to put such a value
+    /// ([`super::file_stages::FullRevealFineTree::Absent`] carries no
+    /// `s_root` field), and this project does not carry unverifiable
+    /// fields in an adversarial format — the same present-set-equals-
+    /// required-set rule C14 applies to `sig_policy` (MVP-SPEC.md line 97:
+    /// "the present signature set MUST equal the policy set … or present
+    /// but unlisted").
+    ///
+    /// One code, not two: a `file_salt` arm would be unreachable, since
+    /// `file_salt` is *always* required on a full reveal, so an
+    /// unexpected-`file_salt` state cannot exist.
+    #[error("file {file_id}: full reveal carries an s_root but the manifest records no fine tree")]
+    FullRevealSRootWithoutFineTree {
+        /// The fully revealed, fine-tree-less file carrying a stray `s_root`.
+        file_id: u64,
     },
 
     /// On a full file reveal, the concatenated non-mirror unit bytes do
@@ -469,11 +505,31 @@ pub enum VerifyError {
     /// (enum-level doc).
     #[error(transparent)]
     Crypto(crate::crypto::CryptoError),
+
+    /// G: canonicalization itself failed while R4 recomputed the
+    /// raw-mirror ↔ canonical binding (MVP-SPEC.md line 121). In practice
+    /// this is exactly one condition — the file descriptor names a
+    /// Unicode/canonicalization version this build does not register
+    /// (`content-unknown-unicode-version`), i.e. **this verifier is too
+    /// old**, which must never be conflated with an integrity verdict
+    /// (`crate::canon::CanonicalizeError` docs).
+    ///
+    /// [`crate::canon::CanonicalizeError::InvalidUtf8`] is unreachable
+    /// from R4, which recomputes in [`crate::canon::TextMode::Forced`]
+    /// (decision D20) — a total transform. The arm still admits it for
+    /// defensive totality, with its own distinct `content-*` code.
+    ///
+    /// **Intentionally no `#[from]`** (the [`Self::Crypto`] rule): content
+    /// disagreement is [`Self::RawMirrorCanonicalizationMismatch`], and an
+    /// auto-`From` would let a stray `?` silently reclassify an integrity
+    /// failure as a canonicalization failure.
+    #[error(transparent)]
+    Canon(crate::canon::CanonicalizeError),
     // ── INTEGRATION EXTENSION POINT ─────────────────────────────────
-    // Wrapper arms Canon(G canonicalization, R4) / Anchor(A) are added
-    // HERE at merge — see the enum-level doc comment for the contract.
-    // (Codec landed with F3; Crypto and the FineRootBindingFailed source
-    // landed with R2.)
+    // The Anchor(A) wrapper arm is added HERE at merge — see the
+    // enum-level doc comment for the contract. (Codec landed with F3;
+    // Crypto and the FineRootBindingFailed source landed with R2; Canon
+    // landed with R4.)
     // ────────────────────────────────────────────────────────────────
 }
 
@@ -532,6 +588,7 @@ impl VerifyError {
                 FullRevealMaterial::FileSalt => "full-reveal-material-missing-file-salt",
                 FullRevealMaterial::SRoot => "full-reveal-material-missing-s-root",
             },
+            Self::FullRevealSRootWithoutFineTree { .. } => "full-reveal-s-root-without-fine-tree",
             Self::ConcatCommitMismatch { commit, .. } => match commit {
                 ContentCommitKind::Canon => "concat-commit-mismatch-canon",
                 ContentCommitKind::Raw => "concat-commit-mismatch-raw",
@@ -542,10 +599,11 @@ impl VerifyError {
                 "raw-mirror-canonicalization-mismatch"
             }
             // Wrapper arms: the wrapped error's own distinct stable code
-            // (`cbor-*` / `crypto-*`) is the row key — never flattened or
-            // renamed.
+            // (`cbor-*` / `crypto-*` / `content-*`) is the row key — never
+            // flattened or renamed.
             Self::Codec(e) => e.code(),
             Self::Crypto(e) => e.code(),
+            Self::Canon(e) => e.code(),
         }
     }
 }
@@ -733,6 +791,7 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             file_id: 4,
             material: FullRevealMaterial::SRoot,
         },
+        E::FullRevealSRootWithoutFineTree { file_id: 4 },
         E::ConcatCommitMismatch {
             file_id: 5,
             commit: ContentCommitKind::Canon,
@@ -786,6 +845,14 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
             .into_iter()
             .map(E::Crypto),
     );
+    // ── Canon wrapper arm (R4): one exemplar per distinct content-* code
+    // of crate::canon::CanonicalizeError, sourced from G's own list so R
+    // can never fall behind that taxonomy either ──
+    exemplars.extend(
+        crate::canon::canon_code_exemplars()
+            .into_iter()
+            .map(E::Canon),
+    );
     exemplars
 }
 
@@ -795,7 +862,7 @@ mod tests {
 
     use super::*;
 
-    /// The number of distinct stable codes: 13 single-code variants plus
+    /// The number of distinct stable codes: 14 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
     /// ConcatCommitMismatch×2, FineRootBindingFailed×**7** — one per
@@ -803,8 +870,12 @@ mod tests {
     /// delegated `cbor-*` codes of the Codec wrapper arm (12 codec
     /// variants, ForbiddenType×3), plus the 25 delegated `crypto-*` codes
     /// of the Crypto wrapper arm (CommitmentMismatch×5, SaltLength×3, four
-    /// signature variants ×2 algorithms, 9 single-code variants).
-    const DISTINCT_CODES: usize = 76;
+    /// signature variants ×2 algorithms, 9 single-code variants), plus the
+    /// 2 delegated `content-*` codes of the Canon wrapper arm (R4).
+    ///
+    /// The 14th single-code variant is D74's
+    /// `FullRevealSRootWithoutFineTree` (R4).
+    const DISTINCT_CODES: usize = 79;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -857,6 +928,9 @@ mod tests {
                 VerifyError::PathCommitMismatch { .. } => "PathCommitMismatch",
                 VerifyError::PartialRevealSaltLeak { .. } => "PartialRevealSaltLeak",
                 VerifyError::FullRevealMaterialMissing { .. } => "FullRevealMaterialMissing",
+                VerifyError::FullRevealSRootWithoutFineTree { .. } => {
+                    "FullRevealSRootWithoutFineTree"
+                }
                 VerifyError::ConcatCommitMismatch { .. } => "ConcatCommitMismatch",
                 VerifyError::FineRootRebuildMismatch { .. } => "FineRootRebuildMismatch",
                 VerifyError::RawCommitMismatch { .. } => "RawCommitMismatch",
@@ -865,10 +939,11 @@ mod tests {
                 }
                 VerifyError::Codec(_) => "Codec",
                 VerifyError::Crypto(_) => "Crypto",
+                VerifyError::Canon(_) => "Canon",
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 21, "21 variants must be represented");
+        assert_eq!(tally.len(), 23, "23 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),
@@ -881,6 +956,8 @@ mod tests {
             ("Codec", 15),
             // One exemplar per delegated crypto-* code (R2).
             ("Crypto", 25),
+            // One exemplar per delegated content-* canonicalization code (R4).
+            ("Canon", 2),
         ]
         .into_iter()
         .collect();
@@ -967,6 +1044,30 @@ mod tests {
         assert_ne!(
             wrapped_aead.code(),
             VerifyError::UnitDecryptFailed { unit_id: 0 }.code()
+        );
+    }
+
+    /// The Canon wrapper arm (R4) honors the same contract as Crypto —
+    /// transparent `Display`, `code()` delegation to the wrapped
+    /// `content-*` code, no `From`. The delegated code and R4's integrity
+    /// verdict for the same *subject* (the raw-mirror binding) stay
+    /// distinct rows: "this verifier does not know that Unicode version"
+    /// is never "these bytes do not canonicalize to that content".
+    #[test]
+    fn canon_wrapper_arm_delegates_display_and_code() {
+        let inner = crate::canon::CanonicalizeError::UnknownVersion(
+            crate::canon::UnicodeVersionError::UnknownUnicodeVersion {
+                requested: "unicode-99.0.0".to_owned(),
+            },
+        );
+        let wrapped = VerifyError::Canon(inner.clone());
+        assert_eq!(wrapped.code(), "content-unknown-unicode-version");
+        assert_eq!(wrapped.code(), inner.code());
+        assert_eq!(wrapped.to_string(), inner.to_string());
+
+        assert_ne!(
+            wrapped.code(),
+            VerifyError::RawMirrorCanonicalizationMismatch { file_id: 0 }.code()
         );
     }
 
