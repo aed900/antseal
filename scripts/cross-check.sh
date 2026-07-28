@@ -261,6 +261,29 @@ elif mutation == "byte":
         sys.exit(f"{victim} is empty and cannot be mutated")
     data[0] ^= 0x01
     victim.write_bytes(bytes(data))
+elif mutation.startswith("field:"):
+    # `field:<marker>:<key>` — flip the first hex digit of the string value of
+    # the first `"<key>": "<hex>"` appearing after `<marker>`.
+    #
+    # Text-level rather than parse-and-re-dump, so the file's formatting is
+    # untouched and the ONLY difference is that one nibble. C27 needs that
+    # precision: signatures.json's ML-DSA fields are handed to the re-derivation
+    # rather than produced by it, so the byte diff stays green by construction
+    # and the red must come from `check_mldsa_half` — which is exactly the
+    # property being proven.
+    import re
+
+    _, marker, key = mutation.split(":", 2)
+    text = victim.read_text(encoding="utf-8")
+    anchor = text.find(marker)
+    if anchor < 0:
+        sys.exit(f"self-test marker {marker!r} not found in {victim}")
+    match = re.compile(rf'"{re.escape(key)}"\s*:\s*"([0-9a-f]+)"').search(text, anchor)
+    if match is None:
+        sys.exit(f"no hex-valued {key!r} after {marker!r} in {victim}")
+    start = match.start(1)
+    flipped = "1" if text[start] == "0" else "0"
+    victim.write_text(text[:start] + flipped + text[start + 1 :], encoding="utf-8")
 elif mutation.startswith("replace:"):
     # A targeted, semantic mutation: `replace:<from>:<to>`. Errors loudly if
     # the anchor is gone, so a refactor cannot silently disarm the proof.
@@ -336,6 +359,20 @@ for path in "${generators[@]}"; do
         continue
       fi
       prove_can_fail "$(rel "${path}") committed vectors" "${script}" "${victim}" "hex"
+
+      # C27. The generic fault above lands in the first *.json of the
+      # directory (commitments.json), so signatures.json's ML-DSA half was
+      # never fault-planted — and it was the one field pair the checker took
+      # on trust. These two prove otherwise. Note that the byte-diff leg
+      # STAYS green for them by construction: the re-derivation is handed
+      # those fields, so it re-emits whatever the file says. The red comes
+      # from check_mldsa_half and nowhere else, which is the proof C27 owes.
+      if [ -f "${dir}/signatures.json" ]; then
+        prove_can_fail "$(rel "${path}") mldsa65.public_key (C27)" \
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":public_key'
+        prove_can_fail "$(rel "${path}") mldsa65.signature (C27)" \
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":signature'
+      fi
       ;;
   esac
 done

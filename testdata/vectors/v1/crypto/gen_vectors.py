@@ -29,15 +29,20 @@ per-file verdict, and exits non-zero on any difference. It is the only thing
     python3 gen_vectors.py signatures --mldsa mldsa65-fips204.json \
                                         | diff - signatures.json
 
-`--check` covers `signatures.json` too, with one honestly-stated hole: the
-`expect.mldsa65.public_key` and `expect.mldsa65.signature` fields cannot be
-re-derived here (no Python ML-DSA), so `--check` reads those two values back
-from the committed file and re-derives everything else — including
-`expect.mldsa65.seed`, which is HKDF and *is* checked. Those two fields are
-covered instead by `crates/antseal-core/tests/acvp_ml_dsa.rs` against NIST
-ACVP (D31 rows 12/13, tier T0), which is a strictly stronger vehicle than
-anything this file could offer. `--check` prints that scope so the coverage
-is never silently overread.
+`--check` covers `signatures.json` too. The `expect.mldsa65.public_key` and
+`expect.mldsa65.signature` fields cannot be *fully* re-derived here — there is
+no Python ML-DSA in this toolchain — but C27 closed the gap that mattered:
+they were once read straight back from the committed file and re-emitted, so
+comparing the result against that same file was a tautology and a tamper of
+either field left `--check` green.
+
+They are now checked by `check_mldsa_half` below, which is stdlib-only and
+gives three independent legs plus a pin (see that function for the FIPS 204
+citations). The honest framing, unchanged: ML-DSA-65 is already covered at
+tier **T0** by NIST ACVP in `crates/antseal-core/tests/acvp_ml_dsa.rs` (D31
+rows 12/13), which is strictly stronger than anything this file can offer.
+C27 is completeness of *this checker*, not a soundness hole that was open.
+`--check` prints the scope so the coverage is never silently overread.
 
 The tiny `check_committed` helper below is duplicated verbatim in the sibling
 generators rather than shared through a common module. That is deliberate:
@@ -290,6 +295,157 @@ def gen_manifest_aead() -> dict:
 # NON-SECRET fixture body: a stand-in for F's canonical CBOR manifest body.
 SIG_BODY = b"antseal C16 crypto golden-vector manifest body\n"
 
+# ── C27: making the ML-DSA half of signatures.json checkable ───────────────
+#
+# FIPS 204 (August 2024) parameters for ML-DSA-65, Table 2.
+MLDSA65_K = 6  # rows of A / polynomials in t1 and h
+MLDSA65_L = 5  # columns of A / polynomials in z
+MLDSA65_OMEGA = 55  # max hint bits across all k polynomials
+MLDSA65_LAMBDA_4 = 48  # |c-tilde| = lambda/4 = 192/4
+MLDSA65_GAMMA1_BITS = 20  # bits per z coefficient: gamma1 = 2^19, range 2*gamma1
+
+MLDSA65_PK_LEN = 32 + MLDSA65_K * 32 * 10  # rho || t1, 10 bits per coefficient
+MLDSA65_SIG_LEN = (
+    MLDSA65_LAMBDA_4 + MLDSA65_L * 32 * MLDSA65_GAMMA1_BITS + MLDSA65_OMEGA + MLDSA65_K
+)
+
+# Leg 4 (see check_mldsa_half): SHA-256 over public_key || signature, the
+# residue the three derivations above it do not determine.
+#
+# THIS CONSTANT MOVES WITH THE VECTOR. If the ML-DSA half of signatures.json
+# is ever legitimately re-emitted — a new W, a new SIG_BODY, a new frozen
+# context — this line moves in the same commit, exactly as that file's entry
+# in FROZEN.sha256 does. The failure message prints the observed digest so
+# the update is a copy-paste, and it is deliberately NOT auto-updatable:
+# "regenerate until it agrees" is the move D31 section 11 item 5 forbids.
+MLDSA65_RESIDUE_SHA256 = "f5ff53604e53de13ca2a094752e9b47467485fef25c65a7056f259070c4b926d"
+
+
+def hint_bit_unpack(tail: bytes) -> int | None:
+    """FIPS 204 Algorithm 21 `HintBitUnpack`. Returns the hint count, or None.
+
+    The last `omega + k` bytes of a signature encode the hint polynomials as
+    a sorted index list per polynomial plus k cumulative cut points, with the
+    unused prefix zero-padded. Most of those bytes are therefore constrained,
+    and a malformed hint section is detectable without any lattice arithmetic
+    at all — which is the whole reason this leg is affordable in stdlib
+    Python.
+    """
+    if len(tail) != MLDSA65_OMEGA + MLDSA65_K:
+        return None
+    index = 0
+    for i in range(MLDSA65_K):
+        cut = tail[MLDSA65_OMEGA + i]
+        if cut < index or cut > MLDSA65_OMEGA:
+            return None
+        first = index
+        while index < cut:
+            if index > first and tail[index - 1] >= tail[index]:
+                return None  # indices within one polynomial must strictly increase
+            index += 1
+    for i in range(index, MLDSA65_OMEGA):
+        if tail[i] != 0:
+            return None  # the pad above the last hint must be zero
+    return index
+
+
+def check_mldsa_half(mldsa: dict, expected_seed: bytes, where: str) -> list[str]:
+    """C27 — check the two ML-DSA fields `--check` used to take on trust.
+
+    Before C27, `--check` read `public_key` and `signature` back out of the
+    committed file and fed them into the document it then compared *against
+    that same file*. The two fields cancelled, and a tamper of either left the
+    lane green. The claim was recorded honestly ("cannot be re-derived here"),
+    but "cannot be re-derived" was doing more work than it should: three
+    properties are derivable with nothing but `hashlib`.
+
+    Tier: this is **T1**, and it is completeness rather than soundness. ML-DSA-65
+    is covered at **T0** by NIST ACVP (D31 rows 12/13, replayed from Rust in
+    `crates/antseal-core/tests/acvp_ml_dsa.rs`), which is strictly stronger
+    than anything here. What C27 fixes is that a tamper of *this file* now
+    turns *this checker* red.
+
+    The four legs, each returning a message rather than raising, so one run
+    reports everything wrong at once:
+
+    1. **Lengths.** FIPS 204 Table 2: pk is 1952 bytes, sig is 3309.
+    2. **rho, re-derived from the HKDF seed.** Algorithm 6 `KeyGen_internal`
+       computes `(rho, rho', K) = H(xi || IntegerToBytes(k,1) ||
+       IntegerToBytes(l,1), 128)` with H = SHAKE-256, and `pkEncode` places
+       rho in the first 32 bytes. So the first 32 bytes of the public key are
+       a pure SHAKE-256 function of the seed, and the seed is itself HKDF of
+       W. This leg ties the committed public key to the master secret through
+       two independent derivations and is the strongest of the four.
+       (The `k || l` domain separator is the FINAL standard's; the 2023 draft
+       omitted it. A crate implementing the draft would fail here, which is a
+       feature.)
+    3. **Hint-section validity.** Algorithm 21 over the trailing 61 bytes.
+    4. **A residue pin.** SHA-256 over `pk || sig`, covering t1 and the
+       c-tilde/z sections that legs 2 and 3 cannot reach. This is the leg that
+       makes the coverage total: with it, any single-byte change to either
+       field turns `--check` red.
+    """
+    problems: list[str] = []
+    try:
+        pk = bytes.fromhex(mldsa.get("public_key", ""))
+        sig = bytes.fromhex(mldsa.get("signature", ""))
+    except ValueError as exc:
+        return [f"{where}: mldsa65 public_key/signature is not valid hex ({exc})"]
+
+    # 1. Lengths (FIPS 204 Table 2).
+    if len(pk) != MLDSA65_PK_LEN:
+        problems.append(
+            f"{where}: mldsa65.public_key is {len(pk)} bytes, but ML-DSA-65 encodes "
+            f"rho || t1 in {MLDSA65_PK_LEN} (FIPS 204 Table 2)"
+        )
+    if len(sig) != MLDSA65_SIG_LEN:
+        problems.append(
+            f"{where}: mldsa65.signature is {len(sig)} bytes, but ML-DSA-65 encodes "
+            f"c~ || z || h in {MLDSA65_SIG_LEN} (FIPS 204 Table 2)"
+        )
+
+    # 2. rho = H(xi || k || l, 128)[0:32]  (FIPS 204 Algorithm 6 + pkEncode).
+    if len(pk) >= 32:
+        rho = hashlib.shake_256(
+            expected_seed + bytes([MLDSA65_K, MLDSA65_L])
+        ).digest(128)[:32]
+        if pk[:32] != rho:
+            problems.append(
+                f"{where}: mldsa65.public_key does not start with rho = "
+                f"SHAKE256(seed || {MLDSA65_K:02x} || {MLDSA65_L:02x}, 128)[0:32] = "
+                f"{rho.hex()} (FIPS 204 Algorithm 6). The public key does not belong "
+                "to the HKDF-derived seed recorded beside it."
+            )
+
+    # 3. The hint section decodes (FIPS 204 Algorithm 21).
+    if len(sig) == MLDSA65_SIG_LEN:
+        hints = hint_bit_unpack(sig[-(MLDSA65_OMEGA + MLDSA65_K) :])
+        if hints is None:
+            problems.append(
+                f"{where}: mldsa65.signature's trailing {MLDSA65_OMEGA + MLDSA65_K} bytes "
+                "are not a valid HintBitUnpack encoding (FIPS 204 Algorithm 21) — the hint "
+                "indices are unsorted, the cut points are not non-decreasing, or the pad "
+                "is non-zero"
+            )
+
+    # 4. The residue pin over everything legs 1-3 do not determine.
+    residue = hashlib.sha256(pk + sig).hexdigest()
+    if residue != MLDSA65_RESIDUE_SHA256:
+        problems.append(
+            f"{where}: SHA-256(mldsa65.public_key || mldsa65.signature) is\n"
+            f"        {residue}\n"
+            f"        but MLDSA65_RESIDUE_SHA256 pins\n"
+            f"        {MLDSA65_RESIDUE_SHA256}\n"
+            "        Either the committed vector was tampered with, or the ML-DSA half was "
+            "legitimately\n"
+            "        re-emitted — in which case move the constant in gen_vectors.py in the "
+            "same commit,\n"
+            "        exactly as signatures.json's FROZEN.sha256 entry moves. Never "
+            "regenerate to agree\n"
+            "        (D31 section 11 item 5)."
+        )
+    return problems
+
 
 def gen_signatures(mldsa_path: str) -> dict:
     """Assemble the hybrid signature vector.
@@ -425,12 +581,29 @@ def check_all() -> int:
     }
     produced = json.dumps(gen_signatures_from(borrowed), indent=2) + "\n"
     status |= check_committed(signatures_path, produced)
+
+    # C27. The comparison above cannot see these two fields — it was handed
+    # them — so they are checked here, against FIPS 204 and a residue pin,
+    # never against themselves.
+    problems = check_mldsa_half(mldsa, bytes.fromhex(borrowed["seed"]), "signatures.json")
+    if problems:
+        print("FAIL  signatures.json: the ML-DSA half does not check out", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        status |= 1
+    else:
+        print(
+            "OK    signatures.json: mldsa65.public_key and .signature check out "
+            f"(lengths {MLDSA65_PK_LEN}/{MLDSA65_SIG_LEN}, rho re-derived from the HKDF "
+            "seed via SHAKE-256, hint section decodes, residue digest pinned)",
+            file=sys.stderr,
+        )
     print(
-        "note  signatures.json: expect.mldsa65.public_key and .signature are "
-        "read back from the committed file (no Python ML-DSA exists); they are "
-        "cross-checked against NIST ACVP by "
-        "crates/antseal-core/tests/acvp_ml_dsa.rs (D31 rows 12/13, tier T0). "
-        "Every other field above, expect.mldsa65.seed included, was re-derived.",
+        "note  signatures.json: the ML-DSA half is not fully re-derived here (no Python "
+        "ML-DSA exists). Its independent vehicle is NIST ACVP at tier T0, replayed by "
+        "crates/antseal-core/tests/acvp_ml_dsa.rs (D31 rows 12/13); the four legs above "
+        "are C27's completeness check, so that a tamper of THIS file turns THIS checker "
+        "red. Every other field, expect.mldsa65.seed included, was re-derived.",
         file=sys.stderr,
     )
     return status
