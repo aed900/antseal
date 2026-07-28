@@ -646,19 +646,36 @@ fn require_shape_coverage(inputs: &Inputs, cases: &[serde_json::Value]) -> Resul
             "a full-file reveal disclosing file_salt and s_root",
         ));
     }
-    // Every anchor kind and optional slot populated.
+    // Every anchor kind and optional slot populated. The TSA half is
+    // `intermediates` alone: D8 §1 removed the `source` string from v1, so
+    // an artifact's one remaining optional slot is its certificate list.
     if !cases.iter().any(|case| {
         list(case, "ots_anchors")
             .iter()
             .any(|a| !a["upgrade"].is_null())
-            && list(case, "tsa_anchors").iter().any(|a| {
-                a["intermediates"].as_array().is_some_and(|i| !i.is_empty())
-                    && !a["source"].is_null()
-            })
+            && list(case, "tsa_anchors")
+                .iter()
+                .any(|a| a["intermediates"].as_array().is_some_and(|i| !i.is_empty()))
     }) {
         return Err(missing(
-            "a bundle with every anchor kind populated (OTS upgrade group, TSA \
-             intermediates and source)",
+            "a bundle with every anchor kind populated (OTS upgrade group and \
+             TSA intermediates)",
+        ));
+    }
+    // …and both TSA shapes present in one bundle: with intermediates and
+    // without. Before D8 §1 the `source` clause above happened to force the
+    // pair; now nothing else would.
+    if !cases.iter().any(|case| {
+        let tsa = list(case, "tsa_anchors");
+        tsa.iter()
+            .any(|a| a["intermediates"].as_array().is_some_and(|i| !i.is_empty()))
+            && tsa
+                .iter()
+                .any(|a| a["intermediates"].as_array().is_some_and(Vec::is_empty))
+    }) {
+        return Err(missing(
+            "one bundle carrying both TSA shapes — an artifact with \
+             intermediates and one without",
         ));
     }
     // Receipt in and out, over the otherwise identical bundle.

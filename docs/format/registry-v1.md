@@ -1684,8 +1684,13 @@ case an allow-list cannot, a `notes` string that still says "proposed".
 for the mechanical tables only: every `### 7.x` map section's rows
 `| N | name | …` match that map's `maps[].fields[].{key,name}` exactly,
 both directions, including the reserved-band row; §6's enum tables match
-`enums[]`; §2's fixed-length table matches `scalars[]`; §11's cap table
-matches `caps.entries[]` by name, value and code. Brittleness to formatting
+`enums[]`; §2's fixed-length table matches `scalars[]` **by length, both
+directions** — a recorded narrowing, because §2 groups fields by byte length
+and names them in prose while `scalars[]` names them by role with synthetic
+keys (`salt16`, `commit32`, `hash32`), so the two are not row-comparable and
+a substring match on the prose would pin editorial wording rather than format
+facts; §11's cap table matches `caps.entries[]` by name, value and code.
+Brittleness to formatting
 is a feature after the freeze: the normative document should not be
 reformatted silently. Without D, "mirrors this document 1:1" is an unbacked
 claim — which is how the JSON drifted from its own doc before the freeze.
