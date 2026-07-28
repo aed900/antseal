@@ -79,6 +79,8 @@ proptest! {
 - Tests with a spec-mandated case floor (e.g. C3's ≥ 10 000 injectivity
   cases) additionally hardcode `cases` on top of the builder:
   `ProptestConfig { cases: 10_000, ..strategies::proptest_config(SEED) }`.
+  **This does not survive `PROPTEST_CASES`** — see the correction in §4
+  before relying on a floor.
   (The pre-Q3 block in `src/crypto/hkdf.rs` already has these semantics —
   fixed seed + hardcoded floor over the default base — and C may fold it
   onto the builder whenever that file is next touched.)
@@ -95,14 +97,71 @@ the §3 builder):
 | CI `test` lane | **1024** | `env: PROPTEST_CASES` on the `test` job, `.github/workflows/ci.yml` |
 | Deep local soak (optional) | e.g. `PROPTEST_CASES=100000 cargo test` | ad hoc |
 
-Hardcoded `cases` values (spec floors, §3) override the env var by
-proptest semantics — that is intended.
+> **Correction (found at C18, 2026-07-28).** This section previously said
+> that a hardcoded `cases` value overrides `PROPTEST_CASES`. **The opposite
+> is true**, and it matters.
+>
+> The `proptest!` macro re-applies the environment on top of whatever
+> config it is handed — `sugar.rs` wraps every config in
+> `contextualize_config($config)` before building the runner — so
+> `PROPTEST_CASES` wins over an explicit `cases` field. Measured on
+> proptest 1.11.0: a block declaring `cases: 48` runs 48 cases with no env
+> var set, 16 with `PROPTEST_CASES=16`, and 256 with `PROPTEST_CASES=256`.
+>
+> Consequences to be aware of, and to fix in the owning tasks:
+>
+> - **Spec floors are not currently enforced.** C3's ≥10 000-case
+>   injectivity floor (`src/crypto/hkdf.rs`, `cases: 10_000`) runs **1024**
+>   cases in the CI `test` lane, not 10 000. C8's `cases: 2048` likewise
+>   drops to 1024. A floor has to be expressed as
+>   `cases: max(10_000, ProptestConfig::default().cases)` — or the lane has
+>   to stop setting the variable — for the floor to actually hold.
+> - **A ceiling cannot be expressed in the config at all.** An expensive
+>   block (e.g. C18's hybrid ML-DSA property) cannot cap its own case count;
+>   the only levers are per-case cost and the lane's env var.
+> - The comment on the `PROPTEST_CASES` env in `.github/workflows/ci.yml`
+>   repeats the same incorrect claim and should be corrected with the C3
+>   fix.
+>
+> Setting `cases` is still worthwhile: it is the value used for local runs
+> and anywhere the variable is unset.
 
 ## 5. Regressions files: committed and never deleted
 
 proptest persists every found failure as a seed line under
 `proptest-regressions/` next to the failing test's source (crate-relative;
 e.g. `crates/antseal-core/proptest-regressions/…`). Policy:
+
+**Integration tests (`tests/`) must name the file explicitly.** proptest's
+default persistence walks *up* from the test's source file looking for a
+directory containing `lib.rs`/`main.rs`. That works for `#[cfg(test)]`
+blocks inside `src/`, but a test in `tests/` has no such ancestor: the
+lookup fails, proptest prints
+
+```text
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+```
+
+and — having no source file configured either — **persists nothing**. A
+failure found in CI would then be unreproducible locally, silently
+defeating this whole section. Use the explicit-path variant instead:
+
+```rust
+proptest! {
+    #![proptest_config(strategies::integration_test_config(
+        0x5EED_0007,
+        "proptest-regressions/<test-file-stem>.txt",
+    ))]
+    // ...
+}
+```
+
+The path is relative to the package root (`cargo test`'s working
+directory), so it lands exactly where `SourceParallel` would have put an
+in-`src` test's file. Suites inside `src/` keep using `proptest_config` —
+the default persistence is correct there. (Found and fixed at C18, which
+was the first substantial `tests/` property suite; `tests/proptest_example.rs`
+was converted at the same time.)
 
 - **Commit every `proptest-regressions/` file** in the PR that first
   produces it. They are regression tests, not noise; persisted seeds re-run

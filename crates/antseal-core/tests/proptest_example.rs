@@ -8,10 +8,14 @@
 //!   re-export (never a per-crate proptest declaration — one frozen
 //!   version workspace-wide);
 //! - shared strategies come from `antseal_core::test_util::strategies`;
-//! - the config is the deterministic project builder
-//!   [`strategies::proptest_config`] with a per-block fixed seed, so CI
-//!   failures reproduce exactly while `PROPTEST_CASES` (set in the CI
-//!   `test` lane) scales case counts per environment;
+//! - the config is the deterministic project builder with a per-block
+//!   fixed seed, so CI failures reproduce exactly while `PROPTEST_CASES`
+//!   (set in the CI `test` lane) scales case counts per environment —
+//!   and because this suite lives in `tests/`, it uses the
+//!   [`strategies::integration_test_config`] variant that names the
+//!   regressions file explicitly (proptest's default `SourceParallel`
+//!   persistence cannot locate a regressions directory from `tests/` and
+//!   silently persists nothing; see that function's docs);
 //! - on failure, proptest persists the seed under
 //!   `crates/<crate>/proptest-regressions/` — those files are committed
 //!   and never deleted (conventions doc §regressions).
@@ -22,7 +26,10 @@ use antseal_core::test_util::proptest::prelude::*;
 use antseal_core::test_util::{TEST_MASTER_SECRET_W, strategies};
 
 proptest! {
-    #![proptest_config(strategies::proptest_config(0x5EED_0002))]
+    #![proptest_config(strategies::integration_test_config(
+        0x5EED_0002,
+        "proptest-regressions/proptest_example.txt",
+    ))]
 
     /// Example property: for ANY work-shaped unit tiling, (a) the shared
     /// strategy upholds its documented contract — sorted, non-overlapping,
