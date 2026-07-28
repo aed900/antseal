@@ -268,6 +268,34 @@
   - A decision record (`docs/decisions/`) stating the choice with its reasoning, or an explicit dated "accepted permanently" row in `docs/zeroization-audit.md` R1.
   - If (c): byte-identical output against the existing HKDF golden vectors and the C2 raw-HMAC reference, on native **and** wasm32, before the swap lands.
   - If (a) or (b): `docs/zeroization-audit.md` R1 updated with the dated disposition; the Q14 freeze checklist notes it as known-and-accepted rather than open.
+- Notes: **[2026-07-28] RESOLVED by D88 — none of (a), (b), (c).** The decision is option **(d)**, which this entry does not list: enable the non-default `zeroize` feature on the existing `sha2 =0.11.0` pin. This entry's premise — "No feature fixes it" — is **false**: `digest`'s `buffer_fixed!` `ZeroizeOnDrop` arm emits a *marker impl with no `Drop`*, so the trait bound on `Hmac<D>` was never the mechanism; the wipe is ordinary drop glue reaching `Sha256VarCore::drop` and `BlockBuffer::drop`, both gated on `sha2`'s feature. Measured: the full 144-byte `Hkdf<Sha256>` wiped, including the block buffer that holds `W` **verbatim** (this entry also understates the exposure — see D88 §1). Implement `docs/decisions/D88-hkdf-hmac-zeroization.md` §4/§6/§7 exactly; the work is one `Cargo.toml` word plus two residue regression tests plus doc edits, and it lands **before Q14**, not at M1.
+
+### C23 — Sweep for un-wiped secret preimage buffers we own
+- Milestone: M0
+- Size: S
+- Deps: C21 (the sweep this widens), C22/D88 (lands first — it changes what is left over)
+- Spec: Vault — zeroize (MVP-SPEC.md line 143); GGM hiding (line 96); security assumptions class 3
+- Discovered by: **D88** (2026-07-28). C21's table E scoped "intermediate buffers" to `crypto/` and to buffers handed *to* a primitive. It missed the class where **we build a secret preimage into a buffer we own and drop it un-wiped**. D88 §2b found the shape via `Sha256`'s internal buffer (fixed by D88's feature enable), but the caller-side buffers are ours and no feature touches them: `crypto::domain::tagged_sha256` assembles `tag ‖ parts` where the parts include GGM covering seeds (`content::ggm::child_seed`), `unit_salt`, `file_salt` and `path_salt`; `content/fine_tree` builds leaf and node preimages the same way. A leaked ancestor seed opens leaves a reveal deliberately withheld, so these are not the already-disclosed class R2 covers.
+- Do: Enumerate every site in `crates/antseal-core/src/crypto/` and `crates/antseal-core/src/content/` that assembles a buffer containing secret material (master secret, any derived key/salt/seed, GGM seeds, decrypted unit plaintext) and does not wipe it before drop. For each, record: the buffer, its lifetime, whether the secret is already disclosed by the bundle at that point (R2's argument), and the disposition — wiped, or accepted with the reason. Wipe the ones where the secret is *not* already disclosed, starting with the GGM seed preimages. Where a buffer is handed onward and cannot be wiped, record it in the same table rather than fixing it (R3's precedent).
+- Accept:
+  - A new table in `docs/zeroization-audit.md` covering caller-owned secret preimage buffers, with every site's disposition; the existing table E cross-references it.
+  - Every GGM seed preimage buffer is wiped before drop; a test asserts it for at least `child_seed` using D88's residue-probe technique.
+  - No golden vector byte changes (wiping is post-hash); `scripts/vector-freeze.sh` green without `--update`.
+  - `wasm32-unknown-unknown` build passes.
+- Notes: Do **not** widen this into R3's territory — decrypted unit plaintext returned to a caller is already dispositioned as caller-owned and stays that way.
+
+### C24 — Guard the `sha2` zeroize feature against silent removal
+- Milestone: M0
+- Size: S
+- Deps: C22/D88
+- Spec: Vault — zeroize (MVP-SPEC.md line 143); dependency pin governance (P7)
+- Discovered by: **D88** (2026-07-28). D88's fix is a Cargo feature whose effect is `Drop` behaviour, and **no compile-time detector can see it**: `crypto.rs::zeroization_sweep`'s `ZeroizeOnDrop` const assertions pass identically with the feature on or off, because `Hmac<Sha256>` never implements the trait either way. A routine dependency edit that drops `features = ["zeroize"]` — exactly what `docs/dependency-policy.md` §4 exists to catch for *versions* — would silently restore recoverable `W` and GGM-seed residue with a green test suite.
+- Do: Add a guard that fails loudly if the feature is off. Two layers, both cheap: (1) a `#[cfg(not(feature = ...))]`-style compile-time assertion is **not** available (the feature belongs to `sha2`, not to us), so instead assert it from the build side — a test that reads the workspace `Cargo.toml` and requires the `sha2` entry to list `zeroize`, in the same spirit as the existing pin-shape tests; (2) the runtime residue tests D88 §6 step 3 lands, which are the only true detector. Cross-reference both from `docs/dependency-policy.md` §1's exact-pin row so a future bump reviewer is told where the guard lives.
+- Accept:
+  - Removing `features = ["zeroize"]` from the `sha2` pin turns the suite red, demonstrated once by actually removing it.
+  - The failure message names D88 and says what the feature protects, not just "assertion failed".
+  - `docs/dependency-policy.md` §1 names the guard.
+- Notes: This is the generic hazard for any *feature*-carried security property; if a second one appears, generalise the Cargo.toml assertion into a small table rather than duplicating it.
 
 ## Open decisions (C)
 - **ed25519-dalek exact pin (2.x vs 3.0.0)** — chosen from C11's probe with P; blocks C11→C12, C15, C16; must land by M0 (start). — **[2026-07-27]** RESOLVED (D13): `=3.0.0`; C12 consumption shape `default-features = false, features = ["alloc","zeroize"]`; never enable `legacy_compatibility` (C11 report §9).

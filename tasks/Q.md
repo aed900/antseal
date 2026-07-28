@@ -397,8 +397,34 @@
   - Bump procedure doc committed; user acceptance of the tracking cadence noted per spec
 - Notes: Same chore as P19 — implement once, owned jointly (P mechanics, Q operation).
 
+### Q37 — Record the v1 freeze boundary in the Q14 checklist and the stability policy
+- Milestone: M0
+- Size: S
+- Deps: D84; Q14 (this is a checklist edit Q14 executes); Q19 (the stability policy it also lands in); A27 (the mirror A5/A11 read)
+- Spec: Format stability (MVP-SPEC.md line 123); Milestones M0/M2 (lines 153, 155)
+- Discovered by: **D84** (2026-07-28). The freeze gate currently has no statement of what is *outside* the freeze. Without one, a later reader has two equally available misreadings: that A's M2 artifact limits were frozen and may never move, or that anything not listed is free — including the anchor envelope, which is frozen. D84 §7 writes the boundary in both directions; this task lands it where the gate can quote it.
+- Do: Add D84 §7's two rows verbatim to Q14's freeze checklist — the anchor-artifact freeze-scope row (what is inside: the opaque-`bstr` envelope, D10 rows 6–9 and 16–19 with their codes, rules F1–F4; what is outside: every numeric limit on artifact-internal structure) and the report-version-evolution row (the Q14 freeze fixes report **v1**; M2's anchor stage ships report v2, which is ordinary versioned evolution under line 123, not a freeze violation). Carry the same freeze-boundary statement into Q19's format-stability policy so it survives past M0, and cross-reference A27's contract.
+- Accept:
+  - Both rows present in Q14's checklist, byte-identical to D84 §7 and to A27's mirror.
+  - Q19's policy text states the boundary and names artifact-internal limits as verifier policy over foreign formats, **not** as an exception to line 123.
+  - A test or checklist-lint asserts the three copies (Q14 row, A27 doc, Q19 policy) have not drifted — three hand-maintained copies of one rule is how the rule dies.
+- Notes: The second row exists because R32's `REPORT_VERSION` 0 → 1 bump lands in the same wave, which makes "the report format is frozen" an easy and wrong thing to conclude.
+
+### Q38 — Cross-check the verification-report byte format against an independent reader
+- Milestone: M0
+- Size: S
+- Deps: D29 (the contract), R9 (the 21 pinned report vectors), R32 (the `REPORT_VERSION` bump — run **after** it, or all 21 strings move underneath this), D31 (the lane it joins)
+- Spec: Revision-2 independent cross-check mandate (MVP-SPEC.md line 5); Verification (line 167)
+- Discovered by: **D31** (2026-07-28). Q11's scope is "CBOR + crypto". The verification-report byte format is neither, yet it is a **v1 format that freezes at Q14** (D29) with 21 byte-pinned strings (R9) and **no independent implementation checking any of it**. A full independent vehicle is not sensible — reproducing a report means reproducing all of verification — but D29's contract is a set of *syntactic* properties, and those are cheap to check with an independent JSON reader.
+- Do: Write a Python checker (stdlib `json` only, no third-party dependency) over every committed report vector in `testdata/vectors/v1/report/`, asserting D29's contract independently of the Rust encoder: every pinned string parses as JSON; re-serialising the parsed value with `json.dumps(..., separators=(',', ':'), ensure_ascii=False)` preserving the original key order reproduces the exact bytes (compact separators + declaration order); no value anywhere in the tree is a float; every hex string is lowercase and even-length; every key matches `^[a-z0-9]+(-[a-z0-9]+)*$`; `report_version` is the first key of every document and equals the pinned constant. Add a `--check` mode and wire it into `scripts/cross-check.sh` (D31 §6b) so it runs in the same permanent lane.
+- Accept:
+  - All committed report vectors pass; the run is recorded in `docs/testing/cross-check.md` as its own surface row with its tier.
+  - Self-test: a deliberately mutated copy (a float introduced; a key reordered; an uppercase hex digit) makes the checker fail, once for each property — a checker never observed failing proves nothing.
+  - Iterates `testdata/vectors/v*/report/`, not a hard-coded `v1`.
+- Notes: Tier is **T1 with no T0 anchor** and the report must say so — the contract is ours, so there is nothing external to check it against. That is the honest ceiling here, not a shortfall.
+
 ## Open decisions (Q)
-- Independent cross-check vehicles and permanence — which second implementations per surface (Python `cbor2` for CBOR; Python crypto stack for HKDF/commitments/GGM; whether ml-dsa↔fips204 cross-crate + ACVP KATs counts as "independent" for ML-DSA), and one-shot audit artifact vs permanent CI lane (proposal: both). Blocks Q11, Q14. Must land by M0.
+- Independent cross-check vehicles and permanence — which second implementations per surface (Python `cbor2` for CBOR; Python crypto stack for HKDF/commitments/GGM; whether ml-dsa↔fips204 cross-crate + ACVP KATs counts as "independent" for ML-DSA), and one-shot audit artifact vs permanent CI lane (proposal: both). Blocks Q11, Q14. Must land by M0. — **[2026-07-28]** RESOLVED (D31): one vehicle per surface, graded **T0 external oracle / T1 independent re-implementation / T2 same-ecosystem agreement**. CBOR keeps D12's `cbor2 ==6.1.3` for **decode only** — our own RFC 8949 §4.2.1 encoder is the encoding authority, which retires D7 §D12's length-first ordering caveat instead of documenting it. Crypto/GGM/padding/canonicalization reuse the Python references C16/G15/G3 already landed, each now **required to carry a T0 known-answer anchor** (RFC 5869 App. A, RFC 8032 §7.1, Unicode `NormalizationTest.txt` + a `unidata_version == '17.0.0'` assertion). **ML-DSA-65: NIST ACVP replayed against `ml-dsa =0.1.1` — T0, the strongest tier, and the answer to this entry's own question is that `ml-dsa`↔`fips204` is T2 and is NOT independence** (it is D14's fallback-equivalence check, retained and labelled as such). Permanence: **both**, and the two are not redundant — the dated one-shot report is the evidence *for* the freeze, the permanent unconditional `cross-check` lane is the guard *after* it. Buildable breakdown for Q11/F14 in D31 §9; Q14's verbatim row in §10. Found a gap: the report byte format has no cross-check at all → **Q38**.
 - Deterministic verification-report byte format compared by the bit-match harness (exact serialized output contract with R/F). Blocks Q4, Q5. Must land by M0.
 - Stable machine-readable error-code contract (how `antseal-core` exposes codes for tamper-distinctness across F/C/G/A/R errors and verdict states). Blocks Q7, Q8, Q18. Must land by M0.
 - Devnet E2E venue: GitHub-hosted CI job vs self-hosted scheduled job vs required scripted local gate. Blocks Q15. Must land by M1.

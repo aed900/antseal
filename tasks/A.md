@@ -311,6 +311,33 @@
   - Test: after appending a new root, all existing anchor golden vectors still verify unchanged (store version bumped, results stable).
   - Store version visible in verdict data for R's display.
 
+### A27 — Write the anchor-artifact limit contract A5/A11 read at M2
+- Milestone: M0 (the contract must exist before the Q14 freeze; A5/A11 consume it at M2)
+- Size: S
+- Deps: D84; D10 (the frozen envelope caps it points at); F11 (the constants exist)
+- Spec: Format stability (MVP-SPEC.md line 123); Milestones M0/M2 (lines 153, 155); Anchoring (lines 108–109); Risks — hostile bundles (line 187)
+- Discovered by: **D84** (2026-07-28). Precedent: **F19**, which handed F14 its sidecar contract for exactly this reason — a rule that lives only in a decision record is a rule the implementing task rediscovers or contradicts.
+- Do: Commit `docs/format/anchor-artifact-limits.md` carrying, verbatim from `docs/decisions/D84-anchor-artifact-limits-permanence.md`: rules **F1–F4** (§4 — limits evaluated only in the anchor stage, never in stage 1 decode; an over-limit artifact fails **that anchor alone** as `invalid`; raise-only monotonicity after M2's first release); the §5 ruling that A5's and A11's promised byte/count caps over bundle-embedded artifacts **are** the existing D10 constants (`MAX_OTS_BYTES`, `MAX_TSA_TOKEN_BYTES`, `MAX_CERT_BYTES`, `MAX_INTERMEDIATE_COUNT`) and must be consumed by name, not re-minted; the §6 table of the eight limits genuinely left open at M2 with the real artifact each is measured against; and an empty **F4 registry** table (limit, initial value, date set, `lowered: never`) for A5/A11 to fill. Update A5's and A11's `Do` text in this file to point at the contract instead of promising caps that §5 rules already frozen.
+- Accept:
+  - The F1–F4 text in the doc is byte-identical to D84 §7's Q14 checklist row wording where they overlap — a paraphrase is how the two drift.
+  - A5 and A11 in `tasks/A.md` name the D10 constants; A5's receive-side response cap carries the `≤ MAX_TSA_TOKEN_BYTES` derivation from D84 §5.
+  - The F4 registry exists with its columns and a stated update rule, even though it is empty at M0.
+  - Referenced from the Q14 freeze checklist row Q37 lands.
+- Notes: This is documentation only — no code, no constants, no error codes at M0. The numbers themselves are deliberately absent; putting placeholders here is the failure mode D84 §8 rejects.
+
+### A28 — Reconcile the receive-side anchor size caps with the frozen bundle-field caps
+- Milestone: M2
+- Size: S
+- Deps: A27 (the contract), A3/A4 (the TSA request path), A13 (OTS submission/merge), D10 rows 16/17
+- Spec: Anchoring (lines 108–109); Reveal bundle (line 114); Format stability (line 123)
+- Discovered by: **D84** (2026-07-28). A5's promised "max response size" is the one cap in A's list that is *not* a duplicate of a D10 constant — it bounds the `TimeStampResp` read off the network, before any bundle exists. It is still not free: a token accepted from a TSA that cannot afterwards be embedded in a `.sealproof` is a seal that anchors and then cannot be revealed. The same trap exists for A13's merged `.ots`.
+- Do: Set the receive-side caps in the network paths (`antseal-anchor`) with the derived constraint from D84 §5 recorded at the site: the TSA response cap MUST be `≤ MAX_TSA_TOKEN_BYTES`, and the merged-`.ots` cap MUST be `≤ MAX_OTS_BYTES`. Fail the *submission* with a distinct, actionable error when a received artifact exceeds the embeddable size, rather than storing it and discovering the problem at reveal time. Record both values in A27's F4 registry.
+- Accept:
+  - A mock TSA returning a token larger than `MAX_TSA_TOKEN_BYTES` produces a distinct submission-time error naming the embeddability limit, and no vault record is written for it.
+  - A merged `.ots` that would exceed `MAX_OTS_BYTES` fails at merge, not at bundle build (test with a synthetic multi-calendar merge).
+  - A compile-time or test-time assertion pins `receive_cap <= MAX_*_BYTES` for both, so a later loosening of one cannot silently outrun the other.
+- Notes: The receive-side caps are **not** format surface (D84 §3) — they are network-path policy and may change freely, subject only to the `≤` constraint.
+
 ## Open decisions (A)
 - **A-OD1 — State for a chain invalid at genTime** (expired-at-genTime): map to `invalid` (with a distinct error detail) or `internally-consistent-only`? Recommendation: `invalid`, keeping `internally-consistent-only` for structurally-untrusted-root closure; the tamper matrix only mandates distinctness from `valid-at-stamping-cert-since-expired`. Blocks: A9, A18, A21. Must land: early M2.
 - **A-OD2 — Default OTS calendar set** (≥2; candidates alice.btc.calendar.opentimestamps.org, bob.btc.calendar.opentimestamps.org, finney.calendar.eternitywall.com), with execution-time liveness verification. Blocks: A13, A25. Must land: M2.
