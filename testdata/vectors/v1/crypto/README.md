@@ -25,6 +25,8 @@ agreement. Per surface, the vehicle and why it is genuinely independent:
 | Commitments (C6) | `reference.py` — SHA-256 over `tag ‖ salt ‖ msg`, Python stdlib | Different language and hash implementation; the preimage assembly is written from MVP-SPEC.md line 79 rather than shared with `tagged_sha256`. |
 | Padding (C8) | `reference.py` — the formula written out from MVP-SPEC.md line 91 | Different language; the padded plaintexts are pinned **byte-exact** inside the unit-AEAD vectors, so both the bucket arithmetic and the all-zero fill are cross-checked. |
 | Unit + manifest AEAD (C9/C10) | `reference.py` — XChaCha20-Poly1305 written from scratch (ChaCha20 block function, Poly1305, HChaCha20, the RFC 8439 §2.8 AEAD construction), Python stdlib only | A **from-scratch implementation of the cipher**, not a binding to a library: no shared code with RustCrypto's `chacha20poly1305`. Corroborated by libsodium (`crypto_aead_xchacha20poly1305_ietf_encrypt`) in the self-test, so three independent implementations agree. |
+| Ed25519 (C12) | `reference.py` — the RFC 8032 §6 reference formulation, Python stdlib | Different language, and the arithmetic is the RFC's own formulation rather than `curve25519-dalek`'s. Known-answer-checked against RFC 8032 §7.1 (an **external oracle**, not our own output) and corroborated against libsodium and OpenSSL. |
+| ML-DSA-65 (C13) | `probes/sig-probe/tests/c16_mldsa_vector.rs` — the `fips204 =0.4.6` crate (integritychain) | A genuinely independent *implementation*: different authors, different codebase, written separately from FIPS 204 — and **not** the `ml-dsa =0.1.1` (RustCrypto) crate the vector is executed against. **But it is one tier weaker than the surfaces above**: same language, same toolchain, same target, no cross-language check and no external known-answer oracle. See "The ML-DSA gap" below. |
 
 `reference.py` is **not** trusted on assertion alone: it validates every
 primitive it implements against that primitive's *published known-answer
@@ -51,6 +53,10 @@ full XChaCha20-Poly1305 AEAD), RFC 8032 §7.1 (Ed25519).
   the ciphertext (MVP-SPEC.md line 91).
 - `manifest-aead.json` — kind `manifest-aead`: the sentinel-id `k_m`, the
   frozen **empty** AAD, and the encrypted blob (MVP-SPEC.md line 98).
+- `signatures.json` — kind `signatures`: per algorithm the `W`-derived
+  seed, public key and signature bytes; the Ed25519 pre-image
+  `ctx ‖ 0x00 ‖ body`; and the `sig_policy` hybrid orchestration over the
+  same body (MVP-SPEC.md lines 97, 104).
 - `reference.py` — the independent reference implementations (Python
   standard library only) plus their known-answer self-test.
 - `gen_vectors.py` — emits the vector files from `reference.py`. Runs the
@@ -70,6 +76,25 @@ python3 gen_vectors.py commitments   | diff - commitments.json
 python3 gen_vectors.py unit-aead     | diff - unit-aead.json
 python3 gen_vectors.py manifest-aead | diff - manifest-aead.json
 ```
+
+`signatures.json` is generated in two steps, because its ML-DSA-65 half
+comes from a Rust crate rather than from Python:
+
+```sh
+# 1. the fips204 half — also *asserts* agreement with the committed vector
+cd probes/sig-probe
+cargo test --test c16_mldsa_vector -- --nocapture      # prints the JSON payload
+# 2. assemble (save the printed JSON block as mldsa65-fips204.json first)
+cd testdata/vectors/v1/crypto
+python3 gen_vectors.py signatures --mldsa mldsa65-fips204.json | diff - signatures.json
+```
+
+Step 1 alone is the re-runnable cross-check: with `signatures.json`
+present, `cargo test --test c16_mldsa_vector` re-derives the ML-DSA-65 key
+and signature from `fips204` and asserts they equal the committed bytes.
+The intermediate `mldsa65-fips204.json` is scratch — it is deliberately not
+committed, since the probe test regenerates it on demand and the committed
+vector is the artifact of record.
 
 `gen_vectors.py` sets `sys.dont_write_bytecode` so running it never drops a
 `__pycache__/` into the vector tree (which the Q4 runner would — correctly —
@@ -133,3 +158,60 @@ a single byte. Every entry's `aad` field must be the empty string **and**
 the executor asserts `MANIFEST_AAD` is itself empty — otherwise the vector
 would still pass if the constant ever grew a value, with generator and
 implementation simply wrong together.
+
+**Signatures — why signature *bytes* can be pinned.** Both halves are
+deterministic: Ed25519 derives its nonce from the key and message
+(RFC 8032), and ML-DSA-65 signs with the FIPS 204 deterministic variant
+`rnd = 0³²` (decision **D15**). Had D15 chosen hedged signing, this vector
+could only have pinned keygen plus verification of a stored signature —
+the fallback C16's task notes describe. It did not, so the bytes are
+portable *across implementations*, which is precisely what makes the
+`fips204` cross-check possible at all.
+
+The vector also pins the Ed25519 pre-image `ctx ‖ 0x00 ‖ body` as its own
+field, so dropping the `0x00` separator or changing the context is a vector
+break rather than something only the opaque signature bytes would catch.
+The hybrid leg re-runs key production and signing through C14's
+policy-driven path and requires the identical per-algorithm bytes, then
+verifies under the policy — so the orchestration cannot derive or sign
+differently from the per-algorithm entry points.
+
+## The ML-DSA gap (feeds decision D31 — deliberately not settled here)
+
+Honest statement of what the ML-DSA-65 cross-check is worth:
+
+- **What it is.** `fips204 =0.4.6` (integritychain) and `ml-dsa =0.1.1`
+  (RustCrypto) are two independently written FIPS 204 implementations. They
+  produce byte-identical keygen and deterministic-signing output for the
+  committed fixture. This is real evidence — a transcription error, a
+  packing bug or a misread of the standard in either crate would show up.
+- **What it is not.** It is not cross-*language*, not cross-toolchain, and
+  not an *external* oracle the way RFC 8032 §7.1 is for Ed25519 or
+  RFC 5869/8439 are for HKDF and the AEADs. Both crates are Rust, built by
+  the same compiler for the same target. A shared misreading of FIPS 204
+  would not be caught.
+- **Why not better, right now.** There is no Python ML-DSA in this
+  toolchain (`cryptography` 38 and PyNaCl have none), so the from-scratch
+  route used for XChaCha20-Poly1305 is not available at proportionate cost.
+  NIST's ACVP-Server ML-DSA `sigGen` known-answer files *would* be a true
+  external oracle, but the published projections are tens of megabytes —
+  committing them wholesale conflicts with the retained-forever fixture
+  policy, and trimming them is itself a decision about what to trust.
+
+**Options for D31**, in increasing strength and cost:
+
+1. Keep `fips204` as the permanent vehicle, run on demand from
+   `probes/sig-probe` (today's state). Cheapest; the weakness above stands.
+2. Same, but promoted to a CI lane so the agreement is continuously
+   asserted rather than re-run by hand.
+3. Add a **trimmed, committed ACVP known-answer extract** for ML-DSA-65
+   (deterministic sigGen + keyGen, a handful of cases) as a genuine
+   external oracle, with its provenance and trimming procedure recorded.
+4. Write a from-scratch ML-DSA-65 in Python. Highest independence, by far
+   the highest cost and its own correctness risk.
+
+**Recommendation: (3) layered on (2)** — an external NIST-derived oracle is
+what actually closes the gap, and the `fips204` agreement is worth keeping
+alongside it as an implementation-vs-implementation check. Note that D31
+governs *permanence* of non-CBOR cross-check vehicles; nothing here freezes
+it, and the committed vector bytes do not depend on which option is chosen.

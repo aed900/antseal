@@ -78,3 +78,20 @@ fn vector_committed_unit_aead_file_verifies() {
 fn vector_committed_manifest_aead_file_verifies() {
     execute_committed("manifest-aead.json", "manifest-aead", 3);
 }
+
+/// C16 accept (signatures): the committed hybrid-signature vector.
+///
+/// Both halves are *byte*-pinned, which is only possible because both are
+/// deterministic — Ed25519 by RFC 8032, ML-DSA-65 by decision D15's
+/// `rnd = 0^32`. Independent vehicles: the pure-Python RFC 8032 §6
+/// reference formulation for Ed25519, and the `fips204` crate (a second,
+/// independently written FIPS 204 implementation) for ML-DSA-65, driven by
+/// `probes/sig-probe/tests/c16_mldsa_vector.rs`.
+///
+/// The three "items" are the two algorithms plus the C14 hybrid
+/// orchestration, which must reproduce the same per-algorithm bytes through
+/// the policy-driven path and then verify under the policy.
+#[test]
+fn vector_committed_signatures_file_verifies() {
+    execute_committed("signatures.json", "signatures", 3);
+}

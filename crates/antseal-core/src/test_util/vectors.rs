@@ -40,7 +40,9 @@ use crate::crypto::manifest_aead::{
 use crate::crypto::material::{FileSalt, MasterSecretRef, Salt16};
 use crate::crypto::padding::{PAD_BLOCK, apply_padding, padded_length};
 use crate::crypto::secrets::SealId;
+use crate::crypto::sig_policy::{PolicyLabel, SigPolicy};
 use crate::crypto::unit_aead::{Nonce24, UnitKey, decrypt_unit, decrypt_unit_with_key, unit_aad};
+use crate::crypto::{SIG_CONTEXT, error::SigAlg, sig_ed25519, sig_mldsa, sig_policy};
 
 /// The envelope `schema` discriminator string.
 pub const SCHEMA: &str = "antseal-golden-vector";
@@ -55,7 +57,13 @@ pub const NON_SECRET_MARKER: &str = "NON-SECRET";
 
 /// Registered vector kinds. Extending this list is a framework change
 /// (see the module docs), not a per-vector event.
-pub const KNOWN_KINDS: &[&str] = &["hkdf-labels", "commitments", "unit-aead", "manifest-aead"];
+pub const KNOWN_KINDS: &[&str] = &[
+    "hkdf-labels",
+    "commitments",
+    "unit-aead",
+    "manifest-aead",
+    "signatures",
+];
 
 /// Why a vector file failed. Every variant is a *loud* failure in the
 /// runner — nothing is skipped.
@@ -185,6 +193,7 @@ pub fn execute_vector_bytes(
         "commitments" => execute_commitments(envelope),
         "unit-aead" => execute_unit_aead(envelope),
         "manifest-aead" => execute_manifest_aead(envelope),
+        "signatures" => execute_signatures(envelope),
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }
@@ -988,6 +997,250 @@ fn verify_manifest_aead_entry(
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// kind: signatures (C16 / C12 + C13 + C14)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignaturesInputs {
+    w: String,
+    body: String,
+    context: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignaturesExpect {
+    ed25519: Ed25519Entry,
+    mldsa65: MlDsaEntry,
+    hybrid: HybridEntry,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Ed25519Entry {
+    seed: String,
+    public_key: String,
+    /// The full signed pre-image `ctx ‖ 0x00 ‖ body` — pinned as its own
+    /// field so the frozen construction cannot drift silently.
+    signing_message: String,
+    signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MlDsaEntry {
+    seed: String,
+    public_key: String,
+    signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HybridEntry {
+    policy_ids: Vec<u64>,
+    policy_label: String,
+}
+
+const SIGNATURES_KIND: &str = "signatures";
+
+/// Execute a `signatures` vector (MVP-SPEC.md lines 97, 104; tasks/C.md
+/// C16): per algorithm the `W`-derived seed, the public key, and the
+/// signature bytes are recomputed and byte-compared, then the whole hybrid
+/// orchestration is run through C14's policy-enforcing verifier.
+///
+/// # Why signature *bytes* can be pinned at all
+///
+/// Both halves are deterministic. Ed25519 derives its nonce from the key
+/// and message (RFC 8032), and ML-DSA-65 signs with the FIPS 204
+/// deterministic variant `rnd = 0^32` (decision D15). Had D15 selected
+/// hedged signing, this vector could only have pinned keygen plus
+/// verification of a stored signature — the fallback C16's task notes
+/// describe. It did not, so the bytes are portable across implementations,
+/// which is exactly what makes the `fips204` cross-check possible.
+fn execute_signatures(envelope: Envelope) -> Result<VectorSummary, VectorError> {
+    let payload_err = |problem: String| VectorError::Payload {
+        kind: SIGNATURES_KIND,
+        problem,
+    };
+    let check_err = |check: &'static str, problem: String| VectorError::Check {
+        kind: SIGNATURES_KIND,
+        check,
+        problem,
+    };
+    let inputs: SignaturesInputs =
+        serde_json::from_value(envelope.inputs).map_err(|e| payload_err(format!("inputs: {e}")))?;
+    let expect: SignaturesExpect =
+        serde_json::from_value(envelope.expect).map_err(|e| payload_err(format!("expect: {e}")))?;
+
+    let w_array = require_test_master_secret(SIGNATURES_KIND, &inputs.w)?;
+    let w = MasterSecretRef::from_bytes(&w_array);
+    let body = decode_hex(SIGNATURES_KIND, "inputs.body", &inputs.body)?;
+
+    // The frozen context (MVP-SPEC.md line 97): changing these bytes is a
+    // format event — every existing signature would stop verifying.
+    let context = decode_hex(SIGNATURES_KIND, "inputs.context", &inputs.context)?;
+    if context != SIG_CONTEXT {
+        return Err(check_err(
+            "sig-context",
+            format!(
+                "vector pins context {}, the frozen SIG_CONTEXT is {}",
+                inputs.context,
+                hex(SIG_CONTEXT)
+            ),
+        ));
+    }
+
+    // --- Ed25519 half (C12) ---
+    let ed_seed = derive_sig_ed25519_seed(w);
+    let expected_ed_seed = decode_hex(SIGNATURES_KIND, "ed25519.seed", &expect.ed25519.seed)?;
+    if ed_seed.as_bytes().as_slice() != expected_ed_seed {
+        return Err(check_err(
+            "ed25519-seed",
+            "derived seed differs from the vector's".to_owned(),
+        ));
+    }
+    let ed_pk = sig_ed25519::public_key(w);
+    if hex(ed_pk.as_bytes()) != expect.ed25519.public_key {
+        return Err(check_err(
+            "ed25519-public-key",
+            format!(
+                "derived {}, vector pins {}",
+                hex(ed_pk.as_bytes()),
+                expect.ed25519.public_key
+            ),
+        ));
+    }
+    // The pre-image `ctx ‖ 0x00 ‖ body`, pinned byte-exact.
+    let message = sig_ed25519::signing_message(&body);
+    if hex(&message) != expect.ed25519.signing_message {
+        return Err(check_err(
+            "ed25519-signing-message",
+            format!(
+                "constructed {}, vector pins {}",
+                hex(&message),
+                expect.ed25519.signing_message
+            ),
+        ));
+    }
+    let ed_sig = sig_ed25519::sign(w, &body);
+    if hex(ed_sig.as_bytes()) != expect.ed25519.signature {
+        return Err(check_err(
+            "ed25519-signature",
+            format!(
+                "signed {}, vector pins {}",
+                hex(ed_sig.as_bytes()),
+                expect.ed25519.signature
+            ),
+        ));
+    }
+    sig_ed25519::verify(&ed_pk, &body, &ed_sig)
+        .map_err(|e| check_err("ed25519-verify", format!("{e}")))?;
+
+    // --- ML-DSA-65 half (C13) ---
+    let mldsa_seed = derive_sig_mldsa65_seed(w);
+    let expected_mldsa_seed = decode_hex(SIGNATURES_KIND, "mldsa65.seed", &expect.mldsa65.seed)?;
+    if mldsa_seed.as_bytes().as_slice() != expected_mldsa_seed {
+        return Err(check_err(
+            "mldsa65-seed",
+            "derived seed differs from the vector's".to_owned(),
+        ));
+    }
+    let mldsa_pk = sig_mldsa::public_key(w);
+    if hex(mldsa_pk.as_bytes()) != expect.mldsa65.public_key {
+        return Err(check_err(
+            "mldsa65-public-key",
+            "derived public key differs from the vector's".to_owned(),
+        ));
+    }
+    let mldsa_sig = sig_mldsa::sign(w, &body);
+    if hex(mldsa_sig.as_bytes()) != expect.mldsa65.signature {
+        return Err(check_err(
+            "mldsa65-signature",
+            "signature differs from the vector's — deterministic signing (D15) means \
+             this is a real divergence, not a nonce difference"
+                .to_owned(),
+        ));
+    }
+    sig_mldsa::verify(&mldsa_pk, &body, &mldsa_sig)
+        .map_err(|e| check_err("mldsa65-verify", format!("{e}")))?;
+
+    // --- hybrid orchestration (C14) ---
+    let policy = SigPolicy::from_ids(expect.hybrid.policy_ids.iter().copied())
+        .map_err(|e| check_err("policy-ids", format!("{e}")))?;
+    let label = policy.label();
+    if policy_label_name(label) != expect.hybrid.policy_label {
+        return Err(check_err(
+            "policy-label",
+            format!(
+                "policy resolves to `{}`, vector pins `{}`",
+                policy_label_name(label),
+                expect.hybrid.policy_label
+            ),
+        ));
+    }
+    // The policy-driven key/signature production must reproduce exactly the
+    // per-algorithm bytes pinned above — the orchestration is not allowed to
+    // derive or sign differently from the per-algorithm entry points.
+    let pubkeys = sig_policy::public_keys(w, &policy);
+    let signatures = sig_policy::sign_body(w, &policy, &body);
+    for (alg, expected) in [
+        (SigAlg::Ed25519, &expect.ed25519.public_key),
+        (SigAlg::MlDsa65, &expect.mldsa65.public_key),
+    ] {
+        let found = pubkeys
+            .iter()
+            .find(|(a, _)| *a == alg)
+            .ok_or_else(|| check_err("hybrid-pubkeys", format!("policy omitted {alg:?}")))?;
+        if &hex(&found.1) != expected {
+            return Err(check_err(
+                "hybrid-pubkeys",
+                format!("{alg:?}: policy-derived key differs from the pinned one"),
+            ));
+        }
+    }
+    for (alg, expected) in [
+        (SigAlg::Ed25519, &expect.ed25519.signature),
+        (SigAlg::MlDsa65, &expect.mldsa65.signature),
+    ] {
+        let found = signatures
+            .iter()
+            .find(|(a, _)| *a == alg)
+            .ok_or_else(|| check_err("hybrid-signatures", format!("policy omitted {alg:?}")))?;
+        if &hex(&found.1) != expected {
+            return Err(check_err(
+                "hybrid-signatures",
+                format!("{alg:?}: policy-produced signature differs from the pinned one"),
+            ));
+        }
+    }
+    let verified = sig_policy::verify_body(&policy, &pubkeys, &signatures, &body)
+        .map_err(|e| check_err("hybrid-verify", format!("{e}")))?;
+    if verified != label {
+        return Err(check_err(
+            "hybrid-verify",
+            "verify_body returned a different policy label than the policy reports".to_owned(),
+        ));
+    }
+
+    Ok(VectorSummary {
+        kind: SIGNATURES_KIND,
+        // Two algorithms plus the hybrid orchestration over them.
+        items: 3,
+        description: envelope.description,
+    })
+}
+
+/// Stable wire-facing name for a [`PolicyLabel`] (R's verdict datum).
+fn policy_label_name(label: PolicyLabel) -> &'static str {
+    match label {
+        PolicyLabel::Hybrid => "hybrid",
+        PolicyLabel::Ed25519Only => "ed25519-only",
+        PolicyLabel::Other => "other",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1847,6 +2100,195 @@ mod tests {
         doc["inputs"]["seal_id"] = serde_json::json!(hex(&[0u8; 15]));
         let err = execute(&doc).expect_err("must fail");
         assert!(matches!(err, VectorError::Payload { .. }), "{err}");
+    }
+
+    // -----------------------------------------------------------------
+    // kind: signatures — tests-of-the-test
+    // -----------------------------------------------------------------
+
+    /// Build a valid `signatures` document from the crate's own signing
+    /// paths (self-consistent by construction).
+    fn valid_signatures_document() -> serde_json::Value {
+        let w = MasterSecretRef::from_bytes(&super::super::TEST_MASTER_SECRET_W);
+        let body: &[u8] = b"self-test body";
+        serde_json::json!({
+            "schema": SCHEMA,
+            "schema_version": SCHEMA_VERSION,
+            "format_version": "v1",
+            "kind": "signatures",
+            "non_secret": "NON-SECRET synthetic self-test document",
+            "description": "framework self-test",
+            "inputs": {
+                "w": hex(&super::super::TEST_MASTER_SECRET_W),
+                "body": hex(body),
+                "context": hex(SIG_CONTEXT),
+            },
+            "expect": {
+                "ed25519": {
+                    "seed": hex(derive_sig_ed25519_seed(w).as_bytes()),
+                    "public_key": hex(sig_ed25519::public_key(w).as_bytes()),
+                    "signing_message": hex(&sig_ed25519::signing_message(body)),
+                    "signature": hex(sig_ed25519::sign(w, body).as_bytes()),
+                },
+                "mldsa65": {
+                    "seed": hex(derive_sig_mldsa65_seed(w).as_bytes()),
+                    "public_key": hex(sig_mldsa::public_key(w).as_bytes()),
+                    "signature": hex(sig_mldsa::sign(w, body).as_bytes()),
+                },
+                "hybrid": { "policy_ids": [0, 1], "policy_label": "hybrid" },
+            },
+        })
+    }
+
+    #[test]
+    fn self_consistent_signatures_document_executes_green() {
+        let summary = execute(&valid_signatures_document()).expect("valid document must execute");
+        assert_eq!(summary.kind, "signatures");
+        assert_eq!(summary.items, 3);
+    }
+
+    /// The frozen context (MVP-SPEC.md line 97): a vector pinning any other
+    /// ctx must fail, so the constant cannot drift under the vectors.
+    #[test]
+    fn wrong_sig_context_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        doc["inputs"]["context"] = serde_json::json!(hex(b"antseal-manifest-v2"));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "sig-context",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// The pre-image `ctx ‖ 0x00 ‖ body` is pinned as its own field, so
+    /// dropping the separator (or the context) is a vector break rather
+    /// than something only the signature bytes would catch.
+    #[test]
+    fn tampered_signing_message_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        let mut without_separator = SIG_CONTEXT.to_vec();
+        without_separator.extend_from_slice(b"self-test body");
+        doc["expect"]["ed25519"]["signing_message"] = serde_json::json!(hex(&without_separator));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "ed25519-signing-message",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_ed25519_signature_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        let mut sig = doc["expect"]["ed25519"]["signature"]
+            .as_str()
+            .expect("signature is a string")
+            .to_owned();
+        let last = sig.pop().expect("non-empty");
+        sig.push(if last == '0' { '1' } else { '0' });
+        doc["expect"]["ed25519"]["signature"] = serde_json::json!(sig);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "ed25519-signature",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// Deterministic ML-DSA signing (D15) is what makes a byte mismatch a
+    /// real divergence rather than a nonce difference — so it must fail.
+    #[test]
+    fn tampered_mldsa_signature_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        let mut sig = doc["expect"]["mldsa65"]["signature"]
+            .as_str()
+            .expect("signature is a string")
+            .to_owned();
+        let last = sig.pop().expect("non-empty");
+        sig.push(if last == '0' { '1' } else { '0' });
+        doc["expect"]["mldsa65"]["signature"] = serde_json::json!(sig);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "mldsa65-signature",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tampered_public_key_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        doc["expect"]["ed25519"]["public_key"] = serde_json::json!(hex(&[0xABu8; 32]));
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "ed25519-public-key",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// An anti-downgrade guard on the vector itself: a file claiming the
+    /// Ed25519-only policy while carrying hybrid material must not pass.
+    #[test]
+    fn downgraded_policy_label_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        doc["expect"]["hybrid"]["policy_ids"] = serde_json::json!([0]);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "policy-label",
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// An unregistered algorithm id is rejected by C14's `from_ids`
+    /// (ids 2–15 are reserved), surfaced as a vector failure, not a panic.
+    #[test]
+    fn unknown_policy_id_fails_loudly() {
+        let mut doc = valid_signatures_document();
+        doc["expect"]["hybrid"]["policy_ids"] = serde_json::json!([0, 1, 7]);
+        let err = execute(&doc).expect_err("must fail");
+        assert!(
+            matches!(
+                err,
+                VectorError::Check {
+                    check: "policy-ids",
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]
