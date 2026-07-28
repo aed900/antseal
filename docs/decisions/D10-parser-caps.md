@@ -788,5 +788,40 @@ every pre-allocation whether or not a cap covers it); eighteen new
 enforcement inside verify stage 1, ahead of every AEAD, hash, and
 signature operation; `u64` everywhere so wasm32 and native cannot diverge.
 F11 implements and lands the registry rows of §10; F15 encodes the
-oversized and over-deep fixtures; D83 is registered for the residual
-M2 artifact-internal limits.
+oversized and over-deep fixtures; the residual M2 artifact-internal
+limits are registered as their own decision (see the register in
+`TODO.md` — the number this doc originally proposed was taken by an
+unrelated finding landed the same day).
+
+## Amendments from F11's implementation (2026-07-28)
+
+F11 implemented every value, name, module path and clamp order in this
+document verbatim. Three items in the *prose* were wrong or underspecified
+and are corrected here rather than left to rot in a task report. None
+changes a frozen value.
+
+1. **§9's `take_units(&mut self, claimed: u64) -> Result<(), ()>` trips a
+   default-on clippy lint** (`result_unit_err`), which the workspace denies
+   under `-D warnings`. The signature is kept — `codec` sits below
+   `manifest` and cannot name `ManifestError`, and a bespoke error type
+   would duplicate the caller's `claimed`/`cap` pair — with a targeted
+   `#[allow]` and that justification at the site. §9 should be read as
+   including the allow.
+
+2. **§5 orders the size cap ahead of F10's version dispatch, which this
+   document never says out loud.** The consequence is a real semantic
+   choice: a >256 MiB **v2** bundle now reports `bundle-too-large`, a *v1*
+   cap that does not bind it. **Ruling: keep it.** The cheapest rejection
+   wins, and a v1 verifier has no business reading 300 MiB of untrusted
+   bytes to discover it cannot parse them anyway; the alternative lets a
+   hostile artifact walk a verifier arbitrarily far in before any bound
+   applies. The claim in `format.rs` that a hostile oversized bundle
+   declaring version 7 is rejected "before F11's caps even matter" was
+   false and has been corrected in place.
+
+3. **§9's "at-cap input passes" is not literally achievable for the count
+   caps.** A count cap is checked *before* its elements are read, so an
+   at-cap fixture that supplies no elements necessarily fails later on
+   something else. The honest form of the property — and what F11's rows
+   assert — is that at-cap yields **a different code** and cap+1 yields
+   **the cap's own code**. Same discrimination, accurate statement.
