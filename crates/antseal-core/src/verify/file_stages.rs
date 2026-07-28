@@ -61,10 +61,20 @@
 //! | 4 | `full(F)` ∧ [`FineTree::Present`] ∧ `s_root` absent | [`VerifyError::FullRevealMaterialMissing`] `{SRoot}` |
 //! | 5 | `full(F)` ∧ [`FineTree::Absent`] ∧ `s_root` present | [`VerifyError::FullRevealSRootWithoutFineTree`] (D74) |
 //! | 6 | present material with the wrong exact length (`file_salt`, then `s_root`) | [`VerifyError::WrongLength`] (defensive; see below) |
+//! | 6b | `full(F)` ∧ fine tree ∧ `n == 1`: `s_root`'s upper 16 bytes are not zero | [`VerifyError::FineRootSeedTailNotCanonical`] (D83) |
 //! | 7 | `full(F)`: concat(non-mirror bytes) ≠ `canon_commit`/`raw_commit` | [`VerifyError::ConcatCommitMismatch`] |
 //! | 8 | `full(F)` ∧ fine tree: rebuild from `s_root` ≠ `fine_root` | [`VerifyError::FineRootRebuildMismatch`] |
 //! | 9 | `full(F)` ∧ mirror revealed: mirror bytes ≠ `raw_commit` | [`VerifyError::RawCommitMismatch`] |
 //! | 10 | `full(F)` ∧ mirror revealed ∧ text: `canonicalize_v(raw) ≠ canonical` | [`VerifyError::RawMirrorCanonicalizationMismatch`] |
+//!
+//! Row 6b is the *value* half of row 6 — same material, same place, one
+//! check later: the length rule says `s_root` is 32 bytes, and D83's rule
+//! says that at `n == 1` (and only there) its upper half must be zero,
+//! because `d == 0` makes the grid root itself a leaf and the verifier reads
+//! `salt_0 = s_root[..16]` with no descent. It mints **no new code**: the arm
+//! delegates to [`LeafSeedTailNotZero`]'s
+//! `fine-root-leaf-seed-tail-not-zero`, the same string the fine-tree site
+//! produces for a `level == d` cover entry.
 //!
 //! Rows 1–6 are the *classification* pass ([`classify_file_reveal`]); rows
 //! 7–10 are the *content* pass ([`check_full_reveal_content`]). Both run
@@ -237,9 +247,11 @@
 //!
 //! [`FineTree::Present`]: crate::manifest::body::FineTree::Present
 //! [`FineTree::Absent`]: crate::manifest::body::FineTree::Absent
+//! [`LeafSeedTailNotZero`]: crate::content::fine_tree::FineTreeError::LeafSeedTailNotZero
 
 use crate::canon::{CanonicalBytes, CanonicalizeError, TextMode, canonicalize_v};
-use crate::content::fine_tree::rebuild_fine_root;
+use crate::content::fine_tree::{check_leaf_level_payload, rebuild_fine_root};
+use crate::content::ggm::{NodeAddress, depth_for_leaf_count};
 use crate::content::mirror::full_reveal_concat_exempt;
 use crate::content::unit::UnitKind as ContentUnitKind;
 use crate::crypto::commit::{CommitmentDigest, verify_canon_commit, verify_raw_commit};
@@ -807,14 +819,37 @@ pub fn classify_file_reveal<'a>(
 
     let fine = match fine_material {
         None => FullRevealFineTree::Absent,
-        Some((bytes, fine_root)) => FullRevealFineTree::Present {
-            s_root: Seed32::try_from(bytes).map_err(|_| VerifyError::WrongLength {
+        Some((bytes, fine_root)) => {
+            let s_root = Seed32::try_from(bytes).map_err(|_| VerifyError::WrongLength {
                 field: LengthField::SRoot,
                 expected: LengthField::SRoot.spec_len(),
                 actual: len_u64(bytes),
-            })?,
-            fine_root,
-        },
+            })?;
+            // Row 6b (D83) — the *value* half of row 6, in the same material
+            // order and immediately after the length conversion that makes
+            // the bytes a `Seed32`. `depth_for_leaf_count(1) == 0 ==
+            // NodeAddress::root().level()`, so this is a no-op for every
+            // `n > 1` and fires only at `n == 1`, where `d == 0` makes the
+            // grid root a leaf and the verifier reads `salt_0 =
+            // s_root[..16]` with no descent (MVP-SPEC.md line 96;
+            // `docs/format/registry-v1.md` §7.14 key 2).
+            //
+            // **`size == 0` is skipped, not defaulted to depth 0.** D83 §4.4
+            // wrote `unwrap_or(0)`, but `depth_for_leaf_count` returns `None`
+            // only for an empty file, which has no GGM grid at all — so no
+            // leaf level exists and the rule is vacuous. Defaulting would
+            // reclassify the hand-built "fine tree declared on an empty file"
+            // bundle from row 8's `fine-root-rebuild-mismatch` to this code,
+            // and would make *which* code it gets depend on an irrelevant
+            // byte of a seed nothing derives from. Row 8 rejects that shape
+            // regardless (`rebuild_fine_root` refuses empty content).
+            if let Some(depth) = depth_for_leaf_count(file.size) {
+                check_leaf_level_payload(s_root.as_bytes(), NodeAddress::root(), depth).map_err(
+                    |source| VerifyError::FineRootSeedTailNotCanonical { file_id, source },
+                )?;
+            }
+            FullRevealFineTree::Present { s_root, fine_root }
+        }
     };
 
     Ok(FileRevealShape::Full(FullRevealEvidence {
@@ -1306,6 +1341,93 @@ mod tests {
         assert_eq!(shapes.len(), 1);
         assert!(shapes[0].is_full());
         assert_eq!(shapes[0].file_id(), 0);
+    }
+
+    /// **Row 6b (D83), the `n == 1` degenerate case** — R's second call site
+    /// for the canonical leaf-level payload.
+    ///
+    /// At `n == 1` the GGM depth is 0, so the grid root **is** the single
+    /// leaf and the verifier reads `salt_0 = s_root[..16]` with no descent.
+    /// The disclosed `s_root` is therefore `salt_0 ‖ 0x00·16`, a non-zero
+    /// upper half is a rejection, and the code is G's — no second one is
+    /// minted for this site.
+    #[test]
+    fn row_6b_binds_the_one_leaf_s_root_tail() {
+        // salt_0 is the same 16 bytes either way, so the honest `fine_root`
+        // is unchanged by D83 — the rule constrains what is *disclosed*,
+        // never what is hashed.
+        const CANONICAL: [u8; 32] = {
+            let mut bytes = [0u8; 32];
+            let mut i = 0;
+            while i < 16 {
+                bytes[i] = 0x33;
+                i += 1;
+            }
+            bytes
+        };
+        assert_eq!(&CANONICAL[..16], &TEST_S_ROOT[..16]);
+        assert_ne!(CANONICAL, TEST_S_ROOT, "TEST_S_ROOT's tail is non-zero");
+
+        let fixture = Fixture::binary(0, b"Z", true);
+        assert_eq!(fixture.size, 1);
+        assert_eq!(
+            fixture.fine_root,
+            rebuild_fine_root(&Seed32::from_bytes(CANONICAL), b"Z").map(|r| *r.as_bytes()),
+            "the canonical payload rebuilds the same fine_root"
+        );
+
+        let ids = fixture.all_unit_ids(1);
+        let canonical_material = [FullRevealMaterialEntry {
+            file_id: 0,
+            file_salt: Some(&TEST_FILE_SALT),
+            s_root: Some(&CANONICAL[..]),
+        }];
+        let shapes = run(&fixture, 1, &ids, &canonical_material)
+            .expect("a canonical one-leaf reveal passes");
+        assert!(shapes[0].is_full());
+
+        // The dirty tail — every byte of it — is rejected here, with G's
+        // code, before the row-8 rebuild can turn it into a generic mismatch.
+        for index in 16..32 {
+            let mut dirty = CANONICAL;
+            dirty[index] = 0x33;
+            let material = [FullRevealMaterialEntry {
+                file_id: 0,
+                file_salt: Some(&TEST_FILE_SALT),
+                s_root: Some(&dirty[..]),
+            }];
+            let err = run(&fixture, 1, &ids, &material).expect_err("a dirty tail is rejected");
+            assert_eq!(
+                err,
+                VerifyError::FineRootSeedTailNotCanonical {
+                    file_id: 0,
+                    source: crate::content::fine_tree::FineTreeError::LeafSeedTailNotZero {
+                        level: 0,
+                        index: 0,
+                    },
+                },
+                "tail byte {index}"
+            );
+            assert_eq!(err.code(), "fine-root-leaf-seed-tail-not-zero");
+        }
+
+        // …and at every larger `n` the check is a no-op: the same
+        // non-canonical 32 bytes are a perfectly legal `s_root` there,
+        // because the root is not a leaf.
+        let bigger = Fixture::binary(0, b"ZZ", true);
+        assert_eq!(bigger.size, 2);
+        let material = [bigger.material()];
+        assert_eq!(material[0].s_root, Some(&TEST_S_ROOT[..]));
+        run(&bigger, 1, &bigger.all_unit_ids(1), &material)
+            .expect("n = 2 has no leaf-level s_root, so row 6b idles");
+
+        // `size == 0` is skipped rather than treated as depth 0: an empty
+        // file has no GGM grid, so the rule is vacuous there and row 8 keeps
+        // its own classification (see the comment at the call site, and
+        // `fine_tree_declared_on_an_empty_file_fails_the_rebuild`).
+        assert!(depth_for_leaf_count(0).is_none());
+        assert_eq!(depth_for_leaf_count(1), Some(0));
+        assert_eq!(depth_for_leaf_count(2), Some(1));
     }
 
     /// R4 accept, stated directly against the four sub-checks: a

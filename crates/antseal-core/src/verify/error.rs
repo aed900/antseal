@@ -557,6 +557,31 @@ pub enum VerifyError {
         commit: ContentCommitKind,
     },
 
+    /// A fully revealed file's disclosed `s_root` violates D83's canonical
+    /// leaf-level payload rule.
+    ///
+    /// Reachable **only at `n == 1`**, where `d == 0` makes the GGM grid
+    /// root itself a leaf: the verifier then reads `salt_0 = s_root[..16]`
+    /// with no descent (MVP-SPEC.md line 96), so bytes `16..32` are never
+    /// hashed and v1 fixes them at zero (`docs/format/registry-v1.md` §7.14
+    /// key 2). At every larger `n` the check is a no-op.
+    ///
+    /// **Delegating arm, no new code.** [`Self::code`] surfaces the wrapped
+    /// [`FineTreeError::LeafSeedTailNotZero`]'s own
+    /// `fine-root-leaf-seed-tail-not-zero` unchanged — a code names a
+    /// rejection *class*, never a site (`docs/testing/error-code-contract.md`
+    /// §2), and this class already has one from
+    /// [`Self::FineRootBindingFailed`]'s side of the seam. The two sites are
+    /// separated in the fixture table by `(code, layer)`.
+    #[error("file {file_id}: disclosed s_root is not the canonical leaf-level payload ({source})")]
+    FineRootSeedTailNotCanonical {
+        /// The fully revealed one-leaf file whose `s_root` was not canonical.
+        file_id: u64,
+        /// G's value-rule failure ([`FineTreeError::LeafSeedTailNotZero`]).
+        #[source]
+        source: FineTreeError,
+    },
+
     /// On a full file reveal, the fine tree rebuilt from the bundled
     /// `s_root` over the revealed bytes does not match the manifest's
     /// `fine_root` (MVP-SPEC.md line 121: "the verifier MUST rebuild the
@@ -724,6 +749,10 @@ impl VerifyError {
                 ContentCommitKind::Canon => "concat-commit-mismatch-canon",
                 ContentCommitKind::Raw => "concat-commit-mismatch-raw",
             },
+            // D83's second call site. Delegates, exactly as
+            // `FineRootBindingFailed` does: one rejection class, one code,
+            // two layers (error-code contract §2).
+            Self::FineRootSeedTailNotCanonical { source, .. } => source.code(),
             Self::FineRootRebuildMismatch { .. } => "fine-root-rebuild-mismatch",
             Self::RawCommitMismatch { .. } => "raw-commit-mismatch",
             Self::RawMirrorCanonicalizationMismatch { .. } => {
@@ -1125,6 +1154,9 @@ mod tests {
                     "FullRevealSRootWithoutFineTree"
                 }
                 VerifyError::ConcatCommitMismatch { .. } => "ConcatCommitMismatch",
+                // Deliberately unexemplified (see `all_error_exemplars`):
+                // its only code is already claimed by FineRootBindingFailed.
+                VerifyError::FineRootSeedTailNotCanonical { .. } => "FineRootSeedTailNotCanonical",
                 VerifyError::FineRootRebuildMismatch { .. } => "FineRootRebuildMismatch",
                 VerifyError::RawCommitMismatch { .. } => "RawCommitMismatch",
                 VerifyError::RawMirrorCanonicalizationMismatch { .. } => {
@@ -1137,6 +1169,13 @@ mod tests {
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
+        // 27 of the 28 variants. `FineRootSeedTailNotCanonical` (D83) is the
+        // exception and is asserted separately below: it is a *delegating*
+        // arm whose only code — `fine-root-leaf-seed-tail-not-zero` — is
+        // already exemplified through `FineRootBindingFailed`, so giving it
+        // an exemplar here would collide by design (error-code contract §2:
+        // one code, one owning domain, many paths). The same reasoning keeps
+        // the `cbor-*` codes out of the `Decode` arm's exemplars.
         assert_eq!(tally.len(), 27, "27 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
@@ -1294,6 +1333,55 @@ mod tests {
             over_broad.to_string().contains("over-broad"),
             "{over_broad}"
         );
+    }
+
+    /// D83's second call site is a *delegating* arm: it surfaces G's
+    /// `fine-root-leaf-seed-tail-not-zero` unchanged, the same string the
+    /// fine-tree site produces, so exactly one code exists for the class and
+    /// the two sites are separated by layer instead. This is the assertion
+    /// that keeps the exemplar list's deliberate omission honest.
+    #[test]
+    fn the_d83_seed_tail_arm_mints_no_second_code() {
+        use std::error::Error as _;
+
+        let inner = FineTreeError::LeafSeedTailNotZero { level: 0, index: 0 };
+        let r_side = VerifyError::FineRootSeedTailNotCanonical {
+            file_id: 4,
+            source: inner,
+        };
+        let g_side = VerifyError::FineRootBindingFailed {
+            unit_id: 4,
+            source: inner,
+        };
+        assert_eq!(r_side.code(), "fine-root-leaf-seed-tail-not-zero");
+        assert_eq!(r_side.code(), inner.code());
+        assert_eq!(r_side.code(), g_side.code());
+
+        // The exemplar list therefore must NOT carry this variant — its code
+        // is already claimed — but every code it does carry stays reachable.
+        assert!(
+            !all_error_exemplars()
+                .iter()
+                .any(|e| matches!(e, VerifyError::FineRootSeedTailNotCanonical { .. })),
+            "a second exemplar would collide with FineRootBindingFailed's"
+        );
+        assert!(
+            all_error_exemplars()
+                .iter()
+                .any(|e| e.code() == "fine-root-leaf-seed-tail-not-zero"),
+            "the code must still be exemplified, through the G-side arm"
+        );
+
+        // Distinct `Display` (the *site* differs) over a shared source chain.
+        assert_ne!(r_side.to_string(), g_side.to_string());
+        assert_eq!(
+            r_side
+                .source()
+                .expect("wrapped G error is the source")
+                .to_string(),
+            inner.to_string()
+        );
+        assert!(r_side.to_string().contains("file 4"), "{r_side}");
     }
 
     /// `LengthField::spec_len` mirrors the line-121 exact-length table.
