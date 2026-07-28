@@ -430,29 +430,21 @@
       "milestone": "M0",
       "owner": "F",
       "spec_quote": "oversized/deep CBOR",
-      "note": "Two fixtures, two errors — an explicit F15 accept (`oversized ≠ over-deep`).",
+      "note": "Two fixtures, two errors — an explicit F15 accept (`oversized ≠ over-deep`). Landed at F15 (2026-07-28). No code was minted for either: the size cap's code `bundle-too-large` was already one of F11's eighteen (decision D10 §1 tabled it for exactly this row) and `cbor-nesting-too-deep` has existed since F3, which is why the pending markers recorded one null and one non-null expected code.",
       "cases": [
         {
           "id": "oversized",
           "what": "a body exceeding the hard cap on bundle size / unit count / allocation (spec line 153)",
-          "pending": {
-            "task": "F15",
-            "row_id": "cbor-oversized",
-            "outcome_kind": "error",
-            "expected": null,
-            "why": "No size-cap code exists in F3's `cbor-*` set today (only `cbor-nesting-too-deep`); F15 mints one when it lands the caps. Recording the case with a null expected code is deliberate — the obligation is visible and the code is the owning task's to choose, append-only per D30."
-          }
+          "rows": [
+            "cbor-oversized"
+          ]
         },
         {
           "id": "deep",
           "what": "nesting beyond the decoder's depth cap",
-          "pending": {
-            "task": "F15",
-            "row_id": "cbor-nesting-too-deep",
-            "outcome_kind": "error",
-            "expected": "cbor-nesting-too-deep",
-            "why": "F15 accept: oversized and over-deep are two fixtures with two distinct errors (tasks/F.md F15). The depth code already exists in F3's decoder."
-          }
+          "rows": [
+            "cbor-nesting-too-deep"
+          ]
         }
       ]
     },
@@ -598,6 +590,31 @@
       "row_id": "cbor-float",
       "owner": "F",
       "why": "The v1 CBOR profile forbids floats outright (F1/F3). Not named at line 168; kept because a float slipping through would break the deterministic-encoding claim the whole format rests on."
+    },
+    {
+      "row_id": "cbor-non-shortest-length",
+      "owner": "F",
+      "why": "F15. Line 168's CBOR family names four cases; the profile the decoder actually enforces is line 153's full RFC 8949 §4.2.1 set, which separates a non-shortest *length argument* (bstr/tstr/array/map head) from a non-shortest *integer value* — F3 gives them two variants and two codes precisely so a tamper row can tell them apart. `cbor-non-shortest-int` was already a seed row; this is its length-head twin, mutating the manifest body map's own head. Without it the whole `NonShortestLength` variant would have no row despite being reachable at every container head in both formats."
+    },
+    {
+      "row_id": "manifest-reserved-key",
+      "owner": "F",
+      "why": "F15. Line 168 does not enumerate the key-band classes at all — the v1 reserved band is F4's registry rule (§1 rule 4, §7.15), written after that line. It earns a row because reserved and unknown are the two halves of forward compatibility: a v1.x key MUST be rejected by a v1 verifier with a distinguishable code, or a receiver cannot tell `this bundle is from a newer antseal` from `this bundle is corrupt`. Mutation: append body key 8, the body map's first reserved key."
+    },
+    {
+      "row_id": "manifest-unknown-key",
+      "owner": "F",
+      "why": "F15, the other half of the same rule: key 24 is above the v1 band and was never reserved, so it can never become meaningful and its rejection is permanent. Distinct code from the reserved arm by design. Also the class F15's line-73 completeness list names as `unknown map key`."
+    },
+    {
+      "row_id": "bundle-reserved-key",
+      "owner": "F",
+      "why": "F15. The bundle family's reserved-band row, and deliberately mutated at key 10 — the *named* reserved slot (v1.1 `range_reveals`). Registry §7.15 requires a named slot to raise the **ordinary** reserved-key error rather than its own, because giving it a code would mean v1.1 changes an error code when it assigns the key, which D30 §3 forbids. The row is what pins that: if someone ever gives key 10 a bespoke code, this row goes red."
+    },
+    {
+      "row_id": "bundle-unknown-key",
+      "owner": "F",
+      "why": "F15. The bundle-side unknown-key row (key 24). Separate from `manifest-unknown-key` because D78 keeps the two schema families structurally disjoint — `BundleError` has no arm that can carry a `ManifestError` — so `malformed bundle` and `malformed manifest inside a well-formed bundle` must stay two different codes, and a row on each is what proves the split is real rather than conventional."
     },
     {
       "row_id": "crypto-non-zero-padding",

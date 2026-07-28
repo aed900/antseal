@@ -1,0 +1,391 @@
+{
+  "_readme": [
+    "F15 — the format-level tamper fixtures: one single mutation each,",
+    "applied to bytes derived from the F12/F13 golden vectors, mapped to",
+    "the exact (code, layer) pair the strict surface must report.",
+    "",
+    "Consumer: crates/antseal-core/tests/format_tamper_fixtures.rs.",
+    "Constructors: antseal_core::test_util::tamper_rows_format (WASM-safe).",
+    "Codes: docs/testing/error-code-contract.md (D30).",
+    "",
+    "`row` names the Q7 tamper-matrix row this fixture is evidence for, or",
+    "null when the fixture's code is ALREADY claimed by another row. That",
+    "is not an omission: a wrapped codec rejection surfaces its inner code",
+    "unchanged at every layer (error-code contract §2, F6/F9), so one",
+    "canonicality fault in the body, the envelope, the bundle map and the",
+    "embedded manifest is FOUR fixtures and ONE code. Q7 would correctly",
+    "refuse four rows; the layer is what separates them, and `expected.layer`",
+    "is checked alongside `expected.code` for exactly that reason.",
+    "",
+    "`expected.layer` is null for a manifest SCHEMA rejection, which names",
+    "its own map rather than a layer, but NOT for a bundle schema rejection:",
+    "a SealProofError::Bundle is layer 1 by construction. The asymmetry is",
+    "two recorded decisions, not a bug — see the FormatFixture::layer docs."
+  ],
+  "bases": [
+    {
+      "file": "base/manifest.cbor",
+      "golden_case": "minimal-binary-ed25519-only",
+      "golden_field": "manifest_bytes",
+      "golden_vector": "vectors/v1/manifest/manifest.json",
+      "id": "manifest",
+      "len": 371,
+      "sha256": "083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df"
+    },
+    {
+      "file": "base/bundle.cbor",
+      "golden_case": "empty-anchor-unanchored",
+      "golden_field": "bundle_bytes",
+      "golden_vector": "vectors/v1/bundle/bundle.json",
+      "id": "bundle",
+      "len": 936,
+      "sha256": "86ef0c8341e72b9526fd1e366b6668186af8451068dc205334f18aa98df7ce69"
+    }
+  ],
+  "fixtures": [
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-duplicate-map-key",
+        "layer": "manifest body"
+      },
+      "id": "body-duplicate-map-key",
+      "mutation": "repeat the body's key-0 entry, bumping the map head to n+1",
+      "row": "cbor-duplicate-map-key",
+      "source": {
+        "file": "body-duplicate-map-key.cbor",
+        "kind": "file",
+        "len": 373,
+        "sha256": "a15e33ef22071048ccfabbfddd6d2cefa1b04cbccb5b27a648d679d3b3b35618"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-non-shortest-int",
+        "layer": "manifest body"
+      },
+      "id": "body-non-shortest-int",
+      "mutation": "re-encode the body's `format_version` value in a two-byte head",
+      "row": "cbor-non-shortest-int",
+      "source": {
+        "file": "body-non-shortest-int.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "7235f03b6ce82f08f2a5ff848ea94c8b72f69aecc165d06be2b525f7757253ed"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-indefinite-length",
+        "layer": "manifest body"
+      },
+      "id": "body-indefinite-length",
+      "mutation": "re-head the body map as indefinite-length, terminated by a break",
+      "row": "cbor-indefinite-length",
+      "source": {
+        "file": "body-indefinite-length.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "47f35892eb1c217ef0ac0ed419e2763a0fcf4d26185bdfe44ef56602dff7896e"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-trailing-bytes",
+        "layer": "manifest body"
+      },
+      "id": "body-trailing-bytes",
+      "mutation": "append one byte after the body's top-level item",
+      "row": "cbor-trailing-bytes",
+      "source": {
+        "file": "body-trailing-bytes.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "adee6a562b66e0909405b0bdeec05d14b0c0f4b7e0b3c3f33d8bb31e41f1e1b0"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-unsorted-map-keys",
+        "layer": "manifest body"
+      },
+      "id": "body-unsorted-map-keys",
+      "mutation": "append a key-0 entry after the body's largest key",
+      "row": "cbor-unsorted-map-keys",
+      "source": {
+        "file": "body-unsorted-map-keys.cbor",
+        "kind": "file",
+        "len": 373,
+        "sha256": "95b1e0cee73ab45c4ad74dd8573ef69c9a6b73c3574f235bf770d441b545b4ab"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-non-shortest-length",
+        "layer": "manifest body"
+      },
+      "id": "body-non-shortest-length",
+      "mutation": "widen the body map's length head by one argument width",
+      "row": "cbor-non-shortest-length",
+      "source": {
+        "file": "body-non-shortest-length.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "b4b5ef6d780b8109aa7c34e6467c6a4ba9e51485f80ffbd9664290a277b46db4"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-float",
+        "layer": "manifest body"
+      },
+      "id": "body-float",
+      "mutation": "replace the body's `format_version` value with a half-precision float",
+      "row": "cbor-float",
+      "source": {
+        "file": "body-float.cbor",
+        "kind": "file",
+        "len": 373,
+        "sha256": "01dca3c18a59e559d12184f134809d67a9661a6f71b7a719996a6d753ad6c533"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-reserved-key",
+        "layer": null
+      },
+      "id": "body-reserved-key",
+      "mutation": "append the body's first reserved key (8) with a zero value",
+      "row": "manifest-reserved-key",
+      "source": {
+        "file": "body-reserved-key.cbor",
+        "kind": "file",
+        "len": 373,
+        "sha256": "05c7b6b2ccf07a5bd67221589562302599b14ca2e3eb0002299febe099c52c1a"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-unknown-key",
+        "layer": null
+      },
+      "id": "body-unknown-key",
+      "mutation": "append body key 24 — above the v1 band, never reserved",
+      "row": "manifest-unknown-key",
+      "source": {
+        "file": "body-unknown-key.cbor",
+        "kind": "file",
+        "len": 374,
+        "sha256": "b08ba7c9d706a66fc18af068278c18a42244212c636dbdb3bfd4ff65eceaa8a2"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-duplicate-map-key",
+        "layer": "manifest envelope"
+      },
+      "id": "envelope-duplicate-map-key",
+      "mutation": "repeat the envelope's key-0 (body) entry",
+      "row": null,
+      "source": {
+        "file": "envelope-duplicate-map-key.cbor",
+        "kind": "file",
+        "len": 672,
+        "sha256": "5d4dba433189243fc9efaa7edafb590ec9d158a4f4b83344de533680266ffe08"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-unsorted-map-keys",
+        "layer": "manifest envelope"
+      },
+      "id": "envelope-unsorted-map-keys",
+      "mutation": "transpose the envelope's two entries, emitting key 1 before key 0",
+      "row": null,
+      "source": {
+        "file": "envelope-unsorted-map-keys.cbor",
+        "kind": "file",
+        "len": 371,
+        "sha256": "77fe4ec23f0443dc3d5f5da5f3d26b49ea67f1ef5e78fff6da70adecdf575622"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-trailing-bytes",
+        "layer": "manifest envelope"
+      },
+      "id": "envelope-trailing-bytes",
+      "mutation": "append one byte after the outer manifest's top-level item",
+      "row": null,
+      "source": {
+        "file": "envelope-trailing-bytes.cbor",
+        "kind": "file",
+        "len": 372,
+        "sha256": "acc9b11a531b3afae29c01c6b26999c5a2b922bf7b3cba39faca2ad3be8a8cf4"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-unknown-key",
+        "layer": null
+      },
+      "id": "envelope-unknown-key",
+      "mutation": "append envelope key 2 — the envelope is shape-frozen and reserves nothing",
+      "row": null,
+      "source": {
+        "file": "envelope-unknown-key.cbor",
+        "kind": "file",
+        "len": 373,
+        "sha256": "6ac74392bde18428ae67c82a25a00034c7dd692b2c56a72befc023971f7d8f1b"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-duplicate-map-key",
+        "layer": "bundle"
+      },
+      "id": "bundle-duplicate-map-key",
+      "mutation": "repeat the bundle's key-0 entry, bumping the map head to n+1",
+      "row": null,
+      "source": {
+        "file": "bundle-duplicate-map-key.cbor",
+        "kind": "file",
+        "len": 938,
+        "sha256": "f493fa5a7d4487ed86cb1a0571e4a635eb8f1479bebc1a55726d5731d9de075c"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-trailing-bytes",
+        "layer": "bundle"
+      },
+      "id": "bundle-trailing-bytes",
+      "mutation": "append one byte after the outer bundle's top-level item",
+      "row": null,
+      "source": {
+        "file": "bundle-trailing-bytes.cbor",
+        "kind": "file",
+        "len": 937,
+        "sha256": "dc47a6c791acbae168793b6a7b875b5698603cd7c78067e0b29f084dfa250f06"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "bundle-reserved-key",
+        "layer": "bundle"
+      },
+      "id": "bundle-reserved-key",
+      "mutation": "append bundle key 10 — the named v1.1 `range_reveals` reserved slot",
+      "row": "bundle-reserved-key",
+      "source": {
+        "file": "bundle-reserved-key.cbor",
+        "kind": "file",
+        "len": 938,
+        "sha256": "bd0dd75fbbb9f4ece1f4c5b36615e68d446c205ca9bb27eec15f00251b4100ba"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "bundle-unknown-key",
+        "layer": "bundle"
+      },
+      "id": "bundle-unknown-key",
+      "mutation": "append bundle key 24 — above the v1 band, never reserved",
+      "row": "bundle-unknown-key",
+      "source": {
+        "file": "bundle-unknown-key.cbor",
+        "kind": "file",
+        "len": 939,
+        "sha256": "ece42fa606f8895ecf20dfb9b5a59256840bddbbba93ff9ac67a4f850bf7f556"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "cbor-unsorted-map-keys",
+        "layer": "manifest envelope"
+      },
+      "id": "embedded-manifest-unsorted-map-keys",
+      "mutation": "transpose the embedded manifest envelope's two entries, length-preserving",
+      "row": null,
+      "source": {
+        "file": "embedded-manifest-unsorted-map-keys.cbor",
+        "kind": "file",
+        "len": 936,
+        "sha256": "c8dff1f976897b98cfbd2b763cf3d94d867ca46f061833ba919c9abccc371559"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "bundle-too-large",
+        "layer": "bundle"
+      },
+      "id": "bundle-oversized",
+      "mutation": "zero-pad the bundle to MAX_BUNDLE_BYTES + 1 bytes",
+      "row": "cbor-oversized",
+      "source": {
+        "kind": "synthesized",
+        "len": 268435457,
+        "recipe": "the base bundle, zero-padded to MAX_BUNDLE_BYTES + 1 bytes"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "cbor-nesting-too-deep",
+        "layer": null
+      },
+      "id": "body-nesting-too-deep",
+      "mutation": "wrap the body in MAX_CBOR_DEPTH + 1 single-element arrays",
+      "row": "cbor-nesting-too-deep",
+      "source": {
+        "file": "body-nesting-too-deep.cbor",
+        "kind": "file",
+        "len": 306,
+        "sha256": "6b78ad4bca69890608db0daacb50ada22cbba34aae3eec95ade923e9e9a53f33"
+      },
+      "surface": "check_canonical"
+    }
+  ],
+  "format_version": "v1",
+  "non_secret": "NON-SECRET — every byte derives from the documented fixed test seed (testdata/README.md)",
+  "schema": "antseal-format-tamper-fixtures",
+  "schema_version": 1,
+  "task": "F15"
+}

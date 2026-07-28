@@ -185,6 +185,12 @@
   - The four named body rows exist as four separate fixtures with four distinct errors; oversized ≠ over-deep.
   - Mapping table checked in and consumed by at least one in-repo test; format documented for Q's global harness.
 - Notes: Wrong-length salt/seed rows, `sig_policy` rows, and structural-invariant rows belong to C/R even where my schema length errors underlie them — coordinate error naming with R and Q so the global matrix stays globally distinct without double-claiming rows.
+- **[2026-07-28] LANDED.** Twenty fixtures in `testdata/tamper/format/` + `FIXTURES.json` + its consumer `tests/format_tamper_fixtures.rs`; constructors in `test_util::tamper_rows_format` (WASM-safe, splicing done through the F3 decoder's own public surface). Seven rows registered; **the M0 tamper matrix is COMPLETE (0 pending)**. Recorded outcomes:
+  - **Fixtures and rows are different populations, and that is forced by the contract, not by cost.** F6/F9 surface a wrapped codec rejection's inner code *unchanged* at every layer (error-code contract §2), so one canonicality fault in the body, the envelope, the bundle map and the embedded manifest is **four fixtures and one code**. Q7 would correctly refuse four rows, and minting per-layer codes to force them through is what §3 forbids. The resolution: every fixture is checked on `(code, layer)`, which *is* pairwise informative; a row is registered only where the code is unclaimed. The four mutations line 168 names by hand keep the rows Q7 seeded and gain real manifest-body fixtures here — four fixtures, four distinct codes, all at the body layer, which is the accept clause read literally.
+  - **No code minted.** All seven rows bind codes that already existed: `bundle-too-large` (D10 §1 tabled it for this row), `cbor-nesting-too-deep` (F3), `cbor-non-shortest-length` (F3), and the two key-band pairs (F4/F5/F8).
+  - **Two shapes are deliberately unlike the rest**, both per prior decisions: over-deep is a **direct call** on `check_canonical` (D10 §6 — unreachable through `SealProof::decode`), and oversized is **synthesized from a recipe** rather than committed (F22's awkward row: the mutation is a length, so the table records "the base bundle, zero-padded to `MAX_BUNDLE_BYTES + 1`" and a test asserts no committed fixture here exceeds 64 KiB, so the recipe cannot quietly become a file).
+  - **Provenance is checked, not prose**: both bases are diffed against the committed F12/F13 vector documents every run.
+  - **Deliberately NOT done here**: D77 §6's mirror-only row (`manifest-empty-normal-units`). `FileEntry::new` refuses to construct a mirror-only file, so the only route is a byte mutation of one *nested* unit's `kind`, which needs the span primitive F25 records. It is not a Q14 gate item — it is a project-added row with no `pending` marker — and **F22 owns it by title**. Surfaced from this task: F24, F25, F26.
 
 ### F16 — Write property tests for codec round-trip, determinism, and canonicality
 - Milestone: M0
@@ -272,6 +278,7 @@
   - Rows recorded as `project_added` in `MATRIX.json`.
   - Any cap code deliberately left unrowed is recorded as a **named non-row** with its reason, in the pattern Q8 already uses for the two recorded non-rows.
 - Notes: `bundle-too-large`'s row must not be built by materializing 256 MiB in the committed fixtures — the mutation is a *length*, and the harness needs a way to express "an input of size n" without storing n bytes. That is the one genuinely awkward row and is worth solving before the rest.
+- **[2026-07-28] Scope narrowed by F15.** Two of the three named rows have landed: `bundle-too-large` (row `cbor-oversized`) and `cbor-nesting-too-deep`. The awkward one is solved and the solution generalizes — `testdata/tamper/format/FIXTURES.json` distinguishes `source.kind = "file"` from `source.kind = "synthesized"`, the latter carrying a **recipe** plus the length it produces, so any future length-valued mutation is a data row rather than a special case. What remains here is unchanged: the **sixteen** other cap codes (representative-per-family vs one-each is still the open call), and **D77 §6's mirror-only row** (`manifest-empty-normal-units`), which F15 deliberately did not take because it needs a byte mutation of a *nested* unit's `kind` — `FileEntry::new` refuses to construct the shape — and therefore the span primitive F25 records. Neither is a Q14 gate item: both are project-added rows with no `pending` marker.
 
 ### F23 — Reverse coverage: every `bundle-`/`manifest-` code has a row or a named owner
 - Milestone: M0
@@ -285,6 +292,44 @@
   - Deliberately mint a throwaway code locally and confirm the check goes red; remove it.
   - Wired into the same lane as R7's check so both directions run together.
 - Notes: This is the check that would have caught F11's own eighteen at authoring time. Worth landing before Q14, because after the freeze an unrowed code is an unrowed code forever.
+
+### F24 — Reverse coverage for the `cbor-` family: six codes have neither a row nor a named owner
+- Milestone: M0
+- Size: S
+- Deps: F15, F23; Q: the Q7 harness + the Q8 completeness registry
+- Spec: Tamper matrix — every mutation fails with a **distinct** error (MVP-SPEC.md line 168); the deterministic profile (line 73); the stable error-code contract (`docs/testing/error-code-contract.md` §§1, 3)
+- Discovered by: **F15** (2026-07-28), while enumerating which line-73 classes still lacked a fixture. F3's `DecodeError` has **fifteen** codes. Nine now carry a tamper row — the seven Q7 seeded plus F15's `cbor-non-shortest-length` and `cbor-nesting-too-deep`. The other **six** — `cbor-malformed`, `cbor-simple-value`, `cbor-tag`, `cbor-invalid-utf8`, `cbor-unexpected-type`, `cbor-int-out-of-range` — have no row, no fixture, and no named owner. They are exercised, thoroughly, by `codec/decode.rs`'s own unit tests, which is exactly the situation F22 records for the sixteen unrowed cap codes: a *unit-level* proof, invisible to Q8's cross-domain distinctness sweep. F23 cannot catch them either — it maps `BundleError`'s and `ManifestError`'s exemplar sweeps, and the `cbor-` family is a third namespace both of those merely *delegate* to (`Self::Cbor { source } => source.code()`), so a `cbor-` code is reachable through every schema surface while belonging to neither sweep.
+- Do: Extend F23's check (or add its sibling in the same lane) over `DecodeError`'s exemplar list — `codes_are_pairwise_distinct_kebab_case` already enumerates all fifteen, so the data exists. Then decide per code whether it earns a row: `cbor-tag` and `cbor-simple-value` are security-bearing (a tagged re-spelling of a value aliasing an untagged one under one `work_id` is precisely why F3 bans them), `cbor-invalid-utf8` is reachable from any `tstr` field, and `cbor-unexpected-type` is the code D10 §6 says an over-deep bundle *actually* produces — so it is load-bearing for the argument that the depth row must be a direct call. `cbor-malformed` and `cbor-int-out-of-range` are the plausible representative-only candidates. Whatever is left unrowed becomes a named non-row or a named owner, never a silent gap.
+- Accept:
+  - Every one of `DecodeError`'s fifteen codes is claimed by a row, a Q7 seed row, or an entry naming the task that owes it.
+  - Any new row's fixture lands in `testdata/tamper/format/` through F15's emitter, so the committed set stays the single artifact.
+  - The check goes red when a throwaway sixteenth code is minted locally.
+- Notes: Several of the six need byte spans inside nested containers, which is F25's primitive. Sequence F25 first or accept hand-pinned offsets, which the Q8 checker's own comment on index-anchored fixtures argues against.
+
+### F25 — A span-locating splice primitive, and the fixtures that are blocked without one
+- Milestone: M0
+- Size: S
+- Deps: F15; F3's decoder surface
+- Spec: Definitions & encoding (MVP-SPEC.md line 73); tamper matrix (line 168)
+- Discovered by: **F15** (2026-07-28). Its splicing primitives are deliberately built out of the F3 decoder's own public surface (`CanonicalDecoder::map` + `position`), so a fixture can never disagree with the decoder about where a map head ends — but that surface can only locate the **head** of a map and the **end** of the whole slice. Every F15 mutation is therefore an insertion at one of those two points, a head rewrite, or a fixed-offset splice over the body's first entry (whose two bytes are pinned by the registry). What it cannot do is find an arbitrary item's byte span, and three separate pieces of owed work need exactly that: **(a)** D77 §6's mirror-only row (`manifest-empty-normal-units`), which must flip one nested unit's `kind` — `FileEntry::new` refuses to construct that shape, so a byte mutation is the *only* route and F22 owns it today; **(b)** most of F24's six `cbor-` codes, which need a mutation at a nested `tstr`/`uint`/container rather than at a top-level head; **(c)** per-layer variants of `cbor-truncated`, which needs a cut at a chosen item boundary.
+- Do: Add a `span_of_next_item(&[u8], at) -> Option<(usize, usize)>` (or a small item-skipping cursor) built on the same public decoder surface — `peek_kind` plus typed reads is enough for the six admitted kinds, and recursion is already depth-bounded — and expose it beside F15's primitives in `test_util::tamper_rows_format`. Then express the blocked fixtures as `(path-to-item, mutation)` rather than as offsets.
+- Accept:
+  - The primitive agrees with `check_canonical` on every committed golden vector: walking an item's span and re-splicing it unchanged reproduces the input byte-for-byte.
+  - At least one previously unreachable fixture lands through it (D77's mirror-only row is the natural first).
+  - No second CBOR implementation: it is built on the F3 decoder, not beside it.
+- Notes: The alternative — pinned byte offsets — is what the Q8 checker's `case_mut` comment already argues against by experience ("index-anchored fixtures broke every time a row landed and said nothing useful when they did").
+
+### F26 — Decide whether the decode **layer** reaches the user-facing verdict, and reconcile the two `layer()` accessors
+- Milestone: M0
+- Size: S
+- Deps: F15, F6, F9; R: the verification report (R9/D29); Q: the error-code contract
+- Spec: Verifier output (MVP-SPEC.md line 169); hostile bundles (line 187)
+- Discovered by: **F15** (2026-07-28), by asserting the layer on every fixture and finding the two accessors disagree about what "no layer" means. `SealProofError::layer()` returns `Some(ProofLayer::Bundle)` for **every** layer-1 arm, including a pure schema rejection like `bundle-reserved-key`, because a `SealProofError::Bundle` is layer 1 by construction. `ManifestError::layer()` returns `None` for a schema rejection, because such an error names its own *map*, which is more precise than a layer. Both are recorded decisions and neither is wrong on its own terms — but read together, `layer: null` means "schema rejection **inside the manifest**" rather than "schema rejection", which no caller would guess. F15's mapping table now states it in three places because a reader hits it immediately.
+- Do: Decide whether the layer appears in the D29 report at all. If it does, the two accessors need one meaning — most likely `Option<Layer>` on both, with the bundle arm returning `None` for schema rejections to match, or a separate `enum { Canonicality(Layer), Schema(MapId) }` that makes the distinction the payload rather than the absence of one. If it does not, say so in the contract and leave the accessors as debugging context.
+- Accept:
+  - One recorded answer, in the error-code contract or a decision record.
+  - If the accessors change, F15's fixture table regenerates with the new values and the change is a reviewed diff (the table is the only place the current behaviour is pinned end-to-end).
+- Notes: Cheap now, expensive after Q14 if the answer turns out to be "yes, and it is part of the report's byte format".
 
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.

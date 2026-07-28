@@ -50,10 +50,31 @@ reworded spec line turns the check red instead of drifting. Family counts,
 the exact pending set, and the non-row set are pinned in the checker as a
 second layer, so nothing can be deleted to make a run green.
 
-**Pending markers.** F15, R7 and R8 have not run, so the M0 matrix is
-genuinely incomplete. The gap is held as enumerated markers — task, row id,
-and the outcome the row will bind — not by weakening the check. **Q14's
-gate condition is zero pending**, printed by the lane every run.
+**Pending markers.** While the M0 matrix was incomplete the gap was held as
+enumerated markers — task, row id, and the outcome the row will bind — not
+by weakening the check. **Q14's gate condition is zero pending**, printed by
+the lane every run, and **the M0 half has been complete since F15
+(2026-07-28)**:
+
+```
+Q14 gate — M0 tamper matrix: COMPLETE (0 pending)
+```
+
+The remaining pending markers are Q18's M2 anchor cases, owned by A21. They
+are what keeps the mechanism live: the checker's own tests-of-the-test
+anchor on an M2 pending case now that no M0 one is owed.
+
+## `format/` — F15's format-level fixtures
+
+`format/` holds the committed **artifact** side of the F rows: twenty single
+mutations of the F12/F13 golden vectors' own manifest and bundle bytes, plus
+`FIXTURES.json`, the machine-readable fixture→expected-error mapping. See
+`format/README.md` — in particular for why only seven of the twenty carry a
+harness row, which is a consequence of the error-code contract rather than a
+gap: a wrapped codec rejection surfaces its inner code unchanged at every
+layer, so one canonicality fault at four layers is four fixtures and one
+code. Fixtures are checked on `(code, layer)`; rows are registered only
+where the code is unclaimed.
 
 **Q18** extends the same structure with the M2 anchor rows, which are
 already enumerated here as pending, so extending is a data change rather

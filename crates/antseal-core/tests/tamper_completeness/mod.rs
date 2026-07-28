@@ -13,11 +13,15 @@
 //! it will bind), or discharged by a recorded **non-row** (names a
 //! `non_rows[]` entry). There is no "not applicable" and no silent gap: a
 //! case with none of the three is a hard failure, and so is a case with two.
-//! The registry is therefore complete *by construction* while the matrix
-//! itself is still being populated — which is the state M0 is in, since F15
-//! has not run yet. **Q14 is where zero-pending becomes the gate
-//! condition**; until then the gap is enumerated and visible rather than
-//! absent.
+//! The registry is therefore complete *by construction* whether or not the
+//! matrix is.
+//!
+//! **Since F15 (2026-07-28) the M0 half is complete: zero pending.** That is
+//! Q14's gate condition, and it is now satisfied rather than merely
+//! enumerated. The M2 anchor cases stay pending under A21/Q18, which is why
+//! every mechanism below — the three states, the pinned pending set, the
+//! collision checks — remains live rather than vestigial; the tests of those
+//! mechanisms simply anchor on M2 cases now that no M0 one is owed.
 //!
 //! ## Why the third state exists (decision D81)
 //!
@@ -96,16 +100,18 @@ const REGISTRY_VERSION: u64 = 1;
 /// same commit as the tamper row — which is exactly the review moment the
 /// pinning exists to force.
 ///
+/// **Empty since F15 (2026-07-28): the M0 tamper matrix is COMPLETE.** The
+/// last two owed rows were `oversized-or-deep-cbor`'s pair, and F15 landed
+/// them as `cbor-oversized` (code `bundle-too-large`) and
+/// `cbor-nesting-too-deep`. Emptiness is not the absence of a pin — it *is*
+/// the pin: [`assert_pending_set_is_the_pinned_one`] requires this list and
+/// the registry's pending set to agree in both directions, so re-opening an
+/// M0 obligation means adding a row here in the same commit, and Q14's gate
+/// (zero pending) reads the same predicate.
+///
 /// Source: MVP-SPEC.md line 168, cross-read against tasks/F.md F15,
-/// tasks/G.md G19 and tasks/R.md R7/R8, which own the unwritten rows.
-const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[
-    ("oversized-or-deep-cbor/oversized", "F15", "cbor-oversized"),
-    (
-        "oversized-or-deep-cbor/deep",
-        "F15",
-        "cbor-nesting-too-deep",
-    ),
-];
+/// tasks/G.md G19 and tasks/R.md R7/R8, which owned the rows.
+const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[];
 
 /// Number of **M0** families the spec's line-168 enumeration contains.
 ///
@@ -980,9 +986,11 @@ pub fn assert_non_row_cases_are_the_pinned_ones(rows: &[TamperRow]) {
 
 /// The still-owed rows are exactly the enumerated ones, each with its owner.
 ///
-/// This is the check that keeps the gap **visible**: the M0 matrix is
-/// genuinely incomplete today (F15, R7 and R8 have not run), and the
-/// honest way to hold that is an enumerated list, not a weakened check.
+/// This is the check that keeps a gap **visible**: while the M0 matrix was
+/// incomplete the honest way to hold that was an enumerated list rather than
+/// a weakened check. The list is empty since F15, and the assertion is now
+/// what stops it silently re-filling — an M0 case slipping back to `pending`
+/// turns this red instead of only moving Q14's gate.
 pub fn assert_pending_set_is_the_pinned_one(rows: &[TamperRow]) {
     let registry = checked(rows);
     let actual: Vec<(&str, &str, &str)> = registry
@@ -1002,19 +1010,26 @@ pub fn assert_pending_set_is_the_pinned_one(rows: &[TamperRow]) {
          AND its EXPECTED_M0_PENDING entry in the same commit; adding one means the spec was \
          re-read"
     );
-    assert!(
-        !registry.m0_is_complete(),
-        "the M0 tamper matrix reports COMPLETE while EXPECTED_M0_PENDING is non-empty — one of \
-         the two is stale"
+    // The two must agree in **both** directions. Before F15 this arm read
+    // `assert!(!m0_is_complete())`, which was the right assertion while the
+    // pin was non-empty and would have become a permanent falsehood the
+    // moment the matrix completed. Stated as an equality it keeps working
+    // either way: a registry that reports COMPLETE with an obligation still
+    // pinned is as much a bug as one that reports incomplete with none.
+    assert_eq!(
+        registry.m0_is_complete(),
+        EXPECTED_M0_PENDING.is_empty(),
+        "the registry's M0 completeness and EXPECTED_M0_PENDING disagree — one of the two is \
+         stale, and Q14's gate reads the registry"
     );
 }
 
 /// **Q14's gate condition**, expressed as executable code rather than
 /// prose: the freeze may not be taken while any M0 spec case is still owed.
 ///
-/// It is deliberately *not* an assertion today — it would be red for a
-/// reason Q8 cannot fix — but it is the exact predicate Q14 evaluates, and
-/// it prints the outstanding work every run so the gap is never silent.
+/// It is deliberately *not* an assertion — Q14 owns the gate, and Q8's job
+/// is to compute and print the predicate every run rather than to enforce
+/// it. Green since F15; the printed line is what the freeze reads.
 pub fn report_q14_gate(rows: &[TamperRow]) {
     let registry = checked(rows);
     if registry.m0_is_complete() {
@@ -1124,7 +1139,17 @@ fn case_mut<'a>(root: &'a mut Value, path: &str) -> &'a mut Value {
 /// A case the committed registry currently holds as **pending**. The
 /// pending-marker fixtures below need one, and this is where that
 /// dependency is stated once.
-const A_PENDING_CASE: &str = "oversized-or-deep-cbor/oversized";
+///
+/// It was an M0 case until F15 completed the M0 matrix; there are now no M0
+/// pending cases left, so it is one of Q18's M2 anchor cases instead. That
+/// is a deliberate re-anchor rather than a weakening: the rules under test
+/// (a case in no state, a case in two, a stale marker, an unowned marker, a
+/// marker colliding with a live row) are milestone-agnostic, and the M2
+/// markers are real registrations rather than props. This one is chosen for
+/// `outcome_kind: "error"` with a null `expected`, which is the shape the
+/// collision fixtures below overwrite.
+const A_PENDING_CASE: &str =
+    "anchor-token-for-a-different-digest/anchor-token-for-a-different-digest";
 
 /// A case the committed registry currently holds as **implemented**.
 const AN_IMPLEMENTED_CASE: &str = "wrong-salt/unit-commit";
@@ -1315,8 +1340,11 @@ fn completeness_red_on_a_pending_row_colliding_with_an_implemented_one() {
 /// checker reports against.
 #[test]
 fn completeness_red_when_two_pending_rows_collide_without_a_note() {
-    /// The later claimant of the synthesized collision.
-    const SECOND_CLAIMANT: &str = "oversized-or-deep-cbor/deep";
+    /// The later claimant of the synthesized collision — a case that comes
+    /// after [`A_PENDING_CASE`] in registry order and reserves a *named*
+    /// outcome, so there is something to collide with. (It was
+    /// `oversized-or-deep-cbor/deep` until F15 landed that row.)
+    const SECOND_CLAIMANT: &str = "untrusted-tsa-root/untrusted-tsa-root";
 
     /// Make `A_PENDING_CASE` claim the outcome `SECOND_CLAIMANT` reserves.
     fn collide(root: &mut Value) {
@@ -1328,9 +1356,9 @@ fn completeness_red_when_two_pending_rows_collide_without_a_note() {
                 serde_json::json!({
                     "task": "R99",
                     "row_id": "verify-a-second-row-for-one-outcome",
-                    "outcome_kind": "error",
-                    "expected": "cbor-nesting-too-deep",
-                    "why": "synthetic: claims the outcome the `deep` case already reserves"
+                    "outcome_kind": "verdict",
+                    "expected": "internally-consistent-only",
+                    "why": "synthetic: claims the outcome the untrusted-root case already reserves"
                 }),
             );
     }
