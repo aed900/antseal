@@ -123,7 +123,8 @@ use crate::bundle::{
     TouchedFile as BundleTouchedFile, TsaAnchor, encode_bundle,
 };
 use crate::canon::{TextMode, UNICODE_17_0_0, canonicalize_v};
-use crate::content::fine_tree::{prove_range, rebuild_fine_root};
+use crate::content::fine_tree::{canonical_leaf_level_payload, prove_range, rebuild_fine_root};
+use crate::content::ggm::{NodeAddress, depth_for_leaf_count};
 use crate::content::unit::ByteRange as ContentByteRange;
 use crate::crypto::commit::{CommitmentDigest, canon_commit, path_commit, raw_commit, unit_commit};
 use crate::crypto::disclosure::UnitBinding;
@@ -1243,8 +1244,18 @@ fn assemble(
             continue;
         }
         let file_salt = derive_file_salt(w(), FileId(file.file_id));
+        // The DISCLOSED `s_root`, which is the derived fine seed at every
+        // size but one: at `n == 1` the GGM depth is 0, so the grid root
+        // **is** the single leaf and D83 fixes the disclosed form at
+        // `salt_0 ‖ 0x00·16` (registry §7.14 key 2). Routed through the same
+        // prover-side rule `cover_seeds` uses, so a sealer has exactly one
+        // implementation of it.
         let mut s_root = if file.fine_tree {
-            Some(derive_fine_seed(w(), FileId(file.file_id)))
+            Some(canonical_leaf_level_payload(
+                &derive_fine_seed(w(), FileId(file.file_id)),
+                NodeAddress::root(),
+                depth_for_leaf_count(file.size).unwrap_or(u8::MAX),
+            ))
         } else {
             None
         };

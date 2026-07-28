@@ -53,7 +53,9 @@ pub mod verify;
 
 pub use build::{FineRoot, FineTreeBuilder, FineTreeStats, rebuild_fine_root};
 pub use cost::{CostEstimate, estimate_fine_tree_cost};
-pub use cover::{CoverEntry, CoverNode, LeafExactCover, cover_seeds, minimal_cover};
+pub use cover::{
+    CoverEntry, CoverNode, LeafExactCover, canonical_leaf_level_payload, cover_seeds, minimal_cover,
+};
 pub use error::FineTreeError;
 pub use proof::{BoundaryNode, CoveredUnit, RangeProof, WireNode, prove_range, prove_unit};
 pub use verify::{

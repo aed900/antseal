@@ -74,8 +74,9 @@ pub use error::ContentError;
 pub use fine_tree::{
     BoundaryNode, CostEstimate, CoverEntry, CoverNode, CoveredUnit, FineRoot, FineTreeBuilder,
     FineTreeError, FineTreeStats, LEAF_PAYLOAD_SIGNIFICANT_LEN, LeafExactCover, RangeProof,
-    RangeProofView, WireNode, check_leaf_level_payload, cover_seeds, estimate_fine_tree_cost,
-    minimal_cover, prove_range, prove_unit, rebuild_fine_root, verify_range,
+    RangeProofView, WireNode, canonical_leaf_level_payload, check_leaf_level_payload, cover_seeds,
+    estimate_fine_tree_cost, minimal_cover, prove_range, prove_unit, rebuild_fine_root,
+    verify_range,
 };
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
 pub use mirror::{

@@ -347,7 +347,7 @@ pub fn cover_seeds(s_root: &Seed32, cover: &LeafExactCover) -> Vec<CoverEntry> {
         .iter()
         .map(|node| {
             let seed = descend(s_root, node.address);
-            let payload = disclosed_payload(&seed, node.address, depth);
+            let payload = canonical_leaf_level_payload(&seed, node.address, depth);
             CoverEntry {
                 node: *node,
                 seed,
@@ -357,13 +357,40 @@ pub fn cover_seeds(s_root: &Seed32, cover: &LeafExactCover) -> Vec<CoverEntry> {
         .collect()
 }
 
-/// The bytes a bundle discloses for one cover node (D83).
+/// The bytes a bundle discloses for one GGM node — the **prover-side dual**
+/// of [`check_leaf_level_payload`](super::verify::check_leaf_level_payload)
+/// (decision D83).
 ///
-/// The seed itself below the leaf level; `salt_i ‖ 0x00·16` at `level == d`,
-/// where the verifier reads `salt_i = payload[..16]` with no descent and the
-/// tail is never hashed (MVP-SPEC.md line 96). The scratch buffer wipes
-/// before returning, so the discarded tail exists in exactly one place.
-fn disclosed_payload(seed: &Seed32, address: NodeAddress, depth: u8) -> Seed32 {
+/// The seed itself below the grid's leaf level; `salt_i ‖ 0x00·16` at
+/// `level == d`, where a verifier reads `salt_i = payload[..16]` with no
+/// descent and the tail is never hashed (MVP-SPEC.md line 96). The scratch
+/// buffer wipes before returning, so the discarded tail exists in exactly one
+/// place.
+///
+/// [`cover_seeds`] applies it to every cover entry, but a cover is not the
+/// only place a `level == d` value is disclosed: a bundle's
+/// `full_reveal.s_root` is the grid root, which at `n == 1` **is** the single
+/// leaf (`docs/format/registry-v1.md` §7.14 key 2). A sealer emitting that
+/// field must route it through here too — which is why this is public rather
+/// than an implementation detail of `cover_seeds`.
+///
+/// ```
+/// use antseal_core::content::{NodeAddress, canonical_leaf_level_payload};
+/// use antseal_core::crypto::material::Seed32;
+///
+/// let s_root = Seed32::from_bytes([0xC7; 32]);
+///
+/// // n = 1 (d = 0): the root is the leaf, so only salt_0 is disclosed.
+/// let one_leaf = canonical_leaf_level_payload(&s_root, NodeAddress::root(), 0);
+/// assert_eq!(&one_leaf.as_bytes()[..16], &[0xC7; 16]);
+/// assert_eq!(&one_leaf.as_bytes()[16..], &[0x00; 16]);
+///
+/// // Any larger file: the root is an interior node and travels whole.
+/// let bigger = canonical_leaf_level_payload(&s_root, NodeAddress::root(), 5);
+/// assert_eq!(bigger.as_bytes(), s_root.as_bytes());
+/// ```
+#[must_use]
+pub fn canonical_leaf_level_payload(seed: &Seed32, address: NodeAddress, depth: u8) -> Seed32 {
     if address.level() != depth {
         return Seed32::from_bytes(*seed.as_bytes());
     }
