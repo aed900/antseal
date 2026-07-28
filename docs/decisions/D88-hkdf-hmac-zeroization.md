@@ -344,6 +344,9 @@ format assumption, so it sits outside that freeze"). Add one paragraph to
 
 That last sentence is the important one and is why step 3 of §6 is not
 optional: this is a property with **no compile-time detector**.
+[Corrected 2026-07-28 by C24 — see the amendment at the end of this record:
+there *is* half a detector, and the half that is missing is the load-bearing
+half.]
 
 ### `tasks/Q.md` — Q14 freeze checklist
 
@@ -411,3 +414,62 @@ accepted residue of four `Drop`-less stack arrays. A second, previously
 unrecorded gap — GGM covering seeds recoverable from dropped hashers — is
 closed by the same edit. No format impact; no golden vector changes; no new
 package in `Cargo.lock`.
+
+---
+
+## Amendment — 2026-07-28, from the C22/C23/C24 implementation
+
+Four errors in this record, found by implementing it. The outcome — option
+(d), enable `sha2`'s `zeroize` feature — is unchanged and was confirmed by
+measurement. What follows is wrong in the reasoning, not in the verdict.
+
+**1. §9.1's stop-condition is wrong and would have aborted a correct
+implementation.** It says the `Cargo.lock` diff is expected to be empty and to
+stop if it is not. The diff is *not* empty: `block-buffer` and `digest` each
+gain a `zeroize` edge, because `digest/zeroize = ["dep:zeroize", ...]`
+activates an optional dependency. What is actually invariant is stronger and
+easier to check: `cargo update -w` reports "Locking 0 packages" — no new
+package, no version change — and `cargo tree -p antseal-core -e normal` is
+byte-identical. **§4's claim ("gains no package") is the correct one; §9.1's
+is not.** Use §4's.
+
+**2. §6.3's two-case test specification cannot witness this record's headline
+claim.** `Hkdf::new` is `extract(salt, ikm).1`, and the extract context is
+consumed *inside*, so the returned `Hkdf` holds only the PRK-keyed HMAC — **`W`
+verbatim is not in it.** The implementation's first run proved this the
+expensive way: the `Hkdf` case failed on its byte count while its "`W`
+recoverable" assertion passed **vacuously**. A third case over
+`HkdfExtract<Sha256>` is required, and without it the strongest finding in
+this record would have shipped with no test behind it. §2's table is
+internally consistent — two columns are two probes — but the summary prose
+conflates them.
+
+**3. §5's 4 KiB cost figure (+4.3 %) is wrong.** It is ≈0 %, which is what
+the mechanism requires: a fixed ~104-byte wipe amortised over 64 block
+compressions. Measured costs are +3.5 % at 34 B, +2.2 % at 65 B, ≈0 % at
+4 KiB, +2.4 % on HKDF — all well under the 10 % escalation gate, and scaling
+inversely with input size exactly as a fixed per-drop cost must.
+
+**4. §7's "no compile-time detector" is too strong.** `digest` re-exports
+`zeroize` under `#[cfg(feature = "zeroize")]` and `sha2` re-exports `digest`,
+so `use sha2::digest::zeroize::Zeroize;` fails to compile without the feature
+(demonstrated: `E0432`). But it is only **half** a detector, and the missing
+half is the one that matters: `hmac/zeroize` forwards `digest/zeroize` too, so
+the compile-time check is blind to **`sha2`'s own** feature — and therefore to
+`Sha256VarCore`'s chaining-state `Drop`, which is the entire mechanism this
+decision turns on. Hence C24's three layers, in three separate test binaries
+so that layer 1's compile error cannot bury layers 2 and 3.
+
+**One finding this record missed entirely, now closed by C23.**
+`ggm_walk::next_salt` copied the whole 32-byte leaf seed into a local array
+merely to truncate it to 16 bytes — a full GGM ancestor seed, un-wiped, on
+**every leaf of every fine tree**. It is deleted rather than wiped: the
+truncation now reads from the borrowed `Seed32`. This was outside both C21's
+`crypto/`-scoped tables and this record's file list.
+
+**Residue counts, measured rather than estimated** (this record's figures in
+brackets): dropped `Hkdf<Sha256>` 114 of 144 non-zero [114]; dropped
+`HkdfExtract<Sha256>` 108 of 144 with `W` verbatim [113]; dropped `Sha256`
+over a GGM child preimage 94 of 104 with the parent seed verbatim [95]. All
+zero afterwards, with the probe's control passing throughout so that "all
+zero" is a measurement rather than a probe artefact.
