@@ -7,7 +7,7 @@
 //! (including the two *named* reserved slots), **closed-enum value and
 //! spelling**, **fixed byte length**, and **tuple arity** below is asserted
 //! equal to its registry row by
-//! `crates/antseal-core/tests/format_registry_draft.rs`
+//! `crates/antseal-core/tests/format_registry_freeze.rs`
 //! (`code_map_keys_match_the_registry`,
 //! `code_reserved_bands_match_the_registry`, `code_enums_match_the_registry`,
 //! `code_scalar_lengths_match_the_registry`,
@@ -376,6 +376,55 @@ impl BundleMapId {
                 key::full_reveal::S_ROOT,
             ],
         }
+    }
+
+    /// The registry **name** of each assigned key, in the same order as
+    /// [`Self::assigned_keys`].
+    ///
+    /// Names are load-bearing, not documentation — see
+    /// [`crate::manifest::registry::MapId::field_names`] for why (assertion
+    /// C6; task F33). The `tsa_anchor` list is the sharpest case: it has four
+    /// entries because D8 §1 removed key 4's `source` string from v1, and a
+    /// rename that quietly reintroduced it would evade the name-based
+    /// checked-absence guard.
+    #[must_use]
+    pub const fn field_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Bundle => &[
+                "format_version",
+                "manifest",
+                "storage_record",
+                "ots_anchors",
+                "tsa_anchors",
+                "receipt",
+                "covered_reveals",
+                "noncovered_reveals",
+                "touched_files",
+                "full_reveals",
+            ],
+            Self::StorageRecord => &["address", "nonce", "k_m"],
+            Self::OtsAnchor => &[
+                "status",
+                "ots",
+                "block_height",
+                "block_header",
+                "fetch_date",
+            ],
+            Self::TsaAnchor => &["status", "token", "intermediates", "fetch_date"],
+            Self::ReceiptRecord => &["tx_hashes", "block_number", "payload"],
+            Self::CoveredReveal => &["unit_id", "k_u", "ciphertext", "cover", "paths"],
+            Self::NonCoveredReveal => &["unit_id", "k_u", "ciphertext", "unit_salt"],
+            Self::TouchedFile => &["file_id", "path", "path_salt"],
+            Self::FullReveal => &["file_id", "file_salt", "s_root"],
+        }
+    }
+
+    /// The registry name of one assigned key, or `None` if the key is not
+    /// assigned in v1.
+    #[must_use]
+    pub fn field_name(self, key: u64) -> Option<&'static str> {
+        let position = self.assigned_keys().iter().position(|&k| k == key)?;
+        self.field_names().get(position).copied()
     }
 
     /// The map's reserved-for-v1.x band. Every bundle map reserves — there

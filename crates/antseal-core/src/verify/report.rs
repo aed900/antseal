@@ -276,6 +276,46 @@ pub enum AnchorState {
     Absent,
 }
 
+impl AnchorState {
+    /// Every state, in the spec's order (MVP-SPEC.md lines 129–135) — which
+    /// is also the wire enum's value order (registry §6.1).
+    pub const ALL: [Self; 7] = [
+        Self::Proven,
+        Self::ValidAtStampingCertSinceExpired,
+        Self::Attested,
+        Self::Pending,
+        Self::InternallyConsistentOnly,
+        Self::Invalid,
+        Self::Absent,
+    ];
+
+    /// This state's serialized spelling — the kebab-case name `serde` emits,
+    /// and (deliberately) byte-identical to the wire enum's
+    /// `AnchorStatus::registry_value_name`.
+    ///
+    /// The two enums are independent by design: the report is a *separate,
+    /// non-wire* format (D27/D29) and a verifier derives its own state rather
+    /// than copying the sealer's. But both freeze at Q14 (D84 §7), and
+    /// nothing bound their spellings to each other until the registry freeze
+    /// test's assertion C10 — a desynchronisation would have shipped one
+    /// taxonomy under two names.
+    ///
+    /// Written as an exhaustive, wildcard-free match so a new variant fails
+    /// compilation here as well as in the report.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Proven => "proven",
+            Self::ValidAtStampingCertSinceExpired => "valid-at-stamping-cert-since-expired",
+            Self::Attested => "attested",
+            Self::Pending => "pending",
+            Self::InternallyConsistentOnly => "internally-consistent-only",
+            Self::Invalid => "invalid",
+            Self::Absent => "absent",
+        }
+    }
+}
+
 /// One per-anchor result slot: state, verified time, artifact metadata,
 /// and fetch date — all absent-tolerant (M0 reports carry `Absent` state
 /// and `None` everywhere; A18/R12 populate real data at M2).
@@ -478,5 +518,24 @@ mod tests {
             serde_json::to_string(&AnchorKind::Ots).expect("kind serializes"),
             "\"ots\""
         );
+    }
+
+    /// `wire_name()` is what `serde` actually emits, for every state.
+    ///
+    /// Without this the accessor would be a second, hand-maintained spelling
+    /// table that could drift from the bytes — exactly the "second authority"
+    /// shape the wire registry excludes elsewhere. `AnchorState::ALL` makes
+    /// the sweep exhaustive, and the wildcard-free match in `wire_name`
+    /// makes a new variant a compile error rather than a missing row.
+    #[test]
+    fn wire_name_is_the_serialized_spelling() {
+        for state in AnchorState::ALL {
+            let json = serde_json::to_string(&state).expect("state serializes");
+            assert_eq!(
+                json,
+                format!("\"{}\"", state.wire_name()),
+                "{state:?}: wire_name() disagrees with serde"
+            );
+        }
     }
 }

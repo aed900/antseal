@@ -7,7 +7,7 @@
 //! and exact lengths come from the v1 wire registry,
 //! `docs/format/registry-v1.md` §§7.6–7.15 (+ its machine mirror
 //! `registry-v1.json`); [`registry`] is the code side of that table and
-//! `crates/antseal-core/tests/format_registry_draft.rs` asserts the two
+//! `crates/antseal-core/tests/format_registry_freeze.rs` asserts the two
 //! agree 1:1.
 //!
 //! ```text

@@ -274,6 +274,7 @@
     {
       "name": "manifest_envelope",
       "status": "frozen-v1",
+      "doc_section": "7.1",
       "doc": "MVP-SPEC.md line 74; shape frozen across ALL versions (no reserved range; keys other than 0/1 are unknown-key forever)",
       "fields": [
         { "key": 0, "name": "body", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "frozen-v1", "notes": "embedded canonical-CBOR manifest body; work_id = SHA-256 of exactly these bytes" },
@@ -284,6 +285,7 @@
     {
       "name": "manifest_body",
       "status": "frozen-v1",
+      "doc_section": "7.2",
       "doc": "MVP-SPEC.md line 98; inside manifest_envelope.body; version discriminant at key 0 encodes first",
       "fields": [
         { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "frozen-v1", "notes": "= 1 in v1" },
@@ -300,6 +302,7 @@
     {
       "name": "file_entry",
       "status": "frozen-v1",
+      "doc_section": "7.3",
       "doc": "MVP-SPEC.md line 98 file table",
       "fields": [
         { "key": 0, "name": "path_commit", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "frozen-v1", "notes": null },
@@ -315,6 +318,7 @@
     {
       "name": "canon_descriptor",
       "status": "frozen-v1",
+      "doc_section": "7.4",
       "doc": "MVP-SPEC.md lines 83/98; G4 field set; no forced-text flag (D20)",
       "fields": [
         { "key": 0, "name": "kind", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "frozen-v1", "notes": "enum descriptor_kind" },
@@ -327,6 +331,7 @@
     {
       "name": "unit_entry",
       "status": "frozen-v1",
+      "doc_section": "7.5",
       "doc": "MVP-SPEC.md lines 91-92/98 unit table",
       "fields": [
         { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "frozen-v1", "notes": "work-global manifest-order ordinal; stored AND parse-checked equal to the derived ordinal. Storing it is spec-mandated (MVP-SPEC.md line 98); CHECKING it is what stops the stored copy from becoming a second authority — the same rule that keeps derived values off the bundle (checked_absences). Mismatch is manifest-unit-id-mismatch. D8 section 6" },
@@ -342,6 +347,7 @@
     {
       "name": "bundle",
       "status": "frozen-v1",
+      "doc_section": "7.6",
       "doc": "MVP-SPEC.md lines 112-114 .sealproof top level; version discriminant at key 0 encodes first. Every key required except the opt-in receipt, so one logical bundle has exactly one shape (required-may-be-empty, never absent-vs-empty)",
       "fields": [
         { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "frozen-v1", "notes": "= 1 in v1; versions independently of the manifest (line 123) — F10 dispatches the two discriminants separately and never infers one from the other" },
@@ -375,6 +381,7 @@
     {
       "name": "storage_record",
       "status": "frozen-v1",
+      "doc_section": "7.7",
       "doc": "MVP-SPEC.md line 98 manifest storage record {address, nonce, k_m} — the MANIFEST's own triple, not a per-unit one (per-unit address/nonce live in unit_entry keys 5-6). Required even though no evidence-layer check consumes it: an absent record would be a second bundle shape, and the storage-linkage layer must be able to say the persistence claim failed rather than that none was made",
       "fields": [
         { "key": 0, "name": "address", "type": "bstr", "presence": "required", "rule": null, "length": 32, "tier": "P", "status": "frozen-v1", "notes": "Autonomi address of the ENCRYPTED manifest copy (D11)" },
@@ -386,6 +393,7 @@
     {
       "name": "ots_anchor",
       "status": "frozen-v1",
+      "doc_section": "7.8",
       "doc": "MVP-SPEC.md lines 108/112-114. Artifact internals stay opaque at this layer: the attestation/ops model, calendar semantics and .ots size limits are A's, at M2. This registry reserves the shape only",
       "presence_groups": [
         {
@@ -410,6 +418,7 @@
     {
       "name": "tsa_anchor",
       "status": "frozen-v1",
+      "doc_section": "7.9",
       "doc": "MVP-SPEC.md lines 109/112-114. DER token and certificates are opaque bstrs here; CMS/X.509 parsing, pinned-root chain validation and valid-at-stamping evaluation are A's, at M2",
       "fields": [
         { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "frozen-v1", "notes": "enum anchor_status; sealer-recorded, never trusted" },
@@ -422,6 +431,7 @@
     {
       "name": "receipt_record",
       "status": "frozen-v1",
+      "doc_section": "7.10",
       "doc": "MVP-SPEC.md line 110; opt-in; payload internals A/S-owned and deliberately outside this registry. MVP verdict is fixed at 'supporting evidence — no independently proven time' and no reserved slot can promote it",
       "fields": [
         { "key": 0, "name": "tx_hashes", "type": "array", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "frozen-v1", "notes": "bstr(32) Keccak-256 EVM tx hashes; non-empty; capture order" },
@@ -436,6 +446,7 @@
     {
       "name": "covered_reveal",
       "status": "frozen-v1",
+      "doc_section": "7.11",
       "doc": "MVP-SPEC.md lines 96/112-114 per revealed fine-tree-covered unit. Carries no nonce (manifest is the single source) and no AAD (reconstructed from manifest seal_id + this entry's unit_id, line 91). cover/paths are NESTED inside the reveal they belong to, so a proof reaching outside the revealed set is unrepresentable in v1 — BundleView.proof_unit_refs idles until bundle key 10 is assigned in v1.1",
       "fields": [
         { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "frozen-v1", "notes": "must resolve into the embedded manifest's unit table" },
@@ -449,6 +460,7 @@
     {
       "name": "noncovered_reveal",
       "status": "frozen-v1",
+      "doc_section": "7.12",
       "doc": "MVP-SPEC.md lines 92/94/112-114 per revealed non-covered unit (--no-fine-tree or raw-mirror) — the two cases bound by unit_commit rather than fine_root (line 94). Keys 0-2 are deliberately key-aligned with covered_reveal so both reveal kinds share one decode prefix. A raw-mirror reveal is an ordinary entry here: no mirror flag, no link field — the manifest's kind identifies it",
       "fields": [
         { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "frozen-v1", "notes": "resolves into the manifest unit table; whether a unit legitimately belongs in THIS array rather than covered_reveal is also R's" },
@@ -461,6 +473,7 @@
     {
       "name": "touched_file",
       "status": "frozen-v1",
+      "doc_section": "7.13",
       "doc": "MVP-SPEC.md lines 112-114 per touched file; explicit file_id decided YES (registry-v1.md section 10). path_salt is the path-only salt, independent of file_salt precisely so naming a file never weakens its content commitments (line 95) — the two must never be merged in a future version",
       "fields": [
         { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "frozen-v1", "notes": "index into the embedded manifest's file table; in-range" },
@@ -472,6 +485,7 @@
     {
       "name": "full_reveal",
       "status": "frozen-v1",
+      "doc_section": "7.14",
       "doc": "MVP-SPEC.md lines 112-114/121 per fully-revealed file. D28 (resolved 2026-07-28) makes this section's presence a BICONDITIONAL over a DERIVED predicate, not a sealer option: an entry exists for file F iff full(F). The entry is material, not a claim — its presence must AGREE with the independently derived predicate, and there is no reveal-shape field anywhere to declare it",
       "derived_predicate": {
         "source": "docs/decisions/D28-full-reveal-strictness.md",

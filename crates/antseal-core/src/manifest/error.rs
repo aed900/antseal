@@ -602,7 +602,7 @@ impl ManifestError {
     /// discriminant — fails compilation here until it is assigned a map.
     ///
     /// Every arm is cross-checked against `docs/format/registry-v1.json`
-    /// by `format_registry_draft.rs`'s `code_error_maps_match_the_registry`
+    /// by `format_registry_freeze.rs`'s `code_error_maps_match_the_registry`
     /// (D86 §4.3): the test states only which registry *field* each
     /// discriminant rejects, and derives the owning map from the registry,
     /// so a hand-copied row cannot be enshrined here.
