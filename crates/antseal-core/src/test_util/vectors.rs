@@ -23,6 +23,7 @@
 //! The runner test and existing vector files never change.
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::crypto::hkdf::{
     FileId, IdDomain, Label, SENTINEL_ID, UnitId, derive_file_salt, derive_fine_seed,
@@ -45,6 +46,18 @@ pub const NON_SECRET_MARKER: &str = "NON-SECRET";
 /// Registered vector kinds. Extending this list is a framework change
 /// (see the module docs), not a per-vector event.
 pub const KNOWN_KINDS: &[&str] = &["hkdf-labels"];
+
+/// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
+/// recomputed_digest`]).
+///
+/// This is a *harness* digest, not a format commitment: it exists so the Q5
+/// native↔WASM lane can byte-compare every value the executor recomputed,
+/// not merely the pass/fail verdict. It deliberately does **not** use
+/// [`crate::crypto::domain::tagged_sha256`] and its long ASCII prefix cannot
+/// collide with the single-byte tags of the C1 domain-tag registry
+/// (MVP-SPEC.md line 79) — nothing here is ever hashed into a manifest,
+/// bundle, or signature preimage.
+const RECOMPUTED_DIGEST_DOMAIN: &[u8] = b"antseal/test-util/vectors/recomputed/v0\x00";
 
 /// Why a vector file failed. Every variant is a *loud* failure in the
 /// runner — nothing is skipped.
@@ -111,6 +124,17 @@ pub struct VectorSummary {
     /// Number of vector entries verified (each entry = multiple byte
     /// comparisons).
     pub items: usize,
+    /// SHA-256 over **every byte this execution recomputed**, in a
+    /// length-prefixed, domain-separated stream (see
+    /// [`RECOMPUTED_DIGEST_DOMAIN`]).
+    ///
+    /// The Q5 native↔WASM bit-match compares this digest, so a platform
+    /// divergence anywhere in the recomputation is caught even where it does
+    /// not (yet) change a pass/fail verdict — that is Q5's "report bytes
+    /// **plus recomputed digests**" requirement. Only the digest is ever
+    /// surfaced; the recomputed key material itself never leaves the
+    /// executor (project rule 6).
+    pub recomputed_digest: [u8; 32],
 }
 
 /// The generic envelope (schema documented in `testdata/vectors/README.md`).
@@ -263,18 +287,29 @@ fn execute_hkdf_labels(envelope: Envelope) -> Result<VectorSummary, VectorError>
         }
     }
 
+    // Accumulates every recomputed artifact, in file order, for the Q5
+    // bit-match (see `VectorSummary::recomputed_digest`).
+    let mut recomputed = Sha256::new();
+    recomputed.update(RECOMPUTED_DIGEST_DOMAIN);
+    recomputed.update(HKDF_KIND.as_bytes());
+    recomputed.update([0x00]);
     for entry in &expect.vectors {
-        verify_hkdf_entry(w, entry)?;
+        verify_hkdf_entry(w, entry, &mut recomputed)?;
     }
 
     Ok(VectorSummary {
         kind: HKDF_KIND,
         description: envelope.description,
         items: expect.vectors.len(),
+        recomputed_digest: recomputed.finalize().into(),
     })
 }
 
-fn verify_hkdf_entry(w: MasterSecretRef<'_>, entry: &HkdfVectorEntry) -> Result<(), VectorError> {
+fn verify_hkdf_entry(
+    w: MasterSecretRef<'_>,
+    entry: &HkdfVectorEntry,
+    recomputed: &mut Sha256,
+) -> Result<(), VectorError> {
     let check_err = |check: &'static str, problem: String| VectorError::Check {
         kind: HKDF_KIND,
         check,
@@ -352,7 +387,25 @@ fn verify_hkdf_entry(w: MasterSecretRef<'_>, entry: &HkdfVectorEntry) -> Result<
             ),
         ));
     }
+
+    // Length-prefixed so no two distinct recomputations can produce the same
+    // stream; little-endian and fixed-width so the digest is identical on
+    // every target (that is the whole point — Q5 byte-compares it native vs
+    // wasm32).
+    recomputed.update(label.as_str().as_bytes());
+    recomputed.update([0x00]);
+    recomputed.update(id.to_le_bytes());
+    recomputed.update(prefix_len(actual_info.len()));
+    recomputed.update(&actual_info);
+    recomputed.update(prefix_len(derived.len()));
+    recomputed.update(&derived);
     Ok(())
+}
+
+/// 8-byte little-endian length prefix (never panics; `u64` covers every
+/// possible in-memory length on both 32- and 64-bit targets).
+fn prefix_len(len: usize) -> [u8; 8] {
+    (len as u64).to_le_bytes()
 }
 
 /// Derive through the public typed API, dispatching per label (the only
@@ -489,11 +542,61 @@ mod tests {
         execute_vector_bytes(&bytes, "v1")
     }
 
+    /// Same as [`valid_hkdf_document`] but with every non-sentinel id set to
+    /// `id`, so the recomputed artifacts genuinely differ.
+    fn valid_hkdf_document_with_id(id: u64) -> serde_json::Value {
+        let w = MasterSecretRef::from_bytes(&super::super::TEST_MASTER_SECRET_W);
+        let vectors: Vec<serde_json::Value> = Label::ALL
+            .into_iter()
+            .map(|label| {
+                let id: u64 = match label.id_domain() {
+                    IdDomain::Sentinel => SENTINEL_ID,
+                    IdDomain::UnitId | IdDomain::FileId => id,
+                };
+                let domain = match label.id_domain() {
+                    IdDomain::UnitId => "unit_id",
+                    IdDomain::FileId => "file_id",
+                    IdDomain::Sentinel => "sentinel",
+                };
+                serde_json::json!({
+                    "label": label.as_str(),
+                    "id": format!("0x{id:016x}"),
+                    "id_domain": domain,
+                    "info": hex(&label.info_bytes(id)),
+                    "okm": hex(&derive_via_typed_api(w, label, id)),
+                })
+            })
+            .collect();
+        let mut doc = valid_hkdf_document();
+        doc["expect"]["vectors"] = serde_json::json!(vectors);
+        doc
+    }
+
     #[test]
     fn self_consistent_document_executes_green() {
         let summary = execute(&valid_hkdf_document()).expect("valid document must execute");
         assert_eq!(summary.kind, "hkdf-labels");
         assert_eq!(summary.items, Label::ALL.len());
+    }
+
+    /// The Q5 bit-match medium: the digest must be a deterministic function
+    /// of what was recomputed — stable across runs, and different when any
+    /// recomputed artifact differs.
+    #[test]
+    fn recomputed_digest_is_deterministic_and_covers_the_recomputation() {
+        let doc = valid_hkdf_document();
+        let first = execute(&doc).expect("valid document").recomputed_digest;
+        let second = execute(&doc).expect("valid document").recomputed_digest;
+        assert_eq!(first, second, "digest must be deterministic");
+        assert_ne!(first, [0u8; 32], "digest must actually be computed");
+
+        let other = execute(&valid_hkdf_document_with_id(4))
+            .expect("valid document")
+            .recomputed_digest;
+        assert_ne!(
+            first, other,
+            "a different id changes every info/okm, so the digest must change"
+        );
     }
 
     #[test]

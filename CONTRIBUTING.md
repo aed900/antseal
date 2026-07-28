@@ -45,18 +45,18 @@ Live lanes (wave 2 — Q2/Q4/P13):
 | `secret-guard` | Q2 — no vault-export/wallet-key file signatures anywhere in the checkout (PEM private keys, EVM keystore JSON, age/minisign secret keys, the reserved `ANTSEAL VAULT EXPORT` magic); self-tests each run by planting fakes in a temp dir (testdata/README.md, secret-material convention). |
 | `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources` against the committed `deny.toml` (licenses stubbed until Q29). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
 
-Live lanes (wave 4 — P14):
+Live lanes (wave 4 — P14/Q5):
 
 | Lane | What it asserts |
 | --- | --- |
 | `wasm32-core-tests` | P14 — **NEW required context.** `antseal-core`'s `--lib` unit tests **execute** on `wasm32-unknown-unknown` (a libtest binary for that target has zero imports, so `scripts/wasm-test-runner.mjs` runs it under plain `WebAssembly.instantiate` in node; wired as cargo's `runner` in `.cargo/config.toml`). Because the target has no stdio, the runner also asserts an in-memory **execution witness** — "all tests passed" and "zero tests ran" are otherwise indistinguishable. Second step: `scripts/wasm-toolchain-audit.sh` (getrandom recipe per wasm32 graph + wasm-bindgen crate↔CLI pin equality). Doc: [docs/wasm-toolchain.md](docs/wasm-toolchain.md). |
+| `wasm-bitmatch` | Q5 — every committed golden vector executed through `antseal_core::test_util::vectors` produces a **byte-identical** transcript (report bytes + per-vector recomputed digests, SHA-256 included) natively and under wasm32. Harness: `crates/wasm-bitmatch` (test-only, no wasm-bindgen — D18 stays free); its `build.rs` embeds vectors by walking `testdata/vectors/`, so **new vectors need no lane change**. The lane **self-tests first, every run**: an injected wasm32-only divergence must turn the comparison red before a green comparison is trusted (`./scripts/wasm-bitmatch.sh --self-test`). |
 
 Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
 task; **a green mount-point lane asserts nothing until then**):
 
 | Lane | Content lands at |
 | --- | --- |
-| `wasm-bitmatch` | Q5 — WASM verification output byte-matches native over every vector |
 | `tamper-matrix` | Q7 — every registered mutation fails with its distinct expected error; no panics (Q8 tracks completeness) |
 | `fuzz-smoke` | Q9 — fixed-budget per-PR cargo-fuzz smoke (nightly long run is a separate scheduled workflow) |
 
@@ -94,7 +94,7 @@ runner image sets `core.autocrlf=true`. Never remove that guard.
 
 ### Claiming a mount point
 
-The owning task (remaining: Q5/Q7/Q9 — Q4 and P13 claimed theirs):
+The owning task (remaining: Q7/Q9 — Q4, P13 and Q5 claimed theirs):
 
 1. replaces the placeholder step body of its job in `ci.yml` with the real
    steps (checkout → rustup-from-toolchain-file → `rust-cache` → content,
@@ -118,6 +118,11 @@ The owning task (remaining: Q5/Q7/Q9 — Q4 and P13 claimed theirs):
       `./scripts/wasm-toolchain-audit.sh` green — antseal-core's unit tests
       still **run** on the verifier's target and no unconfigured `getrandom`
       entered a wasm32 graph ([docs/wasm-toolchain.md](docs/wasm-toolchain.md))
+- [ ] `./scripts/wasm-bitmatch.sh` green — the WASM build still bit-matches
+      native verification over every committed golden vector. **Any PR that
+      adds a vector or touches a verification path must show this lane
+      green**; a byte difference is a format-correctness incident, not a
+      flake ([crates/wasm-bitmatch/README.md](crates/wasm-bitmatch/README.md))
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
 - [ ] `cargo deny --locked check advisories bans sources` green with the

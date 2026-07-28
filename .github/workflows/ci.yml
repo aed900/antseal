@@ -18,8 +18,9 @@
 # vector retention under "Q9"; authoritative IDs are per tasks/Q.md):
 #   Q4:  golden-vectors — LANDED: native runner over testdata/vectors/
 #        (discovery walk, no hardcoded lists; testdata/vectors/README.md)
-#   Q5:  wasm-bitmatch — native<->WASM bit-match, built on the P14 wasm
-#        probe recipe (mount point below)
+#   Q5:  wasm-bitmatch — LANDED: native<->WASM bit-match over every committed
+#        golden vector, built on P14's runner technique. Harness:
+#        crates/wasm-bitmatch (test-only). Doc: docs/wasm-toolchain.md
 #   Q6:  vector-freeze guard (append-only FROZEN.sha256 check) — new job,
 #        lands at Q6
 #   Q7:  tamper-matrix — distinct-error tamper harness (mount point below)
@@ -246,7 +247,7 @@ jobs:
             echo "::notice title=cross-OS suite set is EMPTY::No corpus_*/vector_* tests exist yet — this lane is vacuously green by design (Q1). G3 (UTF-8 corpus) and Q4 (golden vectors) populate it."
           fi
 
-  # ── Mount-point jobs (Q1) ──────────────────────────────────────────────────
+  # ── Mount-point jobs (Q1) — remaining: tamper-matrix (Q7), fuzz-smoke (Q9) ─
   # Each job below reserves a permanent required-status context for a lane
   # whose content lands with a later task. They are real jobs (not comment
   # stubs) so branch protection can list the final context set ONCE, before
@@ -288,20 +289,37 @@ jobs:
             exit 1
           fi
 
-  # Q5: WASM/native bit-match — antseal-core verification compiled to
-  # wasm32-unknown-unknown (wasm-bindgen-test under node / headless runner)
-  # executed over every golden vector; output bytes + recomputed digests must
-  # be SHA-256-identical to the native runner's. Auto-covers new vectors,
-  # including M2 anchor vectors.
+  # Q5 (live): WASM/native bit-match. Every committed golden vector is
+  # executed through antseal_core::test_util::vectors on BOTH targets and the
+  # resulting transcripts — report bytes + the per-vector recomputed digests —
+  # must be byte-identical, SHA-256 included (MVP-SPEC.md lines 167/169).
+  #
+  # The harness is crates/wasm-bitmatch (test-only, never published, no
+  # wasm-bindgen — so decision D18 stays free). Its build.rs embeds the
+  # vectors by walking testdata/vectors/, so NEW VECTORS ARE COVERED WITH NO
+  # CHANGE HERE — including the M2 anchor vectors, whose wasm32 coverage is an
+  # explicit M2 exit criterion.
+  #
+  # The self-test runs FIRST, every run, in the spirit of `secret-guard`: it
+  # injects a wasm32-only platform divergence and requires the comparison to
+  # go RED. Only then is a green comparison trustworthy. It rebuilds a clean
+  # artifact before returning, and step 2 rebuilds from scratch anyway.
   wasm-bitmatch:
     name: wasm-bitmatch
     runs-on: ubuntu-latest
     steps:
-      - name: Mount point — content lands at Q5
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
-          echo "MOUNT POINT (Q1): required-status context 'wasm-bitmatch' is reserved."
-          echo "No bit-match harness exists yet. Green here asserts NOTHING until Q5 lands it."
-          echo "Q5: replace this step's body; never rename the job (branch-protection context)."
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: node version (wasm host; floor asserted by the runner, not pinned)
+        run: node --version
+      - name: Self-test — an injected wasm32-only divergence MUST turn the lane red
+        run: ./scripts/wasm-bitmatch.sh --self-test
+      - name: Native <-> wasm32 bit-match over every committed golden vector
+        run: ./scripts/wasm-bitmatch.sh
 
   # Q7: tamper-matrix harness — every registered mutation row must produce
   # exactly its expected stable error code / verdict state, expected outcomes

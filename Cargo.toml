@@ -5,6 +5,11 @@ members = [
     "crates/antseal-anchor",
     "crates/antseal-net",
     "crates/antseal-cli",
+    # Test infrastructure, never published (Q5). A member — not a standalone
+    # crate like probes/sig-probe — because a bit-match between builds
+    # resolved from different lockfiles would be meaningless: it must share
+    # this workspace's single Cargo.lock and exact pins.
+    "crates/wasm-bitmatch",
 ]
 
 [workspace.package]

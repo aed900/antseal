@@ -564,3 +564,92 @@ same file; **node v24.12.0**; P14 tree.
 - The rendered check-run name `wasm32-core-tests` — confirm in runbook step 3
   **before** applying the 15-context payload in step 5, exactly like the
   cross-os and `secret-guard` names.
+
+---
+
+# Q5 — wave-4 lane changes (2026-07-28)
+
+## What changed
+
+- **`wasm-bitmatch` — mount point → LIVE (Q5).** No context change: the job
+  id and `name:` were reserved by Q1 and are byte-identical, so **the
+  branch-protection payload is unchanged from the 15-context P14 payload
+  above.** Body: checkout → rustup (toolchain file) → rust-cache →
+  `node --version` → `./scripts/wasm-bitmatch.sh --self-test` →
+  `./scripts/wasm-bitmatch.sh`.
+- **`crates/wasm-bitmatch` — NEW workspace member, test-only.**
+  `publish = false`, not named `antseal-*`, depended on by no product crate.
+  A *member* rather than a standalone crate (unlike `probes/sig-probe`)
+  because a bit-match between builds resolved from different lockfiles would
+  prove nothing — both sides must compile the same pinned versions from the
+  single root `Cargo.lock`. It depends on `antseal-core` with
+  `features = ["test-vectors"]`, the tier that activates zero optional
+  dependencies, so the edge cannot perturb `core-dep-graph`.
+  **No new third-party dependency**: `serde`, `serde_json` and `sha2` are
+  already exact-pinned for `antseal-core`.
+- **No wasm-bindgen anywhere.** The wasm entry points are a raw C ABI
+  (`bitmatch_len` / `bitmatch_ptr` / `bitmatch_transcript_version`) over a
+  module with **zero imports**, asserted by the runner each run. Decision
+  **D18** remains entirely free.
+- **`VectorSummary::recomputed_digest` (antseal-core).** New field: SHA-256
+  over every byte the vector executor recomputed, length-prefixed and
+  domain-separated with a harness-local prefix that is deliberately outside
+  the C1 domain-tag registry. This is the substance of the bit-match ("report
+  bytes **plus recomputed digests**") and the medium through which **C3's
+  HKDF vectors join the harness**, discharging their standing rider. The Q4
+  runner now prints it too, so the `golden-vectors` and `wasm-bitmatch` logs
+  are directly comparable.
+- **Transcript byte format**: compact JSON under the **D29** rules, consumed
+  as a *recommendation* — `TRANSCRIPT_VERSION` is `0` and moves to `1` when
+  **Q14** freezes the report byte format. Nothing here freezes D29.
+
+## Local verification — 2026-07-28 (remote CI has still never run)
+
+Environment: linux `x86_64-unknown-linux-gnu`; toolchain **1.92.0** from
+`rust-toolchain.toml`; node **v24.12.0**; Q5 tree.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| `wasm-bitmatch` step 2 (the lane) | `./scripts/wasm-bitmatch.sh` | **PASS** — native transcript 543 B, sha256 `7b6c5063af4c269cd69b030b715ec0a53f01aa73ac9758e1408f81eac6d166ec`; wasm32 transcript **byte-identical**, same sha256; 1 vector, 8 items, recomputed digest `949c49ebf664a65ff59b3ecfbb674b74c43f5e0fb795527a567bbe0ffb00d976` |
+| wasm module self-containment | runner asserts `WebAssembly.Module.imports(module).length === 0` | **PASS** — zero imports; exports are `memory`, `bitmatch_len`, `bitmatch_ptr`, `bitmatch_transcript_version` |
+| Harness native guards | `cargo test -p wasm-bitmatch --locked` | **PASS** — 7 tests: embedded table equals the committed tree (staleness), embedded bytes equal file bytes, transcript deterministic, non-vacuous, path-sorted, total over malformed input, D29 rules held |
+| Full gate on the Q5 tree | `cargo fmt --all` · `cargo clippy --all-targets --all-features --locked -- -D warnings` · `cargo test --workspace --all-features --locked` · `cargo build -p antseal-core --target wasm32-unknown-unknown --locked` · `cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked` · `./scripts/wasm-toolchain-audit.sh` · `cargo deny --locked check advisories bans sources` | **PASS** (all exit 0) |
+| Workflow YAML validity | PyYAML structural parse of `ci.yml` | **PASS** — 13 jobs; `wasm-bitmatch` keeps its job id and `name:` (required-status context unchanged) |
+
+### Red-lane proof (permanent, runs on every CI run — not a one-off)
+
+`./scripts/wasm-bitmatch.sh --self-test` rebuilds **only** the wasm32 side
+with `--cfg antseal_bitmatch_inject_divergence`, which makes the wasm
+transcript reverse its entry order **and** uppercase its hex digests — the
+two classic platform-divergence shapes (container iteration order, i.e. Q5's
+own "HashMap-ordered serialization" example, and platform-dependent
+formatting). Both are injected so the self-test cannot decay into a no-op at
+any vector count. Executed 2026-07-28:
+
+```
+  native transcript: 543 bytes, sha256 7b6c5063af4c269cd69b030b715ec0a53f01aa73ac9758e1408f81eac6d166ec
+  wasm32 transcript: 543 bytes, sha256 0237b8335ed583ec01e50904aa93bbccc08020e6ac1817ee3492de44bc3275bf
+  first difference at byte 465 (of 543 native / 543 wasm)
+  native …fff.","items":8,"recomputed_digest":"949c49ebf664a65ff59b3ecfbb674b74c43f5e0fb79…
+  wasm32 …fff.","items":8,"recomputed_digest":"949C49EBF664A65FF59B3ECFBB674B74C43F5E0FB79…
+::error::wasm-bitmatch: wasm32 transcript differs from native — the WASM build does NOT
+bit-match native verification (MVP-SPEC.md lines 167/169). …
+
+SELF-TEST PASSED: the injected divergence turned the lane red (exit 1), as required.
+```
+
+The script inverts the exit code (a correctly-failing lane is a *passing*
+self-test) and rebuilds a clean artifact before returning, so it is safe as
+the lane's first step. A subsequent clean run was confirmed green.
+
+**Not verifiable locally** (added to the runbook's remote expectations):
+
+- Execution of the two `./scripts/*.sh` steps on the runner image (the
+  scripts are POSIX `bash` with `set -euo pipefail`; `node --version` is
+  logged first).
+- Whether `Swatinem/rust-cache` caches the `wasm32-unknown-unknown`
+  artifacts of a `cdylib` member across runs (a cold build compiles the full
+  crypto stack for wasm32 — ~15 s locally).
+- The rendered check-run name `wasm-bitmatch` is **unchanged** from the Q1
+  mount point, so no new confirmation is needed beyond step 3's existing
+  check.

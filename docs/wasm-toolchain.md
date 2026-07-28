@@ -22,8 +22,8 @@ executed native↔wasm bit-match this lane's technique descends from).
 | `wasm32-core-tests` | `cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked` then `./scripts/wasm-toolchain-audit.sh` | antseal-core's unit tests *execute* on that target; the getrandom recipe and the wasm-bindgen pin equality hold |
 | `wasm-bitmatch` | `./scripts/wasm-bitmatch.sh` | every committed golden vector produces **byte-identical** output natively and under wasm32 (**Q5** — §6) |
 
-The first two lanes land with **P14**; `wasm-bitmatch` lands with **Q5**,
-built on the runner technique below.
+The first two lanes land with **P14**; `wasm-bitmatch` with **Q5**, built on
+the same runner technique.
 
 All three take the toolchain exclusively from `rust-toolchain.toml`, whose
 `targets` list already contains `wasm32-unknown-unknown`.
@@ -238,6 +238,20 @@ See `crates/wasm-bitmatch/README.md` for the harness and
   from the wasm32 module executed in node — and requires the two byte
   strings, and their SHA-256, to be **identical**.
 - Adding a vector requires no change to the harness, the runner, or CI.
+- The lane **self-tests first, every run** (`--self-test`): an injected
+  wasm32-only divergence must turn the comparison red before a green
+  comparison is trusted — the `secret-guard` idiom.
+
+Substance of the comparison: each entry carries the vector's
+**recomputed digest** (`VectorSummary::recomputed_digest`), a SHA-256 over
+every byte the executor recomputed — length-prefixed and domain-separated.
+That is Q5's "report bytes **plus recomputed digests**": a platform
+divergence anywhere in the recomputation changes the digest even where it
+would not (yet) flip a pass/fail verdict. Today that covers **C3's HKDF
+label vectors** — the standing C3 rider to join this harness — and every
+kind registered later flows in with no harness change, which is what the M2
+exit criterion (anchor verification with golden vectors and a wasm32 build)
+needs.
 
 ## 7. Running everything locally
 
@@ -273,7 +287,7 @@ toolchain 1.92.0 / node v24.12.0; recorded in
 | a failing wasm32 unit test | temporarily broke `version_matches_scaffold` | lane red: `the test binary trapped: unreachable` |
 | non-vacuity (zero tests ran) | temporarily perturbed the witness pattern | lane red: `main() returned 0 but the execution witness is absent — the suite ran ZERO tests` |
 | getrandom recipe | `ANTSEAL_WASM_AUDIT_TARGET=x86_64-unknown-linux-gnu ./scripts/wasm-toolchain-audit.sh` — puts proptest's getrandom 0.3/0.4 into the audited graph | exit 1, both lines named, missing `wasm_js` feature and missing `--cfg` both reported |
-| bit-match divergence (Q5) | a `cfg(target_arch = "wasm32")`-only behavioural change in the harness | see §6 / ci-verification.md |
+| bit-match divergence | `./scripts/wasm-bitmatch.sh --self-test` — rebuilds only the wasm32 side with an injected platform divergence (reversed entry order + uppercased hex digests) | lane red, first differing byte and both contexts printed; the script inverts the exit code, so this is a **permanent per-run** guard, not a one-off |
 
 The `ANTSEAL_WASM_AUDIT_TARGET` override exists **only** for that probe; it
 is a documented, re-runnable self-test, not a production knob.

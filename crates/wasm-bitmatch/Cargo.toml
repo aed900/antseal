@@ -1,0 +1,51 @@
+# Q5 — the native<->WASM bit-match harness.
+#
+# NOT A PRODUCT CRATE. The MVP-SPEC Architecture tree lists four `antseal-*`
+# crates plus `verifier-web/` and `testdata/`; this is test infrastructure,
+# never published (`publish = false`), never depended on by any product
+# crate, and deliberately NOT named `antseal-*` so it cannot be mistaken for
+# one. It exists because the bit-match needs a wasm artifact with a custom
+# export, and putting that export in `antseal-core` would edge into decision
+# **D18** (wasm-bindgen surface location, not due until M3). Nothing here
+# uses wasm-bindgen: the exports are a raw C ABI over two integers.
+#
+# It IS a workspace member — that is the point. A bit-match between two
+# builds resolved from different lockfiles would be meaningless, so this
+# crate must share the single root `Cargo.lock` and the exact same pinned
+# dependency versions as every native build.
+#
+# Run it: ./scripts/wasm-bitmatch.sh   (README.md in this directory)
+
+[package]
+name = "wasm-bitmatch"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+build = "build.rs"
+
+[lib]
+# cdylib: the wasm32-unknown-unknown artifact executed by
+# scripts/wasm-bitmatch.mjs. rlib: the native binary and tests.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+# Emits the NATIVE transcript that the wasm transcript is compared against.
+name = "bitmatch-emit"
+path = "src/bin/bitmatch-emit.rs"
+
+# Versions live ONLY in the root [workspace.dependencies]
+# (docs/dependency-policy.md §2). No new third-party dependency: everything
+# here is already pinned for antseal-core.
+[dependencies]
+# `test-vectors` is the WASM-safe tier: zero optional dependencies, no I/O,
+# no proptest — the one feature of antseal-core a NORMAL dependency edge may
+# enable (crates/antseal-core/Cargo.toml).
+antseal-core = { workspace = true, features = ["test-vectors"] }
+# The D29 report-byte rules are the transcript's serialization basis.
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
