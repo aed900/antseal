@@ -18,7 +18,7 @@
 //! **malformed manifest inside a well-formed bundle** must report a
 //! manifest code. Neither can borrow a `bundle-` code, because a
 //! `bundle-`-coded failure is by construction decidable from the bundle's
-//! own bytes (registry §0, tiers [P] and [X]). D30 makes error families
+//! own bytes (registry §0, tiers `[P]` and `[X]`). D30 makes error families
 //! permanent, so this had to be true of the enum from its first line.
 //!
 //! # Two delegating wrapper arms
@@ -311,7 +311,7 @@ pub enum BundleError {
 
     /// A GGM node address in a `cover_entry` / `path_node` failed G8's
     /// self-contained validity bounds (`level <= 64`, `index < 2^level` —
-    /// registry §5's two [P] checks). Constructed through
+    /// registry §5's two `[P]` checks). Constructed through
     /// [`crate::content::ggm::NodeAddress::try_new`] so there is exactly one
     /// implementation of the bound.
     #[error("bundle: {source}")]
@@ -443,7 +443,7 @@ pub enum BundleError {
         missing_key: u64,
     },
 
-    // ── Cross-section rules (registry §7.6, tier [X]) ───────────────
+    // ── Cross-section rules (registry §7.6, tier `[X]`) ───────────────
     /// One `unit_id` appears in **both** reveal arrays. Decidable from the
     /// bundle alone — a unit revealed twice is malformed regardless of what
     /// the manifest says. R's `DuplicateUnitReveal` remains the backstop for
@@ -456,7 +456,7 @@ pub enum BundleError {
 
     /// A `full_reveals` entry names a `file_id` with no `touched_files`
     /// entry: a full reveal whose path was never disclosed is malformed on
-    /// its face. Tier **[X]**, not [R] — both lists are in the bundle, so
+    /// its face. Tier **`[X]`**, not `[R]` — both lists are in the bundle, so
     /// F8 decides it without the manifest.
     #[error("file {file_id} is fully revealed but has no touched_files entry")]
     FullRevealWithoutTouchedFile {

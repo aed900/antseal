@@ -191,7 +191,7 @@ pub mod key {
 
     /// Covered-unit reveal — registry §7.11.
     pub mod covered_reveal {
-        /// Work-global unit ordinal; resolves into the manifest **[R]**.
+        /// Work-global unit ordinal; resolves into the manifest **`[R]`**.
         pub const UNIT_ID: u64 = 0;
         /// The disclosed 32-byte unit key.
         pub const K_U: u64 = 1;
@@ -209,7 +209,7 @@ pub mod key {
     /// key-aligned with [`covered_reveal`] so both reveal kinds share one
     /// decode prefix.
     pub mod noncovered_reveal {
-        /// Work-global unit ordinal; resolves into the manifest **[R]**.
+        /// Work-global unit ordinal; resolves into the manifest **`[R]`**.
         pub const UNIT_ID: u64 = 0;
         /// The disclosed 32-byte unit key.
         pub const K_U: u64 = 1;
@@ -223,7 +223,7 @@ pub mod key {
 
     /// Touched-file entry — registry §7.13.
     pub mod touched_file {
-        /// Index into the manifest file table; in-range **[R]**.
+        /// Index into the manifest file table; in-range **`[R]`**.
         pub const FILE_ID: u64 = 0;
         /// The sealed path — bytes **as received** are the commitment
         /// pre-image.
@@ -236,11 +236,11 @@ pub mod key {
 
     /// Fully-revealed-file entry — registry §7.14.
     pub mod full_reveal {
-        /// Index into the manifest file table; in-range **[R]**.
+        /// Index into the manifest file table; in-range **`[R]`**.
         pub const FILE_ID: u64 = 0;
         /// The 16-byte content-commitment salt.
         pub const FILE_SALT: u64 = 1;
-        /// The 32-byte full `[0, n)` GGM cover; presence is **[R]**.
+        /// The 32-byte full `[0, n)` GGM cover; presence is **`[R]`**.
         pub const S_ROOT: u64 = 2;
         /// First reserved key of the full-reveal map.
         pub const RESERVED_FIRST: u64 = 3;

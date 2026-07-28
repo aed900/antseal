@@ -37,6 +37,9 @@
 //! | 2 | key 1's `bstr` contents | [`crate::manifest::Manifest::decode`] | [`crate::manifest::ManifestError::Envelope`] |
 //! | 3 | the envelope's `body` `bstr` | `ManifestBodyV1::decode` | [`crate::manifest::ManifestError::Body`] |
 //!
+//! [`SealProof::decode`] runs all three; [`SealProofError`] keeps the two
+//! error families in separate variants and reports the layer.
+//!
 //! Beneath all three sits F3's canonicality layer (spec line 73), whose
 //! `cbor-*` codes each layer surfaces unchanged through its own wrapper arm.
 //! Above them sits R, which owns every rule needing *both* the bundle and the
@@ -53,7 +56,8 @@
 //! permanent, so this is a structural property rather than a convention:
 //! "malformed bundle" and "lying sealer" never render alike.
 //!
-//! The composition of layers 2 and 3 is F9's, on a separate error type.
+//! The composition of layers 2 and 3 lives in [`proof`], on a separate error
+//! type ([`SealProofError`]) that is the only place the two families meet.
 //!
 //! # Construction is validation
 //!
@@ -74,14 +78,17 @@
 #![deny(clippy::unwrap_used)]
 
 pub mod error;
+pub mod proof;
 pub mod registry;
 pub mod schema;
 
 pub use error::{
     BundleError, CiphertextDefect, ContainerField, FixedLenField, OrderedList, TupleId,
 };
+pub use proof::{ProofLayer, SealProof, SealProofError};
 pub use registry::{AnchorStatus, BundleMapId};
 pub use schema::{
     BundleParts, BundleV1, CoverEntry, CoveredReveal, FullReveal, NonCoveredReveal, OpaqueBytes,
     OtsAnchor, OtsUpgrade, PathNode, ReceiptRecord, StorageRecord, TouchedFile, TsaAnchor,
+    encode_bundle,
 };

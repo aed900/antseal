@@ -1,5 +1,5 @@
 //! The v1 `.sealproof` bundle schema (F8): [`BundleV1`] and its section
-//! types, with every tier-**[P]** and tier-**[X]** rule of registry
+//! types, with every tier-**`[P]`** and tier-**`[X]`** rule of registry
 //! §§7.6–7.14 enforced where a bundle is *created* — which is the same place
 //! it is decoded.
 //!
@@ -12,7 +12,7 @@
 //! **D78 (ratified): bundle schema validation never consults the embedded
 //! manifest.** Key 1 is an opaque `bstr` here — a borrowed sub-slice handed
 //! on to F9's layer 2 — so no presence rule of this module can reach for
-//! manifest data. Every rule that genuinely needs both sides is tier [R] and
+//! manifest data. Every rule that genuinely needs both sides is tier `[R]` and
 //! belongs to `crate::verify`: which reveal array a unit belongs in, id
 //! resolution into the manifest tables, `full_reveal.s_root` presence,
 //! leaf-exactness of a GGM cover, the no-ancestor-seed rule, tiling,
@@ -66,13 +66,17 @@
 //! A `.sealproof` carries *disclosed* key material: `k_u` per reveal, `k_m`
 //! in the storage record, and the three 16-byte salts. Disclosed is not
 //! public-by-accident — those values are held in the crypto layer's
-//! redacting, zeroizing newtypes ([`Key32`], [`Salt16`], [`Seed32`],
-//! [`FileSalt`]) so a `Debug`-printed bundle cannot dump them into a log, and
-//! [`OpaqueBytes`] renders its length rather than its contents.
+//! redacting, zeroizing newtypes ([`Key32`], [`Salt16`], [`Seed32`]) so a
+//! `Debug`-printed bundle cannot dump them into a log, and [`OpaqueBytes`]
+//! renders its length rather than its contents. C7's opaque `FileSalt` is
+//! deliberately **not** used here — see [`FullReveal`] for why a
+//! serializable field must not be the type whose whole purpose is to have no
+//! public byte path.
 
-use crate::codec::{CanonicalDecoder, DecodeError};
+use crate::codec::encode::MapEncoder;
+use crate::codec::{CanonicalDecoder, CanonicalEncoder, DecodeError, EncodeError, encode_item};
 use crate::content::ggm::NodeAddress;
-use crate::crypto::material::{FileSalt, Key32, NodeHash32, Salt16, Seed32};
+use crate::crypto::material::{Key32, NodeHash32, Salt16, Seed32};
 use crate::manifest::{ContentAddress, Nonce24};
 
 use super::error::{
@@ -177,7 +181,7 @@ fn check_ascending_ids(
 /// The leaf-interval start of a node address, rescaled to a common depth.
 ///
 /// The true start is `index · 2^(d − level)` for the file's depth `d`, which
-/// this layer does not know (`d` comes from the manifest — tier [R]).
+/// this layer does not know (`d` comes from the manifest — tier `[R]`).
 /// Registry §8 records the way out: rescaling every start by the same
 /// positive factor preserves strict order, so comparing
 /// `index · 2^(D − level)` for **any** common `D >= max(level)` gives the
@@ -787,7 +791,7 @@ impl ReceiptRecord {
 /// "over-broad cover spanning an unrevealed leaf" and "wrong-position node"
 /// distinct, nameable errors instead of one generic root mismatch.
 ///
-/// Leaf-exactness and the no-ancestor-seed rule are **[R]** — they need the
+/// Leaf-exactness and the no-ancestor-seed rule are **`[R]`** — they need the
 /// manifest and G13's cover derivation.
 #[derive(Debug)]
 pub struct CoverEntry {
@@ -905,12 +909,12 @@ impl PathNode {
 ///
 /// # D75: a full reveal ships covers **and** `s_root`
 ///
-/// `cover` is unconditionally required (tier [P]), including for units of a
+/// `cover` is unconditionally required (tier `[P]`), including for units of a
 /// fully revealed file whose [`FullReveal`] entry also carries `s_root`. That
 /// keeps bundle schema validation decidable from the bundle alone; the
 /// alternative — omitting covers on a full reveal — would make this key's
 /// presence depend on the derived full-reveal predicate and so cross into
-/// tier [R]. On a full reveal the covers leak nothing, since every leaf is
+/// tier `[R]`. On a full reveal the covers leak nothing, since every leaf is
 /// disclosed anyway. The consequence is R's: the two routes to `fine_root`
 /// must be required to *agree*.
 #[derive(Debug)]
@@ -961,7 +965,7 @@ impl CoveredReveal {
     }
 
     /// The revealed unit's work-global ordinal. Resolving it into the
-    /// manifest unit table is **[R]**.
+    /// manifest unit table is **`[R]`**.
     #[must_use]
     pub const fn unit_id(&self) -> u64 {
         self.unit_id
@@ -987,7 +991,7 @@ impl CoveredReveal {
     }
 
     /// The boundary Merkle sibling path up to `fine_root`. Empty exactly
-    /// when the unit spans the whole `[0, n)` grid — the *exactly* is [R].
+    /// when the unit spans the whole `[0, n)` grid — the *exactly* is `[R]`.
     #[must_use]
     pub fn paths(&self) -> &[PathNode] {
         &self.paths
@@ -1047,12 +1051,12 @@ impl CoveredReveal {
 /// A raw-mirror reveal is an ordinary entry here — no mirror flag, no link
 /// field: the manifest's `kind` already identifies it (D23), and whether a
 /// unit legitimately belongs in *this* section rather than
-/// [`CoveredReveal`]'s is **[R]** (it depends on the file's
+/// [`CoveredReveal`]'s is **`[R]`** (it depends on the file's
 /// `fine_tree_present` and the unit's `kind`).
 ///
 /// Keys 0–2 are deliberately key-aligned with [`CoveredReveal`] so both
 /// reveal kinds share one decode prefix: same key numbers, same types, same
-/// [P] checks, one implementation.
+/// `[P]` checks, one implementation.
 #[derive(Debug)]
 pub struct NonCoveredReveal {
     unit_id: u64,
@@ -1082,7 +1086,7 @@ impl NonCoveredReveal {
         })
     }
 
-    /// The revealed unit's work-global ordinal. Resolution is **[R]**.
+    /// The revealed unit's work-global ordinal. Resolution is **`[R]`**.
     #[must_use]
     pub const fn unit_id(&self) -> u64 {
         self.unit_id
@@ -1187,7 +1191,7 @@ impl TouchedFile {
         }
     }
 
-    /// Index into the manifest's file table; in-range is **[R]**.
+    /// Index into the manifest's file table; in-range is **`[R]`**.
     #[must_use]
     pub const fn file_id(&self) -> u64 {
         self.file_id
@@ -1259,7 +1263,7 @@ impl TouchedFile {
 ///
 /// Every input is either signed manifest data or bundle field presence, but
 /// the predicate needs *both* sides — so the whole biconditional is tier
-/// **[R]** and R4 owns all five of its violation arms. This module supplies
+/// **`[R]`** and R4 owns all five of its violation arms. This module supplies
 /// the material and checks its shape; it never decides whether the material
 /// *should* be here.
 ///
@@ -1268,17 +1272,34 @@ impl TouchedFile {
 /// required at schema level and this layer rejects an entry without it long
 /// before R4 runs. `s_root` is genuinely optional at schema level, so its
 /// arms *are* entry-with-key-absent (and entry-with-key-present).
+/// # Why the salt is a [`Salt16`] and not C7's opaque `FileSalt`
+///
+/// `FileSalt` exists to keep a *derived* `file_salt` unreachable as bytes:
+/// C7's rule is that
+/// [`FullFileRevealDisclosure::file_salt_bytes`](crate::crypto::disclosure::FullFileRevealDisclosure::file_salt_bytes)
+/// is **the only public byte path** to one, and reaching it requires the
+/// full-reveal witness. A bundle field must be serializable by definition,
+/// so storing `FileSalt` here would make `encode_bundle` a second public
+/// byte path and quietly demote that rule to a convention.
+///
+/// Holding [`Salt16`] instead is also the honest description: a salt that
+/// has reached a `FullReveal` is *already disclosed* — it either came off
+/// the wire or was obtained through the witness-gated accessor, which
+/// already yielded raw bytes. R4 wraps it with
+/// [`FileSalt::from_disclosed`](crate::crypto::material::FileSalt::from_disclosed)
+/// when re-verifying `raw_commit`/`canon_commit`; that is what
+/// `from_disclosed` is for.
 #[derive(Debug)]
 pub struct FullReveal {
     file_id: u64,
-    file_salt: FileSalt,
+    file_salt: Salt16,
     s_root: Option<Seed32>,
 }
 
 impl FullReveal {
     /// Assemble a full-reveal entry.
     #[must_use]
-    pub const fn new(file_id: u64, file_salt: FileSalt, s_root: Option<Seed32>) -> Self {
+    pub const fn new(file_id: u64, file_salt: Salt16, s_root: Option<Seed32>) -> Self {
         Self {
             file_id,
             file_salt,
@@ -1286,16 +1307,17 @@ impl FullReveal {
         }
     }
 
-    /// Index into the manifest's file table; in-range is **[R]**. That the
-    /// id also appears in `touched_files` is **[X]** and checked here.
+    /// Index into the manifest's file table; in-range is **`[R]`**. That the
+    /// id also appears in `touched_files` is **`[X]`** and checked here.
     #[must_use]
     pub const fn file_id(&self) -> u64 {
         self.file_id
     }
 
-    /// The 16-byte salt that opens `raw_commit`/`canon_commit`.
+    /// The 16-byte salt that opens `raw_commit`/`canon_commit`, as
+    /// disclosed. See the type docs for why this is a [`Salt16`].
     #[must_use]
-    pub const fn file_salt(&self) -> &FileSalt {
+    pub const fn file_salt(&self) -> &Salt16 {
         &self.file_salt
     }
 
@@ -1313,7 +1335,7 @@ impl FullReveal {
         const MAP: BundleMapId = BundleMapId::FullReveal;
         let mut reader = d.map().map_err(cbor)?;
         let mut file_id: Option<u64> = None;
-        let mut file_salt: Option<FileSalt> = None;
+        let mut file_salt: Option<Salt16> = None;
         let mut s_root: Option<Seed32> = None;
 
         while let Some(k) = reader.next_key(d).map_err(cbor)? {
@@ -1322,12 +1344,10 @@ impl FullReveal {
                 key::full_reveal::FILE_ID => file_id = Some(d.u64().map_err(cbor)?),
                 key::full_reveal::FILE_SALT => {
                     let bytes = d.bytes().map_err(cbor)?;
-                    file_salt = Some(FileSalt::from_disclosed(Salt16::from_bytes(fixed::<
-                        { SALT_LEN as usize },
-                    >(
+                    file_salt = Some(Salt16::from_bytes(fixed::<{ SALT_LEN as usize }>(
                         FixedLenField::FileSalt,
                         bytes,
-                    )?)));
+                    )?));
                 }
                 key::full_reveal::S_ROOT => {
                     let bytes = d.bytes().map_err(cbor)?;
@@ -1427,7 +1447,7 @@ impl<'b> BundleV1<'b> {
     ///
     /// Checks run in a **fixed order** so a given input always yields the
     /// same rejection: the four list-ordering rules in section-key order,
-    /// then the two cross-section rules. Every one of them is tier [X] —
+    /// then the two cross-section rules. Every one of them is tier `[X]` —
     /// decidable from the bundle alone — which is what keeps them out of the
     /// verify family under D78.
     ///
@@ -1693,6 +1713,253 @@ fn decode_section<T>(
         list.push(decode_one(d)?);
     }
     Ok(list)
+}
+
+// ---------------------------------------------------------------------------
+// encode (F9)
+// ---------------------------------------------------------------------------
+//
+// Emission goes through F2's closure-scoped builders, so non-canonical
+// output is unrepresentable: `MapEncoder` sorts its entries at map close and
+// rejects a repeated key, and every length/integer head is shortest-form by
+// construction. Call sites still list keys in ascending order — readable, and
+// it makes a missing key visible as a gap.
+//
+// Determinism (F9 accept) is therefore a property of the *section order plus
+// the list order*, and every parse-ordered list was already validated
+// ascending on the way in. The one unsorted bundle list — the two anchor
+// sections — is emitted in the order it was decoded or built, which is
+// registry §8's builder rule: "the same logical bundle always produces
+// identical bytes" holds **per builder state**, not per logical content. A
+// bundle rebuilt from a different anchor capture order is a different byte
+// string and neither is wrong.
+
+impl StorageRecord {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::storage_record::ADDRESS, |e| {
+            e.bytes(self.address.as_bytes())
+        })?;
+        m.entry(key::storage_record::NONCE, |e| {
+            e.bytes(self.nonce.as_bytes())
+        })?;
+        m.entry(key::storage_record::K_M, |e| e.bytes(self.k_m.as_bytes()))
+    }
+}
+
+impl OtsAnchor {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::ots_anchor::STATUS, |e| e.u64(self.status.to_wire()))?;
+        m.entry(key::ots_anchor::OTS, |e| e.bytes(self.ots.as_slice()))?;
+        // D79: the group is emitted whole or not at all — `Option` is what
+        // makes "two of three" unrepresentable on the way out as well as in.
+        if let Some(upgrade) = &self.upgrade {
+            m.entry(key::ots_anchor::BLOCK_HEIGHT, |e| {
+                e.u64(upgrade.block_height())
+            })?;
+            m.entry(key::ots_anchor::BLOCK_HEADER, |e| {
+                e.bytes(upgrade.block_header())
+            })?;
+            m.entry(key::ots_anchor::FETCH_DATE, |e| e.u64(upgrade.fetch_date()))?;
+        }
+        Ok(())
+    }
+}
+
+impl TsaAnchor {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::tsa_anchor::STATUS, |e| e.u64(self.status.to_wire()))?;
+        m.entry(key::tsa_anchor::TOKEN, |e| e.bytes(self.token.as_slice()))?;
+        m.entry(key::tsa_anchor::INTERMEDIATES, |e| {
+            e.array(|a| {
+                for cert in &self.intermediates {
+                    a.item(|e| e.bytes(cert.as_slice()))?;
+                }
+                Ok(())
+            })
+        })?;
+        m.entry(key::tsa_anchor::FETCH_DATE, |e| e.u64(self.fetch_date))?;
+        if let Some(source) = &self.source {
+            m.entry(key::tsa_anchor::SOURCE, |e| e.str(source))?;
+        }
+        Ok(())
+    }
+}
+
+impl ReceiptRecord {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::receipt::TX_HASHES, |e| {
+            e.array(|a| {
+                for hash in &self.tx_hashes {
+                    a.item(|e| e.bytes(hash))?;
+                }
+                Ok(())
+            })
+        })?;
+        m.entry(key::receipt::BLOCK_NUMBER, |e| e.u64(self.block_number))?;
+        m.entry(key::receipt::PAYLOAD, |e| e.bytes(self.payload.as_slice()))
+    }
+}
+
+impl CoverEntry {
+    fn encode_into(&self, e: &mut CanonicalEncoder) -> Result<(), EncodeError> {
+        e.array(|a| {
+            a.item(|e| e.u64(u64::from(self.address.level())))?;
+            a.item(|e| e.u64(self.address.index()))?;
+            a.item(|e| e.bytes(self.seed.as_bytes()))
+        })
+    }
+}
+
+impl PathNode {
+    fn encode_into(&self, e: &mut CanonicalEncoder) -> Result<(), EncodeError> {
+        e.array(|a| {
+            a.item(|e| e.u64(u64::from(self.address.level())))?;
+            a.item(|e| e.u64(self.address.index()))?;
+            a.item(|e| e.bytes(self.hash.as_bytes()))
+        })
+    }
+}
+
+impl CoveredReveal {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::covered_reveal::UNIT_ID, |e| e.u64(self.unit_id))?;
+        m.entry(key::covered_reveal::K_U, |e| e.bytes(self.k_u.as_bytes()))?;
+        m.entry(key::covered_reveal::CIPHERTEXT, |e| {
+            e.bytes(self.ciphertext.as_slice())
+        })?;
+        m.entry(key::covered_reveal::COVER, |e| {
+            e.array(|a| {
+                for entry in &self.cover {
+                    a.item(|e| entry.encode_into(e))?;
+                }
+                Ok(())
+            })
+        })?;
+        m.entry(key::covered_reveal::PATHS, |e| {
+            e.array(|a| {
+                for node in &self.paths {
+                    a.item(|e| node.encode_into(e))?;
+                }
+                Ok(())
+            })
+        })
+    }
+}
+
+impl NonCoveredReveal {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::noncovered_reveal::UNIT_ID, |e| e.u64(self.unit_id))?;
+        m.entry(key::noncovered_reveal::K_U, |e| {
+            e.bytes(self.k_u.as_bytes())
+        })?;
+        m.entry(key::noncovered_reveal::CIPHERTEXT, |e| {
+            e.bytes(self.ciphertext.as_slice())
+        })?;
+        m.entry(key::noncovered_reveal::UNIT_SALT, |e| {
+            e.bytes(self.unit_salt.as_bytes())
+        })
+    }
+}
+
+impl TouchedFile {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::touched_file::FILE_ID, |e| e.u64(self.file_id))?;
+        // The tstr's bytes are the `path_commit` pre-image, so they are
+        // emitted exactly as held: no normalization, ever (registry §7.13).
+        m.entry(key::touched_file::PATH, |e| e.str(&self.path))?;
+        m.entry(key::touched_file::PATH_SALT, |e| {
+            e.bytes(self.path_salt.as_bytes())
+        })
+    }
+}
+
+impl FullReveal {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::full_reveal::FILE_ID, |e| e.u64(self.file_id))?;
+        m.entry(key::full_reveal::FILE_SALT, |e| {
+            e.bytes(self.file_salt.as_bytes())
+        })?;
+        if let Some(s_root) = &self.s_root {
+            m.entry(key::full_reveal::S_ROOT, |e| e.bytes(s_root.as_bytes()))?;
+        }
+        Ok(())
+    }
+}
+
+impl BundleV1<'_> {
+    fn encode_into(&self, m: &mut MapEncoder) -> Result<(), EncodeError> {
+        m.entry(key::bundle::FORMAT_VERSION, |e| e.u64(FORMAT_VERSION_V1))?;
+        m.entry(key::bundle::MANIFEST, |e| e.bytes(self.manifest))?;
+        m.entry(key::bundle::STORAGE_RECORD, |e| {
+            e.map(|sm| self.storage_record.encode_into(sm))
+        })?;
+        m.entry(key::bundle::OTS_ANCHORS, |e| {
+            encode_section(e, &self.ots_anchors, OtsAnchor::encode_into)
+        })?;
+        m.entry(key::bundle::TSA_ANCHORS, |e| {
+            encode_section(e, &self.tsa_anchors, TsaAnchor::encode_into)
+        })?;
+        if let Some(receipt) = &self.receipt {
+            m.entry(key::bundle::RECEIPT, |e| {
+                e.map(|rm| receipt.encode_into(rm))
+            })?;
+        }
+        m.entry(key::bundle::COVERED_REVEALS, |e| {
+            encode_section(e, &self.covered_reveals, CoveredReveal::encode_into)
+        })?;
+        m.entry(key::bundle::NONCOVERED_REVEALS, |e| {
+            encode_section(e, &self.noncovered_reveals, NonCoveredReveal::encode_into)
+        })?;
+        m.entry(key::bundle::TOUCHED_FILES, |e| {
+            encode_section(e, &self.touched_files, TouchedFile::encode_into)
+        })?;
+        m.entry(key::bundle::FULL_REVEALS, |e| {
+            encode_section(e, &self.full_reveals, FullReveal::encode_into)
+        })
+    }
+}
+
+/// Emit one bundle section as an array of maps, in stored order.
+fn encode_section<T>(
+    e: &mut CanonicalEncoder,
+    entries: &[T],
+    encode_one: impl Fn(&T, &mut MapEncoder) -> Result<(), EncodeError>,
+) -> Result<(), EncodeError> {
+    e.array(|a| {
+        for entry in entries {
+            a.item(|e| e.map(|m| encode_one(entry, m)))?;
+        }
+        Ok(())
+    })
+}
+
+/// Encode a validated bundle to its canonical CBOR bytes — the reveal-side
+/// entry point, and the API surface R's M3 bundle builder consumes.
+///
+/// # Why this borrows where `encode_body` consumes
+///
+/// [`encode_body`](crate::manifest::encode_body) takes its body **by value**
+/// so that no verification path can re-encode a decoded manifest: the
+/// manifest's bytes are hashed (`work_id`) and signed, so "the bytes I
+/// received" and "the bytes I would produce" must never be confusable.
+///
+/// A bundle is different, and the difference is structural rather than a
+/// relaxation: **nothing hashes or signs a `.sealproof` as a whole**. It is
+/// unsigned by design (registry §7.6.1), and the one digest that matters —
+/// `anchor_digest` = SHA-256 of the embedded manifest bytes — is taken from
+/// [`BundleV1::manifest_bytes`], the received sub-slice, which round-trips
+/// through this function untouched. Re-encoding a bundle therefore cannot
+/// change what any verdict is computed over, so a borrow is safe and lets a
+/// caller re-serialize a decoded bundle (which the round-trip test does).
+///
+/// # Errors
+///
+/// [`EncodeError`] reports caller bugs the F2 layer detects (duplicate map
+/// key, a scope that did not emit exactly one item). None is reachable for a
+/// validated bundle — the keys are registry constants and every scope emits
+/// one item — so this is a totality `Err`, never a panic path.
+pub fn encode_bundle(bundle: &BundleV1<'_>) -> Result<Vec<u8>, EncodeError> {
+    encode_item(|e| e.map(|m| bundle.encode_into(m)))
 }
 
 #[cfg(test)]
