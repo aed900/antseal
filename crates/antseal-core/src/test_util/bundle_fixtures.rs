@@ -424,8 +424,32 @@ pub struct Tweak {
     /// Emit a `touched_files` entry naming this `file_id`, which no file
     /// table row has.
     pub unknown_touched_file: Option<u64>,
+    /// Emit a **correct** `touched_files` entry — real path, real
+    /// `path_salt` — for this existing file, from which the selection
+    /// reveals no unit. This is the **D82** shape.
+    ///
+    /// The salt is genuinely derived, not junk, and that matters: a junk
+    /// salt would fail R3's `path_commit` recomputation at stage 2, so the
+    /// row would pin `path-commit-mismatch` and silently test something
+    /// else entirely. The whole point of this knob is that the entry is
+    /// *impeccable in every respect except* that nothing of the file is
+    /// shown.
+    pub touch_without_reveal: Option<u64>,
     /// Flip a bit of this revealed unit's embedded ciphertext.
     pub corrupt_ciphertext: Option<u64>,
+    /// Omit this file's `touched_files` entry even though the reveal shows
+    /// units of it (D80).
+    pub drop_touched_file: Option<u64>,
+    /// Ship this fine-tree-covered unit in `noncovered_reveals` instead.
+    pub misplace_covered_unit: Option<u64>,
+    /// Ship this non-covered unit in `covered_reveals` instead.
+    ///
+    /// A covered reveal must carry a non-empty cover, so the entry borrows
+    /// the cover its file's first normal unit would have had. That is
+    /// semantically meaningless on purpose: the reveal-section rule is
+    /// adjudicated at stage 2, before anything opens a cover, so the row
+    /// pins the misplacement and nothing else.
+    pub misplace_noncovered_unit: Option<u64>,
 }
 
 impl Tweak {
@@ -773,9 +797,12 @@ fn apply_manifest_tweaks(units: &mut [PlannedUnit], files: &[PlannedFile], tweak
     if let Some(file_id) = tweak.unsorted_ranges
         && let Some(file) = files.iter().find(|file| file.file_id == file_id)
     {
-        let [first, second] = file.normal_units[..] else {
-            panic!("`unsorted_ranges` needs a file with exactly two normal units");
-        };
+        assert!(
+            file.normal_units.len() >= 2,
+            "`unsorted_ranges` needs a file with at least two normal units"
+        );
+        let first = file.normal_units[0];
+        let second = file.normal_units[1];
         let a = units[first].range;
         let b = units[second].range;
         assert_eq!(
@@ -931,14 +958,32 @@ fn assemble(
         }
         let k_u = derive_unit_key(w(), UnitId(unit.unit_id));
 
-        if unit.covered {
+        // The reveal-section rule (R5 coherence): a unit belongs in the
+        // section its manifest binding dictates. These two knobs put it in
+        // the other one.
+        let misplaced = tweak.misplace_covered_unit == Some(unit.unit_id)
+            || tweak.misplace_noncovered_unit == Some(unit.unit_id);
+        let as_covered = unit.covered != misplaced;
+
+        if as_covered {
             let file = &files[usize::try_from(unit.file_id).expect("small")];
             let s_root = derive_fine_seed(w(), FileId(unit.file_id));
             let leaf_count = u64::try_from(file.tiling.len()).expect("small");
+            // A misplaced non-covered unit has no leaf range of its own, so
+            // it borrows the file's first normal unit's (see `Tweak`).
+            let range = if unit.covered {
+                unit.true_range
+            } else {
+                units[*file
+                    .normal_units
+                    .first()
+                    .expect("a misplaced mirror's file has a normal unit")]
+                .true_range
+            };
             let proof = prove_range(
                 &s_root,
                 &file.tiling,
-                ContentByteRange::new(unit.true_range.start(), unit.true_range.length()),
+                ContentByteRange::new(range.start(), range.length()),
                 leaf_count,
             )
             .expect("fixture range proof");
@@ -996,6 +1041,7 @@ fn assemble(
                 .iter()
                 .any(|unit_id| touches(units, *unit_id, file.file_id))
         })
+        .filter(|file| tweak.drop_touched_file != Some(file.file_id))
         .map(|file| {
             BundleTouchedFile::new(
                 file.file_id,
@@ -1011,6 +1057,26 @@ fn assemble(
             derive_path_salt(w(), FileId(file_id)),
         ));
     }
+    if let Some(file_id) = tweak.touch_without_reveal {
+        let file = facts
+            .iter()
+            .find(|file| file.file_id == file_id)
+            .expect("`touch_without_reveal` names a file the work has");
+        assert!(
+            !revealed
+                .iter()
+                .any(|unit_id| touches(units, *unit_id, file_id)),
+            "`touch_without_reveal` needs a file the selection reveals NOTHING from — file \
+             {file_id} has a revealed unit, so the entry would be an ordinary touched file"
+        );
+        // Real path, real salt: the entry opens `path_commit` correctly, so
+        // the only thing wrong with it is the D82 question itself.
+        touched.push(BundleTouchedFile::new(
+            file_id,
+            file.path.clone(),
+            derive_path_salt(w(), FileId(file_id)),
+        ));
+    }
     touched.sort_by_key(BundleTouchedFile::file_id);
 
     // full_reveals: derived **only** for files the selection fully reveals.
@@ -1023,6 +1089,12 @@ fn assemble(
             continue;
         }
         if tweak.drop_full_material == Some(file.file_id) {
+            continue;
+        }
+        // F8 rejects `full_reveals ⊄ touched_files` at decode, so dropping a
+        // file's path necessarily drops its full-reveal entry too — the D80
+        // row therefore has to target a file with no full reveal.
+        if tweak.drop_touched_file == Some(file.file_id) {
             continue;
         }
         let file_salt = derive_file_salt(w(), FileId(file.file_id));
