@@ -445,8 +445,8 @@
       "source": {
         "file": "bundle-intermediates-over-cap.cbor",
         "kind": "file",
-        "len": 1691,
-        "sha256": "3878fbe3683a519e01958fcec3ad075939f1b855e28441bd84224ba44d4f90c8"
+        "len": 1661,
+        "sha256": "87d9c9af9f5888863dfde0f42a6ff18cadd51ab6618d367e9af8e553c39dc2ff"
       },
       "surface": "SealProof::decode"
     },
@@ -461,7 +461,7 @@
       "row": "caps-bundle-cert-too-large",
       "source": {
         "kind": "synthesized",
-        "len": 66769,
+        "len": 66739,
         "recipe": "the every-anchor-kind bundle (R6 `AnchorSet::EveryKind`, receipt excluded, over the `single binary` ed25519-only work), with `tsa_anchors[0].intermediates[0]` replaced by a bstr of MAX_CERT_BYTES + 1 zero bytes"
       },
       "surface": "SealProof::decode"
