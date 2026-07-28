@@ -56,6 +56,4 @@ jobs:
         if: steps.deny-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --version 0.19.8 --locked
       - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
-        run: |
-          cargo deny --version
-          cargo deny --locked check advisories bans sources
+        run: ./scripts/ci-lanes.sh audit-deny

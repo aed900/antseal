@@ -14,6 +14,17 @@
 # A domain task claims its mount-point job by replacing the placeholder step
 # body only, keeping id and `name:` (CONTRIBUTING.md "CI lanes").
 #
+# ── NO LOGIC IN THIS FILE (Q43) ─────────────────────────────────────────────
+# Every `run:` block must be a call into a committed script under scripts/,
+# or one of the nine allowlisted no-logic lines in scripts/check-ci-shell.py
+# — which enumerates them and fails on anything else, across ALL THREE
+# workflows. The reason: a `tamper-matrix` guard command was malformed from
+# the day Q8 wrote it and sat latent through two waves, because the lane had
+# never executed remotely and nothing local ran its shell. Logic that lives
+# only in YAML is logic nobody runs before a push. See
+# docs/ci-verification.md, "A lane that has never run on the remote is not
+# evidence".
+#
 # Task-ID map (corrected by Q1 — the P8 header had fuzz under "Q1" and
 # vector retention under "Q9"; authoritative IDs are per tasks/Q.md):
 #   Q4:  golden-vectors — LANDED: native runner over testdata/vectors/
@@ -177,10 +188,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: node version (wasm host; floor asserted by the runner, not pinned)
         run: node --version
-      - name: Execute antseal-core unit tests on wasm32-unknown-unknown
-        run: cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked
-      - name: Audit the getrandom recipe and the wasm-bindgen pin equality
-        run: ./scripts/wasm-toolchain-audit.sh
+      - name: Self-test — a failing wasm32 test MUST be named, not just trapped (R41)
+        run: ./scripts/wasm-tests.sh --self-test
+      - name: Unit tests on wasm32-unknown-unknown + the getrandom/wasm-bindgen audit
+        run: ./scripts/wasm-tests.sh --check
 
   # antseal-core's NORMAL dependency graph must never gain an async runtime,
   # network, or I/O crate (WASM-safety + churn isolation; MVP-SPEC.md
@@ -197,48 +208,8 @@ jobs:
           rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Assert antseal-core normal deps are I/O-free
-        run: |
-          set -u
-          forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2) '
-          tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)"
-          printf '%s\n' "$tree"
-          offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
-          if [ -n "$offenders" ]; then
-            echo ""
-            echo "::error::antseal-core's normal dependency graph contains forbidden I/O/async/network crates:"
-            printf '%s\n' "$offenders"
-            echo "antseal-core must stay WASM-safe: no async runtimes, no network/socket/HTTP crates"
-            echo "(MVP-SPEC.md Architecture; docs/dependency-policy.md)."
-            exit 1
-          fi
-          echo "OK: antseal-core normal dep graph is free of forbidden crates."
+        run: ./scripts/ci-lanes.sh dep-graph
 
-  # ── Q1: cross-OS lane ──────────────────────────────────────────────────────
-  # Proves byte-identical behavior of the cross-platform-sensitive suites on
-  # linux, macOS, and Windows (MVP-SPEC.md Verification: the M0 UTF-8 corpus
-  # must be "cross-platform stable"; golden vectors must verify identically
-  # everywhere). Suite membership is by RESERVED TEST-NAME MARKER
-  # (CONTRIBUTING.md "Cross-OS suite naming"): any test whose fully-qualified
-  # libtest name contains `corpus_` (G3 UTF-8 corpus) or `vector_` (Q4 golden
-  # vectors) runs here on all three OSes.
-  #
-  # Allowed-empty BY DESIGN: no such tests exist yet, so the filtered run
-  # matches zero tests and passes, and the step logs a loud notice that the
-  # suite set is empty. G3 and Q4 populate it; nothing here changes then.
-  #
-  # Scope is `-p antseal-core` deliberately: canonicalization and vector
-  # verification are antseal-core by architecture, and the 3-OS lane must not
-  # depend on the heavyweight net/anchor dependency stacks (ant-core et al.)
-  # building on Windows/macOS — upstream churn stays out of the
-  # cross-platform proof. A future suite that cannot live in antseal-core
-  # extends this lane's package list; that edit belongs to the task landing
-  # the suite (a reviewed lane-content change, not a fold-in of unrelated
-  # steps).
-  #
-  # Context names are decoupled from runner labels via matrix.label, so
-  # pinning a runner image later never renames a required status context.
-  # Fixture byte-exactness on Windows checkouts (image sets
-  # core.autocrlf=true) is guarded by .gitattributes (`testdata/** -text`).
   cross-os:
     name: cross-os-${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
@@ -267,14 +238,10 @@ jobs:
           rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Run cross-platform-sensitive suites (corpus_/vector_ filters; allowed-empty)
-        run: |
-          set -u
-          cargo test -p antseal-core --locked -- corpus_ vector_
-          matched="$(cargo test -p antseal-core --locked -- corpus_ vector_ --list 2>/dev/null | grep -c ': test$' || true)"
-          echo "cross-OS suite: matched ${matched} test(s) for reserved-name filters [corpus_ vector_]"
-          if [ "${matched}" -eq 0 ]; then
-            echo "::notice title=cross-OS suite set is EMPTY::No corpus_*/vector_* tests exist yet — this lane is vacuously green by design (Q1). G3 (UTF-8 corpus) and Q4 (golden vectors) populate it."
-          fi
+        # `bash <script>` rather than `./<script>`: this job also runs on the
+        # Windows runner under Git Bash, where the executable bit is not the
+        # thing that decides.
+        run: bash scripts/ci-lanes.sh cross-os
 
   # ── Mount-point jobs (Q1) — remaining: tamper-matrix (Q7), fuzz-smoke (Q9) ─
   # Each job below reserves a permanent required-status context for a lane
@@ -308,15 +275,7 @@ jobs:
           rustup show
       - uses: Swatinem/rust-cache@v2
       - name: Run the golden-vector suite (vector_ reserved-name marker)
-        run: |
-          set -u
-          cargo test -p antseal-core --locked -- vector_
-          matched="$(cargo test -p antseal-core --locked -- vector_ --list 2>/dev/null | grep -c ': test$' || true)"
-          echo "golden-vector suite: matched ${matched} test(s) for reserved-name filter [vector_]"
-          if [ "${matched}" -eq 0 ]; then
-            echo "::error::golden-vector suite is EMPTY — the Q4 runner tests must always match; the vector_ marker or the runner is broken"
-            exit 1
-          fi
+        run: ./scripts/ci-lanes.sh golden-vectors
 
   # F14 (Q11-co-owned): the INDEPENDENT CROSS-CHECK lane (decision D31), and
   # an input to the Q14 format freeze. No path filter — deliberately, per D31
@@ -409,10 +368,12 @@ jobs:
         run: ./scripts/cross-check.sh --self-test --require
       - name: Independent cross-check over every committed vector
         run: ./scripts/cross-check.sh --check --require
-      - name: Drift guard — the two implementations of the rendering table agree
+      - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
           rustup show active-toolchain || rustup toolchain install
-          cargo test -p antseal-core --all-features --locked --test cbor_crosscheck_contract
+          rustup show
+      - name: Drift guard — the two implementations of the rendering table agree
+        run: ./scripts/ci-lanes.sh cbor-drift-guard
 
   # Q6 (live): the golden-vector FREEZE + must-exist guard. Each
   # testdata/vectors/v<n>/FROZEN.sha256 pins the exact bytes of every
@@ -502,18 +463,10 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup show
       - uses: Swatinem/rust-cache@v2
-      - name: Tamper harness self-tests (colliding codes, panicking row)
-        run: cargo test -p antseal-core --locked --lib -- test_util::tamper
-      - name: Tamper registry + Q8 completeness (--nocapture prints the Q14 gate)
-        run: |
-          set -u
-          cargo test -p antseal-core --locked --test tamper_matrix --test tamper_crypto -- --nocapture
-          matched="$(cargo test -p antseal-core --locked --test tamper_matrix -- --list 2>/dev/null | grep -c ': test$' || true)"
-          echo "tamper-matrix suite: matched ${matched} test(s) in the registry target"
-          if [ "${matched}" -eq 0 ]; then
-            echo "::error::tamper-matrix registry target is EMPTY — the harness or the completeness check is broken"
-            exit 1
-          fi
+      - name: Self-test — Q8's flag order MUST turn this lane red (Q43)
+        run: ./scripts/ci-lanes.sh --self-test
+      - name: Tamper harness self-tests, registry, and Q8 completeness (prints the Q14 gate)
+        run: ./scripts/ci-lanes.sh tamper-matrix
 
   # Q9 (mount point CLAIMED; job id and `name:` unchanged, so the
   # required-status context is unaffected): per-PR cargo-fuzz smoke, a fixed
@@ -609,75 +562,25 @@ jobs:
         if: steps.deny-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --version 0.19.8 --locked
       - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
-        run: |
-          cargo deny --version
-          cargo deny --locked check advisories bans sources
+        run: ./scripts/ci-lanes.sh audit-deny
 
   # Q2: secret-material guard (testdata/README.md, "Secret-material
   # convention"; project rule 6). Greps the checkout for vault-export /
   # wallet-key file signatures; each run FIRST proves the detector works by
   # planting fakes in a temp dir (test-of-the-test — never committed).
-  # Patterns are spelled with character classes so this file cannot match
-  # itself; scan excludes .git/, target/, .github/ (this script) and *.md
-  # (prose may discuss the formats). A future legit source literal (e.g. a
-  # keystore-import parser) extends the exclusions in the same PR as a
-  # reviewed event.
+  # The implementation is scripts/ci-lanes.sh (Q43): it was 60 lines of
+  # inline shell here, which meant nobody could run it before a push.
+  # Moving it TIGHTENED the scan — the exclusion is now the single file that
+  # carries the planted literals, so .github/ (this file) is scanned again.
+  # A future legit source literal (e.g. a keystore-import parser) extends the
+  # exclusions in the same PR as a reviewed event.
   secret-guard:
     name: secret-guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Vault-export / wallet-key signature guard (self-test, then scan)
-        run: |
-          set -u
-          scan() {
-            # $1 = directory. Prints hits; returns 0 = clean, 1 = hit.
-            local root="$1" hits=""
-            ex() { grep -rlaE --exclude-dir=.git --exclude-dir=target \
-                     --exclude-dir=.github --exclude='*.md' -e "$1" "$root" || true; }
-            # (1) PEM private-key blocks (wallet/signing keys, any flavor).
-            hits+="$(ex '[-]{5}BEGIN[ A-Z0-9]*PRIVATE KEY[-]{5}')"$'\n'
-            # (2) EVM keystore JSON (web3 secret storage): both signature
-            #     keys must appear in the same file.
-            local a b
-            a="$(ex '"ciphertext"')" ; b="$(ex '"kdfparams"')"
-            hits+="$(comm -12 <(printf '%s\n' "$a" | sort -u) <(printf '%s\n' "$b" | sort -u))"$'\n'
-            # (3) Reserved antseal vault-export magic (testdata/README.md:
-            #     the U12 vault format must embed it so strays are
-            #     detectable).
-            hits+="$(ex 'ANTSEAL[ ]VAULT[ ]EXPORT')"$'\n'
-            # (4) age / minisign secret-key markers.
-            hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
-            hits+="$(ex 'minisign encrypted secret key')"$'\n'
-            hits="$(printf '%s\n' "$hits" | grep -v '^$' | sort -u || true)"
-            if [ -n "$hits" ]; then
-              printf '%s\n' "$hits"
-              return 1
-            fi
-            return 0
-          }
-          # Self-test FIRST, every run: planted fakes in a temp dir MUST
-          # trigger every pattern class before the repo verdict is trusted.
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          printf 'fake for guard self-test\n-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n' > "$tmp/fake-wallet.pem"
-          printf '{"version":3,"crypto":{"ciphertext":"00","cipherparams":{},"kdf":"scrypt","kdfparams":{"n":1},"mac":"00"}}\n' > "$tmp/fake-keystore.json"
-          printf 'ANTSEAL VAULT EXPORT v0 guard-self-test\n' > "$tmp/fake-vault-export.bin"
-          printf 'AGE-SECRET-KEY-1SELFTESTSELFTESTSELFTEST\n' > "$tmp/fake-age.key"
-          planted=4
-          found="$(scan "$tmp" | wc -l)" || true
-          if [ "$found" -ne "$planted" ]; then
-            echo "::error::secret-guard self-test FAILED: planted $planted fakes, detected $found — the detector is broken; fix it before trusting a green scan"
-            scan "$tmp" || true
-            exit 1
-          fi
-          echo "self-test OK: all $planted planted fakes detected in the temp dir"
-          # The real scan.
-          if ! scan .; then
-            echo "::error::secret-guard: vault-export/wallet-key file signature(s) found (paths above). No real secret material may ever be committed (project rule 6; testdata/README.md)."
-            exit 1
-          fi
-          echo "OK: no vault-export/wallet-key signatures in the tree."
+        run: ./scripts/ci-lanes.sh secret-guard
 
   # Q13 (live) + Q37: the two checks over documented claims that nothing else
   # verifies. Neither needs cargo, so this lane is seconds, not minutes.
@@ -705,11 +608,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Self-test (prove both checks can fail), then check
-        run: |
-          set -u
-          python3 --version
-          if ! python3 scripts/check-traceability.py --self-test; then
-            echo "::error::traceability self-test FAILED — a check stayed green over corrupted input, so a green run below would prove nothing"
-            exit 1
-          fi
-          python3 scripts/check-traceability.py
+        run: ./scripts/ci-lanes.sh traceability
+      - name: Q43 — every workflow `run:` block is a committed script or an allowlisted line
+        run: ./scripts/ci-lanes.sh ci-shell

@@ -205,6 +205,19 @@ cmd_repro() {
   ( cd "$fuzz_dir" && cargo "${toolchain_arg[@]}" fuzz run "$1" "$2" )
 }
 
+# The monthly-minimization input (docs/testing/fuzzing.md §3). Reports only:
+# it never rewrites the committed tree. Lived inline in fuzz-nightly.yml
+# until Q43 — CI shell that no local run ever executed.
+cmd_corpus_report() {
+  local t d
+  for t in "${TARGETS[@]}"; do
+    d="$repo/fuzz/corpus/$t"
+    [ -d "$d" ] || continue
+    printf '%-20s %6s files %10s\n' "$t" \
+      "$(find "$d" -type f | wc -l)" "$(du -sh "$d" | cut -f1)"
+  done
+}
+
 case "${1:-}" in
   lint)     shift; cmd_lint "$@" ;;
   build)    shift; cmd_build "$@" ;;
@@ -215,6 +228,7 @@ case "${1:-}" in
   cmin)     shift; cmd_cmin "$@" ;;
   repro)    shift; cmd_repro "$@" ;;
   targets)  printf '%s\n' "${TARGETS[@]}" ;;
+  corpus-report) shift; cmd_corpus_report "$@" ;;
   ""|-h|--help|help)
     sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown subcommand '$1' (try --help)" ;;

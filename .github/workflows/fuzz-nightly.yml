@@ -96,14 +96,7 @@ jobs:
       # committed tree, and its output is what a human acts on monthly.
       - name: Report corpus size (input to the monthly minimization review)
         if: always()
-        run: |
-          set -u
-          for t in $(./scripts/fuzz.sh targets); do
-            d="fuzz/corpus/$t"
-            [ -d "$d" ] || continue
-            printf '%-20s %6s files %10s\n' "$t" \
-              "$(find "$d" -type f | wc -l)" "$(du -sh "$d" | cut -f1)"
-          done
+        run: ./scripts/fuzz.sh corpus-report
 
       - name: Upload crash artifacts
         if: failure()
