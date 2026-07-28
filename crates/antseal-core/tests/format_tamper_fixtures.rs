@@ -248,10 +248,11 @@ fn build_table() -> Value {
             "refuse four rows; the layer is what separates them, and `expected.layer`",
             "is checked alongside `expected.code` for exactly that reason.",
             "",
-            "`expected.layer` is null for a manifest SCHEMA rejection, which names",
-            "its own map rather than a layer, but NOT for a bundle schema rejection:",
-            "a SealProofError::Bundle is layer 1 by construction. The asymmetry is",
-            "two recorded decisions, not a bug — see the FormatFixture::layer docs."
+            "`expected.layer` is null IFF the surface is not a layered decoder —",
+            "which is only `check_canonical`, the schema-agnostic strict pass.",
+            "`Manifest::decode` and `SealProof::decode` always report one of the",
+            "three layers of registry section 7.6.3, for canonicality and schema",
+            "rejections alike (decision D86)."
         ],
         "bases": bases,
         "fixtures": FIXTURES.iter().map(table_entry).collect::<Vec<_>>(),
