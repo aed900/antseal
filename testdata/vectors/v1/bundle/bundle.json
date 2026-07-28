@@ -4,7 +4,7 @@
   "format_version": "v1",
   "kind": "bundle",
   "non_secret": "NON-SECRET test fixture (project rule 6): every key, salt, seed, commitment, signature and disclosed proof node below derives from the documented fixed test seed W = 0x00..0x1f (testdata/README.md) through R6's deterministic fixture constructor. All anchor artifact bytes — .ots blobs, DER tokens, intermediate certificates, the 80-byte Bitcoin header and the receipt payload — are self-labelling SCHEMA-OPAQUE PLACEHOLDERS, not recorded attestations; A swaps in real recorded fixtures at M2 with no schema change. Never real vault, wallet, author or on-chain material.",
-  "description": ".sealproof bundle golden vectors (F13): canonical deterministic-CBOR bundle bytes, three-layer diagnostic sidecars (bundle -> embedded manifest envelope -> inner body, the F14 independent-CBOR cross-check target), and the reveal structure each bundle discloses. Cases cover the EMPTY-ANCHOR (UNANCHORED) bundle — the named M0 milestone artifact — a whole-work reveal, a single covered-unit reveal with a leaf-exact sub-cover and boundary paths, a non-covered unit reveal, a full-file reveal with a raw mirror and file_salt/s_root, a bundle with every anchor kind and optional slot populated in both receipt-included and receipt-excluded form, and a bundle that reveals nothing at all (MVP-SPEC.md lines 73, 112-114, 153, 167).",
+  "description": ".sealproof bundle golden vectors (F13): canonical deterministic-CBOR bundle bytes, three-layer diagnostic sidecars (bundle -> embedded manifest envelope -> inner body, the F14 independent-CBOR cross-check target), and the reveal structure each bundle discloses. Cases cover the EMPTY-ANCHOR (UNANCHORED) bundle — the named M0 milestone artifact — a whole-work reveal, a single covered-unit reveal with a leaf-exact sub-cover and boundary paths, a non-covered unit reveal, a full-file reveal with a raw mirror and file_salt/s_root, a bundle with every anchor kind and optional slot populated in both receipt-included and receipt-excluded form, a bundle that reveals nothing at all, a partial reveal whose leaf-exact sub-cover is a `level == d` node carrying D83's canonical `salt || 0x00*16` payload, and the n = 1 file where d = 0 makes that payload and `s_root` the same 32 bytes (MVP-SPEC.md lines 73, 96, 112-114, 153, 167).",
   "inputs": {
     "app_version": "antseal-fixture/1",
     "cases": [
@@ -298,6 +298,58 @@
           "policy": "ed25519-only",
           "seed": 1592590342,
           "title": "multi file"
+        }
+      },
+      {
+        "anchors": "empty",
+        "name": "leaf-level-cover-partial-reveal",
+        "selection": [
+          {
+            "units": [
+              1
+            ]
+          }
+        ],
+        "work": {
+          "files": [
+            {
+              "fine_tree": true,
+              "kind": "binary",
+              "path": "data/n6-odd.bin",
+              "raw": "000102030405",
+              "split": [
+                2,
+                1,
+                3
+              ]
+            }
+          ],
+          "name": "unbalanced-n6-odd-split",
+          "policy": "ed25519-only",
+          "seed": 1592590342,
+          "title": "unbalanced n6 odd split"
+        }
+      },
+      {
+        "anchors": "empty",
+        "name": "one-byte-fine-tree-full-reveal",
+        "selection": [
+          "full"
+        ],
+        "work": {
+          "files": [
+            {
+              "fine_tree": true,
+              "kind": "binary",
+              "path": "data/one.bin",
+              "raw": "42",
+              "split": []
+            }
+          ],
+          "name": "one-byte-file",
+          "policy": "ed25519-only",
+          "seed": 1592590342,
+          "title": "one byte file"
         }
       }
     ],
@@ -6015,6 +6067,809 @@
         },
         "name": "nothing-revealed",
         "work_id": "4d26efc225e50da89f0a26d9ff85057758a63220a9c4904a7aeaa9633263fd10"
+      },
+      {
+        "anchor_digest": "f156b8f18eba37b525a25edbacbc2d9fe6db08edc094df16cc2ca01cced83e91",
+        "bundle_bytes": "a900010159020ca2005901c2a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e0377756e62616c616e636564206e36206f64642073706c6974041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a6005820d08666f65c25145765db681161cb092b424f84b256d726fce354f52ce1f99169015820fdd6edb34d420fb880e452305c82f253d38055382396109c83c81e315bf4f94f030604a3000001010200055820c8e7013b3d5e9056b5f7303b8d21977b45e7632d893a80987cfd25c94c43e09b0683a600000100028200020302055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadada60001010002820201030105581896ede8a68e9e8148ac9db2fa42e4312dd69c30209dbeed120658200100000000000000adadadadadadadadadadadadadadadadadadadadadadadada600020100028203030303055818e42bb042513253b62dc99d353b76ce33b322076c3c406b910658200200000000000000adadadadadadadadadadadadadadadadadadadadadadadad01a1005840169f8a891a73329618f461061f987d8b5da00b75e3d059823033e264c59300df50f8460c165dc5357f0d22cfee28d58a9b7813205d27b43cd9298e38e8df530402a30058205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e0158185a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a0258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c038004800681a500010158207406dad0c47d5e1e077d2f93df27fd25bbd39ac78a4aa52503e77c067e8c04260259011061ef16277c4c172b7f6bbb2706d94369a00299ab543a6e47302305702910b482a333ab6374aab4398dee20c0caad38e4701d8cfcd4b106cca18d10cb7c89635ffda95695b08e6d02a7d4e89a64ff7c2026159a14bf1867b84e915917138a221f086030a698b7e4ad51cd0fce01f73c477b54799728b4384ce7c771500759cca2f1e3229f27f14ffe2b437683e82ce598dc3fac81f289c17e3fd4ef765dbd76da93cd7fb961fd2ef4482d1bbb88b9b78f47049880d93a1c7e7c1ac673d9f50e7fc6f369fd34b522087b4aa5597aadd044a38456c578798ff2d0926ef5e20d7e287874f292a4905db84305795199e523fd7185af748f9bf5c2451dcb330aae0bf9fff99fef0fa0fa91160fdf1a041b205c03818303025820cc73aaf65852cfbd7b3da984868da291000000000000000000000000000000000483830200582018b753083556e68bc8d2d3cf09a39c6fbcc754a98711931f1083b4aea918bc998303035820a4edc146f06f15e718588ffe069e1138edf216476bfbd4c5b0d5d613e6b07e09830202582095089a2a179320c325ea4a164c912a5b44dbc1e69ccfbed4f4b489e29154d2ae07800881a30000016f646174612f6e362d6f64642e62696e0250d534c94d4939156629c3a50fb2f00c020980",
+        "decoded": {
+          "covered_reveals": [
+            {
+              "ciphertext": {
+                "len": 272,
+                "sha256": "2e94305fd9e5d0bf550acd61e599a9ef9b7db9c9dc474a78e8f84e7036bcbac2"
+              },
+              "cover": [
+                {
+                  "index": 2,
+                  "level": 3,
+                  "seed": "cc73aaf65852cfbd7b3da984868da29100000000000000000000000000000000"
+                }
+              ],
+              "k_u": "7406dad0c47d5e1e077d2f93df27fd25bbd39ac78a4aa52503e77c067e8c0426",
+              "paths": [
+                {
+                  "hash": "18b753083556e68bc8d2d3cf09a39c6fbcc754a98711931f1083b4aea918bc99",
+                  "index": 0,
+                  "level": 2
+                },
+                {
+                  "hash": "a4edc146f06f15e718588ffe069e1138edf216476bfbd4c5b0d5d613e6b07e09",
+                  "index": 3,
+                  "level": 3
+                },
+                {
+                  "hash": "95089a2a179320c325ea4a164c912a5b44dbc1e69ccfbed4f4b489e29154d2ae",
+                  "index": 2,
+                  "level": 2
+                }
+              ],
+              "unit_id": 1
+            }
+          ],
+          "format_version": 1,
+          "full_reveals": [],
+          "manifest_summary": {
+            "file_count": 1,
+            "sig_policy": [
+              "ed25519"
+            ],
+            "title": "unbalanced n6 odd split",
+            "units_total": 3
+          },
+          "noncovered_reveals": [],
+          "ots_anchors": [],
+          "receipt": null,
+          "revealed_unit_ids": [
+            1
+          ],
+          "storage_record": {
+            "address": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+            "k_m": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+            "nonce": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+          },
+          "touched_files": [
+            {
+              "file_id": 0,
+              "path": "data/n6-odd.bin",
+              "path_salt": "d534c94d4939156629c3a50fb2f00c02"
+            }
+          ],
+          "tsa_anchors": []
+        },
+        "diagnostic": {
+          "body": {
+            "m": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                "antseal-fixture/1"
+              ],
+              [
+                2,
+                {
+                  "b": "b6000102030405060708090a0b0c0d0e"
+                }
+              ],
+              [
+                3,
+                "unbalanced n6 odd split"
+              ],
+              [
+                4,
+                1767225600
+              ],
+              [
+                5,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                6,
+                [
+                  0
+                ]
+              ],
+              [
+                7,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        {
+                          "b": "d08666f65c25145765db681161cb092b424f84b256d726fce354f52ce1f99169"
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "b": "fdd6edb34d420fb880e452305c82f253d38055382396109c83c81e315bf4f94f"
+                        }
+                      ],
+                      [
+                        3,
+                        6
+                      ],
+                      [
+                        4,
+                        {
+                          "m": [
+                            [
+                              0,
+                              0
+                            ],
+                            [
+                              1,
+                              1
+                            ],
+                            [
+                              2,
+                              0
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        5,
+                        {
+                          "b": "c8e7013b3d5e9056b5f7303b8d21977b45e7632d893a80987cfd25c94c43e09b"
+                        }
+                      ],
+                      [
+                        6,
+                        [
+                          {
+                            "m": [
+                              [
+                                0,
+                                0
+                              ],
+                              [
+                                1,
+                                0
+                              ],
+                              [
+                                2,
+                                [
+                                  0,
+                                  2
+                                ]
+                              ],
+                              [
+                                3,
+                                2
+                              ],
+                              [
+                                5,
+                                {
+                                  "b": "bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f18"
+                                }
+                              ],
+                              [
+                                6,
+                                {
+                                  "b": "0000000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                                }
+                              ]
+                            ]
+                          },
+                          {
+                            "m": [
+                              [
+                                0,
+                                1
+                              ],
+                              [
+                                1,
+                                0
+                              ],
+                              [
+                                2,
+                                [
+                                  2,
+                                  1
+                                ]
+                              ],
+                              [
+                                3,
+                                1
+                              ],
+                              [
+                                5,
+                                {
+                                  "b": "96ede8a68e9e8148ac9db2fa42e4312dd69c30209dbeed12"
+                                }
+                              ],
+                              [
+                                6,
+                                {
+                                  "b": "0100000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                                }
+                              ]
+                            ]
+                          },
+                          {
+                            "m": [
+                              [
+                                0,
+                                2
+                              ],
+                              [
+                                1,
+                                0
+                              ],
+                              [
+                                2,
+                                [
+                                  3,
+                                  3
+                                ]
+                              ],
+                              [
+                                3,
+                                3
+                              ],
+                              [
+                                5,
+                                {
+                                  "b": "e42bb042513253b62dc99d353b76ce33b322076c3c406b91"
+                                }
+                              ],
+                              [
+                                6,
+                                {
+                                  "b": "0200000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                                }
+                              ]
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            ]
+          },
+          "bundle": {
+            "m": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                {
+                  "b": "a2005901c2a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e0377756e62616c616e636564206e36206f64642073706c6974041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a6005820d08666f65c25145765db681161cb092b424f84b256d726fce354f52ce1f99169015820fdd6edb34d420fb880e452305c82f253d38055382396109c83c81e315bf4f94f030604a3000001010200055820c8e7013b3d5e9056b5f7303b8d21977b45e7632d893a80987cfd25c94c43e09b0683a600000100028200020302055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadada60001010002820201030105581896ede8a68e9e8148ac9db2fa42e4312dd69c30209dbeed120658200100000000000000adadadadadadadadadadadadadadadadadadadadadadadada600020100028203030303055818e42bb042513253b62dc99d353b76ce33b322076c3c406b910658200200000000000000adadadadadadadadadadadadadadadadadadadadadadadad01a1005840169f8a891a73329618f461061f987d8b5da00b75e3d059823033e264c59300df50f8460c165dc5357f0d22cfee28d58a9b7813205d27b43cd9298e38e8df5304"
+                }
+              ],
+              [
+                2,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+                      }
+                    ],
+                    [
+                      1,
+                      {
+                        "b": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                      }
+                    ],
+                    [
+                      2,
+                      {
+                        "b": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                3,
+                []
+              ],
+              [
+                4,
+                []
+              ],
+              [
+                6,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        1
+                      ],
+                      [
+                        1,
+                        {
+                          "b": "7406dad0c47d5e1e077d2f93df27fd25bbd39ac78a4aa52503e77c067e8c0426"
+                        }
+                      ],
+                      [
+                        2,
+                        {
+                          "b": "61ef16277c4c172b7f6bbb2706d94369a00299ab543a6e47302305702910b482a333ab6374aab4398dee20c0caad38e4701d8cfcd4b106cca18d10cb7c89635ffda95695b08e6d02a7d4e89a64ff7c2026159a14bf1867b84e915917138a221f086030a698b7e4ad51cd0fce01f73c477b54799728b4384ce7c771500759cca2f1e3229f27f14ffe2b437683e82ce598dc3fac81f289c17e3fd4ef765dbd76da93cd7fb961fd2ef4482d1bbb88b9b78f47049880d93a1c7e7c1ac673d9f50e7fc6f369fd34b522087b4aa5597aadd044a38456c578798ff2d0926ef5e20d7e287874f292a4905db84305795199e523fd7185af748f9bf5c2451dcb330aae0bf9fff99fef0fa0fa91160fdf1a041b205c"
+                        }
+                      ],
+                      [
+                        3,
+                        [
+                          [
+                            3,
+                            2,
+                            {
+                              "b": "cc73aaf65852cfbd7b3da984868da29100000000000000000000000000000000"
+                            }
+                          ]
+                        ]
+                      ],
+                      [
+                        4,
+                        [
+                          [
+                            2,
+                            0,
+                            {
+                              "b": "18b753083556e68bc8d2d3cf09a39c6fbcc754a98711931f1083b4aea918bc99"
+                            }
+                          ],
+                          [
+                            3,
+                            3,
+                            {
+                              "b": "a4edc146f06f15e718588ffe069e1138edf216476bfbd4c5b0d5d613e6b07e09"
+                            }
+                          ],
+                          [
+                            2,
+                            2,
+                            {
+                              "b": "95089a2a179320c325ea4a164c912a5b44dbc1e69ccfbed4f4b489e29154d2ae"
+                            }
+                          ]
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              ],
+              [
+                7,
+                []
+              ],
+              [
+                8,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        1,
+                        "data/n6-odd.bin"
+                      ],
+                      [
+                        2,
+                        {
+                          "b": "d534c94d4939156629c3a50fb2f00c02"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ],
+              [
+                9,
+                []
+              ]
+            ]
+          },
+          "manifest": {
+            "m": [
+              [
+                0,
+                {
+                  "b": "a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e0377756e62616c616e636564206e36206f64642073706c6974041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a6005820d08666f65c25145765db681161cb092b424f84b256d726fce354f52ce1f99169015820fdd6edb34d420fb880e452305c82f253d38055382396109c83c81e315bf4f94f030604a3000001010200055820c8e7013b3d5e9056b5f7303b8d21977b45e7632d893a80987cfd25c94c43e09b0683a600000100028200020302055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadada60001010002820201030105581896ede8a68e9e8148ac9db2fa42e4312dd69c30209dbeed120658200100000000000000adadadadadadadadadadadadadadadadadadadadadadadada600020100028203030303055818e42bb042513253b62dc99d353b76ce33b322076c3c406b910658200200000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                }
+              ],
+              [
+                1,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "169f8a891a73329618f461061f987d8b5da00b75e3d059823033e264c59300df50f8460c165dc5357f0d22cfee28d58a9b7813205d27b43cd9298e38e8df5304"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        },
+        "name": "leaf-level-cover-partial-reveal",
+        "work_id": "26f8e90e65688dc5a08c44cca1349202090b3d1680e8d0d84ce7b9a7a0b9036b"
+      },
+      {
+        "anchor_digest": "7eec55bfbc8928af856fe4f8399532e93646b5a6b6330e8331aaa8d7e3b30db8",
+        "bundle_bytes": "a9000101590170a200590126a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e036d6f6e6520627974652066696c65041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a600582032be3899953a84a3c069531e116758f5eccab8aa0f5cd666ee60b53ee519e4f5015820018dd39ee79ff02369d279340d5260b98bdff4f40441396cb6eecafbb0804517030104a3000001010200055820fbdc09abfa51b65d69a4f1140b7a13dbd31180f0c76625f223579f7f328aea830681a600000100028200010301055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadad01a1005840796990fa61712e628a27b361e075a304f24eacf2bade6bea7967cdf1348b6445d8af8e4ccb4a2e1434872528e871bde31c9dfedb1af2d9215ea81aa53102c20802a30058205e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e0158185a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a0258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c038004800681a5000001582004afe6d0e1a7a77d8a59a7d75468ed36c6e8d5b0e7a78a7238e42c9faea5b05202590110b300bec469e5d6da1836be5be97647c20af98c72fa537e09a0e4dbf1fa5a3772429b286dc7be387b53b9c82568fbafef6330d11a22f466bc88b04fd1199744d2feb72366d691d98ca073b280784cb1177b2561b8da683bbefbe815037d71385dfbb00ea3fcd67cba59a158a66f3a91f0adc6abb9b782683d87577147e636244bbe17ff83e3c143611ad76a1841ffb5eed7d2f2b92c755b5234fd263e1b10dbb20348819a9beda34070b2ddf6f3649dab01be57d43d1c49c4a7f8da055d6eafd9d849b4381d556cc5ac3be779b18f758125da8b38c960e746922b266e3fdc98a5e32c174fd9d1588dfc1213e560d8e8698ff554c3eb29bfd808e396acf99d57f9385fc9394a508801e91a6e1b2487462d0381830000582027367827ba525c57ebe82b2cd824983c00000000000000000000000000000000048007800881a30000016c646174612f6f6e652e62696e0250d534c94d4939156629c3a50fb2f00c020981a300000150b7187c447b12ae02eb0693516946039702582027367827ba525c57ebe82b2cd824983c00000000000000000000000000000000",
+        "decoded": {
+          "covered_reveals": [
+            {
+              "ciphertext": {
+                "len": 272,
+                "sha256": "c4b6d5887d3839c3a61c4f082aa7ff2cac89bbe0fbfb7eb09f22df7b11bdb90c"
+              },
+              "cover": [
+                {
+                  "index": 0,
+                  "level": 0,
+                  "seed": "27367827ba525c57ebe82b2cd824983c00000000000000000000000000000000"
+                }
+              ],
+              "k_u": "04afe6d0e1a7a77d8a59a7d75468ed36c6e8d5b0e7a78a7238e42c9faea5b052",
+              "paths": [],
+              "unit_id": 0
+            }
+          ],
+          "format_version": 1,
+          "full_reveals": [
+            {
+              "file_id": 0,
+              "file_salt": "b7187c447b12ae02eb06935169460397",
+              "s_root": "27367827ba525c57ebe82b2cd824983c00000000000000000000000000000000"
+            }
+          ],
+          "manifest_summary": {
+            "file_count": 1,
+            "sig_policy": [
+              "ed25519"
+            ],
+            "title": "one byte file",
+            "units_total": 1
+          },
+          "noncovered_reveals": [],
+          "ots_anchors": [],
+          "receipt": null,
+          "revealed_unit_ids": [
+            0
+          ],
+          "storage_record": {
+            "address": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+            "k_m": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+            "nonce": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+          },
+          "touched_files": [
+            {
+              "file_id": 0,
+              "path": "data/one.bin",
+              "path_salt": "d534c94d4939156629c3a50fb2f00c02"
+            }
+          ],
+          "tsa_anchors": []
+        },
+        "diagnostic": {
+          "body": {
+            "m": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                "antseal-fixture/1"
+              ],
+              [
+                2,
+                {
+                  "b": "b6000102030405060708090a0b0c0d0e"
+                }
+              ],
+              [
+                3,
+                "one byte file"
+              ],
+              [
+                4,
+                1767225600
+              ],
+              [
+                5,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc023"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                6,
+                [
+                  0
+                ]
+              ],
+              [
+                7,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        {
+                          "b": "32be3899953a84a3c069531e116758f5eccab8aa0f5cd666ee60b53ee519e4f5"
+                        }
+                      ],
+                      [
+                        1,
+                        {
+                          "b": "018dd39ee79ff02369d279340d5260b98bdff4f40441396cb6eecafbb0804517"
+                        }
+                      ],
+                      [
+                        3,
+                        1
+                      ],
+                      [
+                        4,
+                        {
+                          "m": [
+                            [
+                              0,
+                              0
+                            ],
+                            [
+                              1,
+                              1
+                            ],
+                            [
+                              2,
+                              0
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        5,
+                        {
+                          "b": "fbdc09abfa51b65d69a4f1140b7a13dbd31180f0c76625f223579f7f328aea83"
+                        }
+                      ],
+                      [
+                        6,
+                        [
+                          {
+                            "m": [
+                              [
+                                0,
+                                0
+                              ],
+                              [
+                                1,
+                                0
+                              ],
+                              [
+                                2,
+                                [
+                                  0,
+                                  1
+                                ]
+                              ],
+                              [
+                                3,
+                                1
+                              ],
+                              [
+                                5,
+                                {
+                                  "b": "bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f18"
+                                }
+                              ],
+                              [
+                                6,
+                                {
+                                  "b": "0000000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                                }
+                              ]
+                            ]
+                          }
+                        ]
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            ]
+          },
+          "bundle": {
+            "m": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                {
+                  "b": "a200590126a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e036d6f6e6520627974652066696c65041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a600582032be3899953a84a3c069531e116758f5eccab8aa0f5cd666ee60b53ee519e4f5015820018dd39ee79ff02369d279340d5260b98bdff4f40441396cb6eecafbb0804517030104a3000001010200055820fbdc09abfa51b65d69a4f1140b7a13dbd31180f0c76625f223579f7f328aea830681a600000100028200010301055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadad01a1005840796990fa61712e628a27b361e075a304f24eacf2bade6bea7967cdf1348b6445d8af8e4ccb4a2e1434872528e871bde31c9dfedb1af2d9215ea81aa53102c208"
+                }
+              ],
+              [
+                2,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+                      }
+                    ],
+                    [
+                      1,
+                      {
+                        "b": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+                      }
+                    ],
+                    [
+                      2,
+                      {
+                        "b": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              [
+                3,
+                []
+              ],
+              [
+                4,
+                []
+              ],
+              [
+                6,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        1,
+                        {
+                          "b": "04afe6d0e1a7a77d8a59a7d75468ed36c6e8d5b0e7a78a7238e42c9faea5b052"
+                        }
+                      ],
+                      [
+                        2,
+                        {
+                          "b": "b300bec469e5d6da1836be5be97647c20af98c72fa537e09a0e4dbf1fa5a3772429b286dc7be387b53b9c82568fbafef6330d11a22f466bc88b04fd1199744d2feb72366d691d98ca073b280784cb1177b2561b8da683bbefbe815037d71385dfbb00ea3fcd67cba59a158a66f3a91f0adc6abb9b782683d87577147e636244bbe17ff83e3c143611ad76a1841ffb5eed7d2f2b92c755b5234fd263e1b10dbb20348819a9beda34070b2ddf6f3649dab01be57d43d1c49c4a7f8da055d6eafd9d849b4381d556cc5ac3be779b18f758125da8b38c960e746922b266e3fdc98a5e32c174fd9d1588dfc1213e560d8e8698ff554c3eb29bfd808e396acf99d57f9385fc9394a508801e91a6e1b2487462d"
+                        }
+                      ],
+                      [
+                        3,
+                        [
+                          [
+                            0,
+                            0,
+                            {
+                              "b": "27367827ba525c57ebe82b2cd824983c00000000000000000000000000000000"
+                            }
+                          ]
+                        ]
+                      ],
+                      [
+                        4,
+                        []
+                      ]
+                    ]
+                  }
+                ]
+              ],
+              [
+                7,
+                []
+              ],
+              [
+                8,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        1,
+                        "data/one.bin"
+                      ],
+                      [
+                        2,
+                        {
+                          "b": "d534c94d4939156629c3a50fb2f00c02"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ],
+              [
+                9,
+                [
+                  {
+                    "m": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        1,
+                        {
+                          "b": "b7187c447b12ae02eb06935169460397"
+                        }
+                      ],
+                      [
+                        2,
+                        {
+                          "b": "27367827ba525c57ebe82b2cd824983c00000000000000000000000000000000"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            ]
+          },
+          "manifest": {
+            "m": [
+              [
+                0,
+                {
+                  "b": "a800010171616e747365616c2d666978747572652f310250b6000102030405060708090a0b0c0d0e036d6f6e6520627974652066696c65041a6955b90005a1005820eee291b6c3994696f393226b02934c86ec161d1e5b0bd964e5ab7a72b85cc0230681000781a600582032be3899953a84a3c069531e116758f5eccab8aa0f5cd666ee60b53ee519e4f5015820018dd39ee79ff02369d279340d5260b98bdff4f40441396cb6eecafbb0804517030104a3000001010200055820fbdc09abfa51b65d69a4f1140b7a13dbd31180f0c76625f223579f7f328aea830681a600000100028200010301055818bcbeca852f6cbdcbef194e7234e167b3a6832555b59b3f180658200000000000000000adadadadadadadadadadadadadadadadadadadadadadadad"
+                }
+              ],
+              [
+                1,
+                {
+                  "m": [
+                    [
+                      0,
+                      {
+                        "b": "796990fa61712e628a27b361e075a304f24eacf2bade6bea7967cdf1348b6445d8af8e4ccb4a2e1434872528e871bde31c9dfedb1af2d9215ea81aa53102c208"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            ]
+          }
+        },
+        "name": "one-byte-fine-tree-full-reveal",
+        "work_id": "2d273c8fb9ee17e52f83110c039563aea2abe315abd14787788d9778b87091c5"
       }
     ]
   }

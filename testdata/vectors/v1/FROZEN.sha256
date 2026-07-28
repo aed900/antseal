@@ -96,7 +96,7 @@
 #
 # ── frozen digests ─────────────────────────────────────────────────────
 #
-26fbc38ff52bce11e9580c5cfaccab21de69061923b9666dbb3d6d97ba2af20d  bundle/bundle.json
+5d8704932e6d60fb91e6e505af746031118938fb1902dcbe806cbb510a3713b6  bundle/bundle.json
 528adac0854a801076f43b0d353f0572fc1b84f073f68d4b47e6847ad1dd908e  content-model/content-model.json
 fa7edc1cdc8de6efa6251e59c5ef1028c90af6327a68fc0f7ed0da8cbc4910c9  crypto/commitments.json
 c1ac570d7d1d1b2fb1ffcaeb4ef0188b54d36a84ce9fcc4c25bae6f3f56f9ef3  crypto/manifest-aead.json

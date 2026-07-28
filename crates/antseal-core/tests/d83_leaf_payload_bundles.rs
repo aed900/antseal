@@ -9,23 +9,32 @@
 //! because only here can the two sites be shown to be reachable, distinct as
 //! variants, and identical as codes.
 //!
-//! # Why every case is a one-byte file
+//! # Why the `n == 1` file carries most of the cases
 //!
-//! It is the only committed R6 shape that produces a `level == d` node at
-//! all. D83's incidence rule is `d == 0 ∨ a odd ∨ (b odd ∧ b < n)`, and
-//! every other R6 work has even unit boundaries — `CRLF_TEXT` -> 34,
-//! `blob.bin` 30 split 10/10/10, `split.md` 34 split 12/12/10 — while a
-//! whole-file cover `[0, n)` is always the single root node. At `n == 1`,
-//! though, `d == 0`: the grid root **is** the leaf, so the file's cover
-//! entry *and* its `full_reveal.s_root` are both leaf-level disclosures of
-//! the same 32 bytes. One shape, both sites, which is exactly what makes it
-//! the right subject.
+//! D83's incidence rule is `d == 0 ∨ a odd ∨ (b odd ∧ b < n)`, and until R37
+//! every R6 work had even unit boundaries — `CRLF_TEXT` -> 34, `blob.bin` 30
+//! split 10/10/10, `split.md` 34 split 12/12/10 — while a whole-file cover
+//! `[0, n)` is always the single root node. At `n == 1`, though, `d == 0`:
+//! the grid root **is** the leaf, so the file's cover entry *and* its
+//! `full_reveal.s_root` are both leaf-level disclosures of the same 32 bytes.
+//! One shape, both sites, which is what makes it the right subject for the
+//! two-sites-one-code statement.
 //!
-//! If R36/R37 ever add an odd-boundary fixture, a second G-site case over a
-//! larger file belongs here.
+//! # The G-site case over a larger file (G24)
+//!
+//! R37 landed the odd-boundary fixture this file's first version asked for,
+//! so [`a_dirty_cover_tail_is_rejected_at_depth_three`] now drives the cover
+//! site at `d = 3` rather than only at the `d == 0` degeneracy. That matters
+//! because `check_leaf_level_payload` is a no-op unless `level == depth`, and
+//! at `n == 1` **every** node satisfies that trivially: a bug that compared
+//! the wrong quantity — `level == 0`, say, or `index == 0` — would have been
+//! invisible in a corpus of one-byte files. The `(3, 2)` case is where the
+//! predicate is actually discriminating.
 
 use antseal_core::content::fine_tree::FineTreeError;
-use antseal_core::test_util::bundle_fixtures::{Selection, Tweak, build, build_tweaked, shapes};
+use antseal_core::test_util::bundle_fixtures::{
+    FileSelection, Selection, Tweak, build, build_tweaked, shapes,
+};
 use antseal_core::verify::{VerifyError, VerifyOptions, verify_bundle};
 
 /// `Tweak` is `#[non_exhaustive]`, so it is built field by field rather than
@@ -156,6 +165,80 @@ fn the_salt_half_is_a_different_class_at_both_sites() {
     .expect_err("a wrong cover salt must not verify");
     assert_ne!(cover_salt.code(), "fine-root-leaf-seed-tail-not-zero");
     assert_eq!(cover_salt.code(), "fine-root-binding-failed");
+}
+
+/// **G24 — the cover site at `d = 3`, in a real bundle.**
+///
+/// `unbalanced-n6-odd-split`, reveal unit 1: leaves `[2, 3)`, cover exactly
+/// `(3, 2)`. Flipping one bit of byte 16 of that entry's payload is the
+/// mutation D83's tamper row describes, driven here through the **whole
+/// pipeline** rather than through `verify_range` alone — which is what G24's
+/// Accept asks for, since a third-party verifier runs `verify_bundle` and
+/// nothing else.
+///
+/// The address `(3, 2)` in the error payload is the load-bearing part: it is
+/// a node at depth 3 of a `d = 3` grid, so the check is discriminating on
+/// `level == depth` rather than passing trivially the way it must at
+/// `n == 1`.
+#[test]
+fn a_dirty_cover_tail_is_rejected_at_depth_three() {
+    // Unit 1 of file 0 — the lone leaf [2, 3). Work-global ids are assigned
+    // in order, so the file's second unit is unit_id 1.
+    let selection = Selection(vec![FileSelection::Units(vec![1])]);
+    let honest = build(&shapes::unbalanced_n6_odd_split(), &selection).bytes;
+    let dirty = build_tweaked(
+        &shapes::unbalanced_n6_odd_split(),
+        &selection,
+        &tweak(|t| t.corrupt_leaf_cover_tail = Some(1)),
+    )
+    .bytes;
+
+    // The knob is a no-op when the unit's cover has no leaf-level node, so
+    // the first thing to establish is that the mutation LANDED.
+    assert_ne!(
+        honest, dirty,
+        "the leaf-level tail knob did nothing — this reveal's cover has no level == d node, so \
+         the case below would be green for the wrong reason"
+    );
+    verify_bundle(&honest, &VerifyOptions::new()).expect("the honest odd-split bundle verifies");
+
+    let err = verify_bundle(&dirty, &VerifyOptions::new())
+        .expect_err("a non-canonical cover payload must not verify");
+    assert_eq!(err.code(), "fine-root-leaf-seed-tail-not-zero");
+    assert_eq!(
+        err,
+        VerifyError::FineRootBindingFailed {
+            unit_id: 1,
+            source: FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 },
+        },
+        "the node is (3, 2) at d = 3 — G11's normative KAT, so the check is discriminating on \
+         level == depth and not passing vacuously"
+    );
+}
+
+/// The same bundle's **salt** half is a different class, at `d = 3` too.
+///
+/// The `n == 1` twin of this
+/// ([`the_salt_half_is_a_different_class_at_both_sites`]) cannot distinguish
+/// "the tail rule fired" from "any change to a 32-byte root fails", because
+/// at `n == 1` the cover payload is the whole fine tree. Here the file has
+/// six leaves and a real boundary path, so the two halves genuinely take
+/// different routes.
+#[test]
+fn at_depth_three_the_salt_half_is_still_a_different_class() {
+    let selection = Selection(vec![FileSelection::Units(vec![1])]);
+    let err = verify_bundle(
+        &build_tweaked(
+            &shapes::unbalanced_n6_odd_split(),
+            &selection,
+            &tweak(|t| t.corrupt_leaf_cover_salt = Some(1)),
+        )
+        .bytes,
+        &VerifyOptions::new(),
+    )
+    .expect_err("a wrong cover salt must not verify");
+    assert_ne!(err.code(), "fine-root-leaf-seed-tail-not-zero");
+    assert_eq!(err.code(), "fine-root-binding-failed");
 }
 
 /// At every larger `n` the rule idles: the same 32-byte `s_root` field

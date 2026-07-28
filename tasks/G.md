@@ -292,6 +292,8 @@
   - The `n == 1` case asserts `cover[0][2] == full_reveal.s_root` byte-for-byte (D75's agreement rider, discharged as a plain equality by D83)
   - A tamper fixture flips a byte of the leaf-level payload's tail in the *bundle* and gets `fine-root-leaf-seed-tail-not-zero`
 - Notes: This is the standing obligation D83 §6 records: the "must not change" digest table holds only while every fixture has even boundaries. The commit that adds an odd boundary moves bundle digests **for D83 reasons** and must say so.
+  — **[2026-07-28] DONE**, and the obligation is discharged in the commit message: `bundle/bundle.json` moved `26fbc38f…` → `5d870493…`, a pure **extension** (all eight pre-existing cases byte-identical in both `inputs` and `expect`; only the description string and two appended cases differ), and it is the only frozen digest that moved. New cases `leaf-level-cover-partial-reveal` (`n = 6` retiled 2/1/3, unit 1 = leaf `[2,3)`, cover exactly `(3,2)`) and `one-byte-fine-tree-full-reveal`. Two vector-level tests pin the class: the leaf-level payload's zero tail, with `d` derived from the case's own R6 shape rather than read off the vector, and the `n == 1` two-site equality over the committed bytes (D75's rider, discharged). R6's corpus gained three `valid-` seeds covering all three arrival routes, and R10's boundary constant is **still exactly 88 (+67)**.
+  — One deviation from this entry's Accept, and it is D83's own rule rather than a shortfall: the tamper artifact is a **fixture, not a new row**. `content-fine-root-leaf-seed-tail-not-zero` already exists (G23), and D83 §4.1/§7 are explicit that a code names a rejection class and never a site, so the bundle-layer case joins it separated by `(code, layer)` — `tests/d83_leaf_payload_bundles.rs::a_dirty_cover_tail_is_rejected_at_depth_three`, plus its salt-half counterpart at `d = 3`, where the two halves take genuinely different routes (at `n == 1` they cannot). `MATRIX.json` gains nothing. Registering that bundle-layer fixture in the tamper-row harness rather than leaving it in a test file is **G28**.
 
 ### G25 — Turn `CostEstimate` into a wall-clock projection, not just a compression count
 - Milestone: M0 (the pure function) / M1 (U15 wires the print)
@@ -319,6 +321,33 @@
   - `estimate_fine_tree_cost(n).sha256_compressions() == FineTreeStats::expected_sha256_compressions(n)` asserted, tying G10's estimator to the same statement
   - `5n − 4` pinned as a KAT at every power of two up to 4096
 - Notes: These are **not** frozen format constants — they are consequences of frozen things (D26 §6.2). Say so in the doc comments so the next reader does not treat them as untouchable, and so a genuine tree-shape change breaks here loudly rather than being absorbed.
+
+### G27 — Move the GGM leaf-level incidence rule into G's cover suite, and extend its range
+- Milestone: M0
+- Size: S
+- Deps: G11 (landed), G13; R37 (landed) currently hosts the statement
+- Spec: GGM fine tree (line 96), GGM cover contents (line 114)
+- Discovered by: 2026-07-28, R37/G24's implementation
+- Do: D83 §1 Fact 2 — a cover of leaves `[a, b)` of an `n`-leaf file contains a `level == d` node **iff** `d == 0 ∨ a odd ∨ (b odd ∧ b < n)` — is a statement about `minimal_cover`'s geometry and therefore G's, but the only executable form of it lives in `crates/antseal-core/tests/leaf_level_cover_shapes.rs` (R37's file), exhaustive to `n = 128`. Three things follow. (1) It belongs beside `cover::tests::full_range_is_exactly_the_root`, which is Fact 1's executable form, so the two facts the whole decision rests on sit together. (2) D83 §9 asked for `n ≤ 2^12`; what landed is exhaustive to 128 in the default lane and 512 offline, because the sweep is cubic in `n` — add an `#[ignore]`d release-profile lane that runs the exhaustive form to `n = 2^12`, the way D26 handled G18's large-`n` case. (3) Fact 4 ("at most two `level == d` nodes per cover", verified only to `n ≤ 200`) has **no** executable form at all, and every wire-cost argument in D83 §3 is built on it.
+- Accept:
+  - The incidence rule is asserted in G's cover tests; R37's copy either becomes a bundle-level restatement or defers to G's with a doc link — the rule is stated once
+  - An `#[ignore]`d exhaustive lane reaches `n = 2^12` and is documented as the deep form, with the default lane's bound stated as a runtime budget, not as the limit of belief
+  - Fact 4 gains an assertion over the same range as the incidence rule
+  - A counterexample to either fact is recorded in D83 before anything else changes (D83 §9.6)
+- Notes: Not a new rule and not a format constant — it is a consequence of the frozen tree shape, so say so in the doc comment the way D26 §6.2 required of G26's accessors. Landing this does **not** move any vector.
+
+### G28 — Register the bundle-layer D83 fixture in the tamper harness
+- Milestone: M0
+- Size: S
+- Deps: G23, G24 (both landed); F15's `(code, layer)` fixture convention
+- Spec: Verification — tamper matrix (line 168)
+- Discovered by: 2026-07-28, G24's implementation
+- Do: D83's rejection class now has three fixtures at two layers — the registered row `content-fine-root-leaf-seed-tail-not-zero` (`verify_range`, node `(3,2)`), `leaf_level_s_root_tail_flipped` (the predicate directly, `s_root` at `n == 1`), and G24's `a_dirty_cover_tail_is_rejected_at_depth_three` (`verify_bundle`, node `(3,2)`). Only the first is in the row registry, so the completeness checker sees one layer of a class that spans two, and the pipeline-level fixture — the one a third-party verifier's code path actually runs — is discoverable only by reading a test file. Register it the way F15's twenty format fixtures are registered, keyed by `(code, layer)`, with no new code string and no new `MATRIX.json` row.
+- Accept:
+  - The bundle-layer fixture appears in the tamper-row registry under the existing code, separated by layer; `MATRIX.json` is unchanged (D83 §4.1: a code names a rejection class, never a site)
+  - The completeness checker reports the class as covered at both layers, and a test asserts that both layers exist for this code — so deleting either is loud
+  - `tamper_rows_fine_tree::helpers`' table gains the third entry, keeping its seam-visibility contract intact
+- Notes: The salt-half counterparts are deliberately **not** rows: they exist to show the two halves of one 32-byte field fail as different classes, which is an argument about the rule rather than a row of the matrix. Say so where they live, so a later reader does not promote them.
 
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
