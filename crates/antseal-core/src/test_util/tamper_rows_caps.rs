@@ -84,6 +84,15 @@
 //! separately calls this "the weakest-evidence cap in the table" and asks A
 //! to confirm it before Q14, which makes it the one most worth a harness row.
 //!
+//! **The coupling that creates, stated out loud:** if A raises
+//! `MAX_INTERMEDIATE_COUNT` before the freeze — which D10 §2 explicitly leaves
+//! open, and which is backward-compatible for receivers — this fixture's bytes
+//! change, because it is built from the constant rather than from a literal.
+//! That is a reviewed diff and not a breakage, and it stays committable for
+//! any cap up to roughly two thousand (a certificate entry is ~28 bytes
+//! against the 64 KiB ceiling). Above that the representative would have to
+//! move again, by the same argument that put it here.
+//!
 //! **The manifest side cannot have this property**, and the limitation is
 //! recorded rather than hidden: `MAX_UNIT_COUNT` is 2^16, so
 //! `body-units-over-cap` re-heads the `units` array and does not supply the
