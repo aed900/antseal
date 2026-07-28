@@ -382,6 +382,89 @@
         "sha256": "6b78ad4bca69890608db0daacb50ada22cbba34aae3eec95ade923e9e9a53f33"
       },
       "surface": "check_canonical"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-empty-normal-units",
+        "layer": "manifest body"
+      },
+      "id": "body-mirror-only-unit",
+      "mutation": "flip file 0's only unit from `normal` to `raw-mirror`, leaving the file with no normal unit",
+      "row": "caps-manifest-empty-normal-units",
+      "source": {
+        "file": "body-mirror-only-unit.cbor",
+        "kind": "file",
+        "len": 371,
+        "sha256": "f16aa424745636b83a7fd194b18209c08cc55e5cd377ab6c3b08c2878f4cbe51"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-too-many-units",
+        "layer": "manifest body"
+      },
+      "id": "body-units-over-cap",
+      "mutation": "re-head file 0's `units` array to claim MAX_UNIT_COUNT + 1 entries",
+      "row": "caps-manifest-too-many-units",
+      "source": {
+        "file": "body-units-over-cap.cbor",
+        "kind": "file",
+        "len": 375,
+        "sha256": "3bac7ed268b13bfcddc0ded218844da6d945c1cc6cbd4959c6ae85571bf1aa13"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-too-large",
+        "layer": "manifest envelope"
+      },
+      "id": "manifest-oversized",
+      "mutation": "zero-pad the manifest envelope to MAX_MANIFEST_BYTES + 1 bytes",
+      "row": "caps-manifest-too-large",
+      "source": {
+        "kind": "synthesized",
+        "len": 16777217,
+        "recipe": "the base manifest envelope, zero-padded to MAX_MANIFEST_BYTES + 1 bytes"
+      },
+      "surface": "Manifest::decode"
+    },
+    {
+      "base": "bundle",
+      "expected": {
+        "code": "bundle-too-many-full-reveals",
+        "layer": "bundle"
+      },
+      "id": "bundle-full-reveals-over-cap",
+      "mutation": "re-head the bundle's `full_reveals` array to claim MAX_FULL_REVEAL_COUNT + 1 entries",
+      "row": "caps-bundle-too-many-full-reveals",
+      "source": {
+        "file": "bundle-full-reveals-over-cap.cbor",
+        "kind": "file",
+        "len": 938,
+        "sha256": "bc5ac69475a18678c4860eb7c81c4a3746fcac59181742ce8fb2f20d0a7d4108"
+      },
+      "surface": "SealProof::decode"
+    },
+    {
+      "base": "bundle-every-kind",
+      "expected": {
+        "code": "bundle-cert-too-large",
+        "layer": "bundle"
+      },
+      "id": "bundle-cert-over-cap",
+      "mutation": "replace the first TSA intermediate with MAX_CERT_BYTES + 1 zero bytes",
+      "row": "caps-bundle-cert-too-large",
+      "source": {
+        "kind": "synthesized",
+        "len": 66769,
+        "recipe": "the every-anchor-kind bundle (R6 `AnchorSet::EveryKind`, receipt excluded, over the `single binary` ed25519-only work), with `tsa_anchors[0].intermediates[0]` replaced by a bstr of MAX_CERT_BYTES + 1 zero bytes"
+      },
+      "surface": "SealProof::decode"
     }
   ],
   "format_version": "v1",

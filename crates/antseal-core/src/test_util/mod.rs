@@ -54,7 +54,7 @@
 //!   representative row per cap-producing error *variant*, plus the D77
 //!   mirror-only row, plus the register of cap codes deliberately left
 //!   unrowed with the reason for each.
-//! - [`tamper_rows_cbor`] — F's `cbor-`-family slice (F24): rows for the
+//! - `tamper_rows_cbor` — F's `cbor-`-family slice (F24): rows for the
 //!   `DecodeError` codes that were reachable but unrowed, and the reverse
 //!   coverage check that maps `DecodeError`'s whole exemplar list onto rows
 //!   or named owners.
@@ -166,6 +166,8 @@ pub mod fixture_rng;
 pub mod strategies;
 #[cfg(feature = "test-util")]
 pub mod tamper;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_caps;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]

@@ -390,7 +390,10 @@ kebab-case id, and never edit an existing row's expected code.
     `FileEntry::new`, positioned **after** `units.is_empty()` (so a genuinely
     unit-less file keeps reporting `manifest-empty-units` — one code per
     outcome, §1) and **before** the coverage loop (so the shape error wins
-    over a per-unit `unit_commit` error). Owed tamper row: F15.
+    over a per-unit `unit_commit` error). Tamper row: **landed by F22** as
+    `caps-manifest-empty-normal-units` (D77 named F15, which deliberately
+    left it: the only route is a byte mutation of a *nested* unit's `kind`,
+    which needed F25's span primitive).
   - R's `VerifyError::Decode` wrapper surfaces all nineteen unchanged (§2), so
     R's universe grows by nineteen without R minting anything.
 - **2026-07-28 (M0 wave 5, D82)** — R appended one code in its unprefixed

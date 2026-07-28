@@ -19,7 +19,7 @@
 //!   the only route) — landed by [`super::tamper_rows_caps`];
 //! - most of F24's `cbor-` codes, which need a mutation at a nested
 //!   `tstr`/`uint`/container rather than at a top-level head — landed by
-//!   [`super::tamper_rows_cbor`];
+//!   `super::tamper_rows_cbor`;
 //! - per-layer variants of `cbor-truncated`, which need a cut at a chosen
 //!   item boundary.
 //!
@@ -332,10 +332,12 @@ pub fn canonical_head(major: u8, arg: u64) -> Vec<u8> {
     }
 }
 
-/// Major type 4 (array).
-pub const MAJOR_ARRAY: u8 = 4;
+/// Major type 0 (unsigned integer).
+pub const MAJOR_UINT: u8 = 0;
 /// Major type 2 (byte string).
 pub const MAJOR_BYTES: u8 = 2;
+/// Major type 4 (array).
+pub const MAJOR_ARRAY: u8 = 4;
 
 // ---------------------------------------------------------------------------
 // exhaustive enumeration (the agreement check's engine)

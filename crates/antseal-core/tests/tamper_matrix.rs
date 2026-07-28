@@ -402,10 +402,11 @@ const ROWS: &[TamperRow] = &[
 /// both sit in one registry.
 ///
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
-/// tree), R7 (structural), R8 (pipeline integration) and F15 (format) are
-/// present; A21's M2 anchor rows follow.
+/// tree), R7 (structural), R8 (pipeline integration), F15 (format) and F22
+/// (caps + D77's mirror-only shape) are present; A21's M2 anchor rows follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_caps::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_format::ROWS);
@@ -480,11 +481,11 @@ fn seeded_rows_span_multiple_domains() {
 /// at — is this target's.
 #[test]
 fn the_format_fixture_table_agrees_with_the_live_registry() {
-    use antseal_core::test_util::tamper_rows_format::FIXTURES;
+    use antseal_core::test_util::tamper_rows_format::all_fixtures;
 
     let rows = all_rows();
     let mut claimed = 0usize;
-    for fixture in FIXTURES {
+    for fixture in all_fixtures() {
         let Some(row_id) = fixture.row else {
             continue;
         };
@@ -504,8 +505,10 @@ fn the_format_fixture_table_agrees_with_the_live_registry() {
         claimed += 1;
     }
     assert!(
-        claimed >= antseal_core::test_util::tamper_rows_format::ROWS.len(),
-        "every F15 row must be backed by at least one fixture"
+        claimed
+            >= antseal_core::test_util::tamper_rows_format::ROWS.len()
+                + antseal_core::test_util::tamper_rows_caps::ROWS.len(),
+        "every format-level row must be backed by at least one fixture"
     );
 }
 

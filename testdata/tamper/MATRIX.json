@@ -725,6 +725,31 @@
       "row_id": "content-fine-root-leaf-seed-tail-not-zero",
       "owner": "G",
       "why": "D83: a level == d cover payload's upper 16 bytes are never read as key material, so v1 fixes them at zero and checks them. Before D83 this mutation had NO observable effect — the row was unlandable as written, which is what forced the decision. The fixture flips one bit of byte 16..32 of a leaf-level cover entry in an odd-boundary reveal (n = 6, reveal {2}, node (3,2))."
+    },
+    {
+      "row_id": "caps-manifest-empty-normal-units",
+      "owner": "F",
+      "why": "D77 section 6 names a row for `manifest-empty-normal-units` and F15 deliberately did not take it: `FileEntry::new` refuses to construct a mirror-only file, so the only route is a byte mutation of a NESTED unit's `kind`, which needed F25's span primitive. Not named at line 168 — the enumeration predates D77. Kept as a row because the shape it rejects would leave a file's `canon_commit`/`raw_commit` permanently unopenable, the condition D28 rationale 1 exists to prevent."
+    },
+    {
+      "row_id": "caps-manifest-too-many-units",
+      "owner": "F",
+      "why": "One representative of `ManifestError::ListTooLong`, whose two discriminants F11 minted with no row and no named owner (tasks/F.md F22). `Units` rather than `Files` because it is the work-global `DecodeBudget` (D10 section 1), the one cap in the table whose accounting is not a plain per-head comparison. The other discriminant is a named non-row in `antseal_core::test_util::tamper_rows_caps::DELIBERATE_NON_ROWS`. Line 168's enumeration predates the cap constants, so the 1:1 spec mapping stays honest."
+    },
+    {
+      "row_id": "caps-manifest-too-large",
+      "owner": "F",
+      "why": "The sole `ManifestError::InputTooLarge` code. Its bundle-side twin `bundle-too-large` already has a row (`cbor-oversized`); this is the layer-2 half, and it fails at the manifest ENVELOPE rather than the bundle, so the pair also pins D10 section 5's stage-1 ordering. Synthesized from a recipe: the mutation is a length (MAX_MANIFEST_BYTES + 1), so 16 MiB never enters the repository."
+    },
+    {
+      "row_id": "caps-bundle-too-many-full-reveals",
+      "owner": "F",
+      "why": "One representative of `BundleError::ListTooLong`, whose ten discriminants F11 minted with no row and no named owner. All ten come from the same `decode_section` cap check on a claimed array count, and `tests/parser_caps.rs` already drives each through the real decode at-cap and cap+1 — so what a row adds (cross-domain distinctness, the no-panic guard, MATRIX visibility) is a property of the error VARIANT, not of the discriminant. The nine others are named non-rows in `tamper_rows_caps::DELIBERATE_NON_ROWS`."
+    },
+    {
+      "row_id": "caps-bundle-cert-too-large",
+      "owner": "F",
+      "why": "One representative of `BundleError::ArtifactTooLarge`, whose four discriminants F11 minted with no row and no named owner. `Certificate` because its cap (64 KiB) is the smallest of the four, and F3 refuses an over-claimed `bstr` length before the schema layer sees it — so the bytes must really be present, and a fixture for `ots`/`token` would cost 1 MiB, for `payload` 16 MiB, for the same construct. Synthesized from a recipe. The three others are named non-rows in `tamper_rows_caps::DELIBERATE_NON_ROWS`."
     }
   ],
   "non_rows": [

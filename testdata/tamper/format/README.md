@@ -1,9 +1,21 @@
-# tamper/format/ — the format-level tamper fixtures (F15)
+# tamper/format/ — the format-level tamper fixtures (F15, F22, F24)
 
-Twenty single mutations of the F12/F13 golden vectors' own bytes, each
-mapped to the exact `(code, layer)` pair the strict decode surface must
-report. Committed so a third-party verifier can be checked against them
-without running any antseal code.
+Single mutations of the F12/F13 golden vectors' own bytes, each mapped to
+the exact `(code, layer)` pair the strict decode surface must report.
+Committed so a third-party verifier can be checked against them without
+running any antseal code.
+
+The set is **one artifact assembled from several task-owned slices**, in
+emit order:
+
+| slice | fixtures | what it covers |
+| --- | --- | --- |
+| F15 (`test_util::tamper_rows_format`) | 20 | the line-73 canonicality classes and the line-168 named mutations, at every layer |
+| F22 (`test_util::tamper_rows_caps`) | 5 | one representative per D10 cap-producing error *variant*, plus D77's mirror-only shape |
+| F24 (`test_util::tamper_rows_cbor`) | 5 | the reachable-but-unrowed `cbor-` codes, at nested items |
+
+`FIXTURES.json` describes all of them at once; the slices are separate
+source files only so that concurrent work merges as a file add.
 
 | File | What it is |
 | --- | --- |
@@ -33,11 +45,11 @@ row}`.
   `Manifest::decode` and `SealProof::decode` attribute a layer to every
   rejection, canonicality and schema alike (D86).
 - **`source.kind`** is `file` (bytes committed here) or `synthesized` (a
-  recipe). Exactly one fixture is synthesized — see below.
+  recipe plus the length it produces) — see below.
 - **`row`** names the Q7 tamper-matrix row this fixture is evidence for, or
   `null`.
 
-## Why only seven of the twenty are rows
+## Why most fixtures are not rows
 
 A **fixture** says "these bytes, this surface, this outcome". A **row**
 additionally claims *distinctness*: Q7's `check_registry` refuses two rows
@@ -56,26 +68,38 @@ and friends to make them four rows would fork one taxonomy into four, which
 The resolution is that the *fixture* is the finer instrument: it is checked
 on `(code, layer)`, which **is** pairwise informative across the layer
 variants, while a row is registered only where the code is not already
-claimed. The seven rows are `cbor-non-shortest-length`,
+claimed. F15's seven rows are `cbor-non-shortest-length`,
 `manifest-unknown-key`, `manifest-reserved-key`, `bundle-unknown-key`,
 `bundle-reserved-key`, `cbor-oversized` (code `bundle-too-large`) and
-`cbor-nesting-too-deep`.
+`cbor-nesting-too-deep`; every F22 and F24 fixture carries one, because
+each was added precisely to claim a code nothing else did.
 
 The four mutations MVP-SPEC.md line 168 names by hand — duplicate key,
 non-shortest int, indefinite length, trailing bytes — keep the rows Q7
 seeded for them and gain a **real manifest-body fixture** here: four
 separate fixtures, four distinct errors, all at the body layer.
 
-## The one fixture that is a recipe, not a file
+## The fixtures that are recipes, not files
 
-`bundle-oversized`'s mutation is a *length*: `MAX_BUNDLE_BYTES + 1` =
-268 435 457 bytes. Committing 256 MiB to pin an `O(1)` comparison would be
-absurd, so the table records the recipe — "the base bundle, zero-padded to
-`MAX_BUNDLE_BYTES + 1` bytes" — and the harness synthesizes it. The buffer
-is zero-allocated and `BundleV1::decode`'s first statement is the length
-check (decision D10 §5), so nothing past the copied prefix is ever read. A
-test asserts that no *committed* fixture here exceeds 64 KiB, so the recipe
-cannot quietly become a file.
+Three mutations are *lengths*, and a length is expressed as a recipe so the
+bytes it names never enter the repository:
+
+| fixture | length | why it cannot be committed |
+| --- | --- | --- |
+| `bundle-oversized` | `MAX_BUNDLE_BYTES + 1` = 268 435 457 | 256 MiB to pin an `O(1)` comparison |
+| `manifest-oversized` | `MAX_MANIFEST_BYTES + 1` = 16 777 217 | 16 MiB, same shape one layer in |
+| `bundle-cert-over-cap` | 64 KiB + 1 of certificate | over the 64 KiB ceiling below, and F3 refuses an over-*claimed* `bstr` length before the schema sees it, so the bytes must really be present |
+
+The two size-cap buffers are zero-allocated and the size check is the first
+statement of the relevant decode (decision D10 §5), so nothing past the
+copied prefix is ever read. A test asserts that no *committed* fixture here
+exceeds 64 KiB, so a recipe cannot quietly become a file.
+
+`bundle-cert-over-cap`'s base is a third artifact — R6's every-anchor-kind
+bundle — because neither committed base carries an anchor artifact at all
+(the UNANCHORED bundle's `ots_anchors` and `tsa_anchors` are both empty).
+It is not committed here for the same reason the fixture is not: only a
+synthesized fixture uses it.
 
 ## Regenerating
 

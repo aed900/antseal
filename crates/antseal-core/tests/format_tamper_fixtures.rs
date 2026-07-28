@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 
 use antseal_core::codec::caps::MAX_BUNDLE_BYTES;
 use antseal_core::test_util::tamper_rows_format::{
-    FIXTURES, FormatFixture, Surface, base_bundle, base_manifest, run_surface,
+    FormatFixture, Surface, all_fixtures, base_bundle, base_manifest, run_surface,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -162,11 +162,39 @@ fn built(fixture: &FormatFixture) -> Vec<u8> {
     (fixture.build)().unwrap_or_else(|| panic!("fixture `{}` failed to build", fixture.id))
 }
 
+/// The recipe a **synthesized** fixture follows, by id.
+///
+/// A length-valued mutation is expressed as a recipe so the length it names
+/// never enters the repository (tasks/F.md F22). Keyed by fixture id rather
+/// than carried on [`FormatFixture`] deliberately: the recipe is prose about
+/// the mutation, it is read only here, and the fixture struct is edited by
+/// every task that adds a fixture — so a field would put a per-fixture diff
+/// on a shared declaration for a string only the emitter uses.
+///
+/// A `committed: false` fixture with no recipe fails the emitter loudly.
+fn recipe_for(id: &str) -> &'static str {
+    match id {
+        "bundle-oversized" => "the base bundle, zero-padded to MAX_BUNDLE_BYTES + 1 bytes",
+        "manifest-oversized" => {
+            "the base manifest envelope, zero-padded to MAX_MANIFEST_BYTES + 1 bytes"
+        }
+        "bundle-cert-over-cap" => {
+            "the every-anchor-kind bundle (R6 `AnchorSet::EveryKind`, receipt excluded, over the \
+             `single binary` ed25519-only work), with `tsa_anchors[0].intermediates[0]` replaced \
+             by a bstr of MAX_CERT_BYTES + 1 zero bytes"
+        }
+        other => panic!(
+            "fixture `{other}` is not committed and has no recipe — a synthesized fixture must \
+             say how to rebuild it, or nobody can"
+        ),
+    }
+}
+
 /// The JSON entry for one fixture (the emitter's row, and the shape every
 /// check below reads).
 fn table_entry(fixture: &FormatFixture) -> Value {
+    let bytes = built(fixture);
     let source = if fixture.committed {
-        let bytes = built(fixture);
         json!({
             "kind": "file",
             "file": format!("{}.cbor", fixture.id),
@@ -174,12 +202,10 @@ fn table_entry(fixture: &FormatFixture) -> Value {
             "sha256": digest(&bytes),
         })
     } else {
-        // The one length-valued mutation: an input of size n, expressed as a
-        // recipe so n bytes never enter the repository (tasks/F.md F22).
         json!({
             "kind": "synthesized",
-            "recipe": "the base bundle, zero-padded to MAX_BUNDLE_BYTES + 1 bytes",
-            "len": MAX_BUNDLE_BYTES + 1,
+            "recipe": recipe_for(fixture.id),
+            "len": bytes.len(),
         })
     };
     json!({
@@ -255,7 +281,7 @@ fn build_table() -> Value {
             "rejections alike (decision D86)."
         ],
         "bases": bases,
-        "fixtures": FIXTURES.iter().map(table_entry).collect::<Vec<_>>(),
+        "fixtures": all_fixtures().into_iter().map(table_entry).collect::<Vec<_>>(),
     })
 }
 
@@ -278,7 +304,7 @@ fn the_committed_mapping_table_regenerates() {
             .iter()
             .filter_map(|f| f.get("id").and_then(Value::as_str))
             .collect();
-        let rebuilt_ids: Vec<&str> = FIXTURES.iter().map(|f| f.id).collect();
+        let rebuilt_ids: Vec<&str> = all_fixtures().iter().map(|f| f.id).collect();
         panic!(
             "testdata/tamper/format/FIXTURES.json is stale.\n  committed ids: \
              {committed_ids:?}\n  library ids:   {rebuilt_ids:?}\nRegenerate with:\n  cargo test \
@@ -348,7 +374,7 @@ fn the_committed_files_and_the_table_name_the_same_set() {
 #[test]
 fn every_committed_fixture_matches_its_constructor() {
     let root = table();
-    for (entry, fixture) in entries(&root, "fixtures").iter().zip(FIXTURES) {
+    for (entry, fixture) in entries(&root, "fixtures").iter().zip(all_fixtures()) {
         let source = entry.get("source").expect("source");
         if source.get("kind").and_then(Value::as_str) != Some("file") {
             continue;
@@ -386,7 +412,7 @@ fn every_committed_fixture_matches_its_constructor() {
 #[test]
 fn every_fixture_fails_with_its_mapped_error() {
     let root = table();
-    for (entry, fixture) in entries(&root, "fixtures").iter().zip(FIXTURES) {
+    for (entry, fixture) in entries(&root, "fixtures").iter().zip(all_fixtures()) {
         let source = entry.get("source").expect("source");
         let bytes = if source.get("kind").and_then(Value::as_str) == Some("file") {
             read(&dir().join(field(source, "file", fixture.id)))
@@ -431,7 +457,7 @@ fn every_fixture_fails_with_its_mapped_error() {
 #[test]
 fn a_null_layer_means_the_surface_is_not_layered() {
     let root = table();
-    for (entry, fixture) in entries(&root, "fixtures").iter().zip(FIXTURES) {
+    for (entry, fixture) in entries(&root, "fixtures").iter().zip(all_fixtures()) {
         let layered = !matches!(fixture.surface, Surface::Canonical);
         assert_eq!(
             fixture.layer.is_some(),
@@ -453,13 +479,13 @@ fn a_null_layer_means_the_surface_is_not_layered() {
     // Both halves of the "iff" are witnessed, so the test cannot pass by
     // vacuity if a future edit leaves only one kind of surface behind.
     assert!(
-        FIXTURES
+        all_fixtures()
             .iter()
             .any(|f| matches!(f.surface, Surface::Canonical)),
         "no unlayered-surface fixture is left to witness the null case"
     );
     assert!(
-        FIXTURES
+        all_fixtures()
             .iter()
             .any(|f| !matches!(f.surface, Surface::Canonical)),
         "no layered-surface fixture is left to witness the non-null case"
@@ -615,7 +641,7 @@ fn emit_format_tamper_fixtures() {
         println!("wrote {} ({} B)", path.display(), bytes.len());
     }
 
-    for fixture in FIXTURES {
+    for fixture in all_fixtures() {
         if !fixture.committed {
             println!("skipped {} (synthesized: a length, not bytes)", fixture.id);
             continue;
