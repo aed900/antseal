@@ -44,10 +44,63 @@ invariants are generated identically everywhere and never redefined per
 crate (Q3 accept). First residents:
 
 - `proptest_config(seed)` — the project config builder (§3);
+- `integration_test_config(seed, path)` — the same, with the failure
+  persistence a `tests/` suite needs (§5);
 - `unit_tiling(max_units, max_unit_len)` — work-shaped unit tilings:
   sorted, non-overlapping, contiguous ranges exactly tiling
   `[0, total_size)`, plus the empty-work case (one empty unit), per the
   MVP-SPEC.md line 121/78 invariants.
+
+Added at **F16** (codec properties):
+
+- `GenCaps` / `GenCaps::PROFILE` — the **test-only reduced-cap profile**
+  (§2.1 below);
+- `arb_file`, `arb_manifest_body`, `arb_manifest_bytes` — arbitrary
+  *schema-valid* manifests. Schema-valid is the load-bearing word: a
+  generator that ignored `FileEntry::new`'s coverage rule or
+  `ManifestBodyV1::new`'s unit-ordinal rule would spend the whole corpus on
+  rejections rather than on the property under test.
+- `arb_bundle_bytes` — arbitrary schema-valid `.sealproof` bytes, built
+  **through R6's `bundle_fixtures::build`** rather than by assembling
+  `BundleParts` directly. A second bundle builder would be a second thing to
+  keep correct and the first one to drift.
+- `canonical_manifest_pair()` — a *deterministic* canonical
+  `(envelope, body)` pair. Deliberately not a strategy: F16's coverage
+  assertion must not depend on what a random corpus happened to reach, or a
+  mutation class could silently go untested on a lucky run.
+- `ItemSpan` / `scan_item` / `MutationKind` / `mutate` — the canonicality
+  mutation kit: a byte-level walk over *our own encoder's* output plus the
+  twelve mutations (int widening, length-head widening, key reorder,
+  duplicate key, indefinite rewrite, trailing byte, float/simple/tag/type
+  substitution, invalid UTF-8, truncation), each with the exact `cbor-*`
+  code it must produce. `scan_item` is a mutation aid, **not** a second
+  parser: it assumes canonical input and nothing security-relevant may be
+  built on it.
+
+### 2.1 The reduced-cap profile (F16, flagged by D10 §5)
+
+Generating at the production caps is not viable in a property corpus:
+`MAX_UNIT_COUNT` is 65 536 and `MAX_BUNDLE_BYTES` is 256 MiB. Property
+suites therefore generate against `GenCaps::PROFILE` and leave the real
+boundaries to F11's dedicated at-cap/cap+1 matrix
+(`crates/antseal-core/tests/parser_caps.rs`), which exercises each cap once
+instead of thousands of times.
+
+**It cannot leak into a production path, structurally.** `GenCaps` is a
+*generation* bound; nothing in `codec::caps` — the module the decoders
+consult — knows the type exists. There is no setter, no `cfg` switch and no
+global, so a production decoder enforces D10's frozen numbers regardless of
+what a test generates. That is what D10 §11 requires: a per-verifier cap
+knob would let the CLI and the WASM page disagree about whether a bundle is
+valid, the exact divergence MVP-SPEC.md line 73 exists to prevent. The
+module is additionally behind `test-util`, which no production build enables.
+
+**The profile may only ever shrink.** `GenCaps::assert_within_production_caps`
+asserts every field `<=` its production counterpart (and that
+`max_files × max_units_per_file` fits the work-global unit budget), and F16
+calls it as a standalone test. A profile *above* an enforced cap would
+generate inputs the decoder refuses, and every round-trip property would
+then pass vacuously on the rejection instead of exercising the codec.
 
 Worked example consuming both (strategy-contract property + real
 crate-code property): `crates/antseal-core/tests/proptest_example.rs`.

@@ -996,7 +996,10 @@ const fn is_covered(fine_tree: FineTree, kind: UnitKind) -> bool {
 /// verifier holding a decoded manifest has no way to re-encode the body —
 /// the "verifiers never re-encode" rule of spec line 74 is enforced by
 /// the borrow checker rather than by documentation.
-#[derive(Debug, PartialEq, Eq)]
+// `Clone` is what lets F16 state "encoding is a function of the value alone"
+// — encode the *same* body twice and byte-compare. It carries no secret
+// material (project rule 6): every field is a public wire value.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestBodyV1 {
     app_version: String,
     seal_id: SealId,
