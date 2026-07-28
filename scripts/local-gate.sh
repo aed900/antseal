@@ -28,4 +28,24 @@ run fmt    cargo fmt --all -- --check
 run clippy cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 run test   cargo test --workspace --all-features --locked
 run wasm32 cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+
+# F14 — the independent cross-check (decision D31; contract:
+# docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
+# it shares no code with the crate it checks.
+#
+# Exit 2 means the dev tool is not provisioned on THIS machine. That is a
+# visible SKIP locally, with the one-line fix printed — and a hard FAILURE in
+# CI, where the `cross-check` lane passes --require so a freeze-gate input can
+# never go quietly missing.
+crosscheck=$(scripts/cross-check.sh --check 2>&1)
+case $? in
+  0) printf '  %-16s PASS  (%s)\n' cross-check \
+       "$(printf '%s' "$crosscheck" | tail -1 | cut -c1-90)" ;;
+  2) printf '  %-16s SKIP  (cbor2 not provisioned — scripts/cross-check.sh --setup)\n' \
+       cross-check ;;
+  *) printf '  %-16s FAIL\n' cross-check
+     printf '%s\n' "$crosscheck" | tail -25
+     fail=1 ;;
+esac
+
 exit $fail

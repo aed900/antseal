@@ -99,8 +99,18 @@ fallout, with this checklist completed in the PR description:
   both the per-PR `audit-deny` job and the weekly `advisory-cron`
   workflow, and the same version is what "run cargo-deny locally" means),
   **Python `cbor2` `==6.1.3`** (the D12 independent CBOR cross-check the
-  M0 golden-vector freeze gate depends on; F14 installs it — never enters
-  any Rust dependency tree). The M3 reproducible wasm build makes the
+  M0 golden-vector freeze gate depends on — never enters any Rust
+  dependency tree; the `the_cbor2_pin_is_exact_and_dev_tool_only` test
+  refuses to let its name appear in a manifest). F14 landed the pin as
+  `requirements-crosscheck.txt` (pip `--require-hashes`, D31): a SHA-256 per
+  artifact PyPI publishes for 6.1.3, from which — on a machine with no pip —
+  `scripts/cross-check.sh --setup` fetches and verifies a wheel into a cache
+  **outside the repo**
+  (`${XDG_CACHE_HOME:-~/.cache}/antseal/cbor2-6.1.3`). Two facts that
+  shaped that: cbor2 6.x is a compiled **Rust/PyO3** extension with no
+  pure-Python fallback (so a source install would want a Rust toolchain and
+  dev headers), and a wheel is a zip — so the setup step needs no `pip`,
+  no `ensurepip` and no root. The M3 reproducible wasm build makes the
   wasm-pack/wasm-bindgen versions format-provenance-relevant, exactly like
   the toolchain itself.
 
