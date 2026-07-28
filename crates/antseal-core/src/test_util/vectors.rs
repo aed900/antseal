@@ -66,6 +66,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "signatures",
     super::vectors_sig_reject::KIND,
     super::vectors_fine_tree::KIND,
+    super::vectors_report::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -234,6 +235,11 @@ pub fn execute_vector_bytes(
             envelope.expect,
             envelope.description,
         ),
+        // R9's verification-report vectors: canonical bundles -> expected
+        // report bytes, the native<->WASM bit-match medium.
+        super::vectors_report::KIND => {
+            super::vectors_report::execute(envelope.inputs, envelope.expect, envelope.description)
+        }
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }

@@ -50,6 +50,13 @@
 //!   **MSB-first** GGM leaf indexing at the unbalanced `n = 6` case
 //!   (MVP-SPEC.md lines 96, 169), and the regenerator
 //!   `tests/fine_tree_vectors.rs` diffs the committed document against.
+//! - [`vectors_report`] — the `report` vector kind (R9): canonical bundles
+//!   mapped to the **expected serialized `VerificationReport`** for every M0
+//!   shape (MVP-SPEC.md lines 153, 167, 169), byte-pinned in the D29
+//!   encoding. Its cases name R6 [`bundle_fixtures::shapes`] handles, which
+//!   both lanes build in-process — that is what makes the native↔WASM
+//!   bit-match over report bytes possible at all. Regenerator:
+//!   `tests/report_vectors.rs`.
 //! - [`vectors_sig_reject`] — the `sig-reject` vector kind (C15): the
 //!   committed per-algorithm signature reject-vector suites and their
 //!   executor, which routes every case through C14's full verification
@@ -88,6 +95,7 @@ pub mod tamper_rows_fine_tree;
 pub mod tamper_rows_structural;
 pub mod vectors;
 pub mod vectors_fine_tree;
+pub mod vectors_report;
 pub mod vectors_sig_reject;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component
