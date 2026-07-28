@@ -3,11 +3,69 @@
   "registry_version": 1,
   "status": "draft-until-Q14",
   "date": "2026-07-27",
+  "date_bundle_slice": "2026-07-28",
   "doc": "docs/format/registry-v1.md",
   "open_decisions": {
     "D8": "whole-registry sign-off: key assignments, reserved ranges, signatures container, time encoding, byte-range representation, explicit file_id",
-    "D9": "GGM node-address representation — co-freeze with G8; candidate A (level,index) drafted primary",
-    "D17": "sig_policy algorithm-ID numeric values — proposed 0=ed25519, 1=ml-dsa-65, 2-15 reserved"
+    "D17": "sig_policy algorithm-ID numeric values — proposed 0=ed25519, 1=ml-dsa-65, 2-15 reserved; ratified in code at M0 wave 3, formal flip at Q14"
+  },
+  "resolved_decisions": {
+    "D9": "RESOLVED 2026-07-28 — GGM node address = (level, index) uint pair (candidate A); docs/decisions/D9-ggm-node-address.md. Former pending-D9 items now carry `proposed`.",
+    "D11": "RESOLVED — Autonomi address = 32 bytes (XorName, BLAKE3-256).",
+    "D23": "RESOLVED 2026-07-27 — a file's raw mirror is that file's last unit; at most one per file. Seal-side construction rule; parse position-agnostic.",
+    "D28": "RESOLVED 2026-07-28 — full-reveal strictness is STRICT (hard-fail): a bundle revealing every kind=Normal unit of a file MUST carry that file's file_salt, plus s_root iff the file has a fine tree. Rider 1 (binding on F8): reveal shape is DERIVED from the signed unit table and the revealed set, NEVER declared — the bundle carries no reveal-shape discriminant. docs/decisions/D28-full-reveal-strictness.md"
+  },
+  "fed_but_not_resolved_here": [
+    { "decision": "D74", "topic": "extraneous s_root on a FineTree::Absent full reveal", "bites_at": "full_reveal key 2", "contribution": "the violation row is left unassigned; the permissive reading is explicitly not encoded. Recommendation on record: reject as full-reveal-s-root-without-fine-tree", "owner": "R4/F8" },
+    { "decision": "D75", "topic": "does a full reveal ship per-unit covers AND s_root?", "bites_at": "covered_reveal key 3 presence", "contribution": "shown key-neutral — only the presence rule and its tier move; draft leans 'both' (keeps key 3 at tier P, leaks nothing since every leaf is revealed, one decode shape). Decides whether R4's s_root rebuild is load-bearing or defence-in-depth", "owner": "F8" },
+    { "decision": "D77", "topic": "zero-non-mirror-unit file", "bites_at": "full_reveal predicate anti-vacuity clause N(F) != empty", "contribution": "recorded as the reason the clause exists; no registry change either way", "owner": "R3/F5" }
+  ],
+  "d8_feed": {
+    "doc_section": "registry-v1.md section 13",
+    "open": [
+      { "item": 1, "topic": "TSA source identity as an informational tstr (tsa_anchor key 4)", "owner": "D8" },
+      { "item": 3, "topic": "title / app_version required-may-be-empty vs optional", "owner": "D8" },
+      { "item": 4, "topic": "receipt_record internal split; confirm payload carries the full v1.1 capture", "owner": "D8 with A/S" },
+      { "item": 5, "topic": "which anchor_status values are legal as recorded, per kind; OTS fetch_date semantics; anchor list order", "owner": "D8 with A/R" },
+      { "item": 8, "topic": "may bundle schema validation open the embedded manifest? decides which error family cross-side rejections land in", "owner": "D8 with F8/F9/R", "added": "2026-07-28" },
+      { "item": 9, "topic": "is the OTS upgrade group (keys 2-4) tied to status == attested, or free-standing?", "owner": "D8 with A", "added": "2026-07-28" },
+      { "item": 10, "topic": "must a revealed unit's owning file have a touched_files entry?", "owner": "D8 with R/U", "added": "2026-07-28" }
+    ],
+    "closed": [
+      { "item": 2, "topic": "explicit file_id in per-file bundle sections", "outcome": "YES — decided in registry section 10" },
+      { "item": 6, "topic": "raw-mirror position in a file's units array", "outcome": "closed by D23" },
+      { "item": 7, "topic": "unit_id stored-and-checked", "outcome": "settled in code by F5 — stored and parse-checked" }
+    ]
+  },
+  "validation_tiers": {
+    "doc_section": "registry-v1.md section 0",
+    "proposed_rule": "bundle schema validation never consults the embedded manifest (D8 feed item 8)",
+    "tiers": [
+      { "tier": "P", "owner": "F5 (manifest) / F8 (bundle)", "decidable_from": "the single entry being decoded" },
+      { "tier": "X", "owner": "F5 / F8, same pass", "decidable_from": "the whole container being decoded" },
+      { "tier": "R", "owner": "R (verify), post-decode", "decidable_from": "bundle plus embedded manifest, or crypto" }
+    ]
+  },
+  "decode_layers": {
+    "doc_section": "registry-v1.md section 7.6.3",
+    "layers": [
+      { "layer": 1, "input": "the whole .sealproof file", "decoder": "F8/F9 bundle decode", "error_class": "bundle-schema (new, F9)" },
+      { "layer": 2, "input": "bundle key 1 bstr contents", "decoder": "manifest::Manifest::decode", "error_class": "ManifestError::Envelope" },
+      { "layer": 3, "input": "envelope key 0 bstr contents", "decoder": "manifest::body::ManifestBodyV1::decode", "error_class": "ManifestError::Body" }
+    ],
+    "zero_copy_requirement": "layer 2 must receive a sub-slice of the bundle input, never a copy: Manifest's guarantee that work_id and signature pre-images are the received bytes holds by construction only for a borrowed slice",
+    "max_container_depth": { "bundle_chain": 5, "manifest_chain": 6, "cap_basis": "max of the two, not the sum — layer 2 starts a fresh decoder over the bstr contents", "note": "input to F11" }
+  },
+  "checked_absences": {
+    "doc_section": "registry-v1.md section 7.6.1",
+    "note": "F8's checklist test asserts these are absent, rather than merely not implementing them",
+    "items": [
+      { "absent": "per-unit nonce in covered_reveal / noncovered_reveal", "reason": "nonces come from the manifest — single source of truth (MVP-SPEC.md line 114)" },
+      { "absent": "any signature container at bundle level", "reason": "the bundle is unsigned; authority is the embedded signed manifest plus the anchor artifacts. Signing the bundle would invite trusting the assembler, who is the sealer (line 121)" },
+      { "absent": "work_id / anchor_digest / seal_id at bundle level", "reason": "all derived; a stored copy could contradict the bytes it summarizes" },
+      { "absent": "anchor kind/type field", "reason": "positional — bundle key 3 is OTS, key 4 is TSA (section 7.6.2); the illegal cross-placement is unrepresentable" },
+      { "absent": "any reveal-shape discriminant (is_full_reveal, reveal_mode, reveal_shape) at any level", "reason": "D28 rider 1 — reveal shape is DERIVED from the signed unit table and the revealed set. A declared shape is sealer-forgeable: declaring 'partial' while revealing every unit would smuggle back the permissive full-reveal option D28 rejected. BINDING CONSTRAINT ON F8 — do not add this field", "binding": true }
+    ]
   },
   "profile": {
     "encoding": "RFC 8949 section 4.2.1 Core Deterministic (MVP-SPEC.md line 73; minicbor =2.3.0 per D7)",
@@ -112,8 +170,14 @@
     },
     {
       "name": "ggm_node_address",
-      "status": "pending-D9",
-      "doc": "candidate A (recommended): level = distance from grid root (root 0, leaves d), index < 2^level; path bits = bits of index MSB-first; co-freeze with G8",
+      "status": "proposed",
+      "doc": "D9 RESOLVED 2026-07-28 — candidate A: level = distance from grid root (root 0, leaves d), index < 2^level; path bits = bits of index MSB-first. Semantic counterpart: content::ggm::NodeAddress (G8), MAX_LEVEL = 64",
+      "validity": [
+        { "check": "level <= 64", "tier": "P", "note": "do this first — it bounds 1 << level so index < 2^level cannot overflow" },
+        { "check": "index < 2^level", "tier": "P" },
+        { "check": "level <= d", "tier": "R", "note": "needs the file size from the embedded manifest" },
+        { "check": "deepest-slot rule; leaf-exactness; no-ancestor-seed", "tier": "R" }
+      ],
       "elements": [
         { "index": 0, "name": "level", "type": "uint" },
         { "index": 1, "name": "index", "type": "uint" }
@@ -121,8 +185,8 @@
     },
     {
       "name": "cover_entry",
-      "status": "pending-D9",
-      "doc": "one disclosed GGM sub-cover seed; leading elements = ggm_node_address",
+      "status": "proposed",
+      "doc": "one disclosed GGM sub-cover seed; leading elements = ggm_node_address (D9 resolved). 3-element definite array; wrong element count is a shape error. Arrays reserve nothing (section 9)",
       "elements": [
         { "index": 0, "name": "level", "type": "uint" },
         { "index": 1, "name": "index", "type": "uint" },
@@ -131,8 +195,8 @@
     },
     {
       "name": "path_node",
-      "status": "pending-D9",
-      "doc": "one boundary Merkle sibling; content-tree canonical slot = deepest (registry-v1.md section 5)",
+      "status": "proposed",
+      "doc": "one boundary Merkle sibling; content-tree canonical slot = deepest (registry-v1.md section 5). 3-element definite array (D9 resolved)",
       "elements": [
         { "index": 0, "name": "level", "type": "uint" },
         { "index": 1, "name": "index", "type": "uint" },
@@ -212,116 +276,160 @@
     {
       "name": "bundle",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 112-114 .sealproof top level; version discriminant at key 0 encodes first",
+      "doc": "MVP-SPEC.md lines 112-114 .sealproof top level; version discriminant at key 0 encodes first. Every key required except the opt-in receipt, so one logical bundle has exactly one shape (required-may-be-empty, never absent-vs-empty)",
       "fields": [
-        { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "= 1 in v1; bundle versions independently of the manifest" },
-        { "key": 1, "name": "manifest", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "full plaintext manifest envelope bytes; anchor_digest = SHA-256 of exactly these bytes; nested strict decode (F9)" },
-        { "key": 2, "name": "storage_record", "type": "map", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "storage_record" },
-        { "key": 3, "name": "ots_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "ots_anchor elements; empty-anchor bundle = both anchor arrays empty" },
-        { "key": 4, "name": "tsa_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "tsa_anchor elements" },
-        { "key": 5, "name": "receipt", "type": "map", "presence": "optional", "rule": "present iff sealer passed --include-receipt", "length": null, "status": "proposed", "notes": "receipt_record" },
-        { "key": 6, "name": "covered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "covered_reveal elements, strictly ascending unit_id" },
-        { "key": 7, "name": "noncovered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "noncovered_reveal elements, strictly ascending unit_id; raw-mirror reveals ride here" },
-        { "key": 8, "name": "touched_files", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "touched_file elements, strictly ascending file_id" },
-        { "key": 9, "name": "full_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "full_reveal elements, strictly ascending file_id; every file_id also in touched_files (R)" }
+        { "key": 0, "name": "format_version", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "= 1 in v1; versions independently of the manifest (line 123) — F10 dispatches the two discriminants separately and never infers one from the other" },
+        { "key": 1, "name": "manifest", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "full plaintext manifest envelope bytes exactly as anchored; anchor_digest = SHA-256 of exactly these bytes; nested strict decode as layer 2 (see decode_layers), handed a sub-slice not a copy" },
+        { "key": 2, "name": "storage_record", "type": "map", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "storage_record" },
+        { "key": 3, "name": "ots_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "P", "status": "proposed", "notes": "ots_anchor elements; an UNANCHORED bundle is both anchor arrays empty. Anchor kind is positional — this key IS the OTS kind" },
+        { "key": 4, "name": "tsa_anchors", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "P", "status": "proposed", "notes": "tsa_anchor elements; one artifact per token, so >= 2 TSAs means >= 2 entries. Nothing in the schema requires two — under-anchoring is a verdict, not a parse error" },
+        { "key": 5, "name": "receipt", "type": "map", "presence": "optional", "rule": "no parse-decidable condition: presence IS the sealer's --include-receipt opt-in (line 110); absence is never an error and presence is never required", "length": null, "tier": "P", "status": "proposed", "notes": "receipt_record; the only optional top-level key" },
+        { "key": 6, "name": "covered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "X", "status": "proposed", "notes": "covered_reveal elements, strictly ascending unit_id" },
+        { "key": 7, "name": "noncovered_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "X", "status": "proposed", "notes": "noncovered_reveal elements, strictly ascending unit_id; raw-mirror reveals ride here (never fine-tree-covered, line 94) and by D23 sort last within their file" },
+        { "key": 8, "name": "touched_files", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "X", "status": "proposed", "notes": "touched_file elements, strictly ascending file_id" },
+        { "key": 9, "name": "full_reveals", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "X", "status": "proposed", "notes": "full_reveal elements, strictly ascending file_id" }
       ],
+      "cross_section_rules": [
+        { "rule": "covered_reveals and noncovered_reveals unit_id sets are disjoint", "tier": "X", "status": "proposed", "notes": "both lists are in the bundle; R's DuplicateUnitReveal remains the manifest-aware backstop" },
+        { "rule": "every full_reveals file_id also appears in touched_files", "tier": "X", "status": "proposed", "notes": "X, not R — a full reveal whose path was never disclosed is malformed on its face" },
+        { "rule": "which reveal array a unit belongs in (covered iff its file has fine_tree_present == 1 and kind != raw-mirror)", "tier": "R", "status": "proposed", "notes": "needs the embedded manifest" },
+        { "rule": "every unit_id / file_id resolves into the manifest tables", "tier": "R", "status": "proposed" }
+      ],
+      "canonical_concatenation_order": {
+        "sequence": ["covered_reveals", "noncovered_reveals"],
+        "status": "proposed",
+        "notes": "section key order; fixes the population order of verify::structural::BundleView.revealed_unit_ids so first-duplicate reporting is deterministic"
+      },
       "reserved": [
-        { "first": 10, "last": 10, "purpose": "range_reveals — v1.1 sub-unit arbitrary-byte-range covers + boundary paths (spec lines 114/161); reject-if-present in v1", "status": "proposed" },
+        { "first": 10, "last": 10, "name": "range_reveals", "purpose": "v1.1 sub-unit arbitrary-byte-range covers + boundary paths (spec lines 114/161) — the reveal --range tooling slot; reject-if-present in v1 with F10's reserved-slot error, same error as a nameless reserved key", "shape_owner": "G/R", "status": "proposed" },
         { "first": 11, "last": 23, "purpose": "future v1.x sections", "status": "proposed" }
       ]
     },
     {
       "name": "storage_record",
       "status": "proposed",
-      "doc": "MVP-SPEC.md line 98 manifest storage record {address, nonce, k_m}",
+      "doc": "MVP-SPEC.md line 98 manifest storage record {address, nonce, k_m} — the MANIFEST's own triple, not a per-unit one (per-unit address/nonce live in unit_entry keys 5-6). Required even though no evidence-layer check consumes it: an absent record would be a second bundle shape, and the storage-linkage layer must be able to say the persistence claim failed rather than that none was made",
       "fields": [
-        { "key": 0, "name": "address", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
-        { "key": 1, "name": "nonce", "type": "bstr", "presence": "required", "rule": null, "length": 24, "status": "proposed", "notes": null },
-        { "key": 2, "name": "k_m", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null }
+        { "key": 0, "name": "address", "type": "bstr", "presence": "required", "rule": null, "length": 32, "tier": "P", "status": "proposed", "notes": "Autonomi address of the ENCRYPTED manifest copy (D11)" },
+        { "key": 1, "name": "nonce", "type": "bstr", "presence": "required", "rule": null, "length": 24, "tier": "P", "status": "proposed", "notes": "XChaCha20-Poly1305 nonce of that copy; manifest AEAD uses empty AAD (line 98), so no further binding field is carried" },
+        { "key": 2, "name": "k_m", "type": "bstr", "presence": "required", "rule": null, "length": 32, "tier": "P", "status": "proposed", "notes": "k_m = HKDF(W, \"manifest-key\"); discloses nothing beyond the manifest the bundle already embeds" }
       ],
       "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "ots_anchor",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 108/112-114",
+      "doc": "MVP-SPEC.md lines 108/112-114. Artifact internals stay opaque at this layer: the attestation/ops model, calendar semantics and .ots size limits are A's, at M2. This registry reserves the shape only",
+      "presence_groups": [
+        {
+          "name": "upgrade_group",
+          "keys": [2, 3, 4],
+          "rule": "all-or-nothing: an upgraded OTS anchor carries height + header + fetch date together; a not-yet-upgraded one carries none. Two of three present is malformed",
+          "tier": "X",
+          "status": "proposed",
+          "open": "whether the group is ADDITIONALLY tied to status == attested is D8 feed item 9 — the one place a parse rule would depend on a field the verifier must never trust. The all-or-nothing rule holds under either reading"
+        }
+      ],
       "fields": [
-        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted" },
-        { "key": 1, "name": "ots", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "raw .ots, opaque at this layer (A parses)" },
-        { "key": 2, "name": "block_height", "type": "uint", "presence": "optional", "rule": "present iff status == attested", "length": null, "status": "proposed", "notes": null },
-        { "key": 3, "name": "block_header", "type": "bstr", "presence": "optional", "rule": "present iff status == attested", "length": 80, "status": "proposed", "notes": null },
-        { "key": 4, "name": "fetch_date", "type": "uint", "presence": "optional", "rule": "present iff status == attested", "length": null, "status": "proposed", "notes": "POSIX seconds; upgrade/header fetch time (semantics to A — D8 item 5)" }
+        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted — the verifier derives its own state" },
+        { "key": 1, "name": "ots", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "raw .ots, opaque at this layer (A parses)" },
+        { "key": 2, "name": "block_height", "type": "uint", "presence": "optional", "rule": "upgrade_group", "length": null, "tier": "X", "status": "proposed", "notes": "attested Bitcoin block height" },
+        { "key": 3, "name": "block_header", "type": "bstr", "presence": "optional", "rule": "upgrade_group", "length": 80, "tier": "P", "status": "proposed", "notes": "exactly 80 bytes (line 108); a wrong length is its own error, never a malformed-header error" },
+        { "key": 4, "name": "fetch_date", "type": "uint", "presence": "optional", "rule": "upgrade_group", "length": null, "tier": "X", "status": "proposed", "notes": "POSIX seconds; upgrade/header fetch time (semantics to A — D8 item 5)" }
       ],
       "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "tsa_anchor",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 109/112-114",
+      "doc": "MVP-SPEC.md lines 109/112-114. DER token and certificates are opaque bstrs here; CMS/X.509 parsing, pinned-root chain validation and valid-at-stamping evaluation are A's, at M2",
       "fields": [
-        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted" },
-        { "key": 1, "name": "token", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "DER TimeStampResp/token, opaque at this layer" },
-        { "key": 2, "name": "intermediates", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "proposed", "notes": "bstr DER certs; intermediates only — bundle-supplied roots never close a chain (line 109)" },
-        { "key": 3, "name": "fetch_date", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "POSIX seconds; token obtained at seal time" },
-        { "key": 4, "name": "source", "type": "tstr", "presence": "optional", "rule": "informational; may be omitted", "length": null, "status": "proposed", "notes": "TSA URL/identity, never verdict-bearing; beyond the literal spec list (D8 item 1)" }
+        { "key": 0, "name": "status", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "enum anchor_status; sealer-recorded, never trusted" },
+        { "key": 1, "name": "token", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "DER TimeStampResp/token, opaque at this layer" },
+        { "key": 2, "name": "intermediates", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "P", "status": "proposed", "notes": "bstr DER certs; intermediates ONLY — a bundle-supplied chain can never close against a bundle-supplied root (line 109), so no root slot exists here to be tempted by" },
+        { "key": 3, "name": "fetch_date", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "POSIX seconds; always known at seal, hence required where the OTS counterpart is optional" },
+        { "key": 4, "name": "source", "type": "tstr", "presence": "optional", "rule": "no parse-decidable condition; informational", "length": null, "tier": "P", "status": "proposed", "notes": "TSA URL/identity, never verdict-bearing — the verdict's source identity comes from the verified cert chain. Beyond the literal spec list (D8 item 1)" }
       ],
       "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "receipt_record",
       "status": "proposed",
-      "doc": "MVP-SPEC.md line 110; opt-in; internals A/S-owned (D8 item 4)",
+      "doc": "MVP-SPEC.md line 110; opt-in; internals A/S-owned (D8 item 4). MVP verdict is fixed at 'supporting evidence — no independently proven time' and no reserved slot can promote it",
       "fields": [
-        { "key": 0, "name": "tx_hashes", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "bstr(32) Keccak-256 EVM tx hashes; non-empty" },
-        { "key": 1, "name": "block_number", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": null },
-        { "key": 2, "name": "payload", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "opaque A/S serialization: quote preimages + proof_bytes (full v1.1-chain capture)" }
+        { "key": 0, "name": "tx_hashes", "type": "array", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "bstr(32) Keccak-256 EVM tx hashes; non-empty; capture order" },
+        { "key": 1, "name": "block_number", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "the payment's Arbitrum One block number" },
+        { "key": 2, "name": "payload", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "opaque A/S serialization: quote preimages + proof_bytes (full v1.1-chain capture). Opaque to this registry — its internal layout is not a v1 wire format, so changing it is not a format-version event" }
       ],
-      "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
+      "reserved": [
+        { "first": 3, "last": 3, "name": "chain_inputs", "purpose": "v1.1 Arbitrum-receipt verification chain (spec line 161: address recomputation <-> quote preimages <-> tx calldata) — the slot into which v1.1 may promote registry-visible, version-stable structure out of the opaque payload. Needed because key 2 is deliberately outside this registry, so anything the WASM page and the CLI must read identically under the line-123 stability contract cannot live there. Reject-if-present in v1", "shape_owner": "A/S", "shape_designed": false, "status": "proposed" },
+        { "first": 4, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }
+      ]
     },
     {
       "name": "covered_reveal",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 96/112-114 per revealed fine-tree-covered unit",
+      "doc": "MVP-SPEC.md lines 96/112-114 per revealed fine-tree-covered unit. Carries no nonce (manifest is the single source) and no AAD (reconstructed from manifest seal_id + this entry's unit_id, line 91). cover/paths are NESTED inside the reveal they belong to, so a proof reaching outside the revealed set is unrepresentable in v1 — BundleView.proof_unit_refs idles until bundle key 10 is assigned in v1.1",
       "fields": [
-        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "must resolve into the embedded manifest's unit table (R)" },
-        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
-        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "len % 256 == 16 and len >= 272 at parse; == padded_length(true_length)+16 is R's check" },
-        { "key": 3, "name": "cover", "type": "array", "presence": "required", "rule": null, "length": null, "status": "pending-D9", "notes": "cover_entry tuples; non-empty; strictly ascending leaf-interval start; leaf-exactness is R's check" },
-        { "key": 4, "name": "paths", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "status": "pending-D9", "notes": "path_node tuples; strictly ascending leaf-interval start; empty when the unit spans [0, n)" }
+        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "proposed", "notes": "must resolve into the embedded manifest's unit table" },
+        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "tier": "P", "status": "proposed", "notes": "the unit key, disclosed per reveal so the verifier decrypts without ever holding W (line 114). No LengthField class — R binds keys by whether they decrypt, not by length" },
+        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "len % 256 == 16 and len >= 272 at parse; the exact len == padded_length(true_length)+16 is R's (needs the manifest)" },
+        { "key": 3, "name": "cover", "type": "array", "presence": "required", "rule": "D75-provisional: required as drafted; if D75 chooses s_root-only for fully-revealed files this becomes 'optional, present iff not full(F)' and moves from tier P to tier R. Key number and type are answer-neutral", "length": null, "tier": "P", "status": "proposed", "notes": "cover_entry tuples; non-empty (a covered unit has >= 1 leaf; the empty unit is never covered); strictly ascending leaf-interval start [X]; leaf-exactness and no-ancestor-seed are R's" },
+        { "key": 4, "name": "paths", "type": "array", "presence": "required", "rule": "may be empty", "length": null, "tier": "X", "status": "proposed", "notes": "path_node tuples; strictly ascending leaf-interval start; empty exactly when the unit spans [0, n) — the 'exactly' is R's" }
       ],
       "reserved": [{ "first": 5, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "noncovered_reveal",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 92/94/112-114 per revealed non-covered unit (--no-fine-tree or raw-mirror); keys 0-2 aligned with covered_reveal",
+      "doc": "MVP-SPEC.md lines 92/94/112-114 per revealed non-covered unit (--no-fine-tree or raw-mirror) — the two cases bound by unit_commit rather than fine_root (line 94). Keys 0-2 are deliberately key-aligned with covered_reveal so both reveal kinds share one decode prefix. A raw-mirror reveal is an ordinary entry here: no mirror flag, no link field — the manifest's kind identifies it",
       "fields": [
-        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": null },
-        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "status": "proposed", "notes": null },
-        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "same parse shape check as covered_reveal.ciphertext" },
-        { "key": 3, "name": "unit_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": "opens unit_commit" }
+        { "key": 0, "name": "unit_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "proposed", "notes": "resolves into the manifest unit table; whether a unit legitimately belongs in THIS array rather than covered_reveal is also R's" },
+        { "key": 1, "name": "k_u", "type": "bstr", "presence": "required", "rule": null, "length": 32, "tier": "P", "status": "proposed", "notes": null },
+        { "key": 2, "name": "ciphertext", "type": "bstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "same parse shape check as covered_reveal.ciphertext" },
+        { "key": 3, "name": "unit_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "tier": "P", "status": "proposed", "notes": "opens unit_commit = SHA-256(0x02 || unit_salt || bytes) (line 94)" }
       ],
       "reserved": [{ "first": 4, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "touched_file",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 112-114 per touched file; explicit file_id decided YES (registry-v1.md section 10)",
+      "doc": "MVP-SPEC.md lines 112-114 per touched file; explicit file_id decided YES (registry-v1.md section 10). path_salt is the path-only salt, independent of file_salt precisely so naming a file never weakens its content commitments (line 95) — the two must never be merged in a future version",
       "fields": [
-        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "index into the embedded manifest's file table; in-range (R)" },
-        { "key": 1, "name": "path", "type": "tstr", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "opens path_commit with path_salt" },
-        { "key": 2, "name": "path_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": null }
+        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "proposed", "notes": "index into the embedded manifest's file table; in-range" },
+        { "key": 1, "name": "path", "type": "tstr", "presence": "required", "rule": null, "length": null, "tier": "P", "status": "proposed", "notes": "the tstr's bytes AS RECEIVED are the commitment pre-image: path_commit = SHA-256(0x05 || path_salt || path_utf8) (line 95). No NFC, no separator rewriting, no case folding — the text canonicalization pipeline (D20/D21) governs file CONTENT, never this field" },
+        { "key": 2, "name": "path_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "tier": "P", "status": "proposed", "notes": null }
       ],
       "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },
     {
       "name": "full_reveal",
       "status": "proposed",
-      "doc": "MVP-SPEC.md lines 112-114/121 per fully-revealed file; partial-reveal isolation is R's check",
+      "doc": "MVP-SPEC.md lines 112-114/121 per fully-revealed file. D28 (resolved 2026-07-28) makes this section's presence a BICONDITIONAL over a DERIVED predicate, not a sealer option: an entry exists for file F iff full(F). The entry is material, not a claim — its presence must AGREE with the independently derived predicate, and there is no reveal-shape field anywhere to declare it",
+      "derived_predicate": {
+        "source": "docs/decisions/D28-full-reveal-strictness.md",
+        "N_of_F": "unit_ids of manifest units with file_id = F and kind = Normal",
+        "R_of_F": "N(F) intersect bundle.revealed",
+        "full_of_F": "N(F) != empty AND R(F) == N(F)",
+        "entry_present_iff": "full(F)",
+        "s_root_present_iff": "full(F) AND file fine_tree == Present",
+        "load_bearing_clauses": [
+          "kind = Normal only — raw-mirror units are exempt by kind, never by position (D23); a mirror-only reveal is partial",
+          "N(F) != empty (anti-vacuity, D77) — otherwise a hand-built zero-unit file is vacuously full for every bundle, including one revealing nothing",
+          "s_root conditional on FineTree::Present — a --no-fine-tree or empty file has none"
+        ]
+      },
+      "violations": [
+        { "condition": "entry present, not full(F)", "error_code": "partial-reveal-salt-leak-file-salt", "tier": "R", "status": "proposed" },
+        { "condition": "key 2 present, not full(F)", "error_code": "partial-reveal-salt-leak-s-root", "tier": "R", "status": "proposed" },
+        { "condition": "full(F), no entry", "error_code": "full-reveal-material-missing-file-salt", "tier": "R", "status": "proposed", "notes": "realized as a MISSING ENTRY, not an entry with a missing key: key 1 is required at schema level, so F8 rejects a key-1-less entry as a schema error before R4 runs" },
+        { "condition": "full(F) and fine_tree Present, key 2 absent", "error_code": "full-reveal-material-missing-s-root", "tier": "R", "status": "proposed" },
+        { "condition": "full(F) and fine_tree Absent, key 2 present", "error_code": null, "tier": "R", "status": "proposed", "notes": "UNASSIGNED — D74. Recommendation on record: reject as full-reveal-s-root-without-fine-tree. Do NOT implement the permissive reading; a stray s_root must not be silently dropped" }
+      ],
       "fields": [
-        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "must also appear in touched_files (R)" },
-        { "key": 1, "name": "file_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "status": "proposed", "notes": "opens raw_commit/canon_commit (full reveal only, line 95)" },
-        { "key": 2, "name": "s_root", "type": "bstr", "presence": "optional", "rule": "present iff file descriptor.fine_tree_present == 1", "length": 32, "status": "proposed", "notes": "full [0, n) cover; discloses nothing since every leaf is revealed (line 114)" }
+        { "key": 0, "name": "file_id", "type": "uint", "presence": "required", "rule": null, "length": null, "tier": "R", "status": "proposed", "notes": "in-range (R); must also appear in touched_files (X)" },
+        { "key": 1, "name": "file_salt", "type": "bstr", "presence": "required", "rule": null, "length": 16, "tier": "P", "status": "proposed", "notes": "opens raw_commit/canon_commit; disclosed ONLY on a full reveal (line 95)" },
+        { "key": 2, "name": "s_root", "type": "bstr", "presence": "optional", "rule": "biconditional [R]: present iff full(F) AND file fine_tree == Present", "length": 32, "tier": "R", "status": "proposed", "notes": "full [0, n) cover; discloses nothing since every leaf is revealed (line 114)" }
       ],
       "reserved": [{ "first": 3, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     }

@@ -2,29 +2,52 @@
 
 > **DRAFT — NOT FROZEN. This registry freezes only at the Q14
 > `format-v1-freeze` gate (M0 Definitions sign-off).** Until then every row
-> is a *proposal*. Three feeding decisions are still open and are marked
-> inline wherever they bite:
+> is a *proposal*, including every row added by the bundle-slice pass
+> below — nothing here is frozen by having been written down. Feeding
+> decisions, marked inline wherever they bite:
 >
 > - **D8** — the registry as a whole (key assignments, reserved ranges,
 >   signatures container, time encoding, byte-range representation,
->   explicit `file_id`). Rows carry status `proposed` = pending D8 sign-off.
-> - **D9** — GGM node-address representation, co-frozen with G8. Rows
->   carry status `pending-D9`. Both candidates are drafted in §5.
-> - **D17** — `sig_policy` algorithm-ID numeric values. Rows carry status
+>   explicit `file_id`). **Open.** Rows carry status `proposed` = pending
+>   D8 sign-off. The D8 feed is §13.
+> - **D9** — GGM node-address representation, co-frozen with G8.
+>   **RESOLVED 2026-07-28** (`(level, index)`, Candidate A —
+>   docs/decisions/D9-ggm-node-address.md). The former `pending-D9` rows
+>   now carry `proposed`: decided, but still riding the D8/Q14 freeze like
+>   every other row. The §5 candidate comparison stays as the recorded
+>   rationale.
+> - **D17** — `sig_policy` algorithm-ID numeric values. **Open**
+>   (ratified in code at M0 wave 3; formal flip at Q14). Rows carry status
 >   `pending-D17`. Proposed values in §6.2.
 >
 > After Q14, this document is normative and any change is a format-version
 > event (MVP-SPEC.md line 123).
 
-- Task: **F4** (tasks/F.md). Date: 2026-07-27.
+- Task: **F4** (tasks/F.md). Date: 2026-07-27; **bundle slice completed
+  2026-07-28** (the D8 `.sealproof` half — §§7.6–7.15, feeding F8/F9).
 - Spec basis: MVP-SPEC.md lines 71–79 (Definitions & encoding), 90
   (`seal_id`), 91–98 (unit/body fields), 112–114 (reveal bundle), 121
-  (structural invariants), 123 (format stability), 127–137 (anchor states).
+  (structural invariants), 123 (format stability), 127–137 (anchor states),
+  161 (v1.1 parking lot — the reserved slots of §9).
 - Resolved inputs: D7 (`minicbor =2.3.0`, uint keys, manual impls), D11
   (Autonomi address = 32 B BLAKE3, docs/research/S1-ant-core-api-survey.md
   §1), D25 (`unicode-17.0.0`), D20/D21 (descriptor carries `kind` only — no
   forced-text flag; canonicalization pipeline frozen), D27/D29 (verification
-  report is a *separate, non-wire* byte format — context only).
+  report is a *separate, non-wire* byte format — context only), **D9**
+  (`NodeAddress = (level, index)` — §5), **D23** (a file's raw mirror is its
+  **last** unit — §7.5, §8), **D22/D24** (splitting rules; no bundle-visible
+  field), **D28** (full-reveal strictness is **hard-fail**, and reveal shape
+  is **derived, never declared** — §7.14, and the fourth checked absence in
+  §7.6.1), **D30** (stable error codes: every rejection class named here must
+  land on its own code — docs/testing/error-code-contract.md).
+- Registered decisions this slice **feeds but must not resolve**: **D74**
+  (extraneous `s_root` on a fine-tree-absent full reveal — §7.14), **D75**
+  (does a full reveal ship covers *and* `s_root` — §7.11), **D77**
+  (zero-non-mirror-unit file — §7.14's anti-vacuity clause).
+- Already-consumed rows: the manifest-side maps §§7.1–7.5 are **implemented**
+  (F5/F6 — `crates/antseal-core/src/manifest/`, key constants in
+  `manifest/registry.rs`). Their key numbers are consumed; the bundle slice
+  composes with them and does not move them.
 - Machine mirror: [`registry-v1.json`](registry-v1.json) (§14). Draft gate
   test: `crates/antseal-core/tests/format_registry_draft.rs`.
 
@@ -39,23 +62,41 @@ field, the shared tuple shapes, the wire enums, and the reserved key space.
 Column conventions in §7:
 
 - **presence** — `req` (must be present) or `opt: <rule>` (present iff the
-  rule holds; the rule is enforced at parse time by F5/F8 unless marked
-  `[R]` = semantic, verifier-side per D27 stage order). Absence is always
-  key absence — v1 has no `null` (§1).
+  rule holds). Absence is always key absence — v1 has no `null` (§1).
+  Every conditional row carries a **validation tier** (below) saying who
+  can decide it.
 - **len/shape** — exact byte length for fixed-size `bstr` fields; element
   type for arrays; `var` for variable-length opaque bytes.
-- **status** — `proposed` (pending the D8 whole-registry sign-off),
-  `pending-D9`, `pending-D17`.
+- **status** — `proposed` (pending the D8 whole-registry sign-off) or
+  `pending-D17`. (`pending-D9` is retired: D9 resolved 2026-07-28. The
+  draft-gate vocabulary in §14 still admits it so the marker can never be
+  reintroduced unregistered.)
 
-Layer split (recorded so rows do not over-claim): F3 enforces CBOR
-canonicality; F5/F8 enforce schema shape — key sets, types, exact lengths,
-conditional presence, list ordering; R owns semantic/structural invariants
-(tiling, `true_length` = range width, leaf-exact cover, partial-reveal
-isolation — MVP-SPEC.md line 121). A row's presence rule names its layer.
+### Validation tiers
+
+Recorded so rows do not over-claim, and so F8 and R cannot both assume the
+other checks a rule. F3 enforces CBOR canonicality beneath all three.
+
+| tier | who | decidable from | examples |
+| --- | --- | --- | --- |
+| **[P]** | F5 (manifest) / F8 (bundle) | the **one entry** being decoded | type, exact byte length, enum membership, non-empty container, `level ≤ 64`, `index < 2^level` |
+| **[X]** | F5 / F8, same pass | the **whole container** it is decoding (manifest body, or bundle) | list ordering, `unit_id` = derived ordinal, cross-section id disjointness, descriptor-conditioned presence within one file entry |
+| **[R]** | R (verify), post-decode | the **bundle *and* the embedded manifest**, or crypto | `full_reveal.s_root` presence, which reveal array a unit belongs in, tiling, leaf-exact cover, `true_length` = range width, partial-reveal isolation (MVP-SPEC.md line 121) |
+
+**Proposed rule (D8 feed, §13 item 8): bundle schema validation never
+consults the embedded manifest.** F8 decodes the bundle from the bundle's
+own bytes; the manifest is layer 2 of F9's pipeline and is not available
+to — and must not be reached for by — a bundle-schema presence rule. Any
+rule needing both sides is therefore **[R]**, not a schema error. This is
+what keeps the two error families separate under D30: a bundle that is
+*well-formed but inconsistent with its manifest* must report a verify
+code, never a schema code, so "malformed bundle" and "lying sealer" never
+render alike.
 
 The 1:1 assertion that **code constants match this table** arrives with
 F5/F8 (schema types) — the current draft test (§14) checks only the
-mirror's internal consistency.
+mirror's internal consistency. §7.15 lists what F8 must register for the
+bundle half.
 
 ## 1. v1 type profile
 
@@ -189,7 +230,14 @@ Rationale for `[start, length]` over `[start, end)`:
   independently settable on the wire. The equality is R's check, not a
   parse rule.
 
-## 5. GGM sub-cover / boundary-path node addressing — status: pending-D9 (co-freeze with G8)
+## 5. GGM sub-cover / boundary-path node addressing — status: proposed (D9 RESOLVED — Candidate A)
+
+> **D9 resolved 2026-07-28** — `(level, index)`, Candidate A below
+> (docs/decisions/D9-ggm-node-address.md). G8 implements the semantic
+> counterpart `content::ggm::NodeAddress` with the identical form and
+> `MAX_LEVEL = 64`. The candidate comparison is retained as the recorded
+> rationale, not as an open choice. Co-frozen with the rest of the
+> registry at Q14.
 
 Both the GGM salt tree and the content Merkle tree of a fine-tree file
 live on the **depth-`d` dyadic grid**, `d = ⌈log₂ n⌉` (n = the file's
@@ -246,8 +294,9 @@ the tuples below. It is informationally identical to a bit-path
 (`index`'s bits MSB-first *are* the path) but inherits canonicality from
 the CBOR profile instead of adding a padding rule, is the cheapest on the
 wire, and reads directly as "this seed is `level` GGM steps below
-`s_root` via the bits of `index`". **Not frozen until G8 adopts the same
-convention (D9).**
+`s_root` via the bits of `index`". **Adopted: G8 implemented the same
+convention independently, and D9 resolved to it on 2026-07-28.** Frozen
+with the registry at Q14, not before.
 
 ### Canonical slot for content-tree (boundary-path) nodes
 
@@ -264,12 +313,33 @@ covers (line 96). Validity: a content-tree address must satisfy
 `index · 2^(d−level) < n` and the deepest-slot rule; both are R-side
 checks (the leaf-exact-cover check subsumes them for covers).
 
-### Tuple shapes (pending-D9)
+### Tuple shapes (D9-decided)
 
 - **`cover_entry` = `[level, index, seed]`** — `uint, uint, bstr(32)`.
   One disclosed GGM seed of the leaf-exact sub-cover.
 - **`path_node` = `[level, index, hash]`** — `uint, uint, bstr(32)`. One
   boundary Merkle sibling node hash.
+
+Both are **3-element definite arrays**; a wrong element count is a shape
+error, not a missing-field error (arrays have no key space and therefore
+no reserved slots — a future extra element would be a format-version
+event, §9).
+
+**Address validity splits across two tiers** (§0), and F8 must implement
+only the first:
+
+| check | tier | rationale |
+| --- | --- | --- |
+| `level ≤ 64` | **[P]** | self-contained; `MAX_LEVEL = 64` because `d = ⌈log₂ n⌉ ≤ 64` for any `n ≤ u64::MAX`. Bounds the `1 << level` below so it cannot overflow — do the level check *first* |
+| `index < 2^level` | **[P]** | self-contained once `level ≤ 64` holds |
+| `level ≤ d` | **[R]** | needs the file's `size` from the embedded manifest |
+| deepest-slot rule; leaf-exactness; no-ancestor-seed | **[R]** | needs the manifest and G13's cover derivation |
+
+G8's `NodeAddress::try_new` already returns the two [P] rejections
+(`NodeAddressLevelTooDeep`, `NodeAddressIndexOutOfRange`) and
+`NodeAddressLevelExceedsDepth` for the first [R] one, so F8 should
+construct through it rather than re-check inline — one implementation of
+the bound, one error per class (D30).
 
 **Addresses are explicit on the wire** (not implied by position within
 the list), a deliberate choice: the verifier MUST recompute the expected
@@ -412,58 +482,206 @@ binary, present tree without domain.
 
 Ordering: units appear in manifest order (which defines `unit_id`).
 Within a file, non-mirror units must tile `[0, size)` sorted (R, line
-121); proposed builder rule: raw-mirror entries follow all non-mirror
-entries of their file (§13 item 6).
+121). **D23 (resolved 2026-07-27): a file's raw mirror, if present, is
+that file's *last* unit** — at most one per file, so within each file the
+id order of the tiling set equals its range order and the mirror always
+holds the file's highest `unit_id`. This is a **seal-side construction
+rule**: parse accepts any position and R exempts mirrors *by `kind`,
+never by position* (`verify::structural`), so a hand-built manifest that
+violates the placement still verifies or fails on content grounds alone.
+Bundle consequence: in `noncovered_reveals` (§7.6 key 7), a file's mirror
+reveal sorts after every non-covered reveal of the same file.
 
 ### 7.6 Bundle top level (lines 112–114)
 
-Version discriminant at key 0 (encoded first).
+Version discriminant at key 0 (encoded first). Every key is `req` except
+the opt-in receipt, so a `.sealproof` has exactly **one** shape per
+logical content: the "nothing revealed, nothing anchored" bundle is
+`{0,1,2, 3:[], 4:[], 6:[], 7:[], 8:[], 9:[]}`, not a bundle with keys
+missing. Required-may-be-empty everywhere avoids the absent-vs-empty
+encoding split that would give one logical bundle two byte encodings.
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `format_version` | uint | req | = 1 in v1 (bundle and manifest version independently, line 123) | proposed |
-| 1 | `manifest` | bstr | req | var — the full **plaintext manifest envelope** bytes (§7.1); `anchor_digest` = SHA-256 of exactly these bytes (line 75); nested strict decode per F9 | proposed |
+| 0 | `format_version` | uint | req | = 1 in v1. Versions **independently** of the manifest (line 123): a v1 bundle may embed a v2 manifest and vice versa, so F10 dispatches the two discriminants separately and never infers one from the other | proposed |
+| 1 | `manifest` | bstr | req | var — the full **plaintext manifest envelope** bytes (§7.1) exactly as anchored; `anchor_digest` = SHA-256 of exactly these bytes (line 75); nested strict decode per F9 (§7.6.3) | proposed |
 | 2 | `storage_record` | map | req | §7.7 | proposed |
-| 3 | `ots_anchors` | array | req, may be empty | OTS artifacts (§7.8); empty-anchor (UNANCHORED) bundle = both anchor arrays empty (one shape only — required-may-be-empty avoids an absent-vs-empty encoding split) | proposed |
+| 3 | `ots_anchors` | array | req, may be empty | OTS artifacts (§7.8); an UNANCHORED bundle is **both** anchor arrays empty | proposed |
 | 4 | `tsa_anchors` | array | req, may be empty | TSA artifacts (§7.9) | proposed |
-| 5 | `receipt` | map | opt: sealer passed `--include-receipt` (line 110 — genuinely optional data, hence key absence) | §7.10 | proposed |
-| 6 | `covered_reveals` | array | req, may be empty | §7.11 entries, strictly ascending `unit_id` | proposed |
-| 7 | `noncovered_reveals` | array | req, may be empty | §7.12 entries, strictly ascending `unit_id`; raw-mirror reveals ride here (raw-mirror units are never covered, line 94) | proposed |
-| 8 | `touched_files` | array | req, may be empty | §7.13 entries, strictly ascending `file_id` | proposed |
-| 9 | `full_reveals` | array | req, may be empty | §7.14 entries, strictly ascending `file_id`; every entry's `file_id` must also appear in `touched_files` [R] | proposed |
-| 10 | `range_reveals` | — | **reserved, named** | v1.1 sub-unit arbitrary-byte-range covers + boundary paths (line 114/161); reject-if-present in v1 with the reserved-slot error (F10) | proposed |
+| 5 | `receipt` | map | **opt — no parse-decidable condition** [P]: presence *is* the sealer's `--include-receipt` opt-in (line 110). Absence is never an error and presence is never required; a verifier must not read anything into either | §7.10 | proposed |
+| 6 | `covered_reveals` | array | req, may be empty | §7.11 entries, strictly ascending `unit_id` [X] | proposed |
+| 7 | `noncovered_reveals` | array | req, may be empty | §7.12 entries, strictly ascending `unit_id` [X]; raw-mirror reveals ride here (a raw mirror is never fine-tree-covered, line 94), and by D23 a file's mirror sorts last among its own entries | proposed |
+| 8 | `touched_files` | array | req, may be empty | §7.13 entries, strictly ascending `file_id` [X] | proposed |
+| 9 | `full_reveals` | array | req, may be empty | §7.14 entries, strictly ascending `file_id` [X]; every entry's `file_id` must also appear in `touched_files` — **[X], not [R]**: both lists are in the bundle, so F8 decides it without the manifest | proposed |
+| 10 | `range_reveals` | — | **reserved, named** | v1.1 sub-unit arbitrary-byte-range covers + boundary paths (lines 114/161); reject-if-present in v1 (§9) | proposed |
 | 11–23 | — | — | — | reserved | proposed |
+
+**Cross-section rules of the bundle map** (all **[X]** — bundle-only, so
+F8 owns them; none needs the manifest):
+
+| rule | why it is not [R] |
+| --- | --- |
+| `covered_reveals` and `noncovered_reveals` `unit_id` sets are **disjoint** | both lists are present; a unit revealed twice is a malformed bundle regardless of what the manifest says. R's `DuplicateUnitReveal` remains the backstop for the manifest-aware case |
+| `full_reveals ⊆ touched_files` by `file_id` | ditto — a full reveal whose path was never disclosed is malformed on its face |
+| the two reveal arrays are each strictly ascending | ordering is a bundle property (§8) |
+
+The matching **[R]** rules — the ones that genuinely need both sides —
+are: *which* array a unit belongs in (covered iff its file has
+`fine_tree_present == 1` and its `kind` is not `raw-mirror`, line 94),
+every id resolving into the manifest tables, and `full_reveal.s_root`
+presence (§7.14).
+
+**Canonical concatenation order.** Where a consumer needs "the revealed
+units" as one sequence — e.g. `verify::structural::BundleView`'s
+`revealed_unit_ids`, whose first-duplicate report must be deterministic —
+it is `covered_reveals` ⧺ `noncovered_reveals`, i.e. **section key
+order**. Recorded here so R5's population order is a registry fact rather
+than an implementation accident.
+
+#### 7.6.1 Checked absences — what a bundle deliberately does not carry
+
+Three fields are absent **by design**, and F8's checklist test asserts
+their absence rather than merely not implementing them (the F8 accept
+criterion for nonces generalizes to all three). An absence nobody tests
+is an absence that grows back.
+
+| absent | why | consequence if it were added |
+| --- | --- | --- |
+| **per-unit `nonce`** in §7.11/§7.12 | "Nonces come from the manifest (single source of truth)" (line 114) | a bundle-side nonce would be a second, sealer-controlled AEAD input the verifier could be steered onto; `verify::unit_stages::RevealedUnitInput` deliberately exposes no parameter to smuggle one through |
+| **any signature container** at bundle level | the bundle is **unsigned**. Its authority is the embedded *signed* manifest (§7.1 key 1) plus the anchor artifacts; nothing about a `.sealproof` is authenticated as a whole | a bundle signature would invite the verifier to trust the *assembler* — but the assembler is the sealer, i.e. the adversary (line 121). There is deliberately no `sig_alg` map here and no §7.1-style envelope |
+| **`work_id` / `anchor_digest` / `seal_id`** at bundle level | all three are *derived*: `work_id` = SHA-256(manifest body bytes), `anchor_digest` = SHA-256(key 1 bytes), `seal_id` is a manifest body field | a stored copy could disagree with the bytes it claims to summarize, creating a "which one is authoritative" question with no good answer (§12) |
+| **any reveal-shape discriminant** (`is_full_reveal`, `reveal_mode`, …) at any level | **D28 rider 1**: reveal shape is *derived* from the signed unit table and the revealed set, never declared | a declared shape is sealer-forgeable: declaring "partial" while revealing every unit would smuggle back the permissive full-reveal option D28 rejected — through the format rather than through the verifier (§7.14) |
+
+#### 7.6.2 Anchor kind is positional, not a field
+
+An anchor artifact carries **no `kind`/`type` key**; whether it is an OTS
+or a TSA anchor is fixed by *which array* it rides in (key 3 vs key 4).
+F8's task text lists "anchor type" among the per-anchor fields — that item
+is satisfied by the array split, and this row records why the field does
+not exist:
+
+1. **The illegal state is unrepresentable.** With a `kind` field, a TSA
+   token sitting in the OTS array is a *representable* state needing a
+   checked rule and a tamper row. With the split, it cannot be written.
+2. **The two shapes genuinely differ** (§7.8 has `.ots` + block height +
+   header; §7.9 has a DER token + an intermediates list), so a single
+   union map would need presence rules keyed on `kind` — reintroducing
+   exactly the coupling item 1 removes.
+3. **Verdict aggregation is per-kind anyway** (R17/A18): OTS is
+   online-gated for `proven`, TSA is offline-verifiable, so no consumer
+   wants a kind-agnostic anchor list.
+
+Cost: a future third anchor kind is a new top-level key, not a new enum
+value. That is the intended shape — a new anchor kind arrives with a new
+artifact schema regardless, so it was never going to be a one-value
+change (§9).
+
+#### 7.6.3 Nested decode layers (F9) and the manifest seam
+
+A `.sealproof` decodes in **three strict layers**, each with its own
+error class so a tamper row can name which one a mutation broke:
+
+| layer | input | decoder | strictness |
+| --- | --- | --- | --- |
+| 1 | the whole file | F8/F9 bundle decode | canonical CBOR (F3) + bundle schema; trailing bytes rejected |
+| 2 | key 1's `bstr` contents | `manifest::Manifest::decode` | canonical CBOR + envelope schema |
+| 3 | the envelope's `body` `bstr` | `manifest::body::ManifestBodyV1::decode` | canonical CBOR + body schema, after F10 reads the body's own key 0 |
+
+Composition requirements this puts on F8/F9, from the shape F6 already
+shipped:
+
+- `Manifest<'b>` **borrows** its input. The bundle decoder must hand
+  layer 2 a **sub-slice of the bundle input**, not a copy: `Manifest`'s
+  zero-copy guarantee — that the bytes fed to `work_id` and to signature
+  verification are the received ones *by construction* — only holds if
+  the slice really is the bundle's own bytes. A decode-into-`Vec` step
+  would silently downgrade that guarantee to a convention.
+- The same slice is the `anchor_digest` pre-image. `Manifest::encoded_bytes()`
+  returns it, so the digest is taken from the decoded object rather than
+  re-derived by the caller.
+- Layers 2 and 3 already report as `ManifestError::Envelope` /
+  `ManifestError::Body`; layer 1 needs its own bundle-schema error class
+  that can never be confused with either (F9 accept).
+- **Nesting depth for F11**: the deepest v1 chain is bundle map →
+  `covered_reveals` array → reveal map → `cover` array → `cover_entry`
+  array = **5** container levels, plus layers 2–3 contributing manifest
+  map → `files` array → file entry map → `units` array → unit entry map →
+  `range` array = **6**. The two do not nest (layer 2 starts from a fresh
+  decoder over the `bstr` contents), so the cap is `max(5, 6)`, not
+  `5 + 6` — recorded so F11 does not budget a depth that permits absurd
+  bundle nesting.
 
 ### 7.7 Manifest storage record (line 98)
 
+The **manifest's own** storage triple, not a per-unit one: each unit's
+address and nonce live in the manifest unit table (§7.5 keys 5–6). It
+exists so the storage-linkage layer can re-fetch and decrypt the uploaded
+*encrypted* manifest copy — "bytes anchored ≠ bytes stored" (line 98).
+
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `address` | bstr | req | 32 (D11) | proposed |
-| 1 | `nonce` | bstr | req | 24 | proposed |
-| 2 | `k_m` | bstr | req | 32 (`k_m` discloses nothing beyond the manifest the bundle already embeds, line 98) | proposed |
+| 0 | `address` | bstr | req | 32 (D11) — Autonomi address of the **encrypted** manifest copy | proposed |
+| 1 | `nonce` | bstr | req | 24 — the XChaCha20-Poly1305 nonce of that copy. Manifest AEAD uses **empty AAD** (line 98), so no further binding field is carried | proposed |
+| 2 | `k_m` | bstr | req | 32 — `k_m = HKDF(W, "manifest-key")`. Disclosing it costs nothing: the bundle already embeds the plaintext manifest (line 98) | proposed |
 | 3–23 | — | — | — | reserved | proposed |
 
+Required, not optional, even though nothing in the **evidence** layer
+consumes it: an absent record would be a second bundle shape for the same
+logical content, and the layer that does consume it (storage linkage /
+`--live`) must be able to say "this bundle claims persistence and the
+claim fails" rather than "this bundle said nothing". The evidence verdict
+never depends on it (line 112) — that separation is R's, and no wire flag
+encodes it.
+
 ### 7.8 OTS anchor artifact (lines 108, 112–114)
+
+**Artifact internals stay opaque at this layer.** `.ots` bytes are a
+`bstr` F8 never parses; the attestation/ops model, the calendar
+semantics, and the `.ots` size limits are **A's, at M2**. This registry
+reserves the *shape* only.
+
+| key | field | type | presence | len/shape | status |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `status` | uint | req | `anchor_status` (§6.1), sealer-recorded (**never trusted** — the verifier derives its own state) | proposed |
+| 1 | `ots` | bstr | req | var — the raw `.ots`, opaque (A parses; A owns `.ots` limits at M2) | proposed |
+| 2 | `block_height` | uint | opt: **upgrade group** (below) | attested Bitcoin block height | proposed |
+| 3 | `block_header` | bstr | opt: **upgrade group** | **exactly 80** [P] (line 108) — a wrong length is its own error, never a "malformed header" | proposed |
+| 4 | `fetch_date` | uint | opt: **upgrade group** | POSIX seconds (§3) — when the upgrade/header was fetched (semantics flagged to A, §13 item 5) | proposed |
+| 5–23 | — | — | — | reserved | proposed |
+
+**The upgrade group (keys 2–4) is all-or-nothing** [X]: an upgraded OTS
+anchor carries height + header + fetch date together, and a
+not-yet-upgraded one carries none of them. Two of the three present is a
+malformed artifact, not a partially-known one. Stating it as a *group*
+(rather than three independent `opt` rows) is what makes "header without
+height" a single distinct rejection instead of a rule that has to be
+rediscovered per key.
+
+Whether the group's presence is additionally **tied to `status ==
+attested`** is a genuinely open, format-permanent question and is
+**flagged to D8 as §13 item 9** — it is the one place in this registry
+where a parse rule would depend on a field the design elsewhere says the
+verifier must never trust. Both readings are drafted there; the group
+rule above holds either way.
+
+### 7.9 TSA anchor artifact (lines 109, 112–114)
+
+Same discipline: the DER token and the certificates are opaque `bstr`s
+here. CMS/X.509 parsing, chain validation against the pinned root store,
+and the "valid at stamping" evaluation are **A's, at M2**.
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
 | 0 | `status` | uint | req | `anchor_status` (§6.1), sealer-recorded (never trusted) | proposed |
-| 1 | `ots` | bstr | req | var — the raw `.ots`, opaque at this layer (A parses; A owns DER/`.ots` limits at M2) | proposed |
-| 2 | `block_height` | uint | opt: `status == attested` | attested Bitcoin block height | proposed |
-| 3 | `block_header` | bstr | opt: `status == attested` | **80** (line 108) | proposed |
-| 4 | `fetch_date` | uint | opt: `status == attested` | POSIX seconds (§3) — when the upgrade/header was fetched (semantics flagged to A, §13 item 5) | proposed |
+| 1 | `token` | bstr | req | var — DER TimeStampResp/token, opaque | proposed |
+| 2 | `intermediates` | array | req, may be empty | bstr elements — DER certs, opaque; **intermediates only**: a bundle-supplied chain can never close against a bundle-supplied root (line 109), so no root slot exists here to be tempted by | proposed |
+| 3 | `fetch_date` | uint | req | POSIX seconds (§3) — when the token was obtained; always known at seal, hence required where the OTS counterpart is optional | proposed |
+| 4 | `source` | tstr | **opt — no parse-decidable condition** [P] | informational TSA URL/identity; **never verdict-bearing** (the verdict's source identity comes from the verified cert chain, not from this string). Beyond the literal line-112 list because the report model renders a bundle-recorded source — flagged to D8, §13 item 1 | proposed |
 | 5–23 | — | — | — | reserved | proposed |
 
-### 7.9 TSA anchor artifact (lines 109, 112–114)
-
-| key | field | type | presence | len/shape | status |
-| --- | --- | --- | --- | --- | --- |
-| 0 | `status` | uint | req | `anchor_status` (§6.1), sealer-recorded | proposed |
-| 1 | `token` | bstr | req | var — DER TimeStampResp/token, opaque at this layer | proposed |
-| 2 | `intermediates` | array | req, may be empty | bstr elements — DER certs, opaque; **intermediates only** (bundle-supplied roots never close a chain, line 109) | proposed |
-| 3 | `fetch_date` | uint | req | POSIX seconds (§3) — when the token was obtained (always known at seal) | proposed |
-| 4 | `source` | tstr | opt | informational TSA URL/identity; never verdict-bearing (the verdict's source identity comes from the verified cert chain). Added beyond the literal line-112 list because the report model renders a bundle-recorded source — flagged to D8, §13 item 1 | proposed |
-| 5–23 | — | — | — | reserved | proposed |
+One artifact per token: "≥ 2 TSAs" (line 103) means ≥ 2 entries in key 4
+of §7.6, not a multi-token artifact. Nothing in the schema requires two —
+an under-anchored bundle is a *verdict*, not a parse error.
 
 ### 7.10 Arbitrum receipt record (line 110) — opt-in
 
@@ -474,55 +692,264 @@ capture). Shape to be confirmed with A/S — §13 item 4.
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `tx_hashes` | array | req | bstr(32) elements (Keccak-256 EVM tx hashes), non-empty | proposed |
-| 1 | `block_number` | uint | req | | proposed |
-| 2 | `payload` | bstr | req | var — opaque A/S serialization (quote preimages, `proof_bytes`) | proposed |
-| 3–23 | — | — | — | reserved | proposed |
+| 0 | `tx_hashes` | array | req | bstr(32) elements (Keccak-256 EVM tx hashes), non-empty; capture order (§8) | proposed |
+| 1 | `block_number` | uint | req | the payment's Arbitrum One block number | proposed |
+| 2 | `payload` | bstr | req | var — opaque A/S serialization (quote preimages, `proof_bytes`). **Opaque to this registry**: its internal layout is A/S's and is *not* a v1 wire format, so changing it is not a format-version event | proposed |
+| 3 | `chain_inputs` | — | **reserved, named** | v1.1 Arbitrum-receipt **verification chain** (line 161: address recomputation ↔ quote preimages ↔ tx calldata) — the slot into which v1.1 may promote registry-visible, version-stable structure out of the opaque `payload`. Reject-if-present in v1 (§9). Shape deliberately **not designed here** — A/S own it | proposed |
+| 4–23 | — | — | — | reserved | proposed |
+
+**Why a named slot when capture is already complete.** The MVP obligation
+is only that the v1.1 chain stay *possible with no reseal* (TODO parking
+lot), and key 2 satisfies it: every input the chain needs is captured at
+payment time. But key 2 is **opaque** — deliberately outside this
+registry — so anything the v1.1 verifier must read in a *version-stable,
+cross-implementation* way (the WASM page and the CLI agreeing on a
+structure, per the line-123 stability contract) cannot live there. That
+needs a registry key, and a frozen v1 map can only gain one from a
+**reserved** slot (§9). Naming it now costs nothing and is the difference
+between "v1.1 adds a field" and "v1.1 is a format-version event".
+
+MVP verdict is unchanged and unchangeable by this slot: the receipt
+renders as **supporting evidence — no independently proven time** (line
+110), because no on-chain datum contains `anchor_digest`. No reserved
+slot can promote it, and none should be read as promising to.
 
 ### 7.11 Covered-unit reveal (lines 96, 112–114)
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `unit_id` | uint | req | must resolve into the embedded manifest's unit table [R] | proposed |
-| 1 | `k_u` | bstr | req | 32 | proposed |
-| 2 | `ciphertext` | bstr | req | var; `≡ 16 (mod 256)`, `≥ 272` at parse (§2) | proposed |
-| 3 | `cover` | array | req | `cover_entry` tuples (§5), non-empty (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree), strictly ascending interval start; leaf-exactness is R's check | pending-D9 |
-| 4 | `paths` | array | req, may be empty | `path_node` tuples (§5), strictly ascending interval start; empty when the unit spans `[0, n)` (no boundary siblings) | pending-D9 |
+| 0 | `unit_id` | uint | req | must resolve into the embedded manifest's unit table **[R]** | proposed |
+| 1 | `k_u` | bstr | req | 32 **[P]** — the unit key, disclosed per reveal so the verifier decrypts without ever holding `W` (line 114) | proposed |
+| 2 | `ciphertext` | bstr | req | var; `len ≡ 16 (mod 256)` and `len ≥ 272` **[P]** (§2). The exact `len == padded_length(true_length) + 16` is **[R]** — it needs the manifest's `true_length` | proposed |
+| 3 | `cover` | array | req **(D75-provisional — see below)** | `cover_entry` tuples (§5), **non-empty [P]** (a covered unit has ≥ 1 leaf; the empty unit is never covered — empty files have no fine tree, §7.4), strictly ascending interval start **[X]**; leaf-exactness and the no-ancestor-seed rule are **[R]** | proposed |
+| 4 | `paths` | array | req, may be empty | `path_node` tuples (§5), strictly ascending interval start **[X]**; empty exactly when the unit spans `[0, n)` (no boundary siblings) — the *exactly* is **[R]** | proposed |
 | 5–23 | — | — | — | reserved | proposed |
+
+The nonce is **not** here: it comes from the manifest unit table (§7.6.1).
+`AAD = seal_id ‖ LE64(unit_id)` (line 91) is likewise reconstructed from
+the manifest and this entry's `unit_id`, never carried.
+
+Because `cover`/`paths` are **nested inside** the reveal they belong to,
+a proof can only speak about the unit whose entry encloses it — the
+"proof reaches outside the revealed set" state
+(`VerifyError::UnknownUnitRef` via `BundleView::proof_unit_refs`) is
+therefore **unrepresentable in v1** and that check idles. It stops idling
+the moment bundle key 10 (`range_reveals`) is assigned in v1.1, where a
+range proof may well name units by id from a separate section — recorded
+so the check is not deleted as dead code.
+
+#### D75 — does a full reveal ship per-unit covers *and* `s_root`?
+
+**Registered open decision (D75, resolve with F8); not decided here.**
+On a *full* reveal of a fine-tree file the bundle would, as drafted,
+carry both this entry's per-unit `cover`/`paths` for every unit **and**
+the file's `s_root` (§7.14 key 2) — two independent routes to the same
+`fine_root`. D75 asks whether the covers should instead be omitted in
+that case.
+
+**The key assignment is answer-neutral, and deliberately so.** Nothing
+about D75 moves a key, a type, or a reserved slot: key 3 keeps its number
+either way. Only its *presence rule* differs —
+
+- **"both"** (as drafted): `req`, **[P]** — a covered reveal is
+  self-contained and F8 validates it without the manifest;
+- **"`s_root` only"**: `opt: ¬full(F)`, which is **[R]** — key 3's
+  presence would then depend on the derived full-reveal predicate
+  (§7.14), so F8 could no longer validate a covered reveal in isolation
+  and the rule would cross the §0 tier boundary.
+
+**Which way the draft leans, and why: "both".** Three reasons, offered as
+D75 input rather than as a decision: (1) it keeps key 3 at tier [P], so
+bundle schema validation stays decidable from the bundle alone (§0);
+(2) it costs bytes but leaks nothing — on a full reveal every leaf is
+disclosed anyway, which is exactly why line 114 says `s_root` "discloses
+nothing" there; (3) it keeps one decode shape for `covered_reveal`
+instead of two. The cost is real: ~2·⌈log₂ n⌉ cover entries per unit are
+redundant once `s_root` is present.
+
+**The consequence D75 actually decides** is what R4's `s_root` tree
+rebuild *is*: under "both" it is defence-in-depth (each unit is already
+bound to `fine_root` through its own cover, and the rebuild additionally
+proves no extra leaves), while under "`s_root` only" it becomes the sole
+binding and is load-bearing. Note the rebuild is spec-mandated by line
+121 either way — D75 changes its weight, not whether it runs. Under
+"both", the two routes must be required to *agree*: leaf salts derived
+from `s_root` and from the per-unit covers are the same values, and a
+disagreement is a distinct tamper row someone must own.
 
 ### 7.12 Non-covered-unit reveal (lines 92, 94, 112–114)
 
-`--no-fine-tree` whole-file units and raw-mirror units. Keys 0–2 aligned
-with §7.11 (shared decode prefix).
+`--no-fine-tree` whole-file units and raw-mirror units — the two cases
+bound by `unit_commit` rather than by `fine_root` (line 94). Keys 0–2 are
+**deliberately key-aligned with §7.11** so both reveal kinds share one
+decode prefix: same key numbers, same types, same [P] checks, one
+implementation. The divergence starts at key 3, where §7.11 needs a
+cover and this needs the salt that opens the commitment.
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `unit_id` | uint | req | | proposed |
-| 1 | `k_u` | bstr | req | 32 | proposed |
-| 2 | `ciphertext` | bstr | req | var; same §2 shape check | proposed |
-| 3 | `unit_salt` | bstr | req | 16 — opens `unit_commit` | proposed |
+| 0 | `unit_id` | uint | req | resolves into the manifest unit table **[R]** | proposed |
+| 1 | `k_u` | bstr | req | 32 **[P]** | proposed |
+| 2 | `ciphertext` | bstr | req | var; same §2 shape check **[P]** | proposed |
+| 3 | `unit_salt` | bstr | req | 16 **[P]** — opens `unit_commit = SHA-256(0x02 ‖ unit_salt ‖ bytes)` (line 94) | proposed |
 | 4–23 | — | — | — | reserved | proposed |
+
+A raw-mirror reveal is an ordinary entry here — no mirror flag, no link
+field: the manifest's `kind` already identifies it (line 98), and by D23
+it is its file's last unit, so it sorts after that file's other
+non-covered entries. Whether a unit legitimately belongs in *this* array
+rather than §7.11 is **[R]** (it depends on the file's
+`fine_tree_present` and the unit's `kind`).
 
 ### 7.13 Touched-file entry (lines 112–114) — explicit `file_id`: YES (§10)
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `file_id` | uint | req | index into the embedded manifest's file table; in-range [R] | proposed |
-| 1 | `path` | tstr | req | the sealed path; UTF-8 by type (native F3 check); opens `path_commit` with `path_salt` | proposed |
-| 2 | `path_salt` | bstr | req | 16 | proposed |
+| 0 | `file_id` | uint | req | index into the embedded manifest's file table; in-range **[R]** | proposed |
+| 1 | `path` | tstr | req | the sealed path. UTF-8 by type (native F3 check); **the tstr's bytes as received are the commitment pre-image** — `path_commit = SHA-256(0x05 ‖ path_salt ‖ path_utf8)` (line 95). No NFC, no separator rewriting, no case folding is applied to a path: the text canonicalization pipeline (D20/D21) governs *file content*, never this field | proposed |
+| 2 | `path_salt` | bstr | req | 16 **[P]** | proposed |
 | 3–23 | — | — | — | reserved | proposed |
 
-### 7.14 Fully-revealed-file entry (lines 112–114, 121)
+Path disclosure is per **touched** file, and `path_salt` is the
+*path-only* salt — independent of `file_salt` precisely so that naming a
+file never weakens its content commitments (line 95). The two must never
+be merged into one salt field in a future version.
+
+### 7.14 Fully-revealed-file entry (lines 112–114, 121) — D28 strict
 
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `file_id` | uint | req | | proposed |
-| 1 | `file_salt` | bstr | req | 16 — opens `raw_commit`/`canon_commit` (full reveal only, line 95) | proposed |
-| 2 | `s_root` | bstr | opt: file's `fine_tree_present == 1` | 32 — the full `[0, n)` cover (line 114); `--no-fine-tree` files have no fine tree, hence no `s_root` | proposed |
+| 0 | `file_id` | uint | req | in-range **[R]**; must also appear in `touched_files` **[X]** (§7.6) | proposed |
+| 1 | `file_salt` | bstr | req | 16 **[P]** — opens `raw_commit`/`canon_commit`; disclosed **only** on a full reveal (line 95) | proposed |
+| 2 | `s_root` | bstr | **opt — biconditional, [R]: present iff `full(F) ∧ fine_tree = Present`** | 32 — the full `[0, n)` cover (line 114); a `--no-fine-tree` or empty file has no fine tree, hence no `s_root` | proposed |
 | 3–23 | — | — | — | reserved | proposed |
 
-Partial-reveal isolation (line 121) — a partially-revealed file must have
-**no** §7.14 entry — is R's semantic check.
+#### The entry's own presence is derived, never declared (D28)
+
+**D28 (resolved 2026-07-28) made full-reveal strictness hard-fail**, and
+the presence rule of this whole *section* is therefore a **biconditional
+over a derived predicate**, not an option the sealer exercises:
+
+```text
+N(F)     = { unit_id : unit ∈ manifest.units, unit.file_id = F, kind = Normal }
+R(F)     = N(F) ∩ bundle.revealed
+full(F) ⟺ N(F) ≠ ∅ ∧ R(F) = N(F)
+
+a §7.14 entry for F exists  ⟺  full(F)
+its key 2 is present        ⟺  full(F) ∧ F.fine_tree = Present
+```
+
+Both directions are errors, and both are **[R]** — every input is either
+signed manifest data or bundle field presence, but the predicate needs
+*both* sides:
+
+| violation | error (D28's frozen order) |
+| --- | --- |
+| entry present, `¬full(F)` | `partial-reveal-salt-leak-file-salt` |
+| key 2 present, `¬full(F)` | `partial-reveal-salt-leak-s-root` |
+| `full(F)`, no entry | `full-reveal-material-missing-file-salt` |
+| `full(F) ∧ fine_tree = Present`, key 2 absent | `full-reveal-material-missing-s-root` |
+| `full(F) ∧ fine_tree = Absent`, key 2 present | **unassigned — D74** (recommendation: reject as `full-reveal-s-root-without-fine-tree`). Do **not** implement the permissive reading; a stray `s_root` must not be silently dropped |
+
+Two shape consequences worth stating, because they are easy to get
+subtly wrong:
+
+1. **"Missing `file_salt`" is realized as a missing *entry*, not as an
+   entry with a missing key.** Key 1 is `req` at schema level, so F8
+   rejects an entry without it as a schema error long before R4 runs.
+   D28's rule 3 therefore fires on section absence. Key 2 is genuinely
+   optional at schema level, so its arm *is* an entry-with-key-absent.
+2. **`kind = Normal` only, and `N(F) ≠ ∅`.** A file is fully revealed
+   when its canonical-domain units are all revealed whether or not its
+   raw mirror is (mirrors are exempt by `kind`, never by position —
+   D23). The non-emptiness clause exists so a hand-built zero-unit file
+   is not *vacuously* full for every bundle, including one revealing
+   nothing (D77).
+
+#### There is no reveal-shape field, and there must never be one
+
+The bundle carries **no** `is_full_reveal` / `reveal_mode` /
+`reveal_shape` discriminant, at any level. This is a **binding
+constraint from D28 rider 1**, not an omission: shape is computed from
+the signed unit table and the revealed set, so a declared shape would be
+a second, *sealer-forgeable* source of truth — and a bundle declaring
+"partial" while revealing every unit would reintroduce exactly the
+permissive option D28 rejected, through the wire format instead of
+through the verifier. A future editor who notices that the verifier
+"already knows" the shape and thinks it cheap to record it on the wire
+is re-opening a closed decision. Do not add the field (§7.6.1).
+
+The presence of a §7.14 entry is therefore **material, not a claim**: it
+does not assert that the file is fully revealed, it supplies openings
+whose presence must *agree* with the independently derived predicate.
+
+#### Why both salts live here rather than in §7.13
+
+Touching a file (naming it) and fully revealing it are separate
+disclosures with separate salts — `path_salt` opens only `path_commit`,
+`file_salt` only the content commitments (line 95). Keeping them in
+separate sections means a builder cannot leak one while intending the
+other, and it is why partial-reveal isolation is expressible as "this
+file has no §7.14 entry" rather than as a per-field rule.
+
+### 7.15 Bundle-side code composition — the F8 seam
+
+What the bundle half must register to match the manifest half already
+shipped in `crates/antseal-core/src/manifest/registry.rs`. This is the
+1:1 code ⟷ registry contract of §14, spelled out so F8 does not have to
+reverse-engineer it from F5.
+
+**Map identities.** F8 registers nine more maps. Their registry names —
+the strings a `MapId::registry_name()` must return, identical to
+`maps[].name` in the JSON mirror, which is how the 1:1 test pairs code to
+table — are:
+
+| §  | registry name | §  | registry name |
+| --- | --- | --- | --- |
+| 7.6 | `bundle` | 7.11 | `covered_reveal` |
+| 7.7 | `storage_record` | 7.12 | `noncovered_reveal` |
+| 7.8 | `ots_anchor` | 7.13 | `touched_file` |
+| 7.9 | `tsa_anchor` | 7.14 | `full_reveal` |
+| 7.10 | `receipt_record` | | |
+
+**Reserved bands abut and fill.** Every bundle map's band runs from
+`last_assigned + 1` to `23` — the shape F5's `key_spaces_are_well_formed`
+already asserts for the manifest maps. Concretely: `bundle` → `10..=23`,
+`storage_record` → `3..=23`, `ots_anchor` → `5..=23`, `tsa_anchor` →
+`5..=23`, `receipt_record` → `3..=23`, `covered_reveal` → `5..=23`,
+`noncovered_reveal` → `4..=23`, `touched_file` → `3..=23`, `full_reveal`
+→ `3..=23`. Unlike the manifest envelope, **no bundle map is
+shape-frozen**: all nine reserve.
+
+**A named reserved slot is documentation, not a new error class.** Bundle
+key 10 (`range_reveals`) and receipt key 3 (`chain_inputs`) classify as
+plain `Reserved` and raise F10's one reserved-slot error with the key
+number in the message. Giving a named slot its own error variant would
+mean v1.1 changes an error code when it assigns the key — exactly what
+D30's stable-code contract forbids. The name exists so a human reading
+the rejection knows what the sender was trying to send.
+
+**Exact lengths: two layers, different jobs.** R already registers
+`verify::error::LengthField` for the six disclosed fixed-length classes
+of line 121 (`unit_salt`, `path_salt`, `file_salt`, `s_root`, GGM
+covering seed, boundary node hash). F8's parse-time checks and R's
+`check_disclosed_lengths` overlap on purpose:
+
+- F8's is the **wire gate** — a bundle that came through F8's decoder can
+  never reach R with a wrong-length salt, so R's group idles on that
+  path;
+- R's is the **view gate** — `BundleView` is populated by R5 and by
+  fixtures, not only by F8, so the invariant must not rest on the
+  decoder alone. Do not delete it as dead code.
+- `k_u` (32) and `k_m` (32) are **F8-only**: line 121's list is
+  "every disclosed salt/seed/node hash", and keys are neither. There is
+  no `LengthField` class for them and none should be added — R binds keys
+  by whether they *decrypt*, not by their length.
+
+**What F8 must not do.** Consult the embedded manifest during bundle
+schema validation (§0); re-home or renumber any of the five manifest-side
+`MapId` variants; or introduce a second `sig_alg`/`SigAlgMap` surface —
+the bundle carries no signature material at all (§7.6.1).
 
 ## 8. Deterministic list-ordering rules (F9 requirement)
 
@@ -536,12 +963,30 @@ are parse-checked where marked:
 | file `units` | manifest order (defines `unit_id`) | yes — stored `unit_id` must equal the derived ordinal (§7.5) |
 | `sig_policy` | sealer's order, preserved (spec: ordered list) | duplicate-free only |
 | `pubkeys` / `signatures` maps | ascending `sig_alg` | yes (map-key strict ascent) |
-| `covered_reveals`, `noncovered_reveals` | strictly ascending `unit_id` | yes |
-| `touched_files`, `full_reveals` | strictly ascending `file_id` | yes |
-| `cover`, `paths` | strictly ascending leaf-interval start (§5) | yes |
+| `covered_reveals`, `noncovered_reveals` | strictly ascending `unit_id` | yes — **[X]**, each array independently; cross-array disjointness too (§7.6) |
+| `touched_files`, `full_reveals` | strictly ascending `file_id` | yes — **[X]** |
+| `cover`, `paths` | strictly ascending leaf-interval start `index · 2^(d−level)` (§5) | yes — **[X]**, and **`d` is not needed to decide it**: rescaling every start by the same positive factor preserves strict order, so comparing `index · 2^(D−level)` for any common `D ≥ max(level)` in the list gives the identical verdict. Compute it in `u128` (`index < 2^level` bounds the product by `2^D ≤ 2^64`, which is *not* a `u64`). The manifest-derived `d` enters only at R's leaf-exactness check |
 | `ots_anchors`, `tsa_anchors` | capture order recorded in the seal journal (stable across rebuilds); wire order preserved as-is | no (builder rule; proposed — §13 item 5) |
 | `intermediates` | as supplied by the TSA (chain order, leaf-adjacent first) | no (A's semantic domain) |
 | `tx_hashes` | capture order | no |
+
+**Why the anchor arrays are the one unsorted bundle list.** Every other
+list has a content-independent sort key (an id, an interval start). An
+anchor artifact has none: sorting by `status` would reorder on
+re-verification, by `fetch_date` would collide, and by artifact bytes
+would be meaningless. So their order is a *builder* rule backed by the
+seal journal rather than a parse rule — which is why "the same logical
+bundle always produces identical bytes" (F9 accept) holds **per builder
+state**, not per logical content. A bundle rebuilt from a journal is
+byte-identical; a bundle rebuilt from a different anchor capture order is
+not, and neither is wrong. Recorded so F9's determinism test fixes the
+anchor order in its fixtures rather than asserting a sort.
+
+D23 rider: because a file's raw mirror is its last unit, ascending
+`unit_id` in `noncovered_reveals` also puts each file's mirror after that
+file's other non-covered reveals — an ordering property that comes free
+and must not be separately enforced (it would double-report the same
+violation).
 
 ## 9. Reserved key space — summary
 
@@ -549,11 +994,29 @@ are parse-checked where marked:
   the per-map remainder of `0..=23` is range-reserved for v1.x additions.
   Reserved-key presence in v1 input → F10's distinct reserved-slot error
   naming the key. Keys `>= 24` → plain unknown-key error. (§1 rule 4.)
-- Named reserved slots in v1: **bundle key 10 `range_reveals`** (v1.1
-  sub-unit byte-range reveals, line 161) and **`sig_alg` values 2–15**
-  (§6.2).
+- **Named reserved slots in v1** — one per committed v1.1 item, so each
+  can ship as an additive v1.x field rather than a format-version event:
+
+  | slot | reserved for | owner of the eventual shape |
+  | --- | --- | --- |
+  | bundle key **10** `range_reveals` (§7.6) | v1.1 arbitrary sub-unit byte-range reveal tooling — the covers + boundary paths of a `reveal --range` selection (lines 114/161) | G/R (the proof format itself already ships in MVP via G12/G13; only *selection* + rendering are deferred) |
+  | receipt key **3** `chain_inputs` (§7.10) | v1.1 Arbitrum-receipt verification chain (line 161) — registry-visible structure promoted out of the opaque `payload` | A/S |
+  | `sig_alg` values **2–15** (§6.2) | future signature algorithms | C |
+
+  Reserving is *not* designing: none of the three shapes is specified
+  here, and specifying one is a later decision, not an editorial pass.
+
+- All three reject-if-present in v1 with F10's reserved-slot error — the
+  same error a *nameless* reserved key raises (§7.15), so assigning a
+  named slot in v1.1 never changes an existing error code (D30).
 - The manifest envelope (§7.1) has **no** reserved space — shape frozen
-  forever (§1 rule 6).
+  forever (§1 rule 6). Every other map, manifest- and bundle-side,
+  reserves the remainder of its band (§7.15).
+- **Arrays have no reserved space.** `byte_range` (2 elements),
+  `cover_entry` and `path_node` (3 each) are positional, so a future
+  element cannot be "reserved" — extending one is a version bump. This is
+  why per-entry extensibility lives in the enclosing *map*, not in the
+  tuples.
 - A reserved key is *assigned* only by a recorded format decision; v1.x
   assignments must be additive (new optional field) — anything else is a
   version bump (line 123).
@@ -597,8 +1060,11 @@ must comfortably admit `2·⌈log₂ n⌉` entries at `n = 10⁸` (line 96).
 ## 12. Spec-coverage checklist
 
 Every field named in MVP-SPEC.md lines 74–75, 98, and 112–114, mapped to
-its registry row (F4 accept criterion). "—" = deliberately not a wire
-field, with the reason.
+its registry row (F4 accept criterion), plus the bundle-slice additions
+drawn from lines 91, 110, 121 and 161. "—" = deliberately not a wire
+field, with the reason. Rows whose registry cell begins "— checked
+absence" are the ones F8 must *test* the absence of, not merely omit
+(§7.6.1).
 
 | spec line | spec item | registry row |
 | --- | --- | --- |
@@ -654,7 +1120,16 @@ field, with the reason.
 | 114 | fully-revealed file: `s_root` | §7.14 key 2 |
 | 114 | raw-mirror unit "when proving exact original bytes" | — rides as a §7.12 entry (its manifest `kind` = raw-mirror identifies it); the whole-file-only selection rule is U's CLI gate (line 92), not wire |
 | 114 | (v1.1) sub-unit range covers + boundary paths | §7.6 key 10 — reserved, reject-in-v1 |
-| 114 | "Nonces come from the manifest (single source of truth)" | — checked absence: §7.11/§7.12 deliberately have **no** nonce key |
+| 161 | (v1.1) Arbitrum-receipt verification chain | §7.10 key 3 — reserved, reject-in-v1 |
+| 114 | "Nonces come from the manifest (single source of truth)" | — checked absence: §7.11/§7.12 deliberately have **no** nonce key (§7.6.1) |
+| 112 | anchor *kind* (OTS vs TSA) | — positional, not a field: §7.6 key 3 vs key 4 (§7.6.2). Satisfies the "anchor type" item of the F8 task field list |
+| 91 | per-unit AAD `seal_id ‖ LE64(unit_id)` | — reconstructed from the manifest `seal_id` + the reveal's `unit_id`; never carried (§7.11) |
+| 121 | exact length of every disclosed salt / seed / node hash | §7.11 key 3 (seed 32) · §7.12 key 3 (16) · §7.13 key 2 (16) · §7.14 keys 1–2 (16, 32) · §5 `path_node` element 2 (32) — all **[P]** |
+| 112 | bundle authority comes from the embedded *signed* manifest | — checked absence: the bundle has no signature container of its own (§7.6.1) |
+| 75 | `work_id` / `anchor_digest` at bundle level | — checked absence: both derived from §7.6 key 1's bytes; storing either would create a second authority (§7.6.1) |
+| 110 | receipt is opt-in | §7.6 key 5 — the *only* optional top-level key; absence carries no meaning |
+| 121 | full-reveal material (`file_salt`, `s_root`) mandatory when a file is fully revealed | §7.14 — biconditional over the **derived** predicate (D28); entry absence *is* the missing-`file_salt` case |
+| 121 | reveal shape (partial vs full) | — checked absence: **no** shape discriminant anywhere in the bundle; derived from the signed unit table + revealed set (D28 rider 1; §7.6.1, §7.14) |
 
 ## 13. Ambiguities found and D8 feed
 
@@ -681,26 +1156,89 @@ a D8 (or A/S) confirmation at sign-off:
    list order** (§6.1, §7.8, §8): which of the seven states are legal *as
    recorded*, per kind, and the exact capture-date meaning — A/R rule,
    wire type unaffected.
-6. **Raw-mirror position within a file's `units` array**: proposed
-   builder rule "after all non-mirror units"; parse accepts any position
-   (only the non-mirror tiling order is invariant-bearing).
-7. **`unit_id` stored-and-checked** (§7.5 key 0): the spec lists the field
-   *and* defines it as derivable; proposed to store + parse-check
-   equality. If D8 prefers derived-only, key 0 is removed and keys shift —
-   decide before F5.
+6. ~~**Raw-mirror position within a file's `units` array**~~ —
+   **CLOSED by D23** (2026-07-27): the mirror is its file's last unit;
+   parse still accepts any position and R exempts mirrors by `kind`, not
+   by position (§7.5).
+7. ~~**`unit_id` stored-and-checked**~~ — **settled in code by F5**
+   (2026-07-28): key 0 is stored *and* parse-checked equal to the derived
+   manifest-order ordinal (`manifest/body.rs`). Recorded here as a D8
+   ratification item only; changing it now would move consumed keys.
 
-Open co-freezes tracked elsewhere: D9 (§5, with G8), D17 (§6.2, with
-C14), F11 caps (§11).
+Added by the bundle-slice pass (2026-07-28) — each is format-permanent
+and **none is decided here**:
+
+8. **May bundle schema validation open the embedded manifest?** (§0.)
+   Proposed **no**: F8 decides the bundle from the bundle's own bytes,
+   and any rule needing both sides is [R]. This is not merely a layering
+   preference — it fixes *which error family* each rejection lands in,
+   and D30 makes error codes permanent. Under "no", an `s_root` present
+   for a tree-less file (§7.14) is a **verify** failure; under "yes" it is
+   a **schema** failure, and the two render differently to users. Decide
+   once, before F8 writes its error enum. Owner: D8 with F8/F9/R.
+9. **Is the OTS upgrade group (§7.8 keys 2–4) tied to `status ==
+   attested`, or free-standing?** The registry's rule that keys 2–4 are
+   all-or-nothing is not in question; the coupling is. Tying presence to
+   `status` makes the artifact self-consistent and gives a crisp early
+   rejection — but it is the only place where a **parse** rule depends on
+   a field the design says the verifier must **never trust** (§6.1), so a
+   sealer's lie about `status` becomes a parse outcome. Free-standing
+   presence keeps parse ignorant of semantics and leaves the whole
+   judgement to A/R, at the cost of admitting artifacts like
+   `status = pending` + header. Owner: D8 with A. Format-permanent either
+   way, and cheap to get wrong quietly.
+10. **Must a revealed unit's owning file have a `touched_files` entry?**
+    I.e. may a bundle disclose bytes while withholding *which file* they
+    came from? Line 114 says paths ship "per **touched** file" without
+    defining touched; line 121's anti-out-of-context guardrail argues the
+    recipient should always know what they are looking at, while path
+    privacy argues the opposite. If mandatory it is an **[X]** rule F8
+    enforces (both lists are in the bundle); if optional it is nothing at
+    all. `full_reveals ⊆ touched_files` is already settled as mandatory
+    (§7.6) — this is the weaker per-unit case. Owner: D8 with R (and U for
+    the `reveal` surface).
+
+Open co-freezes tracked elsewhere: D17 (§6.2, with C14), F11 caps (§11).
+**D9 closed 2026-07-28** (§5) — no longer a co-freeze, only a co-freeze
+*date* (Q14, with everything else here).
+
+Registered decisions the bundle slice **feeds and must not resolve** —
+each is already an entry in the TODO decision register, so it is *not*
+re-raised as a D8 item here:
+
+| decision | where it bites in this registry | this slice's contribution |
+| --- | --- | --- |
+| **D74** — extraneous `s_root` on a fine-tree-absent full reveal | §7.14 key 2, the fifth violation row | the row is left **unassigned**, and the permissive reading is explicitly not encoded |
+| **D75** — does a full reveal ship covers *and* `s_root`? | §7.11 key 3 presence | shown to be **key-neutral** (only the presence rule and its tier move); the draft leans "both", with reasons, as D75 input |
+| **D77** — zero-non-mirror-unit file | §7.14's `N(F) ≠ ∅` clause | recorded as the reason the clause exists; no registry change either way |
 
 ## 14. Machine-readable mirror and tests
 
 [`registry-v1.json`](registry-v1.json) mirrors this document 1:1 — every
 map, key number, type, presence rule, fixed length, enum value, tuple
-shape, and reserved range, with per-item `status` markers
-(`proposed` / `pending-D9` / `pending-D17`). The draft-stage test
-`crates/antseal-core/tests/format_registry_draft.rs` asserts: the JSON
-parses; every key/value/index is an unsigned integer; no duplicate key
-numbers within any single map (nor values within an enum); reserved
-ranges are well-formed, mutually disjoint, and collide with no assigned
-key. The 1:1 code-constants ⟷ registry assertion lands with F5/F8, and
-the F11 cap constants join the mirror when frozen.
+shape, and reserved range, with per-item `status` markers. The
+draft-stage test `crates/antseal-core/tests/format_registry_draft.rs`
+asserts: the JSON parses; every key/value/index is an unsigned integer;
+no duplicate key numbers within any single map (nor values within an
+enum); reserved ranges are well-formed, mutually disjoint, and collide
+with no assigned key; every assigned key and reserved bound sits in the
+`0..=23` band; and every item carries a **registered** status marker.
+
+The registered vocabulary stays `proposed` / `pending-D9` /
+`pending-D17` even though **no item carries `pending-D9` any more** (D9
+resolved 2026-07-28). Keeping the retired marker registered is
+deliberate: an item that reacquires it fails no test today, but the
+marker cannot be *silently reintroduced* under a different spelling
+either — and dropping it from the allow-list would only mean a future
+re-open has to edit the test as well as the registry. Both readings are
+defensible; the cheap one is kept.
+
+The bundle slice adds three non-`maps` sections the walker does not
+status-check, because they record rules rather than assignments:
+`decode_layers`, `checked_absences`, and `validation_tiers`. They are
+mirrors of §7.6.3, §7.6.1, and §0 respectively and exist so F8 can
+consume them without parsing prose.
+
+The 1:1 code-constants ⟷ registry assertion lands with F5/F8 (§7.15
+lists what the bundle half must register), and the F11 cap constants join
+the mirror when frozen.
