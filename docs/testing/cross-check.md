@@ -347,11 +347,20 @@ Recording this is the point of Q14's row N8, which requires a report **for the
 freeze commit** and warns that a reader can otherwise tick it by agreeing with
 a document instead of verifying the evidence it names.
 
-**Tree verified:** `9d3ab16`. The `format-v1-freeze` tag lands on a later
-commit that adds only this report, the CHANGELOG and the register updates —
-no artifact this report verifies changes between the two, and
-`FROZEN.sha256`, `docs/format/FROZEN.sha256` and `testdata/tamper/` are
-byte-identical across them.
+**Tree verified:** the tree at the **`format-v1-freeze`** tag. Named by tag
+rather than by commit hash deliberately: after this report was first written,
+14 commits from three lanes were found to carry a non-canonical author email
+(`aed900@…` rather than the ID-prefixed `129773515+aed900@…` that all other
+history uses), and normalising them before publication rewrote every hash in
+the wave. The content tree was byte-identical across that rewrite — verified,
+not assumed — but a hash written into a document does not survive it, which is
+the same rot §Q58 removed from the registry citations. The tag is stable; the
+hash was not.
+
+Between the commit measured and the tagged commit, no artifact this report
+verifies changes: `testdata/vectors/v1/FROZEN.sha256`,
+`docs/format/FROZEN.sha256` and `testdata/tamper/` are byte-identical across
+them.
 
 **Result: ZERO discrepancies**, every surface, first run.
 
