@@ -1036,6 +1036,42 @@ mod tests {
     //
     // Every byte of key material is a recognisable constant pattern and
     // nothing here is derived from a real secret (`testdata/README.md`).
+    //
+    // # Why it survives R6 (task R29, decided here)
+    //
+    // R29 offered two ends: rewrite these tests against R6's shapes and
+    // delete this fixture, or keep it as a deliberate **independent
+    // construction** and assert the two agree. The second was taken, for
+    // three reasons that are worth having written down rather than
+    // inferred:
+    //
+    // 1. **Independence is the asset, not the duplication.** R9 froze
+    //    R6's bundle bytes for 21 shapes, so one of the two definitions of
+    //    "a valid bundle" is now a CI-enforced artifact. That makes the
+    //    frozen half *authoritative-looking*, not *correct* — a builder
+    //    bug that predates the freeze is pinned, not caught. A second
+    //    construction that shares no code with the first, and agrees with
+    //    it, is evidence the frozen artifact is right. Deleting it would
+    //    have traded the only cross-check for a smaller file. This is the
+    //    same argument that makes F14's independent CBOR implementation
+    //    worth its cost.
+    // 2. **Option (a) was not actually cheap.** These tests need two
+    //    mutations R6's `Tweak` has no knob for — a corrupt Ed25519
+    //    signature and a corrupted GGM **cover seed** — so deleting this
+    //    fixture meant *adding* to R6's constructor, in the same region
+    //    D83 is changing. The cheap-looking option cost a change to the
+    //    frozen half.
+    // 3. **The stage-order pins are ordering claims, and R9 pins
+    //    outputs.** `stage_order_*` needs *combinations* of mutations
+    //    (broken tiling **and** corrupt ciphertext, and so on) whose value
+    //    is which error arrives first. No committed vector expresses that,
+    //    so the fixture's most load-bearing tests had nothing to migrate
+    //    to.
+    //
+    // What R29 fixes is the actual defect — the two definitions were
+    // *unrelated*. `the_two_constructions_agree_on_a_valid_bundle` and
+    // `the_two_constructions_agree_on_what_they_reject` below bind them,
+    // so they can no longer drift silently.
 
     /// Fixed, public, NON-SECRET master secret.
     const TEST_W: [u8; 32] = [0x5A; 32];
@@ -1949,5 +1985,216 @@ mod tests {
     #[test]
     fn default_options_are_the_m0_options() {
         assert_eq!(VerifyOptions::default(), VerifyOptions::new());
+    }
+
+    // -----------------------------------------------------------------
+    // R29: the two definitions of "a valid bundle" agree
+    // -----------------------------------------------------------------
+    //
+    // Gated on `test-vectors` because R6's constructor is (P14's tier
+    // split); the fixture above and every test before this point stay
+    // feature-free, so R5's suite is unchanged on a bare `cargo test -p
+    // antseal-core`.
+
+    #[cfg(feature = "test-vectors")]
+    mod agreement_with_r6 {
+        use super::*;
+        use crate::test_util::bundle_fixtures::{
+            FileSelection, FileSpec, Selection, Tweak as FixtureTweak, WorkSpec, build,
+            build_tweaked,
+        };
+        use crate::test_util::vectors::first_difference;
+
+        /// **The same work, described as data**: R5's three files, their
+        /// contents, their splits and their fine-tree choices, expressed
+        /// through R6's spec API instead of assembled by hand.
+        ///
+        /// Not [`shapes::multi_file`](crate::test_util::bundle_fixtures::shapes::multi_file),
+        /// despite R29's text saying the two are the same work. They are
+        /// nearly the same and differ in two places that matter to a report:
+        /// `multi_file`'s file 0 is a **single** unit plus its mirror where
+        /// this one is two, and its file 2 carries different bytes and so a
+        /// different placeholder size. Building the twin here rather than
+        /// widening `shapes` is deliberate — R9 froze `multi_file`'s bytes,
+        /// so bending it to fit R5 would be a vector re-emit for a test's
+        /// convenience.
+        fn twin() -> (WorkSpec, Selection) {
+            (
+                WorkSpec::new(
+                    // Same title, so `work.title` is not a difference the
+                    // comparison has to be taught to ignore.
+                    "R5 pipeline fixture",
+                    vec![
+                        FileSpec::text(F0_PATH, b"line one\r\nline two\r\n".to_vec())
+                            .split(vec![9, 9]),
+                        FileSpec::binary(F1_PATH, (0u8..30).collect::<Vec<u8>>())
+                            .split(vec![10, 10, 10]),
+                        FileSpec::text(F2_PATH, b"kept back\n".to_vec()).without_fine_tree(),
+                    ],
+                ),
+                Selection(vec![
+                    FileSelection::Full,
+                    FileSelection::Units(vec![1]),
+                    FileSelection::Untouched,
+                ]),
+            )
+        }
+
+        /// **R29's agreement assertion.** Two constructions that share no
+        /// code produce the *same verification report* for the same work —
+        /// everything but `work_id`, which must differ because the two use
+        /// different master secrets, `seal_id`s and AEAD nonces by design.
+        ///
+        /// Written as one comparison over the whole report with that single
+        /// field neutralised, rather than as a list of per-field
+        /// assertions: a field **added** to the report is then covered from
+        /// the moment it exists, which is the failure mode a hand-written
+        /// checklist has and this does not.
+        #[test]
+        fn the_two_constructions_agree_on_a_valid_bundle() {
+            let (spec, selection) = twin();
+            let generated_bytes = build(&spec, &selection).bytes;
+            let hand_bytes = valid();
+
+            // The premise: these really are two different byte strings, so
+            // the agreement below is a claim about two constructions and
+            // not about one artifact compared with itself.
+            assert_ne!(
+                hand_bytes, generated_bytes,
+                "the two fixtures produced identical bytes — the independence R29 kept is gone"
+            );
+
+            let hand = verify_bundle(&hand_bytes, &VerifyOptions::new())
+                .expect("R5's hand-built fixture verifies");
+            let generated =
+                verify_bundle(&generated_bytes, &VerifyOptions::new()).expect("R6's twin verifies");
+
+            assert_ne!(
+                hand.work.work_id, generated.work.work_id,
+                "`work_id` is SHA-256 over the manifest body; two works built from different \
+                 secrets cannot share one"
+            );
+
+            let mut masked = hand.clone();
+            masked.work.work_id = generated.work.work_id;
+            if masked != generated {
+                let json = |report: &VerificationReport| -> serde_json::Value {
+                    serde_json::from_slice(&report.to_canonical_json().expect("report serializes"))
+                        .expect("canonical JSON parses")
+                };
+                panic!(
+                    "R5's hand-built fixture and R6's twin disagree about the same work: {}",
+                    first_difference("report", &json(&masked), &json(&generated))
+                );
+            }
+        }
+
+        /// Agreement on **rejection**, not only on acceptance.
+        ///
+        /// The half that matters most: R5's fixture exists to pin the stage
+        /// order, so its value is in which error arrives first, and a drift
+        /// between the two constructions would show up here long before it
+        /// showed up in a valid bundle. Each row is one mutation both
+        /// vocabularies can express, named on each side.
+        ///
+        /// The assertion is that the two **agree**, never that a particular
+        /// code appears: the tamper matrix owns the codes (error-code
+        /// contract), and re-pinning them here would create a second place
+        /// to edit when a row moves.
+        #[test]
+        fn the_two_constructions_agree_on_what_they_reject() {
+            let (spec, selection) = twin();
+
+            // Unit ids line up between the two by construction: both number
+            // units work-globally in manifest order with each file's raw
+            // mirror last (D23), so file 0 is units 0, 1 + mirror 2, file 1
+            // is 3, 4, 5, and file 2 is unit 6.
+            let rows: Vec<(&str, Tweak, FixtureTweak)> = vec![
+                (
+                    "drop the full-reveal material of file 0",
+                    Tweak {
+                        drop_full_material: true,
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        drop_full_material: Some(0),
+                        ..FixtureTweak::default()
+                    },
+                ),
+                (
+                    "drop file 1's touched-file entry (D80)",
+                    Tweak {
+                        drop_touched_file: Some(1),
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        drop_touched_file: Some(1),
+                        ..FixtureTweak::default()
+                    },
+                ),
+                (
+                    "corrupt unit 0's ciphertext",
+                    Tweak {
+                        corrupt_ciphertext: vec![0],
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        corrupt_ciphertext: Some(0),
+                        ..FixtureTweak::default()
+                    },
+                ),
+                (
+                    "ship covered unit 0 in `noncovered_reveals`",
+                    Tweak {
+                        misplace_covered_unit: Some(0),
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        misplace_covered_unit: Some(0),
+                        ..FixtureTweak::default()
+                    },
+                ),
+                (
+                    "touch file 2 without revealing any of it (D82)",
+                    Tweak {
+                        // 0x32 is the fixture's *genuine* `path_salt` for
+                        // file 2, so `path_commit` still opens — the same
+                        // property R6's knob has by derivation.
+                        add_touched_file_2: Some(0x32),
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        touch_without_reveal: Some(2),
+                        ..FixtureTweak::default()
+                    },
+                ),
+                (
+                    "corrupt file 0's disclosed `s_root`",
+                    Tweak {
+                        corrupt_s_root: true,
+                        ..Tweak::default()
+                    },
+                    FixtureTweak {
+                        corrupt_disclosed_s_root: Some(0),
+                        ..FixtureTweak::default()
+                    },
+                ),
+            ];
+
+            for (mutation, hand_tweak, fixture_tweak) in rows {
+                let hand = code_of(&hand_tweak);
+                let generated = verify_bundle(
+                    &build_tweaked(&spec, &selection, &fixture_tweak).bytes,
+                    &VerifyOptions::new(),
+                )
+                .expect_err("the tweaked twin must not verify")
+                .code();
+                assert_eq!(
+                    hand, generated,
+                    "`{mutation}`: R5's fixture reports `{hand}`, R6's twin reports \
+                     `{generated}` — the two definitions of a valid bundle have drifted"
+                );
+            }
+        }
     }
 }
