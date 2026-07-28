@@ -1,0 +1,88 @@
+{
+  "schema": "antseal-vector-index",
+  "schema_version": 1,
+  "format_version": "v1",
+  "freeze_gate": "Q14",
+  "note": "The per-version vector roster (F10). Machine-readable; consumed by crates/antseal-core/tests/vector_index.rs. Contract + registration procedure: ../README.md, section 'The per-version index'. This file is an AUXILIARY: it is not itself a golden vector and is not frozen by FROZEN.sha256 — it is the roster, FROZEN.sha256 is the freeze.",
+  "vectors": [
+    {
+      "slug": "crypto-commitments",
+      "path": "crypto/commitments.json",
+      "kind": "commitments",
+      "task": "C16",
+      "pins": "the four salted commitments (unit/raw/canon/path): frozen (domain_tag, salt_label) pairs, HKDF-derived salts, and the digest each opens to (MVP-SPEC.md lines 93-95)"
+    },
+    {
+      "slug": "crypto-manifest-aead",
+      "path": "crypto/manifest-aead.json",
+      "kind": "manifest-aead",
+      "task": "C16",
+      "pins": "k_m derivation at the sentinel id and the frozen empty-AAD manifest AEAD (MVP-SPEC.md line 98)"
+    },
+    {
+      "slug": "crypto-signatures",
+      "path": "crypto/signatures.json",
+      "kind": "signatures",
+      "task": "C16",
+      "pins": "hybrid author signatures: HKDF seeds, both public keys, the frozen ctx||0x00||body Ed25519 pre-image, deterministic ML-DSA-65 bytes, and the hybrid policy label (MVP-SPEC.md line 97)"
+    },
+    {
+      "slug": "crypto-unit-aead",
+      "path": "crypto/unit-aead.json",
+      "kind": "unit-aead",
+      "task": "C16",
+      "pins": "k_u derivation, the seal_id||LE64(unit_id) AAD, the padded_length formula at both boundaries (empty unit, 256-aligned unit), and the resulting ciphertexts (MVP-SPEC.md line 91)"
+    },
+    {
+      "slug": "hkdf-labels",
+      "path": "hkdf/hkdf-labels.json",
+      "kind": "hkdf-labels",
+      "task": "C3",
+      "pins": "the full 8-label HKDF registry: the length-prefixed injective info encoding and the OKM of every registered label (MVP-SPEC.md line 73, spec-mandated pairwise distinctness)"
+    },
+    {
+      "slug": "sig-reject-ed25519",
+      "path": "sig-reject/ed25519.json",
+      "kind": "sig-reject",
+      "task": "C15",
+      "pins": "Ed25519 strict-verification rejects — S >= L, small-order and non-canonical R/A, wrong ctx — each bound to its stable crypto- code (MVP-SPEC.md line 97)"
+    },
+    {
+      "slug": "sig-reject-ml-dsa-65",
+      "path": "sig-reject/ml-dsa-65.json",
+      "kind": "sig-reject",
+      "task": "C15",
+      "pins": "ML-DSA-65 canonical-encoding rejects — hint/z bounds and out-of-range encodings — plus the FIPS-204 and empty-ctx confusions (MVP-SPEC.md line 97)"
+    }
+  ],
+  "pending": [
+    {
+      "slug": "manifest-encode-decode",
+      "kind": "manifest",
+      "task": "F12",
+      "must_exist_before_freeze": true,
+      "pins": "manifest kind: deterministic-CBOR manifest bytes, work_id, anchor_digest, commitments, fine_root (MVP-SPEC.md line 153)"
+    },
+    {
+      "slug": "bundle-empty-anchor",
+      "kind": "bundle",
+      "task": "F13",
+      "must_exist_before_freeze": true,
+      "pins": "bundle kind incl. the empty-anchor (UNANCHORED) vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153)"
+    },
+    {
+      "slug": "fine-tree-unbalanced-n6",
+      "kind": "fine-tree",
+      "task": "G15",
+      "must_exist_before_freeze": true,
+      "pins": "fine-tree kind: the unbalanced n=6 opening that pins MSB-first GGM indexing (MVP-SPEC.md line 169)"
+    },
+    {
+      "slug": "verification-reports",
+      "kind": "report",
+      "task": "R9",
+      "must_exist_before_freeze": false,
+      "pins": "report kind: canonical bundle -> serialized VerificationReport for every M0 shape; the native<->WASM bit-match medium and the set R28's multi-version suite extends per released version (MVP-SPEC.md lines 167, 169)"
+    }
+  ]
+}

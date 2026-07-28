@@ -16,11 +16,26 @@ vectors/
   README.md            # this file (aux)
   v1/                  # one directory per format version, name = v<integer>
     FROZEN.sha256      # aux: Q6 freeze + must-exist manifest (one per version)
+    INDEX.json         # aux: F10 per-version roster (one per version)
     <component>/       # free-form grouping (hkdf/, manifest/, …)
       *.json           # vector files (envelope schema below)
       README.md        # aux: what these vectors pin, provenance
       *.py             # aux: independent reference generators (verify-only)
 ```
+
+**`v<n>/` is a format version's whole record**, and it has three parts that
+must not be conflated:
+
+| File | Job | Owner |
+| --- | --- | --- |
+| the `*.json` vectors | the evidence itself | the landing task |
+| `FROZEN.sha256` | **freeze** the bytes + catch deletions | Q6 |
+| `INDEX.json` | the **roster**: what exists, who owns it, what it pins, what is still owed | F10 |
+
+`INDEX.json` is an auxiliary and is deliberately **not** frozen: it changes
+every time a vector lands, and a roster edit must never read as a format
+event. It is held to the tree — and cross-checked against `FROZEN.sha256` —
+by `crates/antseal-core/tests/vector_index.rs`.
 
 The native runner (`crates/antseal-core/tests/vector_runner.rs`, test names
 `vector_runner_*`, CI lane `golden-vectors` + the three `cross-os-*` lanes)
@@ -33,8 +48,9 @@ skipped:
 - Under a version directory, every regular file must be either
   - a **vector file**: extension `.json` — parsed, validated, and executed
     (a malformed vector file is a hard test failure, never a skip), or
-  - an **auxiliary file**: `README.md`, `*.py` (reference generators), or
-    the `FROZEN.sha256` freeze manifest (Q6 — see below).
+  - an **auxiliary file**: `README.md`, `*.py` (reference generators), the
+    `FROZEN.sha256` freeze manifest (Q6), or the `INDEX.json` roster (F10) —
+    both described below.
 
   A file of any other kind **fails the runner** as unclassifiable.
 - Zero vectors discovered across the whole tree **fails the runner**
@@ -123,10 +139,12 @@ changes):
    `wasm-bitmatch` lane covers every new vector automatically.
 5. `./scripts/vector-freeze.sh --update` — appends the vector's digest to
    its version's `FROZEN.sha256`, which freezes its bytes and puts it on
-   the must-exist list. This is the **one** step that touches a committed
-   file: a vector outside the manifest has no retention guarantee, so the
-   `vector-freeze` lane refuses it. Commit the manifest line with the
-   vector.
+   the must-exist list. A vector outside the manifest has no retention
+   guarantee, so the `vector-freeze` lane refuses it. Commit the manifest
+   line with the vector.
+6. **Register it in `INDEX.json`** — see the next section for the exact
+   entry shape. `cargo test -p antseal-core vector_index` refuses a vector
+   that is committed but unrostered, and a roster entry with no file.
 
 Adding a **new kind** (framework extension, not a per-vector event): add
 the payload types + executor arm in
@@ -135,8 +153,104 @@ and a `#! kind <name> <task>` directive to the version manifest (the
 checker requires the two to agree). The runner test itself never changes.
 
 Adding a **new format version**: create `vectors/v<n>/` with its own
-`FROZEN.sha256` — discovery is by directory walk, so the runner executes
-and the freeze guard checks all versions forever (Q6 enforces retention).
+`FROZEN.sha256` **and its own `INDEX.json`** — discovery is by directory
+walk, so the runner executes and the freeze guard checks all versions
+forever (Q6 enforces retention). The index's `format_version` must name a
+version `antseal_core::format::SUPPORTED_VERSIONS` lists, which is what ties
+the vector tree to F10's dispatch table: vectors can only exist for a
+version this build can actually decode.
+
+## The per-version index (F10)
+
+`v<n>/INDEX.json` is the **roster** of one format version. `FROZEN.sha256`
+answers *"have these bytes changed?"*; the index answers *"what is here, who
+owns it, what does it pin, and what is still owed?"* — the questions a
+reviewer, the Q14 freeze gate, and R28's multi-version suite each need
+answered without reading seven JSON payloads.
+
+It is consumed by `crates/antseal-core/tests/vector_index.rs` (test names
+carry the reserved `vector_` marker, so it runs on the `cross-os-*` lanes
+alongside the Q4 runner).
+
+### Schema
+
+```json
+{
+  "schema": "antseal-vector-index",
+  "schema_version": 1,
+  "format_version": "v1",
+  "freeze_gate": "Q14",
+  "note": "…",
+  "vectors": [
+    {
+      "slug":  "crypto-commitments",
+      "path":  "crypto/commitments.json",
+      "kind":  "commitments",
+      "task":  "C16",
+      "pins":  "one sentence: the obligation this vector discharges, citing the spec line"
+    }
+  ],
+  "pending": [
+    {
+      "slug":  "manifest-encode-decode",
+      "kind":  "manifest",
+      "task":  "F12",
+      "must_exist_before_freeze": true,
+      "pins":  "…"
+    }
+  ]
+}
+```
+
+Unknown fields are rejected (`deny_unknown_fields`), so a typo is never
+silently ignored.
+
+| Field | Rule |
+| --- | --- |
+| `slug` | permanent handle, unique within the version, kebab-case. Downstream work refers to a vector by slug, so treat it like an error code: **append-only, never renamed** |
+| `path` | forward-slashed, relative to `v<n>/`, must exist and must be frozen |
+| `kind` | must equal the vector file's own `kind` **and** be in `test_util::vectors::KNOWN_KINDS` |
+| `task` | the task that landed (or owes) it — never blank |
+| `pins` | ≥ 20 chars; states what the vector pins, ideally citing the MVP-SPEC line |
+| `must_exist_before_freeze` | *pending entries only.* `true` ⇒ this is part of Q14's must-exist minimum and has a matching `#! pending` line in `FROZEN.sha256`; `false` ⇒ tracked here only |
+
+### What the test enforces
+
+1. `format_version` equals the directory **and** is in
+   `antseal_core::format::SUPPORTED_VERSIONS`.
+2. **Roster completeness both ways**: committed vectors ≡ index entries. A
+   vector landed without registering fails; so does a stale entry.
+3. The index cannot lie: each entry's `kind` is compared against the vector
+   file's own `kind`, and the file's `format_version` against the directory.
+4. Slugs and paths are unique; a slug is never both landed and pending.
+5. **Index ⟷ freeze agreement**: rostered set ≡ frozen set, and
+   `{pending | must_exist_before_freeze}` ≡ `FROZEN.sha256`'s `#! pending`
+   set, slug and task. The two files are mutually enforcing.
+6. `INDEX.json` itself is never in the frozen set.
+
+### Registration contract for downstream vector tasks
+
+**F12** (`manifest`), **F13** (`bundle`), **G15** (`fine-tree`) and **R9**
+(`report`) each land a kind that is currently a `pending` entry. The move
+from pending → landed is one commit:
+
+1. Commit the vector file(s) under `v1/<component>/`.
+2. Add the kind's payload types + executor arm in
+   `crates/antseal-core/src/test_util/vectors.rs` and its `KNOWN_KINDS` row,
+   plus a row in the registered-kinds table above.
+3. Add `#! kind <name> <task>` to `v1/FROZEN.sha256` and run
+   `./scripts/vector-freeze.sh --update`.
+4. In `INDEX.json`: **delete** the `pending` entry and add one `vectors`
+   entry per committed file. Carry the pending entry's `kind` and `task`
+   across unchanged; give each file its own `slug` and `pins`.
+5. If the entry had `must_exist_before_freeze: true`, delete the matching
+   `#! pending` line from `FROZEN.sha256` in the same commit — the test
+   compares the two sets exactly, so a half-migration is red.
+6. `cargo test -p antseal-core vector_` — runner, freeze and index in one
+   go; then `./scripts/wasm-bitmatch.sh`.
+
+Adding a vector to a kind that already exists needs only steps 1, 3 and 4.
+Neither the runner nor the bit-match lane needs any change, ever.
 
 ## Freeze + indefinite per-version retention (Q6)
 

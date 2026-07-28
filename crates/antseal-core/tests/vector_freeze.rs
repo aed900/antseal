@@ -50,6 +50,13 @@ const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/
 /// the Q4 discovery contract, so it never trips the runner.
 const MANIFEST_NAME: &str = "FROZEN.sha256";
 
+/// F10's per-version roster. An **auxiliary**, like `README.md` and the
+/// `*.py` generators: it is the list *of* the frozen vectors, not one of them,
+/// and it changes whenever a vector lands — freezing it would make every
+/// registration read as a frozen-byte change. `tests/vector_index.rs` is what
+/// holds it to the tree, and it cross-checks against this manifest.
+const INDEX_NAME: &str = "INDEX.json";
+
 /// The manifest schema version this checker implements.
 const MANIFEST_VERSION: u64 = 1;
 
@@ -275,10 +282,10 @@ fn parse_entry(raw: &str, at: &str) -> Result<Entry, String> {
              with no `.`/`..` components"
         ));
     }
-    if !path.ends_with(".json") {
+    if !path.ends_with(".json") || path == INDEX_NAME {
         return Err(format!(
             "{at}: `{path}` is not a vector file — only committed `*.json` vectors are frozen \
-             (READMEs and `*.py` generators are auxiliaries by design)"
+             (READMEs, `*.py` generators and {INDEX_NAME} are auxiliaries by design)"
         ));
     }
     Ok(Entry {
@@ -486,7 +493,7 @@ fn collect_json(base: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), St
     for path in sorted_entries(dir)? {
         if path.is_dir() {
             collect_json(base, &path, out)?;
-        } else if file_name(&path)?.ends_with(".json") {
+        } else if file_name(&path)?.ends_with(".json") && file_name(&path)? != INDEX_NAME {
             let relative = path
                 .strip_prefix(base)
                 .map_err(|_| format!("{}: not under the version directory", path.display()))?;
