@@ -66,6 +66,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "signatures",
     super::vectors_sig_reject::KIND,
     super::vectors_fine_tree::KIND,
+    super::vectors_manifest::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -234,6 +235,10 @@ pub fn execute_vector_bytes(
             envelope.expect,
             envelope.description,
         ),
+        // F12's manifest bytes + diagnostic sidecars + work_id/anchor_digest.
+        super::vectors_manifest::KIND => {
+            super::vectors_manifest::execute(envelope.inputs, envelope.expect, envelope.description)
+        }
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }

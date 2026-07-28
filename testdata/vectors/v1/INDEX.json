@@ -34,6 +34,13 @@
       "pins": "k_u derivation, the seal_id||LE64(unit_id) AAD, the padded_length formula at both boundaries (empty unit, 256-aligned unit), and the resulting ciphertexts (MVP-SPEC.md line 91)"
     },
     {
+      "slug": "manifest-encode-decode",
+      "path": "manifest/manifest.json",
+      "kind": "manifest",
+      "task": "F12",
+      "pins": "manifest kind: canonical deterministic-CBOR envelope bytes for six works, their two-layer diagnostic sidecars (F14's independent-CBOR cross-check target), and the work_id/anchor_digest each hashes to — which is also where F7's deferred committed-digest artifact lands (MVP-SPEC.md lines 73, 75, 98, 153)"
+    },
+    {
       "slug": "hkdf-labels",
       "path": "hkdf/hkdf-labels.json",
       "kind": "hkdf-labels",
@@ -63,13 +70,6 @@
     }
   ],
   "pending": [
-    {
-      "slug": "manifest-encode-decode",
-      "kind": "manifest",
-      "task": "F12",
-      "must_exist_before_freeze": true,
-      "pins": "manifest kind: deterministic-CBOR manifest bytes, work_id, anchor_digest, commitments, fine_root (MVP-SPEC.md line 153)"
-    },
     {
       "slug": "bundle-empty-anchor",
       "kind": "bundle",
