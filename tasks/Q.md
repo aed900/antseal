@@ -149,7 +149,8 @@
 - Accept:
   - Every bullet in lines 165–175 has at least one row; CI check verifies referenced tests exist
   - M0 rows complete at the Q14 freeze; M1/M2/M3/M4 rows checked at their milestone reviews (M4 via Q34)
-- Notes: Maintained continuously through M4; tagged M0 because it must exist at freeze.
+- Notes: Maintained continuously through M4; tagged M0 because it must exist at freeze. Artifacts: `docs/testing/verification-matrix.md` (34 rows) + `scripts/check-traceability.py --matrix`, CI lane `traceability`. **References are by NAME, never by line number** — D83 will move the GGM cover-node wire encoding and its tests with it, and a line-number matrix rots silently on the first refactor.
+- **Finding, 2026-07-28 (M0 wave 6, first build of the matrix): one M0 bullet has no test and it blocks Q14.** Spec line 169's *"bundle/manifest CBOR fuzzing in CI"* is row **V3.4**, status `gap`. `fuzz/fuzz_targets/` holds exactly one target — R10's `verify_bundle`, which drives `verify_bundle`, not the CBOR decoders the spec names. The `fuzz-smoke` CI job is a reserved mount point whose only step prints *"Green here asserts NOTHING until Q9 lands the smoke run."* And the targets could not run if they existed: `rust-toolchain.toml` pins stable 1.92.0 while cargo-fuzz needs nightly, which `fuzz/Cargo.toml` records in its own header. **Three things are missing, not one** — the targets (F17), the nightly pin (**Q39**), the lane (Q9). Every other M0 bullet of lines 165–175 is covered.
 
 ### Q14 — Run the M0 format-freeze gate with recorded sign-off
 - Milestone: M0
@@ -260,7 +261,6 @@ question).**
   disposition and its narrowed residue; R2–R5 carry dated accepted
   dispositions. **Known-and-accepted, not open.**
 
-
 - [ ] **Full-reveal cover shape (D75) — closed *contingent on D83.*** D75 is
   RESOLVED and ratified: a full reveal ships per-unit covers **and** `s_root`
   (`covered_reveal.cover`, registry §7.11 key 3, stays required at tier [P]).
@@ -275,6 +275,23 @@ question).**
   RESOLVED and D75's amendment records which branch was taken. Related: **R36**
   (no committed fixture currently produces a leaf-level cover node — every
   fixture length is even, so `n` is never odd) and **R37**.
+
+**Verification coverage — the row that names what is still missing.**
+
+- [ ] **Traceability matrix M0 rows complete (Q13).**
+  `docs/testing/verification-matrix.md` carries a row for every bullet of
+  MVP-SPEC.md lines 165–175, and `scripts/check-traceability.py --matrix`
+  is green — every test the matrix names resolves. **Every M0 row reads
+  `covered`.** As of 2026-07-28 exactly one does not: **V3.4, spec line 169's
+  "bundle/manifest CBOR fuzzing in CI"**, which needs three things that do not
+  exist — the manifest/bundle targets (F17), a pinned nightly toolchain
+  (**Q39**; `rust-toolchain.toml` pins stable and cargo-fuzz needs nightly),
+  and the smoke lane (Q9). The `fuzz-smoke` job's own output says *"Green here
+  asserts NOTHING until Q9 lands the smoke run"*, so a green CI run is not
+  evidence for this row. **This row blocks the freeze tag.** The in-suite
+  arbitrary-bytes property tests (`verify_fuzz.rs::arbitrary_bytes_never_panic`,
+  `codec_properties.rs::arbitrary_bytes_never_panic_the_decoder`) are a
+  recorded partial mitigation and explicitly do not discharge it.
 
 **Independent cross-check (D31 §10, verbatim).**
 
@@ -552,6 +569,20 @@ question).**
   - Self-test: a deliberately mutated copy (a float introduced; a key reordered; an uppercase hex digit) makes the checker fail, once for each property — a checker never observed failing proves nothing.
   - Iterates `testdata/vectors/v*/report/`, not a hard-coded `v1`.
 - Notes: Tier is **T1 with no T0 anchor** and the report must say so — the contract is ours, so there is nothing external to check it against. That is the honest ceiling here, not a shortfall.
+
+### Q39 — Pin the fuzz-lane nightly toolchain (the blocker under F17, Q9 and Q17)
+- Milestone: M0 (it gates an M0 spec bullet; the work is small and the blocker is absolute)
+- Size: S
+- Deps: P8/P13 (the toolchain-pin policy this must not violate); consumed by F17, Q9, Q17, A23
+- Spec: Milestones M0 (MVP-SPEC.md line 153, "cargo-fuzz targets for the bundle/manifest CBOR parsers in CI"); Verification (line 169); Risks — hostile bundles (line 187)
+- Discovered by: **Q13** (2026-07-28), building the traceability matrix against the tree rather than against task text. `rust-toolchain.toml` pins stable **1.92.0**; cargo-fuzz needs nightly for `-Z sanitizer` and libFuzzer instrumentation. `fuzz/Cargo.toml` records this in its own header — *"It also cannot build on the pinned stable toolchain… Q9 owns that pin"* — and `.github/workflows/ci.yml` says the same in the `fuzz-smoke` mount point's comment. **So the blocker is documented in two places and owned in neither**: Q9's `Do` describes wiring lanes and its Accept says F's targets "run in the required smoke lane at M0", which is unachievable as written. This is the piece that makes the rest possible.
+- Do: Choose and pin the nightly toolchain the fuzz lanes use, **without** touching `rust-toolchain.toml` (the workspace MSRV pin must stay stable — a nightly there would silently widen what the product is allowed to compile against). Options to weigh and record: a `fuzz/rust-toolchain.toml` scoped to the detached fuzz crate; an explicit `cargo +nightly-<date>` in the lane with the date pinned in one place; or `RUSTUP_TOOLCHAIN` set per job. Whichever is chosen, the nightly is an **exact dated pin** under the same deliberate-event rule as every other pin (`docs/dependency-policy.md`), with a documented bump procedure — a floating `nightly` makes the fuzz lane a source of unreproducible red.
+- Accept:
+  - `cargo fuzz build` succeeds locally and in CI for the existing `verify_bundle` target, with the workspace's stable pin unchanged and `cargo build --workspace` unaffected.
+  - The nightly version is pinned exactly, in exactly one place, and named in `docs/toolchain.md` alongside the stable pin with its bump procedure.
+  - The `core-dep-graph` lane stays green — the fuzz crate is deliberately not a workspace member, and this must not change that.
+  - Q13's matrix row **V3.4** can move from `gap` toward `covered` once F17's targets and Q9's lane land on top of this.
+- Notes: Deliberately separated from Q9. Q9 is "build the lanes"; this is "make any lane possible at all", and it is a toolchain decision with its own permanence, not a CI detail. Registering it separately is what stops it being rediscovered at the freeze gate — which is precisely how Q13 found it.
 
 ### Q40 — Machine-check the three coupled report-format version constants
 - Milestone: M0

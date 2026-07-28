@@ -182,20 +182,41 @@ PLAIN_PATH = re.compile(r"^[\w./\-]+$")
 ROW = re.compile(r"^\|\s*(?P<cells>.+)\s*\|$")
 
 
+def split_row(line: str) -> list[str] | None:
+    line = line.strip()
+    if not ROW.match(line):
+        return None
+    return [c.strip() for c in line.strip("|").split("|")]
+
+
+def is_separator(cells: list[str] | None) -> bool:
+    return bool(cells) and all(set(c) <= {"-", ":"} for c in cells if c is not None)
+
+
 def parse_matrix(path: pathlib.Path) -> list[dict[str, str]]:
+    """Every table in the file, keyed by its OWN header.
+
+    The file holds one table per milestone section. A header is recognised by
+    the separator row that must follow it, so a new table resets the header
+    instead of inheriting the previous one — inheriting it is how the second
+    table's header silently becomes a data row.
+    """
     rows: list[dict[str, str]] = []
     header: list[str] | None = None
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        match = ROW.match(line.strip())
-        if not match:
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    for number, line in enumerate(lines, 1):
+        cells = split_row(line)
+        if cells is None:
+            header = None  # a non-table line ends the current table
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if header is None:
+        if is_separator(cells):
+            continue
+        following = split_row(lines[number]) if number < len(lines) else None
+        if is_separator(following):
             header = [c.lower() for c in cells]
             continue
-        if all(set(c) <= {"-", ":", " "} for c in cells if c):
-            continue
-        if len(cells) != len(header):
+        if header is None or len(cells) != len(header):
             continue
         row = dict(zip(header, cells))
         row["_line"] = str(number)
@@ -370,7 +391,13 @@ def self_test() -> int:
         for check, relative, mutate in cases:
             path = tree / relative
             if not path.is_file():
-                print(f"self-test: SKIP {check} — {relative} not present yet")
+                # Never a skip. A self-test that quietly opts out of a case is
+                # how a check stops being able to fail without anyone noticing.
+                print(
+                    f"self-test: FAILED — {check} has no target: {relative} is missing",
+                    file=sys.stderr,
+                )
+                ok = False
                 continue
             original = path.read_text(encoding="utf-8")
             path.write_text(mutate(original), encoding="utf-8")
