@@ -69,7 +69,6 @@
 //!    controls verify.
 
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use crate::crypto::SIG_CONTEXT;
 use crate::crypto::error::{SigAlg, all_code_exemplars};
@@ -95,10 +94,7 @@ pub const ALTERNATE_SIGNER_LABEL: &[u8] = b"antseal C15 alternate signer";
 /// The alternate signer's master secret (see [`ALTERNATE_SIGNER_LABEL`]).
 #[must_use]
 pub fn alternate_signer_secret() -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(ALTERNATE_SIGNER_LABEL);
-    hasher.update(TEST_MASTER_SECRET_W);
-    hasher.finalize().into()
+    super::alternate_test_secret(ALTERNATE_SIGNER_LABEL)
 }
 
 /// Every recognised case class. A class names *what kind of rejection rule*
@@ -751,6 +747,7 @@ fn apply_edit(bytes: &mut [u8], edit: &Edit) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     /// The alternate signer really is a different signer, and it is derived
     /// from the documented test seed rather than being fresh secret material.

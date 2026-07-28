@@ -380,12 +380,27 @@ const ROWS: &[TamperRow] = &[
     },
 ];
 
-/// Every seeded row produces exactly its distinct expected outcome, and no
-/// row panics.
+/// The **whole** M0 registry: the seed rows above plus every domain-owned
+/// slice registered so far. Assembling them here is what makes the
+/// cross-domain distinctness sweep real (error-code contract §4, layer 2) —
+/// a collision between, say, a C row and an R row can only surface once
+/// both sit in one registry.
+///
+/// Domains append their slice here as they land: C17 (crypto) is present;
+/// F15, G19, A21 and R7/R8 follow.
+fn all_rows() -> Vec<TamperRow> {
+    let mut rows = ROWS.to_vec();
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
+    rows
+}
+
+/// Every registered row produces exactly its distinct expected outcome, and
+/// no row panics.
 #[test]
 fn tamper_registry_is_green() {
-    match check_registry(ROWS) {
-        Ok(count) => assert_eq!(count, ROWS.len()),
+    let rows = all_rows();
+    match check_registry(&rows) {
+        Ok(count) => assert_eq!(count, rows.len()),
         Err(failures) => panic!("{}", render_failures(&failures)),
     }
 }
@@ -396,10 +411,11 @@ fn tamper_registry_is_green() {
 /// domain's meta-test.
 #[test]
 fn seeded_rows_span_multiple_domains() {
+    let rows = all_rows();
     let prefixes = ["cbor-", "crypto-"];
     for prefix in prefixes {
         assert!(
-            ROWS.iter().any(|row| matches!(
+            rows.iter().any(|row| matches!(
                 row.expected,
                 ExpectedOutcome::ErrorCode(code) if code.starts_with(prefix)
             )),
@@ -414,9 +430,18 @@ fn seeded_rows_span_multiple_domains() {
         "raw-mirror-in-tiling-set",
     ] {
         assert!(
-            ROWS.iter()
+            rows.iter()
                 .any(|row| row.expected == ExpectedOutcome::ErrorCode(code)),
             "no seeded row binds `{code}`"
         );
     }
+    // The unprefixed R code `path-commit-mismatch` and C's own
+    // `crypto-path-commit-mismatch` are genuinely different outcomes (R's
+    // pipeline check vs C's commitment primitive) and must stay separable —
+    // exactly the cross-domain case the prefix scheme exists for.
+    assert!(
+        rows.iter()
+            .any(|row| row.expected == ExpectedOutcome::ErrorCode("crypto-path-commit-mismatch")),
+        "no row binds `crypto-path-commit-mismatch`"
+    );
 }
