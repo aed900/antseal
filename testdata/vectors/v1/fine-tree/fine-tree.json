@@ -261,7 +261,7 @@
               {
                 "level": 3,
                 "index": 2,
-                "seed": "73387341bf77a56d2ded9a012a3662bb0eb574c8cc071ebc77a9bd182334c16a"
+                "seed": "73387341bf77a56d2ded9a012a3662bb00000000000000000000000000000000"
               }
             ],
             "boundary": [
@@ -292,12 +292,12 @@
               {
                 "level": 3,
                 "index": 1,
-                "seed": "9c24e08a2f6d02a94d489000e2d135894bc843ff3497fbb3e39b8b6820d9efe2"
+                "seed": "9c24e08a2f6d02a94d489000e2d1358900000000000000000000000000000000"
               },
               {
                 "level": 3,
                 "index": 2,
-                "seed": "73387341bf77a56d2ded9a012a3662bb0eb574c8cc071ebc77a9bd182334c16a"
+                "seed": "73387341bf77a56d2ded9a012a3662bb00000000000000000000000000000000"
               }
             ],
             "boundary": [
@@ -395,7 +395,7 @@
               {
                 "level": 0,
                 "index": 0,
-                "seed": "b723077eaee0fbb58430d9932cb173e5e3935b0fcab3203e51f53625a86ee9b5"
+                "seed": "b723077eaee0fbb58430d9932cb173e500000000000000000000000000000000"
               }
             ],
             "boundary": []

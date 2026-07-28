@@ -1394,9 +1394,11 @@ mod tests {
                     .cover()
                     .iter()
                     .map(|entry| {
+                        // The disclosed form (D83): at `level == d` it is
+                        // `salt_i ‖ 0x00·16`, not the raw derived seed.
                         BundleCoverEntry::new(
                             entry.node().address(),
-                            Seed32::from_bytes(*entry.seed().as_bytes()),
+                            Seed32::from_bytes(*entry.payload().as_bytes()),
                         )
                     })
                     .collect();

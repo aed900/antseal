@@ -251,7 +251,7 @@
           "file": "bundle_decode/one-byte-file--full.bin",
           "id": "one-byte-file--full",
           "len": 6202,
-          "sha256": "9bf905fa657ac8fde042fbad4bfa11e47c050869162c0ae9b55f74d016f1a74b"
+          "sha256": "80454d5e16b94195672d1cd1e461cf0ce4fabaa35168d35b3af9d8a3624b7c72"
         },
         {
           "file": "bundle_decode/unbalanced-n6--all.bin",
@@ -347,8 +347,8 @@
       "target": "bundle_decode"
     },
     {
-      "bytes": 1870,
-      "count": 119,
+      "bytes": 2750,
+      "count": 175,
       "seeds": [
         {
           "file": "verify_bundle/valid-multi-file-mixed--identity.bin",
@@ -1063,6 +1063,342 @@
           "id": "tamper-corrupt-unit-commit--mutation-6",
           "len": 18,
           "sha256": "98ce502bd309a6edc4411dd256df3aecad83b8c1f5f2cdfd53ab0e9bdd145423"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--identity.bin",
+          "id": "recombined-round-trip--identity",
+          "len": 2,
+          "sha256": "08da7c45cb204377e7e42249cda5713fa865116ddbb4cb5a1949b2e5b438a6ab"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-1.bin",
+          "id": "recombined-round-trip--mutation-1",
+          "len": 18,
+          "sha256": "b03fa71b53e68dcf4b5406ef1958e4767c3cbdc7b0221a7540e6ed6967a8cdef"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-2.bin",
+          "id": "recombined-round-trip--mutation-2",
+          "len": 18,
+          "sha256": "1cb6bd1e3196e8ff195000991f08c383a57514781089bb77dc56a5d0c03efe79"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-3.bin",
+          "id": "recombined-round-trip--mutation-3",
+          "len": 18,
+          "sha256": "001148aab1e647c8947e44d3d657d7013c9cc34ee83e0aecda8a95ebef890fe5"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-4.bin",
+          "id": "recombined-round-trip--mutation-4",
+          "len": 18,
+          "sha256": "68cc3aefd462bd008222b94c9610055c90de335a1912c1d08f48fe522abddb4a"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-5.bin",
+          "id": "recombined-round-trip--mutation-5",
+          "len": 18,
+          "sha256": "30a420dfdc33bb1125110ac60bd31f5678adccde272120d1581e15a4400a663a"
+        },
+        {
+          "file": "verify_bundle/recombined-round-trip--mutation-6.bin",
+          "id": "recombined-round-trip--mutation-6",
+          "len": 18,
+          "sha256": "3b65de7d158563918c3c0b03edda04db3f58e59116e8ced9309dd3109c7af27f"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--identity.bin",
+          "id": "recombined-graft-manifest--identity",
+          "len": 2,
+          "sha256": "38ac7bda3d1c2bebaee514c7bf472ec10c12ee6bd464d5e75ea8b09ff9425fcb"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-1.bin",
+          "id": "recombined-graft-manifest--mutation-1",
+          "len": 18,
+          "sha256": "9a7840f2bb30915a0955e6c20d4c15597e26d8209a6f4fdbb4d164b3ad974996"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-2.bin",
+          "id": "recombined-graft-manifest--mutation-2",
+          "len": 18,
+          "sha256": "d387f36c7fe3e5fe439dae485d5769e5f8833da60a2a541adbd132a92dd2ac2e"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-3.bin",
+          "id": "recombined-graft-manifest--mutation-3",
+          "len": 18,
+          "sha256": "d6d51a2b6ca05f439764a3021249a99a82f91c169a3a03ea7bae0cb2f0127a60"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-4.bin",
+          "id": "recombined-graft-manifest--mutation-4",
+          "len": 18,
+          "sha256": "a29d6ccb9194bfa13f5bbac64a4f1ce95ca926f7ddb61367a9adb2c8ea93ba1e"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-5.bin",
+          "id": "recombined-graft-manifest--mutation-5",
+          "len": 18,
+          "sha256": "da745e1704b99835f0183c6363a376564f49f3537de0df059fdb12b0590a857f"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-manifest--mutation-6.bin",
+          "id": "recombined-graft-manifest--mutation-6",
+          "len": 18,
+          "sha256": "e5401e27e91d64a82916beddb07537d51c8a752195bb2d321064d99976cae7e6"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--identity.bin",
+          "id": "recombined-graft-reveal-sections--identity",
+          "len": 2,
+          "sha256": "5aeca385d8b781825b07bbec7c858b7170426c88088935850bc13dd6402368a5"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-1.bin",
+          "id": "recombined-graft-reveal-sections--mutation-1",
+          "len": 18,
+          "sha256": "e07f6238708d843fa06bc3d595d4a72a7e7922ec460eb9f31deab6348f63c65f"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-2.bin",
+          "id": "recombined-graft-reveal-sections--mutation-2",
+          "len": 18,
+          "sha256": "6f223b7d3e4f20353ba8a4f744699c3901dcd6b30414086bfec55b1a247460ae"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-3.bin",
+          "id": "recombined-graft-reveal-sections--mutation-3",
+          "len": 18,
+          "sha256": "6967eff0a717d99e89bac226479af4af897e9018b7419aa0e15ce604db7b4fec"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-4.bin",
+          "id": "recombined-graft-reveal-sections--mutation-4",
+          "len": 18,
+          "sha256": "99bd41590a2bbc1325fbbbf71de825b71b3b86b276d743bb0aaa34175467bb2b"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-5.bin",
+          "id": "recombined-graft-reveal-sections--mutation-5",
+          "len": 18,
+          "sha256": "63c2c6c76adf0d325c8f917cce716f465947366b5a21be739678571aa3a7cd0d"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-reveal-sections--mutation-6.bin",
+          "id": "recombined-graft-reveal-sections--mutation-6",
+          "len": 18,
+          "sha256": "7172542c8d9d3d1c4347996237c5c76c926c09d3be263af618f8f3c1d0fbcb48"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--identity.bin",
+          "id": "recombined-graft-touched-files--identity",
+          "len": 2,
+          "sha256": "78b4be1f9eeef9da65c393e4385f67edd142709b400ca7d900bd952e0c3cf727"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-1.bin",
+          "id": "recombined-graft-touched-files--mutation-1",
+          "len": 18,
+          "sha256": "d4cd9f74a4bd5bddcb5cf66664d545286af2fb598ec33d8fc379e7cd8650ca72"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-2.bin",
+          "id": "recombined-graft-touched-files--mutation-2",
+          "len": 18,
+          "sha256": "f9541f5d65a2d2e2d9a4d6e2c3b1ba2dff30cfa2295adcdb40c8b1426951ab00"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-3.bin",
+          "id": "recombined-graft-touched-files--mutation-3",
+          "len": 18,
+          "sha256": "14b319e718eacfb0d54be1d1654ab80b6c7e28dea3a78787015f9c33fea8e6a9"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-4.bin",
+          "id": "recombined-graft-touched-files--mutation-4",
+          "len": 18,
+          "sha256": "951791ca7ebb8b203c5f6aa127864386c2ed03476647485b9d80c67d5feb46e3"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-5.bin",
+          "id": "recombined-graft-touched-files--mutation-5",
+          "len": 18,
+          "sha256": "11f2ec48021ae6b9c7669d54cc9776019ba6749ec3de9d68d17baf5c96f0cc74"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-touched-files--mutation-6.bin",
+          "id": "recombined-graft-touched-files--mutation-6",
+          "len": 18,
+          "sha256": "50a05a5c67778bc201e3e29ab53b70aaac4cf7f92fa7e452d9f904159615288b"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--identity.bin",
+          "id": "recombined-graft-full-reveals--identity",
+          "len": 2,
+          "sha256": "d57e9d4f5842134f140032eaf38b5333638e8c4b145fcf86a23d48d3e9acc0f8"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-1.bin",
+          "id": "recombined-graft-full-reveals--mutation-1",
+          "len": 18,
+          "sha256": "81ed62aa3d0a0b3cc7336e74f9939458f9641ccaa121ae8159bae540ce30349e"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-2.bin",
+          "id": "recombined-graft-full-reveals--mutation-2",
+          "len": 18,
+          "sha256": "5f9549c921c298ebbee754cd5d692e0f3bee364d9005cbe4cb8be8a206b89184"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-3.bin",
+          "id": "recombined-graft-full-reveals--mutation-3",
+          "len": 18,
+          "sha256": "bb4241c3d6c2f13900cc462de478bacd1c7ab606403bafd1f261bd24504eb4ad"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-4.bin",
+          "id": "recombined-graft-full-reveals--mutation-4",
+          "len": 18,
+          "sha256": "18284fa4f631397ef1624e23f1d82208822c180c82386e18a31b5d5cdf2d8243"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-5.bin",
+          "id": "recombined-graft-full-reveals--mutation-5",
+          "len": 18,
+          "sha256": "646abb1d11da1bb33bfdd2f3f760392f48182cfd02f2008fb105c75a5bf07b88"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-full-reveals--mutation-6.bin",
+          "id": "recombined-graft-full-reveals--mutation-6",
+          "len": 18,
+          "sha256": "0e0820566ed53cd7bfb5673c9603464384867998fa35bcc2b35e7f8795b16e6d"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--identity.bin",
+          "id": "recombined-graft-anchors--identity",
+          "len": 2,
+          "sha256": "009bcd40e9707180cd0f5b0a16f497a82ece54d6fe538d5861b47c49ffd91773"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-1.bin",
+          "id": "recombined-graft-anchors--mutation-1",
+          "len": 18,
+          "sha256": "e7890e9fa975f838feb1ffa842c492d5246e6a1537c93f466b522c77315b43c0"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-2.bin",
+          "id": "recombined-graft-anchors--mutation-2",
+          "len": 18,
+          "sha256": "1fa7f42881ec4f66a16ef314e80e0f9029521c44641b4e6c54e81035b0e00d47"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-3.bin",
+          "id": "recombined-graft-anchors--mutation-3",
+          "len": 18,
+          "sha256": "784c20190a55ecca457e667dac9903783964879130a904a5ddf8b2c796c2462f"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-4.bin",
+          "id": "recombined-graft-anchors--mutation-4",
+          "len": 18,
+          "sha256": "a6618d17cc6323826b45f7cd8647280e75b2e1fe44f95b189c455f43113f7e86"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-5.bin",
+          "id": "recombined-graft-anchors--mutation-5",
+          "len": 18,
+          "sha256": "c6bd2e6f6af758a8aa2900b8f80a4122ef456fe2463e454d7f8efa690210b3fb"
+        },
+        {
+          "file": "verify_bundle/recombined-graft-anchors--mutation-6.bin",
+          "id": "recombined-graft-anchors--mutation-6",
+          "len": 18,
+          "sha256": "cdf5666e6e60d7c2e17f1784bc6951d86ed1390413a9e196478821210b553dca"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--identity.bin",
+          "id": "recombined-migrate-covered-into-noncovered--identity",
+          "len": 2,
+          "sha256": "78a23af8da46b1b37e8767921a2d3f528fdc8eca37cea8aea775fd2b283d3776"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-1.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-1",
+          "len": 18,
+          "sha256": "fa92edca96723082eca27f146e087d2fd349e93c3c736044274a4a6d67d05875"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-2.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-2",
+          "len": 18,
+          "sha256": "dc0252c0380290cd80ddb3073884a430d97e5710b3031945251cb03d61e282b7"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-3.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-3",
+          "len": 18,
+          "sha256": "fc6a493a665e92211ae3afb7d0edd7da7a39f7cab26a402d72522d2ae229fd10"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-4.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-4",
+          "len": 18,
+          "sha256": "3a9967c6c19518a8e240b40c9b75c593da2a839dadb8a76c81b09acae7ec5189"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-5.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-5",
+          "len": 18,
+          "sha256": "43b57f60ba29335ff984b29a875ca62fadd3f8b0b6e5ee4516bc31467926893b"
+        },
+        {
+          "file": "verify_bundle/recombined-migrate-covered-into-noncovered--mutation-6.bin",
+          "id": "recombined-migrate-covered-into-noncovered--mutation-6",
+          "len": 18,
+          "sha256": "dfa1ec51098a61bb4e73bc80007b73a6285ec3b83f9aa6152c848f0697c7e68d"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--identity.bin",
+          "id": "recombined-move-full-reveal-to-file-1--identity",
+          "len": 2,
+          "sha256": "4cab73ce2a7e6220975001c8a354143267a3c1ce8bf7692313e654481e616a93"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-1.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-1",
+          "len": 18,
+          "sha256": "282181ef8de060792f0b9e17b31db1ec1d36ea7b9fbd09e372abf518ef5c7860"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-2.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-2",
+          "len": 18,
+          "sha256": "7ca7d61844c8c5d1d78a1d8bb47bec48ee2e44546f9b9e74fffe9541b40e348e"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-3.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-3",
+          "len": 18,
+          "sha256": "3b6f31e165cede15e75718017b48c6131c149e7a9d10eeec85dca67171fac6b1"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-4.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-4",
+          "len": 18,
+          "sha256": "bbc8e0418f0de7ce14bfb12fd717158ce30dbfbc0002d762908d0401afea204e"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-5.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-5",
+          "len": 18,
+          "sha256": "f00496b6687b4d34942ec61a78b550835e9425cb1a43ec287a0d3802889b2d36"
+        },
+        {
+          "file": "verify_bundle/recombined-move-full-reveal-to-file-1--mutation-6.bin",
+          "id": "recombined-move-full-reveal-to-file-1--mutation-6",
+          "len": 18,
+          "sha256": "46ec1c1f29f5c37058a7c9e5f67e46c8defd5b7bcb6705fe6fbe120496c38cd2"
         }
       ],
       "target": "verify_bundle"

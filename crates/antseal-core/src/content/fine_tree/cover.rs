@@ -54,9 +54,11 @@
 //! `O(d^2)` in the worst case and `< 2d` in practice, with no heap traffic
 //! beyond the output.
 
+use zeroize::Zeroize as _;
+
 use crate::content::ggm::{NodeAddress, child_seed, depth_for_leaf_count};
 use crate::content::unit::ByteRange;
-use crate::crypto::material::Seed32;
+use crate::crypto::material::{Salt16, Seed32};
 
 use super::error::FineTreeError;
 
@@ -261,14 +263,33 @@ pub fn minimal_cover(range: ByteRange, leaf_count: u64) -> Result<LeafExactCover
     })
 }
 
-/// One disclosable cover entry: a node and the GGM seed a bundle ships for it.
+/// One disclosable cover entry: a node, the GGM seed derived for it, and the
+/// bytes a bundle actually ships for it.
 ///
 /// Constructible only by [`cover_seeds`], so a `CoverEntry` always carries a
 /// seed the leaf-exactness rule permits leaving the vault.
+///
+/// # Why two values and not one (D83)
+///
+/// The two coincide everywhere except at the grid's leaf level. A node at
+/// `level == d` covers exactly one leaf slot, so a verifier reads
+/// `salt_i = payload[..16]` with no descent and bytes `16..32` are never
+/// hashed; v1 fixes them at zero, so [`Self::payload`] is `salt_i ‖ 0x00·16`
+/// there while [`Self::seed`] stays the true derived seed. Keeping both is
+/// deliberate: `seed()` must go on meaning *the GGM seed*, or
+/// `cover_seeds_agree_with_the_salt_tree` would become a statement about the
+/// wire form instead of about the GGM tree and would stop proving what it
+/// claims.
+///
+/// Both fields are [`Seed32`] rather than `[u8; 32]` so that the redacted
+/// `Debug` and the zeroize-on-drop travel with them — a bare array inside a
+/// `Debug`-deriving [`RangeProof`](super::RangeProof) would print salt bytes
+/// in a panic message (project rule 6).
 #[derive(Debug)]
 pub struct CoverEntry {
     node: CoverNode,
     seed: Seed32,
+    payload: Seed32,
 }
 
 impl CoverEntry {
@@ -278,11 +299,24 @@ impl CoverEntry {
         self.node
     }
 
-    /// The node's GGM seed — 32 bytes, disclosed in the bundle
+    /// The node's GGM seed, exactly as
+    /// [`SaltTree::seed_at`](crate::content::SaltTree) derives it
     /// (MVP-SPEC.md lines 114, 121).
+    ///
+    /// This is the *tree* value. What a bundle discloses is
+    /// [`Self::payload`], which differs at `level == d` (D83).
     #[must_use]
     pub const fn seed(&self) -> &Seed32 {
         &self.seed
+    }
+
+    /// The bytes a bundle discloses for this node — 32 either way: the seed
+    /// itself for `level < d`, and the canonical leaf-level payload
+    /// `salt_i ‖ 0x00·16` for `level == d` (D83;
+    /// `docs/format/registry-v1.md` §2, §5).
+    #[must_use]
+    pub const fn payload(&self) -> &Seed32 {
+        &self.payload
     }
 }
 
@@ -300,16 +334,71 @@ impl CoverEntry {
 /// bits) is always defined. `cover_seeds_agree_with_the_salt_tree` asserts
 /// the descent equals G8's [`SaltTree::seed_at`](crate::content::SaltTree)
 /// for every emitted node.
+///
+/// Each entry carries **both** the derived seed and the bytes a bundle
+/// discloses for it; they differ only at `level == d`, where D83 fixes the
+/// disclosed form at `salt_i ‖ 0x00·16` (see [`CoverEntry`]). The tail of a
+/// leaf-level node's true seed therefore never leaves this function.
 #[must_use]
 pub fn cover_seeds(s_root: &Seed32, cover: &LeafExactCover) -> Vec<CoverEntry> {
+    let depth = cover.depth();
     cover
         .nodes()
         .iter()
-        .map(|node| CoverEntry {
-            node: *node,
-            seed: descend(s_root, node.address),
+        .map(|node| {
+            let seed = descend(s_root, node.address);
+            let payload = canonical_leaf_level_payload(&seed, node.address, depth);
+            CoverEntry {
+                node: *node,
+                seed,
+                payload,
+            }
         })
         .collect()
+}
+
+/// The bytes a bundle discloses for one GGM node — the **prover-side dual**
+/// of [`check_leaf_level_payload`](super::verify::check_leaf_level_payload)
+/// (decision D83).
+///
+/// The seed itself below the grid's leaf level; `salt_i ‖ 0x00·16` at
+/// `level == d`, where a verifier reads `salt_i = payload[..16]` with no
+/// descent and the tail is never hashed (MVP-SPEC.md line 96). The scratch
+/// buffer wipes before returning, so the discarded tail exists in exactly one
+/// place.
+///
+/// [`cover_seeds`] applies it to every cover entry, but a cover is not the
+/// only place a `level == d` value is disclosed: a bundle's
+/// `full_reveal.s_root` is the grid root, which at `n == 1` **is** the single
+/// leaf (`docs/format/registry-v1.md` §7.14 key 2). A sealer emitting that
+/// field must route it through here too — which is why this is public rather
+/// than an implementation detail of `cover_seeds`.
+///
+/// ```
+/// use antseal_core::content::{NodeAddress, canonical_leaf_level_payload};
+/// use antseal_core::crypto::material::Seed32;
+///
+/// let s_root = Seed32::from_bytes([0xC7; 32]);
+///
+/// // n = 1 (d = 0): the root is the leaf, so only salt_0 is disclosed.
+/// let one_leaf = canonical_leaf_level_payload(&s_root, NodeAddress::root(), 0);
+/// assert_eq!(&one_leaf.as_bytes()[..16], &[0xC7; 16]);
+/// assert_eq!(&one_leaf.as_bytes()[16..], &[0x00; 16]);
+///
+/// // Any larger file: the root is an interior node and travels whole.
+/// let bigger = canonical_leaf_level_payload(&s_root, NodeAddress::root(), 5);
+/// assert_eq!(bigger.as_bytes(), s_root.as_bytes());
+/// ```
+#[must_use]
+pub fn canonical_leaf_level_payload(seed: &Seed32, address: NodeAddress, depth: u8) -> Seed32 {
+    if address.level() != depth {
+        return Seed32::from_bytes(*seed.as_bytes());
+    }
+    let mut bytes = [0u8; Seed32::LEN];
+    bytes[..Salt16::LEN].copy_from_slice(&seed.as_bytes()[..Salt16::LEN]);
+    let payload = Seed32::from_bytes(bytes);
+    bytes.zeroize();
+    payload
 }
 
 /// Walk `s_root` down to `address` along the MSB-first bits of its index
@@ -506,14 +595,74 @@ mod tests {
         assert_eq!(entries[0].seed().as_bytes(), s_root.as_bytes());
     }
 
-    /// Project rule 6: a `CoverEntry`'s `Debug` never shows its seed.
+    /// Project rule 6: a `CoverEntry`'s `Debug` never shows its seed — nor,
+    /// since D83 added it, its payload. Checked on a leaf-level cover as well
+    /// as an interior one, because that is where the two values differ and a
+    /// `[u8; 32]` payload field would have printed the salt.
     #[test]
     fn cover_entry_debug_redacts_the_seed() {
         let s_root = root_seed();
-        let cover = minimal_cover(ByteRange::new(0, 6), 6).expect("in bounds");
-        let rendered = format!("{:?}", cover_seeds(&s_root, &cover));
-        assert!(rendered.contains("<redacted>"), "{rendered}");
-        assert!(!rendered.contains("1f"), "{rendered}");
+        for range in [ByteRange::new(0, 6), ByteRange::new(2, 1)] {
+            let cover = minimal_cover(range, 6).expect("in bounds");
+            let rendered = format!("{:?}", cover_seeds(&s_root, &cover));
+            assert_eq!(
+                rendered.matches("<redacted>").count(),
+                2 * cover.nodes().len(),
+                "seed AND payload must both be redacted: {rendered}"
+            );
+            assert!(!rendered.contains("1f"), "{rendered}");
+            for entry in cover_seeds(&s_root, &cover) {
+                let salt = hex_of(&entry.payload().as_bytes()[..Salt16::LEN]);
+                assert!(!rendered.contains(&salt), "{rendered}");
+            }
+        }
+    }
+
+    /// D83's prover half: a cover node's disclosed payload is the seed at
+    /// `level < d` and `salt_i ‖ 0x00·16` at `level == d`, over every range
+    /// of every small `n` — and the salt it carries is always the one G8's
+    /// [`SaltTree`] derives, so the canonical form loses no information a
+    /// verifier needs.
+    #[test]
+    fn disclosed_payloads_are_canonical_at_the_leaf_level() {
+        let s_root = root_seed();
+        let mut leaf_level_seen = 0usize;
+        for n in [1u64, 2, 5, 6, 7, 8, 9, 16, 33] {
+            let tree = SaltTree::new(&s_root, n).expect("n >= 1");
+            for start in 0..n {
+                for length in 1..=(n - start) {
+                    let cover = minimal_cover(ByteRange::new(start, length), n).expect("in bounds");
+                    let depth = cover.depth();
+                    for entry in cover_seeds(&s_root, &cover) {
+                        let address = entry.node().address();
+                        let payload = entry.payload().as_bytes();
+                        if address.level() == depth {
+                            leaf_level_seen += 1;
+                            let salt = tree
+                                .salt(address.index())
+                                .expect("a cover node covers a real leaf");
+                            assert_eq!(&payload[..Salt16::LEN], salt.as_bytes());
+                            assert_eq!(&payload[Salt16::LEN..], &[0u8; 16]);
+                        } else {
+                            assert_eq!(payload, entry.seed().as_bytes());
+                        }
+                        // `seed()` never changes meaning: it is the GGM value.
+                        assert_eq!(
+                            entry.seed().as_bytes(),
+                            tree.seed_at(address).expect("on the grid").as_bytes()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            leaf_level_seen > 0,
+            "the sweep must actually reach the leaf level"
+        );
+    }
+
+    fn hex_of(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     // ── Property tests (G11 accept) ─────────────────────────────────────

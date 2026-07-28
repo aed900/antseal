@@ -97,8 +97,8 @@ use crate::content::{
 };
 use crate::crypto::hkdf::FileId;
 
+use super::vectors::first_difference;
 use super::vectors::{RECOMPUTED_DIGEST_DOMAIN, VectorError, VectorSummary, decode_hex, hex};
-use super::vectors_fine_tree::first_difference;
 
 /// The registered kind name.
 pub const KIND: &str = "content-model";

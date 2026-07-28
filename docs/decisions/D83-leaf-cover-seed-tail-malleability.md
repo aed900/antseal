@@ -636,6 +636,96 @@ report — if any of the following turns out differently:
 
 ---
 
+# IMPLEMENTATION AMENDMENT — 2026-07-28 (G23)
+
+Landed as decided: option B, one code, no length or tier change,
+`format_version` still 1. §9 asks the implementer to amend **this file**
+where the prose proved wrong; six places did.
+
+## A1. §4.3 — `WrongCoverShape` has two precedence positions, not one
+
+The numbered order reads as though the class occupied one slot. It does not:
+
+- the **cover** half is `check_cover`'s (wrong count, wrong order, an address
+  off the grid, a node over only unused slots) and precedes step 7;
+- the **boundary** half — a missing, extra or misplaced sibling — is
+  diagnosed during the fold, and therefore **follows** step 7.
+
+So a proof carrying both a short boundary path and a dirty leaf tail reports
+`LeafSeedTailNotZero`. The pre-existing `error_precedence_is_deterministic`
+caught this on its `shape_and_root` case. The step was **not** moved: every
+security-bearing classification still wins, and what is reordered is only the
+residual structural mismatch this document itself describes as disclosing
+nothing. Both halves are now pinned by that test.
+
+## A2. §4.4 — `unwrap_or(0)` is wrong; skip `n == 0` instead
+
+`depth_for_leaf_count(file.size).unwrap_or(0)` returns `None` only for
+`size == 0`, an empty file with **no GGM grid at all**, where the rule is
+vacuous. Defaulting to depth 0 makes the check fire there and reclassifies
+the hand-built "fine tree declared on an empty file" bundle from row 8's
+`fine-root-rebuild-mismatch` to this code — and makes *which* code it gets
+depend on an irrelevant byte of a seed nothing derives from. Landed as
+`if let Some(depth) = depth_for_leaf_count(file.size)`. Row 8 still rejects
+that shape (`rebuild_fine_root` refuses empty content).
+
+## A3. §4.5 — the prover side is not only `CoverEntry`
+
+`full_reveal.s_root` is disclosed straight from the vault and never passes
+through `cover_seeds`, so scoping the prover change to `CoverEntry` left the
+`n == 1` case with **no** prover-side implementation of the rule — and R6's
+fixture constructor duly emitted a raw `s_root`, which the new check then
+rejected. Fixed by making the transformation public as
+`content::fine_tree::canonical_leaf_level_payload` — the prover-side dual of
+`check_leaf_level_payload` — and routing both disclosure paths through it.
+**A real sealer must do the same** when it writes §7.14 key 2.
+
+## A4. §6 — the "must NOT change" table missed the report vectors
+
+`report/verification-reports.json` moved. Its row in the table
+(`report/*` … "no GGM payload appears in any of them") is wrong: R9's report
+corpus carries whole `.sealproof` bundles, and one of its 21 M0 shapes is a
+**one-byte file** — exactly the `n == 1` case §2 adds to this decision's
+scope. Exactly one field of one case moved,
+`expect.cases[12].bundle_sha256`; `bundle_len`, `report` and `report_json`
+are unchanged. This is inside what the decision authorises, so §9.4's "stop"
+clause does not apply — the omission is in the table, not in the rule.
+
+Everything else the table predicted held, verified rather than assumed:
+`bundle/bundle.json` regenerates byte-for-byte, and all 22
+`testdata/tamper/format` digests are unchanged.
+
+**The verbatim hex in §6 reproduced exactly** — all four "before" strings
+matched the committed vector and all four "after" strings matched the
+regenerated one, in the three named openings and nowhere else.
+
+## A5. §7 — the row id must carry a domain prefix
+
+`MATRIX.json`'s `row_id` must equal the implemented `TamperRow.id` (the
+completeness checker keys on it). G's two existing rows are `content-`
+prefixed by the convention `tamper_rows_fine_tree` documents, and all 29
+existing `project_added` ids carry a domain prefix, so the bare
+`fine-root-leaf-seed-tail-not-zero` would have been the only unprefixed id in
+the registry. Landed as **`content-fine-root-leaf-seed-tail-not-zero`**; the
+`why` text is verbatim and no *code* string changed.
+
+## A6. Count assertions and mirror shape
+
+- §4.1 names two count assertions (both in `error.rs`). There is a **third**,
+  `row_codes_are_distinct_across_the_whole_fine_tree_enum` in
+  `tests/tamper_fine_tree.rs`, and a **fourth** on R's side,
+  `DISTINCT_CODES` 85 → 86 in `verify/error.rs`. All four moved.
+- §5.6's `resolved_decisions` entry is written as an object; every existing
+  entry in `registry-v1.json` is a **string**. Landed as a string carrying
+  the same facts, per §5.6's own "whatever the mirror's key names turn out to
+  be, the 1:1 test is the acceptance criterion". Edits 2 and 3 landed as
+  written.
+- §5.3's new subsection is given as `####`; §5's other children are `###`,
+  and at `####` it would nest under "Canonical slot for content-tree
+  (boundary-path) nodes", which is a different subject. Landed as `###`.
+
+---
+
 # ORIGINAL RECORD (2026-07-28) — retained as the analysis that framed the decision
 
 The material below is the record as written when G20 surfaced the finding. It

@@ -9,14 +9,15 @@
 //! expected codes are `fine-root-…` rather than `content-…` while their row
 //! **ids** keep the `content-` domain prefix.
 //!
-//! # The two rows (MVP-SPEC.md line 168)
+//! # The three rows (MVP-SPEC.md line 168; D83)
 //!
 //! | spec family | mutation | code |
 //! | --- | --- | --- |
 //! | altered manifest field — covered unit | flip one bit of a covered unit's revealed content | `fine-root-binding-failed` |
 //! | over-broad GGM cover | substitute a dyadically valid ancestor node spanning an unrevealed real leaf | `fine-root-over-broad-cover` |
+//! | non-canonical leaf-level payload (project addition, D83) | flip one bit of bytes 16..32 of a `level == d` cover entry | `fine-root-leaf-seed-tail-not-zero` |
 //!
-//! Both start from the **same known-good opening fixture**: G14's golden
+//! The first two start from the **same known-good opening fixture**: G14's golden
 //! work (`crate::content::fixtures`), file 0 — the CRLF text file split into
 //! three paragraph units — opened against the `fine_root` the assembled model
 //! committed. Reusing G14's fixture rather than minting a private one is
@@ -24,17 +25,37 @@
 //! honest path actually produces, and G17's end-to-end suite asserts that
 //! this exact opening verifies.
 //!
-//! # Why these two and not more
+//! The third row's base is different, and deliberately so: G11's **normative
+//! KAT**, `n = 6` reveal `{2}` → node `(3, 2)`. D83 requires a base that has
+//! a `level == d` node at all, and this is the spec-named shape the decision
+//! itself is written against and the one the committed proptest
+//! counterexample uses. `the_golden_work_also_carries_a_leaf_level_node`
+//! keeps the corpus honest by asserting the class is reachable from G14's
+//! fixture too, so the private base is a matter of clarity rather than of
+//! necessity.
 //!
-//! G13's taxonomy has seven codes. The other five are **R's**: the two
+//! # Why these three and not more
+//!
+//! G13's taxonomy has eight codes. The other five are **R's**: the two
 //! wrong-length classes and `fine-root-range-out-of-bounds` /
 //! `fine-root-byte-len-mismatch` / `fine-root-wrong-cover-shape` are
 //! bundle-shape faults reached through `verify_bundle`, and Q8's registry
 //! assigns them to R7/R8 so that no code is claimed by two rows (the harness
-//! would correctly refuse the pair). What is G-owned is the pair whose
-//! meaning is *cryptographic* rather than structural: the binding of revealed
-//! bytes to `fine_root`, and the leaf-exactness rule that keeps an unrevealed
-//! leaf's salt inside the vault (spec line 96).
+//! would correctly refuse the pair). What is G-owned is the set whose
+//! meaning is *cryptographic* or *canonical* rather than structural: the
+//! binding of revealed bytes to `fine_root`, the leaf-exactness rule that
+//! keeps an unrevealed leaf's salt inside the vault (spec line 96), and D83's
+//! canonical leaf-level payload.
+//!
+//! # D83's second site is a fixture, not a second row
+//!
+//! `fine-root-leaf-seed-tail-not-zero` is also reachable through R, on
+//! `full_reveal.s_root` at `n == 1` (`docs/format/registry-v1.md` §7.14
+//! key 2). A code names a rejection *class*, never a site (error-code
+//! contract §2), so that is a **second fixture** for the same row —
+//! [`leaf_level_s_root_tail_flipped`], separated by `(code, layer)` exactly
+//! as F15's twenty format fixtures are — and emphatically not a second row,
+//! which the harness would refuse as a duplicate claim.
 //!
 //! # The R-lane seam
 //!
@@ -46,14 +67,15 @@
 //! than registering a colliding row.
 
 use crate::content::fine_tree::{
-    FineRoot, FineTreeError, RangeProof, RangeProofView, WireNode, minimal_cover, prove_range,
-    verify_range,
+    FineRoot, FineTreeError, RangeProof, RangeProofView, WireNode, canonical_leaf_level_payload,
+    check_leaf_level_payload, minimal_cover, prove_range, verify_range,
 };
 use crate::content::fixtures::{GOLDEN_FILE_TEXT_SPLIT, SYNTHETIC_FINE_SEEDS, golden_model};
 use crate::content::ggm::{NodeAddress, SaltTree};
 use crate::content::{ByteRange, ContentModel, FineSeedSource};
 use crate::crypto::hkdf::FileId;
 use crate::crypto::material::Seed32;
+use crate::test_util::TEST_MASTER_SECRET_W;
 
 use super::tamper::{ActualOutcome, ExpectedOutcome, TamperRow};
 
@@ -347,6 +369,126 @@ fn over_broad_ggm_cover() -> ActualOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// D83's row: the canonical leaf-level payload
+// ---------------------------------------------------------------------------
+
+/// The leaf count of D83's base opening — G11's normative KAT.
+pub const D83_LEAF_COUNT: u64 = 6;
+
+/// The base opening D83's row mutates: `n = 6`, reveal `{2}`, whose cover is
+/// the single deepest node `(3, 2)` — `level == d`, so its payload is the
+/// canonical `salt_2 ‖ 0x00·16`.
+pub const D83_RANGE: ByteRange = ByteRange::new(2, 1);
+
+/// The six content bytes of that opening. Public, non-secret ASCII.
+const D83_CONTENT: &[u8; 6] = b"abcdef";
+
+/// The `s_root` D83's base opening is built from: the documented fixed test
+/// seed (`testdata/README.md`), never a real vault seed.
+fn d83_s_root() -> Seed32 {
+    Seed32::from_bytes(TEST_MASTER_SECRET_W)
+}
+
+/// Row 3 — flip one bit of a `level == d` cover entry's **inert tail**
+/// (bytes 16..32), leaving the address, the salt, the boundary path and the
+/// revealed bytes honest.
+///
+/// **Before D83 this mutation had no observable effect at all.** A cover node
+/// at `level == d` covers exactly one leaf slot, so the verifier descends
+/// zero levels and reads `salt_i = payload[..16]`; the upper half was never
+/// examined and the proof still verified. That is why the row was unlandable
+/// as written, and it is what forced the decision. v1 now fixes those bytes
+/// at zero and checks them, so the row exists and pins its own code.
+fn leaf_level_cover_tail_flipped() -> ActualOutcome {
+    let s_root = d83_s_root();
+    let Ok(fine_root) = crate::content::rebuild_fine_root(&s_root, D83_CONTENT).ok_or(()) else {
+        return fixture_failure("d83-rebuild-fine-root");
+    };
+    let Ok(proof) = prove_range(&s_root, D83_CONTENT, D83_RANGE, D83_LEAF_COUNT) else {
+        return fixture_failure("d83-open-range");
+    };
+
+    let mut cover: Vec<(u8, u64, Vec<u8>)> = proof
+        .wire_cover()
+        .into_iter()
+        .map(|node| (node.level, node.index, node.bytes.to_vec()))
+        .collect();
+    // The base must really be the leaf-level KAT, or the mutation lands in a
+    // seed the verifier *does* read and the row tests the wrong rule.
+    let Some(entry) = cover.first_mut() else {
+        return fixture_failure("d83-empty-cover");
+    };
+    if (entry.0, entry.1) != (3, 2) || entry.2.len() != 32 {
+        return fixture_failure("d83-base-is-not-the-leaf-level-kat");
+    }
+    if entry.2[16..] != [0u8; 16] {
+        return fixture_failure("d83-base-tail-is-not-canonical");
+    }
+    entry.2[16] ^= 0x01;
+
+    let boundary = proof.wire_boundary();
+    let wire_cover: Vec<WireNode<'_>> = cover
+        .iter()
+        .map(|(level, index, bytes)| WireNode {
+            level: *level,
+            index: *index,
+            bytes,
+        })
+        .collect();
+    let view = RangeProofView {
+        range: D83_RANGE,
+        cover: &wire_cover,
+        boundary: &boundary,
+    };
+    ActualOutcome::from_result(
+        verify_range(
+            &view,
+            &D83_CONTENT[2..3],
+            D83_LEAF_COUNT,
+            &FineRoot::from_bytes(*fine_root.as_bytes()),
+        ),
+        FineTreeError::code,
+    )
+}
+
+/// The **second fixture for the same row**, at the other site: D83's rule
+/// also binds `full_reveal.s_root` at `n == 1`, where `d == 0` makes the grid
+/// root itself a leaf (registry §7.14 key 2).
+///
+/// Exercised here through G's predicate, which is the normative check R's
+/// `classify_file_reveal` delegates to — so the fixture pins the *rule*,
+/// while R's own `row_6b_binds_the_one_leaf_s_root_tail` pins the pipeline
+/// arm that surfaces it. Same code, different layer.
+#[must_use]
+pub fn leaf_level_s_root_tail_flipped() -> ActualOutcome {
+    // The honest disclosure at n == 1: salt_0 ‖ 0x00·16, not the raw seed.
+    let canonical = canonical_leaf_level_payload(&d83_s_root(), NodeAddress::root(), 0);
+    let mut bytes = *canonical.as_bytes();
+    if bytes[16..] != [0u8; 16] {
+        return fixture_failure("d83-s-root-tail-is-not-canonical");
+    }
+    bytes[16] ^= 0x01;
+    ActualOutcome::from_result(
+        check_leaf_level_payload(&bytes, NodeAddress::root(), 0),
+        FineTreeError::code,
+    )
+}
+
+/// The honest counterpart of [`leaf_level_s_root_tail_flipped`] — the
+/// unmutated disclosure, which must pass. Kept beside it so "the fixture was
+/// already broken" can never be the reason the row is green.
+///
+/// # Errors
+///
+/// [`FineTreeError::LeafSeedTailNotZero`] — which would mean the *honest*
+/// disclosure is non-canonical, i.e. the prover-side rule and the
+/// verifier-side rule have drifted apart.
+pub fn canonical_s_root_at_one_leaf_is_accepted() -> Result<(), FineTreeError> {
+    let canonical = canonical_leaf_level_payload(&d83_s_root(), NodeAddress::root(), 0);
+    check_leaf_level_payload(canonical.as_bytes(), NodeAddress::root(), 0)
+}
+
+// ---------------------------------------------------------------------------
 // the registry slice
 // ---------------------------------------------------------------------------
 
@@ -370,6 +512,14 @@ pub const ROWS: &[TamperRow] = &[
         expected: ExpectedOutcome::ErrorCode("fine-root-over-broad-cover"),
         exercise: over_broad_ggm_cover,
     },
+    TamperRow {
+        id: "content-fine-root-leaf-seed-tail-not-zero",
+        base: "n6-reveal-leaf-2-normative-kat",
+        mutation: "flip one bit of bytes 16..32 of the level == d cover entry, leaving the \
+                   address, the salt and the boundary path honest",
+        expected: ExpectedOutcome::ErrorCode("fine-root-leaf-seed-tail-not-zero"),
+        exercise: leaf_level_cover_tail_flipped,
+    },
 ];
 
 /// The construction helper R's bundle-level assertions reuse, named
@@ -379,7 +529,12 @@ pub const ROWS: &[TamperRow] = &[
 /// | helper | family |
 /// | --- | --- |
 /// | [`over_broad_cover`] / [`OverBroadCoverNode`] | over-broad GGM cover |
-/// | [`OpeningFixture`] | the known-good opening both rows mutate |
+/// | [`OpeningFixture`] | the known-good opening rows 1 and 2 mutate |
+/// | [`leaf_level_s_root_tail_flipped`] | D83's **second fixture** — the same row's other site, `full_reveal.s_root` at `n == 1` |
+/// | [`canonical_s_root_at_one_leaf_is_accepted`] | its honest counterpart |
 pub mod helpers {
-    pub use super::{OpeningFixture, OverBroadCoverNode, over_broad_cover};
+    pub use super::{
+        OpeningFixture, OverBroadCoverNode, canonical_s_root_at_one_leaf_is_accepted,
+        leaf_level_s_root_tail_flipped, over_broad_cover,
+    };
 }

@@ -38,10 +38,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+use antseal_core::test_util::vectors::first_difference;
 use antseal_core::test_util::vectors_content_model::{
     FORCED_TEXT_CASE, GOLDEN_CASE, KIND, build_inputs, regenerate_expect,
 };
-use antseal_core::test_util::vectors_fine_tree::first_difference;
 
 /// The committed document (workspace-relative via the crate manifest dir, so
 /// it resolves on every OS and checkout location).

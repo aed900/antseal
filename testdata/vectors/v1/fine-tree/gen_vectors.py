@@ -48,6 +48,8 @@ TAG_FINE_TREE_NODE = 0x01
 TAG_GGM_SALT_CHILD = 0x06
 
 SALT_LEN = 16
+# Every disclosed GGM seed and boundary node hash (MVP-SPEC.md line 121).
+SEED_LEN = 32
 
 
 def sha256(*parts: bytes) -> bytes:
@@ -102,6 +104,27 @@ def seed_at(root: bytes, level: int, index: int) -> bytes:
 def salt_of(root: bytes, depth: int, index: int) -> bytes:
     """salt_i = leaf_seed[..16]; with d = 0 this is s_root[..16]."""
     return seed_at(root, depth, index)[:SALT_LEN]
+
+
+def disclosed_payload(root: bytes, level: int, index: int, depth: int) -> bytes:
+    """The 32 bytes a bundle ships for one cover node (decision D83).
+
+    Below the grid's leaf level this is the GGM seed itself. AT the leaf level
+    (`level == depth`) the verifier descends `depth - level == 0` levels and
+    reads `salt_i = payload[:16]` directly (MVP-SPEC.md line 96), so bytes
+    16..32 are never an input to any hash. v1 fixes them at zero and requires
+    the verifier to check them, so one proof has exactly one encoding:
+
+        payload = salt_i || 0x00 * 16
+
+    The length is 32 either way, and `s_root` and every `ggm_nodes[].seed`
+    pinned elsewhere in this document are the GGM *tree* and are untouched:
+    D83 changes only what is DISCLOSED, never what is hashed.
+    """
+    seed = seed_at(root, level, index)
+    if level != depth:
+        return seed
+    return seed[:SALT_LEN] + bytes(SEED_LEN - SALT_LEN)
 
 
 def first_slot(level: int, index: int, depth: int) -> int:
@@ -352,7 +375,9 @@ def build_case(root: bytes, name: str, content: bytes, openings) -> dict:
                     {
                         "level": level,
                         "index": index,
-                        "seed": seed_at(root, level, index).hex(),
+                        # The DISCLOSED payload, not the raw seed: at
+                        # `level == depth` D83 fixes it at salt_i || 0x00*16.
+                        "seed": disclosed_payload(root, level, index, depth).hex(),
                     }
                     for (level, index) in cover
                 ],
@@ -392,6 +417,17 @@ def selftest(root: bytes) -> None:
     assert path_bits(4, 3) == [1, 0, 0]
     # d = 0 (n = 1): salt_0 = s_root[..16], with zero derivation steps.
     assert salt_of(root, 0, 0) == root[:SALT_LEN]
+    # D83's canonical leaf-level payload: zero tail AT the leaf level, the
+    # untouched seed anywhere above it, 32 bytes either way.
+    assert disclosed_payload(root, 0, 0, 0) == root[:SALT_LEN] + bytes(16)
+    assert disclosed_payload(root, 0, 0, 3) == root
+    assert disclosed_payload(root, 3, 2, 3) == salt_of(root, 3, 2) + bytes(16)
+    assert disclosed_payload(root, 1, 1, 3) == seed_at(root, 1, 1)
+    for level in range(4):
+        assert len(disclosed_payload(root, level, 0, 3)) == SEED_LEN
+    # The rule constrains only what is DISCLOSED: the leaf salt a verifier
+    # reads out of the canonical payload is the one the tree derives.
+    assert disclosed_payload(root, 3, 2, 3)[:SALT_LEN] == salt_of(root, 3, 2)
     # tasks/G.md G11's two normative KATs.
     assert minimal_cover(2, 3, 6, 3) == [(3, 2)]
     assert minimal_cover(4, 6, 6, 3) == [(1, 1)]

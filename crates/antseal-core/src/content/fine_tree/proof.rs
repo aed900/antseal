@@ -165,6 +165,10 @@ impl RangeProof {
     /// freshly generated proof and a decoded bundle travel the *identical*
     /// verification path.
     ///
+    /// The bytes are [`CoverEntry::payload`], **not** [`CoverEntry::seed`]:
+    /// at `level == d` the disclosed form is the canonical `salt_i ‖ 0x00·16`
+    /// (D83). The two coincide at every shallower level.
+    ///
     /// [`verify_range`]: super::verify::verify_range
     #[must_use]
     pub fn wire_cover(&self) -> Vec<WireNode<'_>> {
@@ -173,7 +177,7 @@ impl RangeProof {
             .map(|entry| WireNode {
                 level: entry.node().address().level(),
                 index: entry.node().address().index(),
-                bytes: entry.seed().as_bytes(),
+                bytes: entry.payload().as_bytes(),
             })
             .collect()
     }

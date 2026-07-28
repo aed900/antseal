@@ -25,12 +25,18 @@
 use std::collections::BTreeSet;
 
 use antseal_core::content::fine_tree::error::all_code_exemplars;
-use antseal_core::content::{ByteRange, FineTreeError, RangeProofView, verify_range};
+use antseal_core::content::{
+    ByteRange, FineTreeError, RangeProofView, WireNode, prove_range, rebuild_fine_root,
+    verify_range,
+};
+use antseal_core::crypto::material::Seed32;
+use antseal_core::test_util::TEST_MASTER_SECRET_W;
 use antseal_core::test_util::tamper::{
-    ExpectedOutcome, TamperRow, check_registry, render_failures,
+    ActualOutcome, ExpectedOutcome, TamperRow, check_registry, render_failures,
 };
 use antseal_core::test_util::tamper_rows_fine_tree::{
-    FIXTURE_LEAF_COUNT, FIXTURE_OVER_BROAD_RANGE, FIXTURE_UNIT_RANGE, OpeningFixture, ROWS,
+    D83_LEAF_COUNT, D83_RANGE, FIXTURE_LEAF_COUNT, FIXTURE_OVER_BROAD_RANGE, FIXTURE_UNIT_RANGE,
+    OpeningFixture, ROWS, canonical_s_root_at_one_leaf_is_accepted, leaf_level_s_root_tail_flipped,
     over_broad_cover,
 };
 
@@ -57,22 +63,148 @@ fn fine_tree_rows_are_green() {
     }
 }
 
-/// The slice is exactly the two rows G19 owns — a third arriving here
-/// without a Q8 registry entry is a review event, not a silent addition.
+/// The slice is exactly the rows G owns — a fourth arriving here without a
+/// Q8 registry entry is a review event, not a silent addition. The third is
+/// D83's, a **project addition** rather than a spec-line-168 family.
 #[test]
-fn the_slice_is_the_two_g19_rows() {
+fn the_slice_is_the_g19_rows_plus_d83() {
     let ids: Vec<&str> = ROWS.iter().map(|row: &TamperRow| row.id).collect();
     assert_eq!(
         ids,
         vec![
             "content-fine-root-binding-failed",
             "content-fine-root-over-broad-cover",
+            "content-fine-root-leaf-seed-tail-not-zero",
         ]
     );
     assert_eq!(
         expected_codes(),
-        vec!["fine-root-binding-failed", "fine-root-over-broad-cover"]
+        vec![
+            "fine-root-binding-failed",
+            "fine-root-over-broad-cover",
+            "fine-root-leaf-seed-tail-not-zero",
+        ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// D83 — the canonical leaf-level payload row and its second fixture
+// ---------------------------------------------------------------------------
+
+/// **The row is a real mutation of a genuinely good opening**, and it is the
+/// mutation D83 names: the base is G11's normative KAT (`n = 6`, reveal
+/// `{2}`, node `(3, 2)`), its honest wire form carries `salt_2 ‖ 0x00·16`,
+/// and flipping any single tail byte is rejected with the row's own code.
+#[test]
+fn the_d83_row_mutates_a_verifying_leaf_level_opening() {
+    let s_root = Seed32::from_bytes(TEST_MASTER_SECRET_W);
+    let content = b"abcdef";
+    let fine_root = rebuild_fine_root(&s_root, content).expect("n = 6 has a tree");
+    let proof = prove_range(&s_root, content, D83_RANGE, D83_LEAF_COUNT).expect("in bounds");
+    let revealed = &content[2..3];
+
+    // Unmutated: it verifies, and its single cover node really is at the
+    // grid's leaf level carrying the canonical payload.
+    assert_eq!(proof.verify(revealed, &fine_root), Ok(()));
+    assert_eq!(proof.depth(), 3);
+    let honest: Vec<(u8, u64, Vec<u8>)> = proof
+        .wire_cover()
+        .into_iter()
+        .map(|n| (n.level, n.index, n.bytes.to_vec()))
+        .collect();
+    assert_eq!(honest.len(), 1);
+    assert_eq!((honest[0].0, honest[0].1), (3, 2));
+    assert_eq!(&honest[0].2[16..], &[0u8; 16]);
+
+    // Every tail byte, not one lucky position.
+    let boundary = proof.wire_boundary();
+    for index in 16..32 {
+        let mut bytes = honest[0].2.clone();
+        bytes[index] ^= 0x01;
+        let cover = [WireNode {
+            level: 3,
+            index: 2,
+            bytes: &bytes,
+        }];
+        let error = verify_range(
+            &RangeProofView {
+                range: D83_RANGE,
+                cover: &cover,
+                boundary: &boundary,
+            },
+            revealed,
+            D83_LEAF_COUNT,
+            &fine_root,
+        )
+        .expect_err("a non-canonical tail must not verify");
+        assert_eq!(
+            error,
+            FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 },
+            "tail byte {index}"
+        );
+        assert_eq!(error.code(), "fine-root-leaf-seed-tail-not-zero");
+    }
+}
+
+/// **The second fixture, same row, other site** (D83 §7): the rule also
+/// binds `full_reveal.s_root` at `n == 1`. The honest disclosure passes, the
+/// mutated one fails with the *same* code — which is the point: a code names
+/// a rejection class, and the two sites are separated by layer, not by a
+/// second string.
+#[test]
+fn the_d83_second_fixture_covers_the_s_root_site_with_the_same_code() {
+    assert_eq!(canonical_s_root_at_one_leaf_is_accepted(), Ok(()));
+    assert_eq!(
+        leaf_level_s_root_tail_flipped(),
+        ActualOutcome::ErrorCode("fine-root-leaf-seed-tail-not-zero".to_owned())
+    );
+    // Same code from both sites — asserted against the row itself rather
+    // than a literal, so a rename could never leave the two out of step.
+    let row = ROWS
+        .iter()
+        .find(|row| row.id == "content-fine-root-leaf-seed-tail-not-zero")
+        .expect("D83's row is registered");
+    let ExpectedOutcome::ErrorCode(code) = row.expected else {
+        panic!("D83's row expects an error code");
+    };
+    assert_eq!(
+        leaf_level_s_root_tail_flipped(),
+        ActualOutcome::ErrorCode(code.to_owned())
+    );
+}
+
+/// The class is reachable from the **real corpus**, not only from D83's
+/// private base: G14's golden work, opened at the same range row 1 uses,
+/// carries a `level == d` cover node — the incidence rule (`d == 0 ∨ a odd ∨
+/// (b odd ∧ b < n)`) showing up in a committed artifact. If a future fixture
+/// edit made every golden boundary even, this test says so.
+#[test]
+fn the_golden_work_also_carries_a_leaf_level_node() {
+    let fixture = OpeningFixture::new();
+    let proof = fixture
+        .open(FIXTURE_UNIT_RANGE)
+        .expect("the fixture unit range opens");
+    let depth = proof.depth();
+    let leaf_level: Vec<_> = proof
+        .wire_cover()
+        .into_iter()
+        .filter(|node| node.level == depth)
+        .map(|node| (node.index, node.bytes.to_vec()))
+        .collect();
+    assert!(
+        !leaf_level.is_empty(),
+        "the golden opening [{}, {}) of an n = {} file must carry a level-{depth} node",
+        FIXTURE_UNIT_RANGE.start(),
+        FIXTURE_UNIT_RANGE.end().expect("in bounds"),
+        FIXTURE_LEAF_COUNT,
+    );
+    for (index, bytes) in leaf_level {
+        assert_eq!(
+            &bytes[16..],
+            &[0u8; 16],
+            "the golden work's own level-{depth} node {index} must be canonical"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +269,7 @@ fn row_codes_are_distinct_across_the_whole_fine_tree_enum() {
         codes.len(),
         "the fine-tree taxonomy must be pairwise distinct: {codes:?}"
     );
-    assert_eq!(codes.len(), 7, "G13's seven classes");
+    assert_eq!(codes.len(), 8, "G13's seven classes plus D83's");
 
     for code in expected_codes() {
         assert!(

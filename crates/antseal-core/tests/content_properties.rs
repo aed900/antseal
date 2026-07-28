@@ -86,9 +86,10 @@ use std::collections::BTreeSet;
 
 use antseal_core::canon::{CanonicalBytes, TextMode, UnicodeVersion, canonicalize};
 use antseal_core::content::{
-    ByteRange, CanonDescriptor, ChildBit, ContentKind, FineTreeOptOut, NodeAddress, RangeProofView,
-    SaltTree, SplitEligibleText, WireNode, assign_unit_ids, child_seed, cover_seeds, minimal_cover,
-    plan_blank_line_split, prove_range, rebuild_fine_root, verify_range,
+    ByteRange, CanonDescriptor, ChildBit, ContentKind, FineTreeError, FineTreeOptOut, NodeAddress,
+    RangeProofView, SaltTree, SplitEligibleText, WireNode, assign_unit_ids, child_seed,
+    cover_seeds, minimal_cover, plan_blank_line_split, prove_range, rebuild_fine_root,
+    verify_range,
 };
 use antseal_core::crypto::domain::{TAG_FINE_TREE_LEAF, TAG_FINE_TREE_NODE, TAG_GGM_SALT_CHILD};
 use antseal_core::crypto::material::{Salt16, Seed32};
@@ -708,31 +709,31 @@ fn as_wire(nodes: &[Owned]) -> Vec<WireNode<'_>> {
         .collect()
 }
 
-/// The **semantically significant** projection of a cover node — see D83.
+/// The **semantically significant** projection of a wire node — since D83
+/// RESOLVED, the **identity** projection.
 ///
-/// A cover node at `level == d` covers exactly one leaf, so the verifier
-/// descends `d − level == 0` levels and takes `salt_i = seed[..16]`
-/// directly: bytes 16..32 of that node's disclosed seed are never read.
-/// Changing them therefore cannot, and must not be expected to, make a proof
-/// fail. Every other node — a cover node at `level < d`, whose seed is
-/// hashed to derive children, and every boundary node, whose 32 bytes are
-/// folded as a hash — uses all its bytes.
+/// Before D83 this function existed to carve out an exception. A cover node
+/// at `level == d` covers exactly one leaf, so the verifier descends
+/// `d − level == 0` levels and takes `salt_i = seed[..16]` directly, leaving
+/// bytes 16..32 unread — so "every wire change is rejected" was false, and
+/// the projection is what made the property exact instead of approximately
+/// true. That is how the malleability was found (see the committed
+/// counterexample below).
 ///
-/// This projection is what makes the mutation property *exact* instead of
-/// merely approximately true. It is also the executable statement of the
-/// current, unresolved behaviour: if D83 lands as canonical padding or a
-/// 16-byte leaf payload, this function and the assertion below flip
-/// together.
-fn significant(nodes: &[Owned], depth: u8, is_cover: bool) -> Vec<(u8, u64, usize, Vec<u8>)> {
+/// **D83 resolved as option B**, the canonical zero tail: a `level == d`
+/// payload is `salt_i ‖ 0x00·16`, and a non-zero upper half is a rejection
+/// (`fine-root-leaf-seed-tail-not-zero`). Every byte of every wire node is
+/// therefore now either hashed or checked, and the carve-out is gone. The
+/// function is kept — collapsed to the identity, with the parameters it no
+/// longer needs — precisely so the *shape* of the property is unchanged and
+/// the diff that closed the hole is legible: what moved is the projection,
+/// not the assertion.
+fn significant(nodes: &[Owned]) -> Vec<(u8, u64, usize, Vec<u8>)> {
     nodes
         .iter()
-        .map(|(level, index, bytes)| {
-            let inert_tail = is_cover && *level == depth && bytes.len() == Seed32::LEN;
-            let keep = if inert_tail { Salt16::LEN } else { bytes.len() };
-            // The length is carried separately: a wrong-length payload is
-            // rejected by G13 before any byte is looked at (spec line 121).
-            (*level, *index, bytes.len(), bytes[..keep].to_vec())
-        })
+        // The length is carried separately: a wrong-length payload is
+        // rejected by G13 before any byte is looked at (spec line 121).
+        .map(|(level, index, bytes)| (*level, *index, bytes.len(), bytes.clone()))
         .collect()
 }
 
@@ -747,14 +748,15 @@ proptest! {
     /// - any mutation that changes the wire form's **significant** bytes must
     ///   be **rejected**, since the verifier recomputes the canonical cover
     ///   and boundary from `(range, n)` alone;
-    /// - a mutation confined to the *inert* region must still verify.
+    /// - a mutation that changes nothing must still verify.
     ///
-    /// "Significant" is [`significant`], and the distinction is not a
-    /// convenience: it is **D83**, found by this very property at
-    /// `PROPTEST_CASES=1024` and committed as a regression case. A cover node
-    /// at `level == d` has its salt read as `seed[..16]`, so its upper 16
-    /// bytes are never examined and a bundle can carry anything there. This
-    /// block is the executable statement of that unresolved behaviour.
+    /// "Significant" is [`significant`], which since **D83 RESOLVED** is the
+    /// identity: the property is now the unqualified "any change to the wire
+    /// form is rejected" it was originally written to assert. It did not
+    /// start that way — this very property, at `PROPTEST_CASES=1024`, found
+    /// that a `level == d` cover node's upper 16 bytes were never examined
+    /// (the counterexample is committed, and restated as a named case below),
+    /// and D83 closed the hole by fixing them at zero and checking them.
     #[test]
     fn mutated_proofs_never_panic_and_never_verify(
         n in 2u64..=256,
@@ -799,10 +801,8 @@ proptest! {
             &fine_root,
         );
 
-        let depth = proof.depth();
-        let changed = significant(&cover, depth, true) != significant(&honest_cover, depth, true)
-            || significant(&boundary, depth, false)
-                != significant(&honest_boundary, depth, false);
+        let changed = significant(&cover) != significant(&honest_cover)
+            || significant(&boundary) != significant(&honest_boundary);
         if changed {
             prop_assert!(
                 outcome.is_err(),
@@ -814,8 +814,7 @@ proptest! {
             prop_assert_eq!(
                 outcome,
                 Ok(()),
-                "a proof whose significant bytes are unchanged must still verify \
-                 (this is the D83 malleability, stated as a positive)"
+                "an unchanged proof must still verify"
             );
         }
     }
@@ -905,21 +904,28 @@ proptest! {
 // committed regression cases (Q3 §5)
 // ---------------------------------------------------------------------------
 
-/// **The D83 counterexample, as a named deterministic case.**
+/// **The D83 counterexample, as a named deterministic case — now inverted.**
 ///
 /// `crates/antseal-core/proptest-regressions/content_properties.txt` carries
-/// the shrunken seed proptest found, and replays it automatically. A seed
-/// line is opaque, though, so the case is restated here in full: this is the
-/// input that turned "any wire change is rejected" from a plausible property
-/// into a recorded, unresolved format question.
+/// the shrunken seed proptest found, and replays it automatically. **Keep
+/// it**: deleting the seed would discard the evidence that produced the
+/// decision. A seed line is opaque, though, so the case is restated here in
+/// full: this is the input that turned "any wire change is rejected" from a
+/// plausible property into a recorded format question.
 ///
 /// `n = 101` (`d = 7`), a one-leaf reveal, so the cover is the single
-/// deepest node `(7, 73)`. Flipping any bit of that node's bytes 16..32
-/// leaves verification **succeeding**, because the verifier's descent from a
-/// `level == d` cover node is zero levels long and takes `seed[..16]`.
-/// Flipping a bit below 16 is caught.
+/// deepest node `(7, 73)`. When this case was written, flipping any bit of
+/// that node's bytes 16..32 left verification **succeeding**, because the
+/// verifier's descent from a `level == d` cover node is zero levels long and
+/// takes `seed[..16]`.
+///
+/// **D83 resolved as option B**, so the same case now proves the opposite:
+/// the honest wire form carries `salt_73 ‖ 0x00·16`, and every one of those
+/// sixteen bytes is checked. The assertions below are the same assertions
+/// with `Ok(())` replaced by the exact rejection — which is the whole point
+/// of keeping the case rather than replacing it.
 #[test]
-fn d83_leaf_level_cover_seed_tail_is_inert_committed_counterexample() {
+fn d83_leaf_level_cover_seed_tail_committed_counterexample() {
     let n: u64 = 101;
     let content = content_of(n, 0);
     let s_root = Seed32::from_bytes([0u8; 32]);
@@ -940,13 +946,20 @@ fn d83_leaf_level_cover_seed_tail_is_inert_committed_counterexample() {
         .into_iter()
         .map(|w| (w.level, w.index, w.bytes.to_vec()))
         .collect();
-    let mut seed = proof.cover()[0].seed().as_bytes().to_vec();
+    // Since D83 the disclosed payload is NOT the derived seed at this level:
+    // it is `salt_73 ‖ 0x00·16`. Both facts are asserted, because the whole
+    // case turns on the difference between them.
+    let mut payload = proof.cover()[0].payload().as_bytes().to_vec();
+    let derived = proof.cover()[0].seed().as_bytes().to_vec();
+    assert_eq!(payload[..Salt16::LEN], derived[..Salt16::LEN]);
+    assert_eq!(payload[Salt16::LEN..], [0u8; 16]);
+    assert_ne!(payload, derived, "the derived seed has a non-zero tail");
 
-    let verify_with = |seed: &[u8]| {
+    let verify_with = |payload: &[u8]| {
         let cover = vec![WireNode {
             level: 7,
             index: 73,
-            bytes: seed,
+            bytes: payload,
         }];
         let wire_boundary = as_wire(&boundary);
         verify_range(
@@ -961,26 +974,41 @@ fn d83_leaf_level_cover_seed_tail_is_inert_committed_counterexample() {
         )
     };
 
-    assert_eq!(verify_with(&seed), Ok(()), "the honest proof verifies");
+    assert_eq!(verify_with(&payload), Ok(()), "the honest proof verifies");
 
-    // Every byte of the inert tail: verification is unaffected (D83).
+    // **INVERTED BY D83.** Every byte of the tail is now checked, with its
+    // own code — the mutation class that previously had no observable effect
+    // at all, which is what made a tamper row for it unlandable as written.
     for index in Salt16::LEN..Seed32::LEN {
-        seed[index] ^= 0x01;
+        payload[index] ^= 0x01;
         assert_eq!(
-            verify_with(&seed),
-            Ok(()),
-            "byte {index} of a leaf-level cover seed is never read (D83)"
+            verify_with(&payload),
+            Err(FineTreeError::LeafSeedTailNotZero {
+                level: 7,
+                index: 73
+            }),
+            "byte {index} of a leaf-level cover payload must be checked (D83)"
         );
-        seed[index] ^= 0x01;
+        payload[index] ^= 0x01;
     }
 
-    // Every byte of the significant half: verification fails.
+    // Unchanged: every byte of the significant half fails, as the salt.
     for index in 0..Salt16::LEN {
-        seed[index] ^= 0x01;
+        payload[index] ^= 0x01;
         assert!(
-            verify_with(&seed).is_err(),
-            "byte {index} of a leaf-level cover seed IS the salt and must be checked"
+            verify_with(&payload).is_err(),
+            "byte {index} of a leaf-level cover payload IS the salt and must be checked"
         );
-        seed[index] ^= 0x01;
+        payload[index] ^= 0x01;
     }
+
+    // And the *derived* seed, offered whole — the exact artifact the old
+    // behaviour accepted — is now rejected. This is D83 stated as one line.
+    assert_eq!(
+        verify_with(&derived),
+        Err(FineTreeError::LeafSeedTailNotZero {
+            level: 7,
+            index: 73
+        })
+    );
 }

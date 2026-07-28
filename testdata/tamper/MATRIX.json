@@ -720,6 +720,11 @@
       "row_id": "verify-fine-root-rebuild-mismatch",
       "owner": "R",
       "why": "D28 row 8 / D75's second route: the disclosed `s_root` must rebuild the manifest's `fine_root`. The row leaves the per-unit cover seeds correct so stage 3 passes and the whole-file rebuild is what fires, making the pair with the cover-seed route (a recorded non-row) a genuine agreement between two independent derivations of `fine_root` rather than one check wearing two hats."
+    },
+    {
+      "row_id": "content-fine-root-leaf-seed-tail-not-zero",
+      "owner": "G",
+      "why": "D83: a level == d cover payload's upper 16 bytes are never read as key material, so v1 fixes them at zero and checks them. Before D83 this mutation had NO observable effect — the row was unlandable as written, which is what forced the decision. The fixture flips one bit of byte 16..32 of a leaf-level cover entry in an odd-boundary reveal (n = 6, reveal {2}, node (3,2))."
     }
   ],
   "non_rows": [
