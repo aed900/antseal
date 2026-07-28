@@ -20,7 +20,11 @@
 //!    range;
 //! 5. **the offered cover and boundary path must equal the ones recomputed
 //!    from `(range, n)`** — not merely be *a* valid decomposition;
-//! 6. only then are leaves rebuilt and folded, and the result compared to
+//! 6. **every `level == d` disclosure must carry the canonical zero tail**
+//!    `salt_i ‖ 0x00·16` (decision D83) — the one field whose upper half no
+//!    hash reads, so a value rule is the only thing that keeps one proof to
+//!    one encoding;
+//! 7. only then are leaves rebuilt and folded, and the result compared to
 //!    `fine_root`.
 //!
 //! The order is **frozen** and asserted
@@ -72,6 +76,74 @@ use super::proof::{RangeProof, WireNode, canonical_slot};
 /// Required length of every disclosed GGM seed and boundary node hash
 /// (MVP-SPEC.md line 121).
 const DISCLOSED_LEN: usize = 32;
+
+/// Significant bytes of a disclosed GGM payload at `level == d` (decision
+/// D83): a leaf-level node's payload is read as `salt_i = payload[..16]` with
+/// no descent, so only its low 16 bytes are ever an input to a hash.
+///
+/// The remaining `32 − 16` bytes are the *canonical tail*
+/// [`check_leaf_level_payload`] enforces. The length itself is unchanged and
+/// still [`DISCLOSED_LEN`].
+pub const LEAF_PAYLOAD_SIGNIFICANT_LEN: usize = Salt16::LEN;
+
+/// Enforce D83's canonical tail on one disclosed, length-checked GGM payload.
+///
+/// A `level == d` cover node covers exactly one leaf slot, so the verifier
+/// descends `d − level = 0` levels and takes `salt_i = payload[..16]`
+/// directly (MVP-SPEC.md line 96). Bytes `16..32` are therefore never hashed,
+/// and v1 fixes them at zero so that one proof has exactly one encoding:
+///
+/// ```text
+/// payload = salt_i ‖ 0x00·16        (level == d only)
+/// ```
+///
+/// A **no-op for `address.level() != depth`**: only a node at the grid's leaf
+/// level has a tail the verifier never reads. At `depth == 0` (`n == 1`) the
+/// grid root *is* the leaf, which is why the same predicate also governs
+/// `full_reveal.s_root` (`docs/format/registry-v1.md` §7.14 key 2).
+///
+/// The comparison is a plain `!=` and deliberately **not** constant-time: the
+/// payload is disclosed public material a bundle already publishes in the
+/// clear, so there is no secret for a timing channel to leak.
+///
+/// # Errors
+///
+/// [`FineTreeError::LeafSeedTailNotZero`] when the node sits at `level == d`
+/// and any of bytes `16..32` is non-zero.
+///
+/// ```
+/// use antseal_core::content::fine_tree::verify::check_leaf_level_payload;
+/// use antseal_core::content::NodeAddress;
+///
+/// // n = 1 (d = 0): the grid root is the single leaf, so its tail is fixed.
+/// let mut payload = [0u8; 32];
+/// payload[..16].copy_from_slice(&[0xA5; 16]);
+/// assert!(check_leaf_level_payload(&payload, NodeAddress::root(), 0).is_ok());
+///
+/// payload[16] = 1;
+/// assert!(check_leaf_level_payload(&payload, NodeAddress::root(), 0).is_err());
+///
+/// // …and at any shallower level the tail is the real seed, so it is free.
+/// assert!(check_leaf_level_payload(&payload, NodeAddress::root(), 3).is_ok());
+/// ```
+pub fn check_leaf_level_payload(
+    payload: &[u8; DISCLOSED_LEN],
+    address: NodeAddress,
+    depth: u8,
+) -> Result<(), FineTreeError> {
+    if address.level() != depth {
+        return Ok(());
+    }
+    if payload[LEAF_PAYLOAD_SIGNIFICANT_LEN..]
+        != [0u8; DISCLOSED_LEN - LEAF_PAYLOAD_SIGNIFICANT_LEN]
+    {
+        return Err(FineTreeError::LeafSeedTailNotZero {
+            level: address.level(),
+            index: address.index(),
+        });
+    }
+    Ok(())
+}
 
 /// A decoded range proof exactly as it arrives from F's strict CBOR layer:
 /// a claimed range plus two lists of `(level, index, bytes)` whose byte
@@ -138,7 +210,9 @@ impl RangeProof {
 /// 6. [`FineTreeError::WrongCoverShape`] — the offered cover or boundary path
 ///    is not the recomputed canonical one (count, order, addressing, an
 ///    address off this tree's grid, or a node over only unused slots).
-/// 7. [`FineTreeError::RootMismatch`] — everything is well formed but the
+/// 7. [`FineTreeError::LeafSeedTailNotZero`] — a `level == d` cover payload's
+///    upper 16 bytes are not zero (D83; see [`check_leaf_level_payload`]).
+/// 8. [`FineTreeError::RootMismatch`] — everything is well formed but the
 ///    rebuilt root is not `fine_root`.
 pub fn verify_range(
     proof: &RangeProofView<'_>,
@@ -181,6 +255,23 @@ pub fn verify_range(
         range_start,
         range_end,
     )?;
+
+    // 7. D83's canonical leaf-level payload. Its position is load-bearing at
+    //    both ends:
+    //
+    //    - **after `check_cover`**, because the security-bearing
+    //      `OverBroadCover` and the structural `WrongCoverShape` must never
+    //      be masked by a cheaper check — a level-`d` node can be over-broad
+    //      (at d = 3 the node (3, 5) offered for a reveal of leaf 2) — and
+    //      because only a passed `check_cover` makes the offered addresses
+    //      known equal to the recomputed ones, which is what lets the zip
+    //      below trust `node.address()`;
+    //    - **before the `releases_s_root()` branch**, so it also governs the
+    //      `n == 1` full reveal, whose single cover node sits at
+    //      `level 0 == d`.
+    for (node, wire) in expected.nodes().iter().zip(proof.cover) {
+        check_leaf_level_payload(seed_of(wire)?.as_bytes(), node.address(), depth)?;
+    }
 
     // The full-reveal case IS G9's rebuild: the cover is s_root, there is no
     // boundary path, and the verifier recomputes the whole tree from the
@@ -533,6 +624,13 @@ mod tests {
         fine_root: FineRoot,
         proof: RangeProof,
         revealed: Vec<u8>,
+    }
+
+    /// A D83-canonical leaf-level payload: 16 chosen salt bytes, zero tail.
+    fn canonical_payload(salt: [u8; Salt16::LEN]) -> [u8; DISCLOSED_LEN] {
+        let mut payload = [0u8; DISCLOSED_LEN];
+        payload[..Salt16::LEN].copy_from_slice(&salt);
+        payload
     }
 
     fn n6_leaf2() -> Fixture {
@@ -932,9 +1030,12 @@ mod tests {
             Err(FineTreeError::RootMismatch)
         );
 
-        // A cover seed of the right length but the wrong value.
+        // A cover payload of the right length and the right *shape* but the
+        // wrong value. The fixture's node (3, 2) is at level d = 3, so the
+        // payload must keep D83's zero tail or the earlier class fires
+        // instead — which `precedence` below asserts explicitly.
         let mut wrong_seed = OwnedProof::of(&proof);
-        wrong_seed.cover[0].2 = vec![0x99; 32];
+        wrong_seed.cover[0].2 = canonical_payload([0x99; 16]).to_vec();
         assert_eq!(
             wrong_seed.check(&revealed, 6, &fine_root),
             Err(FineTreeError::RootMismatch)
@@ -947,11 +1048,15 @@ mod tests {
         );
     }
 
-    /// The seven classes really are seven distinct outcomes, reachable from
+    /// The eight classes really are eight distinct outcomes, reachable from
     /// this one fixture — the tamper-matrix requirement (MVP-SPEC.md
     /// line 168) demonstrated end to end rather than asserted on exemplars.
+    ///
+    /// The eighth is D83's `LeafSeedTailNotZero`, which this fixture reaches
+    /// for free: `n = 6` reveal `{2}` has the single cover node `(3, 2)`, and
+    /// `3` is the depth of the grid.
     #[test]
-    fn all_seven_classes_are_reachable_and_distinct() {
+    fn all_eight_classes_are_reachable_and_distinct() {
         let Fixture {
             seed,
             fine_root,
@@ -971,8 +1076,10 @@ mod tests {
         over_broad.cover = vec![(0, 0, seed.as_bytes().to_vec())];
         let mut wrong_shape = good.clone();
         wrong_shape.boundary.pop();
+        let mut dirty_tail = good.clone();
+        dirty_tail.cover[0].2[Salt16::LEN] ^= 0x01;
         let mut wrong_root = good.clone();
-        wrong_root.cover[0].2 = vec![0x99; 32];
+        wrong_root.cover[0].2 = canonical_payload([0x99; 16]).to_vec();
 
         let outcomes = [
             out_of_bounds.check(&revealed, 6, &fine_root),
@@ -981,6 +1088,7 @@ mod tests {
             bad_hash.check(&revealed, 6, &fine_root),
             over_broad.check(&revealed, 6, &fine_root),
             wrong_shape.check(&revealed, 6, &fine_root),
+            dirty_tail.check(&revealed, 6, &fine_root),
             wrong_root.check(&revealed, 6, &fine_root),
         ];
 
@@ -990,10 +1098,95 @@ mod tests {
             .collect();
         assert_eq!(
             codes.len(),
-            7,
+            8,
             "each mutation must fail distinctly: {codes:?}"
         );
         assert_eq!(good.check(&revealed, 6, &fine_root), Ok(()));
+    }
+
+    /// 8. `LeafSeedTailNotZero` — **D83's row**. The honest opening of leaf 2
+    ///    at `n = 6` ships the canonical `salt_2 ‖ 0¹⁶` for node `(3, 2)`;
+    ///    setting any tail byte is a rejection naming that exact address.
+    #[test]
+    fn adversarial_leaf_seed_tail_not_zero() {
+        let Fixture {
+            fine_root,
+            proof,
+            revealed,
+            ..
+        } = n6_leaf2();
+        let good = OwnedProof::of(&proof);
+
+        // The honest wire form really does carry the canonical tail — this is
+        // the prover half of D83, and without it the mutations below would
+        // prove nothing.
+        assert_eq!((good.cover[0].0, good.cover[0].1), (3, 2));
+        assert_eq!(&good.cover[0].2[Salt16::LEN..], &[0u8; 16]);
+        assert_eq!(
+            &good.cover[0].2[..Salt16::LEN],
+            &proof.cover()[0].seed().as_bytes()[..Salt16::LEN],
+            "the disclosed salt is still the derived one"
+        );
+
+        for index in Salt16::LEN..DISCLOSED_LEN {
+            for mask in [0x01u8, 0x80, 0xFF] {
+                let mut tampered = good.clone();
+                tampered.cover[0].2[index] ^= mask;
+                assert_eq!(
+                    tampered.check(&revealed, 6, &fine_root),
+                    Err(FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 }),
+                    "tail byte {index}, mask {mask:#04x}"
+                );
+            }
+        }
+        assert_eq!(good.check(&revealed, 6, &fine_root), Ok(()));
+    }
+
+    /// D83 §4.3's `n == 1` case, which the original record missed: at
+    /// `d = 0` the grid root **is** the single leaf, so the whole-file cover
+    /// node `(0, 0)` is a `level == d` disclosure and takes the canonical
+    /// tail — on the branch that delegates to G9's rebuild.
+    #[test]
+    fn a_one_leaf_full_reveal_takes_the_canonical_tail() {
+        let seed = root_seed();
+        let content = b"Z";
+        let fine_root = crate::content::rebuild_fine_root(&seed, content).expect("n = 1");
+        let proof = prove_range(&seed, content, ByteRange::new(0, 1), 1).expect("in bounds");
+        let good = OwnedProof::of(&proof);
+
+        // One cover node, the root, at level 0 == d, carrying salt_0 ‖ 0¹⁶ —
+        // and the true s_root's tail never leaves the vault.
+        assert_eq!(proof.depth(), 0);
+        assert_eq!((good.cover[0].0, good.cover[0].1), (0, 0));
+        assert_eq!(&good.cover[0].2[..Salt16::LEN], &seed.as_bytes()[..16]);
+        assert_eq!(&good.cover[0].2[Salt16::LEN..], &[0u8; 16]);
+        assert_ne!(good.cover[0].2.as_slice(), seed.as_bytes().as_slice());
+
+        // It still verifies — `rebuild_fine_root` derives salt_0 =
+        // payload[..16], which is the correct salt.
+        assert_eq!(good.check(content, 1, &fine_root), Ok(()));
+        assert_eq!(proof.verify(content, &fine_root), Ok(()));
+
+        // …and a non-zero tail is rejected on that same branch, before the
+        // rebuild can turn it into a generic root mismatch.
+        for index in Salt16::LEN..DISCLOSED_LEN {
+            let mut tampered = good.clone();
+            tampered.cover[0].2[index] ^= 0x01;
+            assert_eq!(
+                tampered.check(content, 1, &fine_root),
+                Err(FineTreeError::LeafSeedTailNotZero { level: 0, index: 0 }),
+                "tail byte {index}"
+            );
+        }
+
+        // The true s_root, offered whole, is now inadmissible — the concrete
+        // statement that D83 changed the wire form at n = 1.
+        let mut raw_root = good.clone();
+        raw_root.cover[0].2 = seed.as_bytes().to_vec();
+        assert_eq!(
+            raw_root.check(content, 1, &fine_root),
+            Err(FineTreeError::LeafSeedTailNotZero { level: 0, index: 0 })
+        );
     }
 
     /// The **frozen** precedence of module docs: a proof carrying several
@@ -1045,13 +1238,78 @@ mod tests {
             Err(FineTreeError::OverBroadCover)
         );
 
-        // Shape fault + wrong root → shape wins.
+        // Shape fault + wrong root → shape wins. The cover payload keeps
+        // D83's canonical zero tail, so the second fault really is "wrong
+        // root" and not the step-7 value rule.
         let mut shape_and_root = good.clone();
         shape_and_root.boundary.pop();
-        shape_and_root.cover[0].2 = vec![0x99; 32];
+        shape_and_root.cover[0].2 = canonical_payload([0x99; 16]).to_vec();
         assert_eq!(
             shape_and_root.check(&revealed, 6, &fine_root),
             Err(FineTreeError::WrongCoverShape)
+        );
+
+        // ── D83's step 7, pinned from both sides ──
+        //
+        // Over-broad cover + dirty tail → over-broad wins. The substituted
+        // node (3, 5) is itself at level d, so this is exactly the case that
+        // forces step 7 to sit *after* `check_cover`: the disclosure-bearing
+        // classification must never be masked by the cheaper value rule.
+        let elsewhere = NodeAddress::try_new(3, 5).expect("on the grid");
+        let mut over_broad_and_tail = good.clone();
+        over_broad_and_tail.cover = vec![(
+            elsewhere.level(),
+            elsewhere.index(),
+            descend(&seed, elsewhere).as_bytes().to_vec(),
+        )];
+        assert_ne!(
+            &over_broad_and_tail.cover[0].2[Salt16::LEN..],
+            &[0u8; 16],
+            "the substituted node must really carry a dirty tail"
+        );
+        assert_eq!(
+            over_broad_and_tail.check(&revealed, 6, &fine_root),
+            Err(FineTreeError::OverBroadCover)
+        );
+
+        // **`WrongCoverShape` has two sites, and step 7 sits between them.**
+        //
+        // The *cover* half is `check_cover`'s (count, order, addressing,
+        // unused slots) and precedes the tail check:
+        let mut cover_shape_and_tail = good.clone();
+        cover_shape_and_tail
+            .cover
+            .push(cover_shape_and_tail.cover[0].clone());
+        cover_shape_and_tail.cover[0].2[Salt16::LEN] ^= 0x01;
+        assert_eq!(
+            cover_shape_and_tail.check(&revealed, 6, &fine_root),
+            Err(FineTreeError::WrongCoverShape)
+        );
+
+        // …whereas the *boundary* half is diagnosed during the fold, when a
+        // sibling is missing or misplaced — which is strictly **after** step
+        // 7. So a proof carrying both a short boundary path and a dirty leaf
+        // tail reports the tail. That is the correct trade: `check_cover`'s
+        // security-bearing classifications still win, and what is reordered
+        // is only the residual structural mismatch that "discloses nothing"
+        // (see `FineTreeError::WrongCoverShape`). Recorded because the
+        // numbered precedence reads as though the class had one position.
+        let mut boundary_shape_and_tail = good.clone();
+        boundary_shape_and_tail.boundary.pop();
+        boundary_shape_and_tail.cover[0].2[Salt16::LEN] ^= 0x01;
+        assert_eq!(
+            boundary_shape_and_tail.check(&revealed, 6, &fine_root),
+            Err(FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 })
+        );
+
+        // Dirty tail + wrong salt (hence wrong root) → the tail wins, so the
+        // D83 row can pin an exact code rather than inheriting the generic
+        // binding failure.
+        let mut tail_and_root = good.clone();
+        tail_and_root.cover[0].2 = vec![0x99; 32];
+        assert_eq!(
+            tail_and_root.check(&revealed, 6, &fine_root),
+            Err(FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 })
         );
     }
 
@@ -1083,6 +1341,56 @@ mod tests {
                 "leaf_count = {leaf_count}"
             );
         }
+    }
+
+    // ── The canonical leaf-level payload predicate (D83) ────────────────
+
+    /// [`check_leaf_level_payload`] in isolation: it fires **only** at
+    /// `level == depth`, it accepts exactly the zero tail, and it names the
+    /// offending address and nothing else.
+    #[test]
+    fn the_leaf_level_payload_predicate_binds_only_the_leaf_level() {
+        assert_eq!(LEAF_PAYLOAD_SIGNIFICANT_LEN, Salt16::LEN);
+
+        let canonical = {
+            let mut bytes = [0u8; DISCLOSED_LEN];
+            bytes[..LEAF_PAYLOAD_SIGNIFICANT_LEN].copy_from_slice(&[0xA5; Salt16::LEN]);
+            bytes
+        };
+        let leaf = NodeAddress::try_new(3, 2).expect("on the grid");
+
+        // Canonical at the leaf level, and at every other level too.
+        assert_eq!(check_leaf_level_payload(&canonical, leaf, 3), Ok(()));
+        assert_eq!(
+            check_leaf_level_payload(&canonical, NodeAddress::root(), 0),
+            Ok(())
+        );
+
+        // Every single byte of the tail is checked, one at a time.
+        for index in LEAF_PAYLOAD_SIGNIFICANT_LEN..DISCLOSED_LEN {
+            let mut dirty = canonical;
+            dirty[index] = 0x01;
+            assert_eq!(
+                check_leaf_level_payload(&dirty, leaf, 3),
+                Err(FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 }),
+                "byte {index} of the tail must be checked"
+            );
+            // …and the very same bytes are free at every shallower level,
+            // where they are the real seed.
+            for depth in [4u8, 5, 64] {
+                assert_eq!(
+                    check_leaf_level_payload(&dirty, leaf, depth),
+                    Ok(()),
+                    "level 3 is not the leaf level of a depth-{depth} grid"
+                );
+            }
+        }
+
+        // The significant half is never the predicate's business: a payload
+        // with an arbitrary salt and a zero tail is canonical.
+        let mut arbitrary_salt = [0xFFu8; DISCLOSED_LEN];
+        arbitrary_salt[LEAF_PAYLOAD_SIGNIFICANT_LEN..].fill(0);
+        assert_eq!(check_leaf_level_payload(&arbitrary_salt, leaf, 3), Ok(()));
     }
 
     // ── Property tests (G13 accept) ─────────────────────────────────────
@@ -1310,7 +1618,14 @@ mod tests {
                                 descend(&seed, parent).as_bytes().to_vec(),
                             )
                         } else {
-                            (this.level(), this.index(), entry.seed().as_bytes().to_vec())
+                            // The wire form is the payload, not the seed
+                            // (D83) — an honest entry must stay honest, or
+                            // the substitution would not be the only fault.
+                            (
+                                this.level(),
+                                this.index(),
+                                entry.payload().as_bytes().to_vec(),
+                            )
                         }
                     })
                     .collect();

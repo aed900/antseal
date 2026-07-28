@@ -1129,9 +1129,11 @@ fn assemble(
                 .cover()
                 .iter()
                 .map(|entry| {
+                    // The disclosed form, not the derived seed: at
+                    // `level == d` they differ by D83's canonical zero tail.
                     BundleCoverEntry::new(
                         entry.node().address(),
-                        Seed32::from_bytes(*entry.seed().as_bytes()),
+                        Seed32::from_bytes(*entry.payload().as_bytes()),
                     )
                 })
                 .collect();

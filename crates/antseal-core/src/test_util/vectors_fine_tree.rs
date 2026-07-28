@@ -595,7 +595,7 @@ fn check_case_behaviour(
         })?;
         let disclosed: Vec<[u8; 32]> = cover_seeds(s_root, &cover)
             .iter()
-            .map(|entry| *entry.seed().as_bytes())
+            .map(|entry| *entry.payload().as_bytes())
             .collect();
         let in_proof: Vec<[u8; 32]> = proof
             .wire_cover()

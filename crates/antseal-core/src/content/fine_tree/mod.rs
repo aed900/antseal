@@ -56,4 +56,6 @@ pub use cost::{CostEstimate, estimate_fine_tree_cost};
 pub use cover::{CoverEntry, CoverNode, LeafExactCover, cover_seeds, minimal_cover};
 pub use error::FineTreeError;
 pub use proof::{BoundaryNode, CoveredUnit, RangeProof, WireNode, prove_range, prove_unit};
-pub use verify::{RangeProofView, verify_range};
+pub use verify::{
+    LEAF_PAYLOAD_SIGNIFICANT_LEN, RangeProofView, check_leaf_level_payload, verify_range,
+};
