@@ -390,7 +390,7 @@
   - Q14's checklist carries the row, so a future report-format bump cannot land without its vector re-emit
 - Notes: Surfaced at R9 (M0 wave 5). Must land **before** Q14 flips `status frozen`, since after the freeze `--update` refuses to modify an existing digest and the same change becomes a report-format version bump instead of a pre-freeze re-snapshot.
 
-### R31 — Decide whether `unit_commit` mismatch deserves a cause discriminator, or close it the way D81 closed the AEAD
+### R33 — Decide whether `unit_commit` mismatch deserves a cause discriminator, or close it the way D81 closed the AEAD
 - Milestone: M0 (before Q14 — it is a code-set question)
 - Size: S (a record, and either zero or one code)
 - Deps: R8 (landed); reads `docs/decisions/D81-unit-decrypt-cause.md`
@@ -402,7 +402,7 @@
   - If not, `docs/testing/error-code-contract.md` §7's R8 entry is the citation and the non-row's `record` field points at the ratifying record rather than at the registry
 - Notes: Surfaced at R8 (M0 wave 5). The generalisation worth keeping either way, already recorded in the contract: R's codes name the *check that failed*, not the field that was wrong — so any check that is a single comparison over several inputs (AEAD tag, commitment opening, Merkle root) cannot carry a cause.
 
-### R32 — Extend R10's structure-aware mutators to the sections R6 cannot currently vary
+### R34 — Extend R10's structure-aware mutators to the sections R6 cannot currently vary
 - Milestone: M0
 - Size: S
 - Deps: R10 (landed), R6
