@@ -409,6 +409,7 @@ fn all_rows() -> Vec<TamperRow> {
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_format::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_version::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
     rows

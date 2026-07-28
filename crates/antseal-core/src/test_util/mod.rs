@@ -41,6 +41,12 @@
 //!   the same canonicality fault in the body, the envelope, the bundle map
 //!   and the embedded manifest is four fixtures and one code. Committed
 //!   bytes + mapping table: `testdata/tamper/format/`.
+//! - [`tamper_rows_version`] — F's other registry slice (F18): the two rows
+//!   over F10's version dispatch, each a **one-byte** bump of a golden
+//!   vector's `format_version`. Separate from [`tamper_rows_format`] because
+//!   the mutation is not a canonicality or key-band fault at all: it is the
+//!   one rejection a third-party verifier must render as *"your file is from
+//!   a newer antseal"* rather than *"your file is corrupt"*.
 //! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
 //!   structural rows, mutated from [`bundle_fixtures`] works and driven
 //!   through `verify_bundle` wherever the mutation is reachable there.
@@ -157,6 +163,8 @@ pub mod tamper_rows_format;
 pub mod tamper_rows_pipeline;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_structural;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_version;
 pub mod vectors;
 pub mod vectors_bundle;
 pub mod vectors_cbor_diag;

@@ -725,6 +725,16 @@
       "row_id": "content-fine-root-leaf-seed-tail-not-zero",
       "owner": "G",
       "why": "D83: a level == d cover payload's upper 16 bytes are never read as key material, so v1 fixes them at zero and checks them. Before D83 this mutation had NO observable effect — the row was unlandable as written, which is what forced the decision. The fixture flips one bit of byte 16..32 of a leaf-level cover entry in an odd-boundary reveal (n = 6, reveal {2}, node (3,2))."
+    },
+    {
+      "row_id": "version-manifest-unsupported",
+      "owner": "F",
+      "why": "F18. MVP-SPEC.md line 168's enumeration predates F10's version dispatch, so this is project-added by construction. The mutation is ONE byte — the manifest body's `format_version`, bumped 1 -> 2 on the golden vector's own bytes — and it is the rejection a third-party verifier must render as \"your file is from a newer antseal\" rather than \"your file is corrupt\" (spec line 123, format stability). Without a row, the most user-visible distinction in the format is untested at the harness level: F10 proves it case-wise from hand-built bytes, but nothing put it in the cross-domain distinctness sweep."
+    },
+    {
+      "row_id": "version-bundle-unsupported",
+      "owner": "F",
+      "why": "F18, the bundle half. A separate row rather than a second fixture because the two discriminants are INDEPENDENT (registry §7.6 key 0 vs §7.2 key 0) and carry separate permanent codes (D30/D78: `manifest-` and `bundle-` never merge) — so a v1 bundle wrapping a v2 manifest is a manifest version error, and this row is what pins that the bundle's own discriminant has its own outcome."
     }
   ],
   "non_rows": [
