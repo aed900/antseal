@@ -12,16 +12,24 @@
 //! house style as `identifier_bans.rs` and the registry cross-check tests: it
 //! reads the tracked files and asserts the claims mechanically.
 //!
-//! **C20** — the frozen AEAD rule appears *verbatim* as a module doc comment
-//! in **both** `crypto/unit_aead.rs` and `crypto/manifest_aead.rs`, and in
-//! the frozen block itself. Assumption class 4 (AEAD is confidentiality-only
-//! and non-committing) is the one assumption a well-meaning refactor can
-//! quietly invalidate — by deciding that a successful decryption is evidence
-//! of anything — so the rule is planted where that refactor gets written, not
-//! only where security documents get read.
+//! Two claims, each an explicit acceptance criterion of its task:
 //!
-//! Whitespace and Markdown emphasis are normalized before comparison, so
-//! rewrapping a doc comment is allowed and changing its words is not.
+//! 1. **C20/Q12** — the text between the `frozen-security-assumptions`
+//!    markers is **byte-identical** in `docs/security-assumptions.md` and
+//!    `docs/threat-model.md`. No normalization is applied to this one: the
+//!    task word is *verbatim*, so verbatim is what is checked.
+//! 2. **C20** — the frozen AEAD rule appears verbatim as a module doc comment
+//!    in **both** `crypto/unit_aead.rs` and `crypto/manifest_aead.rs`, and in
+//!    the frozen block itself. Assumption class 4 (AEAD is
+//!    confidentiality-only and non-committing) is the one assumption a
+//!    well-meaning refactor can quietly invalidate — by deciding that a
+//!    successful decryption is evidence of anything — so the rule is planted
+//!    where that refactor gets written, not only where security documents get
+//!    read.
+//!
+//! For claim 2, whitespace and Markdown emphasis are normalized before
+//! comparison, so rewrapping a doc comment is allowed and changing its words
+//! is not.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +39,8 @@ const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 /// C20's source document — the signed-off freeze.
 const SOURCE_DOC: &str = "docs/security-assumptions.md";
+/// Q12's threat model, which must carry the block verbatim.
+const THREAT_MODEL: &str = "docs/threat-model.md";
 
 const BEGIN_MARKER: &str = "<!-- BEGIN frozen-security-assumptions -->";
 const END_MARKER: &str = "<!-- END frozen-security-assumptions -->";
@@ -112,6 +122,53 @@ fn normalize(text: &str) -> String {
     words.join(" ").replace("**", "").replace('`', "")
 }
 
+/// Q12 accept: the assumptions block in `docs/threat-model.md` matches C20's
+/// source text **verbatim** — byte-identical between the markers, with no
+/// normalization whatsoever. Editing one copy without the other fails here.
+#[test]
+fn threat_model_carries_the_frozen_block_verbatim() {
+    let source = frozen_block(&read(SOURCE_DOC), SOURCE_DOC);
+    let delivered = frozen_block(&read(THREAT_MODEL), THREAT_MODEL);
+    if source == delivered {
+        return;
+    }
+
+    // Locate the divergence so the failure names the edit, not just the fact.
+    let first_difference = source
+        .bytes()
+        .zip(delivered.bytes())
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| source.len().min(delivered.len()));
+    let excerpt = |text: &str| {
+        let from = text
+            .char_indices()
+            .map(|(at, _)| at)
+            .take_while(|at| *at <= first_difference.saturating_sub(60))
+            .last()
+            .unwrap_or(0);
+        text.get(from..)
+            .unwrap_or(text)
+            .chars()
+            .take(160)
+            .collect::<String>()
+    };
+    panic!(
+        "the frozen Security-assumptions block has DRIFTED.\n\n  \
+         {SOURCE_DOC} — C20, the signed-off source ({} bytes)\n  \
+         {THREAT_MODEL} — Q12, must carry it verbatim ({} bytes)\n\n\
+         first difference at byte {first_difference}:\n\n\
+         source ......: {}\n\
+         threat model : {}\n\n\
+         Fix by copying C20's block over, not by editing the copy. If the \
+         assumption itself changed, that is a format event: it starts with a \
+         dated row in {SOURCE_DOC}'s change header.",
+        source.len(),
+        delivered.len(),
+        excerpt(&source),
+        excerpt(&delivered),
+    );
+}
+
 /// C20 accept: the MUST-NOT-trust-the-AEAD rule appears verbatim in the
 /// `unit_aead.rs` / `manifest_aead.rs` module docs — the place a refactor
 /// that would violate it gets written.
@@ -143,16 +200,68 @@ fn the_aead_rule_is_in_the_frozen_block() {
     );
 }
 
-/// The markers exist and delimit a substantial block — a cheap guard against
-/// someone "fixing" a later drift failure by emptying one side.
+/// The markers exist and delimit a substantial block in **both** documents —
+/// a cheap guard against someone "fixing" a drift failure by emptying one
+/// side, which would otherwise satisfy the byte-equality test perfectly.
 #[test]
-fn the_source_document_delimits_a_substantial_frozen_block() {
-    let block = frozen_block(&read(SOURCE_DOC), SOURCE_DOC);
-    assert!(
-        block.len() > 4_000,
-        "{SOURCE_DOC}: the frozen block is only {} bytes — it covers five \
-         assumption classes and cannot plausibly be that short. Emptying one \
-         copy is not how a drift failure is fixed.",
-        block.len()
-    );
+fn both_documents_delimit_a_substantial_frozen_block() {
+    for document in [SOURCE_DOC, THREAT_MODEL] {
+        let block = frozen_block(&read(document), document);
+        assert!(
+            block.len() > 4_000,
+            "{document}: the frozen block is only {} bytes — it covers five \
+             assumption classes and cannot plausibly be that short. Emptying \
+             one copy is not how a drift failure is fixed.",
+            block.len()
+        );
+    }
+}
+
+/// Q12 accept: every M4 threat section named by the task is present as a
+/// stub. The list is the point — a section that is missing cannot be noticed
+/// as missing at M4, whereas a stub marked "not written" is a visible debt.
+#[test]
+fn every_m4_threat_section_is_enumerated() {
+    /// The M4 sections Q12 requires, as `(anchor phrase, what it covers)`.
+    const REQUIRED_SECTIONS: &[(&str, &str)] = &[
+        ("2.1 Vault theft", "retroactive decryption, no rotation"),
+        ("2.2 Vault loss", "reveal/restore lost forever"),
+        (
+            "2.3 Wallet linkability",
+            "receipt exposes the paying wallet",
+        ),
+        (
+            "2.4 Malicious verifier host",
+            "the page can render any verdict",
+        ),
+        (
+            "2.5 Coercion / compelled disclosure",
+            "selective disclosure protects against recipients, not compulsion",
+        ),
+        ("2.6 Hostile bundles", "attacker-controlled parser input"),
+        (
+            "2.7 Sealer as adversary",
+            "equivocation, out-of-context reveal",
+        ),
+        ("2.8 Size fingerprint", "structure metadata is visible"),
+        (
+            "2.9 Evidence independence",
+            "no single anchor is load-bearing",
+        ),
+        (
+            "2.10 WASM zeroization caveat",
+            "browser memory cannot be wiped (C21)",
+        ),
+    ];
+
+    let threat_model = read(THREAT_MODEL);
+    for (heading, covers) in REQUIRED_SECTIONS {
+        assert!(
+            threat_model.contains(heading),
+            "{THREAT_MODEL}: missing the required M4 section `{heading}` \
+             ({covers}). Q12 enumerates every section so the M0 freeze happens \
+             against a known map; deleting one hides a hole rather than \
+             closing it."
+        );
+    }
 }
