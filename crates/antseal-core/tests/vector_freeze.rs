@@ -64,7 +64,10 @@ const MANIFEST_VERSION: u64 = 1;
 const EXPECTED_PENDING_V1: &[(&str, &str)] = &[
     ("manifest-encode-decode", "F12"),
     ("bundle-empty-anchor", "F13"),
-    ("fine-tree-unbalanced-n6", "G15"),
+    // `fine-tree-unbalanced-n6` (G15) landed 2026-07-28 as
+    // `fine-tree/fine-tree.json`; its directive and its row here were
+    // deleted together with the vector, which is the discharge procedure
+    // this constant's doc comment describes.
 ];
 
 // ---------------------------------------------------------------------------
@@ -665,7 +668,8 @@ const MANIFEST_HEADER: &str = "#! manifest-version 1\n\
      #! kind unit-aead C16\n\
      #! kind manifest-aead C16\n\
      #! kind signatures C16\n\
-     #! kind sig-reject C15\n";
+     #! kind sig-reject C15\n\
+     #! kind fine-tree G15\n";
 
 /// Rewrite `v1/FROZEN.sha256` with the given header and freshly computed
 /// digests for the given relative paths.

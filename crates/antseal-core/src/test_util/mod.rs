@@ -32,6 +32,11 @@
 //!   Deliberately WASM-safe (parses/executes **bytes**; zero I/O) so the
 //!   Q5 native↔WASM bit-match lane reuses the identical execution path —
 //!   only file discovery lives in the native runner test.
+//! - [`vectors_fine_tree`] — the `fine-tree` vector kind (G15): the
+//!   fine-tree/GGM golden vectors, whose reason for existing is to pin
+//!   **MSB-first** GGM leaf indexing at the unbalanced `n = 6` case
+//!   (MVP-SPEC.md lines 96, 169), and the regenerator
+//!   `tests/fine_tree_vectors.rs` diffs the committed document against.
 //! - [`vectors_sig_reject`] — the `sig-reject` vector kind (C15): the
 //!   committed per-algorithm signature reject-vector suites and their
 //!   executor, which routes every case through C14's full verification
@@ -65,6 +70,7 @@ pub mod tamper;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
 pub mod vectors;
+pub mod vectors_fine_tree;
 pub mod vectors_sig_reject;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component

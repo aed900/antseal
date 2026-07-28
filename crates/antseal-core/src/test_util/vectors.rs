@@ -65,6 +65,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "manifest-aead",
     "signatures",
     super::vectors_sig_reject::KIND,
+    super::vectors_fine_tree::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -222,6 +223,13 @@ pub fn execute_vector_bytes(
         // C15's reject-vector suites; executor in a sibling module so this
         // dispatch stays a one-liner per kind.
         super::vectors_sig_reject::KIND => super::vectors_sig_reject::execute(
+            envelope.inputs,
+            envelope.expect,
+            envelope.description,
+        ),
+        // G15's fine-tree/GGM vectors; executor in a sibling module for the
+        // same reason.
+        super::vectors_fine_tree::KIND => super::vectors_fine_tree::execute(
             envelope.inputs,
             envelope.expect,
             envelope.description,
