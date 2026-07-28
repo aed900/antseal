@@ -45,12 +45,23 @@
 //! rejects with two *different* codes depending on whether the stripped
 //! file retains another revealed unit, and the property is indifferent to
 //! that by design.
+//!
+//! # Section-level recombination (R34)
+//!
+//! The last section of this file drives R34's [`Recombination`] class,
+//! which moves whole sections between two bundles rather than rewriting
+//! bytes within one. Its invariant is stronger than the byte-level one and
+//! is worth stating separately: a recombination either produces a bundle
+//! that gets **past the decoder**, or produces nothing at all. There is no
+//! "died in the codec" outcome to tolerate, because the seam re-encodes
+//! through `BundleV1::new` — so a failure here is a seam bug, never a
+//! sampling accident.
 
 use antseal_core::test_util::bundle_fixtures::{
     FileSelection, Selection, Tweak, build_tweaked, shapes,
 };
 use antseal_core::test_util::bundle_mutators::{
-    Outcome, decode_mutation, drive, fuzz_once, seed_bytes, seed_corpus,
+    Outcome, Recombination, decode_mutation, drive, fuzz_once, recombine, seed_bytes, seed_corpus,
 };
 use antseal_core::test_util::proptest::prelude::*;
 use antseal_core::test_util::strategies;
@@ -565,25 +576,112 @@ fn the_single_unit_downgrade_is_unrepresentable() {
 // the seed corpus is what the fuzz target will be given
 // ---------------------------------------------------------------------------
 
-/// R10's Accept: "seed corpus includes ... R7 tamper fixtures".
+/// R10's Accept: "seed corpus includes ... R7 tamper fixtures", plus R34's
+/// section-level recombinations.
 ///
 /// Asserted here rather than left to the fuzz crate, because the fuzz crate
 /// needs a nightly toolchain and Q9's wiring, and an accept criterion that
 /// only holds in a lane nobody can run yet is not held at all.
 #[test]
-fn the_seed_corpus_covers_valid_shapes_and_tamper_fixtures() {
+fn the_seed_corpus_covers_valid_shapes_tamper_fixtures_and_recombinations() {
     let seeds = seed_corpus();
-    let valid = seeds
-        .iter()
-        .filter(|(name, _)| name.starts_with("valid-"))
-        .count();
-    let tamper = seeds
-        .iter()
-        .filter(|(name, _)| name.starts_with("tamper-"))
-        .count();
+    let count = |prefix: &str| {
+        seeds
+            .iter()
+            .filter(|(name, _)| name.starts_with(prefix))
+            .count()
+    };
+    let (valid, tamper, recombined) = (count("valid-"), count("tamper-"), count("recombined-"));
     assert!(valid >= 5, "only {valid} valid seeds");
     assert!(tamper >= 10, "only {tamper} tamper seeds");
-    assert_eq!(valid + tamper, seeds.len(), "every seed is named by class");
+    assert!(recombined >= 8, "only {recombined} recombined seeds");
+    assert_eq!(
+        valid + tamper + recombined,
+        seeds.len(),
+        "every seed is named by class"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R34: section-level recombination
+// ---------------------------------------------------------------------------
+
+/// **The R34 property**: every `(target, donor, recombination)` triple over
+/// the whole seed corpus yields either a decodable bundle or nothing.
+///
+/// The quantified form of `every_representable_recombination_decodes`, which
+/// checks one pair. Here both sides range over the corpus — including the
+/// tamper fixtures and the recombined seeds themselves, so grafts compose —
+/// and the invariant is the one R10 established for byte-level mutation,
+/// restated for the class byte-level mutation cannot reach: a typed outcome
+/// always, never a panic, and *past the codec* whenever the seam produced
+/// bytes at all.
+///
+/// **Strided, not the full cross product.** Every corpus entry appears as a
+/// target and (via the `+1` offset, which is coprime with any length) as a
+/// donor, at three offsets each. The full n² sweep costs 22 s and re-tests
+/// mostly near-duplicate pairs; this re-derives the same conclusion in
+/// seconds, and the fuzz target is where unbounded pairing belongs.
+#[test]
+fn every_recombination_of_every_corpus_pair_is_decodable_or_refused() {
+    let corpus = corpus();
+    let mut produced = 0usize;
+    for (index, target) in corpus.iter().enumerate() {
+        for offset in [1usize, 7, 13] {
+            let donor = &corpus[(index + offset) % corpus.len()];
+            for (name, how) in Recombination::all() {
+                let Some(bytes) = recombine(target, donor, how) else {
+                    continue;
+                };
+                produced += 1;
+                let outcome = drive(&bytes);
+                assert!(
+                    outcome.reached_the_pipeline(),
+                    "`{name}` produced a bundle that died in the codec ({outcome:?}) — the seam \
+                     re-encodes through `BundleV1::new`, so this cannot happen"
+                );
+            }
+        }
+    }
+    // Guards against the sweep silently emptying: if the seam started
+    // refusing everything, every assertion above would vacuously hold.
+    assert!(
+        produced > 400,
+        "only {produced} recombinations were representable across the corpus"
+    );
+}
+
+proptest! {
+    #![proptest_config(strategies::integration_test_config(
+        0x5EED_0A34,
+        "proptest-regressions/verify_fuzz_recombine.txt",
+    ))]
+
+    /// Recombination **composed with** byte-level mutation: graft a section
+    /// across two corpus bundles, then mutate the result.
+    ///
+    /// The composition is the point. A grafted bundle is deep in the
+    /// machine by construction, so a bit-flip on top of one lands in a
+    /// stage that has already found something wrong — the same argument
+    /// R10 makes for seeding the corpus with tamper fixtures, one level up.
+    #[test]
+    fn mutated_recombinations_never_panic(
+        target_index in 0usize..64,
+        donor_index in 0usize..64,
+        how_index in 0usize..16,
+        kind in 0u8..7,
+        params in prop::collection::vec(any::<u8>(), 0..32),
+    ) {
+        let corpus = corpus();
+        let all = Recombination::all();
+        let (_, how) = all[how_index % all.len()];
+        let target = &corpus[target_index % corpus.len()];
+        let donor = &corpus[donor_index % corpus.len()];
+        if let Some(bytes) = recombine(target, donor, how) {
+            let mutated = decode_mutation(kind, &params).apply(&bytes, corpus);
+            prop_assert!(matches!(drive(&mutated), Outcome::Rejected(_) | Outcome::Verified));
+        }
+    }
 }
 
 /// The tamper seeds must fail at a **spread** of stages, or the corpus

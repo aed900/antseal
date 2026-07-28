@@ -50,17 +50,46 @@
 //! Structure-*aware* here means "derived from a valid bundle" rather than
 //! "schema-aware": the mutators work on encoded bytes, and the typed
 //! reveal-shape mutations are R6's [`Tweak`] knobs, which
-//! [`seed_corpus`] draws on. Task R32 records the section-level
-//! recombination this cannot yet reach, and why it needs a builder seam.
+//! [`seed_corpus`] draws on.
 //!
+//! # The second mutation class: section-level recombination (R34)
+//!
+//! [`Recombination`] is the class byte-level mutation cannot reach. Its
+//! members move a whole **section** — the reveal arrays, the touched-file
+//! list, the anchors, the storage record, or the embedded manifest itself —
+//! from one bundle into another, and the result is guaranteed to *decode*
+//! rather than to die in the codec. That matters because the interesting
+//! bugs are behind stage 1: a bundle that pairs one work's signed manifest
+//! with another work's reveals exercises every decode-then-cross-check path
+//! at once, and a bit-flip finds that shape only by accident.
+//!
+//! The guarantee is structural, not statistical. Every recombination goes
+//! `decode → `[`BundleV1::into_parts`] → move sections → [`BundleV1::new`] →
+//! [`encode_bundle`], so the tier-`[X]` rules run again on the way back in.
+//! A recombination that would violate one is refused there and reported as
+//! [`None`] — *unrepresentable*, which is a stronger statement about the
+//! format than "rejected" and is worth distinguishing (R10's
+//! `the_single_unit_downgrade_is_unrepresentable` makes the same point about
+//! a different attack).
+//!
+//! Recombined bundles join [`seed_corpus`] under their own `recombined-`
+//! name class, so the fuzz target and R10's proptest consume them without
+//! either having to know they exist — and the byte-level mutators then run
+//! *on top of* them, composing the two classes for free.
+//!
+//! [`BundleV1::into_parts`]: crate::bundle::BundleV1::into_parts
+//! [`BundleV1::new`]: crate::bundle::BundleV1::new
 //! [`Tweak`]: super::bundle_fixtures::Tweak
 //! [`VerificationReport`]: crate::verify::VerificationReport
 //! [`VerifyError`]: crate::verify::VerifyError
+//! [`encode_bundle`]: crate::bundle::encode_bundle
 
+use crate::bundle::{BundleV1, FullReveal, NonCoveredReveal, encode_bundle};
+use crate::crypto::material::{Key32, Salt16, Seed32};
 use crate::verify::{VerifyOptions, verify_bundle};
 
 use super::bundle_fixtures::{
-    BuiltFixture, FileSelection, Selection, Tweak, build_tweaked, shapes,
+    AnchorSet, BuiltFixture, FileSelection, Selection, Tweak, build_tweaked, shapes,
 };
 
 /// One structure-aware mutation of an encoded bundle.
@@ -212,6 +241,193 @@ impl Mutation {
 /// spent on many shapes rather than on a few enormous ones.
 const MAX_EXTEND: usize = 4096;
 
+// ---------------------------------------------------------------------------
+// section-level recombination (R34)
+// ---------------------------------------------------------------------------
+
+/// One **section-level** recombination of two bundles: a whole section of
+/// `donor` replaces the corresponding section of `target`.
+///
+/// Every variant produces a bundle that **decodes** or produces nothing at
+/// all — see the module docs for why that is structural. Unlike
+/// [`Mutation`], these are therefore *not* total: [`recombine`] returns
+/// [`None`] when the result would violate a rule [`BundleV1::new`] owns,
+/// which is the honest report ("this attack has no representable form on
+/// this pair") rather than a silently-degraded input.
+///
+/// # Why these sections and not others
+///
+/// Each names a cross-check the pipeline performs between the *signed*
+/// manifest and the *unsigned* bundle around it. A relay holding two
+/// bundles can build all of them for free, which is exactly the M0 threat
+/// (MVP-SPEC.md line 187).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Recombination {
+    /// Decode and re-encode with nothing moved — the control.
+    ///
+    /// Its value is the assertion it supports: the seam is byte-identity on
+    /// an untouched bundle, so any difference a sibling variant produces is
+    /// the section it moved and not the round trip.
+    RoundTrip,
+    /// Graft the donor's embedded **manifest** under the target's reveals —
+    /// one work's signed claims over another work's disclosed bytes.
+    ///
+    /// The headline cross-work graft (R34's Accept), and the shape no
+    /// single-work fixture can produce.
+    GraftManifest,
+    /// The dual: the donor's two **reveal sections** under the target's own
+    /// manifest.
+    GraftRevealSections,
+    /// The donor's `touched_files` under the target's reveals — disclosed
+    /// paths and `path_salt`s that belong to a different work.
+    GraftTouchedFiles,
+    /// The donor's `full_reveals` — full-reveal material for files of
+    /// another work.
+    GraftFullReveals,
+    /// The donor's anchor artifacts and receipt.
+    ///
+    /// Expected to still **verify** at M0: the anchor stage is a stub that
+    /// emits one `absent` slot per embedded artifact and R12 replaces it at
+    /// M2, so an artifact's *provenance* is not yet verdict-bearing. That
+    /// makes this the section-level twin of R10's
+    /// `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`, and
+    /// it is written to go red at the same moment.
+    ///
+    /// **There is deliberately no storage-record graft.** R6 gives every
+    /// fixture the *same* constant storage record, so grafting one across
+    /// works is a provable no-op — a corpus entry that duplicated its own
+    /// target under a name claiming otherwise. R10's
+    /// `the_unauthenticated_region_at_m0_is_exactly_the_storage_record`
+    /// already pins that region byte by byte; reaching it *here* needs a
+    /// per-work storage record in R6 (task R38).
+    GraftAnchors,
+    /// Move **every** covered reveal into `noncovered_reveals`, keying each
+    /// on a `unit_salt` borrowed from the donor.
+    ///
+    /// The wholesale form of R6's per-unit `misplace_covered_unit` knob.
+    /// A borrowed salt is meaningless on purpose: the reveal-section rule is
+    /// adjudicated at stage 2, before anything opens a salt, so the input
+    /// exercises the misplacement and nothing else.
+    ///
+    /// Deliberately one-directional. The reverse — migrating non-covered
+    /// entries into `covered_reveals` — would have to fabricate cover
+    /// entries, and a fixture that hard-codes the cover-seed wire shape is a
+    /// fixture that breaks when that shape changes. R6's
+    /// `misplace_noncovered_unit` knob covers the direction typed, at one
+    /// unit, where borrowing a real cover is cheap.
+    MigrateCoveredIntoNonCovered,
+    /// Re-point the target's first `full_reveals` entry at another
+    /// `file_id`, keeping its `file_salt` and `s_root`.
+    ///
+    /// Representable only when that id is already in `touched_files`, since
+    /// `full_reveals ⊆ touched_files` is tier `[X]`; otherwise [`None`].
+    MoveFullReveal {
+        /// The `file_id` the entry is moved onto.
+        to_file_id: u64,
+    },
+}
+
+impl Recombination {
+    /// Every variant, with the one parameterised case instantiated at the
+    /// `file_id`s a fixture work actually has.
+    ///
+    /// Names carry the [`seed_corpus`] `recombined-` prefix because that is
+    /// where they end up, and a name that reaches fuzz-crash triage should
+    /// be the same string in the corpus, in a test message, and in a bug
+    /// report. Named rather than derived so the corpus is stable across
+    /// runs: a seed corpus that reshuffled between builds would make triage
+    /// guesswork.
+    #[must_use]
+    pub fn all() -> Vec<(&'static str, Self)> {
+        vec![
+            ("recombined-round-trip", Self::RoundTrip),
+            ("recombined-graft-manifest", Self::GraftManifest),
+            (
+                "recombined-graft-reveal-sections",
+                Self::GraftRevealSections,
+            ),
+            ("recombined-graft-touched-files", Self::GraftTouchedFiles),
+            ("recombined-graft-full-reveals", Self::GraftFullReveals),
+            ("recombined-graft-anchors", Self::GraftAnchors),
+            (
+                "recombined-migrate-covered-into-noncovered",
+                Self::MigrateCoveredIntoNonCovered,
+            ),
+            (
+                "recombined-move-full-reveal-to-file-1",
+                Self::MoveFullReveal { to_file_id: 1 },
+            ),
+            (
+                "recombined-move-full-reveal-to-file-2",
+                Self::MoveFullReveal { to_file_id: 2 },
+            ),
+        ]
+    }
+}
+
+/// Apply a [`Recombination`] of `donor` into `target`.
+///
+/// Returns [`None`] when either input does not decode, when the result
+/// would violate a tier-`[X]` rule, or when the encoder refuses it — the
+/// three ways a recombination can be *unrepresentable* rather than merely
+/// rejected. A `Some` result is always a bundle that decodes.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn recombine(target: &[u8], donor: &[u8], how: Recombination) -> Option<Vec<u8>> {
+    let mut parts = BundleV1::decode(target).ok()?.into_parts();
+    let donor_parts = BundleV1::decode(donor).ok()?.into_parts();
+
+    match how {
+        Recombination::RoundTrip => {}
+        Recombination::GraftManifest => parts.manifest = donor_parts.manifest,
+        Recombination::GraftRevealSections => {
+            parts.covered_reveals = donor_parts.covered_reveals;
+            parts.noncovered_reveals = donor_parts.noncovered_reveals;
+        }
+        Recombination::GraftTouchedFiles => parts.touched_files = donor_parts.touched_files,
+        Recombination::GraftFullReveals => parts.full_reveals = donor_parts.full_reveals,
+        Recombination::GraftAnchors => {
+            parts.ots_anchors = donor_parts.ots_anchors;
+            parts.tsa_anchors = donor_parts.tsa_anchors;
+            parts.receipt = donor_parts.receipt;
+        }
+        Recombination::MigrateCoveredIntoNonCovered => {
+            // A real derived salt from the donor, so the entry is
+            // well formed and only its *section* is wrong.
+            let borrowed = donor_parts.noncovered_reveals.first()?;
+            let salt_bytes = *borrowed.unit_salt().as_bytes();
+            for covered in core::mem::take(&mut parts.covered_reveals) {
+                let unit_id = covered.unit_id();
+                let k_u = Key32::from_bytes(*covered.k_u().as_bytes());
+                let ciphertext = covered.ciphertext().clone();
+                parts.noncovered_reveals.push(
+                    NonCoveredReveal::new(unit_id, k_u, ciphertext, Salt16::from_bytes(salt_bytes))
+                        .ok()?,
+                );
+            }
+            // `new` requires strict ascent; the two sections were each
+            // ascending and disjoint, so sorting the union restores it.
+            parts
+                .noncovered_reveals
+                .sort_by_key(NonCoveredReveal::unit_id);
+        }
+        Recombination::MoveFullReveal { to_file_id } => {
+            let entry = parts.full_reveals.first()?;
+            let moved = FullReveal::new(
+                to_file_id,
+                Salt16::from_bytes(*entry.file_salt().as_bytes()),
+                entry
+                    .disclosed_s_root()
+                    .map(|seed| Seed32::from_bytes(*seed.as_bytes())),
+            );
+            parts.full_reveals = vec![moved];
+        }
+    }
+
+    encode_bundle(&BundleV1::new(parts).ok()?).ok()
+}
+
 /// What `verify_bundle` did with one input.
 ///
 /// The invariant is that one of these is always produced — the absence of a
@@ -259,8 +475,8 @@ pub fn drive(bytes: &[u8]) -> Outcome {
     }
 }
 
-/// The seed corpus: valid bundles of every shape R6 builds cheaply, plus
-/// R7's tamper fixtures.
+/// The seed corpus: valid bundles of every shape R6 builds cheaply, R7's
+/// tamper fixtures, and R34's section-level recombinations.
 ///
 /// R10's accept requires the tamper fixtures specifically, and the reason
 /// is worth keeping: a mutation of an *already invalid* bundle reaches
@@ -268,7 +484,20 @@ pub fn drive(bytes: &[u8]) -> Outcome {
 /// the second failure inside a stage that has already found one.
 ///
 /// Each entry is `(name, bytes)`; the name reaches crash triage, and a
-/// fuzz corpus directory is written from it.
+/// fuzz corpus directory is written from it. The **name prefix is a
+/// claim**, asserted by `the_seeds_are_what_their_names_say`:
+///
+/// | prefix | claim |
+/// |---|---|
+/// | `valid-` | verifies |
+/// | `tamper-` | is rejected |
+/// | `recombined-` | gets **past the decoder** — verdict left open |
+///
+/// The third class's claim is deliberately about *reach* rather than
+/// outcome. Some recombinations verify (grafting the storage record must,
+/// at M0) and most do not, and pinning either would be pinning the wrong
+/// thing: what R34 buys is that the input lands in the stages behind the
+/// codec instead of dying in it.
 #[must_use]
 pub fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
     let multi = shapes::multi_file();
@@ -403,7 +632,68 @@ pub fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         ),
     );
 
+    // ── R34 section-level recombinations ──
+    //
+    // Target and donor are two *different works* — the mixed-selection
+    // multi-file bundle and the anchored one built under `--all` — so every
+    // graft below genuinely crosses a work boundary rather than shuffling
+    // one bundle's own sections. The anchored donor is what makes
+    // `graft-anchors` a real change rather than a copy of two empty lists.
+    let (target, donor) = recombination_pair();
+    for (name, how) in Recombination::all() {
+        // An unrepresentable recombination contributes no seed rather than
+        // an empty one: `None` here is a statement about the format
+        // (`unrepresentable_recombinations_are_named` pins which are which),
+        // and a zero-byte corpus entry would only re-test the empty input.
+        if let Some(bytes) = recombine(&target, &donor, how) {
+            seeds.push((name, bytes));
+        }
+    }
+
     seeds
+}
+
+/// The `(target, donor)` pair [`seed_corpus`] recombines.
+///
+/// Choosing it took two corrections, both worth recording because both are
+/// facts about R6 that a future donor swap will meet again:
+///
+/// 1. **`with_anchors` does not make a different work.** The obvious donor
+///    is [`shapes::multi_file_anchored`], but that helper changes only
+///    *bundle* sections — the work, and so the manifest bytes, are
+///    identical to the target's. `GraftManifest` was a silent no-op and the
+///    headline cross-work graft R34 asks for was not exercised at all.
+/// 2. **R6's per-file material is keyed on `file_id`, not on the work.**
+///    Every fixture shares one master secret, and `file_salt`/`s_root` come
+///    from `(W, file_id)` — so two *different* works that both fully reveal
+///    their file 0 emit byte-identical `full_reveals` entries, and a
+///    "cross-work" graft of that section moves nothing. The donor must
+///    therefore differ in the section's **shape** (how many files it fully
+///    reveals), not merely in which work it came from. Production material
+///    is keyed on the seal's own `W` and has no such collision; giving R6 a
+///    per-work secret is task R39.
+///
+/// [`shapes::raw_mirror_sources`] satisfies both: a different work (two
+/// text files, different title, different file table) that fully reveals
+/// **two** files against the target's one, so the full-reveal graft lands
+/// material for a file the target only partially reveals — a genuine
+/// proof-downgrade shape. Anchors are attached so the anchor graft is a
+/// real change against the target's empty sections.
+///
+/// Exposed so the property tests recombine the same pair the corpus does
+/// rather than a second one that could drift away from it.
+#[must_use]
+pub fn recombination_pair() -> (Vec<u8>, Vec<u8>) {
+    let donor = shapes::raw_mirror_sources().with_anchors(AnchorSet::EveryKind { receipt: true });
+    (
+        build_tweaked(
+            &shapes::multi_file(),
+            &shapes::multi_file_mixed_selection(),
+            &Tweak::default(),
+        )
+        .bytes,
+        build_tweaked(&donor, &Selection::all(2), &Tweak::default()).bytes,
+    )
 }
 
 /// Just the seed bytes, in [`seed_corpus`] order — what
@@ -518,12 +808,23 @@ mod tests {
     /// The valid seeds verify and the tamper seeds do not — otherwise the
     /// corpus would be mislabelled and a "tamper" seed could quietly be a
     /// second copy of a valid one.
+    ///
+    /// R34's `recombined-` class makes the weaker but more useful claim its
+    /// name carries (see [`seed_corpus`]): it reached the stages behind the
+    /// decoder. A recombined seed that died in the codec would be a seam
+    /// bug, since the seam re-encodes through `BundleV1::new`.
     #[test]
     fn the_seeds_are_what_their_names_say() {
         for (name, bytes) in seed_corpus() {
             let outcome = drive(&bytes);
             if name.starts_with("valid-") {
                 assert_eq!(outcome, Outcome::Verified, "seed `{name}` must verify");
+            } else if name.starts_with("recombined-") {
+                assert!(
+                    outcome.reached_the_pipeline(),
+                    "seed `{name}` died in the codec ({outcome:?}) — a recombined bundle is \
+                     re-encoded through `BundleV1::new`, so it must decode"
+                );
             } else {
                 assert!(
                     matches!(outcome, Outcome::Rejected(_)),
@@ -618,6 +919,146 @@ mod tests {
             "only {past}/{total} structure-aware inputs got past the decoder; the target is \
              supposed to stress the stages behind it, not re-fuzz F17's territory"
         );
+    }
+
+    // ── R34: the section-level seam ──
+
+    /// **The seam loses nothing.** Decoding a bundle, destructuring it
+    /// through [`BundleV1::into_parts`], and re-encoding reproduces the
+    /// input byte for byte.
+    ///
+    /// This is the load-bearing test of R34, and it is what makes every
+    /// other recombination interpretable: if the round trip were lossy, a
+    /// grafted bundle would differ from its target in the grafted section
+    /// *and* in whatever the round trip dropped, and no test below could
+    /// tell the two apart.
+    ///
+    /// The [`recombination_pair`] donor is included **by name and on
+    /// purpose**: no ordinary seed populates the optional receipt slot, so
+    /// a seam that silently dropped the receipt passed this test until the
+    /// maximal-shape bundle was added to it. An identity assertion is only
+    /// as strong as the widest shape it runs on.
+    #[test]
+    fn the_recombination_seam_is_byte_identity_on_an_untouched_bundle() {
+        let (target, donor) = recombination_pair();
+        let extra = [
+            ("recombination-target", target),
+            ("recombination-donor (every anchor kind + receipt)", donor),
+        ];
+        let seeds = seed_corpus()
+            .into_iter()
+            .filter(|(name, _)| !name.starts_with("recombined-")) // already a round-trip product
+            .chain(extra);
+
+        for (name, bytes) in seeds {
+            let round_tripped = recombine(&bytes, &bytes, Recombination::RoundTrip)
+                .unwrap_or_else(|| panic!("seed `{name}` must round-trip through the seam"));
+            assert_eq!(
+                round_tripped, bytes,
+                "seed `{name}`: the R34 seam is not byte-identity — a section is being dropped \
+                 or reordered on the way through `into_parts`"
+            );
+        }
+    }
+
+    /// Every recombination is either representable and **decodable**, or
+    /// refused outright. Nothing in between.
+    ///
+    /// The distinction is R34's whole point: a byte-level mutator reaches
+    /// past stage 1 by luck, this class reaches it by construction.
+    #[test]
+    fn every_representable_recombination_decodes() {
+        let (target, donor) = recombination_pair();
+        let mut representable = 0usize;
+        for (name, how) in Recombination::all() {
+            let Some(bytes) = recombine(&target, &donor, how) else {
+                continue;
+            };
+            representable += 1;
+            let outcome = drive(&bytes);
+            assert!(
+                outcome.reached_the_pipeline(),
+                "`{name}` produced bytes that died in the codec ({outcome:?})"
+            );
+        }
+        assert!(
+            representable >= 8,
+            "only {representable} of the recombinations were representable on this pair"
+        );
+    }
+
+    /// Every recombination except the control actually **changes** the
+    /// bundle.
+    ///
+    /// Without this a graft whose donor happened to carry an identical
+    /// section would be a silently empty test, and the corpus would gain a
+    /// duplicate of its own target under a name claiming otherwise.
+    #[test]
+    fn every_recombination_but_the_control_changes_the_bundle() {
+        let (target, donor) = recombination_pair();
+        for (name, how) in Recombination::all() {
+            let Some(bytes) = recombine(&target, &donor, how) else {
+                continue;
+            };
+            if how == Recombination::RoundTrip {
+                assert_eq!(bytes, target, "the control must be the identity");
+            } else {
+                assert_ne!(bytes, target, "`{name}` did not change the bundle");
+            }
+        }
+    }
+
+    /// Which recombinations are **unrepresentable** on the corpus pair, and
+    /// why — recorded rather than left as a silent `None`.
+    ///
+    /// `move-full-reveal-to-file-2` is the one: the corpus target reveals
+    /// nothing of file 2, so no `touched_files` entry names it, and F8's
+    /// tier-`[X]` rule `full_reveals ⊆ touched_files` refuses to construct
+    /// the bundle. That is the format doing its job one layer below the
+    /// verifier, and it is the same shape R10's
+    /// `the_single_unit_downgrade_is_unrepresentable` records.
+    #[test]
+    fn unrepresentable_recombinations_are_named() {
+        let (target, donor) = recombination_pair();
+        let unrepresentable: Vec<&str> = Recombination::all()
+            .into_iter()
+            .filter(|(_, how)| recombine(&target, &donor, *how).is_none())
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            unrepresentable,
+            ["recombined-move-full-reveal-to-file-2"],
+            "the set of unrepresentable recombinations moved; if that is intended, say why here"
+        );
+    }
+
+    /// **No cross-work graft of an evidence-bearing section verifies.** The
+    /// anchor graft is the sole exception, and only until R12.
+    ///
+    /// This is the security statement R34 exists to make, and it is
+    /// stronger than "the mutators produce decodable bundles": a bundle
+    /// pairing one work's signed manifest with another work's reveals must
+    /// be *rejected*, not merely parsed. Grafting anchors is the one
+    /// section-level move an M0 verifier is entitled to accept, because the
+    /// anchor stage is still a stub (R12 replaces it at M2) — so this test
+    /// goes red exactly when R12 lands, and whoever lands it moves
+    /// `GraftAnchors` out of the exception.
+    #[test]
+    fn no_cross_work_graft_verifies_except_the_m0_inert_anchor_section() {
+        let (target, donor) = recombination_pair();
+        for (name, how) in Recombination::all() {
+            let Some(bytes) = recombine(&target, &donor, how) else {
+                continue;
+            };
+            let verifies = drive(&bytes) == Outcome::Verified;
+            let expected = matches!(how, Recombination::RoundTrip | Recombination::GraftAnchors);
+            assert_eq!(
+                verifies, expected,
+                "`{name}`: verified = {verifies}, expected {expected}. If R12 has landed, the \
+                 anchor stage is no longer a stub and this test has done its job: move \
+                 `GraftAnchors` out of the exception and give it a tamper row (A21)."
+            );
+        }
     }
 
     /// The property itself, over a deterministic sweep. R10's proptest
