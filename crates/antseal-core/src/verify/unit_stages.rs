@@ -70,54 +70,24 @@ use crate::crypto::unit_aead::{Nonce24, UnitKey, decrypt_unit_with_key};
 
 use super::error::VerifyError;
 
-/// G-side fine-tree range-verification failure — **placeholder for G13**
-/// (tasks/G.md), defined minimally here so the covered-unit arm of the
-/// evidence pipeline is a compile-enforced extension point today.
+/// G-side fine-tree range-verification failure.
 ///
-/// # G13 contract (normative once implemented)
+/// **Relocated to G by G13, exactly as R2 planned** ("G13 may relocate the
+/// type into G's fine-tree module; the `VerifyError` arm and its codes are
+/// the stable surface"): the definition now lives in
+/// [`crate::content::fine_tree::error`] alongside the `verify_range`
+/// implementation that produces it — `content` is the lower layer and must
+/// not depend on `verify` — and is re-exported here so this path, and
+/// [`VerifyError::FineRootBindingFailed`]'s `source`, are unchanged.
 ///
-/// G13 implements
-/// `verify_range(proof, revealed_bytes, n, fine_root) -> Result<(), FineTreeError>`:
-/// length-check every cover seed (32 B) and boundary node hash (32 B);
-/// recompute the expected **leaf-exact** cover for the claimed range and
-/// require the proof's node set to match exactly; derive in-range salts,
-/// rebuild leaves (`0x00 ‖ salt_i ‖ LE64(i) ‖ byte_i`), fold with boundary
-/// paths to the root, compare to `fine_root` (MVP-SPEC.md lines 96, 118,
-/// 121). Its full variant set (at minimum `WrongCoverShape`,
-/// `BadSeedLength`, `BadNodeHashLength`, `RangeOutOfBounds`,
-/// `ByteLenMismatch` in addition to the two below) extends **this** enum;
-/// each addition breaks the wildcard-free match in
-/// [`VerifyError::code`] until the new class receives a distinct stable
-/// code and an exemplar — the same mechanism R1 built for the wrapper
-/// arms. G13 may relocate the type into G's fine-tree module; the
-/// `VerifyError` arm and its codes are the stable surface.
-///
-/// Two classes exist from day one because the R2 accept requires them
-/// distinct:
-///
-/// - [`Self::RootMismatch`] — the generic binding failure (recomputed
-///   root ≠ `fine_root`);
-/// - [`Self::OverBroadCover`] — the leaf-exact-cover violation: a cover
-///   node spans an unrevealed real leaf `j < n`. **Must stay its own
-///   distinct code forever**: an over-broad cover would disclose
-///   `salt_j` and reopen the per-byte confirmation attack (spec line 96),
-///   so its rejection is its own tamper row, not a generic mismatch.
-///
-/// Like [`VerifyError`], deliberately **not** `#[non_exhaustive]`:
-/// breaking downstream matches on extension is the point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum FineTreeError {
-    /// The recomputed root does not match the manifest's `fine_root`
-    /// (wrong bytes, wrong salts, wrong boundary path — the generic
-    /// binding failure).
-    #[error("recomputed root does not match fine_root")]
-    RootMismatch,
-    /// The GGM sub-cover is not leaf-exact: a cover node spans an
-    /// unrevealed real leaf, which would disclose that leaf's salt
-    /// (MVP-SPEC.md line 96: "the cover MUST be leaf-exact").
-    #[error("over-broad GGM cover spans an unrevealed leaf")]
-    OverBroadCover,
-}
+/// The two classes R2 declared ([`FineTreeError::RootMismatch`],
+/// [`FineTreeError::OverBroadCover`]) keep their shape *and their codes*
+/// verbatim; G13 appended `WrongCoverShape`, `BadSeedLength`,
+/// `BadNodeHashLength`, `RangeOutOfBounds` and `ByteLenMismatch`, each of
+/// which broke the wildcard-free match in [`VerifyError::code`] until it
+/// received a distinct stable code and an exemplar — the mechanism working
+/// as designed.
+pub use crate::content::fine_tree::FineTreeError;
 
 /// The covered-unit range-verification hook — **the stage signature G13's
 /// implementation plugs into**.

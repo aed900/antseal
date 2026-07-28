@@ -25,6 +25,11 @@
 //! - [`ggm`] (G8) — the GGM salt tree: `s_root` → per-leaf 16-byte salts over a
 //!   complete depth-`d` dyadic grid, with the canonical node-address type
 //!   shared by covers and boundary paths (MVP-SPEC.md line 96).
+//! - [`fine_tree`] (G9–G13) — the fine tree itself: streaming construction
+//!   with O(log n) memory, `rebuild_fine_root`, the leaf-exact GGM sub-cover,
+//!   and range-proof generation/verification against `fine_root`
+//!   (MVP-SPEC.md lines 85, 96, 118, 121), with its own `fine-root-*`
+//!   taxonomy (the seam R2 pre-declared).
 //! - [`error`] — the `content-`-coded error taxonomy these share.
 //!
 //! # Where the boundaries are
@@ -40,6 +45,7 @@
 
 pub mod descriptor;
 pub mod error;
+pub mod fine_tree;
 pub mod ggm;
 pub mod mirror;
 pub mod split;
@@ -47,6 +53,12 @@ pub mod unit;
 
 pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, FineTreeOptOut};
 pub use error::ContentError;
+pub use fine_tree::{
+    BoundaryNode, CostEstimate, CoverEntry, CoverNode, CoveredUnit, FineRoot, FineTreeBuilder,
+    FineTreeError, FineTreeStats, LeafExactCover, RangeProof, RangeProofView, WireNode,
+    cover_seeds, estimate_fine_tree_cost, minimal_cover, prove_range, prove_unit,
+    rebuild_fine_root, verify_range,
+};
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
 pub use mirror::{
     RevealSelection, full_reveal_concat_exempt, mirror_selectable, needs_mirror, tiling_exempt,
