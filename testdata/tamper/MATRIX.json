@@ -121,27 +121,30 @@
       "milestone": "M0",
       "owner": "C+R",
       "spec_quote": "wrong-length salt or seed (16-B `*_salt`; 32-B `s_root`/GGM seed/boundary node)",
-      "note": "The spec names six length-checked fields: three 16-byte `*_salt`s and three 32-byte values. One case each.",
+      "note": "The spec names six length-checked fields: three 16-byte `*_salt`s and three 32-byte values. One case each. Five carry BOTH a C-level primitive row and an R-level pipeline-view row (the `s-root-32` precedent), because the two check different surfaces; `ggm-seed-32` is R-only, per the `crypto-level-ggm-seed-length` non-row. Every R-level row is a DIRECT call on `check_structural`: F8's schema decodes each of these into a fixed-size type, so a wrong-length value never reaches R's group 1 through `verify_bundle` (error-code contract, the 2026-07-28 R5 rider).",
       "cases": [
         {
           "id": "unit-salt-16",
           "what": "truncate the disclosed `unit_salt` to 15 bytes",
           "rows": [
-            "crypto-unit-salt-wrong-length"
+            "crypto-unit-salt-wrong-length",
+            "verify-wrong-length-unit-salt"
           ]
         },
         {
           "id": "path-salt-16",
           "what": "truncate the disclosed `path_salt` to 15 bytes",
           "rows": [
-            "crypto-path-salt-length"
+            "crypto-path-salt-length",
+            "verify-wrong-length-path-salt"
           ]
         },
         {
           "id": "file-salt-16",
           "what": "append a byte to the disclosed `file_salt` (17 bytes)",
           "rows": [
-            "crypto-file-salt-wrong-length"
+            "crypto-file-salt-wrong-length",
+            "verify-wrong-length-file-salt"
           ]
         },
         {
@@ -155,19 +158,16 @@
         {
           "id": "ggm-seed-32",
           "what": "supply a wrong-length GGM covering seed",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-wrong-length-ggm-covering-seed",
-            "outcome_kind": "error",
-            "expected": "wrong-length-ggm-covering-seed",
-            "why": "R7 enumerates all six wrong-length rows through `verify_bundle` (tasks/R.md R7). This case MUST land at the R level: see non_rows — C's `CryptoError::SeedLength` carries no kind discriminator, so a C-level row would collide with the `s_root` one."
-          }
+          "rows": [
+            "verify-wrong-length-ggm-covering-seed"
+          ]
         },
         {
           "id": "boundary-node-32",
           "what": "append a byte to a boundary Merkle node hash (33 bytes)",
           "rows": [
-            "crypto-node-hash-wrong-length"
+            "crypto-node-hash-wrong-length",
+            "verify-wrong-length-boundary-node-hash"
           ]
         }
       ]
@@ -320,13 +320,9 @@
         {
           "id": "out-of-bounds",
           "what": "extend a unit's range past the file's `size`",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-tiling-out-of-bounds",
-            "outcome_kind": "error",
-            "expected": "tiling-out-of-bounds",
-            "why": "R7 enumerates overlapping / out-of-bounds / gap / unsorted ranges (tasks/R.md R7); Q7 seeded overlap and gap, this one and `tiling-unsorted` remain."
-          }
+          "rows": [
+            "verify-tiling-out-of-bounds"
+          ]
         },
         {
           "id": "non-tiling",
@@ -361,13 +357,9 @@
         {
           "id": "raw-mirror-canonicalization-mismatch",
           "what": "substitute raw-mirror bytes that do not canonicalize to the file's canonical bytes",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-raw-mirror-canonicalization-mismatch",
-            "outcome_kind": "error",
-            "expected": "raw-mirror-canonicalization-mismatch",
-            "why": "R7 owns the raw-mirror structural rows (tasks/R.md R7). The code already exists in R1's shipped taxonomy; only the fixture and row are missing."
-          }
+          "rows": [
+            "verify-raw-mirror-canonicalization-mismatch"
+          ]
         }
       ]
     },
@@ -380,13 +372,9 @@
         {
           "id": "true-length-range-mismatch",
           "what": "declare a `true_length` that disagrees with the unit's [start, end) width",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-true-length-range-mismatch",
-            "outcome_kind": "error",
-            "expected": "true-length-range-mismatch",
-            "why": "R7's enumerated rows include `true_length` ≠ byte-range width (tasks/R.md R7)."
-          }
+          "rows": [
+            "verify-true-length-range-mismatch"
+          ]
         }
       ]
     },
@@ -426,29 +414,21 @@
       "milestone": "M0",
       "owner": "R",
       "spec_quote": "`file_salt`/`s_root` present for an only-partially-revealed file",
-      "note": "Split per material because each has its own code (D28, docs/decisions/D28-full-reveal-strictness.md). The symmetric *missing*-material rows are NOT in this family — see project_added; D28 ratified them as a project addition precisely so this mapping stays honest.",
+      "note": "Split per material because each has its own code (D28, docs/decisions/D28-full-reveal-strictness.md). The symmetric *missing*-material rows are NOT in this family — see project_added; D28 ratified them as a project addition precisely so this mapping stays honest. R7 landed both: the `file_salt` row drives `verify_bundle`; the `s_root` row is a DIRECT call on `classify_file_reveal`, because F8 makes `file_salt` mandatory inside a `full_reveals` entry, so a bundle can never present `s_root` alone and D28 row 1 always claims the pipeline verdict. That unreachability is itself pinned by a test (`the_pipeline_route_to_an_s_root_leak_is_the_file_salt_row`), so the day the bundle schema gains an `s_root`-only shape the row becomes a pipeline row.",
       "cases": [
         {
           "id": "file-salt-leak",
           "what": "attach a partially revealed file's `file_salt` to the bundle",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-partial-reveal-salt-leak-file-salt",
-            "outcome_kind": "error",
-            "expected": "partial-reveal-salt-leak-file-salt",
-            "why": "D28's R7 row table, row 3 (docs/decisions/D28-full-reveal-strictness.md)."
-          }
+          "rows": [
+            "verify-partial-reveal-salt-leak-file-salt"
+          ]
         },
         {
           "id": "s-root-leak",
           "what": "attach a partially revealed file's `s_root` to the bundle",
-          "pending": {
-            "task": "R7",
-            "row_id": "verify-partial-reveal-salt-leak-s-root",
-            "outcome_kind": "error",
-            "expected": "partial-reveal-salt-leak-s-root",
-            "why": "D28's R7 row table, row 4."
-          }
+          "rows": [
+            "verify-partial-reveal-salt-leak-s-root"
+          ]
         }
       ]
     },
@@ -655,6 +635,76 @@
       "row_id": "crypto-sig-policy-unknown-alg",
       "owner": "C",
       "why": "Sixth `sig_policy` case, same basis: an unregistered/reserved algorithm id (D17 reserves 2–15 and requires rejection). Distinct from `unlisted-extra`, which is a valid algorithm the policy omits."
+    },
+    {
+      "row_id": "verify-tiling-unsorted",
+      "owner": "R",
+      "why": "The fourth tiling violation. Line 168's `non-mirror-range-violations` family names three (overlapping / out-of-bounds / non-tiling), but spec line 121's invariant is `sorted, non-overlapping, and exactly tiling` — R3 checks sortedness as its own pre-pass with its own code, precisely so a descending unit table is diagnosed as unsorted rather than as a gap at the first range. R7's task text lists it."
+    },
+    {
+      "row_id": "verify-unknown-file-ref",
+      "owner": "R",
+      "why": "R3 structural invariant (spec line 121): a `touched_files` entry naming a `file_id` the signed file table has no row for. The unit-side siblings (`unknown-unit-ref`, `duplicate-unit-reveal`) are already project-added; this completes R7's `duplicate/unknown unit and file references`. NOT the D82 shape — that is an EXISTING file with no revealed unit, which is open and permissive today, so no code may be pinned for it."
+    },
+    {
+      "row_id": "verify-full-reveal-missing-file-salt",
+      "owner": "R",
+      "why": "D28's R7 row table, the *missing*-material direction. Line 168 names only the leak direction; D28 ratified strictness in both, so a full reveal that withholds its `file_salt` must fail with its own code — otherwise the two whole-file content commitments would have no verification path at all (D28 §Why strict)."
+    },
+    {
+      "row_id": "verify-full-reveal-missing-s-root",
+      "owner": "R",
+      "why": "The fine-tree arm of the same rule: a fully revealed file WITH a fine tree must disclose `s_root`. Separate code from the `file_salt` arm because the two materials are independently adjudicated (D28 rows 3 and 4)."
+    },
+    {
+      "row_id": "verify-full-reveal-s-root-without-fine-tree",
+      "owner": "R",
+      "why": "D74's direction: EXTRA material. An `s_root` attached to a `--no-fine-tree` file's full reveal is rejected, which is what makes D28's present-set-==-required-set rule total — strip units and the leak arm fires, strip material and the missing arm fires, add material and this one does, so a third party cannot alter a bundle's reveal shape undetected in any direction."
+    },
+    {
+      "row_id": "verify-concat-commit-mismatch-canon",
+      "owner": "R",
+      "why": "D28 row 7 on a TEXT file: the concatenated non-mirror bytes must open `canon_commit`. Not in line 168's list, and the check has no other verification path — `fine_root` and `unit_commit` are per-unit, `path_commit` per touched file — so without a row the strictness D28 ratified would be untested at the bundle level."
+    },
+    {
+      "row_id": "verify-concat-commit-mismatch-raw",
+      "owner": "R",
+      "why": "The same check's other arm: a BINARY file's concatenation opens `raw_commit`. Its own code because a verdict must say which commitment disagreed."
+    },
+    {
+      "row_id": "verify-raw-commit-mismatch",
+      "owner": "R",
+      "why": "D28 row 9. On a TEXT file the concatenation check opens `canon_commit`, so a corrupt `raw_commit` survives row 7 and is caught by the raw-mirror binding instead — the same corrupted field reaching a different code by a different route, which is exactly why both rows exist."
+    },
+    {
+      "row_id": "verify-padded-length-mismatch",
+      "owner": "R",
+      "why": "The pipeline-level counterpart of the `over-padded-unit` spec case, whose row (`crypto-padding-length-mismatch`) pins C8's `strip_padding` primitive. R's code is a genuinely different outcome: its payload is recomputed from the manifest's `true_length` in wide arithmetic so the rendered error is byte-identical on native and wasm32 (spec line 169), which only a pipeline row exercises. Uses C9's own mis-encryptor, so the row also proves the padding rejection fires strictly AFTER the AEAD authenticates."
+    },
+    {
+      "row_id": "verify-non-zero-padding",
+      "owner": "R",
+      "why": "Same basis, other arm: a pad byte that is non-zero at the correct length. `crypto-non-zero-padding` (itself a project addition) pins the primitive; this pins the pipeline verdict."
+    },
+    {
+      "row_id": "verify-revealed-unit-file-not-touched",
+      "owner": "R",
+      "why": "D80's rule (docs/decisions/D80-revealed-unit-touched-file.md), landed at R5: a revealed unit's file MUST appear in `touched_files`. Not in line 168's enumeration because the rule did not exist when the line was written. Needs both layers decoded at once to observe, which is why R5 was the first task that could."
+    },
+    {
+      "row_id": "verify-covered-unit-revealed-as-non-covered",
+      "owner": "R",
+      "why": "R5's reveal-section rule: a unit shipped in the reveal section its SIGNED manifest binding forbids. Named from the bundle's mistake, since that is what a tamper row mutates. Not in line 168's list — it is the check that makes the per-unit stage's dispatch total, so without it a covered unit could be opened by a `unit_commit` the manifest never assigned it."
+    },
+    {
+      "row_id": "verify-non-covered-unit-revealed-as-covered",
+      "owner": "R",
+      "why": "The other arm of the same rule, and its own code because a verdict must say which direction the bundle got wrong. Exercised with a raw mirror, which is non-covered BY KIND whatever its file's fine-tree state (spec line 94)."
+    },
+    {
+      "row_id": "verify-fine-root-rebuild-mismatch",
+      "owner": "R",
+      "why": "D28 row 8 / D75's second route: the disclosed `s_root` must rebuild the manifest's `fine_root`. The row leaves the per-unit cover seeds correct so stage 3 passes and the whole-file rebuild is what fires, making the pair with the cover-seed route (a recorded non-row) a genuine agreement between two independent derivations of `fine_root` rather than one check wearing two hats."
     }
   ],
   "non_rows": [

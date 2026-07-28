@@ -83,37 +83,7 @@ const EXPECTED_M0_PENDING: &[(&str, &str, &str)] = &[
         "R8",
         "verify-non-covered-unit-commit-mismatch",
     ),
-    (
-        "wrong-length-salt-or-seed/ggm-seed-32",
-        "R7",
-        "verify-wrong-length-ggm-covering-seed",
-    ),
     ("swapped-unit/swapped-unit", "R8", "verify-swapped-unit"),
-    (
-        "non-mirror-range-violations/out-of-bounds",
-        "R7",
-        "verify-tiling-out-of-bounds",
-    ),
-    (
-        "raw-mirror-canonicalization-mismatch/raw-mirror-canonicalization-mismatch",
-        "R7",
-        "verify-raw-mirror-canonicalization-mismatch",
-    ),
-    (
-        "true-length-range-mismatch/true-length-range-mismatch",
-        "R7",
-        "verify-true-length-range-mismatch",
-    ),
-    (
-        "partial-reveal-material-leak/file-salt-leak",
-        "R7",
-        "verify-partial-reveal-salt-leak-file-salt",
-    ),
-    (
-        "partial-reveal-material-leak/s-root-leak",
-        "R7",
-        "verify-partial-reveal-salt-leak-s-root",
-    ),
     ("oversized-or-deep-cbor/oversized", "F15", "cbor-oversized"),
     (
         "oversized-or-deep-cbor/deep",

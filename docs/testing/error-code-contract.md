@@ -269,6 +269,48 @@ kebab-case id, and never edit an existing row's expected code.
   Gap recorded, not closed: none of these four codes has a tamper row —
   `MATRIX.json` has no version or reserved-slot case, and Q8 does not catch it
   because they are project-added rather than spec-enumerated. Owned by **F18**.
+- **2026-07-28 (M0 wave 5, R6/R7)** — R7 landed R's structural registry slice
+  (`antseal_core::test_util::tamper_rows_structural`): **24 rows**, merged
+  into `tests/tamper_matrix.rs` so the layer-2 cross-domain sweep now runs
+  over **58 rows**. **No code was minted.** Every row binds a code R1–R5 had
+  already shipped, which is the outcome the contract is meant to produce: a
+  task whose whole job is writing rows should find the taxonomy already
+  adequate, and a row that could not find a distinct code would have been a
+  finding about the taxonomy rather than a licence to extend it.
+
+  Three records worth keeping:
+
+  1. **A second pipeline-unreachable R code, same cause as the first.**
+     R5's rider recorded that `wrong-length-ggm-covering-seed` cannot be
+     reached through `verify_bundle` because F8 decodes every disclosed
+     salt/seed into a fixed-size type. R7 found the same effect in a
+     different field: `partial-reveal-salt-leak-s-root` is unreachable
+     because `FullReveal` makes `file_salt` **mandatory**, so a bundle can
+     never present `s_root` alone and D28 row 1 always claims the verdict
+     first. Both are direct-call rows (on `check_structural` and
+     `classify_file_reveal` respectively), and neither code was weakened to
+     fit — the R-level rules are right, and R4 must keep adjudicating the two
+     materials independently. The unreachability is itself pinned by a test,
+     so the day F8 gains an `s_root`-only shape the row becomes a pipeline
+     row rather than silently continuing to test a different layer.
+  2. **All six `wrong-length-*` classes now have R-level rows**, alongside
+     C's primitive-level ones (the `s-root-32` two-row precedent, extended to
+     five of the six cases; `ggm-seed-32` stays R-only per the recorded
+     `crypto-level-ggm-seed-length` non-row). They keep R's length group
+     reachable and pinned for the day a field is relaxed to a variable-length
+     byte string.
+  3. **The reverse coverage direction is now enforced.** Q8's registry maps
+     the *spec's* enumeration onto rows; R7 added
+     `every_unprefixed_verify_code_has_a_row_or_a_named_owner`, which maps
+     the *error enum* onto rows. Every code in R's unprefixed namespace must
+     be claimed by a row, by a Q7 seed row, or by an entry naming the task
+     that owes it (**two** codes, both R8's). Adding a structural invariant
+     without one of the three now fails CI — the direction Q8 structurally
+     cannot check, because it catches an invariant nobody wrote a spec case
+     for. It immediately earned itself: it surfaced that R's *pipeline-level*
+     `padded-length-mismatch` and `non-zero-padding` had no row and no owner
+     — C's seed rows pin the `strip_padding` primitive under different codes,
+     and no task's text named the pipeline pair — so R7 added them.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.

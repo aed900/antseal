@@ -15,11 +15,16 @@ rust-version.workspace = true
 # WASM-SAFE SUBSET (P14/Q5). Gates exactly the parts of the test-support
 # surface that are I/O-free and dependency-free: the golden-vector envelope
 # executor (`test_util::vectors`), the documented NON-SECRET fixture seed,
-# the deterministic manifest fixtures, and the byte accessors committed
-# vectors need. It activates **ZERO optional dependencies** — that is the
-# property that keeps the `core-dep-graph` verdict and the `wasm32-core`
-# build unaffected no matter who turns it on, and it is why the Q5 bit-match
+# the deterministic manifest fixtures, the deterministic fixture RNG
+# (`test_util::fixture_rng`), R6's `.sealproof` fixture constructor
+# (`test_util::bundle_fixtures`), and the byte accessors committed vectors
+# need. It activates **ZERO optional dependencies** — that is the property
+# that keeps the `core-dep-graph` verdict and the `wasm32-core` build
+# unaffected no matter who turns it on, and it is why the Q5 bit-match
 # harness may depend on antseal-core through a NORMAL edge with this feature.
+# R6 lives here rather than under `test-util` deliberately: the
+# `wasm32-core-tests` lane's dev-dependency edge enables `test-vectors` only,
+# and R6's whole point is to be usable from it (R9/R10, the wasm32 lanes).
 test-vectors = []
 # Full test-support surface: `test-vectors` plus the proptest-bearing parts
 # (shared strategies, the Q7 tamper harness). Never enabled by any

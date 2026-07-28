@@ -391,12 +391,13 @@ const ROWS: &[TamperRow] = &[
 /// a collision between, say, a C row and an R row can only surface once
 /// both sit in one registry.
 ///
-/// Domains append their slice here as they land: C17 (crypto) and G19
-/// (fine tree) are present; F15, A21 and R7/R8 follow.
+/// Domains append their slice here as they land: C17 (crypto), G19 (fine
+/// tree) and R7 (structural) are present; F15, A21 and R8 follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
     rows
 }
 
