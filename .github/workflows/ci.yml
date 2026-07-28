@@ -337,9 +337,32 @@ jobs:
   # "commits a diagnostic sidecar", and scripts/cross-check.sh iterates
   # testdata/vectors/v*/ so a future v2/ is picked up automatically.
   #
-  # Q11 (D31 §6a) adds the remaining surfaces to scripts/cross-check.sh once
-  # the existing reference generators grow a --check mode; they are listed in
-  # that script so the gap is visible rather than absent.
+  # Q11 (D31 §6a) completed the lane: all six surfaces now run, not just
+  # CBOR. In D31 §6b's order — crypto/reference.py's own T0 known answers
+  # FIRST and unconditionally (RFC 5869 A.1/A.2/A.3, RFC 8032 §7.1 all five,
+  # RFC 8439, draft-irtf-cfrg-xchacha; if the reference's own anchors fail,
+  # every downstream agreement is worthless and this ordering makes that
+  # legible), then hkdf/, crypto/ and fine-tree/ --check, then the UTF-8
+  # corpus --check, which also replays Unicode's own NormalizationTest NFC
+  # column (T0) from testdata/unicode/, then the CBOR checker.
+  #
+  # The self-test now covers every surface too: the lane stages a COPY of
+  # testdata/ in a temp dir, plants a fault per surface, and requires each
+  # checker to go red and then green again. A checker never observed failing
+  # is not evidence (D31 §11 item 6), and this makes that a standing property
+  # rather than a one-off note in a report.
+  #
+  # ML-DSA-65 is deliberately NOT here. Its vehicle is NIST ACVP (T0,
+  # testdata/acvp/), replayed from Rust in the `test` lane as
+  # crates/antseal-core/tests/acvp_ml_dsa.rs — committed fixtures, so no
+  # network and no new job. The neighbouring ml-dsa↔fips204 comparison is T2
+  # (D31 §4a) and is D14's fallback evidence, never this lane's independence
+  # claim.
+  #
+  # NO PATH FILTER, deliberately (D31 §8): no job in this workflow has one,
+  # and a filter here would be a foot-gun the first time a vector directory
+  # is renamed. This is also the first lane in the workflow that requires
+  # Python (docs/ci-verification.md records that).
   cross-check:
     name: cross-check
     runs-on: ubuntu-latest

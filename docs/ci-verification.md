@@ -817,3 +817,114 @@ marker reserving a live row id; a pending marker without a task id; a
 non-row whose `collides_with` points at nothing; a project addition with an
 empty justification; an unknown field. Plus the positive control (the
 committed registry passes through the identical text path).
+
+---
+
+## What changed — Q11 (D31): the `cross-check` lane, and the first Python in CI
+
+`cross-check` was added to `.github/workflows/ci.yml` by F14 carrying the CBOR
+surface only, and was never recorded here. Q11 completed it to all six
+surfaces. Both facts land in this section.
+
+### The lane is the first in this workflow to require Python
+
+Every other lane is Rust plus coreutils. `cross-check` runs
+`actions/setup-python@v5` at `python-version: '3.12'` and installs one
+hash-pinned dev tool:
+
+```
+pip install --require-hashes -r requirements-crosscheck.txt
+```
+
+which pins `cbor2==6.1.3` by wheel/sdist SHA-256 (the file lists all
+distributions for the version, so `--require-hashes` succeeds on any runner
+architecture). `cbor2` is a **dev tool only**: it never enters a Rust
+dependency graph, and the lane's drift-guard step refuses to let its name
+appear in a Cargo manifest (`docs/dependency-policy.md` §5).
+
+**Everything else the lane runs is Python-standard-library only.** That is not
+an accident of convenience — it is what keeps the reference implementations
+independent of both our Rust stack and of PyPI. The only surface with an
+external Python dependency is the CBOR one, and there `cbor2` is restricted to
+**decoding**; the RFC 8949 §4.2.1 canonical encoder we compare against is ours
+(D31 §8).
+
+### No path filter, deliberately
+
+D31 §8 rejected filtering the lane to `testdata/vectors/`. No job in this
+workflow has a path filter, and one here would be a foot-gun the first time a
+vector directory is renamed — the lane would go green by not running. The
+~30 s per PR is the correct price.
+
+### Lane steps
+
+| step | command |
+| --- | --- |
+| self-test | `./scripts/cross-check.sh --self-test --require` |
+| the check | `./scripts/cross-check.sh --check --require` |
+| drift guard | `cargo test -p antseal-core --all-features --locked --test cbor_crosscheck_contract` |
+
+`--require` turns "a dev tool is missing" (exit 2) into a failure, which is
+what CI wants and what a local contributor does not.
+
+The **self-test runs first**, as in `vector-freeze` and `secret-guard`: it
+stages a copy of `testdata/` in a temp directory, plants one fault per surface,
+and requires each checker to go red and then green again. A checker never
+observed failing is not evidence (D31 §11 item 6), and running it before the
+real check means a green lane is trustworthy rather than merely quiet.
+
+### ML-DSA-65 is not in this lane
+
+Its vehicle is NIST ACVP — tier T0 — replayed from Rust against `ml-dsa
+=0.1.1`. The fixtures are committed under `testdata/acvp/`, so the replay is
+an ordinary `#[test]` in the existing **`test`** lane
+(`crates/antseal-core/tests/acvp_ml_dsa.rs`): no new job, no network, no
+Python. The neighbouring `ml-dsa`↔`fips204` comparison
+(`tests/mldsa_fallback_equivalence.rs`) is **T2** and is D14's fallback
+evidence, never the independence claim (D31 §4a).
+
+### `core-dep-graph` is unaffected
+
+`fips204` became a **native-only dev-dependency** of `antseal-core` for the T2
+test. Verified by cargo-tree diff at landing:
+`cargo tree -p antseal-core -e normal --prefix none --locked` is byte-identical
+before and after (102 lines) and `fips204` does not appear in it. `Cargo.lock`
+gains 12 dev-only packages; `deny.toml` sets `multiple-versions = "warn"`, so
+the duplicate RustCrypto 0.10-generation pairs it introduces warn rather than
+fail. Recorded in D14's 2026-07-28 addendum.
+
+## Authoritative context set (now 17)
+
+```
+fmt
+clippy
+test
+wasm32-core
+wasm32-core-tests
+core-dep-graph
+cross-os-linux
+cross-os-macos
+cross-os-windows
+golden-vectors
+cross-check            <-- NEW (F14 + Q11/D31)
+vector-freeze
+wasm-bitmatch
+tamper-matrix
+fuzz-smoke
+audit-deny
+secret-guard
+```
+
+## Local verification (2026-07-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| `cross-check` step 1 (self-test) | `./scripts/cross-check.sh --self-test --require` | **PASS** — 7 surface proofs, each red with a planted fault and green after restore, plus the CBOR checker's own 8 planted faults and 1 control |
+| `cross-check` step 2 (the lane) | `./scripts/cross-check.sh --check --require` | **PASS** — 1 reference self-test (20 published known answers, 4 optional third-party corroborations), 4 generators, 1 CBOR checker: 225 CBOR checks over 14 cases, 33 RFC 8949 Appendix A examples, 1 537 Unicode NormalizationTest lines, 37 corpus fixtures, all committed crypto/HKDF/fine-tree vectors. **Zero discrepancies.** |
+| `cross-check` step 3 (drift guard) | `cargo test -p antseal-core --all-features --locked --test cbor_crosscheck_contract` | **PASS** |
+| ML-DSA T0 replay (in the `test` lane) | `cargo test -p antseal-core --test acvp_ml_dsa` | **PASS** — 6 tests, 115 NIST ACVP cases, zero disagreements |
+| ML-DSA T2 fallback equivalence (in the `test` lane) | `cargo test -p antseal-core --test mldsa_fallback_equivalence` | **PASS** — 2 tests |
+| `core-dep-graph` unperturbed by the `fips204` dev-dependency | `cargo tree -p antseal-core -e normal --prefix none --locked`, diffed before/after | **PASS** — byte-identical, 102 lines, `fips204` absent |
+
+The full dated freeze report, with the per-surface vehicle, version, tier and
+discrepancy count that Q14 quotes, is `docs/testing/cross-check.md`.
