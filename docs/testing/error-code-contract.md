@@ -61,6 +61,41 @@ the exception in the other direction: when R wraps a C or F error
 surfaced unchanged, so the wrapped failure keeps its owning domain's
 identity rather than acquiring a second one.
 
+### Consequence: a code names a rejection class, never a layer (recorded at F15)
+
+Wrapper arms delegating unchanged has a consequence worth stating outright,
+because it is the thing a contributor will otherwise try to "fix". The
+`.sealproof` pipeline has three strict layers (registry §7.6.3), and the
+**same** canonicality fault at each of them produces the **same code**:
+
+| where the duplicate map key is | code | layer |
+|---|---|---|
+| the manifest body | `cbor-duplicate-map-key` | manifest body |
+| the manifest envelope | `cbor-duplicate-map-key` | manifest envelope |
+| the bundle map | `cbor-duplicate-map-key` | bundle |
+| the embedded manifest inside a canonical bundle | `cbor-duplicate-map-key` | manifest envelope |
+
+So **four distinguishable mutations cannot be four tamper rows** — §4 layer 2
+correctly refuses the set. That is not a coverage gap and the fix is *not*
+`cbor-duplicate-map-key-in-body` and friends: minting per-layer codes would
+fork one taxonomy into four and make "which layer" a permanent part of every
+code name, which §3 then freezes forever.
+
+What separates them is `ManifestError::layer` / `SealProofError::layer` —
+pipeline context, not a rejection class. F15's fixture table
+(`testdata/tamper/format/FIXTURES.json`) is therefore the finer instrument:
+it pins every fixture on the **`(code, layer)` pair**, which *is* pairwise
+informative, while a tamper row is registered only where the code is not
+already claimed. Twenty fixtures, seven rows, and the difference is checked
+in both directions rather than asserted.
+
+Caveat a reader hits immediately, and F26 owns: the two accessors disagree
+about what a missing layer means. A bundle **schema** rejection still
+reports `Some(Bundle)` — a layer-1 failure is layer 1 by construction — while
+a manifest schema rejection reports `None`, because it names its own map,
+which is more precise. So `layer == null` means "schema rejection *inside the
+manifest*", not "schema rejection".
+
 ### Recorded exception: the `fine-root-` family (ratified 2026-07-28)
 
 The fine-tree errors live in G (`content/fine_tree/error.rs`) but carry
@@ -441,6 +476,50 @@ kebab-case id, and never edit an existing row's expected code.
   `unit-commit-mismatch`) and both are now rows, so that list is empty. It
   is kept rather than deleted, so the "named owner" escape stays available
   and deliberate the next time a code lands ahead of its row.
+
+- **2026-07-28 (M0 wave 5, F15)** — **no code minted**, and the **M0 tamper
+  matrix is COMPLETE (0 pending)** — Q14's gate condition, printed by the
+  lane every run. F landed its registry slice
+  (`antseal_core::test_util::tamper_rows_format`): **twenty fixtures, seven
+  rows**, merged into `tests/tamper_matrix.rs`. Every row binds a code that
+  already existed — `bundle-too-large` (D10 §1 tabled it for exactly this
+  row), `cbor-nesting-too-deep`, `cbor-non-shortest-length`, and the two
+  key-band pairs — which is the outcome §3 is meant to produce for a task
+  whose whole job is writing rows.
+
+  Four records:
+
+  1. **Twenty fixtures, seven rows, and the ratio is the contract's own
+     doing.** See the new §2 subsection above: one canonicality fault at four
+     layers is four fixtures and one code, because wrapper arms delegate
+     unchanged. F15's mapping table pins the `(code, layer)` pair, which is
+     the finer instrument a per-layer code family would have been — without
+     freezing "which layer" into fifteen permanent names.
+  2. **The `cbor-` family has no reverse-coverage check, and six of its
+     fifteen codes have neither a row nor a named owner** (`cbor-malformed`,
+     `cbor-simple-value`, `cbor-tag`, `cbor-invalid-utf8`,
+     `cbor-unexpected-type`, `cbor-int-out-of-range`). R7's check covers R's
+     namespace and F23 will cover `bundle-`/`manifest-`; the `cbor-` family
+     falls between them precisely *because* both merely delegate to it, so it
+     belongs to neither exemplar sweep while being reachable through every
+     schema surface. Owned by **F24**.
+  3. **A length-valued mutation is now expressible as data.** The oversized
+     row needed "an input of size *n*" without storing *n* bytes;
+     `FIXTURES.json` distinguishes `source.kind = "file"` from
+     `"synthesized"`, the latter carrying a recipe plus the length it
+     produces. Any future cap row is a data row rather than a special case,
+     and a test asserts no committed format fixture exceeds 64 KiB so the
+     recipe cannot quietly become a file.
+  4. **The two `layer()` accessors disagree about what "no layer" means**
+     — recorded in §2 above, owned by **F26**. It only surfaced because F15
+     asserts the layer on every fixture rather than the code alone.
+
+  One obligation deliberately left open and re-homed: **D77 §6's mirror-only
+  row** (`manifest-empty-normal-units`), which the decision names F15 for. It
+  needs a byte mutation of a *nested* unit's `kind` — `FileEntry::new` refuses
+  to construct the shape — and therefore the span primitive **F25** records.
+  It is a project-added row with no `pending` marker, so it never bore on the
+  gate; **F22** owns it by title.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.
