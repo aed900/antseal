@@ -314,7 +314,7 @@ impl CryptoError {
 /// rows validate their expected codes against: a committed artifact naming
 /// a code no variant can emit is a typo, and this list is what catches it.
 /// `test-util` only — no production build sees it.
-#[cfg(any(test, feature = "test-util"))]
+#[cfg(any(test, feature = "test-vectors"))]
 #[must_use]
 pub fn all_code_exemplars() -> Vec<CryptoError> {
     use CryptoError as E;

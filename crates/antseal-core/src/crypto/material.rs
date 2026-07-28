@@ -325,10 +325,11 @@ impl FileSalt {
     }
 
     /// Raw bytes for committed test-vector generation (C3/C16) —
-    /// **NON-PRODUCTION**: exists only under the `test-util` feature, which
-    /// no shipped build enables. Production disclosure goes through
+    /// **NON-PRODUCTION**: exists only under the `test-vectors` feature (and
+    /// hence under `test-util`, which implies it), which no shipped build
+    /// enables. Production disclosure goes through
     /// [`crate::crypto::disclosure::FullFileRevealDisclosure`] only.
-    #[cfg(feature = "test-util")]
+    #[cfg(feature = "test-vectors")]
     #[must_use]
     pub const fn expose_bytes_for_test_vectors(&self) -> &[u8; 16] {
         self.0.as_bytes()

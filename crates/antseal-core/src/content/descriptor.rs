@@ -446,7 +446,12 @@ fn check_fields(
 mod tests {
     use super::*;
     use crate::canon::UNICODE_17_0_0;
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use crate::test_util::strategies::proptest_config;
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
 
     const V: UnicodeVersion = UnicodeVersion::CURRENT;
@@ -733,10 +738,12 @@ mod tests {
 
     // ── Property tests ──────────────────────────────────────────────────
 
+    #[cfg(feature = "test-util")]
     fn content_kind() -> impl Strategy<Value = ContentKind> {
         prop_oneof![Just(ContentKind::Binary), Just(ContentKind::Text(V))]
     }
 
+    #[cfg(feature = "test-util")]
     fn opt_out() -> impl Strategy<Value = FineTreeOptOut> {
         prop_oneof![
             Just(FineTreeOptOut::NotRequested),
@@ -744,6 +751,7 @@ mod tests {
         ]
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(proptest_config(0x0064_0001))]
 

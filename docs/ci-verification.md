@@ -347,6 +347,11 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
 
 ## Authoritative context set (now 14)
 
+> **[wave-4 note]** Superseded: P14 adds a 15th context
+> (`wasm32-core-tests`). The authoritative list and the updated
+> branch-protection payload are in the "P14 + Q5 (wave 4)" section at the end
+> of this file.
+
 ```
 fmt
 clippy
@@ -425,3 +430,226 @@ Environment: as the P8/Q1 records (linux x86_64, toolchain 1.92.0 from
   version-keyed cache).
 - Check-run name of `secret-guard` (expected verbatim; confirm in runbook
   step 3 before step 5, exactly like the cross-os names).
+
+---
+
+# P14 — wave-4 lane changes (2026-07-28)
+
+## What changed
+
+- **`wasm32-core-tests` — NEW job, NEW required context (P14).** The first
+  lane that *executes* rather than merely compiles for
+  `wasm32-unknown-unknown`. Two steps:
+  1. `cargo test -p antseal-core --lib --target wasm32-unknown-unknown
+     --locked`. A Rust libtest binary for this target has **zero imports**
+     and exports `main` + `memory`, so `scripts/wasm-test-runner.mjs`
+     executes it under plain `WebAssembly.instantiate` in node — no
+     wasm-bindgen, no wasm-pack, no browser, and therefore no pre-emption of
+     decision **D18**. cargo invokes the runner automatically via the
+     `runner` key added to `.cargo/config.toml`. The technique is the one
+     `docs/research/C11-signature-probe.md` §5 already used for its executed
+     native↔wasm byte match.
+  2. `./scripts/wasm-toolchain-audit.sh` — the getrandom recipe on every
+     wasm32 build graph, plus the wasm-bindgen crate↔CLI pin equality of
+     `docs/dependency-policy.md` §5.
+- **`.cargo/config.toml` — NEW file.** Carries the `--cfg` half of the
+  getrandom recipe (`[target.wasm32-unknown-unknown] rustflags`) and the
+  wasm32 test `runner`. The runner path is `../../scripts/…` because cargo
+  sets a test binary's working directory to the **package** root.
+- **`antseal-core` feature split.** New `test-vectors` feature = the
+  WASM-safe subset of the test-support surface, activating **zero** optional
+  dependencies; `test-util = ["test-vectors", "dep:proptest"]` as before.
+  The self dev-dependency is target-split so wasm32 test builds get
+  `test-vectors` (no proptest) and native builds get `test-util`.
+  **`core-dep-graph` is unaffected by construction**: a feature that
+  activates no optional dependency cannot change `cargo tree -p antseal-core
+  -e normal`.
+- **`wasm32-core` unchanged** (still build-only); its header comment now
+  points at the new lane instead of promising the getrandom upgrade.
+- **Docs**: new `docs/wasm-toolchain.md` (the normative recipe, the audit
+  table of which dependency sits on which getrandom line, what the runner
+  can and cannot observe, why wasm-pack/wasm-bindgen are deliberately not
+  pinned yet, red-lane evidence); cross-references added to
+  `docs/toolchain.md`, `docs/dependency-policy.md` §5 + Enforcement, and
+  `CONTRIBUTING.md` (lane table + PR checklist).
+
+## Authoritative context set (now 15)
+
+```
+fmt
+clippy
+test
+wasm32-core
+wasm32-core-tests      <-- NEW (P14)
+core-dep-graph
+cross-os-linux
+cross-os-macos
+cross-os-windows
+golden-vectors
+wasm-bitmatch
+tamper-matrix
+fuzz-smoke
+audit-deny
+secret-guard
+```
+
+**Branch-protection payload delta: +1 line, `wasm32-core-tests`.** Nothing
+else about runbook step 5 changes. Full updated payload (this supersedes the
+wave-2 one):
+
+```bash
+gh api -X PUT repos/aed900/antseal/branches/main/protection --input - <<'EOF'
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      { "context": "fmt" },
+      { "context": "clippy" },
+      { "context": "test" },
+      { "context": "wasm32-core" },
+      { "context": "wasm32-core-tests" },
+      { "context": "core-dep-graph" },
+      { "context": "cross-os-linux" },
+      { "context": "cross-os-macos" },
+      { "context": "cross-os-windows" },
+      { "context": "golden-vectors" },
+      { "context": "wasm-bitmatch" },
+      { "context": "tamper-matrix" },
+      { "context": "fuzz-smoke" },
+      { "context": "audit-deny" },
+      { "context": "secret-guard" }
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+EOF
+```
+
+> Unlike the Q1 mount points, `wasm32-core-tests` is a **live** lane from its
+> first run: it has never reported on the remote, so — per the runbook's
+> normative ordering — it must be observed green on `main` (step 3) **before**
+> this payload is applied (step 5).
+
+## Local verification — 2026-07-28 (remote CI has still never run)
+
+Environment: linux `x86_64-unknown-linux-gnu`; toolchain **1.92.0** from
+`rust-toolchain.toml`; `wasm32-unknown-unknown` target installed from the
+same file; **node v24.12.0**; P14 tree.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| `wasm32-core-tests` step 1 | `cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked` | **PASS** — runner reported `main() = 0, execution witness present (1 hit(s)); imports: 0; memory: 1769472 B`; **286** unit tests executed on wasm32 (of 311 native; the 25-test delta is enumerated in docs/wasm-toolchain.md §2) |
+| `wasm32-core-tests` step 2 | `./scripts/wasm-toolchain-audit.sh` | **PASS** (exit 0) — no getrandom in any wasm32 graph; wasm-bindgen pin check `N/A` |
+| `wasm32-core` (unchanged lane) | `cargo build -p antseal-core --target wasm32-unknown-unknown --locked` | **PASS** (exit 0) with the full M0 crypto set (ed25519-dalek 3.0.0, ml-dsa 0.1.1, minicbor, hkdf/sha2/hmac, chacha20poly1305, subtle, zeroize, unicode-normalization, serde/serde_json) |
+| `core-dep-graph` unaffected by the feature split | lane script verbatim, plus `cargo tree -p antseal-core -e normal` compared with and without `--features test-vectors` | **PASS** — identical graphs; `OK: antseal-core normal dep graph is free of forbidden crates.` |
+| `fmt` / `clippy` / `test` on the P14 tree | `cargo fmt --all --check` · `cargo clippy --all-targets --all-features --locked -- -D warnings` · `cargo test --workspace --all-features --locked` | **PASS** (all exit 0) |
+| Workflow YAML validity | PyYAML structural parse of `ci.yml` | **PASS** — 13 jobs; the new `wasm32-core-tests` job follows the checkout → rustup-from-toolchain-file → rust-cache → content pattern |
+
+### Red-lane probes (test-of-the-test), executed and reverted
+
+| Guard | Probe | Observed |
+| --- | --- | --- |
+| a failing wasm32 unit test turns the lane red | temporarily broke `antseal_core::tests::version_matches_scaffold`, ran step 1, reverted | **RED** — `::error::wasm32 test runner: the test binary trapped: unreachable. …` and `error: test failed` (exit 1) |
+| non-vacuity: a suite that runs zero tests must NOT pass | temporarily perturbed the witness pattern so the runner's post-`main` scan misses it, ran step 1, reverted | **RED** — `::error::… main() returned 0 but the execution witness is absent — the suite ran ZERO tests.` (exit 1) |
+| the getrandom detector actually detects | `ANTSEAL_WASM_AUDIT_TARGET=x86_64-unknown-linux-gnu ./scripts/wasm-toolchain-audit.sh` (puts proptest's getrandom 0.3 **and** 0.4 into the audited graph) | **RED** (exit 1) — both lines named, each with the missing `wasm_js` feature *and* the missing `--cfg`, and the fix stanza printed |
+
+**Not verifiable locally** (added to the runbook's remote expectations):
+
+- Execution of `wasm32-core-tests` on the GitHub runner image — in
+  particular that the preinstalled node satisfies the v18 floor asserted by
+  the runner (`node --version` is logged as the lane's first step) and that
+  `Swatinem/rust-cache` caches the wasm32 target artifacts.
+- The rendered check-run name `wasm32-core-tests` — confirm in runbook step 3
+  **before** applying the 15-context payload in step 5, exactly like the
+  cross-os and `secret-guard` names.
+
+---
+
+# Q5 — wave-4 lane changes (2026-07-28)
+
+## What changed
+
+- **`wasm-bitmatch` — mount point → LIVE (Q5).** No context change: the job
+  id and `name:` were reserved by Q1 and are byte-identical, so **the
+  branch-protection payload is unchanged from the 15-context P14 payload
+  above.** Body: checkout → rustup (toolchain file) → rust-cache →
+  `node --version` → `./scripts/wasm-bitmatch.sh --self-test` →
+  `./scripts/wasm-bitmatch.sh`.
+- **`crates/wasm-bitmatch` — NEW workspace member, test-only.**
+  `publish = false`, not named `antseal-*`, depended on by no product crate.
+  A *member* rather than a standalone crate (unlike `probes/sig-probe`)
+  because a bit-match between builds resolved from different lockfiles would
+  prove nothing — both sides must compile the same pinned versions from the
+  single root `Cargo.lock`. It depends on `antseal-core` with
+  `features = ["test-vectors"]`, the tier that activates zero optional
+  dependencies, so the edge cannot perturb `core-dep-graph`.
+  **No new third-party dependency**: `serde`, `serde_json` and `sha2` are
+  already exact-pinned for `antseal-core`.
+- **No wasm-bindgen anywhere.** The wasm entry points are a raw C ABI
+  (`bitmatch_len` / `bitmatch_ptr` / `bitmatch_transcript_version`) over a
+  module with **zero imports**, asserted by the runner each run. Decision
+  **D18** remains entirely free.
+- **`VectorSummary::recomputed_digest` (antseal-core).** New field: SHA-256
+  over every byte the vector executor recomputed, length-prefixed and
+  domain-separated with a harness-local prefix that is deliberately outside
+  the C1 domain-tag registry. This is the substance of the bit-match ("report
+  bytes **plus recomputed digests**") and the medium through which **C3's
+  HKDF vectors join the harness**, discharging their standing rider. The Q4
+  runner now prints it too, so the `golden-vectors` and `wasm-bitmatch` logs
+  are directly comparable.
+- **Transcript byte format**: compact JSON under the **D29** rules, consumed
+  as a *recommendation* — `TRANSCRIPT_VERSION` is `0` and moves to `1` when
+  **Q14** freezes the report byte format. Nothing here freezes D29.
+
+## Local verification — 2026-07-28 (remote CI has still never run)
+
+Environment: linux `x86_64-unknown-linux-gnu`; toolchain **1.92.0** from
+`rust-toolchain.toml`; node **v24.12.0**; Q5 tree.
+
+| Check | Method | Result |
+| --- | --- | --- |
+| `wasm-bitmatch` step 2 (the lane) | `./scripts/wasm-bitmatch.sh` | **PASS** — native transcript 543 B, sha256 `7b6c5063af4c269cd69b030b715ec0a53f01aa73ac9758e1408f81eac6d166ec`; wasm32 transcript **byte-identical**, same sha256; 1 vector, 8 items, recomputed digest `949c49ebf664a65ff59b3ecfbb674b74c43f5e0fb795527a567bbe0ffb00d976` |
+| wasm module self-containment | runner asserts `WebAssembly.Module.imports(module).length === 0` | **PASS** — zero imports; exports are `memory`, `bitmatch_len`, `bitmatch_ptr`, `bitmatch_transcript_version` |
+| Harness native guards | `cargo test -p wasm-bitmatch --locked` | **PASS** — 7 tests: embedded table equals the committed tree (staleness), embedded bytes equal file bytes, transcript deterministic, non-vacuous, path-sorted, total over malformed input, D29 rules held |
+| Full gate on the Q5 tree | `cargo fmt --all` · `cargo clippy --all-targets --all-features --locked -- -D warnings` · `cargo test --workspace --all-features --locked` · `cargo build -p antseal-core --target wasm32-unknown-unknown --locked` · `cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked` · `./scripts/wasm-toolchain-audit.sh` · `cargo deny --locked check advisories bans sources` | **PASS** (all exit 0) |
+| Workflow YAML validity | PyYAML structural parse of `ci.yml` | **PASS** — 13 jobs; `wasm-bitmatch` keeps its job id and `name:` (required-status context unchanged) |
+
+### Red-lane proof (permanent, runs on every CI run — not a one-off)
+
+`./scripts/wasm-bitmatch.sh --self-test` rebuilds **only** the wasm32 side
+with `--cfg antseal_bitmatch_inject_divergence`, which makes the wasm
+transcript reverse its entry order **and** uppercase its hex digests — the
+two classic platform-divergence shapes (container iteration order, i.e. Q5's
+own "HashMap-ordered serialization" example, and platform-dependent
+formatting). Both are injected so the self-test cannot decay into a no-op at
+any vector count. Executed 2026-07-28:
+
+```
+  native transcript: 543 bytes, sha256 7b6c5063af4c269cd69b030b715ec0a53f01aa73ac9758e1408f81eac6d166ec
+  wasm32 transcript: 543 bytes, sha256 0237b8335ed583ec01e50904aa93bbccc08020e6ac1817ee3492de44bc3275bf
+  first difference at byte 465 (of 543 native / 543 wasm)
+  native …fff.","items":8,"recomputed_digest":"949c49ebf664a65ff59b3ecfbb674b74c43f5e0fb79…
+  wasm32 …fff.","items":8,"recomputed_digest":"949C49EBF664A65FF59B3ECFBB674B74C43F5E0FB79…
+::error::wasm-bitmatch: wasm32 transcript differs from native — the WASM build does NOT
+bit-match native verification (MVP-SPEC.md lines 167/169). …
+
+SELF-TEST PASSED: the injected divergence turned the lane red (exit 1), as required.
+```
+
+The script inverts the exit code (a correctly-failing lane is a *passing*
+self-test) and rebuilds a clean artifact before returning, so it is safe as
+the lane's first step. A subsequent clean run was confirmed green.
+
+**Not verifiable locally** (added to the runbook's remote expectations):
+
+- Execution of the two `./scripts/*.sh` steps on the runner image (the
+  scripts are POSIX `bash` with `set -euo pipefail`; `node --version` is
+  logged first).
+- Whether `Swatinem/rust-cache` caches the `wasm32-unknown-unknown`
+  artifacts of a `cdylib` member across runs (a cold build compiles the full
+  crypto stack for wasm32 — ~15 s locally).
+- The rendered check-run name `wasm-bitmatch` is **unchanged** from the Q1
+  mount point, so no new confirmation is needed beyond step 3's existing
+  check.

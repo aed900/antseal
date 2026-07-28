@@ -307,7 +307,12 @@ pub fn derive_manifest_key(w: MasterSecretRef<'_>) -> Key32 {
 mod tests {
     use super::*;
     use hmac::{Hmac, KeyInit, Mac};
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-util")]
     use proptest::test_runner::RngSeed;
 
     /// Fixed, public, NON-SECRET test master secret (bytes 0x00..0x1F) —
@@ -506,6 +511,7 @@ mod tests {
         assert_ne!(key_0.as_bytes(), key_1.as_bytes());
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(ProptestConfig {
             // ≥ 10_000 cases per the C3 CI requirement; deterministic fixed

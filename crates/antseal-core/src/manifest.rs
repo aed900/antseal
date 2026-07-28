@@ -97,7 +97,10 @@ pub mod ids;
 pub mod registry;
 pub mod sigmap;
 
-#[cfg(feature = "test-util")]
+// `test-vectors` (implied by `test-util`) — the fixtures are pure constant
+// data with no dependencies, so they are part of the WASM-safe tier and
+// remain available to the wasm32 `--lib` unit-test build (P14).
+#[cfg(feature = "test-vectors")]
 pub mod fixtures;
 
 pub use body::{

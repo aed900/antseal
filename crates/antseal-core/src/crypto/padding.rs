@@ -116,7 +116,12 @@ pub fn strip_padding(plaintext: &[u8], true_length: usize) -> Result<&[u8], Cryp
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-util")]
     use proptest::test_runner::RngSeed;
 
     /// C8 accept: the table-driven formula cases.
@@ -280,6 +285,7 @@ mod tests {
         assert_eq!(padded_length(usize::MAX), usize::MAX);
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(ProptestConfig {
             // Deterministic fixed seed per the determinism principle (Q3

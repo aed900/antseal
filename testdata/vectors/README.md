@@ -59,9 +59,19 @@ rule); 64-bit ids are `0x`-prefixed 16-digit hex strings (unambiguous in
 every JSON implementation, including the Q11 independent cross-check).
 
 Parsing, validation, and execution live WASM-safe (no I/O) in
-`antseal_core::test_util::vectors` (feature `test-util`), so the Q5
-native↔WASM bit-match lane reuses the exact same execution path; only file
-discovery/reading is native and lives in the runner test.
+`antseal_core::test_util::vectors` (feature **`test-vectors`**, implied by
+`test-util`; the tier split is P14's — see `docs/wasm-toolchain.md`), so the
+Q5 native↔WASM bit-match lane reuses the exact same execution path; only
+file discovery/reading is native and lives in the runner test.
+
+Each execution also returns `VectorSummary::recomputed_digest`: a SHA-256
+over **every byte the executor recomputed**, length-prefixed and
+domain-separated. It is a *harness* digest — never a format commitment, and
+outside the C1 domain-tag registry by construction — and it is the medium
+the `wasm-bitmatch` lane byte-compares between native and wasm32
+(`crates/wasm-bitmatch/README.md`). Kind executors that recompute values
+should feed them into it; the runner and the bit-match then cover the new
+kind with no further wiring.
 
 ### Registered kinds
 
@@ -101,6 +111,10 @@ changes):
 3. `cargo test -p antseal-core vector_` — the runner discovers and executes
    it; CI (`golden-vectors` + `cross-os-*` lanes) picks it up with **no
    code change**.
+4. `./scripts/wasm-bitmatch.sh` — the Q5 harness embeds the new file (its
+   `build.rs` walks this tree) and requires the native and wasm32
+   transcripts to stay byte-identical. Also **no code change**: the
+   `wasm-bitmatch` lane covers every new vector automatically.
 
 Adding a **new kind** (framework extension, not a per-vector event): add
 the payload types + executor arm in

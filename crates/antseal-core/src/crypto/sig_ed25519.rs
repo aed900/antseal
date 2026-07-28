@@ -390,7 +390,7 @@ pub fn verify(
 /// context, or one made with no context prefix at all — therefore needs an
 /// explicit escape hatch, and it lives here so no production path can reach
 /// it.
-#[cfg(any(test, feature = "test-util"))]
+#[cfg(any(test, feature = "test-vectors"))]
 pub mod test_signing {
     use super::{CONTEXT_SEPARATOR, Ed25519Signature, MasterSecretRef, sign_message};
 

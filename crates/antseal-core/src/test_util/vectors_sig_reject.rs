@@ -69,6 +69,7 @@
 //!    controls verify.
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::crypto::SIG_CONTEXT;
 use crate::crypto::error::{SigAlg, all_code_exemplars};
@@ -77,7 +78,9 @@ use crate::crypto::sig_policy::{self, SigPolicy};
 use crate::crypto::{sig_ed25519, sig_mldsa};
 
 use super::TEST_MASTER_SECRET_W;
-use super::vectors::{VectorError, VectorSummary, decode_hex, hex};
+use super::vectors::{
+    RECOMPUTED_DIGEST_DOMAIN, VectorError, VectorSummary, decode_hex, hex, prefix_len,
+};
 
 /// The registered kind name.
 pub const KIND: &str = "sig-reject";
@@ -364,6 +367,19 @@ pub fn execute(
             format!("a one-algorithm policy must validate, got {e}"),
         )
     })?;
+    // Accumulates every recomputed artifact, in file order, for the Q5
+    // bit-match (see `VectorSummary::recomputed_digest`). For a reject suite
+    // the recomputation is the per-case key/signature bytes **and the verdict
+    // each one reaches**, so a platform divergence is caught even when both
+    // platforms still agree on pass/fail.
+    let mut recomputed = Sha256::new();
+    recomputed.update(RECOMPUTED_DIGEST_DOMAIN);
+    recomputed.update(KIND.as_bytes());
+    recomputed.update([0x00]);
+    recomputed.update(prefix_len(base_public_key.len()));
+    recomputed.update(&base_public_key);
+    recomputed.update(prefix_len(base_signature.len()));
+    recomputed.update(&base_signature);
     for case in &expect.cases {
         run_case(
             alg,
@@ -373,6 +389,7 @@ pub fn execute(
             &base_public_key,
             &base_signature,
             case,
+            &mut recomputed,
         )?;
     }
 
@@ -380,6 +397,7 @@ pub fn execute(
         kind: KIND,
         description,
         items: expect.cases.len(),
+        recomputed_digest: recomputed.finalize().into(),
     })
 }
 
@@ -518,6 +536,7 @@ fn check_case_list(alg: SigAlg, cases: &[Case]) -> Result<(), VectorError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_case(
     alg: SigAlg,
     w: MasterSecretRef<'_>,
@@ -526,6 +545,7 @@ fn run_case(
     base_public_key: &[u8],
     base_signature: &[u8],
     case: &Case,
+    recomputed: &mut Sha256,
 ) -> Result<(), VectorError> {
     let public_key = build(
         alg,
@@ -565,7 +585,27 @@ fn run_case(
         )?;
     }
 
+    // This case's contribution to the Q5 bit-match digest: the bytes the
+    // recipe constructed, then the verdict they reach. The verdict is fed as
+    // its **stable error code** (D30) rather than a rendered message, so the
+    // digest pins semantics, not prose.
+    recomputed.update(case.id.as_bytes());
+    recomputed.update([0x00]);
+    recomputed.update(prefix_len(public_key.len()));
+    recomputed.update(&public_key);
+    recomputed.update(prefix_len(signature.len()));
+    recomputed.update(&signature);
+
     let outcome = sig_policy::verify_body(policy, &[(alg, public_key)], &[(alg, signature)], body);
+    match &outcome {
+        Ok(_) => recomputed.update([0x01]),
+        Err(error) => {
+            recomputed.update([0x00]);
+            recomputed.update(error.code().as_bytes());
+        }
+    }
+    recomputed.update([0x00]);
+
     match (&outcome, case.expect.as_str()) {
         (Ok(_), ACCEPT) => Ok(()),
         (Ok(label), _) => Err(check_err(

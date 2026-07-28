@@ -463,7 +463,12 @@ impl<'a> SaltTree<'a> {
 mod tests {
     use super::*;
     use crate::test_util::TEST_MASTER_SECRET_W;
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use crate::test_util::strategies::proptest_config;
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
     use sha2::{Digest, Sha256};
 
@@ -863,6 +868,7 @@ mod tests {
 
     // ── Property tests (G8 accept) ──────────────────────────────────────
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(proptest_config(0x0064_0008))]
 

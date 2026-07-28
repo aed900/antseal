@@ -4,21 +4,31 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
-# Shared test infrastructure (Q2/Q3/Q4): the golden-vector schema/executor
-# and the shared proptest strategies live in `src/test_util/` behind this
-# feature (docs/testing/proptest-conventions.md; testdata/vectors/README.md).
-# DEV-DEPENDENCY EDGES ONLY — never enable `test-util` from a normal
+# Shared test infrastructure (Q2/Q3/Q4/Q5): the golden-vector schema/executor
+# and the shared proptest strategies live in `src/test_util/` behind these
+# features (docs/testing/proptest-conventions.md; testdata/vectors/README.md).
+# DEV-DEPENDENCY EDGES ONLY for `test-util` — never enable it from a normal
 # dependency: it activates test-only deps (proptest) that are neither
 # WASM-safe nor part of the audited default/normal graph (the `wasm32-core`
 # and `core-dep-graph` lanes build default features and stay meaningful).
 [features]
-# Test-support surface for fixture generation and shared strategies ONLY —
-# never enabled by any production build (CLI, verifier page, wasm CI lane
-# all build without it). Gates: the C9 wrong-bucket mis-encryptors (C17/R7
-# tamper fixtures), the vector-generation byte accessor on the otherwise-
-# opaque `FileSalt` (C7's disclosure rule vs the C3/C16 committed-vector
-# needs), and the Q3/Q4 shared proptest strategies + golden-vector executor.
-test-util = ["dep:proptest"]
+# WASM-SAFE SUBSET (P14/Q5). Gates exactly the parts of the test-support
+# surface that are I/O-free and dependency-free: the golden-vector envelope
+# executor (`test_util::vectors`), the documented NON-SECRET fixture seed,
+# the deterministic manifest fixtures, and the byte accessors committed
+# vectors need. It activates **ZERO optional dependencies** — that is the
+# property that keeps the `core-dep-graph` verdict and the `wasm32-core`
+# build unaffected no matter who turns it on, and it is why the Q5 bit-match
+# harness may depend on antseal-core through a NORMAL edge with this feature.
+test-vectors = []
+# Full test-support surface: `test-vectors` plus the proptest-bearing parts
+# (shared strategies, the Q7 tamper harness). Never enabled by any
+# production build (CLI, verifier page, wasm CI lanes all build without it).
+# Gates: the C9 wrong-bucket mis-encryptors (C17/R7 tamper fixtures), the
+# vector-generation byte accessor on the otherwise-opaque `FileSalt` (C7's
+# disclosure rule vs the C3/C16 committed-vector needs), and the Q3/Q4
+# shared proptest strategies + golden-vector executor.
+test-util = ["test-vectors", "dep:proptest"]
 
 # Versions live ONLY in the root [workspace.dependencies]
 # (docs/dependency-policy.md §2). This crate must stay WASM-safe: no I/O,
@@ -51,21 +61,39 @@ zeroize.workspace = true
 proptest = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Self-dependency enabling `test-util` for this crate's own unit,
-# integration, and doc tests (cargo feature unification); normal builds and
-# the wasm32 CI lane are unaffected (dev-deps don't apply there).
-# Self-dependency: enables `test-util` for this crate's own unit and
-# integration tests (the standard feature-for-tests pattern — feature
-# unification turns it on for every test target while plain builds stay
-# feature-free; `proptest` reaches lib-internal cfg(test) code through the
-# activated optional dep). Other crates consume the identical surface:
-#   [dev-dependencies]
-#   antseal-core = { workspace = true, features = ["test-util"] }
-antseal-core = { workspace = true, features = ["test-util"] }
 # Raw HMAC-SHA256 used to re-derive HKDF as the RFC 5869 independent
 # reference (tasks/C.md C2 accept). Exact-pinned in the workspace table.
+# Both are pure Rust and build for wasm32, so they stay unconditional.
 hmac.workspace = true
 rand_chacha.workspace = true
+
+# The self-dependency is the standard feature-for-tests pattern: cargo
+# feature unification turns the named feature on for every test target of
+# this crate while plain builds stay feature-free (`proptest` reaches
+# lib-internal `cfg(test)` code through the activated optional dep). It is
+# TARGET-SPLIT (P14) because `proptest` is NOT WASM-safe — it pulls
+# `rusty-fork` (process spawning) and `tempfile`/`rand` (getrandom) — while
+# the `wasm32-core-tests` lane executes this crate's `--lib` unit tests on
+# wasm32-unknown-unknown:
+#
+#   native  -> test-util    (everything: strategies, tamper harness, vectors)
+#   wasm32  -> test-vectors (the I/O-free, dependency-free subset)
+#
+# Consequence, deliberate and documented in docs/wasm-toolchain.md: the
+# `proptest!` blocks and their strategy helpers inside this crate's
+# `cfg(test)` modules carry `#[cfg(feature = "test-util")]`, so they compile
+# and run natively and are absent from the wasm32 test binary. Property
+# tests are generative and platform-independent; the wasm32 lane exists to
+# execute the deterministic unit tests on the verifier's real target.
+#
+# Other crates consume the identical surface:
+#   [dev-dependencies]
+#   antseal-core = { workspace = true, features = ["test-util"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+antseal-core = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+antseal-core = { workspace = true, features = ["test-vectors"] }
 
 [lints]
 workspace = true

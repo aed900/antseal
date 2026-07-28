@@ -323,7 +323,12 @@ fn normalize_eol(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
+    #[cfg(feature = "test-util")]
     use proptest::test_runner::RngSeed;
 
     use super::super::unicode::UNICODE_17_0_0;
@@ -665,6 +670,7 @@ mod tests {
     /// Scalars that concentrate on the pipeline's hot spots: CR/LF, U+FEFF,
     /// U+FFFD, NFD material (combining marks, singletons, Hangul jamo),
     /// plus arbitrary scalars for breadth.
+    #[cfg(feature = "test-util")]
     fn hotspot_string() -> impl Strategy<Value = String> {
         let scalar = prop_oneof![
             Just('\r'),
@@ -687,6 +693,7 @@ mod tests {
     /// Arbitrary raw bytes, weighted toward interesting shapes: pure noise,
     /// valid hotspot text, and hotspot text truncated mid-scalar (which
     /// manufactures maximal-subpart boundary cases at the tail).
+    #[cfg(feature = "test-util")]
     fn raw_byte_soup() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![
             proptest::collection::vec(any::<u8>(), 0..=256),
@@ -700,6 +707,7 @@ mod tests {
         ]
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(ProptestConfig {
             // Deterministic fixed seed per the determinism principle

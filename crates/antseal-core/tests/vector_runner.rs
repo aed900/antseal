@@ -137,11 +137,21 @@ fn vector_runner_discovers_and_executes_every_committed_vector() {
     assert!(!executed.is_empty(), "discovery returned an empty set");
     println!("golden-vector runner: {} vector file(s)", executed.len());
     for run in &executed {
+        // The recomputed digest is the medium the Q5 native<->WASM bit-match
+        // lane compares (crates/wasm-bitmatch); printing it here makes the
+        // two lanes' logs directly comparable by eye.
+        let digest: String = run
+            .summary
+            .recomputed_digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         println!(
-            "  OK [{}] {} — {} item(s): {}",
+            "  OK [{}] {} — {} item(s), recomputed {}: {}",
             run.summary.kind,
             run.path.display(),
             run.summary.items,
+            digest,
             run.summary.description
         );
     }

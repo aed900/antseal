@@ -315,7 +315,7 @@ pub fn verify(
 /// the wrong-ctx reject vectors need signatures made under a *different*
 /// context (including the empty one the crate's `Signer`/`Verifier` trait
 /// impls would silently use), so the escape hatch lives here.
-#[cfg(any(test, feature = "test-util"))]
+#[cfg(any(test, feature = "test-vectors"))]
 pub mod test_signing {
     use super::{MasterSecretRef, MlDsa65Signature, sign_with_context as sign_inner};
 
