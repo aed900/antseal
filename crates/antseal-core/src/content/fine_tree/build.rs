@@ -123,6 +123,27 @@ pub(crate) fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     tagged_sha256(TAG_FINE_TREE_NODE, &[left, right])
 }
 
+/// The largest power of two **strictly** below `width` — RFC 6962's split
+/// point, i.e. the leaf count of the left (always perfect) subtree of a node
+/// spanning `width` leaves (MVP-SPEC.md line 78).
+///
+/// The single definition of the tree's interior shape: [`FineTreeBuilder`]
+/// realizes it implicitly through the frontier's binary-counter merges, while
+/// G12's proof walk and G13's verification fold apply it explicitly, so the
+/// three can never disagree about where a node splits.
+///
+/// Total: returns 1 for `width < 2`, which no caller passes, rather than
+/// shifting out of range.
+#[must_use]
+pub(crate) const fn rfc6962_split(width: u64) -> u64 {
+    if width < 2 {
+        return 1;
+    }
+    // `width - 1 >= 1`, so `bit_width(width - 1) - 1` is the exponent of the
+    // largest power of two <= width - 1, i.e. strictly below `width`.
+    1u64 << (u64::BITS - 1 - (width - 1).leading_zeros())
+}
+
 /// Instrumented cost and memory shape of one fine-tree construction
 /// (tasks/G.md G9; consumed by G10's estimator and G18's budgets).
 ///
@@ -557,6 +578,28 @@ mod tests {
 
         let (root, _) = build(&seed, content).expect("n = 6");
         assert_eq!(root.as_bytes(), &expected);
+    }
+
+    /// RFC 6962's split point: the largest power of two **strictly** below
+    /// the width, total on the degenerate inputs no caller passes.
+    #[test]
+    fn split_point_is_the_largest_power_of_two_below_width() {
+        for (width, split) in [
+            (2u64, 1u64),
+            (3, 2),
+            (4, 2),
+            (5, 4),
+            (6, 4),
+            (7, 4),
+            (8, 4),
+            (9, 8),
+            (1 << 40, 1 << 39),
+            (u64::MAX, 1u64 << 63),
+        ] {
+            assert_eq!(rfc6962_split(width), split, "width = {width}");
+        }
+        assert_eq!(rfc6962_split(0), 1);
+        assert_eq!(rfc6962_split(1), 1);
     }
 
     // ── Streaming behaviour (G9 accept) ─────────────────────────────────

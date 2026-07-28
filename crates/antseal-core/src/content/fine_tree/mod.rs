@@ -9,12 +9,13 @@
 //! | G8 | [`ggm`](super::ggm) | `s_root` → per-leaf 16-byte salts on the depth-`d` dyadic grid |
 //! | G9 | [`build`] | streaming construction with O(log n) memory; [`rebuild_fine_root`] |
 //! | G11 | [`cover`] | the leaf-exact minimal GGM sub-cover, and the only seed-disclosure path |
+//! | G12 | [`proof`] | range-proof generation; per-unit reveals as leaf-aligned ranges |
 //! | — | [`error`] | the shared `fine-root-*` failure taxonomy (R2's seam) |
 //! | — | `ggm_walk` | the amortized sequential salt walker G9/G12/G13 share |
 //!
-//! G12 (range-proof generation) and G13 (range-proof verification) land as
-//! further modules here; the taxonomy, the walker and the cover are already
-//! shaped for them.
+//! G13 (range-proof verification against `fine_root`) lands as a further
+//! module here; the taxonomy, the walker, the cover and the wire node shape
+//! are already built for it.
 //!
 //! # The one rule everything here exists to enforce
 //!
@@ -48,7 +49,9 @@ pub mod build;
 pub mod cover;
 pub mod error;
 mod ggm_walk;
+pub mod proof;
 
 pub use build::{FineRoot, FineTreeBuilder, FineTreeStats, rebuild_fine_root};
 pub use cover::{CoverEntry, CoverNode, LeafExactCover, cover_seeds, minimal_cover};
 pub use error::FineTreeError;
+pub use proof::{BoundaryNode, CoveredUnit, RangeProof, WireNode, prove_range, prove_unit};
