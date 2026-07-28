@@ -360,7 +360,7 @@ fn non_canonical_embedded_manifest_fails_at_layer_two() {
     let err = SealProof::decode(&bytes)
         .map(|_| ())
         .expect_err("layer 2 must reject");
-    assert_eq!(err.layer(), Some(ProofLayer::ManifestEnvelope));
+    assert_eq!(err.layer(), ProofLayer::ManifestEnvelope);
     assert_eq!(err.code(), "cbor-unsorted-map-keys");
 }
 
@@ -391,7 +391,7 @@ fn non_canonical_manifest_body_fails_at_layer_three() {
     let err = SealProof::decode(&bytes)
         .map(|_| ())
         .expect_err("layer 3 must reject");
-    assert_eq!(err.layer(), Some(ProofLayer::ManifestBody));
+    assert_eq!(err.layer(), ProofLayer::ManifestBody);
     assert_eq!(err.code(), "cbor-non-shortest-int");
 }
 
@@ -410,15 +410,16 @@ fn a_bundle_failure_stays_in_the_bundle_family() {
     let err = SealProof::decode(&bytes)
         .map(|_| ())
         .expect_err("layer 1 must reject");
-    assert_eq!(err.layer(), Some(ProofLayer::Bundle));
+    assert_eq!(err.layer(), ProofLayer::Bundle);
     assert_eq!(err.code(), "bundle-full-reveal-without-touched-file");
 }
 
 /// A **manifest schema** rejection keeps its `manifest-` code and does not
 /// leak into the bundle family, even though it surfaces through the bundle's
-/// pipeline. Its layer is `None` by the same recorded decision F6 made: such
-/// an error names its own map in its payload, which is more precise than a
-/// layer number.
+/// pipeline. It is layered like any other rejection (D86): the missing key
+/// is body key 2 `seal_id`, so the error names the body map and reports
+/// layer 3. Before D86 it reported no layer at all, which is what made
+/// `manifest-unknown-key` at the envelope and at the body one observable.
 #[test]
 fn a_manifest_schema_failure_keeps_its_own_family() {
     let mut body_entries = manifest_wire::default_body();
@@ -440,7 +441,7 @@ fn a_manifest_schema_failure_keeps_its_own_family() {
         .map(|_| ())
         .expect_err("the manifest schema must reject");
     assert_eq!(err.code(), "manifest-missing-key");
-    assert_eq!(err.layer(), None);
+    assert_eq!(err.layer(), ProofLayer::ManifestBody);
     assert!(
         !err.code().starts_with("bundle-"),
         "a manifest failure must never acquire a bundle- code (D78/D30)"
