@@ -210,6 +210,35 @@ pub enum CanonicalizeError {
     },
 }
 
+impl CanonicalizeError {
+    /// Stable machine-readable code (decision D30,
+    /// `docs/testing/error-code-contract.md`), `content-` prefixed —
+    /// canonicalization is G's domain.
+    ///
+    /// R's `VerifyError::Canon` wrapper arm surfaces these unchanged, so a
+    /// canonicalization failure keeps G's identity rather than acquiring a
+    /// second one (contract §2). The two classes stay distinct codes because
+    /// they demand opposite reactions (enum docs): *upgrade the verifier* vs
+    /// *the caller's validity claim was wrong*. Neither is an integrity
+    /// verdict — R4's raw-mirror binding reports content disagreement as
+    /// `raw-mirror-canonicalization-mismatch` instead.
+    ///
+    /// [`Self::InvalidUtf8`] is **unreachable from R4**, which always
+    /// recomputes in [`TextMode::Forced`] (decision D20); it has a code
+    /// because the seal-side pipeline can still produce it.
+    ///
+    /// The match is wildcard-free despite `#[non_exhaustive]` (which only
+    /// binds downstream crates): a new variant fails compilation here until
+    /// it receives its own distinct code.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::UnknownVersion(error) => error.code(),
+            Self::InvalidUtf8 { .. } => "content-canonicalize-invalid-utf8",
+        }
+    }
+}
+
 /// Seal-time text detection: **strict UTF-8 validity** (spec line 83 —
 /// "Text files (valid UTF-8, or `--force-text`)").
 ///

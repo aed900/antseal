@@ -887,7 +887,7 @@ signed manifest data or bundle field presence, but the predicate needs
 | key 2 present, `¬full(F)` | `partial-reveal-salt-leak-s-root` |
 | `full(F)`, no entry | `full-reveal-material-missing-file-salt` |
 | `full(F) ∧ fine_tree = Present`, key 2 absent | `full-reveal-material-missing-s-root` |
-| `full(F) ∧ fine_tree = Absent`, key 2 present | `full-reveal-s-root-without-fine-tree` — **D74 RESOLVED 2026-07-28 with F8: reject** (`docs/decisions/D74-extraneous-s-root.md`). A single code: the `FileSalt` counterpart would be unreachable, because key 1 is `req` at schema level and F8 rejects a key-1-less entry as `bundle-missing-key` before R4 runs |
+| `full(F) ∧ fine_tree = Absent`, key 2 present | `full-reveal-s-root-without-fine-tree` — **D74 RESOLVED 2026-07-28 with F8: reject** (`docs/decisions/D74-extraneous-full-reveal-s-root.md`). A single code: the `FileSalt` counterpart would be unreachable, because key 1 is `req` at schema level and F8 rejects a key-1-less entry as `bundle-missing-key` before R4 runs |
 
 Two shape consequences worth stating, because they are easy to get
 subtly wrong:
