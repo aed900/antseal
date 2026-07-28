@@ -148,6 +148,7 @@ const EXPECTED_M2_FAMILIES: usize = 6;
 const EXPECTED_NON_ROWS: &[&str] = &[
     "full-reveal-unit-strip-downgrade",
     "crypto-level-ggm-seed-length",
+    "full-reveal-cover-seed-not-descending-from-s-root",
 ];
 
 // ---------------------------------------------------------------------------

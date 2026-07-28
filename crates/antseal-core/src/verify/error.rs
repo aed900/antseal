@@ -150,6 +150,36 @@ impl fmt::Display for ContentCommitKind {
     }
 }
 
+/// How the **signed manifest** binds a unit's content — the
+/// single-authoritative-commitment rule of MVP-SPEC.md line 94, as a
+/// discriminator (the R-side projection of
+/// [`crate::crypto::disclosure::UnitBinding`]).
+///
+/// Carried by [`VerifyError::RevealModeMismatch`], where it names the
+/// mode the manifest declares; the bundle's reveal section is the other
+/// half of the disagreement and is implied by it (there are exactly two
+/// modes, so naming one names both).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingMode {
+    /// The manifest binds the unit **solely** through the file's
+    /// `fine_root`; the bundle must reveal it as a *covered* reveal
+    /// carrying a leaf-exact GGM sub-cover + boundary path.
+    FineTreeCovered,
+    /// The manifest binds the unit through its own `unit_commit`
+    /// (`--no-fine-tree` whole-file units and raw mirrors); the bundle
+    /// must reveal it as a *non-covered* reveal carrying `unit_salt`.
+    NonCovered,
+}
+
+impl fmt::Display for BindingMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::FineTreeCovered => "fine-tree-covered",
+            Self::NonCovered => "non-covered",
+        })
+    }
+}
+
 /// Typed, field-identifying verification failure (D27 fail-fast mode).
 ///
 /// One variant per failure class the R domain owns; each
@@ -386,6 +416,46 @@ pub enum VerifyError {
         file_id: u64,
     },
 
+    // ── Bundle ↔ manifest coherence (R5; see `super::coherence`) ──
+    /// A revealed unit's owning file has no `touched_files` entry, so the
+    /// recipient cannot verify the path of what they were shown
+    /// (**decision D80**, on MVP-SPEC.md line 95: `path_salt` "ships
+    /// whenever any reveal *touches* the file", and line 121 defines no
+    /// rendering state for "revealed content, path withheld").
+    ///
+    /// Distinct from F8's `bundle-full-reveal-without-touched-file`,
+    /// which is the *whole-file* case and is decidable from the bundle
+    /// alone (tier `[X]`). This one needs the manifest's unit table to
+    /// map `unit_id → file_id`, which D78 keeps out of the bundle layer.
+    #[error("unit {unit_id}: owning file {file_id} has no touched_files entry")]
+    RevealedUnitFileNotTouched {
+        /// The revealed unit whose owning file was not disclosed.
+        unit_id: u64,
+        /// That owning file, per the manifest unit table.
+        file_id: u64,
+    },
+
+    /// The bundle reveals a unit in the wrong reveal section for the way
+    /// the **signed manifest** binds it (MVP-SPEC.md line 94): a
+    /// fine-tree-covered unit shipped as a non-covered reveal (so it
+    /// carries a `unit_salt` for a `unit_commit` that does not exist), or
+    /// a non-covered unit shipped as a covered reveal (so it carries a
+    /// GGM cover for a file whose bytes are not tree-bound).
+    ///
+    /// Neither layer can catch this alone: the bundle is well formed on
+    /// its own bytes (D78 keeps F8 out of the manifest) and the manifest
+    /// is internally consistent (F5 already ties each unit's binding to
+    /// its file's fine-tree state). It is exactly the "well-formed but
+    /// inconsistent with its manifest" class the error-code contract §2
+    /// assigns to R's unprefixed namespace.
+    #[error("unit {unit_id}: manifest binds it {manifest_binding}, bundle reveals it otherwise")]
+    RevealModeMismatch {
+        /// The unit revealed in the wrong section.
+        unit_id: u64,
+        /// How the manifest binds it (the bundle did the other thing).
+        manifest_binding: BindingMode,
+    },
+
     // ── File-level reveal-shape checks (R4; MVP-SPEC.md line 121) ──
     /// The bundle contains `file_salt` or `s_root` for a file that is
     /// only **partially** revealed — a violation of partial-reveal
@@ -495,6 +565,23 @@ pub enum VerifyError {
     },
 
     // ── Cross-domain wrapper arms (see the enum-level doc) ──────────
+    /// F: the `.sealproof` failed one of the **three strict decode
+    /// layers** (F9's [`SealProof::decode`] — bundle schema, manifest
+    /// envelope, manifest body). This is R5's stage-1 arm: the wrapped
+    /// [`SealProofError`] already keeps `bundle-*` and `manifest-*`
+    /// separate (D78) and reports which layer rejected, and its inner
+    /// code — `bundle-*`, `manifest-*`, or a delegated `cbor-*` — is
+    /// surfaced unchanged through [`Self::code`].
+    ///
+    /// **Intentionally no `#[from]`** (the [`Self::Crypto`] rule): the
+    /// decode stage is the only legitimate producer, so wrapping stays an
+    /// explicit act at that one call site.
+    ///
+    /// [`SealProof::decode`]: crate::bundle::SealProof::decode
+    /// [`SealProofError`]: crate::bundle::SealProofError
+    #[error(transparent)]
+    Decode(crate::bundle::SealProofError),
+
     /// F: the bundle/manifest/body bytes failed the strict canonical
     /// CBOR decode layer (MVP-SPEC.md line 73; task F3). The wrapped
     /// error's distinct `cbor-*` code is surfaced unchanged through
@@ -591,6 +678,15 @@ impl VerifyError {
             },
             Self::RawMirrorInTilingSet { .. } => "raw-mirror-in-tiling-set",
             Self::PathCommitMismatch { .. } => "path-commit-mismatch",
+            Self::RevealedUnitFileNotTouched { .. } => "revealed-unit-file-not-touched",
+            // Named from the *bundle's* mistake, since that is what a
+            // tamper row mutates: the manifest side is the fixed fact.
+            Self::RevealModeMismatch {
+                manifest_binding, ..
+            } => match manifest_binding {
+                BindingMode::FineTreeCovered => "covered-unit-revealed-as-non-covered",
+                BindingMode::NonCovered => "non-covered-unit-revealed-as-covered",
+            },
             Self::PartialRevealSaltLeak { material, .. } => match material {
                 FullRevealMaterial::FileSalt => "partial-reveal-salt-leak-file-salt",
                 FullRevealMaterial::SRoot => "partial-reveal-salt-leak-s-root",
@@ -610,8 +706,9 @@ impl VerifyError {
                 "raw-mirror-canonicalization-mismatch"
             }
             // Wrapper arms: the wrapped error's own distinct stable code
-            // (`cbor-*` / `crypto-*` / `content-*`) is the row key — never
-            // flattened or renamed.
+            // (`bundle-*` / `manifest-*` / `cbor-*` / `crypto-*` /
+            // `content-*`) is the row key — never flattened or renamed.
+            Self::Decode(e) => e.code(),
             Self::Codec(e) => e.code(),
             Self::Crypto(e) => e.code(),
             Self::Canon(e) => e.code(),
@@ -658,6 +755,18 @@ impl VerifyFailures {
     #[must_use]
     pub const fn primary(&self) -> &VerifyError {
         &self.primary
+    }
+
+    /// Consume the collection and yield the authoritative first error.
+    ///
+    /// This is how the two D27 entry points share **one** stage list:
+    /// [`verify_bundle`](super::verify_bundle) runs the collecting
+    /// pipeline with collection disabled and unwraps the (necessarily
+    /// single-finding) result through here, so "primary == fail-fast"
+    /// holds by construction rather than by parallel implementations.
+    #[must_use]
+    pub fn into_primary(self) -> VerifyError {
+        self.primary
     }
 
     /// The findings after the primary, in deterministic pipeline order.
@@ -786,6 +895,18 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
         },
         E::RawMirrorInTilingSet { unit_id: 9 },
         E::PathCommitMismatch { file_id: 2 },
+        E::RevealedUnitFileNotTouched {
+            unit_id: 10,
+            file_id: 2,
+        },
+        E::RevealModeMismatch {
+            unit_id: 11,
+            manifest_binding: BindingMode::FineTreeCovered,
+        },
+        E::RevealModeMismatch {
+            unit_id: 12,
+            manifest_binding: BindingMode::NonCovered,
+        },
         E::PartialRevealSaltLeak {
             file_id: 3,
             material: FullRevealMaterial::FileSalt,
@@ -814,6 +935,29 @@ pub(crate) fn all_error_exemplars() -> Vec<VerifyError> {
         E::FineRootRebuildMismatch { file_id: 6 },
         E::RawCommitMismatch { file_id: 7 },
         E::RawMirrorCanonicalizationMismatch { file_id: 8 },
+        // ── Decode wrapper arm (R5 stage 1, over F9's SealProof): one
+        // exemplar per composition arm, each choosing an inner error
+        // whose family is that arm's own — `bundle-` for layer 1,
+        // `manifest-` for layers 2–3. The delegated `cbor-*` codes both
+        // arms can also carry are already enumerated by the Codec arm
+        // below, so exemplifying them here would collide by design
+        // (error-code contract §2: one code, one owning domain, many
+        // paths).
+        E::Decode(crate::bundle::SealProofError::Bundle {
+            source: crate::bundle::BundleError::UnitRevealedTwice { unit_id: 3 },
+        }),
+        // NB the manifest exemplar deliberately avoids
+        // `ManifestError::SigPolicyEmpty`: its *code* is distinct from C's
+        // (`manifest-sig-policy-empty` vs `crypto-sig-policy-empty`, a
+        // recorded near-miss) but its `Display` text is word-for-word
+        // identical, and `display_identifies_the_failing_subject` requires
+        // the exemplar set's Display strings to be distinct too.
+        E::Decode(crate::bundle::SealProofError::Manifest {
+            source: crate::manifest::ManifestError::UnitIdMismatch {
+                expected: 4,
+                found: 9,
+            },
+        }),
         // ── Codec wrapper arm (F3): one exemplar per distinct cbor-*
         // code of crate::codec::DecodeError ──
         E::Codec(CodecError::Truncated { position: 10 }),
@@ -873,22 +1017,26 @@ mod tests {
 
     use super::*;
 
-    /// The number of distinct stable codes: 14 single-code variants plus
+    /// The number of distinct stable codes: 15 single-code variants plus
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
-    /// ConcatCommitMismatch×2, FineRootBindingFailed×**7** — one per
-    /// delegated `fine-root-*` class of G13's taxonomy), plus the 15
-    /// delegated `cbor-*` codes of the Codec wrapper arm (12 codec
-    /// variants, ForbiddenType×3), plus the 25 delegated `crypto-*` codes
-    /// of the Crypto wrapper arm (CommitmentMismatch×5, SaltLength×3, four
-    /// signature variants ×2 algorithms, 9 single-code variants), plus the
-    /// 2 delegated `content-*` codes of the Canon wrapper arm (R4).
+    /// ConcatCommitMismatch×2, RevealModeMismatch×2,
+    /// FineRootBindingFailed×**7** — one per delegated `fine-root-*`
+    /// class of G13's taxonomy), plus the 2 exemplified composition arms
+    /// of the Decode wrapper arm (R5: one `bundle-*`, one `manifest-*`),
+    /// plus the 15 delegated `cbor-*` codes of the Codec wrapper arm (12
+    /// codec variants, ForbiddenType×3), plus the 25 delegated `crypto-*`
+    /// codes of the Crypto wrapper arm (CommitmentMismatch×5,
+    /// SaltLength×3, four signature variants ×2 algorithms, 9 single-code
+    /// variants), plus the 2 delegated `content-*` codes of the Canon
+    /// wrapper arm (R4).
     ///
     /// The 14th single-code variant is D74's
-    /// `FullRevealSRootWithoutFineTree` (R4).
+    /// `FullRevealSRootWithoutFineTree` (R4); the 15th is D80's
+    /// `RevealedUnitFileNotTouched` (R5).
     ///
-    /// 14 + (6+4+2+2+2+7) + 15 + 25 + 2 = 79.
-    const DISTINCT_CODES: usize = 79;
+    /// 15 + (6+4+2+2+2+2+7) + 2 + 15 + 25 + 2 = 84.
+    const DISTINCT_CODES: usize = 84;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -939,6 +1087,8 @@ mod tests {
                 VerifyError::TilingViolation { .. } => "TilingViolation",
                 VerifyError::RawMirrorInTilingSet { .. } => "RawMirrorInTilingSet",
                 VerifyError::PathCommitMismatch { .. } => "PathCommitMismatch",
+                VerifyError::RevealedUnitFileNotTouched { .. } => "RevealedUnitFileNotTouched",
+                VerifyError::RevealModeMismatch { .. } => "RevealModeMismatch",
                 VerifyError::PartialRevealSaltLeak { .. } => "PartialRevealSaltLeak",
                 VerifyError::FullRevealMaterialMissing { .. } => "FullRevealMaterialMissing",
                 VerifyError::FullRevealSRootWithoutFineTree { .. } => {
@@ -950,19 +1100,23 @@ mod tests {
                 VerifyError::RawMirrorCanonicalizationMismatch { .. } => {
                     "RawMirrorCanonicalizationMismatch"
                 }
+                VerifyError::Decode(_) => "Decode",
                 VerifyError::Codec(_) => "Codec",
                 VerifyError::Crypto(_) => "Crypto",
                 VerifyError::Canon(_) => "Canon",
             };
             *tally.entry(variant).or_insert(0) += 1;
         }
-        assert_eq!(tally.len(), 23, "23 variants must be represented");
+        assert_eq!(tally.len(), 26, "26 variants must be represented");
         let expected: BTreeMap<&str, usize> = [
             ("WrongLength", 6),
             ("TilingViolation", 4),
             ("PartialRevealSaltLeak", 2),
             ("FullRevealMaterialMissing", 2),
             ("ConcatCommitMismatch", 2),
+            ("RevealModeMismatch", 2),
+            // One exemplar per composition arm of F9's SealProofError (R5).
+            ("Decode", 2),
             // One exemplar per delegated fine-root-* code (G13).
             ("FineRootBindingFailed", 7),
             // One exemplar per delegated cbor-* code (F3).
