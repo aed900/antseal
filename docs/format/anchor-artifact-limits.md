@@ -57,12 +57,14 @@ table, and every cap in it is frozen v1 format surface.
   verifies real anchors, artifact-internal limits may be **raised, never
   lowered**. Raising cannot reject a bundle a past release accepted;
   lowering can. Any lowering is a format-version event and requires the
-  full freeze procedure (Q19). Record every limit's value and every change
+  full freeze procedure (**Q27** — see the 2026-07-28 correction in D84).
+  Record every limit's value and every change
   in the registry A27 creates, so "has this ever been lowered?" is answerable
   from the tree.
 
-> **Editorial note, A27 (2026-07-28) — one cross-reference in F4 is wrong,
-> and the rule is carried verbatim anyway.** F4 says a lowering "requires the
+> **Editorial note, A27 (2026-07-28), RESOLVED 2026-07-28 (wave 7) — the
+> cross-reference was wrong at the source, and the source has since been
+> corrected, so this mirror is re-cut.** F4 said a lowering "requires the
 > full freeze procedure (Q19)". `tasks/Q.md` **Q19** is the headless-browser
 > (playwright) page-verification CI lane, an M3 task. The format-stability
 > policy document is **Q27**, and the freeze procedure Q27 mirrors is

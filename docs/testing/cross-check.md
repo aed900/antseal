@@ -303,7 +303,9 @@ ourselves.
 ## 6. Retention
 
 The lane is permanent and unconditional, for the same reason the golden
-vectors are retained forever (spec line 123, Q19): a v2 format will add
+vectors are retained forever (spec line 123, **Q27** — the
+format-stability policy; Q19 is the M3 playwright lane and was a
+mis-numbering, corrected wave 7): a v2 format will add
 `testdata/vectors/v2/`, and the cross-check must extend to it rather than be
 reasoned about again. `scripts/cross-check.sh` globs `testdata/vectors/v*/`
 and `*/gen_vectors.py`, never a hard-coded version or component list, and

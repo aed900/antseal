@@ -358,3 +358,40 @@ record — so the corrected reference lives here, at the source, and
 One mistake in three places, which is the argument for splicing normative text
 programmatically rather than retyping it: the error propagated everywhere the
 text did, and correcting it here corrects it everywhere.
+
+### Correction to the correction — 2026-07-28 (M0 wave 7)
+
+The section above says **three** sites and concludes: *"correcting it here
+corrects it everywhere."* Both halves were wrong, and the way they were wrong
+is worth more than the fix.
+
+**There were five sites, not three.** The two it did not count:
+
+1. `docs/format/anchor-artifact-limits.md` — the A27 mirror of rule **F4**.
+   The correction section names this file as the *place the splice went* and
+   then asserts the fix propagates to it. It did not.
+2. `docs/testing/cross-check.md` §6 — the retention rationale, which cited
+   Q19 for the same policy. Never counted at all, in either direction.
+
+**Why "correcting it here corrects it everywhere" did not hold.** The claim
+rests on the splice being programmatic and drift-checked. Only *part* of this
+record is: `scripts/check-traceability.py --freeze-boundary` compares §7's
+rows, between `FREEZE-BOUNDARY` markers, in two files. **Rules F1–F4 are
+outside that block.** They are a second verbatim copy, made by hand, with no
+lint — so the source was corrected on 2026-07-28 and its mirror kept saying
+Q19 for a full wave, while the editorial note beside it recorded the error as
+*"the source's to fix"* and then never noticed the source had fixed it.
+
+Both mirrors are re-cut now, and A27's editorial note is marked RESOLVED
+rather than left describing a live defect.
+
+**The structural finding, which outlives this cross-reference.** D84 §7's own
+freeze-boundary row puts **rules F1–F4 inside the v1 freeze**. So this record
+contains two classes of normative text — one drift-checked, one not — and the
+*unchecked* one is the one whose rules freeze permanently and which A5 and
+A11 read at M2. That asymmetry is not visible from either file; it is visible
+only from the lint's source. Registered as **Q64**: extend the freeze-boundary
+lint to cover the F1–F4 block, or splice it programmatically the way §7 is.
+
+Until then, the honest statement replacing the one above is: *correcting it
+here corrects it everywhere the lint reaches, and the lint reaches §7 only.*
