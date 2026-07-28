@@ -75,11 +75,21 @@ pub use embedded::{
 ///   *contains* — the `report` vector's `recomputed_digest` moves — and
 ///   changing content is what this artifact is *for*; it is recomputed from
 ///   scratch every run.
-/// - **The report is 1 of 7 kinds** whose recomputed digests this transcript
-///   aggregates (`hkdf`, `crypto`, `manifest`, `bundle`, `fine-tree`,
-///   `sig-reject`, `report`). Tying the envelope's version to one of them
-///   would be arbitrary — the manifest and bundle formats freeze at Q14 too,
-///   and nobody proposed tracking those.
+/// - **The report is 1 of 11 registered kinds** whose recomputed digests this
+///   transcript aggregates: `hkdf-labels`, `commitments`, `unit-aead`,
+///   `manifest-aead`, `signatures`, `sig-reject`, `manifest`, `bundle`,
+///   `fine-tree`, `content-model`, `report`. Tying the envelope's version to
+///   one of them would be arbitrary — the manifest and bundle formats freeze
+///   at Q14 too, and nobody proposed tracking those.
+///
+///   (Corrected 2026-07-28, wave 7. This read *"1 of 7 kinds"* and listed
+///   directory names, not kinds: `crypto/` alone carries four kinds, and
+///   `content-model` landed after the comment was written. The count is a
+///   hand-maintained list of a growing set, so it is stated with the way to
+///   recompute it — every vector file's `kind` field under
+///   `testdata/vectors/v*/`. The argument is unaffected, and if anything
+///   stronger: the more kinds this envelope aggregates, the more arbitrary
+///   it would be to version it after any one of them.)
 /// - **Nothing freezes here.** The transcript is written to `target/`, is in
 ///   no `FROZEN.sha256`, and is produced and consumed inside a single lane
 ///   run. Q14's `--update`-refuses-a-changed-digest trap — the reason R32

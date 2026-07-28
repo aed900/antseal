@@ -993,3 +993,66 @@ not a PR context. **Runbook step 5 needs no re-run for this wave.**
 
 The full dated freeze report, with the per-surface vehicle, version, tier and
 discrepancy count that Q14 quotes, is `docs/testing/cross-check.md`.
+
+---
+
+## Authoritative context set (18) — correction, 2026-07-28 (M0 wave 7)
+
+**Two sections above are wrong, and they are wrong in different ways.** This
+section supersedes both. The earlier ones are left in place because this
+document's convention is dated append-only sections — rewriting them would
+destroy the record of what was believed when the branch-protection payload
+was last prepared, which is exactly the thing a maintainer needs to diff.
+
+- *"Authoritative context set (now 17)"* lists 17 names and **omits
+  `traceability`**. Q13 added that job in the same wave that added
+  `cross-check`; the section recorded one of the two new contexts and missed
+  the other.
+- *"Authoritative context set (still 16)"* appears **after** the 17-section
+  and says the set is unchanged at 16. It is describing the fuzz-smoke mount
+  point being claimed (which genuinely changed no context), but it states a
+  total that was already stale two sections earlier.
+
+The set at this commit is **18 contexts from 16 jobs** — `cross-os` is a
+three-way matrix (`linux`, `macos`, `windows`) and contributes three:
+
+```
+fmt
+clippy
+test
+wasm32-core
+wasm32-core-tests
+core-dep-graph
+cross-os-linux
+cross-os-macos
+cross-os-windows
+golden-vectors
+cross-check
+vector-freeze
+wasm-bitmatch
+tamper-matrix
+fuzz-smoke
+audit-deny
+secret-guard
+traceability
+```
+
+Recompute rather than trust this list — a count kept by hand is what produced
+both errors above:
+
+```sh
+# job ids (16), excluding the `on:` trigger keys
+awk '/^jobs:/{j=1;next} j && /^  [a-z0-9-]+:$/{gsub(/[ :]/,"");print}' .github/workflows/ci.yml
+# then expand any matrix job by its `include:` length
+```
+
+**Consequence for the branch-protection payload**, which remains an
+outstanding maintainer action: it must list **18** contexts, and both
+`traceability` and `cross-check` are among them. A payload cut from either
+superseded section would silently leave a required lane unprotected —
+`traceability` under the 17-list, and five lanes under the 16-claim.
+
+Registered as **Q56**: generate this set from `ci.yml` rather than
+maintaining it by hand. The failure here is not carelessness; it is that
+three sections each had to be edited by a different wave and nothing compared
+them to the workflow or to each other.
