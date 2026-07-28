@@ -92,8 +92,15 @@ jobs:
       # Q3 (docs/testing/proptest-conventions.md): CI runs 4x the local
       # default case count. Seeds stay fixed per proptest! block, so the
       # extra cases are a longer deterministic sequence, not lost
-      # reproducibility. Tests with spec-mandated floors (e.g. C3's
-      # >= 10_000) hardcode `cases` and are unaffected.
+      # reproducibility.
+      #
+      # NOTE (corrected 2026-07-28): this variable OVERRIDES a hardcoded
+      # `cases` in a proptest! block, not the other way round — the macro
+      # re-applies the environment on top of the config it is handed. A
+      # spec-mandated floor therefore cannot be expressed in the macro at
+      # all; it must bypass it and drive TestRunner directly (see C3's
+      # info_encoding_is_structurally_injective and
+      # docs/testing/proptest-conventions.md §4).
       PROPTEST_CASES: "1024"
     steps:
       - uses: actions/checkout@v4

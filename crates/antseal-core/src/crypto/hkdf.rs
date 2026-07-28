@@ -511,35 +511,61 @@ mod tests {
         assert_ne!(key_0.as_bytes(), key_1.as_bytes());
     }
 
+    /// C3: structural injectivity of the info encoding — for ANY two pairs
+    /// (label, id) ≠ (label′, id′) with labels up to 255 bytes, the encoded
+    /// infos differ (spec line 77: injective by construction, not by the
+    /// current registry's accident).
+    ///
+    /// # Why this drives `TestRunner` directly instead of using `proptest!`
+    ///
+    /// The spec mandates a **≥ 10 000-case floor** here, and a floor that
+    /// something else can lower is not a floor. The `proptest!` macro passes
+    /// its config through `contextualize_config`, which **overwrites**
+    /// `cases` from `PROPTEST_CASES` whenever that variable is set — and the
+    /// CI `test` lane sets it to 1024. Declaring `cases: 10_000` inside the
+    /// macro therefore ran 1024 cases in CI, silently.
+    ///
+    /// Note that computing the floor in the config (`max(10_000, …)`) does
+    /// **not** fix it either: contextualization happens *after* the config is
+    /// built, so it overrides any value the literal computed. Constructing
+    /// the runner directly is what makes the floor hold, because
+    /// `TestRunner::new` does not re-contextualize.
     #[cfg(feature = "test-util")]
-    proptest! {
-        #![proptest_config(ProptestConfig {
-            // ≥ 10_000 cases per the C3 CI requirement; deterministic fixed
-            // seed per the determinism principle. Q3 later centralizes the
-            // proptest conventions (regressions files, seed policy).
-            cases: 10_000,
-            rng_seed: RngSeed::Fixed(0xA57E_A1C3),
-            .. ProptestConfig::default()
-        })]
+    #[test]
+    fn info_encoding_is_structurally_injective() {
+        use proptest::test_runner::{Config, TestRunner};
 
-        /// C3: structural injectivity of the info encoding — for ANY two
-        /// pairs (label, id) ≠ (label′, id′) with labels up to 255 bytes,
-        /// the encoded infos differ (spec line 77: injective by
-        /// construction, not by the current registry's accident).
-        #[test]
-        fn info_encoding_is_structurally_injective(
-            label_a in proptest::collection::vec(any::<u8>(), 0..=255),
-            label_b in proptest::collection::vec(any::<u8>(), 0..=255),
-            id_a in any::<u64>(),
-            id_b in any::<u64>(),
-        ) {
-            let info_a = encode_info(&label_a, id_a);
-            let info_b = encode_info(&label_b, id_b);
-            if label_a == label_b && id_a == id_b {
-                prop_assert_eq!(info_a, info_b);
-            } else {
-                prop_assert_ne!(info_a, info_b);
-            }
-        }
+        /// The spec's floor (line 77). Deliberately not overridable.
+        const C3_CASE_FLOOR: u32 = 10_000;
+
+        let config = Config {
+            cases: C3_CASE_FLOOR,
+            rng_seed: RngSeed::Fixed(0xA57E_A1C3),
+            ..ProptestConfig::default()
+        };
+        assert_eq!(
+            config.cases, C3_CASE_FLOOR,
+            "the C3 case floor must not be overridable by PROPTEST_CASES"
+        );
+
+        let strategy = (
+            proptest::collection::vec(any::<u8>(), 0..=255),
+            proptest::collection::vec(any::<u8>(), 0..=255),
+            any::<u64>(),
+            any::<u64>(),
+        );
+
+        TestRunner::new(config)
+            .run(&strategy, |(label_a, label_b, id_a, id_b)| {
+                let info_a = encode_info(&label_a, id_a);
+                let info_b = encode_info(&label_b, id_b);
+                if label_a == label_b && id_a == id_b {
+                    prop_assert_eq!(info_a, info_b);
+                } else {
+                    prop_assert_ne!(info_a, info_b);
+                }
+                Ok(())
+            })
+            .expect("info encoding is injective");
     }
 }

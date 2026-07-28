@@ -110,18 +110,25 @@ the §3 builder):
 >
 > Consequences to be aware of, and to fix in the owning tasks:
 >
-> - **Spec floors are not currently enforced.** C3's ≥10 000-case
->   injectivity floor (`src/crypto/hkdf.rs`, `cases: 10_000`) runs **1024**
->   cases in the CI `test` lane, not 10 000. C8's `cases: 2048` likewise
->   drops to 1024. A floor has to be expressed as
->   `cases: max(10_000, ProptestConfig::default().cases)` — or the lane has
->   to stop setting the variable — for the floor to actually hold.
+> - **Spec floors were not enforced; C3's now is (fixed 2026-07-28).**
+>   C3's ≥10 000-case injectivity floor (`src/crypto/hkdf.rs`) was running
+>   **1024** cases in the CI `test` lane. C8's `cases: 2048` likewise drops
+>   to 1024 — that one is a preference, not a spec floor, so it is left as
+>   is.
+>
+>   **A computed floor does not work.** The originally-proposed
+>   `cases: max(10_000, ProptestConfig::default().cases)` fails for the same
+>   reason the plain literal does: contextualization runs *after* the config
+>   literal is built, so it overwrites whatever the expression computed.
+>   The fix is to **not go through the macro** — build a `Config` and drive
+>   `TestRunner::new(config).run(&strategy, …)` directly, since
+>   `TestRunner::new` does not re-contextualize. C3's test carries the
+>   worked example and the reasoning; copy it for any future spec floor.
+>   Verified: the test's runtime is identical under `PROPTEST_CASES=16` and
+>   `PROPTEST_CASES=200000`.
 > - **A ceiling cannot be expressed in the config at all.** An expensive
 >   block (e.g. C18's hybrid ML-DSA property) cannot cap its own case count;
 >   the only levers are per-case cost and the lane's env var.
-> - The comment on the `PROPTEST_CASES` env in `.github/workflows/ci.yml`
->   repeats the same incorrect claim and should be corrected with the C3
->   fix.
 >
 > Setting `cases` is still worthwhile: it is the value used for local runs
 > and anywhere the variable is unset.
