@@ -1046,8 +1046,9 @@ mod tests {
     /// the discriminated ones (WrongLength×6, TilingViolation×4,
     /// PartialRevealSaltLeak×2, FullRevealMaterialMissing×2,
     /// ConcatCommitMismatch×2, RevealModeMismatch×2,
-    /// FineRootBindingFailed×**7** — one per delegated `fine-root-*`
-    /// class of G13's taxonomy), plus the 2 exemplified composition arms
+    /// FineRootBindingFailed×**8** — one per delegated `fine-root-*`
+    /// class of G13's taxonomy, the eighth being D83's
+    /// `fine-root-leaf-seed-tail-not-zero`), plus the 2 exemplified composition arms
     /// of the Decode wrapper arm (R5: one `bundle-*`, one `manifest-*`),
     /// plus the 15 delegated `cbor-*` codes of the Codec wrapper arm (12
     /// codec variants, ForbiddenType×3), plus the 25 delegated `crypto-*`
@@ -1061,8 +1062,8 @@ mod tests {
     /// `RevealedUnitFileNotTouched` (R5); the 16th is D82's
     /// `TouchedFileWithoutRevealedUnit` (R5), the converse of the 15th.
     ///
-    /// 16 + (6+4+2+2+2+2+7) + 2 + 15 + 25 + 2 = 85.
-    const DISTINCT_CODES: usize = 85;
+    /// 16 + (6+4+2+2+2+2+8) + 2 + 15 + 25 + 2 = 86.
+    const DISTINCT_CODES: usize = 86;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -1146,8 +1147,8 @@ mod tests {
             ("RevealModeMismatch", 2),
             // One exemplar per composition arm of F9's SealProofError (R5).
             ("Decode", 2),
-            // One exemplar per delegated fine-root-* code (G13).
-            ("FineRootBindingFailed", 7),
+            // One exemplar per delegated fine-root-* code (G13, +D83).
+            ("FineRootBindingFailed", 8),
             // One exemplar per delegated cbor-* code (F3).
             ("Codec", 15),
             // One exemplar per delegated crypto-* code (R2).

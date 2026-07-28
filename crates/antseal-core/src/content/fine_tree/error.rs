@@ -27,7 +27,8 @@
 //! `fine-root-over-broad-cover` for the two original classes, so the family
 //! is unprefixed by inheritance; renaming to satisfy the prefix table is
 //! exactly the "third option that destroys the contract" §3 rules out. The
-//! five classes added here therefore extend the same `fine-root-` family.
+//! five classes added here therefore extend the same `fine-root-` family, as
+//! does [`FineTreeError::LeafSeedTailNotZero`], the sixth (D83).
 //!
 //! This is consistent with §2's *wrapper* rule read in the other direction:
 //! R surfaces the inner code unchanged
@@ -157,6 +158,35 @@ pub enum FineTreeError {
         /// Bytes actually supplied.
         got: u64,
     },
+
+    /// A disclosed GGM payload at the grid's **leaf level** (`level == d`)
+    /// does not carry the canonical zero tail (decision D83).
+    ///
+    /// A cover node at `level == d` covers exactly one leaf slot, so the
+    /// verifier descends `d − level = 0` levels and reads
+    /// `salt_i = payload[..16]` directly (MVP-SPEC.md line 96). Bytes
+    /// `16..32` are therefore never an input to any hash, and v1 fixes them
+    /// at zero so one proof has exactly one encoding:
+    ///
+    /// ```text
+    /// payload = salt_i ‖ 0x00·16        (level == d only)
+    /// ```
+    ///
+    /// The length rule is unchanged — the payload is still exactly 32 bytes
+    /// and [`Self::BadSeedLength`] still owns that check. This variant is a
+    /// **value** rule, and it fires at both sites where a `level == d` GGM
+    /// value is disclosed: a `cover_entry`'s third element, and
+    /// `full_reveal.s_root` at `n == 1`, where `d == 0` makes the grid root
+    /// itself a leaf (`docs/format/registry-v1.md` §2, §5, §7.11, §7.14).
+    ///
+    /// The payload is the offending node's public wire address only.
+    #[error("leaf-level GGM seed tail at (level {level}, index {index}) is not zero")]
+    LeafSeedTailNotZero {
+        /// Grid level of the offending node — always the tree depth `d`.
+        level: u8,
+        /// Position of the offending node within that level.
+        index: u64,
+    },
 }
 
 impl FineTreeError {
@@ -181,6 +211,7 @@ impl FineTreeError {
             Self::BadNodeHashLength { .. } => "fine-root-bad-node-hash-length",
             Self::RangeOutOfBounds { .. } => "fine-root-range-out-of-bounds",
             Self::ByteLenMismatch { .. } => "fine-root-byte-len-mismatch",
+            Self::LeafSeedTailNotZero { .. } => "fine-root-leaf-seed-tail-not-zero",
         }
     }
 }
@@ -216,6 +247,7 @@ pub fn all_code_exemplars() -> Vec<FineTreeError> {
             expected: 2,
             got: 3,
         },
+        E::LeafSeedTailNotZero { level: 3, index: 2 },
     ]
 }
 
@@ -238,7 +270,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            7,
+            8,
             "one exemplar per variant — keep exhaustive when adding variants"
         );
 
@@ -320,7 +352,7 @@ mod tests {
             .into_iter()
             .map(|source| VerifyError::FineRootBindingFailed { unit_id: 7, source }.code())
             .collect();
-        assert_eq!(wrapped.len(), 7, "R must not collapse two classes");
+        assert_eq!(wrapped.len(), 8, "R must not collapse two classes");
         for err in all_code_exemplars() {
             assert!(
                 wrapped.contains(err.code()),
@@ -379,6 +411,10 @@ mod tests {
             }
             .to_string(),
             "revealed byte count 3 != claimed leaf-range width 2"
+        );
+        assert_eq!(
+            FineTreeError::LeafSeedTailNotZero { level: 3, index: 2 }.to_string(),
+            "leaf-level GGM seed tail at (level 3, index 2) is not zero"
         );
     }
 }
