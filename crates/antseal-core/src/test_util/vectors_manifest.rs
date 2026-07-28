@@ -87,9 +87,8 @@ use crate::test_util::bundle_fixtures::{
 };
 
 use super::TEST_MASTER_SECRET_W;
-use super::vectors::{VectorError, VectorSummary, decode_hex, hex};
+use super::vectors::{VectorError, VectorSummary, decode_hex, first_difference, hex};
 use super::vectors_cbor_diag;
-use super::vectors_fine_tree::first_difference;
 
 /// The registered kind name.
 pub const KIND: &str = "manifest";

@@ -37,7 +37,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use antseal_core::test_util::vectors_report::{KIND, REQUIRED_SHAPES, build_inputs};
-use antseal_core::test_util::{vectors_fine_tree::first_difference, vectors_report};
+use antseal_core::test_util::{vectors::first_difference, vectors_report};
 
 /// The committed document (workspace-relative via the crate manifest dir, so
 /// it resolves on every OS and checkout location).

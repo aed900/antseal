@@ -80,9 +80,8 @@ use crate::test_util::bundle_fixtures::{
 use crate::verify::{VerifyOptions, verify_bundle};
 
 use super::TEST_MASTER_SECRET_W;
-use super::vectors::{VectorError, VectorSummary, decode_hex, hex};
+use super::vectors::{VectorError, VectorSummary, decode_hex, first_difference, hex};
 use super::vectors_cbor_diag;
-use super::vectors_fine_tree::first_difference;
 use super::vectors_manifest::{WorkInput, check_err, payload_err};
 
 /// The registered kind name.

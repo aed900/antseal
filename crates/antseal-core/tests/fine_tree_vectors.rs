@@ -26,9 +26,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use antseal_core::test_util::vectors_fine_tree::{
-    KIND, S_ROOT_LABEL, first_difference, regenerate_expect,
-};
+use antseal_core::test_util::vectors::first_difference;
+use antseal_core::test_util::vectors_fine_tree::{KIND, S_ROOT_LABEL, regenerate_expect};
 
 /// The committed document (workspace-relative via the crate manifest dir, so
 /// it resolves on every OS and checkout location).

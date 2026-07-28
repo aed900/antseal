@@ -1497,6 +1497,58 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     out
 }
 
+/// Locate the first structural difference between two JSON values, as a
+/// path plus the two sides — so a failing vector says *where*, not just
+/// "documents differ" over 18 kB of hex.
+///
+/// Cross-kind and kind-agnostic (task R31): it landed with G15's `fine-tree`
+/// executor but has nothing fine-tree-specific in it, and by the time R9's
+/// `report` kind arrived, four executors and four regenerator tests were
+/// importing it from a sibling kind's module. `pub`, unlike [`hex`] and
+/// [`decode_hex`], because the regenerator tests under
+/// `crates/antseal-core/tests/` are out-of-crate consumers.
+pub fn first_difference(
+    path: &str,
+    recomputed: &serde_json::Value,
+    committed: &serde_json::Value,
+) -> String {
+    match (recomputed, committed) {
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+            for (key, value) in a {
+                match b.get(key) {
+                    None => return format!("{path}.{key}: recomputed has it, the file does not"),
+                    Some(other) if other != value => {
+                        return first_difference(&format!("{path}.{key}"), value, other);
+                    }
+                    Some(_) => {}
+                }
+            }
+            for key in b.keys() {
+                if !a.contains_key(key) {
+                    return format!("{path}.{key}: the file has it, recomputation does not");
+                }
+            }
+            format!("{path}: objects differ but no field does (unreachable)")
+        }
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+            if a.len() != b.len() {
+                return format!(
+                    "{path}: recomputed {} entr(ies), the file pins {}",
+                    a.len(),
+                    b.len()
+                );
+            }
+            for (i, (value, other)) in a.iter().zip(b).enumerate() {
+                if value != other {
+                    return first_difference(&format!("{path}[{i}]"), value, other);
+                }
+            }
+            format!("{path}: arrays differ but no element does (unreachable)")
+        }
+        (a, b) => format!("{path}: recomputed {a}, the file pins {b}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2517,5 +2569,20 @@ mod tests {
         doc["expect"]["vectors"][0]["okm"] = serde_json::json!(okm);
         let err = execute(&doc).expect_err("must fail");
         assert!(matches!(err, VectorError::Payload { .. }), "{err}");
+    }
+
+    /// The diff locator names the field, not just "they differ".
+    ///
+    /// Moved here with [`first_difference`] itself (R31); it was written for
+    /// the `fine-tree` kind, and its `fine_root` field name is kept so the
+    /// move is visibly a move.
+    #[test]
+    fn first_difference_locates_the_field() {
+        let a = serde_json::json!({"cases": [{"n": 6, "fine_root": "aa"}]});
+        let b = serde_json::json!({"cases": [{"n": 6, "fine_root": "bb"}]});
+        let message = first_difference("expect", &a, &b);
+        assert!(message.contains("cases[0].fine_root"), "{message}");
+        let short = serde_json::json!({"cases": []});
+        assert!(first_difference("expect", &short, &b).contains("entr"));
     }
 }
