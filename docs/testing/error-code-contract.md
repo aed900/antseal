@@ -49,6 +49,26 @@ the exception in the other direction: when R wraps a C or F error
 surfaced unchanged, so the wrapped failure keeps its owning domain's
 identity rather than acquiring a second one.
 
+### Recorded exception: the `fine-root-` family (ratified 2026-07-28)
+
+The fine-tree errors live in G (`content/fine_tree/error.rs`) but carry
+**`fine-root-`**, not `content-`. This is deliberate and is the only
+standing exception.
+
+R2 minted `fine-root-binding-failed` and `fine-root-over-broad-cover` before
+G9–G13 existed, to declare the seam the fine tree would later fill. §3 makes
+codes append-only — *a failing test is never fixed by editing a code* — so
+those two cannot be renamed. When G13 added five more classes to the same
+family, the choice was between extending `fine-root-` or splitting one
+taxonomy across two prefixes with the older half misnamed. Extending it is
+the lesser evil: the family stays contiguous and searchable, and the
+identity of already-shipped codes is preserved.
+
+The global distinctness rule is unaffected — `fine-root-` collides with no
+other prefix, and the Q7 registry sweep proves it. R's exemplar list
+*sources* the fine-tree rows from G's rather than restating them, so the two
+cannot drift.
+
 ## 3. Append-only
 
 Codes are permanent from the moment a tamper row, a golden vector, or a

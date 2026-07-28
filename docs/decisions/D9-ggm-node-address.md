@@ -64,3 +64,34 @@ checks with no representation-dependent edge cases.
   decided but not yet permanent.
 - G15's fine-tree golden vectors pin concrete `(level, index)` values,
   including the unbalanced n = 6 case that pins MSB-first ordering.
+
+## Amendment (2026-07-28, at G11/G12): two tie-break rules, deliberately
+
+Implementing the fine tree surfaced a case this record did not cover. When
+`n` is not a power of two, one real span can have **two** grid addresses.
+At `n = 6` the span `[4, 6)` is both `(1, 1)` — whose slot interval `[4, 8)`
+truncates to it, since slots ≥ n are unused — and `(2, 2)`, whose slot
+interval *is* it.
+
+The two proof lists break that tie **differently, on purpose**, because they
+address different things:
+
+- a **cover** address names a GGM **seed**. G11 emits the *shallowest* node
+  whose real span fits inside the revealed range — `(1, 1)` — because that
+  is what makes the cover minimal: one seed there derives every leaf salt
+  below it. (Slots 6 and 7 are unused, so the extra reach discloses salts
+  for leaves that do not exist.)
+- a **boundary** address names a content-subtree **hash**, whose identity is
+  its leaf interval alone. `docs/format/registry-v1.md` §5 fixes the
+  *deepest* slot whose interval equals the span as that interval's normal
+  form — `(2, 2)`, the registry's own worked example — so the address is
+  unique and the verifier can recompute it.
+
+This is safe because **no node ever appears in both lists**: cover nodes lie
+inside the revealed range, boundary nodes outside it, and each list is
+recomputed by the verifier under its own rule. It is nonetheless a
+format-visible asymmetry, so it is recorded here rather than left to the
+code, and `boundary_addressing_deliberately_differs_from_cover_addressing`
+(`content/fine_tree/proof.rs`) pins both by name so neither can be
+"corrected" into the other. **Ratified 2026-07-28; co-frozen with the
+registry at Q14.**
