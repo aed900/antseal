@@ -277,7 +277,48 @@
   - D83 resolved and recorded; `docs/format/registry-v1.md` §5 states the leaf-level cover payload's length and its significant bytes explicitly
   - G20's `significant()` projection and the `d83_…` regression case updated to state whichever rule was chosen (they are the executable statement of it)
   - If B or C: a G19/R7 tamper row for the previously-inert bytes, with its own distinct error code
-- Notes: **Format event either way** — must be settled before Q14, and cannot be a drive-by. No constant, code path, or length rule has been minted; only the test and the decision record exist.
+- Notes: **Format event either way** — must be settled before Q14, and cannot be a drive-by. No constant, code path, or length rule has been minted; only the test and the decision record exist. — **[2026-07-28]** D83 RESOLVED as **option B, the canonical zero tail**: the disclosed payload of a `level == d` GGM node is `salt_i ‖ 0x00·16`, still `bstr(32)`, still tier [P] on length, with the zero tail a tier-[R] value rule. Scope **widened** beyond the entry: the rule also binds `full_reveal.s_root` (§7.14 key 2) at `n == 1`, where `d == 0` makes the grid root a leaf. One code `fine-root-leaf-seed-tail-not-zero`, fired as step 7 of `verify_range`'s frozen precedence (after `check_cover`, before the `releases_s_root()` branch) plus a delegating R4 arm. Exact implementation, verbatim registry rows and the re-emission list: `docs/decisions/D83-leaf-cover-seed-tail-malleability.md`.
+
+### G24 — Bundle-level coverage for a `level == d` cover node (the D83 rule, pinned on the wire)
+- Milestone: M0
+- Size: S
+- Deps: G23 (**must land first** — this pins whatever G23 decides), F13 (the bundle-vector generator), R6 (the fuzz seed-corpus builder); R: R36/R37's odd-length fixtures
+- Spec: GGM cover contents (line 114), the 32-B length rule (line 121), `salt_i = leaf_seed[..16]` (line 96), tamper matrix (line 168)
+- Discovered by: 2026-07-28, D83's planning round, by enumerating the committed fixtures against the incidence rule
+- Do: **No committed bundle fixture exercises a `level == d` cover node**, so after G23 the new wire rule is pinned only in the fine-tree vector and never at bundle level. Verified: every case of `testdata/vectors/v1/bundle/bundle.json` has even unit boundaries — case 0/4/5/6 cover `(0,0)` on `n = 64`/`n = 34` (`d = 6`), case 1's covers are levels 2–4 on `n = 30` (`d = 5`), case 2's is `(2,1)` on `n = 6` (`d = 3`) — and the R6 seed corpus shares those shapes (`CRLF_TEXT` → 34, `blob.bin` 30 split 10/10/10, `split.md` 34 split 12/12/10). The incidence rule (D83 §1 Fact 2) is `d == 0 ∨ a odd ∨ (b odd ∧ b < n)`, so an odd unit boundary is all it takes. Add (a) one bundle-vector case whose covered reveal has an odd-aligned unit — the `n = 6` reveal `{2}` shape, cover `(3,2)`, which is G11's own normative KAT — and (b) a one-byte fine-tree file case, which is the `n == 1` degenerate where `cover[0][2]` and `full_reveal.s_root` are the *same* 32 bytes under D75-BOTH. Extend R6's corpus with the same two shapes so the fuzz lane's authentication-boundary tests actually traverse a leaf-level payload.
+- Accept:
+  - `testdata/vectors/v1/bundle/bundle.json` carries at least one covered reveal with a `level == d` cover entry, and one `n == 1` fine-tree file; both re-frozen in `FROZEN.sha256`
+  - `crates/antseal-core/tests/verify_fuzz.rs`'s authentication-boundary tests run over a corpus containing a leaf-level payload, and the boundary constant is still **exactly** 88 (+67 until R12) — the property D83 option B exists to preserve
+  - The `n == 1` case asserts `cover[0][2] == full_reveal.s_root` byte-for-byte (D75's agreement rider, discharged as a plain equality by D83)
+  - A tamper fixture flips a byte of the leaf-level payload's tail in the *bundle* and gets `fine-root-leaf-seed-tail-not-zero`
+- Notes: This is the standing obligation D83 §6 records: the "must not change" digest table holds only while every fixture has even boundaries. The commit that adds an odd boundary moves bundle digests **for D83 reasons** and must say so.
+
+### G25 — Turn `CostEstimate` into a wall-clock projection, not just a compression count
+- Milestone: M0 (the pure function) / M1 (U15 wires the print)
+- Size: S
+- Deps: G10 (landed); U: U15's seal-time print; D26 for the measured figures
+- Spec: `seal` prints an estimated fine-tree cost for large files (line 85), M0 milestone (line 153)
+- Discovered by: 2026-07-28, D26's planning round, from the measured throughput
+- Do: `CostEstimate` reports a compression *count*, which no user can convert into a decision. D26 measured the real rate on a no-SHA-NI reference box: **0.32–0.55 MiB/s**, i.e. **≈ 5 minutes** for the spec's own worked case `n = 10⁸` (95.4 MiB, line 96) and **≈ 12.5 minutes** for D10's largest fully revealable binary work (≈ 239 MiB). That is the number line 85's print exists to deliver. Add a pure, deterministic, WASM-safe projection — `CostEstimate::seconds_at(compressions_per_second: u64) -> u64` (integer, saturating, no float) — and a `Display` variant that renders it. The **rate** is a caller input, never measured inside `antseal-core`: U (or a one-off calibration at M1) times a short fixed hash loop and passes the result in, so `seal-core` stays deterministic and free of timing dependence (project rule: no non-deterministic deps).
+- Accept:
+  - `seconds_at` is `const fn`, saturating, panic-free at `u64::MAX` inputs, with doc-tests pinning the two worked cases above at a stated rate
+  - No clock, no `std::time`, no feature gate: the crate still builds for `wasm32-unknown-unknown`
+  - The existing `Display` string is unchanged (it is exercised by `display_renders_the_seal_time_line`); the time form is a separate rendering
+- Notes: Do **not** put the measurement inside `antseal-core`. A rate measured at runtime would make a printed estimate non-reproducible and would put a timing side channel next to the GGM walker.
+
+### G26 — Closed-form accessors for the fine tree's cost and memory shape
+- Milestone: M0
+- Size: S
+- Deps: G9, G10 (both landed); G18 asserts against these
+- Spec: fine-tree streaming (line 85), M0 perf/memory budget (line 153)
+- Discovered by: 2026-07-28, D26's planning round
+- Do: D26 established that the fine tree's memory peaks are **exact deterministic functions of `n`**, not quantities needing a tolerance constant — verified exhaustively for `n = 1..=4096` with zero mismatches: `peak_seed_stack_len == d + 1` (`d = ⌈log₂ n⌉`) and `peak_frontier_len == bit_width(n) == 64 − n.leading_zeros()`. The two genuinely differ (at `n = 6`: 4 and 3). G9 currently asserts only `≤ depth + 1` for each, which is true but loose, and G18 would otherwise restate both formulas inside a test file, away from the instrumentation they describe. Add `const fn` accessors on `FineTreeStats` — `expected_peak_seed_stack_len(n) -> u32`, `expected_peak_frontier_len(n) -> u32` — plus `expected_sha256_compressions(n) -> u64` (`n + 2(n−1) + G(n)`, with the power-of-two closed form `5n − 4` as a doc-test), each documented as a consequence of the **frozen** preimage shapes and tree shape rather than as a tunable.
+- Accept:
+  - The three accessors exist with doc-tests, are `const fn`, saturating, and panic-free at `n = 0` and `n = u64::MAX`
+  - G9's two `≤ depth + 1` assertions are upgraded to equalities against them
+  - `estimate_fine_tree_cost(n).sha256_compressions() == FineTreeStats::expected_sha256_compressions(n)` asserted, tying G10's estimator to the same statement
+  - `5n − 4` pinned as a KAT at every power of two up to 4096
+- Notes: These are **not** frozen format constants — they are consequences of frozen things (D26 §6.2). Say so in the doc comments so the next reader does not treat them as untouchable, and so a genuine tree-shape change breaks here loudly rather than being absorbed.
 
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
@@ -287,7 +328,7 @@
 - `--no-fine-tree` × `--split` on the same file: silently force single-unit vs. hard CLI error (model must be single-unit either way, per the unit_commit-only-for-whole-file-units rule). Blocks G5, G6, G14 (+U flag validation). M0.
 - Normalization crate + exact Unicode data version + multi-version retention architecture (the G1 decision itself; needs upstream verification of the crate's shipped Unicode version). Blocks G1 and all canonicalization downstream. M0. — **[2026-07-27]** RESOLVED (D25): `unicode-normalization = "=0.1.25"` shipping Unicode **17.0.0** (verified from published crate bytes, `tables.rs` `UNICODE_VERSION == (17,0,0)`; machine-asserted in tests); frozen descriptor string `unicode-17.0.0`; retention = append-only registry, future versions vendored as distinctly named pinned crates, every shipped table retained forever (docs/decisions/D25-unicode-normalization.md).
 - Canonical node-address representation for GGM covers/boundary paths ((level,index) vs bit-path) — semantic form is G's, CBOR encoding is F's; must be co-frozen with F. Blocks G8, G11, G12, G13. M0.
-- Perf/memory budget constants (C₁, streamed corpus size, wall-clock ceiling, wasm reduced size). Blocks G18. M0.
+- Perf/memory budget constants (C₁, streamed corpus size, wall-clock ceiling, wasm reduced size). Blocks G18. M0. — **[2026-07-28]** RESOLVED (D26) with this entry's own framing overturned: **`C₁` does not exist and must not be minted.** Both instrumented peaks are exact closed forms (`peak_seed_stack_len == d + 1`, `peak_frontier_len == bit_width(n)`, verified exhaustively to `n = 4096`), so G18 asserts **equality**, and a slack constant would license the very regression the test exists to catch. The entry's `≤ C₁·⌈log₂ n⌉` form is also false at `n = 1` (`d = 0`). Corpus size set from measurement, not guess: G18's suggested "≥ 256 MiB" is 13.5 min in release and **6.3 h in dev** on the reference box, and CI runs the **dev** profile (`cargo test --workspace`, no `[profile]` section anywhere) — so the default lane tops out at `n = 65 536` (≈ 3.2 s dev) and a `#[ignore]`d release-profile lane runs `n = 2^25` (≈ 94 s). The `[5, 7]` compressions/byte envelope **fails as written** (measured 4.999, approached from below); floor is 4 990 for `n ≥ 2^12`, and the primary assertion is the exact identity, not the band. **No wall-clock assertion in the default lane.** **None of these constants is format-permanent and none freezes at Q14 — and G18 is not a Q14 dependency** (Q14's dep list is Q5/Q6/Q8/Q11/Q12/Q13 + P9/P10, C3/C11, F4, G1); it is an M0 *milestone* item (line 153) that may land after the freeze tag (docs/decisions/D26-perf-memory-budgets.md).
 
 ## Cross-domain expectations
 - P: workspace + `antseal-core` crate scaffold, exact-pin dependency policy, wasm32-unknown-unknown target configured from day one
