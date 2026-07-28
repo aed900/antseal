@@ -317,3 +317,71 @@ fn bitmatch_embedded_bytes_stay_under_the_per_version_ceiling() {
     }
     assert!(!recomputed.is_empty(), "no format versions embedded");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Q53 / Q14 normative row N3, site 3 — TRANSCRIPT_VERSION stays 0 (R32)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The negative clause of the coupled-edit row, made executable.**
+///
+/// Q14 row N3 lists three sites that move together when the report byte format
+/// versions, and its third is deliberately a **NEGATIVE**: `TRANSCRIPT_VERSION`
+/// must *not* move. R32 established why on evidence — the transcript versions
+/// an envelope that carries no report field, is written to `target/`, and sits
+/// in no `FROZEN.sha256` — so `0` is this schema's first version, not a
+/// placeholder waiting on Q14.
+///
+/// The row says the gate confirms this *"by `grep`, not by memory"*, and until
+/// Q53 that was literally true: no Rust test named the numeral, and the only
+/// runtime comparison was `scripts/wasm-bitmatch.mjs`'s — which checks the two
+/// against *each other*, so bumping **both** would have passed the lane and
+/// silently broken the negative clause.
+///
+/// So this asserts the value, not the agreement, at both sites:
+///
+/// - the Rust constant, by reference, so it cannot be satisfied by a stale copy;
+/// - the runner's literal, by scrape, because it lives in JavaScript.
+///
+/// **If you are here because this test is red:** the fix is almost never to
+/// update the number. Re-read the rule on `TRANSCRIPT_VERSION` in
+/// `crates/wasm-bitmatch/src/lib.rs` — the version moves when a transcript
+/// *field* is added, removed, renamed or reordered, and never for a change in
+/// what the fields contain. If a field really did change, bump both sites and
+/// amend R32's record and Q14 row N3 in the same commit.
+#[test]
+fn transcript_version_is_still_zero_at_both_sites() {
+    assert_eq!(
+        wasm_bitmatch::TRANSCRIPT_VERSION,
+        0,
+        "wasm_bitmatch::TRANSCRIPT_VERSION moved off 0. Q14 row N3's third site is a \
+         NEGATIVE clause: the report byte format freezing at v1 does NOT move this."
+    );
+
+    let runner = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("scripts")
+        .join("wasm-bitmatch.mjs");
+    let source = fs::read_to_string(&runner)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", runner.display()));
+
+    let declarations: Vec<&str> = source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("const EXPECTED_TRANSCRIPT_VERSION"))
+        .collect();
+    assert_eq!(
+        declarations.len(),
+        1,
+        "expected exactly one `const EXPECTED_TRANSCRIPT_VERSION` declaration in \
+         scripts/wasm-bitmatch.mjs, found {}: {declarations:?}",
+        declarations.len()
+    );
+    assert_eq!(
+        declarations[0], "const EXPECTED_TRANSCRIPT_VERSION = 0;",
+        "the wasm-bitmatch runner's expected transcript version no longer reads 0. \
+         The runner compares itself against the module's exported version at lane \
+         runtime, so moving BOTH keeps that lane green — which is exactly the hole \
+         this assertion closes."
+    );
+}

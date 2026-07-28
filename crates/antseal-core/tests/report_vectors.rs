@@ -373,3 +373,82 @@ fn decode_hex(text: &str) -> Vec<u8> {
         })
         .collect()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Q53 / Q14 normative row N4 — the decode layer is never a report field (D86)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **D86, permanent.** `ManifestError::layer()` / `SealProofError::layer()` are
+/// *failure context*, not a report field, and never will be: a
+/// `VerificationReport` exists only for a bundle that **passed** (D27 §4), and
+/// `layer` is already the report's word for two other things — the evidence
+/// layer and the storage-linkage layer (MVP-SPEC.md lines 118/119). Minting a
+/// third meaning would freeze an ambiguity into a format that cannot be
+/// changed without a version event.
+///
+/// Q14 row N4 ticks this by `grep -c '"layer"' … → 0`. A count computed by
+/// hand at gate time is evidence exactly once; this is the same count, run on
+/// every build, in **three** places rather than one:
+///
+/// 1. the committed document as a whole — the literal grep the row names;
+/// 2. each of the 21 byte-pinned `report_json` strings, so a `layer` buried in
+///    a report but absent from the surrounding envelope could not hide;
+/// 3. the **regenerated** reports, which is the only one of the three that is
+///    about the live `VerificationReport` type rather than about frozen bytes.
+///    Without it, adding a `layer` field would be caught by the vector diff
+///    (loudly, but as "the bytes changed") and by nothing that says why.
+#[test]
+fn vector_report_never_carries_a_decode_layer() {
+    let document = committed_document();
+
+    // (1) The row's own grep.
+    let text = fs::read_to_string(PathBuf::from(VECTOR_PATH))
+        .unwrap_or_else(|e| panic!("{VECTOR_PATH}: {e}"));
+    assert_eq!(
+        text.matches("layer").count(),
+        0,
+        "the committed report vector document now contains the substring `layer`. \
+         D86 is permanent: the decode layer is failure context and is not a report \
+         field. If a NEW field legitimately needs that word, it is named \
+         `decode_layer` and only in U30's `--json` FAILURE envelope (D65, M3) — \
+         which is not this document."
+    );
+
+    // (2) Each byte-pinned report string on its own.
+    let cases = document
+        .get("expect")
+        .and_then(|expect| expect.get("cases"))
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("the R9 vector has no `expect.cases` array"));
+    assert!(
+        !cases.is_empty(),
+        "no cases in the committed document — this check would be vacuous"
+    );
+    for case in cases {
+        let shape = case
+            .get("shape")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?");
+        let json = case
+            .get("report_json")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("case {shape:?} has no `report_json` string"));
+        assert!(
+            !json.contains("layer"),
+            "the pinned report bytes for shape {shape:?} contain `layer`"
+        );
+    }
+
+    // (3) The live type, not the frozen bytes.
+    let recomputed = vectors_report::regenerate_expect(&document)
+        .unwrap_or_else(|e| panic!("regeneration: {e}"));
+    let rendered = serde_json::to_string(&recomputed)
+        .unwrap_or_else(|e| panic!("cannot re-serialize the regenerated expect: {e}"));
+    assert!(
+        !rendered.contains("layer"),
+        "a freshly computed VerificationReport now serializes a `layer` somewhere. \
+         The committed vector has not caught up yet, so the failing artifact is the \
+         TYPE, not the bytes: D27 §4 makes the report exist only for a bundle that \
+         passed, so there is no decode layer to report. See D86 and Q14 row N4."
+    );
+}

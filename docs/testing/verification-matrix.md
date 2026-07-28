@@ -12,6 +12,12 @@
 > exist. A row with no reference must say `NONE` out loud; a blank cell is a
 > failure, because a blank cell reads as covered.
 >
+> **The `status` column is machine-checked too, since Q51.** Every row at or
+> before the milestone under review must read `covered`; later milestones are
+> unconstrained. Until Q51 the check resolved references and never read this
+> column, so a row could sit at `gap` through a milestone review with the lint
+> green — which is what happened to V3.4 (see the Findings section).
+>
 > **References are by name, never by line number.** D83 will move the GGM
 > cover-node wire encoding and tests will move with it; a line-number matrix
 > would rot silently on the first refactor, and a rotted matrix is worse than
@@ -26,7 +32,19 @@
   and that is correct, not a gap: the crates they test are stubs.
 - Status vocabulary: **`covered`** (a test exists and is named here);
   **`gap`** (the milestone owns the bullet and no test exists — this blocks
-  that milestone's gate); **`deferred`** (a later milestone owns it).
+  that milestone's gate); **`deferred`** (a later milestone owns it). Nothing
+  else parses: an unrecognised status is a typo and fails the check, at every
+  milestone, because a typo at a not-yet-gated one would otherwise stay
+  invisible until that milestone's review.
+- **The gate that enforces the first two bullets** is
+  `scripts/check-traceability.py --matrix`, and the milestone it enforces is
+  the constant `CURRENT_MILESTONE` in that script — **the line a milestone
+  review bumps.** It is a constant and not a required flag on purpose: a gate
+  that runs only when someone remembers to pass `--milestone` is the same
+  unenforced prose the gate replaces. The rule is cumulative — at the M1
+  review, M0's rows must *still* read `covered`, so a milestone cannot
+  regress once its own review has passed. `--milestone M1` answers the
+  one-off question "would M1 pass today?" without moving the gate.
 
 ## M0 — the rows the format freeze depends on
 
@@ -123,13 +141,21 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
 
 ## Findings from building this matrix (2026-07-28, M0 wave 6)
 
-1. **One M0 bullet has no test: V3.4, "bundle/manifest CBOR fuzzing in CI"
-   (spec line 169).** It is not a near-miss — three separate pieces are
-   absent (targets, nightly toolchain pin, lane), and the reserved CI job
-   says in its own output that green there asserts nothing. **Q14's M0 rows
-   cannot be complete until F17, Q39 and Q9 land.** The in-suite
-   arbitrary-bytes property tests are a partial mitigation and are recorded
-   as such, not as coverage.
+1. **~~One M0 bullet has no test: V3.4, "bundle/manifest CBOR fuzzing in
+   CI"~~ — CLOSED in wave 6; this finding was itself stale for a full wave.**
+   As written (wave 6) it said three separate pieces were absent — targets,
+   nightly toolchain pin, lane — and that *"Q14's M0 rows cannot be complete
+   until F17, Q39 and Q9 land"*. All three landed in that same wave. The
+   V3.4 row was corrected to `covered`; **this paragraph was not**, and
+   `--matrix` could not see the difference because it never read the status
+   column. Corrected 2026-07-28 (M0 wave 7).
+
+   The finding worth keeping is the second-order one, and it is why `Q51`
+   exists: *a matrix maintained by hand goes stale in the direction of
+   pessimism, and a stale row asserting that a milestone is blocked is more
+   expensive than a missing row* — Q14's normative row N7 reproduced this
+   claim verbatim and told a gate executor that the freeze was blocked by
+   completed work. The status column is machine-checked from wave 7 onward.
 2. **"Unit/property tests per crate" (V1.1) needed a reading, not a tick.**
    Three of five workspace crates have zero tests. All three are stubs whose
    milestones have not arrived, so the honest row states the reading rather

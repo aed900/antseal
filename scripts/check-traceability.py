@@ -209,6 +209,39 @@ PLAIN_PATH = re.compile(r"^[\w./\-]+$")
 
 ROW = re.compile(r"^\|\s*(?P<cells>.+)\s*\|$")
 
+# Q51 — the status column is now read, not merely parsed.
+#
+# `--matrix` resolved every reference a row named and never looked at whether
+# the row claimed to be covered at all. So a row could sit at `gap` through a
+# milestone review with the lint green — which is exactly what happened: V3.4
+# read `gap` for a full wave after F17/Q39/Q9 landed, and Q14's normative row
+# N7 reproduced the stale claim and declared the freeze blocked by work that
+# was already done.
+#
+# The gate: at the milestone under review, and at every milestone before it,
+# every row must read `covered`. Later milestones are unconstrained — their
+# crates are stubs and `deferred` is the correct answer, not a gap.
+MILESTONE_ORDER = ("M0", "M1", "M2", "M3", "M4")
+
+# The milestone under review. **This is the line a milestone review bumps.**
+# It is a constant rather than a required flag on purpose: a gate that only
+# runs when someone remembers to pass `--milestone` is the same unenforced
+# prose this check exists to replace. `--milestone` overrides it for a one-off
+# question ("would M1 pass today?").
+CURRENT_MILESTONE = "M0"
+
+# The full vocabulary, per the matrix's own "Status vocabulary" note. Anything
+# else is a typo, and a typo'd status at a not-yet-gated milestone would
+# otherwise be invisible until that milestone's review.
+STATUS_VOCABULARY = ("covered", "gap", "deferred")
+
+# Rows allowed to sit at a non-`covered` status inside a gated milestone, as
+# `id -> (status, reason)`. Empty, and it should stay that way: an entry here
+# is a milestone shipping with a known hole, which is a decision worth writing
+# down rather than a lint to be silenced. Stale entries are themselves a
+# failure — see `check_matrix` — so this cannot rot into a permanent mute.
+ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {}
+
 
 def split_row(line: str) -> list[str] | None:
     line = line.strip()
@@ -252,7 +285,21 @@ def parse_matrix(path: pathlib.Path) -> list[dict[str, str]]:
     return rows
 
 
-def check_matrix(failures: Failures) -> None:
+def gated_milestones(under_review: str) -> tuple[str, ...]:
+    """Every milestone at or before `under_review`.
+
+    Cumulative on purpose: at the M1 review, M0's rows must *still* read
+    covered. A gate that only looked at the current milestone would let an
+    earlier one silently regress to `gap` the moment its own review passed.
+    """
+    if under_review not in MILESTONE_ORDER:
+        raise ValueError(
+            f"unknown milestone {under_review!r}; known: {', '.join(MILESTONE_ORDER)}"
+        )
+    return MILESTONE_ORDER[: MILESTONE_ORDER.index(under_review) + 1]
+
+
+def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> None:
     check = "matrix"
     path = ROOT / MATRIX
     if not path.is_file():
@@ -264,9 +311,17 @@ def check_matrix(failures: Failures) -> None:
         failures.add(check, f"{MATRIX} contains no table rows — the check would be vacuous")
         return
 
+    try:
+        gated = gated_milestones(under_review)
+    except ValueError as error:
+        failures.add(check, str(error))
+        return
+
     milestones: dict[str, int] = {}
     checked = 0
     bullets: set[str] = set()
+    gate_rows = 0
+    exemptions_seen: set[str] = set()
 
     for row in rows:
         milestone = row.get("milestone", "").strip("*` ").upper()
@@ -274,6 +329,49 @@ def check_matrix(failures: Failures) -> None:
         bullet = row.get("spec bullet", "")
         if bullet:
             bullets.add(bullet)
+
+        # ── the status gate (Q51) ──────────────────────────────────────────
+        identifier = row.get("id", "?").strip("*` ")
+        status = row.get("status", "").strip("*` ").lower()
+        if status not in STATUS_VOCABULARY:
+            failures.add(
+                check,
+                f"{MATRIX}:{row['_line']} row {identifier!r} has status {status!r}, which is "
+                f"not one of {', '.join(STATUS_VOCABULARY)} — see the file's own "
+                "'Status vocabulary' note. A status nobody recognises is a status no gate "
+                "can read.",
+            )
+        elif milestone in gated:
+            gate_rows += 1
+            accepted = ACCEPTED_NON_COVERED.get(identifier)
+            if accepted is not None:
+                exemptions_seen.add(identifier)
+            if status != "covered" and accepted is None:
+                failures.add(
+                    check,
+                    f"{MATRIX}:{row['_line']} row {identifier!r} ({milestone}) reads "
+                    f"{status!r}, but {under_review} is under review and every row at or "
+                    f"before it must read 'covered'. Either the work is genuinely missing "
+                    f"— in which case the milestone is not done — or the row is stale and "
+                    f"has not been updated since the work landed. Resolving it by "
+                    f"registering the row in ACCEPTED_NON_COVERED needs a written reason: "
+                    f"that is a milestone shipping with a known hole.",
+                )
+            elif accepted is not None and status == "covered":
+                failures.add(
+                    check,
+                    f"{MATRIX}:{row['_line']} row {identifier!r} now reads 'covered' but is "
+                    f"still registered in ACCEPTED_NON_COVERED as {accepted[0]!r} "
+                    f"({accepted[1]}). Drop the entry — a stale exemption is how a gate "
+                    "decays into a permanent mute.",
+                )
+            elif accepted is not None and status != accepted[0]:
+                failures.add(
+                    check,
+                    f"{MATRIX}:{row['_line']} row {identifier!r} reads {status!r} but is "
+                    f"registered in ACCEPTED_NON_COVERED as {accepted[0]!r} ({accepted[1]}). "
+                    "The exemption was written for a different state; re-decide it.",
+                )
 
         cell = row.get("tests / evidence", "")
         references = REFERENCE.findall(cell)
@@ -297,11 +395,31 @@ def check_matrix(failures: Failures) -> None:
                     f"{MATRIX}:{row['_line']} row {row.get('id', '?')!r}: {problem}",
                 )
 
+    # A registered exemption for a row that no longer exists is as stale as one
+    # for a row that is now covered, and less visible.
+    for identifier, (status, reason) in ACCEPTED_NON_COVERED.items():
+        if identifier not in exemptions_seen:
+            failures.add(
+                check,
+                f"ACCEPTED_NON_COVERED registers row {identifier!r} as {status!r} "
+                f"({reason}) but no such row exists at a gated milestone in {MATRIX}. "
+                "Remove it.",
+            )
+
+    if not gate_rows:
+        failures.add(
+            check,
+            f"no rows at or before {under_review} — the status gate would be vacuous. "
+            "Either the milestone column stopped parsing or CURRENT_MILESTONE names a "
+            "milestone this matrix has no rows for.",
+        )
+
     if not failures:
         summary = ", ".join(f"{k}={v}" for k, v in sorted(milestones.items()))
         print(
             f"[{check}] ok — {len(rows)} rows over {len(bullets)} spec bullets, "
-            f"{checked} references resolved ({summary})"
+            f"{checked} references resolved ({summary}); status gate: all {gate_rows} "
+            f"row(s) at or before {under_review} read 'covered'"
         )
 
 
@@ -356,6 +474,16 @@ def main() -> int:
     for name in CHECKS:
         parser.add_argument(f"--{name}", action="store_true", help=f"run the {name} check")
     parser.add_argument(
+        "--milestone",
+        default=CURRENT_MILESTONE,
+        choices=MILESTONE_ORDER,
+        help=(
+            "milestone under review for the --matrix status gate: every row at or "
+            f"before it must read 'covered' (default: {CURRENT_MILESTONE}, the constant "
+            "a milestone review bumps)"
+        ),
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="prove the checks can fail: corrupt a copy in a scratch tree and require red",
@@ -371,7 +499,10 @@ def main() -> int:
 
     failures = Failures()
     for name in selected:
-        CHECKS[name](failures)
+        if name == "matrix":
+            check_matrix(failures, args.milestone)
+        else:
+            CHECKS[name](failures)
 
     if failures:
         print(
@@ -441,6 +572,39 @@ def self_test() -> int:
                 ),
                 "red",
             ),
+            # Q51 — the status gate. The red case is the exact regression that
+            # motivated it: an M0 row back at `gap`, in the `**gap**` spelling
+            # the file actually used, so the marker stripping is exercised too.
+            (
+                "matrix",
+                MATRIX,
+                lambda t: t.replace(
+                    "| M0 | F17 + Q39 + Q9 | covered |",
+                    "| M0 | F17 + Q39 + Q9 | **gap** |",
+                    1,
+                ),
+                "red",
+            ),
+            # And the bound from the other side. A *later* milestone's row at
+            # `gap` must stay GREEN: M1's crates are stubs and gating them
+            # would make the check unrunnable until M4, which is how a gate
+            # gets switched off. Without this case the rule could quietly
+            # widen to "every row must be covered" and nothing would notice.
+            (
+                "matrix",
+                MATRIX,
+                lambda t: t.replace("| M1 | S17 + Q15 | deferred |", "| M1 | S17 + Q15 | gap |", 1),
+                "green",
+            ),
+            # A status outside the vocabulary is a typo, and a typo at a
+            # not-yet-gated milestone would otherwise be invisible until that
+            # milestone's review.
+            (
+                "matrix",
+                MATRIX,
+                lambda t: t.replace("| M1 | S17 + Q15 | deferred |", "| M1 | S17 + Q15 | defered |", 1),
+                "red",
+            ),
         ]
 
         for check, relative, mutate, expect in cases:
@@ -485,7 +649,7 @@ def self_test() -> int:
             elif expect == "red":
                 print(f"self-test: ok — {check} goes red when {relative} is corrupted")
             else:
-                print(f"self-test: ok — {check} tolerates gate state in {relative}")
+                print(f"self-test: ok — {check} stays green where it must, on {relative}")
 
     return 0 if ok else 1
 

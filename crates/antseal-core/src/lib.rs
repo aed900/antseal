@@ -18,6 +18,14 @@ pub mod canon;
 pub mod codec;
 pub mod content;
 pub mod crypto;
+// Q52 — the frozen error-code universe (D30). A test-only module, and
+// deliberately *inside* the crate rather than under `tests/`: five of the
+// eight per-domain exemplar enumerators it collects from are `#[cfg(test)]
+// pub(crate)`, and widening them to `pub` so an integration test could reach
+// them would put a test-support surface into the crate's public API to buy
+// nothing. Native-only — it reads a committed file.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod error_universe;
 pub mod format;
 pub mod manifest;
 // `test-util` implies `test-vectors` (see Cargo.toml), so gating the module
