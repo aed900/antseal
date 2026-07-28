@@ -453,6 +453,19 @@
   - The interaction with R36 is stated in the commit: if D83 has not yet resolved, adding these shapes is expected to turn `the_unauthenticated_region_at_m0_is_exactly_the_storage_record` red, and the correct response is R36, never a widened tolerance
 - Notes: Surfaced 2026-07-28 by wave 6's D75 re-audit. The reason the gap survived five waves is that "even" is the natural thing to type in a fixture; the fix is one odd number, and the class it unlocks is roughly half of all real files.
 
+### R41 — Make a wasm32 `--lib` test failure say which test failed
+- Milestone: M0
+- Size: S
+- Deps: P14 (the runner), R32 (which is how it surfaced)
+- Spec: Verification — the WASM build must bit-match native verification (MVP-SPEC.md line 167/169); no CLI/page divergence (line 73)
+- Discovered by: **R32** (2026-07-28). Its fourth coupled site, `EXPECTED_CANONICAL_JSON` in `verify/mod.rs`, was enforced by nothing else, passed every other lane, and failed on `wasm32-core-tests` as a bare `the test binary trapped: unreachable` — no test name, no assertion, no message, because stdout is discarded on that target and a panic aborts the module.
+- Do: Fix `scripts/wasm-test-runner.mjs` so a failure names its test. Constraints that must survive: the module has **zero imports** (verified per run); the harness keeps executing the real `#[test]` functions; and D18 stays free — no wasm-bindgen, no crate-type change, no JS surface committed to the product. The in-memory execution witness is the precedent for getting information out without stdio.
+- Accept:
+  - A deliberately failing `#[test]` under `--target wasm32-unknown-unknown` reports its name.
+  - The zero-import property still holds and is still asserted.
+  - `wasm32-core-tests` stays green otherwise.
+- Notes: **DONE 2026-07-28 (M0 wave 7).** Nothing was added to the crate and no import was introduced: **linear memory survives the trap**, and the program has already written the diagnosis into it. (1) libtest writes `test <name> ... ` before invoking a test body and `ok\n` after it; `stdout` on this target is a discarding sink *behind std's line buffer*, so the flushing newline never arrives and the buffer still holds the line for the test that was running at the abort. (2) The default panic hook's record — `panicked at <file>:<line>:<col>:` plus the payload — is on the heap. The runner reads both from the exported `memory` and filters by the exported **`__heap_base`** global, which is what makes it sound: every test name and the panic format string are static literals in the data section, so an unfiltered scan reports decoys and can name the wrong test. Zero or several candidates are reported as such rather than guessed. Measured on a failing build: one progress line and one panic record above `__heap_base`, three decoys correctly below. Planted-fault self-test: `scripts/wasm-tests.sh --self-test` builds a throwaway crate **outside the repo** (so it inherits neither `.cargo/config.toml`'s runner nor `rust-toolchain.toml`) with one passing and one failing `#[test]`; red under all three faults tried — diagnostic lost, attribution wrong, `__heap_base` filter dropped — and green unmodified. Follow-up **R52**: the run-order assumption this rests on.
+
 ### R51 — D85's own falsification: the salt route at the other three commitment sites
 - Milestone: M0 (before Q14 — it can falsify a record Q14 freezes)
 - Size: S
@@ -465,6 +478,19 @@
   - None of the three is added to any registry slice: each would claim an outcome an existing row owns, and `check_registry` must keep refusing the pair. Each doc comment says so and cites D85.
   - Each of the three lands on its tabled code, reported individually. If any lands elsewhere, stop: amend D85 before Q14, never edit the expected code (error-code contract §3).
 - Notes: No committed artifact moves — the fixtures are built at runtime from R6's builder, so no golden vector, no `vector-freeze` digest, and no `.sealproof` fixture is affected. If a digest moves, the change escaped scope. R33 deliberately did **not** do this: its Accept names only the two bookkeeping items, and adding a `Tweak` knob touches a fixture file other wave-7 lanes are in.
+
+### R52 — The wasm32 post-mortem rests on two toolchain behaviours nothing pins
+- Milestone: M0 (record) / on every toolchain bump (act)
+- Size: S
+- Deps: R41 (landed), P14, `docs/toolchain.md`'s bump procedure
+- Spec: Verification (MVP-SPEC.md line 167); no CLI/page divergence (line 73)
+- Discovered by: **R41** (2026-07-28), while making it work. The runner recovers the failing test's name from **libtest's `test <name> ... ` progress line sitting unflushed in std's stdout line buffer**, and the assertion from **the default panic hook's formatted record**. Both are behaviours of the pinned toolchain, not of anything this repository controls: if a future `std` makes `wasm32-unknown-unknown`'s stdout unbuffered, or libtest changes its progress-line shape, or the panic hook's format moves, the diagnostic disappears. It disappears **loudly** — the runner reports "0 libtest progress lines were found above `__heap_base`" rather than naming the wrong test — but a toolchain bump would silently give back the bare trap that R32 hid behind, and nothing would notice until the next real failure.
+- Do: Add `./scripts/wasm-tests.sh --self-test` to the toolchain-bump checklist in `docs/toolchain.md` (and to whatever Q36's upstream-bump chore executes), so a bump that costs the diagnostic is caught by the bump, not by the next incident. Consider making the self-test unconditional in the `wasm32-core-tests` lane rather than an on-demand check — it costs one small `cargo build` for a dependency-free crate, which is the same trade `scripts/wasm-bitmatch.sh --self-test` already took when it made its divergence probe a **permanent per-run** guard.
+- Accept:
+  - The toolchain-bump procedure names the self-test explicitly, with the reason (this entry).
+  - A recorded decision on unconditional-per-run vs on-demand, with the measured cost of the extra build.
+  - The runner's fallback message stays honest: zero or several candidates must never be resolved by guessing.
+- Notes: The **`__heap_base`** dependency is the sturdiest part — it is wasm-ld's, not std's, and the runner already refuses to attribute anything without it. The fragile parts are the two textual shapes. A crate-side alternative (a panic hook writing a magic-prefixed record into a static) would pin the *message* but still not the *name*: libtest sets no thread name on this target and passes the description to nothing observable, so the progress line really is the only place the running test's identity exists at trap time.
 
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
