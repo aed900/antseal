@@ -18,6 +18,15 @@ import { createHash } from "node:crypto";
 
 // Must equal wasm_bitmatch::TRANSCRIPT_VERSION. Bumping it there without
 // bumping it here is caught immediately, by design.
+//
+// It versions the transcript ENVELOPE — the field set of the JSON this
+// runner parses — and nothing else. In particular it is NOT coupled to
+// antseal_core's REPORT_VERSION: R32 bumped that to 1 and this stayed 0,
+// because the transcript carries no report field, aggregates all seven
+// vector kinds rather than the report alone, and is never frozen (it lives
+// in target/, in no FROZEN.sha256). Move it when a transcript field is
+// added, removed, renamed or reordered — never for a change in what the
+// fields contain. See crates/wasm-bitmatch/src/lib.rs.
 const EXPECTED_TRANSCRIPT_VERSION = 0;
 const NODE_MAJOR_FLOOR = 18;
 

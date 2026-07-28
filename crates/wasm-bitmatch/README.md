@@ -64,8 +64,16 @@ Compact JSON under the **D29** determinism rules
 (`docs/decisions/D29-report-byte-format.md`): declaration-order fields, no
 maps, no floats, no conditional presence (absent values are `null`),
 lowercase hex for binary. D29 is **recommended, not frozen** — this crate
-*consumes* the recommendation; the freeze belongs to Q14, at which point
-`TRANSCRIPT_VERSION` moves from `0` to `1`.
+*consumes* the recommendation; the freeze belongs to Q14.
+
+`TRANSCRIPT_VERSION` stays `0` through that freeze. It versions the
+transcript **envelope**, not the report: the transcript carries no report
+field, aggregates the recomputed digests of all seven vector kinds rather
+than the report alone, and is never committed or frozen (it is written to
+`target/`). R32 bumped `antseal_core`'s `REPORT_VERSION` to `1` and left
+this at `0` deliberately — see the constant's own docs for the evidence.
+It moves when a transcript field is added, removed, renamed or reordered,
+and never for a change in what the fields contain.
 
 Each entry carries the vector's path, format version, size, status, kind,
 description, item count, and — the substantive part — the **recomputed

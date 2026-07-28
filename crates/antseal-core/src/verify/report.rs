@@ -31,8 +31,36 @@ use core::fmt;
 use serde::Serialize;
 
 /// Version of the report serialization itself (first field of every
-/// report). `0` = pre-freeze; Q14 freezes `1` (D29).
-pub const REPORT_VERSION: u32 = 0;
+/// report). **`1` — the version Q14 freezes** (D29 rule 8; task R32).
+///
+/// It was `0` while D29 was a recommendation. R32 moved it to `1` *before*
+/// the Q14 gate flips `status frozen`, because afterwards
+/// `scripts/vector-freeze.sh --update` refuses to change an existing digest
+/// and the same edit becomes a report-format version bump rather than a
+/// pre-freeze re-snapshot.
+///
+/// # Coupled edits — everything a future bump must carry with it
+///
+/// Bumping this constant is a **format event**, never a chore. Exactly two
+/// things move with it, and the second is the one that surprises people:
+///
+/// 1. **`testdata/vectors/v1/report/verification-reports.json`** — this is
+///    the first field of every serialized report, so all 21 pinned byte
+///    strings change at once. Re-emit with
+///    `cargo test -p antseal-core --features test-util --test report_vectors
+///    -- --ignored emit_report_vector_document`, then
+///    `scripts/vector-freeze.sh --update`. *Enforced*: the vector executor
+///    recomputes `expect.report_version` and fails on a bump without a
+///    re-emit, and after Q14 the freeze checker refuses the changed digest.
+///    No prose anywhere quotes the numeral — checked at R32 — so there is
+///    no documentation row to keep in step.
+/// 2. **Nothing in `wasm-bitmatch`.** `TRANSCRIPT_VERSION` and
+///    `EXPECTED_TRANSCRIPT_VERSION` read as coupled to this constant and
+///    are not: they version the bit-match *transcript envelope*, which
+///    carries no report field and aggregates the recomputed digests of all
+///    seven vector kinds. A report bump changes what the transcript
+///    *contains*, never its schema. See `crates/wasm-bitmatch/src/lib.rs`.
+pub const REPORT_VERSION: u32 = 1;
 
 /// A 32-byte digest (e.g. `work_id = SHA-256(body)`), serialized and
 /// displayed as 64 lowercase hex characters (D29 rule: binary data is

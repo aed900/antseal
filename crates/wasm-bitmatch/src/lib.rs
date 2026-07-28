@@ -55,8 +55,42 @@ pub use embedded::{
     EMBEDDED_BYTES_BY_VERSION, EMBEDDED_VECTORS, EmbeddedVector, MAX_EMBEDDED_BYTES_PER_VERSION,
 };
 
-/// Transcript format version. `0` while D29 is a recommendation; Q14 freezes
-/// the report byte format and this becomes `1`.
+/// Version of the **transcript envelope** — the schema of [`Transcript`] and
+/// [`TranscriptEntry`], nothing else.
+///
+/// # It is not coupled to `REPORT_VERSION` (R32)
+///
+/// This constant used to say "`0` while D29 is a recommendation; Q14 freezes
+/// the report byte format and this becomes `1`", and
+/// `scripts/wasm-bitmatch.mjs` still carries the matching
+/// `EXPECTED_TRANSCRIPT_VERSION`. R32 examined that promise when it bumped
+/// `antseal_core::verify::REPORT_VERSION` to `1` and found it **wrong**, on
+/// three pieces of evidence:
+///
+/// - **The transcript carries no report field.** Its schema is
+///   `transcript_version`, `vector_count`, and per entry `path`,
+///   `format_version`, `bytes`, `status`, `kind`, `description`, `items`,
+///   `recomputed_digest`, `error`. A report-format bump adds, removes,
+///   renames and reorders none of them. It changes what the transcript
+///   *contains* — the `report` vector's `recomputed_digest` moves — and
+///   changing content is what this artifact is *for*; it is recomputed from
+///   scratch every run.
+/// - **The report is 1 of 7 kinds** whose recomputed digests this transcript
+///   aggregates (`hkdf`, `crypto`, `manifest`, `bundle`, `fine-tree`,
+///   `sig-reject`, `report`). Tying the envelope's version to one of them
+///   would be arbitrary — the manifest and bundle formats freeze at Q14 too,
+///   and nobody proposed tracking those.
+/// - **Nothing freezes here.** The transcript is written to `target/`, is in
+///   no `FROZEN.sha256`, and is produced and consumed inside a single lane
+///   run. Q14's `--update`-refuses-a-changed-digest trap — the reason R32
+///   had to land before the gate — cannot reach it.
+///
+/// So `0` is not a provisional value waiting on Q14; it is this schema's
+/// first version. **The rule: it moves when a transcript field is added,
+/// removed, renamed or reordered, and never for a change in what the fields
+/// contain.** Its job, per the `bitmatch_transcript_version` export, is to
+/// let the runner refuse a module whose *shape* it does not understand — and
+/// the runner understands a post-R32 transcript perfectly.
 pub const TRANSCRIPT_VERSION: u32 = 0;
 
 /// One executed vector. Every field is always present (D29 rule 4): fields
