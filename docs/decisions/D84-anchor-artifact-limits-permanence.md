@@ -155,7 +155,8 @@ them exactly.**
   verifies real anchors, artifact-internal limits may be **raised, never
   lowered**. Raising cannot reject a bundle a past release accepted;
   lowering can. Any lowering is a format-version event and requires the
-  full freeze procedure (Q19). Record every limit's value and every change
+  full freeze procedure (**Q27** — see the 2026-07-28 correction below).
+  Record every limit's value and every change
   in the registry A27 creates, so "has this ever been lowered?" is answerable
   from the tree.
 
@@ -310,8 +311,8 @@ A5/A11 (M2) report:
    A13's merged-`.ots` size against D10's frozen bundle-field caps, per §5's
    derived constraint.
 3. **Q37 registered** (`tasks/Q.md`): add §7's two rows to the Q14 checklist
-   and carry the same freeze-boundary statement into Q19's format-stability
-   policy.
+   and carry the same freeze-boundary statement into **Q27**'s
+   format-stability policy (see the 2026-07-28 correction below).
 4. **A5 and A11's `Do` text is now partly wrong on disk** — both promise caps
    that §5 rules are already-frozen D10 constants. A27 fixes the text; until
    it does, an implementer reading `tasks/A.md` alone would mint duplicates.
@@ -334,3 +335,26 @@ byte and count caps over it, and F1–F4 themselves. A5's and A11's promised
 byte/count caps over bundle-embedded artifacts are ruled to be the existing
 D10 constants, not new ones. §7 is the verbatim freeze-boundary text for
 Q14's checklist.
+
+---
+
+## Correction — 2026-07-28 (A27 implementation)
+
+**Three references in this record cited the wrong task for the
+format-stability policy.** Rule F4 above, Consequences item 3 above, and the
+`Q37` entry this record created all said **Q19**. Q19 is the M3 headless-browser
+Playwright page-verification lane and has nothing to do with format stability.
+
+The format-stability policy is **Q27** ("Format-stability policy doc: versions
+verifiable forever; Unicode-table retention; bump criteria"), and the procedure
+F4's "full freeze procedure" mirrors is **Q14**'s.
+
+Found by A27's implementation while splicing F1–F4 into
+`docs/format/anchor-artifact-limits.md`. The splice deliberately carried F4
+byte-identically — A27's Accept criterion demands byte-identity with this
+record — so the corrected reference lives here, at the source, and
+`tasks/Q.md` and `tasks/A.md` already say Q27.
+
+One mistake in three places, which is the argument for splicing normative text
+programmatically rather than retyping it: the error propagated everywhere the
+text did, and correcting it here corrects it everywhere.
