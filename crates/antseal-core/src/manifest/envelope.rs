@@ -33,6 +33,7 @@
 //! key 0. The envelope therefore reserves nothing, and any key besides
 //! 0/1 is an unknown key — permanently.
 
+use crate::codec::caps::MAX_MANIFEST_BYTES;
 use crate::codec::{CanonicalDecoder, DecodeError, EncodeError, encode_item};
 
 use super::body::ManifestBodyV1;
@@ -67,13 +68,30 @@ impl<'b> Manifest<'b> {
     /// pass additionally rejects trailing bytes after the envelope, so
     /// [`Self::encoded_bytes`] is exactly the whole input.
     ///
+    /// # The size cap runs first (F11 / decision D10 §5)
+    ///
+    /// `input.len() > MAX_MANIFEST_BYTES` is the **first statement**, before
+    /// the decoder is constructed. Besides refusing an oversized manifest in
+    /// O(1), it is what bounds the SHA-256 work behind `work_id` and
+    /// `anchor_digest`, whose pre-images are exactly these bytes. The
+    /// **body** needs no cap of its own: it is a `bstr` inside this envelope,
+    /// so `len(body) < len(envelope) <= MAX_MANIFEST_BYTES` by construction.
+    ///
     /// # Errors
     ///
+    /// [`ManifestError::InputTooLarge`] for an over-cap input;
     /// [`ManifestError::Envelope`] / [`ManifestError::Body`] for
     /// canonicality failures at the respective layer, plus every
     /// `manifest-*` schema class.
     pub fn decode(input: &'b [u8]) -> Result<Self, ManifestError> {
         const MAP: MapId = MapId::Envelope;
+        let len = input.len() as u64;
+        if len > MAX_MANIFEST_BYTES {
+            return Err(ManifestError::InputTooLarge {
+                len,
+                cap: MAX_MANIFEST_BYTES,
+            });
+        }
         let mut d = CanonicalDecoder::new(input);
         let mut reader = d.map().map_err(envelope_layer)?;
 

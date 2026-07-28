@@ -217,6 +217,148 @@ impl fmt::Display for OrderedList {
     }
 }
 
+/// A bundle list with a **frozen length cap** (decision D10, registry §11).
+///
+/// One discriminant per capped list, so a tamper row can pin exactly which
+/// list overflowed — the same variant-level-code pattern F8 already used for
+/// its four `bundle-unsorted-*` codes over four of these same lists.
+///
+/// Every value's cap is a `codec::caps` constant; [`Self::cap`] is the only
+/// mapping, so the code and the registry table cannot drift (a test asserts
+/// code == registry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BundleListKind {
+    /// Bundle key 3 `ots_anchors`.
+    OtsAnchors,
+    /// Bundle key 4 `tsa_anchors`.
+    TsaAnchors,
+    /// A TSA anchor's key 2 `intermediates`.
+    Intermediates,
+    /// A receipt's key 0 `tx_hashes`.
+    TxHashes,
+    /// Bundle key 6 `covered_reveals`.
+    CoveredReveals,
+    /// Bundle key 7 `noncovered_reveals`.
+    NonCoveredReveals,
+    /// A covered reveal's key 3 `cover`.
+    Cover,
+    /// A covered reveal's key 4 `paths`.
+    Paths,
+    /// Bundle key 8 `touched_files`.
+    TouchedFiles,
+    /// Bundle key 9 `full_reveals`.
+    FullReveals,
+}
+
+impl BundleListKind {
+    /// Every capped list, for exhaustive tests.
+    pub const ALL: [Self; 10] = [
+        Self::OtsAnchors,
+        Self::TsaAnchors,
+        Self::Intermediates,
+        Self::TxHashes,
+        Self::CoveredReveals,
+        Self::NonCoveredReveals,
+        Self::Cover,
+        Self::Paths,
+        Self::TouchedFiles,
+        Self::FullReveals,
+    ];
+
+    /// The frozen maximum element count (decision D10 §1).
+    ///
+    /// The reveal and touched/full caps are defined *as* their manifest-side
+    /// partner (`MAX_UNIT_COUNT` / `MAX_FILE_COUNT`) so the two halves cannot
+    /// drift, while staying bundle-side constants — D78 forbids this layer
+    /// from consulting the manifest at all.
+    #[must_use]
+    pub const fn cap(self) -> u64 {
+        use crate::codec::caps;
+        match self {
+            Self::OtsAnchors => caps::MAX_OTS_ANCHOR_COUNT,
+            Self::TsaAnchors => caps::MAX_TSA_ANCHOR_COUNT,
+            Self::Intermediates => caps::MAX_INTERMEDIATE_COUNT,
+            Self::TxHashes => caps::MAX_TX_HASH_COUNT,
+            Self::CoveredReveals => caps::MAX_COVERED_REVEAL_COUNT,
+            Self::NonCoveredReveals => caps::MAX_NONCOVERED_REVEAL_COUNT,
+            Self::Cover => caps::MAX_COVER_ENTRIES,
+            Self::Paths => caps::MAX_PATH_NODES,
+            Self::TouchedFiles => caps::MAX_TOUCHED_FILE_COUNT,
+            Self::FullReveals => caps::MAX_FULL_REVEAL_COUNT,
+        }
+    }
+}
+
+impl fmt::Display for BundleListKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::OtsAnchors => "ots_anchors",
+            Self::TsaAnchors => "tsa_anchors",
+            Self::Intermediates => "intermediates",
+            Self::TxHashes => "tx_hashes",
+            Self::CoveredReveals => "covered_reveals",
+            Self::NonCoveredReveals => "noncovered_reveals",
+            Self::Cover => "cover",
+            Self::Paths => "paths",
+            Self::TouchedFiles => "touched_files",
+            Self::FullReveals => "full_reveals",
+        })
+    }
+}
+
+/// A bundle `bstr` field holding an **opaque foreign artifact**, with a frozen
+/// byte-length cap (decision D10, registry §11).
+///
+/// The artifacts' *internals* are A's at M2 (registry §7.8/§7.9), but a
+/// byte-length cap on a v1 wire field decides whether a given `.sealproof` is
+/// valid v1, so it freezes with format v1 and lives here. All four caps are
+/// ≥30× the largest real artifact: guessing high is free, guessing low is a
+/// compatibility break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpaqueField {
+    /// An OTS anchor's key 1 `ots` — the `.ots` proof blob.
+    Ots,
+    /// A TSA anchor's key 1 `token` — the DER `TimeStampToken`.
+    TsaToken,
+    /// One element of a TSA anchor's `intermediates` — a DER X.509 cert.
+    Certificate,
+    /// A receipt's key 2 `payload`.
+    ReceiptPayload,
+}
+
+impl OpaqueField {
+    /// Every capped opaque field, for exhaustive tests.
+    pub const ALL: [Self; 4] = [
+        Self::Ots,
+        Self::TsaToken,
+        Self::Certificate,
+        Self::ReceiptPayload,
+    ];
+
+    /// The frozen maximum byte length (decision D10 §1).
+    #[must_use]
+    pub const fn cap(self) -> u64 {
+        use crate::codec::caps;
+        match self {
+            Self::Ots => caps::MAX_OTS_BYTES,
+            Self::TsaToken => caps::MAX_TSA_TOKEN_BYTES,
+            Self::Certificate => caps::MAX_CERT_BYTES,
+            Self::ReceiptPayload => caps::MAX_RECEIPT_PAYLOAD_BYTES,
+        }
+    }
+}
+
+impl fmt::Display for OpaqueField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Ots => "ots artifact",
+            Self::TsaToken => "TSA token",
+            Self::Certificate => "TSA chain certificate",
+            Self::ReceiptPayload => "receipt payload",
+        })
+    }
+}
+
 /// One of the two positional 3-element tuples of registry §5.
 ///
 /// Arrays have no key space and therefore no reserved slots, so a wrong
@@ -403,6 +545,53 @@ pub enum BundleError {
         got: u64,
     },
 
+    // ── Resource caps (decision D10, registry §11) ──────────────────
+    /// The `.sealproof` input exceeds
+    /// [`MAX_BUNDLE_BYTES`](crate::codec::caps::MAX_BUNDLE_BYTES).
+    ///
+    /// Raised as the **first statement** of the bundle decode, before the
+    /// decoder is even constructed, so it precedes every canonicality and
+    /// schema code as well as every AEAD, hash, and signature operation
+    /// (D10 §5). An oversized bundle that is *also* non-canonical reports
+    /// this, deliberately.
+    #[error("bundle input of {len} bytes exceeds the {cap}-byte limit")]
+    InputTooLarge {
+        /// The input length actually offered.
+        len: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+
+    /// A capped bundle list claims more elements than its cap allows.
+    ///
+    /// Checked on the **claimed count at the array head**, before a single
+    /// element is read, so the rejecting input is an array head and nothing
+    /// else — the cap fires cheaply by construction (D10 §4).
+    #[error("{list} claims {claimed} entries, exceeding the limit of {cap}")]
+    ListTooLong {
+        /// Which list overflowed.
+        list: BundleListKind,
+        /// The element count the array head claimed.
+        claimed: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+
+    /// An opaque foreign artifact (`.ots`, TSA token, certificate, receipt
+    /// payload) exceeds its frozen byte-length cap.
+    ///
+    /// Length only — the artifact's bytes are never rendered, and its
+    /// *internal* structure is A's at M2.
+    #[error("{field} of {len} bytes exceeds the {cap}-byte limit")]
+    ArtifactTooLarge {
+        /// Which field overflowed.
+        field: OpaqueField,
+        /// The byte length actually present.
+        len: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+
     /// An `anchor_status` value outside the registered `0..=6`
     /// (registry §6.1; `7..=15` are reserved and unregistered in v1).
     #[error("anchor_status: unregistered value {value}")]
@@ -491,9 +680,9 @@ impl BundleError {
     ///
     /// The exhaustive, variant-wildcard-free match is the compile-time
     /// guard: a new variant — or a new [`FixedLenField`]/[`ContainerField`]/
-    /// [`OrderedList`]/[`TupleId`]/[`CiphertextDefect`] discriminant — fails
-    /// compilation here until it receives a distinct code and an exemplar in
-    /// `all_code_exemplars`.
+    /// [`OrderedList`]/[`TupleId`]/[`CiphertextDefect`]/[`BundleListKind`]/
+    /// [`OpaqueField`] discriminant — fails compilation here until it
+    /// receives a distinct code and an exemplar in `all_code_exemplars`.
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
@@ -535,6 +724,25 @@ impl BundleError {
             Self::CiphertextShape { defect, .. } => match defect {
                 CiphertextDefect::TooShort => "bundle-ciphertext-too-short",
                 CiphertextDefect::BadResidue => "bundle-ciphertext-length-residue",
+            },
+            Self::InputTooLarge { .. } => "bundle-too-large",
+            Self::ListTooLong { list, .. } => match list {
+                BundleListKind::OtsAnchors => "bundle-too-many-ots-anchors",
+                BundleListKind::TsaAnchors => "bundle-too-many-tsa-anchors",
+                BundleListKind::Intermediates => "bundle-too-many-intermediates",
+                BundleListKind::TxHashes => "bundle-too-many-tx-hashes",
+                BundleListKind::CoveredReveals => "bundle-too-many-covered-reveals",
+                BundleListKind::NonCoveredReveals => "bundle-too-many-noncovered-reveals",
+                BundleListKind::Cover => "bundle-too-many-cover-entries",
+                BundleListKind::Paths => "bundle-too-many-path-nodes",
+                BundleListKind::TouchedFiles => "bundle-too-many-touched-files",
+                BundleListKind::FullReveals => "bundle-too-many-full-reveals",
+            },
+            Self::ArtifactTooLarge { field, .. } => match field {
+                OpaqueField::Ots => "bundle-ots-too-large",
+                OpaqueField::TsaToken => "bundle-tsa-token-too-large",
+                OpaqueField::Certificate => "bundle-cert-too-large",
+                OpaqueField::ReceiptPayload => "bundle-receipt-payload-too-large",
             },
             Self::UnknownAnchorStatus { .. } => "bundle-unknown-anchor-status",
             Self::UnsupportedFormatVersion { .. } => "bundle-unsupported-format-version",
@@ -606,7 +814,27 @@ pub(crate) fn all_code_exemplars() -> Vec<BundleError> {
             got: 100 + i as u64,
         });
     }
+    for list in BundleListKind::ALL {
+        let cap = list.cap();
+        exemplars.push(E::ListTooLong {
+            list,
+            claimed: cap + 1,
+            cap,
+        });
+    }
+    for field in OpaqueField::ALL {
+        let cap = field.cap();
+        exemplars.push(E::ArtifactTooLarge {
+            field,
+            len: cap + 1,
+            cap,
+        });
+    }
     exemplars.extend([
+        E::InputTooLarge {
+            len: crate::codec::caps::MAX_BUNDLE_BYTES + 1,
+            cap: crate::codec::caps::MAX_BUNDLE_BYTES,
+        },
         E::UnknownAnchorStatus { value: 7 },
         E::UnsupportedFormatVersion {
             found: 2,
@@ -633,7 +861,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            32,
+            47,
             "one exemplar per distinct code — update deliberately"
         );
 
@@ -733,6 +961,17 @@ mod tests {
             BundleError::CiphertextShape {
                 defect: CiphertextDefect::TooShort,
                 got: 16,
+            },
+            BundleError::InputTooLarge { len: 1, cap: 0 },
+            BundleError::ListTooLong {
+                list: BundleListKind::Cover,
+                claimed: 1,
+                cap: 0,
+            },
+            BundleError::ArtifactTooLarge {
+                field: OpaqueField::Ots,
+                len: 1,
+                cap: 0,
             },
             BundleError::UnknownAnchorStatus { value: 7 },
             BundleError::UnsupportedFormatVersion {
@@ -873,6 +1112,29 @@ mod tests {
                     got: 16,
                 },
                 "unit ciphertext of 16 bytes is shorter than one padding block plus the AEAD tag",
+            ),
+            (
+                BundleError::InputTooLarge {
+                    len: 268_435_457,
+                    cap: 268_435_456,
+                },
+                "bundle input of 268435457 bytes exceeds the 268435456-byte limit",
+            ),
+            (
+                BundleError::ListTooLong {
+                    list: BundleListKind::Cover,
+                    claimed: 257,
+                    cap: 256,
+                },
+                "cover claims 257 entries, exceeding the limit of 256",
+            ),
+            (
+                BundleError::ArtifactTooLarge {
+                    field: OpaqueField::Certificate,
+                    len: 65_537,
+                    cap: 65_536,
+                },
+                "TSA chain certificate of 65537 bytes exceeds the 65536-byte limit",
             ),
             (
                 BundleError::UnknownAnchorStatus { value: 7 },

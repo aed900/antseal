@@ -21,7 +21,7 @@
 
 use antseal_core::codec::{
     CanonicalDecoder, DecodeError, EncodeError, ExpectedKind, ForbiddenKind, ItemKind,
-    MAX_NESTING_DEPTH, check_canonical, encode_item,
+    MAX_CBOR_DEPTH, check_canonical, encode_item,
 };
 use antseal_core::verify::VerifyError;
 
@@ -659,7 +659,7 @@ fn error_surfaces_never_contain_input_byte_content() {
     errors.push(check_canonical(&trailing).expect_err("trailing"));
 
     // cbor-nesting-too-deep: the salt buried beyond the depth guard.
-    let mut deep = vec![0x81; usize::from(MAX_NESTING_DEPTH) + 1];
+    let mut deep = vec![0x81; usize::from(MAX_CBOR_DEPTH) + 1];
     deep.extend_from_slice(&bstr_salt);
     errors.push(check_canonical(&deep).expect_err("deep"));
 

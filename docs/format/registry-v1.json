@@ -13,7 +13,8 @@
     "D9": "RESOLVED 2026-07-28 — GGM node address = (level, index) uint pair (candidate A); docs/decisions/D9-ggm-node-address.md. Former pending-D9 items now carry `proposed`.",
     "D11": "RESOLVED — Autonomi address = 32 bytes (XorName, BLAKE3-256).",
     "D23": "RESOLVED 2026-07-27 — a file's raw mirror is that file's last unit; at most one per file. Seal-side construction rule; parse position-agnostic.",
-    "D28": "RESOLVED 2026-07-28 — full-reveal strictness is STRICT (hard-fail): a bundle revealing every kind=Normal unit of a file MUST carry that file's file_salt, plus s_root iff the file has a fine tree. Rider 1 (binding on F8): reveal shape is DERIVED from the signed unit table and the revealed set, NEVER declared — the bundle carries no reveal-shape discriminant. docs/decisions/D28-full-reveal-strictness.md"
+    "D28": "RESOLVED 2026-07-28 — full-reveal strictness is STRICT (hard-fail): a bundle revealing every kind=Normal unit of a file MUST carry that file's file_salt, plus s_root iff the file has a fine tree. Rider 1 (binding on F8): reveal shape is DERIVED from the signed unit table and the revealed set, NEVER declared — the bundle carries no reveal-shape discriminant. docs/decisions/D28-full-reveal-strictness.md",
+    "D10": "RESOLVED 2026-07-28 — 19 frozen parser resource caps, one universal clamp rule min(claimed_length, remaining_input) applied at every pre-allocation whether or not a cap covers it, 18 new bundle-/manifest- codes plus the existing cbor-nesting-too-deep; all enforced inside verify stage 1 (decode), ahead of every AEAD, hash and signature operation; u64 everywhere so wasm32 and native cannot diverge. Mirrored in the top-level `caps` object and in registry-v1.md section 11. docs/decisions/D10-parser-caps.md"
   },
   "fed_but_not_resolved_here": [
     { "decision": "D74", "topic": "extraneous s_root on a FineTree::Absent full reveal", "bites_at": "full_reveal key 2", "contribution": "the violation row is left unassigned; the permissive reading is explicitly not encoded. Recommendation on record: reject as full-reveal-s-root-without-fine-tree", "owner": "R4/F8" },
@@ -54,7 +55,7 @@
       { "layer": 3, "input": "envelope key 0 bstr contents", "decoder": "manifest::body::ManifestBodyV1::decode", "error_class": "ManifestError::Body" }
     ],
     "zero_copy_requirement": "layer 2 must receive a sub-slice of the bundle input, never a copy: Manifest's guarantee that work_id and signature pre-images are the received bytes holds by construction only for a borrowed slice",
-    "max_container_depth": { "bundle_chain": 5, "manifest_chain": 6, "cap_basis": "max of the two, not the sum — layer 2 starts a fresh decoder over the bstr contents", "note": "input to F11" }
+    "max_container_depth": { "bundle_chain": 5, "manifest_chain": 6, "cap": 8, "cap_basis": "max of the two, not the sum — layer 2 starts a fresh decoder over the bstr contents", "note": "cap frozen by D10 as MAX_CBOR_DEPTH = 8 = 6 + 2, leaving room for one additive v1.x field nested one level deeper; see the top-level `caps` object" }
   },
   "version_dispatch": {
     "doc_section": "registry-v1.md sections 7.1 and 9 (Version dispatch order)",
@@ -104,6 +105,38 @@
       "fields": ["manifest_body.claimed_time", "ots_anchor.fetch_date", "tsa_anchor.fetch_date"]
     },
     "envelope_frozen_across_versions": true
+  },
+  "caps": {
+    "doc_section": "registry-v1.md section 11",
+    "decision": "D10",
+    "status": "proposed",
+    "implemented_in": "antseal_core::codec::caps",
+    "enforcement_point": "verify stage 1 (decode) — every cap fires before any AEAD, hash, or signature work",
+    "wasm32_parity": "every byte/count cap is u64 and <= u32::MAX, so each is reachable and compares identically on wasm32 and native; MAX_CBOR_DEPTH is the deliberate u16 exception (it counts containers, never wire lengths)",
+    "clamp_rule": "every pre-allocation clamped to min(claimed_length, remaining_input); order at an array head is head canonicality -> cap -> clamped allocation -> elements",
+    "recorded_non_caps": "sig_policy / pubkeys / signatures (bounded by the 16-value registered sig_alg universe of section 6.2 and by duplicate-freedom, so an existing code fires first); range / cover_entry / path_node (fixed arity); title / app_version / touched_file.path / tsa_anchor.source (free-form tstr, transitively bounded by caps 1-2); revealed-unit ciphertext (already shape-checked; an upper bound would equal MAX_BUNDLE_BYTES). The clamp rule still applies to every one of them.",
+    "not_in_scope": "internal structural limits of the opaque artifacts (.ots op counts, DER nesting, signed-attribute counts) are A's at M2 (sections 7.8, 7.9; MVP-SPEC.md line 153) — their freeze status is decision D83",
+    "entries": [
+      { "name": "MAX_BUNDLE_BYTES", "value": 268435456, "unit": "bytes", "applies_to": "layer-1 .sealproof input", "code": "bundle-too-large", "status": "proposed" },
+      { "name": "MAX_MANIFEST_BYTES", "value": 16777216, "unit": "bytes", "applies_to": "layer-2 input (section 7.6 key 1 contents)", "code": "manifest-too-large", "status": "proposed" },
+      { "name": "MAX_CBOR_DEPTH", "value": 8, "unit": "containers", "applies_to": "enclosing containers of any item, generic walker (section 7.6.3: the v1 maximum is 6)", "code": "cbor-nesting-too-deep", "status": "proposed" },
+      { "name": "MAX_FILE_COUNT", "value": 16384, "unit": "count", "applies_to": "section 7.2 key 7 files", "code": "manifest-too-many-files", "status": "proposed" },
+      { "name": "MAX_UNIT_COUNT", "value": 65536, "unit": "count", "applies_to": "section 7.3 key 6 units — a WORK-GLOBAL running budget, not a per-file cap", "code": "manifest-too-many-units", "status": "proposed" },
+      { "name": "MAX_OTS_ANCHOR_COUNT", "value": 256, "unit": "count", "applies_to": "section 7.6 key 3", "code": "bundle-too-many-ots-anchors", "status": "proposed" },
+      { "name": "MAX_TSA_ANCHOR_COUNT", "value": 256, "unit": "count", "applies_to": "section 7.6 key 4", "code": "bundle-too-many-tsa-anchors", "status": "proposed" },
+      { "name": "MAX_INTERMEDIATE_COUNT", "value": 16, "unit": "count", "applies_to": "section 7.9 key 2", "code": "bundle-too-many-intermediates", "status": "proposed" },
+      { "name": "MAX_TX_HASH_COUNT", "value": 256, "unit": "count", "applies_to": "section 7.10 key 0", "code": "bundle-too-many-tx-hashes", "status": "proposed" },
+      { "name": "MAX_COVERED_REVEAL_COUNT", "value": 65536, "unit": "count", "applies_to": "section 7.6 key 6", "code": "bundle-too-many-covered-reveals", "status": "proposed" },
+      { "name": "MAX_NONCOVERED_REVEAL_COUNT", "value": 65536, "unit": "count", "applies_to": "section 7.6 key 7", "code": "bundle-too-many-noncovered-reveals", "status": "proposed" },
+      { "name": "MAX_COVER_ENTRIES", "value": 256, "unit": "count", "applies_to": "section 7.11 key 3 (2*ceil(log2 n) <= 128 for any uint file size)", "code": "bundle-too-many-cover-entries", "status": "proposed" },
+      { "name": "MAX_PATH_NODES", "value": 256, "unit": "count", "applies_to": "section 7.11 key 4", "code": "bundle-too-many-path-nodes", "status": "proposed" },
+      { "name": "MAX_TOUCHED_FILE_COUNT", "value": 16384, "unit": "count", "applies_to": "section 7.6 key 8", "code": "bundle-too-many-touched-files", "status": "proposed" },
+      { "name": "MAX_FULL_REVEAL_COUNT", "value": 16384, "unit": "count", "applies_to": "section 7.6 key 9", "code": "bundle-too-many-full-reveals", "status": "proposed" },
+      { "name": "MAX_OTS_BYTES", "value": 1048576, "unit": "bytes", "applies_to": "section 7.8 key 1", "code": "bundle-ots-too-large", "status": "proposed" },
+      { "name": "MAX_TSA_TOKEN_BYTES", "value": 1048576, "unit": "bytes", "applies_to": "section 7.9 key 1", "code": "bundle-tsa-token-too-large", "status": "proposed" },
+      { "name": "MAX_CERT_BYTES", "value": 65536, "unit": "bytes", "applies_to": "section 7.9 key 2 elements", "code": "bundle-cert-too-large", "status": "proposed" },
+      { "name": "MAX_RECEIPT_PAYLOAD_BYTES", "value": 16777216, "unit": "bytes", "applies_to": "section 7.10 key 2", "code": "bundle-receipt-payload-too-large", "status": "proposed" }
+    ]
   },
   "scalars": [
     { "name": "seal_id", "type": "bstr", "length": 16, "status": "proposed" },
@@ -258,7 +291,7 @@
         { "key": 3, "name": "size", "type": "uint", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "leaf count / tiling-domain byte count (canonical for text, raw for binary)" },
         { "key": 4, "name": "descriptor", "type": "map", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "canon_descriptor" },
         { "key": 5, "name": "fine_root", "type": "bstr", "presence": "optional", "rule": "present iff descriptor.fine_tree_present == 1", "length": 32, "status": "proposed", "notes": null },
-        { "key": 6, "name": "units", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "unit_entry elements; non-empty (empty file = one empty unit)" }
+        { "key": 6, "name": "units", "type": "array", "presence": "required", "rule": null, "length": null, "status": "proposed", "notes": "unit_entry elements; non-empty (empty file = one empty unit); length capped work-globally by MAX_UNIT_COUNT (D10)" }
       ],
       "reserved": [{ "first": 7, "last": 23, "purpose": "future v1.x fields", "status": "proposed" }]
     },

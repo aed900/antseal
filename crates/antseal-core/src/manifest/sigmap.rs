@@ -29,6 +29,7 @@
 
 use core::fmt;
 
+use crate::codec::caps::clamped_capacity;
 use crate::codec::encode::MapEncoder;
 use crate::codec::{CanonicalDecoder, EncodeError};
 use crate::crypto::error::SigAlg;
@@ -217,7 +218,14 @@ impl SigAlgMap {
         wrap: fn(crate::codec::DecodeError) -> ManifestError,
     ) -> Result<Self, ManifestError> {
         let mut reader = d.map().map_err(wrap)?;
-        let mut entries: Vec<(SigAlg, Vec<u8>)> = Vec::new();
+        // A recorded **non-cap** (D10 §3): map keys are the registered
+        // `sig_alg` universe `0..=15` and must strictly ascend, so this map
+        // holds ≤16 entries by map semantics and an unregistered id fires
+        // first anyway. The clamp still applies — F11's rule admits no
+        // exceptions, and it is the clamp, not the cap, that bounds the
+        // allocation to `min(claimed, remaining_input)`.
+        let mut entries: Vec<(SigAlg, Vec<u8>)> =
+            Vec::with_capacity(clamped_capacity(reader.remaining(), d.remaining()));
         while let Some(alg_id) = reader.next_key(d).map_err(wrap)? {
             let alg = sig_alg_from_wire(alg_id).ok_or(ManifestError::UnregisteredAlg {
                 position: material.position(),

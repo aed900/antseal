@@ -222,6 +222,51 @@ impl fmt::Display for ContainerField {
     }
 }
 
+/// A manifest list with a **frozen length cap** (decision D10, registry §11).
+///
+/// Only two lists are capped. The others are recorded non-caps (D10 §3):
+/// `sig_policy`, `pubkeys` and `signatures` are bounded instead by the
+/// 16-value registered `sig_alg` universe *and* by duplicate-freedom, so an
+/// existing code fires before any cap could; `range` has fixed arity; and
+/// `title`/`app_version` are free-form `tstr`s with no principled maximum,
+/// transitively bounded by [`MAX_MANIFEST_BYTES`](crate::codec::caps::MAX_MANIFEST_BYTES).
+/// The clamp rule still applies to every one of them — a cap and a clamp are
+/// different mechanisms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ManifestListKind {
+    /// Body key 7 `files`.
+    Files,
+    /// A file's key 6 `units` — charged against a **work-global** budget
+    /// ([`DecodeBudget`](crate::codec::caps::DecodeBudget)), not a per-file
+    /// one, so "one file claiming 2^20 units" and "2^20 files claiming one
+    /// unit each" hit the same cap with the same code.
+    Units,
+}
+
+impl ManifestListKind {
+    /// Every capped list, for exhaustive tests.
+    pub const ALL: [Self; 2] = [Self::Files, Self::Units];
+
+    /// The frozen maximum element count (decision D10 §1).
+    #[must_use]
+    pub const fn cap(self) -> u64 {
+        use crate::codec::caps;
+        match self {
+            Self::Files => caps::MAX_FILE_COUNT,
+            Self::Units => caps::MAX_UNIT_COUNT,
+        }
+    }
+}
+
+impl fmt::Display for ManifestListKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Files => "files",
+            Self::Units => "units",
+        })
+    }
+}
+
 /// Which closed wire enum rejected a value (registry §6.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EnumId {
@@ -381,6 +426,41 @@ pub enum ManifestError {
         field: ContainerField,
     },
 
+    // ── Resource caps (decision D10, registry §11) ──────────────────
+    /// The manifest envelope input exceeds
+    /// [`MAX_MANIFEST_BYTES`](crate::codec::caps::MAX_MANIFEST_BYTES).
+    ///
+    /// Raised as the **first statement** of the envelope decode, before the
+    /// decoder is constructed, so it precedes every canonicality and schema
+    /// code and bounds the SHA-256 work behind `work_id`/`anchor_digest`
+    /// (D10 §5). The **body** needs no separate cap: it is a `bstr` inside
+    /// the envelope, so `len(body) < len(envelope)` by construction.
+    #[error("manifest input of {len} bytes exceeds the {cap}-byte limit")]
+    InputTooLarge {
+        /// The input length actually offered.
+        len: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+
+    /// A capped manifest list claims more elements than its cap allows.
+    ///
+    /// Checked on the **claimed count at the array head**, before a single
+    /// element is read. For `units` the claim is charged against the
+    /// work-global [`DecodeBudget`](crate::codec::caps::DecodeBudget), so
+    /// `claimed` is this file's claim while `cap` is always the work-global
+    /// constant — never the residue, so the reported error never depends on
+    /// how far through the file list the decoder had got.
+    #[error("{list} claims {claimed} entries, exceeding the limit of {cap}")]
+    ListTooLong {
+        /// Which list overflowed.
+        list: ManifestListKind,
+        /// The element count claimed.
+        claimed: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+
     /// A closed enum received an unregistered value.
     #[error("{enumeration}: unregistered value {value}")]
     UnknownEnumValue {
@@ -511,9 +591,9 @@ impl ManifestError {
     ///
     /// The exhaustive, variant-wildcard-free match is the compile-time
     /// guard: a new variant — or a new [`FixedLenField`]/[`CondField`]/
-    /// [`ContainerField`]/[`EnumId`]/[`AlgPosition`] discriminant — fails
-    /// compilation here until it receives a distinct code and an exemplar
-    /// in `all_code_exemplars`.
+    /// [`ContainerField`]/[`EnumId`]/[`AlgPosition`]/[`ManifestListKind`]
+    /// discriminant — fails compilation here until it receives a distinct
+    /// code and an exemplar in `all_code_exemplars`.
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
@@ -558,6 +638,11 @@ impl ManifestError {
                 ContainerField::Units => "manifest-empty-units",
                 ContainerField::Pubkeys => "manifest-empty-pubkeys",
                 ContainerField::Signatures => "manifest-empty-signatures",
+            },
+            Self::InputTooLarge { .. } => "manifest-too-large",
+            Self::ListTooLong { list, .. } => match list {
+                ManifestListKind::Files => "manifest-too-many-files",
+                ManifestListKind::Units => "manifest-too-many-units",
             },
             Self::UnknownEnumValue { enumeration, .. } => match enumeration {
                 EnumId::DescriptorKind => "manifest-unknown-descriptor-kind",
@@ -655,7 +740,19 @@ pub(crate) fn all_code_exemplars() -> Vec<ManifestError> {
             alg_id: i as u64,
         });
     }
+    for list in ManifestListKind::ALL {
+        let cap = list.cap();
+        exemplars.push(E::ListTooLong {
+            list,
+            claimed: cap + 1,
+            cap,
+        });
+    }
     exemplars.extend([
+        E::InputTooLarge {
+            len: crate::codec::caps::MAX_MANIFEST_BYTES + 1,
+            cap: crate::codec::caps::MAX_MANIFEST_BYTES,
+        },
         E::WrongRangeArity { got: 3 },
         E::DescriptorDomainMismatch {
             kind: super::registry::DescriptorKind::Binary,
@@ -689,7 +786,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            44,
+            47,
             "one exemplar per distinct code — update deliberately"
         );
 
@@ -766,6 +863,12 @@ mod tests {
             ManifestError::UnknownEnumValue {
                 enumeration: EnumId::UnitKind,
                 value: 2,
+            },
+            ManifestError::InputTooLarge { len: 1, cap: 0 },
+            ManifestError::ListTooLong {
+                list: ManifestListKind::Files,
+                claimed: 1,
+                cap: 0,
             },
             ManifestError::WrongRangeArity { got: 3 },
             ManifestError::DescriptorDomainMismatch {
@@ -900,6 +1003,21 @@ mod tests {
                     value: 2,
                 },
                 "unit_kind: unregistered value 2",
+            ),
+            (
+                ManifestError::InputTooLarge {
+                    len: 16_777_217,
+                    cap: 16_777_216,
+                },
+                "manifest input of 16777217 bytes exceeds the 16777216-byte limit",
+            ),
+            (
+                ManifestError::ListTooLong {
+                    list: ManifestListKind::Units,
+                    claimed: 65_537,
+                    cap: 65_536,
+                },
+                "units claims 65537 entries, exceeding the limit of 65536",
             ),
             (
                 ManifestError::WrongRangeArity { got: 3 },

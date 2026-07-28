@@ -36,6 +36,7 @@
 //! range width" exists (registry §4); collapsing them at parse would
 //! delete a required tamper-matrix row.
 
+use crate::codec::caps::{DecodeBudget, MAX_FILE_COUNT, MAX_UNIT_COUNT, clamped_capacity};
 use crate::codec::encode::MapEncoder;
 use crate::codec::{CanonicalDecoder, DecodeError, EncodeError, encode_item};
 use crate::crypto::commit::CommitmentDigest;
@@ -44,7 +45,9 @@ use crate::crypto::error::SigAlg;
 use crate::crypto::secrets::SealId;
 use crate::format::{SUPPORTED_VERSIONS, V1, VersionDispatch};
 
-use super::error::{AlgPosition, CondField, ContainerField, EnumId, FixedLenField, ManifestError};
+use super::error::{
+    AlgPosition, CondField, ContainerField, EnumId, FixedLenField, ManifestError, ManifestListKind,
+};
 use super::registry::{
     ADDRESS_LEN, DescriptorKind, FORMAT_VERSION_V1, FineTreeDomain, KeyClass, MapId, NONCE_LEN,
     UnitKind, key, sig_alg_from_wire, sig_alg_to_wire,
@@ -780,7 +783,17 @@ impl FileEntry {
         }
     }
 
-    fn decode(d: &mut CanonicalDecoder<'_>) -> Result<Self, ManifestError> {
+    /// Decode one file entry, charging its `units` claim against the
+    /// **work-global** [`DecodeBudget`] (F11 / decision D10).
+    ///
+    /// The budget is work-global rather than per-file so that "one file
+    /// claiming 2^20 units" and "2^20 files claiming one unit each" hit the
+    /// same cap with the same code — a per-file cap would let a hostile
+    /// manifest multiply unit count by file count.
+    fn decode(
+        d: &mut CanonicalDecoder<'_>,
+        budget: &mut DecodeBudget,
+    ) -> Result<Self, ManifestError> {
         const MAP: MapId = MapId::FileEntry;
         let mut reader = d.map().map_err(body_layer)?;
         let mut path_commit: Option<CommitmentDigest> = None;
@@ -813,9 +826,19 @@ impl FileEntry {
                     fine_root = Some(fixed(FixedLenField::FineRoot, bytes)?);
                 }
                 key::file::UNITS => {
-                    let count = d.array().map_err(body_layer)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
+                    // D10 §4 order: head canonicality, then the cap on the
+                    // claimed count before any element is read, then the
+                    // clamped allocation, then the elements.
+                    let claimed = d.array().map_err(body_layer)?;
+                    budget
+                        .take_units(claimed)
+                        .map_err(|()| ManifestError::ListTooLong {
+                            list: ManifestListKind::Units,
+                            claimed,
+                            cap: MAX_UNIT_COUNT,
+                        })?;
+                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    for _ in 0..claimed {
                         list.push(UnitEntry::decode(d)?);
                     }
                     units = Some(list);
@@ -1109,6 +1132,8 @@ impl ManifestBodyV1 {
         let mut pubkeys: Option<SigAlgMap> = None;
         let mut sig_policy: Option<Vec<SigAlg>> = None;
         let mut files: Option<Vec<FileEntry>> = None;
+        // One budget per body decode: the unit cap is work-global (F11).
+        let mut budget = DecodeBudget::new();
 
         while let Some(k) = reader.next_key(&mut d).map_err(body_layer)? {
             admit_key(MAP, k)?;
@@ -1141,9 +1166,15 @@ impl ManifestBodyV1 {
                     pubkeys = Some(SigAlgMap::decode(&mut d, SigMaterial::Pubkey, body_layer)?);
                 }
                 key::body::SIG_POLICY => {
-                    let count = d.array().map_err(body_layer)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
+                    // A recorded **non-cap** (D10 §3): the registered
+                    // `sig_alg` universe is `0..=15` and duplicates are
+                    // rejected, so element 17 of a hostile array always fails
+                    // on an existing code before any cap could fire. The
+                    // clamp still applies — a cap and a clamp are different
+                    // mechanisms, and only the clamp bounds allocation.
+                    let claimed = d.array().map_err(body_layer)?;
+                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    for _ in 0..claimed {
                         let alg_id = d.u64().map_err(body_layer)?;
                         list.push(sig_alg_from_wire(alg_id).ok_or(
                             ManifestError::UnregisteredAlg {
@@ -1155,10 +1186,17 @@ impl ManifestBodyV1 {
                     sig_policy = Some(list);
                 }
                 key::body::FILES => {
-                    let count = d.array().map_err(body_layer)?;
-                    let mut list = Vec::new();
-                    for _ in 0..count {
-                        list.push(FileEntry::decode(&mut d)?);
+                    let claimed = d.array().map_err(body_layer)?;
+                    if claimed > MAX_FILE_COUNT {
+                        return Err(ManifestError::ListTooLong {
+                            list: ManifestListKind::Files,
+                            claimed,
+                            cap: MAX_FILE_COUNT,
+                        });
+                    }
+                    let mut list = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+                    for _ in 0..claimed {
+                        list.push(FileEntry::decode(&mut d, &mut budget)?);
                     }
                     files = Some(list);
                 }

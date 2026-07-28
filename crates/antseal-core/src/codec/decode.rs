@@ -66,20 +66,14 @@
 //!
 //! No `unsafe`, no panics, no unwraps on any input: every failure is a
 //! typed `Err`. Recursion in the generic walker is bounded by
-//! [`MAX_NESTING_DEPTH`] so hostile nesting cannot overflow the stack.
+//! [`MAX_CBOR_DEPTH`](super::caps::MAX_CBOR_DEPTH) so hostile nesting
+//! cannot overflow the stack.
 
 use core::fmt;
 
 use minicbor::decode::Decoder;
 
-/// Provisional generic-walker recursion bound: the maximum number of
-/// enclosing containers (arrays/maps) an item may have. Deep enough for
-/// every v1 schema (nesting ≤ ~8) with wide margin; exists so
-/// [`check_canonical`] is panic-free (no stack overflow) on hostile
-/// nesting **today**. The frozen resource-cap constants — including the
-/// official depth cap — are task F11's; F11 may re-home or retune this
-/// value, keyed by the same [`DecodeError::NestingTooDeep`] error.
-pub const MAX_NESTING_DEPTH: u16 = 64;
+use super::caps::MAX_CBOR_DEPTH;
 
 /// The six item types the deterministic profile admits.
 ///
@@ -280,8 +274,8 @@ pub enum DecodeError {
         trailing: u64,
     },
 
-    /// Container nesting exceeds [`MAX_NESTING_DEPTH`] (provisional
-    /// walker guard; the frozen cap is F11's).
+    /// Container nesting exceeds [`MAX_CBOR_DEPTH`](super::caps::MAX_CBOR_DEPTH)
+    /// (the D10-frozen walker guard).
     #[error("container nesting exceeds the supported depth at byte {position}")]
     NestingTooDeep {
         /// Offset of the item that would exceed the depth bound.
@@ -390,6 +384,20 @@ impl<'b> CanonicalDecoder<'b> {
     #[must_use]
     pub fn position(&self) -> usize {
         self.d.position()
+    }
+
+    /// Bytes remaining after the cursor.
+    ///
+    /// `u64`, never `usize`, so the F11 clamp
+    /// ([`caps::clamped_capacity`](super::caps::clamped_capacity)) behaves
+    /// identically on wasm32 and native. Every element of a definite-length
+    /// array costs at least one wire byte, so this is an upper bound on how
+    /// many elements the rest of the input can still hold — which is what
+    /// makes it a legitimate allocation clamp.
+    #[must_use]
+    pub fn remaining(&self) -> u64 {
+        let input = self.d.input();
+        input.len().saturating_sub(self.d.position()) as u64
     }
 
     /// Defensive error for states the head validation has already made
@@ -672,16 +680,17 @@ impl<'b> CanonicalDecoder<'b> {
         Ok(())
     }
 
-    /// Generic canonicality walk of one item (any schema), recursing
-    /// into containers with the [`MAX_NESTING_DEPTH`] guard. `depth` is
-    /// the number of enclosing containers.
+    /// Generic canonicality walk of one item (any schema), recursing into
+    /// containers with the [`MAX_CBOR_DEPTH`] guard. `depth` is the number
+    /// of enclosing containers, so an item with exactly `MAX_CBOR_DEPTH`
+    /// enclosing containers is accepted and one more is rejected (D10 §2).
     ///
     /// Map keys of *any* item type are compared in bytewise order of
     /// their (already canonically validated) encoded forms — the general
     /// §4.2.1 rule; schema layers additionally restrict keys to unsigned
     /// integers via [`MapReader`].
     fn walk_item(&mut self, depth: u16) -> Result<(), DecodeError> {
-        if depth > MAX_NESTING_DEPTH {
+        if depth > MAX_CBOR_DEPTH {
             return Err(DecodeError::NestingTooDeep {
                 position: self.d.position() as u64,
             });
@@ -1042,8 +1051,8 @@ mod tests {
 
     #[test]
     fn nesting_depth_guard_accepts_limit_rejects_beyond() {
-        let max = usize::from(MAX_NESTING_DEPTH);
-        // Innermost item enclosed by exactly MAX_NESTING_DEPTH containers.
+        let max = usize::from(MAX_CBOR_DEPTH);
+        // Innermost item enclosed by exactly MAX_CBOR_DEPTH containers.
         assert_eq!(check_canonical(&nested_arrays(max + 1)), Ok(()));
         // One level deeper: rejected, never a stack overflow.
         assert_eq!(
@@ -1052,6 +1061,36 @@ mod tests {
                 position: (max + 1) as u64
             })
         );
+    }
+
+    /// The v1 registry's deepest legal chain is 6 containers (§7.6.3), so a
+    /// 6-deep item must always pass. This is the guard against ever lowering
+    /// [`MAX_CBOR_DEPTH`] below the schema by accident — a cap under the
+    /// schema maximum would reject honest manifests.
+    #[test]
+    fn depth_guard_admits_the_deepest_v1_schema_chain() {
+        const V1_DEEPEST_CHAIN: usize = 6;
+        assert!(usize::from(MAX_CBOR_DEPTH) >= V1_DEEPEST_CHAIN);
+        assert_eq!(
+            check_canonical(&nested_arrays(V1_DEEPEST_CHAIN + 1)),
+            Ok(())
+        );
+    }
+
+    /// `remaining()` is the clamp's right-hand operand (F11/D10 §4): it must
+    /// shrink exactly as the cursor advances and never underflow.
+    #[test]
+    fn remaining_tracks_the_cursor_in_u64() {
+        // [1, 2]: head 0x82, then two one-byte uints.
+        let input = [0x82u8, 0x01, 0x02];
+        let mut d = CanonicalDecoder::new(&input);
+        assert_eq!(d.remaining(), 3);
+        assert_eq!(d.array(), Ok(2));
+        assert_eq!(d.remaining(), 2);
+        assert_eq!(d.u64(), Ok(1));
+        assert_eq!(d.remaining(), 1);
+        assert_eq!(d.u64(), Ok(2));
+        assert_eq!(d.remaining(), 0);
     }
 
     // ── Typed reader ──

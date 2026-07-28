@@ -35,10 +35,13 @@
 //! - **Schema layer (F5/F8)**: unknown/extra map keys in a fixed schema,
 //!   presence rules, field lengths — built on this module's typed reader
 //!   ([`decode::CanonicalDecoder`] + [`decode::MapReader`]).
-//! - **Resource caps (F11)**: byte-size/count/depth cap constants and
-//!   their budget tracker. Until F11 freezes them, this module carries a
-//!   provisional recursion guard ([`decode::MAX_NESTING_DEPTH`]) so the
-//!   generic walker is panic-free on hostile nesting today.
+//! - **Resource caps ([`caps`], F11 / decision D10)**: the 19 frozen
+//!   byte-size/count/depth cap constants, the universal clamp rule
+//!   ([`caps::clamped_capacity`]), and the work-global unit budget
+//!   ([`caps::DecodeBudget`]). The generic walker's recursion guard is
+//!   [`caps::MAX_CBOR_DEPTH`], which replaced F3's provisional
+//!   `MAX_NESTING_DEPTH` keyed by the same
+//!   [`decode::DecodeError::NestingTooDeep`].
 //!
 //! The codec is built on the exact-pinned `minicbor = "=2.3.0"`
 //! (decision D7, `docs/decisions/D7-cbor-crate.md`): emission and payload
@@ -52,11 +55,13 @@
 //! output and error values are platform-independent (positions are `u64`,
 //! never `usize`) so native and wasm32 behavior bit-match.
 
+pub mod caps;
 pub mod decode;
 pub mod encode;
 
+pub use caps::{DecodeBudget, MAX_CBOR_DEPTH, clamped_capacity};
 pub use decode::{
-    CanonicalDecoder, DecodeError, ExpectedKind, ForbiddenKind, ItemKind, MAX_NESTING_DEPTH,
-    MapReader, check_canonical,
+    CanonicalDecoder, DecodeError, ExpectedKind, ForbiddenKind, ItemKind, MapReader,
+    check_canonical,
 };
 pub use encode::{ArrayEncoder, CanonicalEncoder, EncodeError, MapEncoder, encode_item};
