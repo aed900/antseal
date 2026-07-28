@@ -59,12 +59,16 @@ Live lanes (wave 5 — Q6):
 | `vector-freeze` | Q6 — **NEW required context.** Per format version, `testdata/vectors/v<n>/FROZEN.sha256` pins the exact bytes of every committed vector **and** is that version's must-exist list: `golden-vectors` can only fail on files it finds, so a **deleted** vector is caught here, as is a committed vector left *outside* the manifest. Two independent layers: coreutils `sha256sum -c` (no shared code with antseal) and `crates/antseal-core/tests/vector_freeze.rs` (directives, misfiled/unfrozen/stray classes, per-version retention, `#! pending` must-exist obligations). **Self-tests first, every run**: a mutated and a deleted vector must both turn the digest check red (`./scripts/vector-freeze.sh --self-test`). Add a vector with `./scripts/vector-freeze.sh --update`. Contract: `testdata/vectors/README.md`; retention policy: `testdata/README.md`. |
 | `tamper-matrix` | Q7 + Q8 — **mount point claimed** (job id and name unchanged). Q7: every registered mutation row produces exactly its expected stable code / verdict state, outcomes are pairwise distinct across domains, no row panics. Q8: `testdata/tamper/MATRIX.json` maps MVP-SPEC.md line 168's enumeration **1:1** onto implemented rows — each family's `spec_quote` must be a literal substring of that spec line, every spec case is implemented or carries a `pending` marker naming its owning task, every implemented row is mapped or declared in `project_added` with a justification, and deliberate non-rows are recorded. **Zero pending is Q14's gate condition**, printed every run. See `testdata/tamper/README.md`. |
 
-Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
-task; **a green mount-point lane asserts nothing until then**):
+Live lanes (wave 6 — F17/Q9):
 
-| Lane | Content lands at |
+| Lane | What it asserts |
 | --- | --- |
-| `fuzz-smoke` | Q9 — fixed-budget per-PR cargo-fuzz smoke (nightly long run is a separate scheduled workflow) |
+| `fuzz-smoke` | Q9 — **mount point claimed** (job id and name unchanged, so the required-status context set is unchanged at 16). Builds the four cargo-fuzz targets — F17's `manifest_decode` / `bundle_decode` / `codec_round_trip` and R10's `verify_bundle` — and fuzzes each for 90 s over the committed seed corpora (`testdata/fuzz-seeds/`). **Self-tests first, every run**: `scripts/fuzz.sh selftest` arms a permanent env-gated tripwire so each target panics on its first input, and the lane fails unless the crash is caught *and* a reproducer artifact is written — only then is a clean run evidence. Crash artifacts upload on failure. Nightly long run with corpus persistence: `.github/workflows/fuzz-nightly.yml` (scheduled, never a PR context). Driver `scripts/fuzz.sh`; doc [`docs/testing/fuzzing.md`](docs/testing/fuzzing.md). |
+
+**No mount-point lanes remain**: every Q1 placeholder has been claimed.
+cargo-fuzz needs nightly, so a second dated toolchain pin lives in
+`fuzz/rust-toolchain.toml` and governs `fuzz/` only — the workspace pin
+(= the MSRV) is untouched.
 
 ### Cross-OS suite naming (reserved test-name markers)
 
