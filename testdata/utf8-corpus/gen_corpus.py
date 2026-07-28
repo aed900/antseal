@@ -41,6 +41,36 @@ NFC form of an already-assigned character can never change in a later version
 combining classes are immutable). Characters assigned after this
 interpreter's table would be unsafe here — see NFC_SAFE_FLOOR.
 
+### The T0 anchor (D31 row 10)
+
+The paragraph above is a *reasoned* argument that this interpreter's table is
+an exact oracle. D31 section 1 is blunt about what a reasoned argument is
+worth: a T1 re-implementation catches transcription bugs but never a shared
+misreading, and only an external oracle closes that gap. So `--check` also
+replays the Unicode Consortium's own conformance data — the NFC column of
+`NormalizationTest.txt` 17.0.0, the exact version D25 pins — from
+`testdata/unicode/`. See that directory's PROVENANCE.md.
+
+**D31 section 3 asked for `assert unicodedata.unidata_version == '17.0.0'`
+here. That assertion is not satisfiable and is deliberately not implemented.**
+No released CPython embeds Unicode 17.0.0: 3.11 has 14.0.0, 3.12 has 15.0.0,
+3.13 has 15.1.0, 3.14 has 16.0.0 — and D31's own CI job pins Python 3.12. The
+assertion would have made the cross-check lane permanently red on the very
+runner D31 specifies for it, and it would have thrown away the stability-policy
+argument above, which is the thing that actually makes the oracle sound.
+
+What D31 was reaching for — "without the version assertion the different-NFC-
+table-lineage claim is unverified" — is met the right way instead:
+
+- NFC_SAFE_FLOOR still bounds the fixtures (a genuinely ancient table fails);
+- the running `unidata_version` is *recorded* in every verdict line, so the
+  table lineage is never a silent variable;
+- and the conformance replay is the real anchor. It skips lines whose scalars
+  the running interpreter does not know (their expected NFC legitimately
+  differs there) and enforces NORMALIZATION_TEST_MIN_LINES on the number
+  actually executed, so a stale interpreter or a truncated file fails the lane
+  rather than passing it vacuously.
+
 Stage 1 (lossy decode) relies on CPython's UTF-8 `replace` handler emitting
 one U+FFFD per *maximal subpart* (Unicode section 3.9) — the same rule D20
 froze and Rust's `String::from_utf8_lossy` implements. Verified class by
@@ -59,6 +89,20 @@ import unicodedata
 NFC_SAFE_FLOOR = (6, 0)
 
 HERE = pathlib.Path(__file__).resolve().parent
+
+# The T0 anchor: Unicode's own NFC conformance column (D31 row 10). Provenance,
+# the filter that produced the sample, and the interpreter-version caveat are
+# in testdata/unicode/PROVENANCE.md.
+NORMALIZATION_TEST = HERE.parent / "unicode" / "NormalizationTest-17.0.0-sample.txt"
+
+# A floor on lines actually executed. The runner skips lines whose scalars the
+# running interpreter does not know, which is correct but is also exactly how
+# this check could rot into a no-op: a very old table, or a truncated sample,
+# would skip everything and report a cheerful zero failures. 1 200 is
+# comfortably under the 1 537 executed on the oldest interpreter this project
+# supports (CPython 3.11, Unicode 14.0.0 — the worst case, since a newer table
+# knows strictly more scalars and so skips strictly fewer) and far above zero.
+NORMALIZATION_TEST_MIN_LINES = 1200
 
 BOM = "\ufeff"  # leading run stripped (D21), interior preserved as ZWNBSP
 ZWJ = "\u200d"  # zero-width joiner (emoji sequences)
@@ -328,6 +372,103 @@ def build() -> dict[str, tuple[bytes, bytes, str]]:
     return built
 
 
+def _scalars(field: str) -> str:
+    """Decode one upstream column ('0044 0307') into a Python string."""
+    return "".join(chr(int(cp, 16)) for cp in field.split())
+
+
+def normalization_test_anchor() -> "tuple[int, int, list[str]]":
+    """Replay the NFC column of Unicode's own conformance data (D31 row 10).
+
+    UAX #15's conformance statement for the five-column format
+    `c1;c2;c3;c4;c5` gives, for the NFC leg:
+
+        c2 == NFC(c1) == NFC(c2) == NFC(c3)
+        c4 == NFC(c4) == NFC(c5)
+
+    Returns (executed, skipped, failures). A line is skipped when any of its
+    scalars is unassigned in the running interpreter — there its expected NFC
+    form legitimately differs, so asserting it would assert a falsehood. See
+    testdata/unicode/PROVENANCE.md for why the remainder is exact.
+    """
+    if not NORMALIZATION_TEST.exists():
+        return 0, 0, [f"missing conformance sample: {NORMALIZATION_TEST}"]
+
+    executed = 0
+    skipped = 0
+    failures: list[str] = []
+    part = "?"
+    for lineno, raw in enumerate(
+        NORMALIZATION_TEST.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        line = raw.strip()
+        if line.startswith("@"):
+            part = line[1:]
+            continue
+        if not line or line.startswith("#"):
+            continue
+        columns = line.split("#")[0].strip().rstrip(";").split(";")
+        if len(columns) != 5:
+            failures.append(f"line {lineno}: expected 5 columns, got {len(columns)}")
+            continue
+        try:
+            c1, c2, c3, c4, c5 = (_scalars(col) for col in columns)
+        except ValueError:
+            failures.append(f"line {lineno}: malformed scalar list")
+            continue
+
+        if any(unicodedata.category(ch) == "Cn" for ch in c1 + c2 + c3 + c4 + c5):
+            skipped += 1
+            continue
+
+        executed += 1
+        for label, source, want in (
+            ("NFC(c1)", c1, c2),
+            ("NFC(c2)", c2, c2),
+            ("NFC(c3)", c3, c2),
+            ("NFC(c4)", c4, c4),
+            ("NFC(c5)", c5, c4),
+        ):
+            got = unicodedata.normalize("NFC", source)
+            if got != want:
+                failures.append(
+                    f"{part} line {lineno}: {label} = "
+                    f"{' '.join(f'{ord(ch):04X}' for ch in got)}, expected "
+                    f"{' '.join(f'{ord(ch):04X}' for ch in want)}"
+                )
+    return executed, skipped, failures
+
+
+def run_normalization_test_anchor() -> int:
+    """Report the T0 anchor's verdict. 0 = pass, 1 = fail."""
+    executed, skipped, failures = normalization_test_anchor()
+    version = unicodedata.unidata_version
+    if failures:
+        for problem in failures[:20]:
+            print(f"  {problem}", file=sys.stderr)
+        print(
+            f"FAIL  NormalizationTest NFC anchor: {len(failures)} disagreement(s) "
+            f"over {executed} executed line(s) (interpreter Unicode table {version})",
+            file=sys.stderr,
+        )
+        return 1
+    if executed < NORMALIZATION_TEST_MIN_LINES:
+        print(
+            f"FAIL  NormalizationTest NFC anchor executed only {executed} line(s), "
+            f"below the {NORMALIZATION_TEST_MIN_LINES} floor — the sample is "
+            f"truncated or this interpreter's Unicode table ({version}) is too old "
+            "for the anchor to mean anything",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"OK    NormalizationTest NFC anchor: {executed} line(s) executed, "
+        f"{skipped} skipped as unassigned in Unicode {version} "
+        "(T0, Unicode 17.0.0 conformance data)"
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Regenerate or verify the G3 UTF-8 corpus.")
     parser.add_argument(
@@ -349,7 +490,12 @@ def main() -> int:
     input_dir, expected_dir = HERE / "input", HERE / "expected"
 
     if args.check:
-        bad = 0
+        # The T0 anchor runs first and unconditionally, for D31 section 6b's
+        # reason applied one level down: if the NFC oracle itself disagrees
+        # with Unicode, every fixture agreement below is worthless, and this
+        # ordering makes that failure legible instead of showing up as 37
+        # mismatched fixtures.
+        bad = run_normalization_test_anchor()
         for name, (raw, expected, _) in sorted(built.items()):
             for path, want in ((input_dir / name, raw), (expected_dir / name, expected)):
                 got = path.read_bytes() if path.exists() else None
