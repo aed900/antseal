@@ -37,10 +37,19 @@ load-bearing** (D88): dropping it silently restores recoverable `W` and
 GGM-seed residue in dropped hashers. Treat feature removal as a version bump
 under §4, and note that the compile-time `ZeroizeOnDrop` assertions in
 `crypto.rs::zeroization_sweep` do **not** catch it — the wipe is drop glue,
-not a trait bound. `crates/antseal-core/tests/zeroization_residue.rs` is the
-only behavioural guard. The stack's other feature selections are ordinary
-consumption shape; this one is a security property with no compile-time
-detector, which is why it is called out here rather than left in the row.
+not a trait bound.
+
+Three separate guards exist instead (C24), and none is redundant:
+
+| guard | file | catches |
+| --- | --- | --- |
+| compile-time | `crates/antseal-core/tests/digest_zeroize_link.rs` | `digest/zeroize` off ⇒ `sha2::digest::zeroize` does not resolve ⇒ build fails. Proves `BlockBuffer`'s wiping `Drop` exists — the buffer holding `W` and the GGM parent seed. **Blind to** `sha2`'s own feature: `hmac/zeroize` forwards `digest/zeroize` too. |
+| declaration | `crates/antseal-core/tests/feature_pins.rs` | the pin line itself losing `features = ["zeroize"]` — exactly the case above is blind to, i.e. `Sha256VarCore`'s chaining-state `Drop` silently vanishing. |
+| behaviour | `crates/antseal-core/tests/zeroization_residue.rs` | bytes actually surviving a drop. The only layer that would outlive an upstream change of mechanism. |
+
+The stack's other feature selections are ordinary consumption shape; this one
+is a security property whose failure mode is silent, which is why it is
+called out here rather than left in the row.
 
 **This list grows — it is a floor, not a ceiling.** G nominates the
 Unicode/NFC crate (with its exact Unicode data version) at M0, and C

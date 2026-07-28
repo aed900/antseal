@@ -23,10 +23,18 @@ sentence above once read "a dependency bump that silently dropped a `zeroize`
 feature fails the build", full stop. That is **false for `sha2`**, and the
 distinction is the whole subject of R1's disposition: `sha2/zeroize` wipes
 through ordinary **drop glue** on `Sha256VarCore` and `BlockBuffer`, not
-through a `ZeroizeOnDrop` bound, so no `const` assertion can observe whether
-it is enabled. `crates/antseal-core/tests/zeroization_residue.rs` (C22) and
-the pin assertion in `crates/antseal-core/tests/feature_pins.rs` (C24) are the
-only guards for that one.
+through a `ZeroizeOnDrop` bound, so no `const` assertion in
+`zeroization_sweep` can observe whether it is enabled.
+
+C24 guards it with three separate test binaries instead
+(`docs/dependency-policy.md` §1 tabulates what each one catches):
+`tests/digest_zeroize_link.rs` (compile-time — `sha2::digest::zeroize` does
+not resolve without it, which proves `BlockBuffer`'s `Drop` but is blind to
+`sha2`'s own feature, since `hmac/zeroize` forwards `digest/zeroize` too),
+`tests/feature_pins.rs` (the pin line still says what it must), and
+`tests/zeroization_residue.rs` (the bytes are actually wiped). D88 §7 called
+this a property with "**no** compile-time detector"; that is slightly too
+strong — a *partial* one exists, and C24 uses it, but it cannot stand alone.
 
 **Honest part.** Five residual risks (R1–R5) are recorded below. **Four
 stand; R1 is resolved** (2026-07-28, D88) with a narrowed, permanently

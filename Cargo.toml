@@ -89,13 +89,14 @@ serde_json = "=1.0.151"
 # `content::ggm::child_seed` call strands its parent GGM seed in a dropped
 # hasher — a direct contradiction of MVP-SPEC.md line 143.
 #
-# There is NO compile-time detector: the wipe is drop glue, not a trait bound,
-# so `crypto.rs::zeroization_sweep`'s `ZeroizeOnDrop` assertions cannot see it
-# (`digest`'s `buffer_fixed!` `ZeroizeOnDrop` arm is a marker impl with no
-# `Drop`). Removing this feature would silently un-fix all of the above.
-# `crates/antseal-core/tests/zeroization_residue.rs` is the only guard, and
-# `feature_pins.rs` asserts this line still says what it says. Treat removal
-# as a version bump under docs/dependency-policy.md §4.
+# `crypto.rs::zeroization_sweep`'s `ZeroizeOnDrop` assertions CANNOT see this
+# feature: the wipe is drop glue, not a trait bound (`digest`'s
+# `buffer_fixed!` `ZeroizeOnDrop` arm is a marker impl with no `Drop`). It is
+# guarded instead by three deliberately separate test binaries (C24) —
+# `tests/digest_zeroize_link.rs` (compile-time: `sha2::digest::zeroize` does
+# not resolve without it), `tests/feature_pins.rs` (this line still says what
+# it must), and `tests/zeroization_residue.rs` (the bytes are actually wiped).
+# Treat removal as a version bump under docs/dependency-policy.md §4.
 #
 # Cost, re-measured at C22: ~4-6% on hash-bound work, below D88 §5's 10%
 # escalation gate against G18's budget. `hmac`'s own `zeroize` feature is
