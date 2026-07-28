@@ -983,18 +983,15 @@ mod tests {
     /// committed-bytes half lives in `tests/format_tamper_fixtures.rs`,
     /// which needs file I/O.
     ///
-    /// The oversized fixture is skipped **here only**: it allocates
-    /// `MAX_BUNDLE_BYTES + 1` and this module's unit tests also run under
-    /// `wasm32-unknown-unknown`, where a 256 MiB `memory.grow` is a real
-    /// commitment rather than a lazily-backed mapping. Its row is exercised
-    /// by the native tamper-matrix lane, and `tests/parser_caps.rs` pins the
-    /// same cap independently.
+    /// Including the oversized fixture, which allocates
+    /// `MAX_BUNDLE_BYTES + 1`. That is affordable because the buffer is
+    /// zeroed-on-allocation and only its first ~1 KiB is ever written, and
+    /// because this module is `test-util`-gated: the `wasm32-core-tests`
+    /// lane enables `test-vectors` only, so none of it reaches a target
+    /// where a 256 MiB `memory.grow` would be a real commitment.
     #[test]
     fn every_fixture_produces_its_declared_code_and_layer() {
         for fixture in FIXTURES {
-            if fixture.id == "bundle-oversized" {
-                continue;
-            }
             let bytes = (fixture.build)()
                 .unwrap_or_else(|| panic!("fixture `{}` failed to build", fixture.id));
             let observed = run_surface(fixture.surface, &bytes);

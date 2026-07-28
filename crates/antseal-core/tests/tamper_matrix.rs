@@ -8,13 +8,23 @@
 //! [`antseal_core::test_util::tamper`]; the error-code contract these rows
 //! bind to is `docs/testing/error-code-contract.md`.
 //!
-//! **This registry is deliberately not complete.** The full M0 row list is
-//! populated by the domain tasks that own the fixtures — F15 (format-level
-//! rows), C17 (crypto rows), G19 (fine-tree rows), R7/R8 (structural and
-//! pipeline rows) — and the 1:1 completeness check against the spec's row
-//! list is Q8's. What is proven here is that the harness works, that the
-//! codes it binds to are genuinely distinct across three domains, and that
-//! the row-addition procedure has been exercised end to end.
+//! **The rows below are Q7's seed set, not the whole matrix.** The full M0
+//! row list is assembled by [`all_rows`] from the domain slices that own the
+//! fixtures — F15 (format), C17 (crypto), G19 (fine tree), R7/R8
+//! (structural and pipeline) — and the 1:1 completeness check against the
+//! spec's row list is Q8's. What the seed rows prove is that the harness
+//! works, that the codes it binds to are genuinely distinct across domains,
+//! and that the row-addition procedure has been exercised end to end.
+//!
+//! The seven `cbor-*` seed rows below run on a synthetic three-byte map,
+//! which is what let Q7 land before any codec fixture existed. F15 has since
+//! given four of them — the mutations MVP-SPEC.md line 168 names by hand —
+//! a **real manifest-body fixture** under `testdata/tamper/format/`, checked
+//! by `tests/format_tamper_fixtures.rs`. Those fixtures deliberately did
+//! *not* become second rows: they produce the same four codes, and Q7's
+//! distinctness assertion would correctly refuse the pairs
+//! (`the_format_fixture_table_agrees_with_the_live_registry`, below, is
+//! where the two sides are tied together).
 
 /// Q8's completeness registry check (`testdata/tamper/MATRIX.json`). It
 /// lives here rather than in its own test target because the assembled
@@ -392,12 +402,13 @@ const ROWS: &[TamperRow] = &[
 /// both sit in one registry.
 ///
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
-/// tree), R7 (structural) and R8 (pipeline integration) are present; F15
-/// and A21 follow.
+/// tree), R7 (structural), R8 (pipeline integration) and F15 (format) are
+/// present; A21's M2 anchor rows follow.
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_format::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
     rows
@@ -452,6 +463,49 @@ fn seeded_rows_span_multiple_domains() {
         rows.iter()
             .any(|row| row.expected == ExpectedOutcome::ErrorCode("crypto-path-commit-mismatch")),
         "no row binds `crypto-path-commit-mismatch`"
+    );
+}
+
+/// **F15's fixture table, tied to the live registry.** Every format fixture
+/// that names a row must name one that exists *and* expects the fixture's
+/// code.
+///
+/// This is the check that keeps the fixture/row split honest in both
+/// directions. A fixture pointing at a row that never existed would be a
+/// coverage claim with nothing behind it; a fixture pointing at a row that
+/// expects a *different* code would mean the committed bytes are evidence
+/// for something other than what the row asserts. It has to live here rather
+/// than beside the fixtures, because [`all_rows`] — which includes Q7's own
+/// seed rows, and those are what the four spec-named body fixtures point
+/// at — is this target's.
+#[test]
+fn the_format_fixture_table_agrees_with_the_live_registry() {
+    use antseal_core::test_util::tamper_rows_format::FIXTURES;
+
+    let rows = all_rows();
+    let mut claimed = 0usize;
+    for fixture in FIXTURES {
+        let Some(row_id) = fixture.row else {
+            continue;
+        };
+        let row = rows.iter().find(|r| r.id == row_id).unwrap_or_else(|| {
+            panic!(
+                "fixture `{}` names row `{row_id}`, which is in no domain slice",
+                fixture.id
+            )
+        });
+        assert_eq!(
+            row.expected,
+            ExpectedOutcome::ErrorCode(fixture.code),
+            "fixture `{}` is committed as evidence for row `{row_id}`, but they disagree about \
+             the code",
+            fixture.id
+        );
+        claimed += 1;
+    }
+    assert!(
+        claimed >= antseal_core::test_util::tamper_rows_format::ROWS.len(),
+        "every F15 row must be backed by at least one fixture"
     );
 }
 
