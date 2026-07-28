@@ -1,4 +1,4 @@
-//! Repo-wide identifier bans (task F7).
+//! Repo-wide identifier bans (task F7; extended by F8 for D28 rider 1).
 //!
 //! MVP-SPEC.md line 75 names two distinct digests and forbids collapsing
 //! them into one: `work_id` = SHA-256 of the manifest **body**, and
@@ -8,7 +8,16 @@
 //! either one `manifest_hash` has already lost the distinction that keeps
 //! anchors bound to the bytes they were computed over.
 //!
-//! So the identifier is banned outright, and this test is the enforcement:
+//! **D28 rider 1** adds a second family: a `.sealproof` carries no
+//! reveal-shape discriminant at any level. Reveal shape is *derived* from the
+//! signed unit table and the revealed set, so a declared shape would be a
+//! second, sealer-forgeable source of truth — and a bundle declaring
+//! "partial" while revealing every unit would reintroduce, through the wire
+//! format, exactly the permissive option D28 rejected. A future editor who
+//! notices that the verifier "already knows" the shape and thinks it cheap to
+//! record it is re-opening a closed decision; this test is what stops them.
+//!
+//! So the identifiers are banned outright, and this test is the enforcement:
 //! it greps the tracked Rust sources rather than trusting review.
 
 use std::fs;
@@ -18,25 +27,58 @@ use std::path::{Path, PathBuf};
 const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 /// Identifiers no source file may contain, with the reason each is banned.
-const BANNED: &[(&str, &str)] = &[(
-    "manifest_hash",
-    "MVP-SPEC.md line 75 bans it: use `work_id` (body) or `anchor_digest` \
-     (full manifest incl. signatures) — the two are not interchangeable",
-)];
+const BANNED: &[(&str, &str)] = &[
+    (
+        "manifest_hash",
+        "MVP-SPEC.md line 75 bans it: use `work_id` (body) or `anchor_digest` \
+         (full manifest incl. signatures) — the two are not interchangeable",
+    ),
+    (
+        "is_full_reveal",
+        "D28 rider 1: reveal shape is DERIVED from the signed unit table and \
+         the revealed set, never declared — a declared shape is \
+         sealer-forgeable (registry §7.6.1, §7.14)",
+    ),
+    (
+        "reveal_mode",
+        "D28 rider 1: no reveal-shape discriminant exists at any level",
+    ),
+    (
+        "reveal_shape",
+        "D28 rider 1: no reveal-shape discriminant exists at any level",
+    ),
+];
+
+/// Files that necessarily spell the banned identifiers because they are
+/// themselves enforcement sites. Each needs a reason; nothing else is exempt.
+///
+/// Keep this list to *guards*. A file that merely wants to mention a banned
+/// name belongs in a `//` comment, which the scan already treats as prose.
+const ENFORCEMENT_SITES: &[(&str, &str)] = &[
+    ("identifier_bans.rs", "this file defines the ban list"),
+    (
+        "format_registry_draft.rs",
+        "the registry §7.6.1 checked-absence test names the forbidden field \
+         names so it can assert no wire map grows one",
+    ),
+];
 
 #[test]
 fn no_source_file_uses_a_banned_identifier() {
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
+    let mut exempted = 0usize;
 
     for path in rust_sources(&Path::new(WORKSPACE_ROOT).join("crates")) {
         let text = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("{}: cannot read source: {err}", path.display()));
         scanned += 1;
 
-        // This file necessarily contains the banned strings (it defines
-        // them); skip itself so the guard is not its own violation.
-        if path.ends_with("identifier_bans.rs") {
+        if ENFORCEMENT_SITES
+            .iter()
+            .any(|(name, _)| path.ends_with(name))
+        {
+            exempted += 1;
             continue;
         }
 
@@ -59,6 +101,12 @@ fn no_source_file_uses_a_banned_identifier() {
     assert!(
         scanned > 0,
         "the source sweep found no files — the walk is broken, not the code clean"
+    );
+    assert_eq!(
+        exempted,
+        ENFORCEMENT_SITES.len(),
+        "every exemption must correspond to a file that actually exists — a \
+         stale entry silently un-guards a real file"
     );
     assert!(
         offenders.is_empty(),
