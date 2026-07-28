@@ -36,6 +36,15 @@ run wasm32 cargo build -p antseal-core --target wasm32-unknown-unknown --locked
 run format-freeze scripts/format-freeze.sh --self-test
 run format-freeze scripts/format-freeze.sh
 
+# Q43 — the CI lanes whose shell used to live only in YAML, and therefore ran
+# only after a push. `ci-shell` is the enumerating guard (with its own planted
+# faults); `ci-lanes --self-test` reproduces the Q8 flag-order defect and
+# requires the tamper-matrix lane to go red locally. Both are seconds once the
+# workspace is built, which is the point: a lane that has never run on the
+# remote is not evidence, and neither is one that never runs locally.
+run ci-shell   scripts/ci-lanes.sh ci-shell
+run ci-lanes   scripts/ci-lanes.sh --self-test
+
 # F14 — the independent cross-check (decision D31; contract:
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
 # it shares no code with the crate it checks.

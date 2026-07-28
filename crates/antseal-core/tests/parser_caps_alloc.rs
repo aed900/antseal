@@ -5,7 +5,31 @@
 //!
 //! This is the observable form of D10 §4's clamp rule — *every pre-allocation
 //! is clamped to `min(claimed_length, remaining_input)`* — and the invariant
-//! F17's fuzz target will restate ("no allocation beyond the F11 budget").
+//! F17's fuzz target restates ("no allocation beyond the F11 budget").
+//!
+//! # What F17 disproved, and what this file now claims (task F30)
+//!
+//! Until F30 this file stated the consequence as *"an attacker can never make
+//! the parser allocate more than the attacker's own bytes"* while asserting
+//! something strictly weaker, and F17's first fuzz run falsified the stated
+//! form in seconds. Two independent reasons the two tests below could not
+//! have caught it, both structural rather than unlucky:
+//!
+//! 1. **Both fixtures put their container head last**, so `d.remaining()` —
+//!    the clamp's right-hand operand — is 0 or single digits at the
+//!    allocation. A clamp whose operands are in *different units* is
+//!    indistinguishable from a correct one when one of them is zero.
+//! 2. **`SLACK` is 4 KiB and the fixtures are under 128 B**, so even the
+//!    32× multiplier F17 measured fits inside the slack.
+//!
+//! The claim is now true as written — F30 made [`clamped_capacity`] divide
+//! the remaining bytes by the element width — and
+//! [`the_reservation_never_exceeds_the_input_that_drove_it`] is where it is
+//! actually proven, on kilobyte inputs whose heads are followed by a tail.
+//! That test was run red against the pre-F30 clamp (2 097 152 B reserved for
+//! a 65 549 B input; 3 145 728 B for a 20 005 B one) before it was run green.
+//!
+//! [`clamped_capacity`]: antseal_core::codec::clamped_capacity
 //!
 //! # Why this is its own test binary
 //!
@@ -54,7 +78,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use antseal_core::bundle::BundleV1;
 use antseal_core::codec::caps;
-use antseal_core::manifest::Manifest;
+use antseal_core::manifest::{Manifest, ManifestBodyV1};
 
 // ─────────────────────────────────────────────────────────────────────
 // A counting global allocator, armed only around the call under test.
@@ -117,10 +141,39 @@ fn measure(f: impl FnOnce()) -> (usize, usize) {
 // Fixtures: a handful of bytes claiming astronomically many elements.
 // ─────────────────────────────────────────────────────────────────────
 
+/// An 8-byte-argument head. Shortest-form **only** for arguments above
+/// `u32::MAX`; see [`canon_head`] for the general case.
 fn head(major: u8, arg: u64) -> Vec<u8> {
     let mut v = vec![(major << 5) | 27];
     v.extend_from_slice(&arg.to_be_bytes());
     v
+}
+
+/// A **canonical** (shortest-form) head — the only kind that survives
+/// `d.array()`/`d.map()`.
+///
+/// [`head`] always writes the 8-byte argument, which is non-canonical for
+/// anything under 2^32 and is rejected as `cbor-non-shortest-length` at step
+/// 1 of D10 §4's frozen order — *before* the cap check and before the
+/// clamped allocation. A fixture that wants to reach the allocation must
+/// therefore encode its length canonically.
+fn canon_head(major: u8, arg: u64) -> Vec<u8> {
+    let m = major << 5;
+    match arg {
+        0..=23 => vec![m | (arg as u8)],
+        24..=0xFF => vec![m | 24, arg as u8],
+        0x100..=0xFFFF => {
+            let mut v = vec![m | 25];
+            v.extend_from_slice(&(arg as u16).to_be_bytes());
+            v
+        }
+        0x1_0000..=0xFFFF_FFFF => {
+            let mut v = vec![m | 26];
+            v.extend_from_slice(&(arg as u32).to_be_bytes());
+            v
+        }
+        _ => head(major, arg),
+    }
 }
 
 /// `{0: 1, 1: h'', 2: <storage record>, 3: array(u64::MAX)}` and nothing else —
@@ -139,7 +192,10 @@ fn bundle_claiming(count: u64) -> Vec<u8> {
     v.extend_from_slice(&[0x02, 0x58, 0x20]);
     v.extend_from_slice(&[0xC7; 32]); // k_m
     v.push(0x03); // key 3: ots_anchors
-    v.extend_from_slice(&head(4, count));
+    // `canon_head`, not `head` (F30): at `count = u64::MAX` the two agree,
+    // but at `count = MAX_OTS_ANCHOR_COUNT` the always-8-byte form is
+    // `cbor-non-shortest-length` and dies before the cap and the clamp.
+    v.extend_from_slice(&canon_head(4, count));
     v
 }
 
@@ -158,16 +214,54 @@ fn manifest_claiming(count: u64) -> Vec<u8> {
     v
 }
 
+/// The same envelope with `filler` junk bytes **after** the map head, so the
+/// decoder's `remaining()` — the clamp's right-hand operand — is large.
+///
+/// This is the shape F17's fuzzer found and the two fixtures above cannot
+/// produce: both of them put the container head *last*, so `remaining()` is
+/// 0 or single digits and the clamp collapses to zero regardless of whether
+/// its units agree. See [`the_reservation_never_exceeds_the_input_that_drove_it`].
+fn manifest_claiming_with_tail(count: u64, filler: usize) -> Vec<u8> {
+    let mut v = vec![
+        0xa2, // map(2)
+        0x00, 0x40, // 0: h'' (body — never reached)
+        0x01, // 1: signatures
+    ];
+    v.extend_from_slice(&canon_head(5, count));
+    v.extend(std::iter::repeat_n(0xC7, filler));
+    v
+}
+
+/// A manifest **body** `{7: array(count)}` followed by `filler` junk bytes.
+///
+/// `files` carries the largest clamped element in the format
+/// (`FileEntry`), so it is the worst-case amplification site, where
+/// `signatures` (32 B entries) is merely the one the fuzzer reached first.
+fn body_claiming_files_with_tail(count: u64, filler: usize) -> Vec<u8> {
+    let mut v = vec![0xa1, 0x07]; // map(1) { 7: files
+    v.extend_from_slice(&canon_head(4, count));
+    v.extend(std::iter::repeat_n(0xC7, filler));
+    v
+}
+
 // ─────────────────────────────────────────────────────────────────────
 
 /// A tiny input claiming `u64::MAX` elements must allocate nothing large,
 /// whether the list is capped (the cap fires first) or uncapped (only the
 /// clamp stands in the way).
 ///
-/// The bound asserted is the input length itself, which is the strongest form
-/// of the clamp rule: *an attacker can never make the parser allocate more
-/// than the attacker's own bytes* — modulo a small constant for the parser's
-/// own bookkeeping, which is what `SLACK` covers.
+/// The bound asserted is the input length itself: *an attacker can never make
+/// the parser allocate more than the attacker's own bytes* — modulo a small
+/// constant for the parser's own bookkeeping, which is what `SLACK` covers.
+///
+/// **This test does not on its own establish that claim** (F30). Both
+/// fixtures end at their container head, so `d.remaining()` is 0 there and
+/// the clamp returns 0 whatever unit its operands are in; and both inputs are
+/// under 128 B, so a multiplier of 32 would still fit inside `SLACK`. The
+/// claim is proven by
+/// [`the_reservation_never_exceeds_the_input_that_drove_it`]; what *this*
+/// test still pins is the precedence — that a `u64::MAX` claim is refused by
+/// the cap, with the cap's own code, before any element is read.
 #[test]
 fn a_huge_claimed_length_never_drives_a_large_allocation() {
     /// The parser's own fixed overhead (error values, decoder state). Kept
@@ -213,13 +307,35 @@ fn a_huge_claimed_length_never_drives_a_large_allocation() {
 }
 
 /// The same assertion at the boundary that matters most: a claim of exactly
-/// the cap, from an input far too small to hold it. Without the clamp this
-/// would allocate `MAX_COVERED_REVEAL_COUNT * size_of::<CoveredReveal>()`
-/// bytes — megabytes — for a ~90-byte input.
+/// the cap, from an input far too small to hold it. The cap admits it, so
+/// only the clamp stands between the head and
+/// `MAX_OTS_ANCHOR_COUNT * size_of::<OtsAnchor>()` = 34 816 B for a ~115-byte
+/// input.
+///
+/// **Two corrections here (F30).** The docstring named `covered_reveals` and
+/// `CoveredReveal` while the fixture builds `ots_anchors`; and the fixture
+/// used the always-8-byte length head, which is `cbor-non-shortest-length`
+/// for 256 — so the decode died at step 1 of D10 §4's order and never reached
+/// the cap it claims to be testing. The two `assert_ne!`s below are what keep
+/// it from going vacuous again, and
+/// [`the_amplification_fixtures_are_not_vacuous`] does the same for the F30
+/// fixtures.
 #[test]
 fn an_at_cap_claim_from_a_tiny_input_allocates_only_what_the_input_could_hold() {
     const SLACK: usize = 4 * 1024;
     let input = bundle_claiming(caps::MAX_OTS_ANCHOR_COUNT);
+    let code = BundleV1::decode(&input)
+        .map(|_| ())
+        .expect_err("truncated at the array head")
+        .code();
+    assert_ne!(
+        code, "cbor-non-shortest-length",
+        "the length head must be canonical, or the cap and the clamp are never reached"
+    );
+    assert_ne!(
+        code, "bundle-too-many-ots-anchors",
+        "an at-cap claim must pass the cap, or only the cap is being tested"
+    );
     let (peak, total) = measure(|| {
         let _ = BundleV1::decode(&input).map(|_| ());
     });
@@ -230,4 +346,97 @@ fn an_at_cap_claim_from_a_tiny_input_allocates_only_what_the_input_could_hold() 
         caps::MAX_OTS_ANCHOR_COUNT
     );
     assert!(total <= input.len() + SLACK, "total {total} B");
+}
+
+/// **F30 / F17's finding.** The reservation must never exceed the bytes that
+/// drove it — in *bytes*, which is the unit the two fixtures above cannot
+/// distinguish.
+///
+/// `clamped_capacity` takes `min(claimed_elements, remaining_bytes)` and hands
+/// the result to `Vec::with_capacity`, which multiplies it by
+/// `size_of::<T>()`. Before F30 the reservation was therefore
+/// `min(claimed, remaining) x size_of::<T>()` bytes — up to `size_of::<T>()`
+/// times the attacker's own input, 192x at the `files` array. It went
+/// unnoticed for two reasons, both structural:
+///
+/// 1. every fixture above puts its container head **last**, so `remaining()`
+///    is 0 and the clamp collapses to zero whatever its units; and
+/// 2. `SLACK` is 4 KiB while the fixtures are under 128 B, so even a 32x
+///    multiplier fits inside the slack.
+///
+/// This test removes both: the inputs are kilobytes, the heads are followed
+/// by a tail, and the asserted bound is the input length itself.
+#[test]
+fn the_reservation_never_exceeds_the_input_that_drove_it() {
+    const SLACK: usize = 4 * 1024;
+
+    // 1. `signatures` — the uncapped map F17's fuzzer reached first.
+    //    Entries are `(SigAlg, Vec<u8>)`: 32 B each on x86-64.
+    let sig_input = manifest_claiming_with_tail(u64::MAX, 64 * 1024);
+    let (sig_peak, sig_total) = measure(|| {
+        let _ = Manifest::decode(&sig_input).map(|_| ());
+    });
+
+    // 2. `files` — the largest clamped element in the format (`FileEntry`),
+    //    and a **capped** list, so this also shows that passing the cap is
+    //    not the same as being bounded by the input.
+    let files_input = body_claiming_files_with_tail(caps::MAX_FILE_COUNT, 20_000);
+    let (files_peak, files_total) = measure(|| {
+        let _ = ManifestBodyV1::decode(&files_input).map(|_| ());
+    });
+
+    // Both measurements are taken before either is asserted, so one failure
+    // still reports the other site's number — the amplification factor is a
+    // property of the element type, so the two numbers are the evidence.
+    let report = format!(
+        "signatures: peak {sig_peak} B / total {sig_total} B for a {} B input; \
+         files: peak {files_peak} B / total {files_total} B for a {} B input",
+        sig_input.len(),
+        files_input.len()
+    );
+    assert!(
+        sig_peak <= sig_input.len() + SLACK && sig_total <= sig_input.len() + SLACK,
+        "the reservation is scaled by size_of::<(SigAlg, Vec<u8>)>() instead of being \
+         bounded by the remaining bytes — {report}"
+    );
+    assert!(
+        files_peak <= files_input.len() + SLACK && files_total <= files_input.len() + SLACK,
+        "at-cap is not the same as bounded by the input ({} claimed entries) — {report}",
+        caps::MAX_FILE_COUNT
+    );
+}
+
+/// The fixtures reach the clamped allocation rather than dying at head
+/// canonicality first.
+///
+/// Without this, `the_reservation_never_exceeds_the_input_that_drove_it` could
+/// pass vacuously — which is exactly how the at-cap test below stood for a
+/// wave: it built its length head with the always-8-byte [`head`], which is
+/// `cbor-non-shortest-length` for 256 and is refused at step 1 of D10 §4's
+/// order, before any allocation.
+#[test]
+fn the_amplification_fixtures_are_not_vacuous() {
+    let input = manifest_claiming_with_tail(u64::MAX, 64);
+    let code = Manifest::decode(&input)
+        .map(|_| ())
+        .expect_err("junk tail cannot decode as a sig_alg key")
+        .code();
+    assert_ne!(
+        code, "cbor-non-shortest-length",
+        "the signatures head must be canonical, or the clamp is never reached"
+    );
+
+    let input = body_claiming_files_with_tail(caps::MAX_FILE_COUNT, 64);
+    let code = ManifestBodyV1::decode(&input)
+        .map(|_| ())
+        .expect_err("junk tail cannot decode as a file entry")
+        .code();
+    assert_ne!(
+        code, "cbor-non-shortest-length",
+        "the files head must be canonical, or the cap and the clamp are never reached"
+    );
+    assert_ne!(
+        code, "manifest-too-many-files",
+        "an at-cap claim must pass the cap, so that only the clamp bounds the allocation"
+    );
 }

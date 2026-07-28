@@ -825,3 +825,68 @@ changes a frozen value.
    something else. The honest form of the property — and what F11's rows
    assert — is that at-cap yields **a different code** and cap+1 yields
    **the cap's own code**. Same discrimination, accurate statement.
+
+## Amendment from F30 (2026-07-28, M0 wave 7) — the clamp's two units
+
+**No cap value changes and no error code moves.** §1's nineteen constants
+and §3's non-cap list are untouched; this amends §4's *mechanism* and §9's
+signature only. Under §permanence, `clamped_capacity`'s implementation is
+already named as one of the "genuinely non-permanent parts of F11", free to
+change forever; §9's signature was frozen against F11's design freedom, not
+against a later correction, so the type parameter added below is recorded
+here rather than treated as a violation.
+
+**The defect.** §4's rule — `min(claimed_length, remaining_input)` — is
+right, and its justification (every element costs ≥1 wire byte, so the
+remaining bytes bound the element count) is right. What was wrong is that
+the two operands are in **different units**: `claimed_length` counts
+elements, `remaining_input` counts bytes, and `Vec::with_capacity`
+multiplies its argument by `size_of::<T>()`. So the rule as implemented
+bounded the element *count* by the input while leaving the *allocation*
+free to be `size_of::<T>()` times it. F17's first fuzz run measured it in
+seconds; the two worst sites, on the counting allocator:
+
+| site | element | input | peak before | peak after |
+| --- | --- | --- | --- | --- |
+| `signatures` (a §3 non-cap) | `(SigAlg, Vec<u8>)` 32 B | 65 549 B | 2 097 152 B (32.0×) | 65 536 B (1.00×) |
+| `files` (capped at 16 384) | `FileEntry` 192 B | 20 005 B | 3 145 728 B (157.2×) | 19 968 B (1.00×) |
+
+No verdict moves — capacity is a hint, the loop was never bounded by it —
+which is exactly why it stood unnoticed through F11's own accept test.
+
+**The fix.** `clamped_capacity` becomes generic in the element type and
+divides the remaining bytes by that type's width, so §4's rule holds in one
+consistent unit:
+
+```rust
+#[must_use]
+pub fn clamped_capacity<T>(claimed: u64, remaining: u64) -> usize;
+// capacity * size_of::<T>() <= remaining <= input.len() <= usize::MAX
+```
+
+§8 rule 3's invariant is strengthened, not weakened: the result is still
+`≤ remaining`, and now the *bytes it reserves* are too. Zero-sized `T`
+divides by zero, so it falls back to the count bound — correct by
+inspection, since a `Vec` of ZSTs allocates nothing. Step 3 of §4's frozen
+order is restated as
+`Vec::with_capacity(clamped_capacity::<T>(claimed, d.remaining()))`; steps
+1, 2 and 4 and the whole of §5's precedence are unchanged, so no
+tamper-matrix row moves.
+
+**Two errors in F11's own accept test, corrected with the fix** — both
+structural, and together the reason the harness could not have caught this:
+
+- Every fixture in `tests/parser_caps_alloc.rs` ended at its container
+  head, so `d.remaining()` was **0** at the allocation. A clamp whose
+  operands are in different units is indistinguishable from a correct one
+  when one of them is zero.
+- `an_at_cap_claim_from_a_tiny_input_…` built its length head with an
+  always-8-byte argument, which is `cbor-non-shortest-length` for 256 and
+  dies at step 1 of §4's order — so the test never reached the cap or the
+  clamp it names, and its docstring named `covered_reveals`/`CoveredReveal`
+  while the fixture builds `ots_anchors`. Both fixed; a
+  `the_amplification_fixtures_are_not_vacuous` guard now asserts the
+  fixtures reach the clamp.
+
+Cost of the fix on honest input: a reservation short by the ratio of
+in-memory to wire width, i.e. at most a `Vec` regrowth, amortised O(1).

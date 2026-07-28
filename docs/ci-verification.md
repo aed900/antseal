@@ -969,8 +969,17 @@ there only because its two inputs are under 32 bytes so the element-size
 multiplier hides inside a 4 KiB slack. Scaled to `MAX_MANIFEST_BYTES`, a
 16 MiB manifest can drive a ~512 MiB reservation before one map entry is
 read. No verdict changes (capacity is a hint), so the lane now asserts the
-*true* bound and task **F30** carries the fix (element-aware clamping where
-a bound is already known) plus the prose correction.
+*true* bound and task **F30** carries the fix plus the prose correction.
+
+**Closed by F30 (M0 wave 7).** `clamped_capacity` is generic in the element
+type and divides the remaining bytes by its width, so the reservation is
+bounded in bytes by the input. Measured on the counting allocator at the two
+worst sites: `signatures` 2 097 152 B → **65 536 B** for a 65 549 B input
+(32.0× → 1.00×) and `files` 3 145 728 B → **19 968 B** for a 20 005 B input
+(157.2× → 1.00×). No cap constant changed value and no error code moved.
+`MAX_CLAMPED_ELEMENT_BYTES` is now **1** and the fuzz lane asserts the strong
+claim literally; `TOTAL_FACTOR` was decoupled from it and held at 1 024,
+because F30 measured the clamp and produced no evidence about payload copies.
 
 **Not verifiable locally**: execution on the runner image; the
 `actions/cache` corpus-persistence round trip (`fuzz-corpus-<run_id>` key
@@ -1056,3 +1065,95 @@ Registered as **Q56**: generate this set from `ci.yml` rather than
 maintaining it by hand. The failure here is not carelessness; it is that
 three sections each had to be edited by a different wave and nothing compared
 them to the workflow or to each other.
+
+---
+
+## A lane that has never run on the remote is not evidence (Q43, M0 wave 7)
+
+**The general form, and the reason this section exists:**
+
+> **A lane that has never run on the remote is not evidence, no matter how
+> long it has been committed.** Neither is a guard whose own command has
+> never been executed.
+
+Wave 6 pushed 182 commits at once, so five lanes ran remotely for the first
+time simultaneously. The two brand-new ones (`cross-check`, `traceability`)
+passed and the *old* one failed — the opposite of the intuition. Run
+30376120625 turned `tamper-matrix` red on `tamper-matrix registry target is
+EMPTY — the harness or the completeness check is broken`. The harness was
+fine. The **counting command** was malformed: `cargo test … --test
+tamper_matrix --list` passes `--list` to *cargo*, which rejects it, where it
+must reach the test binary after `--`. Q8 introduced it when it repurposed
+Q1's counter; Q1's own two counters had the correct form and stayed green.
+
+The guard behaved exactly as designed — it refused to report success from a
+check that produced no evidence, which is the false-green it exists to
+prevent. What failed is that **the guard's own command had never been run**,
+because it existed only inside a `run:` block, and `scripts/local-gate.sh`
+ran four lanes to CI's eighteen.
+
+### What changed
+
+Both CI-logic defects this project has had were in inline YAML shell; the
+lanes that call `scripts/vector-freeze.sh`, `scripts/cross-check.sh`,
+`scripts/fuzz.sh` and `scripts/check-traceability.py` were green on their
+first remote run. So the logic moved to where it can be executed:
+
+| was inline in | now |
+| --- | --- |
+| `core-dep-graph` | `scripts/ci-lanes.sh dep-graph` |
+| `cross-os` | `scripts/ci-lanes.sh cross-os` |
+| `golden-vectors` | `scripts/ci-lanes.sh golden-vectors` |
+| `tamper-matrix` (both steps) | `scripts/ci-lanes.sh tamper-matrix` |
+| `cross-check`'s drift guard | `scripts/ci-lanes.sh cbor-drift-guard` |
+| `traceability` | `scripts/ci-lanes.sh traceability` |
+| `secret-guard` (60 lines) | `scripts/ci-lanes.sh secret-guard` |
+| `audit-deny`, in **two** workflows | `scripts/ci-lanes.sh audit-deny` |
+| `wasm32-core-tests` (both steps) | `scripts/wasm-tests.sh` |
+| `fuzz-nightly`'s corpus-size loop | `scripts/fuzz.sh corpus-report` |
+
+**All three workflows, not just `ci.yml`.** Q43's Accept names `ci.yml`, but
+`advisory-cron.yml` carried a second copy of the `cargo deny` invocation and
+`fuzz-nightly.yml` a corpus loop; scoping the check to one file would have
+closed the instance again.
+
+### The check that keeps it closed
+
+`scripts/check-ci-shell.py` enumerates every `run:` block in every workflow
+and requires each to be either a committed-script call or one of nine
+allowlisted lines — each allowlist entry recording the **local lane that
+exercises it** (e.g. `cargo fmt --check` → `scripts/local-gate.sh`'s `fmt`).
+A stale allowlist entry that no block uses is also a failure: an exemption
+nobody needs is how an allowlist stops meaning anything. A script call with
+logic wrapped around it fails too — that is still inline logic.
+
+At this commit: **54 `run:` blocks across 3 workflows**, all classified.
+
+### Test-of-the-test
+
+| Guard | Probe | Observed |
+| --- | --- | --- |
+| the CI-shell check | `scripts/check-ci-shell.py --self-test` — three planted faults: a new inline `run:` block with logic, logic wrapped around a script call, a call to a script that does not exist | RED on each, GREEN on the unmodified control |
+| **the Q8 defect itself** | `scripts/ci-lanes.sh --self-test` — puts `--list` back before `--` in a copy of the lane script and runs the lane | control counts **25** tests; with the fault the lane exits non-zero on `registry target is EMPTY`; restored, green again. The defect now turns a **local** lane red |
+| a failing wasm32 test is named | `scripts/wasm-tests.sh --self-test` (R41) | see `docs/wasm-toolchain.md` §8 |
+
+Both self-tests run in `scripts/local-gate.sh` (`ci-shell`, `ci-lanes`) and in
+CI — `ci-shell` inside the `traceability` job and the Q8 reproduction inside
+`tamper-matrix`, deliberately as steps of existing jobs so the **18-context
+set above is unchanged**.
+
+### One thing this tightened rather than relaxed
+
+`secret-guard`'s scan excluded all of `.github/` because the guard lived in
+the workflow and its self-test plants literal key material. Moving it to
+`scripts/` naively would have meant excluding all of `scripts/` — a strictly
+larger hole, in a directory far more likely to receive a stray key. The
+exclusion is now the single file that carries the literals
+(`--exclude='ci-lanes.sh'`), and `.github/` is scanned again.
+
+### Still not verifiable locally
+
+Execution on the runner image, `actions/cache` round trips,
+`actions/upload-artifact`, the `schedule:` trigger, and the matrix expansion
+on the macOS and Windows runners. Those remain first-run-on-the-remote
+risks — which is precisely why the shell inside them no longer is.

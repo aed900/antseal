@@ -96,43 +96,43 @@ pub const SLACK: usize = 4 * 1024;
 
 /// Bytes of `Vec` capacity one clamped **element** costs.
 ///
-/// # The correction this constant encodes (found by this fuzzer)
+/// # The finding this constant recorded, and its fix
 ///
-/// `crates/antseal-core/tests/parser_caps_alloc.rs` states decision D10 §4's
+/// `crates/antseal-core/tests/parser_caps_alloc.rs` stated decision D10 §4's
 /// consequence as
 ///
 /// > an attacker can never make the parser allocate more than the
 /// > attacker's own bytes — modulo a small constant … which is what `SLACK`
 /// > covers
 ///
-/// and that is **not true in general**. The clamp is
-/// `Vec::with_capacity(min(claimed, remaining_input))` where the unit is
-/// *elements*, not bytes, so the true bound is
-/// `remaining_input × size_of::<Element>()`. That test passes because both
-/// of its inputs are under 32 bytes, so the multiplier disappears inside a
-/// 4 KiB `SLACK`.
+/// and until task **F30** that was **not true in general**. The clamp was
+/// `Vec::with_capacity(min(claimed, remaining_input))` where the left side
+/// counts *elements* and the right side counts *bytes*, so the true bound was
+/// `remaining_input × size_of::<Element>()`. That test passed only because
+/// both of its inputs were under 32 bytes, so the multiplier disappeared
+/// inside a 4 KiB `SLACK`.
 ///
 /// The first fuzz run over the committed corpus surfaced it immediately: a
-/// **152-byte** input whose `signatures` map head claims 59 638 entries
-/// drives a **4 704-byte** single allocation — 147 elements of
-/// `(SigAlg, Vec<u8>)`, 32 B each. The amplification factor is
-/// `size_of::<Element>()`, and it is a property of the type, not of the
-/// input.
+/// **152-byte** input whose `signatures` map head claims 59 638 entries drove
+/// a **4 704-byte** single allocation — 147 elements of `(SigAlg, Vec<u8>)`,
+/// 32 B each. The amplification factor was `size_of::<Element>()`: a property
+/// of the type, not of the input. Measured element sizes at the time
+/// (x86-64), across every clamped-allocation site: `FileEntry` 192,
+/// `OtsAnchor` 136, `UnitEntry` 128, `CoveredReveal` 112, `TsaAnchor` 88,
+/// `NonCoveredReveal` 80, `FullReveal` 64, `TouchedFile` 48,
+/// `(SigAlg, Vec<u8>)` 32 — so this constant was **256**, the largest of them
+/// rounded up.
 ///
-/// Measured element sizes at this commit (x86-64), all clamped-allocation
-/// sites: `FileEntry` 192, `OtsAnchor` 136, `UnitEntry` 128,
-/// `CoveredReveal` 112, `TsaAnchor` 88, `NonCoveredReveal` 80,
-/// `FullReveal` 64, `TouchedFile` 48, `(SigAlg, Vec<u8>)` 32. **256** is the
-/// largest of those rounded up, leaving room for layout drift without
-/// admitting a whole new element class unnoticed.
-///
-/// Task **F30** proposes making the clamp element-aware where a bound is
-/// already known (the `sig_alg` universe is 16, so `signatures`,
-/// `pubkeys` and `sig_policy` need never reserve more than 16 slots), which
-/// would let this constant shrink towards 1 and restore the strong claim
-/// literally. Until then the assertion states what is *true*, not what
-/// would be nicer.
-pub const MAX_CLAMPED_ELEMENT_BYTES: usize = 256;
+/// **F30 removed the multiplier**: `clamped_capacity` is now generic in the
+/// element type and divides the remaining bytes by its width, so the
+/// reservation is bounded in *bytes* by the remaining input:
+/// `capacity × size_of::<T>() ≤ remaining ≤ input.len()`. The same two heads
+/// now reserve 65 536 B for a 65 549 B input and 19 968 B for a 20 005 B one
+/// (`crates/antseal-core/tests/parser_caps_alloc.rs`,
+/// `the_reservation_never_exceeds_the_input_that_drove_it`). One input byte
+/// buys at most one reserved byte, which is why this is **1** and why the
+/// strong claim can be stated literally again.
+pub const MAX_CLAMPED_ELEMENT_BYTES: usize = 1;
 
 /// How many times its own input a decode may allocate **in total**.
 ///
@@ -141,11 +141,36 @@ pub const MAX_CLAMPED_ELEMENT_BYTES: usize = 256;
 /// decode that succeeds: reveal sections own their ciphertexts, nested
 /// layers each decode their own slice, and the round-trip target re-encodes
 /// on top. What `total` still forbids is the thing that actually hurts —
-/// **super-linear** blowup — so the factor is deliberately generous
-/// (4 × [`MAX_CLAMPED_ELEMENT_BYTES`], i.e. a handful of clamped containers
-/// plus their payload copies) and the assertion is about the *shape* of the
-/// growth rather than its constant.
-pub const TOTAL_FACTOR: usize = 4 * MAX_CLAMPED_ELEMENT_BYTES;
+/// **super-linear** blowup — so the factor is deliberately generous (a
+/// handful of clamped containers plus their payload copies) and the
+/// assertion is about the *shape* of the growth rather than its constant.
+///
+/// **Independent of [`MAX_CLAMPED_ELEMENT_BYTES`]** (F30). It used to be
+/// derived from it (`4 ×`), which was a coincidence of magnitude rather than
+/// a relationship: the peak bound is about the *clamp*, the total bound is
+/// about payload copies and re-encoding, and F30 moved the first without
+/// having any evidence about the second. Tightening this is its own task
+/// with its own measurement.
+pub const TOTAL_FACTOR: usize = 1_024;
+
+/// Peak-single factor for a target that **re-encodes**, not just decodes.
+///
+/// A decode's peak allocation is a clamped reservation, so it is bounded by
+/// the input (see [`MAX_CLAMPED_ELEMENT_BYTES`]). A *round trip* also builds
+/// an output buffer, and `Vec` grows that by doubling — so its peak is
+/// bounded by the output size rounded up to a power of two, which for an
+/// output the size of the input is up to 2× the input and has nothing to do
+/// with the clamp.
+///
+/// **Measured, not guessed** (F30): tightening the shared factor to 1 turned
+/// `codec_round_trip` red at iteration 20 000 on an 11 280 B peak for a
+/// 5 751 B input — **1.96×**, exactly one doubling past the output. Both
+/// decode targets stayed green over 20 000 iterations each, which is what
+/// establishes that the failure is the encoder's regrowth and not the clamp.
+/// **4** is that worst case with one further doubling of headroom, and it
+/// still refuses everything the bound exists for: `claimed` is a `u64`, so a
+/// length-driven allocation misses this by many orders of magnitude.
+pub const ROUND_TRIP_PEAK_FACTOR: usize = 4;
 
 /// What one measured call allocated.
 #[derive(Debug, Clone, Copy)]
@@ -180,31 +205,48 @@ pub fn measure<T>(f: impl FnOnce() -> T) -> (T, Budget) {
 ///
 /// The invariant, from decision D10 §4's clamp rule (*every pre-allocation
 /// is clamped to `min(claimed_length, remaining_input)`*), stated in the
-/// form that is actually true (see [`MAX_CLAMPED_ELEMENT_BYTES`]):
+/// form that is actually true — which since F30 is the strong form (see
+/// [`MAX_CLAMPED_ELEMENT_BYTES`]):
 ///
 /// > An attacker can never make the parser allocate more than the
-/// > attacker's own bytes times one element, plus a fixed constant.
+/// > attacker's own bytes, plus a fixed constant.
 ///
-/// What that still catches is everything that matters: an allocation sized
-/// by a **claimed** count rather than by the input. `claimed` is a `u64` and
-/// can be `u64::MAX`; the gap between `len × 256` and `u64::MAX × 256` is
-/// the whole point, and no realistic unclamped allocation fits under this
-/// bound.
+/// What that catches is everything that matters: an allocation sized by a
+/// **claimed** count rather than by the input. `claimed` is a `u64` and can
+/// be `u64::MAX`; the gap between `len` and `u64::MAX` is the whole point,
+/// and no unclamped allocation fits under this bound.
 ///
 /// # Panics
 ///
 /// On a violation — which is the point: libFuzzer records it as a crash and
 /// the offending input is written to `fuzz/artifacts/`.
 pub fn assert_within_budget(what: &str, input_len: usize, budget: Budget) {
-    let single_cap = input_len
-        .saturating_mul(MAX_CLAMPED_ELEMENT_BYTES)
-        .saturating_add(SLACK);
+    assert_within_budget_scaled(what, input_len, budget, MAX_CLAMPED_ELEMENT_BYTES);
+}
+
+/// [`assert_within_budget`] with an explicit peak factor.
+///
+/// The one caller that needs it is `codec_round_trip`, whose peak is the
+/// **encoder's** output buffer rather than a clamped reservation; see
+/// [`ROUND_TRIP_PEAK_FACTOR`]. Keeping it a separate entry point rather than
+/// loosening the shared constant is the point: the decode targets keep the
+/// sharp 1× bound that is the actual statement of D10 §4's clamp rule.
+///
+/// # Panics
+///
+/// On a violation, as [`assert_within_budget`].
+pub fn assert_within_budget_scaled(
+    what: &str,
+    input_len: usize,
+    budget: Budget,
+    peak_factor: usize,
+) {
+    let single_cap = input_len.saturating_mul(peak_factor).saturating_add(SLACK);
     assert!(
         budget.peak_single <= single_cap,
         "{what}: peak single allocation {} B for a {input_len} B input (cap {single_cap} B = \
-         len x {MAX_CLAMPED_ELEMENT_BYTES} + {SLACK}) — D10 §4's clamp rule says a hostile \
-         length head can never drive an allocation larger than the input that claimed it, \
-         scaled by one element",
+         len x {peak_factor} + {SLACK}) — D10 §4's clamp rule says a hostile length head \
+         can never drive an allocation larger than the input that claimed it",
         budget.peak_single
     );
     let total_cap = input_len.saturating_mul(TOTAL_FACTOR).saturating_add(SLACK);
@@ -254,19 +296,36 @@ mod tests {
 
     #[test]
     fn the_budget_admits_a_clamped_decode_and_refuses_a_length_driven_one() {
-        // The finding that set MAX_CLAMPED_ELEMENT_BYTES: a 152-byte input
-        // whose `signatures` head claims 59 638 entries reserves 147
-        // elements of 32 B. Clamped, therefore admitted.
+        // Post-F30, the 152-byte `signatures` input that produced the
+        // original finding reserves floor(147 / 32) = 4 entries of 32 B.
+        // Clamped in bytes, therefore admitted.
         assert_within_budget(
             "sigmap clamp",
             152,
             Budget {
-                peak_single: 4_704,
+                peak_single: 128,
                 total: 8_192,
             },
         );
-        // The same input driving a 4 MiB single allocation is NOT clamped:
-        // 4 MiB > 152 x 256 + 4096.
+        // The pre-F30 reservation for that same input — 147 elements of
+        // 32 B — is NOT admitted any more: 4 704 > 152 x 1 + 4096. This is
+        // the regression the tightened constant now catches.
+        let regressed = std::panic::catch_unwind(|| {
+            assert_within_budget(
+                "pre-F30 sigmap clamp",
+                152,
+                Budget {
+                    peak_single: 4_704,
+                    total: 8_192,
+                },
+            );
+        });
+        assert!(
+            regressed.is_err(),
+            "the element-size multiplier must no longer fit inside the budget"
+        );
+        // A 4 MiB single allocation from the same input is not clamped at
+        // all: 4 MiB > 152 x 1 + 4096.
         let violated = std::panic::catch_unwind(|| {
             assert_within_budget(
                 "hostile",

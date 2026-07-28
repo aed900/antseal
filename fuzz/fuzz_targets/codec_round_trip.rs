@@ -42,7 +42,9 @@
 use libfuzzer_sys::{Corpus, fuzz_target};
 
 use antseal_core::test_util::codec_fuzz::{RoundTripped, round_trip};
-use antseal_fuzz::{Counting, assert_within_budget, measure, selftest_tripwire};
+use antseal_fuzz::{
+    Counting, ROUND_TRIP_PEAK_FACTOR, assert_within_budget_scaled, measure, selftest_tripwire,
+};
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
@@ -61,9 +63,14 @@ fuzz_target!(|data: &[u8]| -> Corpus {
     };
 
     // The round trip re-encodes, so it legitimately allocates more than a
-    // bare decode; the budget's `TOTAL_FACTOR` covers that and the
-    // peak-single clamp still holds.
-    assert_within_budget("round_trip", data.len(), budget);
+    // bare decode: `TOTAL_FACTOR` covers the copies, and the **peak** is the
+    // encoder's output buffer rather than a clamped reservation — `Vec`
+    // doubles, so it reaches ~2x the output. Measured at 1.96x when F30
+    // tightened the shared peak factor to 1 (the decode targets stayed
+    // green, which is what showed the cause was the encoder). Hence the
+    // explicit `ROUND_TRIP_PEAK_FACTOR` instead of loosening the constant
+    // that states the clamp rule.
+    assert_within_budget_scaled("round_trip", data.len(), budget, ROUND_TRIP_PEAK_FACTOR);
 
     match arm {
         // Something decoded: worth keeping, since inputs that reach the law

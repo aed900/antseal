@@ -409,6 +409,18 @@
   - If added: both sides built at the same profile, the self-test still goes red at that profile, and no vector or transcript byte changes.
 - Notes: Do **not** simply switch the existing lane to release — debug and release are different codegen, and dropping the debug pass would trade one blind spot for another. The question is whether to have both.
 
+### F30 — Make the F11 clamp element-aware, and correct the claim it is documented under
+- Milestone: M0
+- Size: S
+- Deps: F11 (landed), F17 (found it)
+- Spec: Milestones M0 — hard caps on allocations (MVP-SPEC.md line 153); Risks — hostile bundles (line 187); no CLI/page divergence (line 73)
+- Discovered by: **F17** (2026-07-28), on its first fuzz run over the committed corpus. D10 §4's rule is `min(claimed_length, remaining_input)` and its two operands are in **different units**: `claimed_length` counts elements, `remaining_input` counts bytes, and `Vec::with_capacity` multiplies its argument by `size_of::<T>()`. So the clamp bounded the element *count* by the input while leaving the *allocation* free to be `size_of::<T>()` times it. No verdict moves — capacity is only a hint and the element loop was never bounded by it — which is exactly why it stood through F11's own accept test.
+- Do: Make `clamped_capacity` generic in the element type and divide the remaining bytes by that type's width, so the reservation is bounded in bytes: `capacity * size_of::<T>() <= remaining <= input.len()`. Guard the zero-sized case (a `Vec` of ZSTs allocates nothing). Then correct the claim: `tests/parser_caps_alloc.rs` stated the strong consequence while asserting something strictly weaker.
+- Accept:
+  - A counting-allocator test proves the amplification is gone, and was run **red** against the old clamp first.
+  - No cap constant changes value and no error code moves — this is an allocation fix, not a limit change; the 19 D10 caps and their codes are untouched.
+  - The corrected prose matches the implemented behaviour, in the test, in `caps.rs`, in D10, in `docs/testing/fuzzing.md` and in `docs/ci-verification.md`.
+- Notes: **DONE 2026-07-28 (M0 wave 7).** Measured on the counting allocator, before → after: `signatures` (uncapped map, `(SigAlg, Vec<u8>)` 32 B) **2 097 152 B → 65 536 B** for a 65 549 B input (32.0× → 1.00×); `files` (capped at 16 384, `FileEntry` 192 B) **3 145 728 B → 19 968 B** for a 20 005 B input (157.2× → 1.00×). Four call sites: `bundle::schema::decode_section`, `manifest::body`'s `units`/`sig_policy`/`files`, `manifest::sigmap`. Recorded as an amendment to D10 (which had frozen the non-generic signature in §9, while its own permanence section already named `clamped_capacity`'s implementation as free to change forever). `MAX_CLAMPED_ELEMENT_BYTES` is now **1**, so the fuzz lane asserts the strong claim literally. **Two further defects found in F11's accept test, both fixed here**: every fixture ended at its container head so `d.remaining()` was 0 at the allocation (a mis-united clamp is indistinguishable from a correct one when one operand is zero), and `an_at_cap_claim_…` built its length head non-canonically, so it died on `cbor-non-shortest-length` before reaching the cap or clamp it names — and its docstring named `covered_reveals`/`CoveredReveal` while the fixture builds `ots_anchors`. See **F49** for the honest-path reservation question this fix opens.
 ### F33 — Assert the registry's field **names**, not just its key numbers
 - Milestone: M0
 - Size: S
@@ -515,6 +527,30 @@
   - A shifted spec line turns something red (test-of-the-test), rather than being discovered by a confused reader.
   - No registry content changes as a side effect.
 - Notes: Q58 owns the lint and the general citation convention across `docs/`; this entry owns the narrower, sharper question — that the *frozen* document's correctness depends on an *unfrozen* one. The two should land together or the answer will be split across them.
+### F49 — The two allocation bounds F30 did not measure: the round-trip peak and `TOTAL_FACTOR`
+- Milestone: M0 (record) / M1 (act)
+- Size: S
+- Deps: F30 (landed), F17, Q9 (the fuzz lane)
+- Spec: Milestones M0 — hard caps on allocations (MVP-SPEC.md line 153); Risks — hostile bundles (line 187)
+- Discovered by: **F30** (2026-07-28). Tightening the shared peak factor to 1 turned `codec_round_trip` red at 20 000 iterations on an 11 280 B peak for a 5 751 B input — **1.96×**, and both decode targets stayed green, which is what identified the cause as the **encoder's** `Vec` doubling rather than the clamp. F30 split the constant (`ROUND_TRIP_PEAK_FACTOR = 4`) rather than loosening the one that states D10 §4's rule. That leaves two numbers in `fuzz/src/lib.rs` that are still allowances rather than statements: `ROUND_TRIP_PEAK_FACTOR` (4, measured worst 1.96, so the headroom is one doubling) and `TOTAL_FACTOR` (**1 024, never measured at all** — it was `4 × MAX_CLAMPED_ELEMENT_BYTES` when that constant was 256, so its value is an artifact of a number F30 moved).
+- Do: (a) Pre-size the encoder's output buffer from the value being encoded so the round-trip peak stops being a power-of-two artifact, and see whether `ROUND_TRIP_PEAK_FACTOR` can go to 1 or 2. (b) Instrument the three targets to record the **observed** worst `total / len` over a long run and set `TOTAL_FACTOR` from that plus stated headroom, rather than from an arithmetic that no longer exists. Both changes must keep the planted-fault self-test red.
+- Accept:
+  - Each of the two constants has a recorded measurement behind it — target, iteration count, worst observed ratio — in `docs/testing/fuzzing.md`, not a derivation from another constant.
+  - The tightened values survive a `runs 100000` pass on all three targets.
+  - `MAX_CLAMPED_ELEMENT_BYTES` stays 1: it states the clamp rule and must not absorb slack that belongs to the encoder.
+- Notes: `total` is deliberately the loose one (D10's rule is about a single length-driven reservation), so the goal for it is a *measured* bound, not a tight one. The failure mode this guards against is the same one F30 fixed: a constant whose value is inherited from an argument that has since been withdrawn.
+### F50 — Sweep the hostile fixtures for the ones that die before the check they name
+- Milestone: M0
+- Size: S
+- Deps: F15, F11, F22/F24 (which add more such fixtures)
+- Spec: Definitions & encoding (MVP-SPEC.md line 73); tamper matrix (line 168)
+- Discovered by: **F30** (2026-07-28). `an_at_cap_claim_from_a_tiny_input_allocates_only_what_the_input_could_hold` built its array head with an always-8-byte length argument, which is `cbor-non-shortest-length` for 256 — so it died at step 1 of D10 §4's frozen order and never reached the cap or the clamp its name and docstring claim to test. It passed for a wave because it asserted only "peak ≤ len + SLACK" and never looked at the error code. That is a **class**: any fixture whose assertion is "an error happened" (or a bound that holds vacuously) can be silently rerouted to an earlier check by the frozen precedence order, and the frozen order is precisely designed to make earlier checks win.
+- Do: Enumerate every hostile fixture in the format and parser test suites that does **not** assert a specific code, and either give it one or give it a negative assertion naming the earlier checks it must *not* reach (the pattern `the_amplification_fixtures_are_not_vacuous` uses). Prefer a shared canonical-head helper over hand-written heads, so the non-shortest-length trap cannot be re-entered.
+- Accept:
+  - A list of the fixtures found, with the check each actually reaches versus the one it names.
+  - Every one either asserts its code or asserts what it must not be.
+  - A planted fault: re-introduce one non-canonical head and watch the guard go red.
+- Notes: The tamper-matrix rows are already safe by construction — a row *is* an expected code. This is about the tests that live beside them, where the assertion is a bound or a `is_err()`.
 
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.

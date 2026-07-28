@@ -691,6 +691,49 @@ kebab-case id, and never edit an existing row's expected code.
      committed and live sets, so dropping a code is only ever a hand edit
      with a reviewable diff.
 
+- **2026-07-28 (M0 wave 7, D85/R33)** — **no code minted**; R's universe
+  stays at **85** distinct codes over **27** variants. R33 ratified the
+  non-row `pipeline-level-wrong-unit-salt` and, in doing so, generalised
+  the R8 entry above from `unit_commit` to **every salted-commitment
+  opening in R's pipeline** (`unit_commit`, `path_commit`, `canon_commit`,
+  `raw_commit`).
+
+  The generalisation needed more than D81's analogy, because the
+  asymmetry R33 names is real: unlike an AEAD tag's inputs, a commitment
+  opening's inputs are structurally attributable — the salt is
+  bundle-side, the commit is manifest-side, and the manifest is signed.
+  D85 shows the attribution still does not exist. `Signature valid`
+  leaves **two** bundle-side candidates, not one, because the verifier
+  never holds `W` and a bundle holder can re-encrypt arbitrary plaintext
+  under the supplied `k_u` (spec line 103); `signature invalid` names no
+  manifest field, since one signature covers the whole body; and neither
+  half distinguishes a third-party edit from an adversarial sealer, which
+  is the threat model (line 121). Obtaining even that coarse split would
+  require signatures before files, re-binding the expected code of every
+  manifest-field row at once — which §3 forbids.
+
+  `path_commit` is the sharper case and is covered by the same rule:
+  **both** its salt and its committed value (`path`) are bundle-side, so
+  R7's single `verify-path-commit-mismatch` row legitimately claims both
+  the wrong-salt and the substituted-path routes. That merge had no
+  recorded justification before D85.
+
+  §3 consequence, the same shape as D81's: **adding a
+  `unit-commit-*`/`path-commit-*`/`concat-commit-*`/`raw-commit-*` cause
+  code later is not a routine append.** It requires a decision that first
+  says what the verifier holds outside the comparison that separates its
+  inputs. Where a cause is genuinely wanted it belongs in **rendering**,
+  not in the code set: D27's `VerifyFailures` lane can show "content
+  check failed *and* the signature does not verify" without minting a
+  code or reordering stages.
+
+  Record: `docs/decisions/D85-unit-commit-cause.md`, which is now also the
+  `record` field of the non-row in `testdata/tamper/MATRIX.json`. The
+  falsification D85 owes itself — a named salt-route test at each of the
+  other three commitment sites — is **not** part of this ratification and
+  is carried by task **R51**; until it lands, the generalisation is
+  argued at four sites and asserted at one.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
   as the enforcement, and with §3's "before the Q14 freeze a code may still

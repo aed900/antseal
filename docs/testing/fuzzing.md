@@ -40,48 +40,66 @@ path: `crates/antseal-core/tests/codec_fuzz.rs` and
   defeat the property.
 - **No allocation beyond the F11 budget.** `fuzz/src/lib.rs` installs a
   counting global allocator and asserts, for every input:
-  `peak_single ≤ 256 · len(input) + 4 KiB` and
+  `peak_single ≤ 1 · len(input) + 4 KiB` and
   `total ≤ 1024 · len(input) + 4 KiB`. This generalizes
   `crates/antseal-core/tests/parser_caps_alloc.rs`, which asserts the same
-  thing on two hand-picked hostile inputs, to every input libFuzzer can
+  thing on hand-picked hostile inputs, to every input libFuzzer can
   invent — and **the generalization immediately corrected the claim**; see
-  below.
+  below. (The peak factor was 256 between the finding and F30's fix.)
 - **No hang.** `-timeout=25` — a single input taking longer is a finding.
   libFuzzer's default (1200 s) would let a quadratic parser look merely
   slow.
 
-### The 256× that is not a fudge factor (finding, 2026-07-28)
+### The 256× that was not a fudge factor (finding 2026-07-28, fixed by F30)
 
-`parser_caps_alloc.rs` states decision D10 §4's consequence as
+`parser_caps_alloc.rs` stated decision D10 §4's consequence as
 
 > an attacker can never make the parser allocate more than the attacker's
 > own bytes — modulo a small constant … which is what `SLACK` covers
 
-and that is **not true in general**. The clamp is
-`Vec::with_capacity(min(claimed, remaining_input))` where the unit is
-*elements*, not bytes, so the real bound is
-`remaining_input × size_of::<Element>()`. That test passes only because both
-of its inputs are under 32 bytes, so the multiplier vanishes inside a 4 KiB
+and that was **not true in general**. The clamp was
+`Vec::with_capacity(min(claimed, remaining_input))` where the left side
+counts *elements* and the right side counts *bytes*, so the real bound was
+`remaining_input × size_of::<Element>()`. That test passed only because both
+of its inputs were under 32 bytes, so the multiplier vanished inside a 4 KiB
 `SLACK`.
 
 The first fuzz run over the committed corpus surfaced it in seconds: a
 **152-byte** manifest whose `signatures` map head claims 59 638 entries
-drives a **4 704-byte** single allocation (147 × `(SigAlg, Vec<u8>)`, 32 B
-each). Scaled to the cap, a 16 MiB manifest (`MAX_MANIFEST_BYTES`) can drive
-a ~512 MiB reservation *before a single map entry is read*, and the entry
-that follows then fails — a 32× memory amplification that matters most in
-the WASM verifier page, where the ceiling is a browser tab.
+drove a **4 704-byte** single allocation (147 × `(SigAlg, Vec<u8>)`, 32 B
+each). Scaled to the cap, a 16 MiB manifest (`MAX_MANIFEST_BYTES`) could
+drive a ~512 MiB reservation *before a single map entry was read*, and the
+entry that followed then failed — a 32× memory amplification that mattered
+most in the WASM verifier page, where the ceiling is a browser tab.
 
-Nothing here is a verdict change: capacity is a hint, and no input's
-accept/reject outcome moves. **Task F30** proposes the fix — the clamp
-should use a known element bound where one exists (the `sig_alg` universe is
-16, so `signatures`, `pubkeys` and `sig_policy` never need more than 16
-slots) — plus the D10/`parser_caps_alloc.rs` prose correction. Until then
-the fuzz assertion states what is *true* rather than what would be nicer,
-and `MAX_CLAMPED_ELEMENT_BYTES` (256, from a measured worst of `FileEntry`
-at 192 B) is the honest constant. It still catches every realistic failure:
-`claimed` is a `u64`, and the gap between `len × 256` and `u64::MAX × 256`
-is the entire hazard.
+Nothing here was a verdict change: capacity is a hint, and no input's
+accept/reject outcome moved. That is exactly why it stood.
+
+**Resolved by task F30 (M0 wave 7).** `clamped_capacity` is generic in the
+element type and divides the remaining bytes by its width, so the
+reservation is bounded in *bytes* by the remaining input:
+
+```
+capacity × size_of::<T>() ≤ remaining ≤ input.len()
+```
+
+Measured before/after on the counting allocator, at the two worst sites
+(`crates/antseal-core/tests/parser_caps_alloc.rs`,
+`the_reservation_never_exceeds_the_input_that_drove_it` — run red against
+the old clamp before it was run green):
+
+| site | element | input | peak before | peak after |
+| --- | --- | --- | --- | --- |
+| `signatures` (uncapped map) | `(SigAlg, Vec<u8>)` 32 B | 65 549 B | 2 097 152 B (**32.0×**) | 65 536 B (**1.00×**) |
+| `files` (capped at 16 384) | `FileEntry` 192 B | 20 005 B | 3 145 728 B (**157.2×**) | 19 968 B (**1.00×**) |
+
+No cap constant changed value and no error code moved: F30 is an allocation
+fix, not a limit change. `MAX_CLAMPED_ELEMENT_BYTES` is therefore now **1**
+and the fuzz assertion states the strong claim literally. `TOTAL_FACTOR` was
+decoupled from it (it was `4 ×`) because the total bound is about payload
+copies and re-encoding, not about the clamp, and F30 produced no evidence
+about that side.
+
 ## 2. Running it
 
 `scripts/fuzz.sh` is the only place run commands are written down; CI calls

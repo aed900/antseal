@@ -98,6 +98,12 @@ impl fmt::Display for SigMaterial {
     }
 }
 
+/// One `sig_alg` → material pair.
+///
+/// Named so that the F11 clamp can be told the element width it is
+/// reserving for (F30) without spelling the tuple inside a turbofish.
+type Entry = (SigAlg, Vec<u8>);
+
 /// A non-empty, duplicate-free, exact-length-checked map from `sig_alg`
 /// to that algorithm's material, held in ascending wire-id order.
 ///
@@ -109,7 +115,7 @@ pub struct SigAlgMap {
     material: SigMaterial,
     /// Ascending by `sig_alg_to_wire`, duplicate-free (invariant of
     /// [`Self::new`] and of the strict-ascent decode).
-    entries: Vec<(SigAlg, Vec<u8>)>,
+    entries: Vec<Entry>,
 }
 
 impl SigAlgMap {
@@ -224,8 +230,13 @@ impl SigAlgMap {
         // first anyway. The clamp still applies — F11's rule admits no
         // exceptions, and it is the clamp, not the cap, that bounds the
         // allocation to `min(claimed, remaining_input)`.
-        let mut entries: Vec<(SigAlg, Vec<u8>)> =
-            Vec::with_capacity(clamped_capacity(reader.remaining(), d.remaining()));
+        //
+        // This is the site F17's fuzzer measured at 32× before F30 made the
+        // clamp element-aware: entries are 32 B, so bounding the *count* by
+        // the remaining bytes left the *allocation* free to be 32× the input.
+        // Naming the element type is what bounds it in bytes.
+        let capacity = clamped_capacity::<Entry>(reader.remaining(), d.remaining());
+        let mut entries: Vec<Entry> = Vec::with_capacity(capacity);
         while let Some(alg_id) = reader.next_key(d).map_err(wrap)? {
             let alg = sig_alg_from_wire(alg_id).ok_or(ManifestError::UnregisteredAlg {
                 position: material.position(),

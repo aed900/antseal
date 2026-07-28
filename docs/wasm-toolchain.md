@@ -55,7 +55,7 @@ the module down. The two observable outcomes are therefore:
 | Outcome | Meaning |
 | --- | --- |
 | `main` returns `0` | every test passed |
-| the module traps (`unreachable`) | a test failed — reproduce natively with `cargo test -p antseal-core --lib` |
+| the module traps (`unreachable`) | a test failed — the runner **names it**, see below |
 
 Neither distinguishes *all tests passed* from *zero tests ran*. That hole is
 closed per run by the **execution witness**: `antseal_core::tests::`
@@ -68,6 +68,50 @@ halves precisely so no 8-byte copy of it can exist in the module image.
 
 The runner also refuses a module that has **any** import: an import means the
 binary is no longer the self-contained artifact this lane promises.
+
+#### Naming the failing test (R41)
+
+Until R41 the entire diagnosis on a red lane was `the test binary trapped:
+unreachable` — no test name, no assertion, no message. That is how R32's
+fourth coupled site hid: `EXPECTED_CANONICAL_JSON` in `verify/mod.rs` was
+enforced by nothing else, passed every other lane, and failed here as a bare
+trap.
+
+**Linear memory survives the trap**, and the program has already written two
+things into it — no import, no JS glue, and nothing added to the crate:
+
+1. **libtest's progress line.** libtest writes `test <name> ... ` before
+   invoking a test body and `ok\n` after it. `stdout` here is a discarding
+   sink *behind std's line buffer*, so the newline that would flush the line
+   never arrives and the buffer still holds the line for the test that was
+   running when the module aborted.
+2. **The default panic hook's record**: `panicked at <file>:<line>:<col>:`
+   followed by the payload — the assertion, its message, and `left`/`right`.
+
+The runner reads both out of the exported `memory` after catching the trap.
+The filter that makes this sound is the exported **`__heap_base`** global:
+every test name and the panic hook's own format string are static literals in
+the data section, so without it the scan would report decoys and could name
+the wrong test. Matches below `__heap_base` are therefore discarded, and when
+the scan finds zero or more than one candidate the runner **says so** rather
+than guessing — a diagnostic that can be silently wrong is worse than none.
+
+Measured on a deliberately failing build of `antseal-core`'s lib tests:
+exactly one progress line above `__heap_base`, one panic record above it,
+three static decoys correctly below it. Output shape:
+
+```
+panicked at crates/antseal-core/src/lib.rs:88:9:
+assertion `left == right` failed: R41 probe: deliberate failure
+  left: 1
+ right: 2
+::error::wasm32 test runner: test `tests::zzz_r41_probe_deliberate_failure` FAILED (module trapped: unreachable)
+```
+
+Nothing here changes what executes: the real `#[test]` functions run through
+the real libtest `main`, the module still has zero imports (asserted per run),
+and D18 stays open — no wasm-bindgen, no crate-type change, no JS shipped
+with the product.
 
 ### Which tests run on wasm32
 
@@ -257,10 +301,15 @@ needs.
 
 ```sh
 cargo build -p antseal-core --target wasm32-unknown-unknown --locked   # wasm32-core
-cargo test  -p antseal-core --lib --target wasm32-unknown-unknown --locked   # wasm32-core-tests
-./scripts/wasm-toolchain-audit.sh                                      #   (same lane)
+./scripts/wasm-tests.sh                                                # wasm32-core-tests
+./scripts/wasm-tests.sh --self-test                                    #   its planted fault
 ./scripts/wasm-bitmatch.sh                                             # wasm-bitmatch
 ```
+
+`scripts/wasm-tests.sh` is what CI runs, so the lane's shell is executed
+locally before it is pushed (Q43). It wraps the two steps the lane used to
+spell inline — `cargo test -p antseal-core --lib --target
+wasm32-unknown-unknown --locked` and `./scripts/wasm-toolchain-audit.sh`.
 
 Requirements: the pinned toolchain (which already installs the wasm32
 target) and **node ≥ 18**. Node is the wasm *host*, not a build tool — it
@@ -285,6 +334,7 @@ toolchain 1.92.0 / node v24.12.0; recorded in
 | Guard | Probe | Observed |
 | --- | --- | --- |
 | a failing wasm32 unit test | temporarily broke `version_matches_scaffold` | lane red: `the test binary trapped: unreachable` |
+| **the failure names its test** (R41) | `./scripts/wasm-tests.sh --self-test` — builds a throwaway crate outside the repo with one passing and one failing `#[test]`, and asserts the runner names the failing one, does **not** name the passing one, prints the assertion message, and reports no data-section decoy | self-test green; and red under each of three planted faults — diagnostic lost (`0 libtest progress lines … cannot be named with certainty`), attribution wrong (`named a test that PASSED`), `__heap_base` filter dropped (`reported a data-section decoy`) |
 | non-vacuity (zero tests ran) | temporarily perturbed the witness pattern | lane red: `main() returned 0 but the execution witness is absent — the suite ran ZERO tests` |
 | getrandom recipe | `ANTSEAL_WASM_AUDIT_TARGET=x86_64-unknown-linux-gnu ./scripts/wasm-toolchain-audit.sh` — puts proptest's getrandom 0.3/0.4 into the audited graph | exit 1, both lines named, missing `wasm_js` feature and missing `--cfg` both reported |
 | bit-match divergence | `./scripts/wasm-bitmatch.sh --self-test` — rebuilds only the wasm32 side with an injected platform divergence (reversed entry order + uppercased hex digests) | lane red, first differing byte and both contexts printed; the script inverts the exit code, so this is a **permanent per-run** guard, not a one-off |

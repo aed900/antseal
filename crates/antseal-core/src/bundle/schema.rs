@@ -1777,9 +1777,12 @@ impl<'b> BundleV1<'b> {
 /// 2. the cap on the **claimed** count, before a single element is read —
 ///    the rejecting input is an array head and nothing else, so a hostile
 ///    bundle is refused in O(1) and long before any crypto;
-/// 3. `Vec::with_capacity(clamped_capacity(claimed, d.remaining()))` — by
+/// 3. `Vec::with_capacity(clamped_capacity::<T>(claimed, d.remaining()))` — by
 ///    this point `claimed <= cap`, so the allocation is bounded by
-///    `min(cap, remaining_input)`;
+///    `min(cap, remaining_input)`. The `::<T>` is load-bearing (F30): the
+///    clamp divides the remaining **bytes** by the element width, so the
+///    reservation is bounded by the input in bytes and not merely in
+///    elements;
 /// 4. decode elements (the loop was always bounded by input consumption:
 ///    each element costs ≥1 byte or errors).
 fn decode_section<T>(
@@ -1792,7 +1795,7 @@ fn decode_section<T>(
     if claimed > cap {
         return Err(BundleError::ListTooLong { list, claimed, cap });
     }
-    let mut out = Vec::with_capacity(clamped_capacity(claimed, d.remaining()));
+    let mut out = Vec::with_capacity(clamped_capacity::<T>(claimed, d.remaining()));
     for _ in 0..claimed {
         out.push(decode_one(d)?);
     }
