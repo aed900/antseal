@@ -18,6 +18,10 @@
 //! - [`split`] (G6, decision D22) — `--split blank-lines`: the frozen
 //!   blank-line paragraph-boundary semantics, over canonical bytes so the
 //!   result is platform-stable (MVP-SPEC.md line 84).
+//! - [`mirror`] (G7, decision D23) — the raw mirror: when a text file needs
+//!   one, how its entry is built, the `kind`-based tiling/concatenation
+//!   exemptions, and the rule that a mirror is never selectable by a bare
+//!   `--units` id (MVP-SPEC.md line 92).
 //! - [`ggm`] (G8) — the GGM salt tree: `s_root` → per-leaf 16-byte salts over a
 //!   complete depth-`d` dyadic grid, with the canonical node-address type
 //!   shared by covers and boundary paths (MVP-SPEC.md line 96).
@@ -37,12 +41,17 @@
 pub mod descriptor;
 pub mod error;
 pub mod ggm;
+pub mod mirror;
 pub mod split;
 pub mod unit;
 
 pub use descriptor::{CanonDescriptor, ContentKind, FileKind, FineTreeDomain, FineTreeOptOut};
 pub use error::ContentError;
 pub use ggm::{ChildBit, NodeAddress, SaltTree, child_seed, depth_for_leaf_count};
+pub use mirror::{
+    RevealSelection, full_reveal_concat_exempt, mirror_selectable, needs_mirror, tiling_exempt,
+    unit_selectable, with_raw_mirror_if_needed,
+};
 pub use split::{is_blank_line, plan_blank_line_split, split_blank_lines};
 pub use unit::{
     ByteRange, FileLengths, FileUnitPlan, SplitEligibleText, Unit, UnitKind, assign_unit_ids,
