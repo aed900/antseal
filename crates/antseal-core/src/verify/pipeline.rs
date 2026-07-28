@@ -989,3 +989,904 @@ fn reveal_set(
         unrevealed_files,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::*;
+    use crate::bundle::{
+        BundleParts, CoverEntry as BundleCoverEntry, FullReveal, OpaqueBytes, PathNode,
+        StorageRecord, TouchedFile as BundleTouchedFile, encode_bundle,
+    };
+    use crate::canon::{TextMode, UNICODE_17_0_0, canonicalize_v};
+    use crate::content::fine_tree::{prove_range, rebuild_fine_root};
+    use crate::crypto::commit::{canon_commit, path_commit, raw_commit, unit_commit};
+    use crate::crypto::error::SaltKind;
+    use crate::crypto::hkdf::derive_unit_key;
+    use crate::crypto::material::{FileSalt, Key32, MasterSecretRef, NodeHash32, Salt16, Seed32};
+    use crate::crypto::secrets::SealId;
+    use crate::crypto::sig_policy::{public_keys, sign_body};
+    use crate::crypto::unit_aead::encrypt_unit;
+    use crate::manifest::body::{
+        ByteRange, ContentAddress, FileEntry, Nonce24 as ManifestNonce, UnitEntry, encode_body,
+    };
+    use crate::manifest::{SigAlgMap, SigMaterial, encode_envelope};
+
+    // -----------------------------------------------------------------
+    // the R5 smoke fixture
+    // -----------------------------------------------------------------
+    //
+    // **This is not R6.** R6 owns the seeded constructor for *every* M0
+    // shape and is the substrate R7–R10 mutate; this is one hand-built
+    // work, deliberately narrow, whose only job is to let R5's own
+    // orchestration and stage order be tested at all. It lives in this
+    // module (not `test_util`) so nothing outside R5 can depend on it and
+    // R6 has nothing to unpick. It does exercise, in one work, every
+    // branch the orchestration has:
+    //
+    // | file | shape | why it is here |
+    // |---|---|---|
+    // | 0 `notes/intro.md` | text, fine tree, 2 units + raw mirror, **fully revealed** | the covered dispatch, the full-reveal cross-checks, the mirror binding, D75's two routes to `fine_root` |
+    // | 1 `data/blob.bin` | binary, fine tree, 3 units, **1 revealed** | partial-reveal isolation, blackout spans, a covered unit outside a full reveal |
+    // | 2 `archive/old.txt` | text, `--no-fine-tree`, 1 unit, **untouched** | the non-covered `unit_commit` branch, and the committed-placeholder rendering |
+    //
+    // Every byte of key material is a recognisable constant pattern and
+    // nothing here is derived from a real secret (`testdata/README.md`).
+
+    /// Fixed, public, NON-SECRET master secret.
+    const TEST_W: [u8; 32] = [0x5A; 32];
+    /// Fixed, public, NON-SECRET `seal_id`.
+    const TEST_SEAL_ID: [u8; 16] = [0xB0; 16];
+    /// Seeds the fixture's AEAD nonces, so the bundle bytes are reproducible.
+    const TEST_RNG_SEED: [u8; 32] = [0x52; 32];
+
+    const F0_PATH: &str = "notes/intro.md";
+    const F1_PATH: &str = "data/blob.bin";
+    const F2_PATH: &str = "archive/old.txt";
+
+    fn w() -> MasterSecretRef<'static> {
+        MasterSecretRef::from_bytes(&TEST_W)
+    }
+
+    fn seal_id() -> SealId {
+        SealId::from_bytes(TEST_SEAL_ID)
+    }
+
+    fn salt16(pattern: u8) -> Salt16 {
+        Salt16::try_from_slice(SaltKind::Unit, &[pattern; 16]).expect("16 bytes")
+    }
+
+    fn file_salt(pattern: u8) -> FileSalt {
+        FileSalt::from_disclosed(salt16(pattern))
+    }
+
+    fn seed32(pattern: u8) -> Seed32 {
+        Seed32::from_bytes([pattern; 32])
+    }
+
+    /// Which mutation a fixture carries: one knob per tamper case, plus
+    /// the combinations the stage-order pins need.
+    #[derive(Debug, Clone, Default)]
+    struct Tweak {
+        /// Flip a byte of the first GGM cover seed of unit 0 (D75).
+        corrupt_cover_seed: bool,
+        /// Flip a byte of file 0's disclosed `s_root`.
+        corrupt_s_root: bool,
+        /// Omit file 0's whole full-reveal entry (`file_salt` + `s_root`).
+        drop_full_material: bool,
+        /// Omit the `touched_files` entry for this file (D80).
+        drop_touched_file: Option<u64>,
+        /// Emit this covered unit in `noncovered_reveals` instead.
+        misplace_covered_unit: Option<u64>,
+        /// Flip a ciphertext byte of each of these units.
+        corrupt_ciphertext: Vec<u64>,
+        /// Shorten file 1's first (unrevealed) unit range, opening a gap
+        /// in the manifest's tiling of that file.
+        break_tiling: bool,
+        /// Flip a byte of the Ed25519 signature.
+        corrupt_signature: bool,
+    }
+
+    /// One unit as the fixture builds it.
+    struct PlannedUnit {
+        unit_id: u64,
+        file_id: u64,
+        kind: ManifestUnitKind,
+        range: ByteRange,
+        bytes: Vec<u8>,
+        covered: bool,
+        ciphertext: Vec<u8>,
+        nonce: ManifestNonce,
+    }
+
+    impl PlannedUnit {
+        fn new(
+            rng: &mut ChaCha20Rng,
+            unit_id: u64,
+            file_id: u64,
+            kind: ManifestUnitKind,
+            start: u64,
+            bytes: &[u8],
+            covered: bool,
+        ) -> Self {
+            let (ciphertext, nonce) = encrypt_unit(w(), &seal_id(), UnitId(unit_id), bytes, rng)
+                .expect("fixture encryption succeeds");
+            Self {
+                unit_id,
+                file_id,
+                kind,
+                range: ByteRange::new(start, u64::try_from(bytes.len()).expect("small")),
+                bytes: bytes.to_vec(),
+                covered,
+                ciphertext,
+                nonce: ManifestNonce::from_bytes(*nonce.as_bytes()),
+            }
+        }
+
+        fn manifest_entry(&self) -> UnitEntry {
+            let binding = if self.covered {
+                UnitBinding::FineTreeCovered
+            } else {
+                UnitBinding::NonCovered {
+                    unit_commit: unit_commit(&salt16(unit_salt_pattern(self.unit_id)), &self.bytes),
+                }
+            };
+            UnitEntry::new(
+                self.unit_id,
+                self.kind,
+                self.range,
+                u64::try_from(self.bytes.len()).expect("small"),
+                binding,
+                self.nonce,
+                ContentAddress::from_bytes([u8::try_from(self.unit_id).unwrap_or(0xFF); 32]),
+            )
+        }
+    }
+
+    /// The `unit_salt` pattern for a unit id (only non-covered units use it).
+    fn unit_salt_pattern(unit_id: u64) -> u8 {
+        0x40u8.wrapping_add(u8::try_from(unit_id).unwrap_or(0))
+    }
+
+    /// Build the fixture `.sealproof` bytes under `tweak`.
+    #[allow(clippy::too_many_lines)]
+    fn fixture(tweak: &Tweak) -> Vec<u8> {
+        let mut rng = ChaCha20Rng::from_seed(TEST_RNG_SEED);
+
+        // ── content ────────────────────────────────────────────────────
+        let f0_raw = b"line one\r\nline two\r\n".to_vec();
+        let f0_canon = canonicalize_v(UNICODE_17_0_0, TextMode::Detected, &f0_raw)
+            .expect("fixture text canonicalizes")
+            .into_bytes();
+        let f1_raw: Vec<u8> = (0u8..30).collect();
+        let f2_raw = b"kept back\n".to_vec();
+
+        let f0_size = u64::try_from(f0_canon.len()).expect("small");
+        let f1_size = u64::try_from(f1_raw.len()).expect("small");
+        let f2_size = u64::try_from(f2_raw.len()).expect("small");
+        let half = usize::try_from(f0_size / 2).expect("small");
+
+        // ── units, in manifest order (so unit_id == ordinal) ───────────
+        let mut units = vec![
+            PlannedUnit::new(
+                &mut rng,
+                0,
+                0,
+                ManifestUnitKind::Normal,
+                0,
+                &f0_canon[..half],
+                true,
+            ),
+            PlannedUnit::new(
+                &mut rng,
+                1,
+                0,
+                ManifestUnitKind::Normal,
+                u64::try_from(half).expect("small"),
+                &f0_canon[half..],
+                true,
+            ),
+            PlannedUnit::new(
+                &mut rng,
+                2,
+                0,
+                ManifestUnitKind::RawMirror,
+                0,
+                &f0_raw,
+                false,
+            ),
+            PlannedUnit::new(
+                &mut rng,
+                3,
+                1,
+                ManifestUnitKind::Normal,
+                0,
+                &f1_raw[..10],
+                true,
+            ),
+            PlannedUnit::new(
+                &mut rng,
+                4,
+                1,
+                ManifestUnitKind::Normal,
+                10,
+                &f1_raw[10..20],
+                true,
+            ),
+            PlannedUnit::new(
+                &mut rng,
+                5,
+                1,
+                ManifestUnitKind::Normal,
+                20,
+                &f1_raw[20..],
+                true,
+            ),
+            PlannedUnit::new(&mut rng, 6, 2, ManifestUnitKind::Normal, 0, &f2_raw, false),
+        ];
+
+        if tweak.break_tiling {
+            // Unit 3 is unrevealed, so narrowing its manifest range is a
+            // pure tiling defect: `[0,9) [10,20) [20,30)` leaves byte 9
+            // covered by nothing, and no per-unit check ever runs on it.
+            units[3].range = ByteRange::new(0, 9);
+        }
+
+        // ── manifest ───────────────────────────────────────────────────
+        let f0_root = rebuild_fine_root(&seed32(0x13), &f0_canon).expect("fine root");
+        let f1_root = rebuild_fine_root(&seed32(0x23), &f1_raw).expect("fine root");
+
+        let file0 = FileEntry::new(
+            path_commit(&salt16(0x12), F0_PATH),
+            raw_commit(&file_salt(0x11), &f0_raw),
+            CanonMode::Text {
+                canon_commit: canon_commit(&file_salt(0x11), &f0_canon),
+                unicode_version: UNICODE_17_0_0.to_owned(),
+            },
+            f0_size,
+            FineTree::Present {
+                root: *f0_root.as_bytes(),
+            },
+            units[0..3]
+                .iter()
+                .map(PlannedUnit::manifest_entry)
+                .collect(),
+        )
+        .expect("file 0 is well formed");
+
+        let file1 = FileEntry::new(
+            path_commit(&salt16(0x22), F1_PATH),
+            raw_commit(&file_salt(0x21), &f1_raw),
+            CanonMode::Binary,
+            f1_size,
+            FineTree::Present {
+                root: *f1_root.as_bytes(),
+            },
+            units[3..6]
+                .iter()
+                .map(PlannedUnit::manifest_entry)
+                .collect(),
+        )
+        .expect("file 1 is well formed");
+
+        let file2 = FileEntry::new(
+            path_commit(&salt16(0x32), F2_PATH),
+            raw_commit(&file_salt(0x31), &f2_raw),
+            CanonMode::Text {
+                canon_commit: canon_commit(&file_salt(0x31), &f2_raw),
+                unicode_version: UNICODE_17_0_0.to_owned(),
+            },
+            f2_size,
+            FineTree::Absent,
+            units[6..].iter().map(PlannedUnit::manifest_entry).collect(),
+        )
+        .expect("file 2 is well formed");
+
+        let policy = SigPolicy::hybrid();
+        let pubkeys = SigAlgMap::new(SigMaterial::Pubkey, public_keys(w(), &policy))
+            .expect("fixture pubkeys");
+        let body = ManifestBodyV1::new(
+            "antseal-fixture/1".to_owned(),
+            seal_id(),
+            "R5 pipeline fixture".to_owned(),
+            1_767_225_600,
+            pubkeys,
+            policy.algorithms().to_vec(),
+            vec![file0, file1, file2],
+        )
+        .expect("fixture body is well formed");
+        let body_bytes = encode_body(body).expect("fixture body encodes");
+
+        let mut signature_material = sign_body(w(), &policy, &body_bytes);
+        if tweak.corrupt_signature
+            && let Some((_, bytes)) = signature_material.first_mut()
+        {
+            bytes[0] ^= 0x01;
+        }
+        let signatures =
+            SigAlgMap::new(SigMaterial::Signature, signature_material).expect("fixture signatures");
+        let manifest_bytes =
+            encode_envelope(&body_bytes, &signatures).expect("fixture envelope encodes");
+
+        // ── bundle ─────────────────────────────────────────────────────
+        // Revealed: file 0 in full (units 0, 1 + mirror 2), file 1's unit 4
+        // only, file 2 not at all.
+        let revealed: [u64; 4] = [0, 1, 2, 4];
+        let mut covered_reveals = Vec::new();
+        let mut noncovered_reveals = Vec::new();
+
+        for unit in &units {
+            if !revealed.contains(&unit.unit_id) {
+                continue;
+            }
+            let mut ciphertext = unit.ciphertext.clone();
+            if tweak.corrupt_ciphertext.contains(&unit.unit_id) {
+                ciphertext[0] ^= 0x01;
+            }
+            let k_u = derive_unit_key(w(), UnitId(unit.unit_id));
+            let misplaced = tweak.misplace_covered_unit == Some(unit.unit_id);
+
+            if unit.covered && !misplaced {
+                let (s_root, content, leaf_count) = if unit.file_id == 0 {
+                    (seed32(0x13), f0_canon.as_slice(), f0_size)
+                } else {
+                    (seed32(0x23), f1_raw.as_slice(), f1_size)
+                };
+                let proof = prove_range(
+                    &s_root,
+                    content,
+                    ContentByteRange::new(unit.range.start(), unit.range.length()),
+                    leaf_count,
+                )
+                .expect("fixture range proof");
+
+                let mut cover: Vec<BundleCoverEntry> = proof
+                    .cover()
+                    .iter()
+                    .map(|entry| {
+                        BundleCoverEntry::new(
+                            entry.node().address(),
+                            Seed32::from_bytes(*entry.seed().as_bytes()),
+                        )
+                    })
+                    .collect();
+                if tweak.corrupt_cover_seed && unit.unit_id == 0 {
+                    let mut bytes = *cover[0].seed().as_bytes();
+                    bytes[0] ^= 0x01;
+                    cover[0] = BundleCoverEntry::new(cover[0].address(), Seed32::from_bytes(bytes));
+                }
+                let paths: Vec<PathNode> = proof
+                    .boundary()
+                    .iter()
+                    .map(|node| {
+                        PathNode::new(
+                            node.address(),
+                            NodeHash32::from_bytes(*node.hash().as_bytes()),
+                        )
+                    })
+                    .collect();
+
+                covered_reveals.push(
+                    CoveredReveal::new(
+                        unit.unit_id,
+                        k_u,
+                        OpaqueBytes::from_vec(ciphertext),
+                        cover,
+                        paths,
+                    )
+                    .expect("fixture covered reveal"),
+                );
+            } else {
+                noncovered_reveals.push(
+                    NonCoveredReveal::new(
+                        unit.unit_id,
+                        k_u,
+                        OpaqueBytes::from_vec(ciphertext),
+                        salt16(unit_salt_pattern(unit.unit_id)),
+                    )
+                    .expect("fixture non-covered reveal"),
+                );
+            }
+        }
+
+        let touched_files: Vec<BundleTouchedFile> = [(0u64, F0_PATH, 0x12u8), (1, F1_PATH, 0x22)]
+            .into_iter()
+            .filter(|(file_id, ..)| tweak.drop_touched_file != Some(*file_id))
+            .map(|(file_id, path, pattern)| {
+                BundleTouchedFile::new(file_id, path.to_owned(), salt16(pattern))
+            })
+            .collect();
+
+        // F8 rejects `full_reveals ⊄ touched_files` at decode, so dropping
+        // file 0's path also drops its full-reveal entry — the D80 case
+        // this fixture exercises is file 1's, which has no full reveal.
+        let mut full_reveals = Vec::new();
+        if !tweak.drop_full_material && tweak.drop_touched_file != Some(0) {
+            let mut s_root = [0x13u8; 32];
+            if tweak.corrupt_s_root {
+                s_root[0] ^= 0x01;
+            }
+            full_reveals.push(FullReveal::new(
+                0,
+                salt16(0x11),
+                Some(Seed32::from_bytes(s_root)),
+            ));
+        }
+
+        let bundle = BundleV1::new(BundleParts {
+            manifest: &manifest_bytes,
+            storage_record: StorageRecord::new(
+                ContentAddress::from_bytes([0x77; 32]),
+                ManifestNonce::from_bytes([0x78; 24]),
+                Key32::from_bytes([0x79; 32]),
+            ),
+            ots_anchors: Vec::new(),
+            tsa_anchors: Vec::new(),
+            receipt: None,
+            covered_reveals,
+            noncovered_reveals,
+            touched_files,
+            full_reveals,
+        })
+        .expect("fixture bundle is well formed");
+
+        encode_bundle(&bundle).expect("fixture bundle encodes")
+    }
+
+    fn valid() -> Vec<u8> {
+        fixture(&Tweak::default())
+    }
+
+    /// Verify `tweak`'s fixture and return the code of the first error.
+    fn code_of(tweak: &Tweak) -> &'static str {
+        verify_bundle(&fixture(tweak), &VerifyOptions::new())
+            .expect_err("the tweaked fixture must not verify")
+            .code()
+    }
+
+    // -----------------------------------------------------------------
+    // the happy path
+    // -----------------------------------------------------------------
+
+    /// R5's headline Accept bullet: a valid bundle verifies end to end and
+    /// the report says what the work is, what was shown, and what was not.
+    #[test]
+    fn a_valid_bundle_verifies_end_to_end() {
+        let bytes = valid();
+        let report = verify_bundle(&bytes, &VerifyOptions::new()).expect("fixture verifies");
+
+        assert!(report.evidence.passed);
+        assert_eq!(report.evidence.units_verified, 4);
+        assert_eq!(report.work.title, "R5 pipeline fixture");
+        assert_eq!(report.work.format_version, 1);
+        assert_eq!(report.work.signature_scheme, SignatureScheme::HybridPq);
+        assert_eq!(report.storage_linkage, StorageLinkageResult::NotEvaluated);
+        assert_eq!(report.supporting_evidence, SupportingEvidenceResult::None);
+
+        // `work_id` is SHA-256 over the received body bytes.
+        let proof = SealProof::decode(&bytes).expect("fixture decodes");
+        assert_eq!(
+            report.work.work_id.0,
+            *work_id(proof.manifest().body_bytes()).as_bytes()
+        );
+
+        // File 0: fully revealed, mirror rode along, no blackouts.
+        let file0 = &report.reveal.files[0];
+        assert_eq!(file0.path, F0_PATH);
+        assert!(file0.fully_revealed);
+        assert_eq!(file0.revealed_spans.len(), 2);
+        assert!(file0.unrevealed_spans.is_empty());
+        assert_eq!(file0.raw_mirror.map(|mirror| mirror.raw_size), Some(20));
+
+        // File 1: one unit shown, two rendered as sized blackouts, with
+        // position and total size present (MVP-SPEC.md line 121).
+        let file1 = &report.reveal.files[1];
+        assert_eq!(file1.path, F1_PATH);
+        assert!(!file1.fully_revealed);
+        assert_eq!(file1.total_size, 30);
+        assert_eq!(file1.revealed_spans.len(), 1);
+        assert_eq!(file1.revealed_spans[0].start, 10);
+        assert_eq!(file1.unrevealed_spans.len(), 2);
+        assert!(file1.raw_mirror.is_none());
+
+        // File 2: a committed placeholder — size only, path withheld.
+        assert_eq!(report.reveal.files.len(), 2);
+        assert_eq!(report.reveal.unrevealed_files.len(), 1);
+        assert_eq!(report.reveal.unrevealed_files[0].file_id, 2);
+        assert_eq!(report.reveal.unrevealed_files[0].size, 10);
+        let json = String::from_utf8(report.to_canonical_json().expect("serializes"))
+            .expect("canonical JSON is UTF-8");
+        assert!(!json.contains(F2_PATH), "placeholder leaked a path: {json}");
+    }
+
+    /// The M0 empty-anchor requirement (MVP-SPEC.md line 153): a bundle
+    /// with no anchor artifacts verifies, and its anchor list is empty
+    /// rather than absent.
+    #[test]
+    fn empty_anchor_bundle_verifies_with_an_empty_anchor_list() {
+        let report = verify_bundle(&valid(), &VerifyOptions::new()).expect("fixture verifies");
+        assert!(report.anchors.is_empty());
+        let json = String::from_utf8(report.to_canonical_json().expect("report serializes"))
+            .expect("canonical JSON is UTF-8");
+        assert!(json.contains("\"anchors\":[]"), "{json}");
+    }
+
+    /// Determinism: two runs over the same bytes produce byte-identical
+    /// canonical reports (the Q4/Q5 vector contract).
+    #[test]
+    fn verification_is_byte_deterministic() {
+        let bytes = valid();
+        let first = verify_bundle(&bytes, &VerifyOptions::new())
+            .expect("verifies")
+            .to_canonical_json()
+            .expect("serializes");
+        let second = verify_bundle(&bytes, &VerifyOptions::new())
+            .expect("verifies")
+            .to_canonical_json()
+            .expect("serializes");
+        assert_eq!(first, second);
+        // The fixture itself is reproducible, which is what makes the
+        // above a statement about verification rather than about luck.
+        assert_eq!(bytes, valid());
+    }
+
+    /// No secret material reaches the report: the fixture's own salts,
+    /// seeds and keys appear nowhere in the serialized bytes.
+    #[test]
+    fn no_fixture_secret_reaches_the_report() {
+        let report = verify_bundle(&valid(), &VerifyOptions::new()).expect("verifies");
+        let json = String::from_utf8(report.to_canonical_json().expect("serializes"))
+            .expect("canonical JSON is UTF-8");
+        for pattern in ["11111111", "13131313", "40404040", "5a5a5a5a"] {
+            assert!(!json.contains(pattern), "{pattern} leaked into {json}");
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // the frozen stage order
+    // -----------------------------------------------------------------
+
+    /// `VerifyStage::ALL` is the declaration order, complete and ascending
+    /// — so the constant and the enum cannot drift apart.
+    #[test]
+    fn stage_order_constant_matches_declaration() {
+        assert_eq!(
+            VerifyStage::ALL,
+            [
+                VerifyStage::Decode,
+                VerifyStage::Structural,
+                VerifyStage::Units,
+                VerifyStage::Files,
+                VerifyStage::Signatures,
+                VerifyStage::Anchors,
+            ]
+        );
+        assert!(VerifyStage::ALL.windows(2).all(|pair| pair[0] < pair[1]));
+        let names: Vec<&str> = VerifyStage::ALL.iter().map(|stage| stage.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "decode",
+                "structural",
+                "units",
+                "files",
+                "signatures",
+                "anchors"
+            ]
+        );
+    }
+
+    /// Stage 1 before everything: bytes that are not a bundle fail at
+    /// decode, with the inner layer's own code (never an R code).
+    #[test]
+    fn stage_order_decode_runs_first() {
+        for input in [&b""[..], &b"\x00\x01\x02"[..], &[0xFF; 64][..]] {
+            let code = verify_bundle(input, &VerifyOptions::new())
+                .expect_err("garbage is not a bundle")
+                .code();
+            assert!(
+                code.starts_with("cbor-") || code.starts_with("bundle-"),
+                "{code}"
+            );
+        }
+    }
+
+    /// Stage 2 before stage 3: a manifest whose units do not tile is
+    /// rejected structurally even though a revealed unit's ciphertext is
+    /// also corrupt.
+    #[test]
+    fn stage_order_structural_runs_before_units() {
+        assert_eq!(
+            code_of(&Tweak {
+                break_tiling: true,
+                corrupt_ciphertext: vec![0],
+                ..Tweak::default()
+            }),
+            "tiling-gap"
+        );
+    }
+
+    /// R3's four groups run before R5's coherence groups: with both a
+    /// tiling violation and a missing `touched_files` entry, tiling wins.
+    #[test]
+    fn stage_order_structural_groups_run_before_coherence() {
+        assert_eq!(
+            code_of(&Tweak {
+                break_tiling: true,
+                drop_touched_file: Some(1),
+                ..Tweak::default()
+            }),
+            "tiling-gap"
+        );
+    }
+
+    /// Stage 3 before stage 4: a corrupt ciphertext is reported even
+    /// though the file-level material is also missing.
+    #[test]
+    fn stage_order_units_run_before_files() {
+        assert_eq!(
+            code_of(&Tweak {
+                corrupt_ciphertext: vec![0],
+                drop_full_material: true,
+                ..Tweak::default()
+            }),
+            "unit-decrypt-failed"
+        );
+    }
+
+    /// Stage 4 before stage 5: a full reveal stripped of its material is
+    /// reported even though the signature is also broken.
+    #[test]
+    fn stage_order_files_run_before_signatures() {
+        assert_eq!(
+            code_of(&Tweak {
+                drop_full_material: true,
+                corrupt_signature: true,
+                ..Tweak::default()
+            }),
+            "full-reveal-material-missing-file-salt"
+        );
+    }
+
+    /// Each mutation used above is observable on its own, so those tests
+    /// are about ordering and not about one mutation being invisible.
+    #[test]
+    fn each_stage_order_mutation_is_observable_alone() {
+        assert_eq!(
+            code_of(&Tweak {
+                break_tiling: true,
+                ..Tweak::default()
+            }),
+            "tiling-gap"
+        );
+        assert_eq!(
+            code_of(&Tweak {
+                corrupt_ciphertext: vec![0],
+                ..Tweak::default()
+            }),
+            "unit-decrypt-failed"
+        );
+        assert_eq!(
+            code_of(&Tweak {
+                drop_full_material: true,
+                ..Tweak::default()
+            }),
+            "full-reveal-material-missing-file-salt"
+        );
+        assert_eq!(
+            code_of(&Tweak {
+                corrupt_signature: true,
+                ..Tweak::default()
+            }),
+            "crypto-signature-invalid-ed25519"
+        );
+        assert_eq!(
+            code_of(&Tweak {
+                drop_touched_file: Some(1),
+                ..Tweak::default()
+            }),
+            "revealed-unit-file-not-touched"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // D80 and the reveal-section rule
+    // -----------------------------------------------------------------
+
+    /// D80 through the whole pipeline: file 1 has a revealed unit, so its
+    /// path must be disclosed.
+    #[test]
+    fn d80_revealed_unit_without_a_touched_file_is_rejected() {
+        assert_eq!(
+            code_of(&Tweak {
+                drop_touched_file: Some(1),
+                ..Tweak::default()
+            }),
+            "revealed-unit-file-not-touched"
+        );
+    }
+
+    /// A covered unit shipped in `noncovered_reveals` is rejected before
+    /// any ciphertext is opened.
+    #[test]
+    fn a_misplaced_covered_unit_is_rejected() {
+        assert_eq!(
+            code_of(&Tweak {
+                misplace_covered_unit: Some(0),
+                ..Tweak::default()
+            }),
+            "covered-unit-revealed-as-non-covered"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // D75: the two routes to `fine_root` are required to agree
+    // -----------------------------------------------------------------
+
+    /// **D75's owed agreement check, discharged transitively.** A full
+    /// reveal of a fine-tree file carries two independent routes to
+    /// `fine_root`: each unit's own GGM sub-cover (stage 3) and the file's
+    /// `s_root` (stage 4). A cover seed that does not descend from the
+    /// disclosed `s_root` yields different leaf salts, hence different
+    /// leaves, hence a different folded root — so the *existing* per-unit
+    /// binding rejects it, and reaching `fine_root` anyway would be a
+    /// Merkle collision. The redundancy is enforced by both routes binding
+    /// the same signed value, not by an extra comparison.
+    #[test]
+    fn d75_a_cover_seed_not_descending_from_s_root_is_rejected() {
+        assert_eq!(
+            code_of(&Tweak {
+                corrupt_cover_seed: true,
+                ..Tweak::default()
+            }),
+            "fine-root-binding-failed"
+        );
+    }
+
+    /// The other route, mutated: an `s_root` that does not rebuild the
+    /// manifest's `fine_root`. Distinct code, distinct stage — which is
+    /// what makes the pair above a genuine agreement rather than one check
+    /// wearing two hats.
+    #[test]
+    fn d75_an_s_root_that_does_not_rebuild_fine_root_is_rejected() {
+        assert_eq!(
+            code_of(&Tweak {
+                corrupt_s_root: true,
+                ..Tweak::default()
+            }),
+            "fine-root-rebuild-mismatch"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // D27: the two entry points
+    // -----------------------------------------------------------------
+
+    fn tamper_cases() -> Vec<Tweak> {
+        vec![
+            Tweak {
+                break_tiling: true,
+                ..Tweak::default()
+            },
+            Tweak {
+                drop_touched_file: Some(1),
+                ..Tweak::default()
+            },
+            Tweak {
+                misplace_covered_unit: Some(0),
+                ..Tweak::default()
+            },
+            Tweak {
+                corrupt_ciphertext: vec![0],
+                ..Tweak::default()
+            },
+            Tweak {
+                corrupt_ciphertext: vec![0, 1],
+                ..Tweak::default()
+            },
+            Tweak {
+                corrupt_cover_seed: true,
+                ..Tweak::default()
+            },
+            Tweak {
+                corrupt_s_root: true,
+                ..Tweak::default()
+            },
+            Tweak {
+                drop_full_material: true,
+                ..Tweak::default()
+            },
+            Tweak {
+                corrupt_signature: true,
+                ..Tweak::default()
+            },
+        ]
+    }
+
+    /// The D27 invariant, over every tamper case this module builds:
+    /// `VerifyFailures::primary()` is exactly the fail-fast error.
+    #[test]
+    fn collecting_primary_equals_the_fail_fast_error() {
+        for tweak in tamper_cases() {
+            let bytes = fixture(&tweak);
+            let fail_fast =
+                verify_bundle(&bytes, &VerifyOptions::new()).expect_err("must not verify");
+            let collected = verify_bundle_collecting(&bytes, &VerifyOptions::new())
+                .expect_err("must not verify");
+            assert_eq!(*collected.primary(), fail_fast, "{tweak:?}");
+        }
+    }
+
+    /// Units are independent, so collecting mode reports all of them —
+    /// and only them (no speculative file/signature findings, D27 §3).
+    #[test]
+    fn collecting_reports_every_independent_unit_failure() {
+        let bytes = fixture(&Tweak {
+            corrupt_ciphertext: vec![0, 1],
+            ..Tweak::default()
+        });
+        let collected =
+            verify_bundle_collecting(&bytes, &VerifyOptions::new()).expect_err("must not verify");
+        assert_eq!(collected.count(), 2);
+        let codes: Vec<&str> = collected.iter().map(VerifyError::code).collect();
+        assert_eq!(codes, ["unit-decrypt-failed", "unit-decrypt-failed"]);
+        assert_eq!(
+            *collected.primary(),
+            VerifyError::UnitDecryptFailed { unit_id: 0 }
+        );
+    }
+
+    /// A failure outside the per-unit stage yields exactly one finding.
+    #[test]
+    fn collecting_does_not_cascade_past_a_non_unit_stage() {
+        let bytes = fixture(&Tweak {
+            break_tiling: true,
+            ..Tweak::default()
+        });
+        let collected =
+            verify_bundle_collecting(&bytes, &VerifyOptions::new()).expect_err("must not verify");
+        assert_eq!(collected.count(), 1);
+    }
+
+    /// The valid fixture verifies identically through both entry points.
+    #[test]
+    fn both_entry_points_agree_on_a_valid_bundle() {
+        let bytes = valid();
+        let strict = verify_bundle(&bytes, &VerifyOptions::new()).expect("verifies");
+        let collecting = verify_bundle_collecting(&bytes, &VerifyOptions::new())
+            .map_err(|_| ())
+            .expect("verifies");
+        assert_eq!(strict, collecting);
+    }
+
+    // -----------------------------------------------------------------
+    // hostile input
+    // -----------------------------------------------------------------
+
+    /// Every truncation, and a spread of single-bit flips, of a valid
+    /// bundle is handled totally: a typed error or a report, never a panic
+    /// (MVP-SPEC.md line 187, hostile bundles). R10 owns the fuzz target;
+    /// this is the cheap deterministic sweep that keeps the guarantee
+    /// alive between fuzz runs.
+    #[test]
+    fn hostile_inputs_never_panic() {
+        let bytes = valid();
+        for cut in 0..bytes.len() {
+            drop(verify_bundle(&bytes[..cut], &VerifyOptions::new()));
+        }
+        for index in (0..bytes.len()).step_by(97) {
+            let mut mutated = bytes.clone();
+            mutated[index] ^= 0x01;
+            drop(verify_bundle(&mutated, &VerifyOptions::new()));
+        }
+    }
+
+    /// The options type is inert at M0 but present in the signature D27
+    /// fixed, so later stages can be switched on without a break.
+    #[test]
+    fn default_options_are_the_m0_options() {
+        assert_eq!(VerifyOptions::default(), VerifyOptions::new());
+    }
+}
