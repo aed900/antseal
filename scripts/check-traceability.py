@@ -60,6 +60,29 @@ BOUNDARY_COPIES = [
 BOUNDARY_SOURCE = "docs/decisions/D84-anchor-artifact-limits-permanence.md"
 
 
+# Q49 — a checkbox marker is gate state, not rule text.
+#
+# Q14's Accept requires BOTH this lint green AND every normative row ticked,
+# and rows N1/N2 live *inside* the markers. `- [ ]` → `- [x]` is a byte change,
+# so as written the two criteria were mutually exclusive and the gate could not
+# be run at all. What this lint exists to protect is the rule *text*; the tick
+# records whether the gate has verified that rule, which is per-copy state and
+# legitimately differs between the decision record (which never ticks) and the
+# checklist (which must).
+#
+# So the marker — and only the marker, and only at the head of a list item — is
+# blanked on both sides before comparison. Every other byte still compares
+# exactly: change one word and the check goes red. `--self-test` proves both
+# halves, because a normalisation that quietly widened to "compare nothing"
+# would leave this lint green forever.
+CHECKBOX_MARKER = re.compile(r"^(\s*)- \[[ xX]\] ", re.MULTILINE)
+
+
+def blank_gate_state(block: str) -> str:
+    """Blank every checkbox marker; leave every other byte untouched."""
+    return CHECKBOX_MARKER.sub(r"\1- [ ] ", block)
+
+
 def extract_boundary(path: pathlib.Path) -> str | None:
     """The text between the markers, exclusive, stripped of blank edges."""
     text = path.read_text(encoding="utf-8")
@@ -132,13 +155,18 @@ def check_freeze_boundary(failures: Failures) -> None:
             continue
         seen[relative] = block
 
+    # Compare with gate state blanked on BOTH sides (Q49). The reported
+    # difference is computed on the same blanked forms, so the message can
+    # never point at a tick the comparison deliberately ignored.
+    source_text = blank_gate_state(source)
     for relative, block in seen.items():
-        if block != source:
+        block_text = blank_gate_state(block)
+        if block_text != source_text:
             failures.add(
                 check,
                 f"{relative} has drifted from {BOUNDARY_SOURCE} §7. "
                 "Re-cut the copy from the record; do not edit the copy in place. "
-                f"First difference: {first_difference(source, block)}",
+                f"First difference: {first_difference(source_text, block_text)}",
             )
 
     if not failures and len(seen) < 2:
@@ -369,6 +397,13 @@ def self_test() -> int:
             ignore=shutil.ignore_patterns(".git", "target", "node_modules"),
         )
 
+        # (check, file, mutation, expect) where expect is "red" or "green".
+        #
+        # The two "green" cases are Q49's: a ticked checkbox is gate state and
+        # must be tolerated. They are not decoration — without them the
+        # normalisation could widen to "compare nothing" and no case would
+        # notice. The "red" cases bound it from the other side: change a word,
+        # or delete the marker instead of ticking it, and the check still bites.
         cases = [
             (
                 "freeze-boundary",
@@ -378,6 +413,25 @@ def self_test() -> int:
                     "an over-limit artifact fails THE WHOLE BUNDLE and that",
                     1,
                 ),
+                "red",
+            ),
+            (
+                "freeze-boundary",
+                "tasks/Q.md",
+                lambda t: t.replace("- [ ] **Anchor-artifact freeze scope", "- **Anchor-artifact freeze scope", 1),
+                "red",
+            ),
+            (
+                "freeze-boundary",
+                "tasks/Q.md",
+                lambda t: t.replace("- [ ] **Anchor-artifact freeze scope", "- [x] **Anchor-artifact freeze scope", 1),
+                "green",
+            ),
+            (
+                "freeze-boundary",
+                "tasks/Q.md",
+                lambda t: t.replace("- [ ] **Report-version evolution", "- [X] **Report-version evolution", 1),
+                "green",
             ),
             (
                 "matrix",
@@ -385,10 +439,11 @@ def self_test() -> int:
                 lambda t: t.replace(
                     "::", "::this_test_does_not_exist_", 1
                 ),
+                "red",
             ),
         ]
 
-        for check, relative, mutate in cases:
+        for check, relative, mutate, expect in cases:
             path = tree / relative
             if not path.is_file():
                 # Never a skip. A self-test that quietly opts out of a case is
@@ -400,21 +455,37 @@ def self_test() -> int:
                 ok = False
                 continue
             original = path.read_text(encoding="utf-8")
-            path.write_text(mutate(original), encoding="utf-8")
+            mutated = mutate(original)
+            if mutated == original:
+                # A mutation that changed nothing would make its case vacuous —
+                # green for a reason that has nothing to do with the check.
+                print(
+                    f"self-test: FAILED — the {expect}-case mutation of {relative} "
+                    "matched nothing, so the case proves nothing",
+                    file=sys.stderr,
+                )
+                ok = False
+                continue
+            path.write_text(mutated, encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(tree / "scripts/check-traceability.py"), f"--{check}"],
                 capture_output=True,
                 text=True,
             )
             path.write_text(original, encoding="utf-8")
-            if result.returncode == 0:
+            went_red = result.returncode != 0
+            if went_red != (expect == "red"):
                 print(
-                    f"self-test: FAILED — {check} stayed green with {relative} corrupted",
+                    f"self-test: FAILED — {check} went "
+                    f"{'red' if went_red else 'green'} on the {expect}-case "
+                    f"mutation of {relative}",
                     file=sys.stderr,
                 )
                 ok = False
-            else:
+            elif expect == "red":
                 print(f"self-test: ok — {check} goes red when {relative} is corrupted")
+            else:
+                print(f"self-test: ok — {check} tolerates gate state in {relative}")
 
     return 0 if ok else 1
 

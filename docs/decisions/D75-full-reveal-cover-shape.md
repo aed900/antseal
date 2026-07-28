@@ -4,8 +4,10 @@
   required (registry §7.11 key 3, tier [P]); a fully revealed file's
   `s_root` (§7.14 key 2) is carried in addition, not instead. Outcome
   **ratified** at M0 wave 6 (2026-07-28); its stated *consequences* are
-  corrected in three places below, and the discharged open action is now
-  **contingent on D83** — see the amendment**
+  corrected in three places below. The discharged open action was
+  contingent on D83; **D83 resolved as option B (canonical zero tail) and
+  the contingency is now discharged — Correction 3's exception is DELETED.
+  See "Post-D83 amendment" at the end of this record**
 - **Date: 2026-07-28** (resolved with F8)
 
 ## Context
@@ -356,3 +358,85 @@ changed digests.
    `the_unauthenticated_region_at_m0_is_exactly_the_storage_record` red as
    predicted. A red test there is the analysis confirmed, not a
    regression — report the measured size of the third region.
+
+---
+
+## Post-D83 amendment (2026-07-28, M0 wave 7)
+
+Correction 3 was written while **D83 was OPEN** and made its own closure
+conditional: *"If D83 resolves by shortening the wire form or canonicalizing
+the tail, the original discharge sentence becomes true as written and
+correction 3 is deleted. If D83 resolves by accepting the malleability,
+correction 3 becomes permanent and D75 carries the exception for good."*
+
+**D83 RESOLVED as option B — the canonical zero tail** (`docs/decisions/
+D83-leaf-cover-seed-tail-malleability.md`, implemented at **G23**): a
+`level == d` cover payload is `salt_i ‖ 0x00·16`, enforced from **both**
+emission sites — the cover-entry site and the `n == 1` `s_root` site — under
+the single code `fine-root-leaf-seed-tail-not-zero`.
+
+**Correction 3's exception is therefore DELETED.** Q14's normative row N6
+("Full-reveal cover shape (D75) — closed *contingent on D83*") is now
+tickable, and this section is the amendment it requires.
+
+### The discharge is restored — but not by the mechanism the original sentence claimed
+
+The conditional above says the original sentence becomes *"true as written"*.
+That is very nearly right and worth stating precisely, because the difference
+is the whole reason D83 needed a decision at all.
+
+The original discharge argued one mechanism: *"a cover seed that does not
+descend from the disclosed `s_root` derives different leaf salts, hence
+different leaves, hence a different folded root — so R2 already rejects it."*
+Under option B the routes are forced to agree on **every byte of the payload**,
+but by **two** mechanisms, not one:
+
+| payload half | what forces agreement | code on disagreement |
+|---|---|---|
+| `salt_i` (bytes 0..16) | folded-root comparison — the derivation argument, unchanged | `fine-root-binding-failed` |
+| tail (bytes 16..32) | the canonical-zero rule — an explicit **value** check, not a derivation | `fine-root-leaf-seed-tail-not-zero` |
+
+The tail is not caught by deriving anything from it; it is caught by requiring
+it to be a constant. So the accurate restatement — which supersedes both the
+original sentence and Correction 3's replacement — is:
+
+> The two routes are required to agree on **every byte of every disclosed
+> cover payload**. For the salt half this is transitive through the signed
+> `fine_root`; for the leaf-level tail it is D83 option B's canonical-zero
+> rule, checked directly. There is no byte of the payload that no check reads.
+
+The discharge's *conclusion* is unchanged and now rests on a stronger footing
+than when it was written: an explicit route-comparison is still unnecessary,
+still unreachable after R4, and still verdict-displacing before it.
+
+### What this amendment does NOT change
+
+- **The outcome.** BOTH still holds: `covered_reveal.cover` unconditionally
+  required at tier [P]; `s_root` carried in addition.
+- **Corrections 1 and 2** of the wave-6 ratification. Only Correction 3 is
+  affected.
+- **D75's contribution to D83**, which stays on the record and stays true: a
+  full reveal of any odd-length fine-tree file ships a leaf-level cover seed,
+  by the rule *the `[0, n)` decomposition contains a size-1 block iff `n` is
+  odd*. Under option B those 16 bytes are now constrained rather than inert,
+  which is what makes the class safe — not the class becoming rare.
+
+### Consequential edits this amendment orders
+
+1. **Verbatim artifact 1** (the `registry-v1.md` §7.11 replacement paragraph)
+   ends *"the bytes they may disagree on are exactly D83's inert leaf-level
+   seed tails"*. That clause is **superseded by this amendment** and must not
+   be transcribed into the registry. F4 substitutes the blockquote above.
+   Recorded here rather than by silently editing the verbatim block, because a
+   block labelled *verbatim* that changes without a note is exactly the drift
+   the label exists to prevent.
+2. **Verbatim artifact 4** (the `registry-v1.json` `fed_but_not_resolved_here[]`
+   blob) must be re-cut: D74 and D75 are settled law and belong in
+   `resolved_decisions`, not in a "fed but not resolved" list. F4 owns it.
+3. **R36** is now the *simplifying* branch, not the widening one: the
+   authentication-boundary equality generalises rather than gaining a third
+   region, and its doc comment must record the `n` odd ⇒ leaf-level-node
+   incidence rule so the corpus dependence cannot silently return. Open
+   action 4 below is answered by this: a red test at R37 would mean the D83
+   tail rule is **not** enforced on some path, and is a finding, not a
+   prediction confirmed.
