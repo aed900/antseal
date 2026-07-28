@@ -455,6 +455,30 @@ pub struct Tweak {
     /// Flip a bit of this file's **disclosed** `s_root`, leaving the
     /// per-unit cover seeds correct.
     pub corrupt_disclosed_s_root: Option<u64>,
+    /// Flip a bit of this file's disclosed `s_root`'s **inert tail** (bytes
+    /// 16..32), leaving its salt half and every cover seed correct (D83).
+    ///
+    /// Observable only at `n == 1`, where `d == 0` makes the grid root a
+    /// leaf and the tail is fixed at zero; at any larger `n` the tail is the
+    /// real seed and this produces a bundle that fails the *rebuild*
+    /// instead. That asymmetry is the rule, so tests state which they mean.
+    pub corrupt_s_root_tail: Option<u64>,
+    /// Flip a bit of the **inert tail** (bytes 16..32) of this covered
+    /// unit's first `level == d` cover entry, leaving its address, its salt
+    /// half, the boundary path and the revealed bytes honest (D83).
+    ///
+    /// A no-op when the unit's cover has no leaf-level node — the incidence
+    /// rule is `d == 0 ∨ a odd ∨ (b odd ∧ b < n)` — so a test using this
+    /// knob must assert the mutation actually landed.
+    pub corrupt_leaf_cover_tail: Option<u64>,
+    /// The counterpart of [`Self::corrupt_leaf_cover_tail`]: flip a bit of
+    /// the **salt half** (bytes 0..16) of the same `level == d` cover entry,
+    /// leaving D83's zero tail intact.
+    ///
+    /// Exists so a test can show the two halves of one 32-byte field fail as
+    /// *different* classes — the tail as a canonicality rejection, the salt
+    /// as a binding failure — rather than "any change to these bytes fails".
+    pub corrupt_leaf_cover_salt: Option<u64>,
     /// Emit a `touched_files` entry naming this `file_id`, which no file
     /// table row has.
     pub unknown_touched_file: Option<u64>,
@@ -1126,7 +1150,7 @@ fn assemble(
             )
             .expect("fixture range proof");
 
-            let cover: Vec<BundleCoverEntry> = proof
+            let mut cover: Vec<BundleCoverEntry> = proof
                 .cover()
                 .iter()
                 .map(|entry| {
@@ -1138,6 +1162,27 @@ fn assemble(
                     )
                 })
                 .collect();
+            // D83: the two halves of a `level == d` payload, corrupted one at
+            // a time. Bytes 16..32 are fixed at zero (a canonicality rule);
+            // bytes 0..16 are `salt_i` (a binding input). Everything else
+            // about the entry stays honest — its address, the boundary path,
+            // the ciphertext.
+            for (knob, at_byte) in [
+                (tweak.corrupt_leaf_cover_tail, 16usize),
+                (tweak.corrupt_leaf_cover_salt, 0),
+            ] {
+                if knob == Some(unit.unit_id)
+                    && let Some(depth) = depth_for_leaf_count(leaf_count)
+                    && let Some(at) = cover
+                        .iter()
+                        .position(|entry| entry.address().level() == depth)
+                {
+                    let mut bytes = *cover[at].seed().as_bytes();
+                    bytes[at_byte] ^= 0x01;
+                    cover[at] =
+                        BundleCoverEntry::new(cover[at].address(), Seed32::from_bytes(bytes));
+                }
+            }
             let paths: Vec<PathNode> = proof
                 .boundary()
                 .iter()
@@ -1270,6 +1315,14 @@ fn assemble(
         {
             let mut bytes = *seed.as_bytes();
             bytes[0] ^= 0x01;
+            s_root = Some(Seed32::from_bytes(bytes));
+        }
+        if tweak.corrupt_s_root_tail == Some(file.file_id)
+            && let Some(seed) = s_root
+        {
+            // D83, the §7.14 site: the tail only, salt half untouched.
+            let mut bytes = *seed.as_bytes();
+            bytes[16] ^= 0x01;
             s_root = Some(Seed32::from_bytes(bytes));
         }
         full_reveals.push(FullReveal::new(
