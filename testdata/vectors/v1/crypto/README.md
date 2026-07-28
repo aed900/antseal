@@ -42,6 +42,40 @@ case antseal relies on), RFC 8439 §2.3.2 / §2.5.2 / §2.8.2 (ChaCha20 block,
 Poly1305, AEAD), draft-irtf-cfrg-xchacha §2.2.1 + A.3.1 (HChaCha20 and the
 full XChaCha20-Poly1305 AEAD), RFC 8032 §7.1 (Ed25519).
 
+## Cross-check run record
+
+| | |
+| --- | --- |
+| Date | 2026-07-28 |
+| Toolchain | Rust 1.92.0 (`rust-toolchain.toml`), x86_64-unknown-linux-gnu |
+| Reference stack | CPython 3.11.2, stdlib only; corroboration by PyNaCl 1.5.0 (libsodium) and `cryptography` 38.0.4 (OpenSSL) |
+| ML-DSA vehicle | `fips204 =0.4.6`, via `probes/sig-probe` (own committed `Cargo.lock`) |
+| Entries checked | 12 commitments · 9 unit-AEAD · 3 manifest-AEAD · 2 signatures + 1 hybrid orchestration · (8 HKDF labels, from C3) |
+| **Discrepancies** | **none** — every surface agreed byte-for-byte on the first run, with no adjustment to either implementation |
+
+Two agreements are worth calling out because they were reached without any
+opportunity to tune: the Python RFC 8032 reference derived the same Ed25519
+public key from the HKDF seed that C12 had *independently* pinned in its own
+unit test weeks earlier (`eee291b6…c023`); and the from-scratch
+XChaCha20-Poly1305 matched RustCrypto on all 12 AEAD ciphertexts, having
+already matched libsodium and the cfrg draft's own A.3.1 vector.
+
+The run is reproducible on demand — see "Regenerating" below. Nothing here
+is a one-shot claim: the generators and the `fips204` probe test re-derive
+the committed bytes and compare.
+
+### Native ↔ WASM bit-match (Q5's lane, not yet green)
+
+C16's accept also asks for a native/wasm32 bit-match on every vector. The
+executor is built for it — `antseal_core::test_util::vectors` is zero-I/O
+by construction, so the same parse/validate/execute path runs unchanged in
+wasm32; only file discovery is native. The remaining blocker is **not** in
+this code: `cargo build -p antseal-core --target wasm32-unknown-unknown
+--features test-util` currently fails inside `getrandom`, which enters the
+graph via `proptest` (the `test-util` feature's only dependency) and needs
+the `wasm_js` recipe that **P14** owns. The default-feature wasm32 build is
+green. Q5 wires the lane once P14 lands.
+
 ## Files
 
 - `commitments.json` — kind `commitments`: the four salted commitments
@@ -112,6 +146,32 @@ fail on as an unclassifiable file).
 Both carry the reserved `vector_` test-name marker, so the three
 `cross-os-*` CI lanes prove byte-stability on Linux, macOS and Windows
 (CONTRIBUTING.md, "Cross-OS suite naming").
+
+## Must-exist list for Q6's freeze manifest
+
+Q6 owns `FROZEN.sha256`; C16 owns the files it must cover. The v1 crypto
+vectors this task freezes are exactly:
+
+| File | Kind | Entries |
+| --- | --- | --- |
+| `testdata/vectors/v1/crypto/commitments.json` | `commitments` | 12 |
+| `testdata/vectors/v1/crypto/unit-aead.json` | `unit-aead` | 9 |
+| `testdata/vectors/v1/crypto/manifest-aead.json` | `manifest-aead` | 3 |
+| `testdata/vectors/v1/crypto/signatures.json` | `signatures` | 2 algorithms + hybrid |
+
+plus, already committed at C3 and equally in scope:
+
+| File | Kind | Entries |
+| --- | --- | --- |
+| `testdata/vectors/v1/hkdf/hkdf-labels.json` | `hkdf-labels` | 8 |
+
+The entry counts are pinned independently in
+`crates/antseal-core/tests/crypto_vectors.rs` (and `tests/hkdf_golden.rs`
+for HKDF), so a file that loses entries fails before Q6's hash guard even
+runs. The generators (`reference.py`, `gen_vectors.py`) and the fips204
+probe test are **auxiliaries**, not frozen artifacts: they are re-run to
+verify, and are allowed to gain surfaces later without a format event —
+what is frozen is the `.json` bytes.
 
 ## Vector-file coverage notes
 
