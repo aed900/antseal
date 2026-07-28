@@ -6,8 +6,30 @@ line 123: **per-version vectors are retained in CI indefinitely** — Q6's
 per-version `FROZEN.sha256` is the append-only freeze + must-exist guard,
 see "Freeze + indefinite per-version retention" below).
 
+## The test-only-secret convention
+
 Everything here is NON-SECRET fixture material under the secret-material
-convention in `../README.md`.
+convention in `../README.md`, and the harness **enforces** it rather than
+trusting it:
+
+- every vector file's `non_secret` field must contain the literal marker
+  `NON-SECRET` and name the seed it derives from — the envelope check rejects
+  the file otherwise;
+- every secret-bearing kind requires `inputs.w` to be the documented fixed
+  test seed `W = 0x00 0x01 … 0x1f`, and a document derived from any other
+  master secret **fails** rather than passing quietly;
+- a second fixture secret, where one is genuinely needed (a wrong-key case, a
+  synthetic `s_root`), is minted as `SHA-256(label ‖ W)` through
+  `test_util::alternate_test_secret`, with the label appearing verbatim in
+  the vector — so its provenance is readable and reproducible, never a fresh
+  32-byte literal of unknown origin;
+- the non-secret fixture constants a format vector needs (`seal_id`,
+  `app_version`, `claimed_time`, content addresses) are published constants
+  of `test_util::bundle_fixtures`, and the executors require the committed
+  values to equal them.
+
+No committed vector contains, or derives from, real vault, wallet or author
+material (project rule 6).
 
 ## Directory contract
 
@@ -102,6 +124,42 @@ kind with no further wiring.
 | `signatures` | M0 (C16) | `w` (as above), `body` (hex), `context` (hex; must equal the frozen `SIG_CONTEXT`) | `ed25519` (`seed`, `public_key`, `signing_message`, `signature`), `mldsa65` (`seed`, `public_key`, `signature`), `hybrid` (`policy_ids`, `policy_label`) | frozen context checked; per algorithm the seed, public key and signature bytes re-derived and byte-compared, then verified; the hybrid leg rebuilds keys and signatures through C14's policy path, requires the identical bytes, and runs `verify_body` under the policy |
 | `sig-reject` | M0 (C15) | `w`, `alg` (`ed25519`\|`ml-dsa-65`), `ctx` (must equal the frozen signature context), `body` (hex) | `base` (honest `public_key`/`signature` hex) + `cases`: per case an `id`, a `class`, a `why`, a **source** recipe for the key and the signature bytes, and the `expect`ed outcome (`accept` or a stable `crypto-…` code) | `base` re-derived and byte-compared; per-algorithm class coverage; expected codes checked against the real `CryptoError` code set; every case's bytes rebuilt from its recipe and run through C14's full verification path (`sig_policy::verify_body`). Format doc: `v1/sig-reject/README.md` |
 | `fine-tree` | M0 (G15) | `w`, `s_root_label` (the documented synthetic-seed label) + `cases`: per case a `name`, the file `content` (hex; its length **is** `n`) and the `openings` to prove (`name`, `start`, `length`) | `s_root` (hex) + per case `n`, `depth`, `slot_count`, `ggm_nodes` (every used grid node's seed), `salts` (every `salt_i`), `merkle_nodes` (every RFC 6962 content-tree node with its canonical slot and hash), `fine_root`, and per opening the full range proof — `cover` (leaf-exact, with seeds), `boundary` (with hashes), `revealed_bytes`, `releases_s_root` | the **whole** `expect` object is recomputed from `inputs` through the public API and compared as one value, so a missing/extra/reordered entry fails like a wrong byte; then the assertions a value comparison cannot state: each leaf is *also* derived LSB-first and must differ (the MSB-first pin), every wholly-unused grid slot must be refused by `SaltTree::seed_at`, every opening is run back through `verify_range`, and `n = 0` must be declined by all four entry points. Format doc: `v1/fine-tree/README.md` |
+| `manifest` | M0 (F12) | `w`, `seal_id`, `app_version`, `claimed_time` (each required to equal its published fixture constant) + `cases`: per case a `name`, `title`, `policy` (`hybrid`\|`ed25519-only`), `seed`, and `files` (`path`, `kind`, `raw` hex, `fine_tree`, `split` widths) — a declarative work driven through R6's fixture constructor | per case `manifest_bytes` (hex, the canonical envelope), `work_id`, `anchor_digest`, `diagnostic` (`envelope` + `body`, rendered by the [sidecar rules](#the-diagnostic-sidecar-manifest--bundle)) and `decoded` (the schema-layer reading, field by named field; large blobs as `{len, sha256}`) | the **whole** `expect` is recomputed from `inputs` and compared as one value; then, against the **committed** bytes: the F6 envelope round-trip, the F5/F2 body round-trip, both F7 digests, F7's separation property (a mutated signature container moves `anchor_digest` and leaves `work_id`), and the sidecar re-rendered from the committed bytes. Shape coverage is asserted structurally, not by case name. Format doc: `v1/manifest/README.md` |
+| `bundle` | M0 (F13) | the `manifest` inputs, plus per case an `anchors` set (`empty`\|`one-ots-two-tsa`\|`every-kind`\|`every-kind-no-receipt`), a `selection` (one of `"untouched"`\|`"full"`\|`"full-no-mirror"`\|`{"units":[…]}` per file) and the `work` | per case `bundle_bytes` (hex, the canonical `.sealproof`), `work_id`, `anchor_digest`, `diagnostic` (`bundle` + `manifest` + `body` — **all three** strict-decode layers) and `decoded` (storage record, anchors, receipt, covered/non-covered reveals with covers and boundary paths, touched files, full reveals) | the whole `expect` recomputed and compared; then, against the **committed** bytes: `SealProof::decode`'s three strict layers, `encode_bundle` round-trip byte-identity, the zero-copy `anchor_digest` pre-image seam, both manifest digests over the *embedded* bytes, the sidecar re-rendered per layer, and **`verify_bundle` accepts it** (F13's R handshake — report *bytes* are R9's kind). Coverage is structural and includes the **empty-anchor** requirement. Format doc: `v1/bundle/README.md` |
+
+## The diagnostic sidecar (`manifest` + `bundle`)
+
+The two format kinds commit **bytes**, and bytes alone cannot be reviewed or
+cross-checked: an independent decoder handed only a hex string has nothing to
+disagree *with*. Each of their cases therefore also carries a `diagnostic` —
+the same CBOR data item written out structurally — which is what **F14**'s
+second CBOR implementation (Python `cbor2`, decision D12) compares against.
+
+One canonical CBOR item renders by these rules and no others (renderer:
+`test_util::vectors_cbor_diag`; **F14 implements exactly this table**):
+
+| CBOR item | JSON |
+| --- | --- |
+| unsigned integer (major 0) | a JSON number, non-negative |
+| negative integer (major 1) | a JSON number, negative |
+| byte string (major 2) | `{"b": "<lowercase hex>"}` |
+| text string (major 3) | a JSON string |
+| array (major 4) | a JSON array |
+| map (major 5) | `{"m": [[key, value], …]}`, entries in wire order |
+
+Unambiguous by construction: the only JSON objects are `{"b": …}` and
+`{"m": …}`, told apart by their single key. Map entries are **pairs** rather
+than a JSON object because every v1 key is an integer while JSON object keys
+are strings — pairs keep the key's type and the wire order visible, and that
+order (strictly ascending, RFC 8949 §4.2.1) is itself part of what is pinned.
+The renderer refuses any integer above 2^53 − 1 rather than emit a number an
+IEEE-double reader would silently round.
+
+**Embedded CBOR is never recursed into.** A manifest's `body`, and a bundle's
+embedded manifest, render as byte strings exactly as the wire says; each
+inner layer is rendered separately under its own name (`envelope`, `body`,
+`manifest`, …). The layer boundary stays explicit because that boundary *is*
+F6/F9's three-layer strict decode.
 
 | `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
 
@@ -117,6 +175,10 @@ changes):
 - `bundle` (F13, M3): as `manifest` plus reveal selection; `expect` adds
   bundle bytes and the redaction structure. Includes the **empty-anchor**
   must-exist vector (MVP-SPEC.md line 153).
+- `report` (R/Q5): `inputs` = a bundle (hex or by reference to a sibling
+  `bundle` vector id); `expect` = the canonical verification-report bytes
+  (hex of the D29 compact-JSON encoding) — the native↔WASM bit-match
+  medium.
 - `anchor` (A, M2): recorded `.ots`/TSA-token fixtures with expected
   per-anchor verdict states — slots in as a kind with no envelope change
   (an explicit Q4 accept: M2 anchor vectors need no redesign).
@@ -231,6 +293,10 @@ silently ignored.
 (`report`) each land a kind that starts life as a `pending` entry — G15 and
 R9 have done so; F12 and F13 are still owed. The move from pending → landed
 is one commit:
+**R9** (`report`) is the one kind still sitting as a `pending` entry;
+**G15** (`fine-tree`), **F12** (`manifest`) and **F13** (`bundle`) have each
+made the move already, and with F13 the v1 **must-exist set is empty** — the
+Q14 gate condition on `FROZEN.sha256`. It is one commit:
 
 1. Commit the vector file(s) under `v1/<component>/`.
 2. Add the kind's payload types + executor arm in
@@ -291,8 +357,9 @@ typo is never silently ignored):
 
 **Kinds freeze at Q14** — the kind *name* and its `inputs`/`expect` payload
 shape, not the shared envelope (which carries its own `schema_version`).
-Seven kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
-`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`.
+Nine kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
+`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`, `manifest`,
+`bundle`.
 
 ### Retention: per version, indefinite
 

@@ -68,14 +68,20 @@ const MANIFEST_VERSION: u64 = 1;
 /// **empty-anchor vectors**) and line 169 (the **unbalanced-`n`** n=6
 /// fine-tree vector), which are also `tasks/Q.md` Q6's named dependencies
 /// on F13 and G15. Editing this list means re-reading those spec lines.
-const EXPECTED_PENDING_V1: &[(&str, &str)] = &[
-    ("manifest-encode-decode", "F12"),
-    ("bundle-empty-anchor", "F13"),
-    // `fine-tree-unbalanced-n6` (G15) landed 2026-07-28 as
-    // `fine-tree/fine-tree.json`; its directive and its row here were
-    // deleted together with the vector, which is the discharge procedure
-    // this constant's doc comment describes.
-];
+/// **Empty as of 2026-07-28** — v1 owes nothing, which is Q14's gate
+/// condition on this file. The three obligations and their discharges:
+///
+/// | slug | task | landed as |
+/// | --- | --- | --- |
+/// | `fine-tree-unbalanced-n6` | G15 | `fine-tree/fine-tree.json` |
+/// | `manifest-encode-decode` | F12 | `manifest/manifest.json` |
+/// | `bundle-empty-anchor` | F13 | `bundle/bundle.json` (case `empty-anchor-unanchored`) |
+///
+/// Each directive and its row here were deleted in the same commit as the
+/// vector, which is the discharge procedure this constant's doc comment
+/// describes. An empty list is not a licence to stop checking: a *new*
+/// obligation added later must appear in both places again.
+const EXPECTED_PENDING_V1: &[(&str, &str)] = &[];
 
 // ---------------------------------------------------------------------------
 // manifest model + parser

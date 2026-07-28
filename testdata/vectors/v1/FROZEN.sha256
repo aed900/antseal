@@ -59,12 +59,15 @@
 #! kind sig-reject C15
 #! kind fine-tree G15
 #! kind report R9
+#! kind manifest F12
+#! kind bundle F13
 #
 # Must-exist vectors this version still owes before Q14 can freeze it.
 # Each names its owning task; Q14's gate condition is ZERO pending lines.
 #
-#! pending manifest-encode-decode F12 manifest kind: deterministic-CBOR manifest bytes, work_id, anchor_digest, commitments, fine_root (MVP-SPEC.md line 153)
-#! pending bundle-empty-anchor F13 bundle kind incl. the empty-anchor vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153; Q6 must-exist minimum)
+# ***NONE REMAIN.*** Every must-exist obligation v1 owed has landed, so the
+# Q14 gate condition on this file is met: `status frozen` is now refusable
+# only for reasons outside the pending set.
 #
 # LANDED 2026-07-28 (G15), obligation discharged and its `#! pending` line
 # deleted with the vector, per the freeze contract: `fine-tree-unbalanced-n6`
@@ -78,15 +81,28 @@
 # `must_exist_before_freeze: false`, so it had no `#! pending` line here to
 # delete; its INDEX.json `pending` entry moved to `vectors` in the same
 # commit.
+# LANDED 2026-07-28 (F12), same discharge: `manifest-encode-decode` →
+# `manifest/manifest.json`, the `manifest` kind's six works — canonical
+# envelope bytes, two-layer diagnostic sidecars, and the work_id/
+# anchor_digest each hashes to, which is also where F7's deferred
+# committed-digest artifact lands (MVP-SPEC.md lines 75, 153).
+#
+# LANDED 2026-07-28 (F13), the LAST must-exist obligation: `bundle-empty-anchor`
+# → `bundle/bundle.json`, whose `empty-anchor-unanchored` case is the M0
+# milestone artifact — a `.sealproof` carrying no OTS artifact, no TSA
+# artifact and no receipt, which must decode, round-trip and verify like any
+# other (MVP-SPEC.md lines 112-114, 153).
 #
 # ── frozen digests ─────────────────────────────────────────────────────
 #
+26fbc38ff52bce11e9580c5cfaccab21de69061923b9666dbb3d6d97ba2af20d  bundle/bundle.json
 fa7edc1cdc8de6efa6251e59c5ef1028c90af6327a68fc0f7ed0da8cbc4910c9  crypto/commitments.json
 c1ac570d7d1d1b2fb1ffcaeb4ef0188b54d36a84ce9fcc4c25bae6f3f56f9ef3  crypto/manifest-aead.json
 6c68dfd6458ebbce16f1991af1b0b8fdc164d8c41048b5eddb3302ff05de0739  crypto/signatures.json
 29bcc9c8e4f2b9a958c26c2666b94253b96ec520262a90c6f2c5e58c21715249  crypto/unit-aead.json
 2e94e955379171f8f1945d976bd703d50570f492c8244a777986550551f0cef3  fine-tree/fine-tree.json
 48bdc8fd6b1c73d09ae878ce849b2ffb247668fe8ad8d089fd75c44ba0d022c8  hkdf/hkdf-labels.json
+c6a85a2780a344e3291078161729758b0321f5d7e61e99082a515f9e2919011a  manifest/manifest.json
 634e641a4ea136c85a34add3e2ed5b3a525254b4cff39cd0ba76a3a052470079  report/verification-reports.json
 6b081e19c8214f48ccfc3fbb21174f4fd2d2f31e2a7b104204fd897a13be0600  sig-reject/ed25519.json
 09b6ac360820288814627fdc3602a0958b6d78185b38c443df606786043f499d  sig-reject/ml-dsa-65.json

@@ -223,6 +223,44 @@
   - The peek/decode agreement property runs in the F16 suite with a recorded seed; a deliberately mis-wired peek makes it fail.
 - Notes: The two version rows are the natural home for a **third-party-verifier wording check** later (M3/R): the message a user sees for "too new" must be actionable, and the `supported` payload F10 added to both error variants is what makes that possible without reaching into the crate.
 
+### F19 — Hand F14 the diagnostic-sidecar contract (it is in-file, and its rendering is normative)
+- Milestone: M0
+- Size: S
+- Deps: F12, F13; F14 consumes this
+- Spec: Revision-2 pre-freeze mandate (MVP-SPEC.md line 5); Definitions & encoding — cross-check (line 73)
+- Discovered by: **F12/F13** (2026-07-28). F14's Do text says the checker "asserts structural equality against its diagnostic sidecar", which reads as *a sibling file beside the vector*. That file cannot exist: Q4's discovery contract admits only `*.json` **vector** files, `README.md`, `*.py` and the two auxiliaries under `vectors/v<n>/`, so a `*.diag.json` sibling would be executed as a vector and fail the runner. F12/F13 therefore put the sidecar **inside** the vector, as `expect.cases[].diagnostic`, with one rendered object per strict-decode layer (`envelope`/`body` for `manifest`; `bundle`/`manifest`/`body` for `bundle`). Two further facts F14 must be told rather than rediscover: (a) the rendering is a **fixed table**, written down in `testdata/vectors/README.md` § "The diagnostic sidecar" and implemented by `test_util::vectors_cbor_diag` — F14 implements exactly that table or the comparison is meaningless; (b) there is deliberately **no** `body_bytes`/`manifest_bytes` field, so the `work_id` pre-image must be read out of the envelope's key-0 byte string, which is the point (it demonstrates that `work_id` hashes the embedded bytes and never a re-encoding).
+- Do: Update tasks/F.md F14's Do/Accept text (or record the delta where F14 will read it) to name the in-file sidecar location, the rendering table, and the four checks F12/F13's READMEs already enumerate: render-and-compare per layer; re-encode per RFC 8949 §4.2.1 and compare to the committed bytes; `SHA-256` of the key-0 bstr equals `work_id`; `SHA-256` of the whole envelope equals `anchor_digest`. Confirm Python `cbor2` preserves map order on load (it does, via `dict` insertion order) — the sidecar pins wire order, so a checker that sorts would silently weaken to a set comparison.
+- Accept:
+  - F14's checker reads `expect.cases[].diagnostic` and needs no new file in the vector tree.
+  - The self-test fails on a non-canonical vector **and** on a sidecar whose map entries are correct but reordered.
+  - The rendering table in `testdata/vectors/README.md` and F14's implementation are cross-referenced from each other, so a change to one is visibly a change to both.
+- Notes: The `MAX_JSON_SAFE_INT` refusal (2^53 − 1) exists so no reader with double-typed JSON numbers can silently round a pinned value; F14 should assert it rather than assume it.
+
+### F20 — Tamper rows for the anchor-artifact schema surface F13 made constructible
+- Milestone: M0
+- Size: S
+- Deps: F8, F13, F15; A: A21's anchor rows and status semantics; Q: the Q7 harness + Q8 completeness registry
+- Spec: Tamper matrix — every mutation fails with a **distinct** error (MVP-SPEC.md line 168); Reveal bundle (lines 112–114)
+- Discovered by: **F13** (2026-07-28). F8 defines the OTS upgrade group (D79: all-or-nothing, never keyed on `status`), the TSA intermediate list and `source`, and the whole Arbitrum receipt record — and has schema-level reject-tests for them. None of it had ever been **constructed** by a fixture: R6's `AnchorSet` offered only `Empty` and `OneOtsTwoTsa`, both of which leave every optional slot absent and the receipt section missing. F13 added `AnchorSet::EveryKind { receipt }` and committed vectors over it, so these shapes are now reachable from the shared constructor — which means the Q7 matrix can now carry rows for them, and currently carries none.
+- Do: Add `project_added` rows to `testdata/tamper/MATRIX.json` + the Q7 registry, each mutating exactly one thing on an `AnchorSet::EveryKind` fixture: a 79-byte and an 81-byte `block_header`; the upgrade group with one of its three fields missing (the D79 partial state); an empty `intermediates` entry vs an empty `tx_hashes` list; a wrong-length transaction hash; a reserved `chain_inputs` key present in the receipt; an out-of-band `anchor_status` value. Reuse the existing distinct schema errors rather than minting new ones — the row's claim is *reachability from the shared constructor*, not a new failure class.
+- Accept:
+  - Every added row's outcome is pairwise distinct from every existing row (`check_registry` is the proof).
+  - Each row is built by typed construction from R6, never by byte-patching, so "this mutation, this error" stays an honest claim.
+  - Rows recorded as `project_added` with the rationale above, so Q8 does not read them as spec-enumerated cases.
+- Notes: Anchor **semantics** (what an upgraded attestation proves, chain validation, the `--online` gate) stay A's at M2; these rows are schema-level only. Coordinate naming with A21 so the global matrix does not double-claim.
+
+### F21 — Decide how the bit-match harness carries the vector tree before v2 doubles it
+- Milestone: M0
+- Size: S
+- Deps: F12, F13; Q5 (the bit-match harness), Q6 (retention), R28 (the multi-version suite)
+- Spec: Format stability — per-version vectors retained indefinitely (MVP-SPEC.md line 123); Verification (line 167)
+- Discovered by: **F13** (2026-07-28). `crates/wasm-bitmatch/build.rs` **embeds the whole `testdata/vectors/` tree into the wasm artifact**. That was free when the tree was ~98 kB; F12 and F13 take it to ~520 kB, and the growth is structural rather than incidental — a byte-level format freeze necessarily commits the bytes twice (the artifact and its sidecar), and Q6's retention policy is *per version, forever*, so v2 adds its own full tree beside v1's rather than replacing it. Nothing is broken today; the point is that the decision to embed was made when embedding was obviously cheap, and it should be re-taken deliberately rather than discovered as a slow build.
+- Do: Measure the current wasm artifact size and bit-match wall time; decide between (a) keep embedding, with a recorded ceiling that turns a lane red before it becomes a problem, (b) have the harness read the tree at run time through the Node host (it already runs under Node, so the file access exists), or (c) embed a *manifest of digests* and stream the vectors in. Record the decision with its measurements. Whatever is chosen must keep the property that makes the lane meaningful: native and wasm32 execute the **identical bytes** through the **identical executor**.
+- Accept:
+  - Decision recorded with before/after measurements, referencing R28's per-version multiplication.
+  - If (a), the ceiling is enforced by a check rather than a comment.
+  - The bit-match still covers every committed vector automatically, with no per-vector wiring (the property `testdata/vectors/README.md` promises).
+
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.
 - Complete v1 wire registry: integer key assignments, reserved-slot ranges, signatures-container encoding, anchor-status enum wire values, byte-range representation (start+length vs start+end), integer time encoding for claimed time and fetch dates, GGM cover/path node-coordinate encoding (with G), explicit `file_id` in touched-file bundle entries or not — blocks F5, F8 — must freeze at M0 Definitions sign-off.
