@@ -58,6 +58,13 @@ pub mod unit;
 #[cfg(feature = "test-vectors")]
 pub mod fixtures;
 
+// G17's end-to-end opening suite: G14's pipeline -> prove_unit/prove_range ->
+// G13 verification against the manifest-committed `fine_root`. It lives in
+// the library's test tree, not in `tests/`, because the wasm32 lane executes
+// `--lib` unit tests only (P14) and G17 must be green on both targets.
+#[cfg(test)]
+mod openings_e2e;
+
 pub use assemble::{
     ContentModel, FileFlags, FileInput, FileModel, FineSeedSource, SplitMode,
     assemble_content_model,
