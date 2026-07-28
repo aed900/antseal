@@ -13,6 +13,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use antseal_core::content::ggm::depth_for_leaf_count;
 use antseal_core::test_util::TEST_MASTER_SECRET_W;
 use antseal_core::test_util::bundle_fixtures::{
     DEFAULT_SEED, FIXTURE_APP_VERSION, FIXTURE_CLAIMED_TIME, FIXTURE_SEAL_ID, FileSelection,
@@ -53,8 +54,10 @@ const DESCRIPTION: &str = ".sealproof bundle golden vectors (F13): canonical det
      artifact — a whole-work reveal, a single covered-unit reveal with a leaf-exact sub-cover and \
      boundary paths, a non-covered unit reveal, a full-file reveal with a raw mirror and \
      file_salt/s_root, a bundle with every anchor kind and optional slot populated in both \
-     receipt-included and receipt-excluded form, and a bundle that reveals nothing at all \
-     (MVP-SPEC.md lines 73, 112-114, 153, 167).";
+     receipt-included and receipt-excluded form, a bundle that reveals nothing at all, a partial \
+     reveal whose leaf-exact sub-cover is a `level == d` node carrying D83's canonical \
+     `salt || 0x00*16` payload, and the n = 1 file where d = 0 makes that payload and `s_root` \
+     the same 32 bytes (MVP-SPEC.md lines 73, 96, 112-114, 153, 167).";
 
 // ---------------------------------------------------------------------------
 // the case table
@@ -227,6 +230,50 @@ fn cases() -> Vec<Value> {
             vec![json!("untouched"), json!("untouched"), json!("untouched")],
             multi_file_work("multi-file", "ed25519-only"),
         ),
+        // ── G24: the `level == d` cover payload, pinned on the wire ──
+        //
+        // The same six leaves as `covered-unit-partial-reveal`, retiled
+        // 2 / 1 / 3 so unit 1 is the lone leaf [2, 3). Its minimal cover is
+        // the single node (3, 2) — G11's normative KAT — which sits at the
+        // grid's leaf level, so its disclosed payload is `salt_2 ‖ 0x00·16`
+        // under D83. Every case above has even unit boundaries and therefore
+        // no such node (D83 §6's "must NOT change" table is exactly that
+        // observation), which is why the rule was pinned only in the
+        // fine-tree vector until now.
+        case(
+            "leaf-level-cover-partial-reveal",
+            "empty",
+            vec![units(&[1])],
+            work(
+                "unbalanced-n6-odd-split",
+                "unbalanced n6 odd split",
+                "ed25519-only",
+                vec![file(
+                    "data/n6-odd.bin",
+                    "binary",
+                    &[0, 1, 2, 3, 4, 5],
+                    true,
+                    &[2, 1, 3],
+                )],
+            ),
+        ),
+        // The `n == 1` degenerate: `d == 0`, so the grid root IS the single
+        // leaf and the *same* 32 bytes are disclosed twice — once as
+        // `cover[0][2]` (§7.11 key 3) and once as `s_root` (§7.14 key 2).
+        // D83 binds both, so the two are byte-equal on the wire; the
+        // `expect` block below pins that agreement rather than leaving it to
+        // be re-derived.
+        case(
+            "one-byte-fine-tree-full-reveal",
+            "empty",
+            vec![json!("full")],
+            work(
+                "one-byte-file",
+                "one byte file",
+                "ed25519-only",
+                vec![file("data/one.bin", "binary", &[0x42], true, &[])],
+            ),
+        ),
     ]
 }
 
@@ -282,6 +329,16 @@ fn shape_parity() -> Vec<(&'static str, WorkSpec, Selection)> {
             "nothing-revealed",
             shapes::multi_file().with_ed25519_only_policy(),
             Selection::nothing(3),
+        ),
+        (
+            "leaf-level-cover-partial-reveal",
+            shapes::unbalanced_n6_odd_split().with_ed25519_only_policy(),
+            Selection(vec![FileSelection::Units(vec![1])]),
+        ),
+        (
+            "one-byte-fine-tree-full-reveal",
+            shapes::one_byte_file().with_ed25519_only_policy(),
+            Selection::all(1),
         ),
     ]
 }
@@ -425,6 +482,113 @@ fn vector_bundle_carries_the_empty_anchor_milestone_case() {
             .expect("revealed_unit_ids is an array")
             .is_empty(),
         "the unanchored bundle must still reveal something, or it pins nothing"
+    );
+}
+
+/// **G24.** The committed vector carries a `level == d` cover payload, and it
+/// is in D83's canonical form.
+///
+/// The depth is derived from the case's own R6 shape rather than read off the
+/// vector, so the claim is "this address really is the grid's leaf level for
+/// this file", not "someone wrote 3 here". Before this case every committed
+/// bundle had even unit boundaries, which is precisely the standing
+/// assumption D83 §6's must-not-change table rests on — so losing this case
+/// would put the wire rule back to being pinned only in the fine-tree vector.
+#[test]
+fn vector_bundle_pins_a_canonical_leaf_level_cover_payload() {
+    let committed = committed_document();
+    let cases = committed["expect"]["cases"]
+        .as_array()
+        .expect("expect.cases is an array");
+
+    let mut leaf_level_payloads = 0usize;
+    for (name, spec, selection) in shape_parity() {
+        let built = build(&spec, &selection);
+        let case = cases
+            .iter()
+            .find(|c| c["name"] == json!(name))
+            .unwrap_or_else(|| panic!("no committed case named `{name}`"));
+
+        for reveal in case["decoded"]["covered_reveals"]
+            .as_array()
+            .expect("covered_reveals is an array")
+        {
+            let unit_id = reveal["unit_id"].as_u64().expect("unit_id is a number");
+            let file = built
+                .files
+                .iter()
+                .find(|file| {
+                    file.normal_unit_ids.contains(&unit_id) || file.mirror_unit_id == Some(unit_id)
+                })
+                .expect("every covered reveal names a fixture unit");
+            let Some(depth) = depth_for_leaf_count(file.size) else {
+                continue; // an empty file has no grid
+            };
+            for entry in reveal["cover"].as_array().expect("cover is an array") {
+                if entry["level"].as_u64() != Some(u64::from(depth)) {
+                    continue;
+                }
+                leaf_level_payloads += 1;
+                let seed = entry["seed"].as_str().expect("seed is hex");
+                assert_eq!(seed.len(), 64, "`{name}`: a cover payload is 32 bytes");
+                assert_eq!(
+                    &seed[32..],
+                    "0".repeat(32),
+                    "`{name}`: a level == {depth} cover payload's upper half is not zero — D83's \
+                     canonical tail is not being written by the prover"
+                );
+            }
+        }
+    }
+
+    assert!(
+        leaf_level_payloads >= 2,
+        "the committed bundle vector carries {leaf_level_payloads} leaf-level cover payloads; \
+         G24 requires the class to be pinned on the wire, so a case that produces one must not \
+         be dropped"
+    );
+}
+
+/// **G24 / D75's agreement rider, discharged as a plain equality.**
+///
+/// At `n == 1` the GGM depth is 0, so the grid root *is* the single leaf: the
+/// same 32 bytes are disclosed at registry §7.11 key 3 and §7.14 key 2.
+/// Pinned over the *committed* bytes, so a future change that made the two
+/// sites diverge — which nothing in the format forbids structurally — shows
+/// up as a vector diff rather than as a silent second derivation.
+#[test]
+fn vector_bundle_n1_case_discloses_one_value_at_both_sites() {
+    let committed = committed_document();
+    let case = committed["expect"]["cases"]
+        .as_array()
+        .expect("expect.cases is an array")
+        .iter()
+        .find(|c| c["name"] == json!("one-byte-fine-tree-full-reveal"))
+        .expect("the n == 1 case must exist");
+
+    let covered = case["decoded"]["covered_reveals"]
+        .as_array()
+        .expect("covered_reveals is an array");
+    assert_eq!(covered.len(), 1, "the one-byte file has one covered unit");
+    let cover = covered[0]["cover"].as_array().expect("cover is an array");
+    assert_eq!(cover.len(), 1, "its cover is the single node (0, 0)");
+    assert_eq!(cover[0]["level"], json!(0));
+    assert_eq!(cover[0]["index"], json!(0));
+
+    let fulls = case["decoded"]["full_reveals"]
+        .as_array()
+        .expect("full_reveals is an array");
+    assert_eq!(fulls.len(), 1, "one fully revealed file");
+
+    assert_eq!(
+        cover[0]["seed"], fulls[0]["s_root"],
+        "at n == 1 `cover[0][2]` and `full_reveal.s_root` are the same disclosure"
+    );
+    let seed = cover[0]["seed"].as_str().expect("seed is hex");
+    assert_eq!(
+        &seed[32..],
+        "0".repeat(32),
+        "and both are `salt_0 || 0x00*16` (D83 option B)"
     );
 }
 

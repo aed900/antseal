@@ -539,6 +539,39 @@ pub fn seed_corpus() -> Vec<(&'static str, Vec<u8>)> {
         "valid-multi-file-anchored",
         build_tweaked(&shapes::multi_file_anchored(), &mixed, &Tweak::default()),
     );
+    // ── G24: the `level == d` cover class ──
+    //
+    // Until R37 no seed carried a leaf-level GGM payload, so the
+    // authentication-boundary tests below quantified over a corpus in which
+    // D83's canonical zero tail was never on the wire — and a rule that is
+    // never on the wire cannot be shown to be checked. These three put it
+    // there through all three routes it can arrive by: a partial reveal, a
+    // full reveal, and the `n == 1` degeneracy where the same 32 bytes are
+    // disclosed twice (registry §7.11 key 3 and §7.14 key 2).
+    push(
+        "valid-leaf-level-cover-partial",
+        build_tweaked(
+            &shapes::unbalanced_n6_odd_split(),
+            &Selection(vec![FileSelection::Units(vec![1])]),
+            &Tweak::default(),
+        ),
+    );
+    push(
+        "valid-leaf-level-cover-full",
+        build_tweaked(
+            &shapes::odd_split_multi_unit(),
+            &Selection::all(1),
+            &Tweak::default(),
+        ),
+    );
+    push(
+        "valid-one-byte-file-full",
+        build_tweaked(
+            &shapes::one_byte_file(),
+            &Selection::all(1),
+            &Tweak::default(),
+        ),
+    );
 
     // ── R7/R8 tamper fixtures: one per stage the pipeline can fail at, so
     //    the fuzzer starts from an input that is already deep in the

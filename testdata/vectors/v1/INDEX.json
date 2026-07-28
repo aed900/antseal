@@ -10,7 +10,7 @@
       "path": "bundle/bundle.json",
       "kind": "bundle",
       "task": "F13",
-      "pins": "bundle kind: canonical .sealproof bytes for eight reveal shapes with three-layer diagnostic sidecars — INCLUDING the empty-anchor (UNANCHORED) bundle, a .sealproof carrying no OTS artifact, no TSA artifact and no receipt, which is the named M0 milestone artifact this slug's must-exist obligation owed (MVP-SPEC.md lines 112-114, 153)"
+      "pins": "bundle kind: canonical .sealproof bytes for ten reveal shapes with three-layer diagnostic sidecars \u2014 including the two G24 shapes that carry a `level == d` GGM cover payload in D83's canonical `salt || 0x00*16` form (the n = 6 odd-boundary partial reveal, and the n = 1 file where that payload and `s_root` are the same 32 bytes) — INCLUDING the empty-anchor (UNANCHORED) bundle, a .sealproof carrying no OTS artifact, no TSA artifact and no receipt, which is the named M0 milestone artifact this slug's must-exist obligation owed (MVP-SPEC.md lines 112-114, 153)"
     },
     {
       "slug": "crypto-commitments",

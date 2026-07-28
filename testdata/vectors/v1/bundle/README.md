@@ -1,7 +1,7 @@
 # `bundle` vectors (F13) — the `.sealproof` format, frozen byte for byte
 
 `bundle.json` is the v1 reveal-bundle format's committed evidence: the
-canonical deterministic-CBOR bytes of eight `.sealproof` bundles, the
+canonical deterministic-CBOR bytes of ten `.sealproof` bundles, the
 identity of the manifest each embeds, a **three-layer diagnostic sidecar**,
 and the reveal structure each one discloses (MVP-SPEC.md lines 57, 73,
 112–114, 153, 167).
@@ -61,8 +61,18 @@ because it is.
 | `every-anchor-kind-with-receipt` | a mixed selection (full / one unit / untouched) | **every kind and optional slot**: an OTS artifact with the D79 upgrade group and one without, a TSA artifact with intermediates and a `source` and one with neither, and the Arbitrum receipt |
 | `every-anchor-kind-no-receipt` | identical | the same, receipt **excluded** |
 | `nothing-revealed` | nothing at all — proves the work exists and shows none of it | none |
+| `leaf-level-cover-partial-reveal` | one covered unit of the **odd-boundary** `n = 6` file (retiled 2 / 1 / 3) — the lone leaf `[2,3)`, whose minimal cover is the single node `(3,2)` at the grid's **leaf level**, so its payload is D83's `salt₂ ‖ 0x00·16` | none |
+| `one-byte-fine-tree-full-reveal` | the `n = 1` file in full. `d = 0`, so the grid root *is* the leaf: `cover[0][2]` and `s_root` are the **same 32 bytes**, both in canonical leaf-level form | none |
 
-The last two are a **one-section diff**: identical works, identical
+The last two cases are the ones D83 exists for. Every other case here has
+**even** unit boundaries, and by D83 §1 Fact 2 a cover of leaves `[a, b)`
+contains a `level == d` node iff `d == 0 ∨ a odd ∨ (b odd ∧ b < n)` — so
+before G24 the canonical leaf-level payload was pinned only in the
+`fine-tree` vector and never in a whole `.sealproof`. `bundle.json`'s digest
+moved when they landed, for exactly that reason (D83 §6's standing
+obligation).
+
+The receipt pair is a **one-section diff**: identical works, identical
 selections, differing only in the receipt. Receipt presence *is* the sealer's
 `--include-receipt` choice and carries no verdict (registry §7.10), which is
 exactly why both shapes need a committed vector.
