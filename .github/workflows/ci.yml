@@ -21,8 +21,12 @@
 #   Q5:  wasm-bitmatch — LANDED: native<->WASM bit-match over every committed
 #        golden vector, built on P14's runner technique. Harness:
 #        crates/wasm-bitmatch (test-only). Doc: docs/wasm-toolchain.md
-#   Q6:  vector-freeze guard (append-only FROZEN.sha256 check) — new job,
-#        lands at Q6
+#   Q6:  vector-freeze — LANDED as a NEW lane (a new required-status
+#        context, +1 on the branch-protection payload — see
+#        docs/ci-verification.md). Per-version FROZEN.sha256 freeze +
+#        must-exist guard over testdata/vectors/v<n>/; driver
+#        scripts/vector-freeze.sh, checker
+#        crates/antseal-core/tests/vector_freeze.rs
 #   Q7:  tamper-matrix — distinct-error tamper harness (mount point below)
 #   Q9:  fuzz-smoke — per-PR cargo-fuzz smoke, fixed budget (mount point
 #        below); the nightly long run is a separate scheduled workflow, and
@@ -295,6 +299,37 @@ jobs:
             echo "::error::golden-vector suite is EMPTY — the Q4 runner tests must always match; the vector_ marker or the runner is broken"
             exit 1
           fi
+
+  # Q6 (live): the golden-vector FREEZE + must-exist guard. Each
+  # testdata/vectors/v<n>/FROZEN.sha256 pins the exact bytes of every
+  # committed vector of that format version AND is that version's must-exist
+  # list — the `golden-vectors` lane above can only fail on files it finds,
+  # so a DELETED vector is invisible to it and is caught here. Two
+  # independent layers run: coreutils `sha256sum -c` (shares no code with
+  # antseal) and the authoritative checker
+  # crates/antseal-core/tests/vector_freeze.rs (directive vocabulary,
+  # unfrozen/misfiled/stray classes, per-version retention, and the `#!
+  # pending` must-exist obligations whose emptiness is Q14's gate
+  # condition). New vectors need no lane change: discovery is a directory
+  # walk, and the manifest line is appended with `--update`.
+  #
+  # Like `secret-guard` and `wasm-bitmatch`, the lane SELF-TESTS FIRST: it
+  # mutates and deletes a vector in a scratch copy of the tree and requires
+  # the digest check to go red, so a green run is trustworthy.
+  vector-freeze:
+    name: vector-freeze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Self-test — a mutated/deleted frozen vector MUST turn the lane red
+        run: ./scripts/vector-freeze.sh --self-test
+      - name: Freeze + must-exist guard over every retained format version
+        run: ./scripts/vector-freeze.sh
 
   # Q5 (live): WASM/native bit-match. Every committed golden vector is
   # executed through antseal_core::test_util::vectors on BOTH targets and the

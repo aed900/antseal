@@ -2,8 +2,9 @@
 
 Committed golden vectors for every versioned antseal format, organised as
 `vectors/<format-version>/…` (MVP-SPEC.md line 57; format-stability policy
-line 123: **per-version vectors are retained in CI indefinitely** — Q6 adds
-the append-only `FROZEN.sha256` freeze guard per version directory).
+line 123: **per-version vectors are retained in CI indefinitely** — Q6's
+per-version `FROZEN.sha256` is the append-only freeze + must-exist guard,
+see "Freeze + indefinite per-version retention" below).
 
 Everything here is NON-SECRET fixture material under the secret-material
 convention in `../README.md`.
@@ -14,6 +15,7 @@ convention in `../README.md`.
 vectors/
   README.md            # this file (aux)
   v1/                  # one directory per format version, name = v<integer>
+    FROZEN.sha256      # aux: Q6 freeze + must-exist manifest (one per version)
     <component>/       # free-form grouping (hkdf/, manifest/, …)
       *.json           # vector files (envelope schema below)
       README.md        # aux: what these vectors pin, provenance
@@ -31,8 +33,8 @@ skipped:
 - Under a version directory, every regular file must be either
   - a **vector file**: extension `.json` — parsed, validated, and executed
     (a malformed vector file is a hard test failure, never a skip), or
-  - an **auxiliary file**: `README.md`, `*.py` (reference generators), or —
-    once Q6 lands — the `FROZEN.sha256` freeze manifest.
+  - an **auxiliary file**: `README.md`, `*.py` (reference generators), or
+    the `FROZEN.sha256` freeze manifest (Q6 — see below).
 
   A file of any other kind **fails the runner** as unclassifiable.
 - Zero vectors discovered across the whole tree **fails the runner**
@@ -119,20 +121,87 @@ changes):
    `build.rs` walks this tree) and requires the native and wasm32
    transcripts to stay byte-identical. Also **no code change**: the
    `wasm-bitmatch` lane covers every new vector automatically.
+5. `./scripts/vector-freeze.sh --update` — appends the vector's digest to
+   its version's `FROZEN.sha256`, which freezes its bytes and puts it on
+   the must-exist list. This is the **one** step that touches a committed
+   file: a vector outside the manifest has no retention guarantee, so the
+   `vector-freeze` lane refuses it. Commit the manifest line with the
+   vector.
 
 Adding a **new kind** (framework extension, not a per-vector event): add
 the payload types + executor arm in
-`crates/antseal-core/src/test_util/vectors.rs` and a row to the table
-above. The runner test itself never changes.
+`crates/antseal-core/src/test_util/vectors.rs`, a row to the table above,
+and a `#! kind <name> <task>` directive to the version manifest (the
+checker requires the two to agree). The runner test itself never changes.
 
-Adding a **new format version**: create `vectors/v<n>/` — discovery is by
-directory walk, so the runner executes all versions forever (Q6 enforces
-retention).
+Adding a **new format version**: create `vectors/v<n>/` with its own
+`FROZEN.sha256` — discovery is by directory walk, so the runner executes
+and the freeze guard checks all versions forever (Q6 enforces retention).
 
-## Freeze status
+## Freeze + indefinite per-version retention (Q6)
 
-**Pre-freeze**: until Q6 lands the `FROZEN.sha256` guard and Q14 tags
-`format-v1-freeze`, vectors here may still be moved or re-containered (as
-the Q2/Q4 hkdf migration was). After the freeze, modifying or deleting a
-frozen vector is a format event requiring a version bump; additions remain
-allowed.
+Each version directory carries a **`FROZEN.sha256`** manifest. It does two
+jobs at once:
+
+1. **Freeze** — one SHA-256 per committed vector file, so any byte change
+   turns the `vector-freeze` CI lane red.
+2. **Must-exist list** — the hash lines *are* the list. The Q4 runner above
+   can only fail on files it finds, so **deleting** a vector silently
+   removes its coverage; the manifest is the second layer that catches it.
+   It also catches the opposite: a committed `*.json` that is *not* listed
+   is an unfrozen vector and fails too.
+
+Only vector files (`*.json`) are frozen. `README.md` and the `*.py`
+reference generators are **auxiliaries by design**: the generators are
+re-runnable cross-checks, and the JSON they produced is what the format
+commits to.
+
+The manifest is `sha256sum -c` compatible (`#` lines are comments), so CI
+checks the digests twice — once with coreutils, which shares no code with
+antseal, and once with the authoritative checker
+`crates/antseal-core/tests/vector_freeze.rs`. Both run from
+`./scripts/vector-freeze.sh`; `--self-test` proves the lane goes red on a
+mutated and on a deleted vector; `--update` regenerates the digest blocks.
+
+### Directives
+
+`#!` lines carry the machine-readable part (unknown directives fail — a
+typo is never silently ignored):
+
+| Directive | Meaning |
+| --- | --- |
+| `manifest-version` | the manifest's own schema version |
+| `format-version` | must equal the version directory it sits in |
+| `status` | `pre-freeze` or `frozen` |
+| `freeze-gate` | the task that flips `status` (`Q14`) |
+| `kind <name> <since>` | a vector **kind** that freezes with this version; the union across versions must equal `test_util::vectors::KNOWN_KINDS` |
+| `pending <slug> <task> <what>` | a must-exist vector this version still owes, naming the task that must land it |
+
+**Kinds freeze at Q14** — the kind *name* and its `inputs`/`expect` payload
+shape, not the shared envelope (which carries its own `schema_version`).
+Six kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
+`manifest-aead`, `signatures`, `sig-reject`.
+
+### Retention: per version, indefinite
+
+**`v<n>/` is the unit of retention.** A version directory, once created, is
+kept and run forever; every future release's CI executes all of them
+(MVP-SPEC.md line 123; `../README.md`). Freezing is per version too: a
+future `v2/` gets its own `FROZEN.sha256` and neither disturbs nor releases
+`v1/`. Discovery is a directory walk, so retention needs no per-version
+wiring — but a version directory **without** a manifest is a hard failure,
+because its vectors would be unfrozen and deletable in silence.
+
+### What changes at Q14
+
+| | now (`status pre-freeze`) | after Q14 (`status frozen`) |
+| --- | --- | --- |
+| Add a vector | append its manifest line (`--update`) | same — additions stay legal forever |
+| Change a vector's bytes | allowed as a **recorded, justified** regeneration: re-run `--update`, review the digest diff, state why in the commit | **refused.** A byte change is a format event needing a new format version |
+| Delete a vector | refused | refused |
+| Add a kind | record it as `#! kind` | new kinds land under a new format version |
+| `#! pending` entries | may exist; each names its owning task | **must be empty** — that is Q14's gate condition, and the checker refuses `status frozen` while any remain |
+
+Q6 built the mechanism and the current manifest; **Q14 executes the
+freeze** by landing the outstanding `#! pending` vectors and setting
+`#! status frozen`.

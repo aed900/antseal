@@ -1,0 +1,76 @@
+# antseal golden-vector freeze manifest — format version v1  (task Q6)
+#
+# Two guarantees in one file:
+#
+#   1. FREEZE   — every listed digest pins the exact bytes of a committed
+#                 vector file. Editing or deleting one turns CI red.
+#   2. MUST-EXIST — the list of hash lines *is* the must-exist list: the
+#                 runner can only fail on files it finds, so a deleted file
+#                 is invisible to it and is caught here instead. Vectors
+#                 the M0 freeze still owes are declared as `#! pending`
+#                 below, each naming the task that must land it.
+#
+# Only committed vector files (*.json) are frozen. Auxiliaries — README.md
+# and the `*.py` reference generators — are deliberately NOT frozen: the
+# generators are re-runnable cross-checks, and the JSON they produced is
+# what the format actually commits to.
+#
+# This file is `sha256sum -c` compatible (lines starting with `#` are
+# comments to GNU coreutils), so the digests can be checked with a tool
+# that shares no code with antseal:
+#
+#     cd testdata/vectors/v1 && grep -v '^#' FROZEN.sha256 | sha256sum -c -
+#
+# The authoritative checker is `crates/antseal-core/tests/vector_freeze.rs`
+# (CI lane `vector-freeze`, driver `scripts/vector-freeze.sh`). Regenerate
+# with `scripts/vector-freeze.sh --update`. Contract + retention policy:
+# `testdata/vectors/README.md`, `testdata/README.md`.
+#
+# ── directives (`#!`), parsed by the checker ────────────────────────────
+#
+#   manifest-version  this file's own schema version
+#   format-version    the vector format version; MUST equal the directory
+#   status            pre-freeze | frozen   (see below)
+#   freeze-gate       the task that flips `status` to `frozen`
+#   kind <name> <since>   a vector kind that freezes with this version;
+#                     the set must equal test_util::vectors::KNOWN_KINDS
+#   pending <slug> <task> <what it must pin>
+#                     a must-exist vector this version still owes
+#
+# `status pre-freeze` (today): vectors may still be regenerated, moved, or
+# re-containered as a recorded, justified change — re-run `--update` and
+# review the digest diff. `status frozen` (set by Q14): digests are
+# permanent, `--update` refuses to modify or drop an entry, additions are
+# the only legal change, and `pending` must be empty.
+#
+#! manifest-version 1
+#! format-version v1
+#! status pre-freeze
+#! freeze-gate Q14
+#
+# Frozen vector kinds (kind name + payload shape freeze at Q14; the Q4
+# envelope itself is shared and versioned separately by `schema_version`).
+#
+#! kind hkdf-labels C3
+#! kind commitments C16
+#! kind unit-aead C16
+#! kind manifest-aead C16
+#! kind signatures C16
+#! kind sig-reject C15
+#
+# Must-exist vectors this version still owes before Q14 can freeze it.
+# Each names its owning task; Q14's gate condition is ZERO pending lines.
+#
+#! pending manifest-encode-decode F12 manifest kind: deterministic-CBOR manifest bytes, work_id, anchor_digest, commitments, fine_root (MVP-SPEC.md line 153)
+#! pending bundle-empty-anchor F13 bundle kind incl. the empty-anchor vector — a bundle carrying no anchors at all (MVP-SPEC.md line 153; Q6 must-exist minimum)
+#! pending fine-tree-unbalanced-n6 G15 fine-tree kind: the unbalanced n=6 opening that pins MSB-first GGM indexing (MVP-SPEC.md line 169; Q6 must-exist minimum)
+#
+# ── frozen digests ─────────────────────────────────────────────────────
+#
+fa7edc1cdc8de6efa6251e59c5ef1028c90af6327a68fc0f7ed0da8cbc4910c9  crypto/commitments.json
+c1ac570d7d1d1b2fb1ffcaeb4ef0188b54d36a84ce9fcc4c25bae6f3f56f9ef3  crypto/manifest-aead.json
+6c68dfd6458ebbce16f1991af1b0b8fdc164d8c41048b5eddb3302ff05de0739  crypto/signatures.json
+29bcc9c8e4f2b9a958c26c2666b94253b96ec520262a90c6f2c5e58c21715249  crypto/unit-aead.json
+48bdc8fd6b1c73d09ae878ce849b2ffb247668fe8ad8d089fd75c44ba0d022c8  hkdf/hkdf-labels.json
+6b081e19c8214f48ccfc3fbb21174f4fd2d2f31e2a7b104204fd897a13be0600  sig-reject/ed25519.json
+09b6ac360820288814627fdc3602a0958b6d78185b38c443df606786043f499d  sig-reject/ml-dsa-65.json

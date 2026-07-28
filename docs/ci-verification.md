@@ -475,6 +475,10 @@ Environment: as the P8/Q1 records (linux x86_64, toolchain 1.92.0 from
 
 ## Authoritative context set (now 15)
 
+> **[wave-5 note]** Superseded: Q6 adds a 16th context (`vector-freeze`).
+> The authoritative list and the updated branch-protection payload are in
+> the "Q6 (wave 5)" section at the end of this file.
+
 ```
 fmt
 clippy
@@ -653,3 +657,105 @@ the lane's first step. A subsequent clean run was confirmed green.
 - The rendered check-run name `wasm-bitmatch` is **unchanged** from the Q1
   mount point, so no new confirmation is needed beyond step 3's existing
   check.
+
+---
+
+# Q6 — wave-5 lane changes (2026-07-28)
+
+## What changed
+
+- **New lane `vector-freeze`** (`.github/workflows/ci.yml`). It is a **new
+  required-status context**, not a mount point: the Q1 map reserved
+  `golden-vectors` for Q4 and left Q6's freeze guard as "a sibling job or
+  extends this one (Q6's call)". Sibling job chosen — the two assert
+  different things (execute what exists vs. *exactly this set exists,
+  byte-for-byte*), and a separate context makes a freeze violation
+  legible in the checks list rather than buried in a runner failure.
+- Driver `scripts/vector-freeze.sh` (`--self-test`, `--update`); checker
+  `crates/antseal-core/tests/vector_freeze.rs`; manifest
+  `testdata/vectors/v1/FROZEN.sha256`.
+- Docs: `testdata/vectors/README.md` (freeze contract, directive
+  vocabulary, before/after-Q14 table), `testdata/README.md` (normative
+  retention policy, referenced by Q27), `CONTRIBUTING.md` (lane table).
+
+## Authoritative context set (now 16)
+
+```
+fmt
+clippy
+test
+wasm32-core
+wasm32-core-tests
+core-dep-graph
+cross-os-linux
+cross-os-macos
+cross-os-windows
+golden-vectors
+vector-freeze          <-- NEW (Q6)
+wasm-bitmatch
+tamper-matrix
+fuzz-smoke
+audit-deny
+secret-guard
+```
+
+**Branch-protection payload delta: +1 line, `vector-freeze`.** Nothing else
+about runbook step 5 changes. Full updated payload (this supersedes the
+wave-4 one):
+
+```bash
+gh api -X PUT repos/aed900/antseal/branches/main/protection --input - <<'EOF'
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      { "context": "fmt" },
+      { "context": "clippy" },
+      { "context": "test" },
+      { "context": "wasm32-core" },
+      { "context": "wasm32-core-tests" },
+      { "context": "core-dep-graph" },
+      { "context": "cross-os-linux" },
+      { "context": "cross-os-macos" },
+      { "context": "cross-os-windows" },
+      { "context": "golden-vectors" },
+      { "context": "vector-freeze" },
+      { "context": "wasm-bitmatch" },
+      { "context": "tamper-matrix" },
+      { "context": "fuzz-smoke" },
+      { "context": "audit-deny" },
+      { "context": "secret-guard" }
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+EOF
+```
+
+Runbook step 3 must confirm the rendered check-run name `vector-freeze`
+**before** applying the 16-context payload in step 5, exactly like `Q5`'s
+and `P14`'s new contexts.
+
+## Local verification (2026-07-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| `vector-freeze` step 1 (self-test) | `./scripts/vector-freeze.sh --self-test` | **PASS** — a mutated frozen vector and a deleted frozen vector each turn the digest check red on a scratch copy; the untouched copy is green first, so the self-test cannot pass vacuously |
+| `vector-freeze` step 2 (the lane) | `./scripts/vector-freeze.sh` | **PASS** — layer 1: `v1: 7 frozen vector(s) OK (independent sha256sum check)`; layer 2: 19 tests |
+| Idempotence | `./scripts/vector-freeze.sh --update` | **PASS** — `v1: unchanged`, empty `git diff` |
+
+**Test-of-the-test coverage** (`tests/vector_freeze.rs`), one test per
+failure class, each asserting the specific message: mutated vector,
+**deleted** vector, unfrozen addition, missing manifest, second version
+directory checked independently, unknown directive, misfiled
+`format-version`, malformed digest line, path escaping the version
+directory, duplicate entry, empty manifest, `status frozen` with a pending
+obligation, `pending` without an owner, and freezing a `*.py` generator.
+Plus the positive controls: the scratch baseline is green, and a **legal
+addition** (vector + manifest line) stays green.
+
+**Not verifiable locally**: execution of the two `./scripts/*.sh` steps on
+the runner image (POSIX `bash`, `set -euo pipefail`; `sha256sum` from the
+image's coreutils, with a `shasum -a 256` fallback for non-GNU hosts).

@@ -41,7 +41,7 @@ Live lanes (wave 2 — Q2/Q4/P13):
 
 | Lane | What it asserts |
 | --- | --- |
-| `golden-vectors` | Q4 — the native runner discovers (directory walk, no hardcoded lists) and executes **every** committed vector under `testdata/vectors/<format-version>/`; malformed or unclassifiable files and empty discovery fail loudly. Schema + add-a-vector procedure: `testdata/vectors/README.md`. Q6 adds the append-only freeze guard. |
+| `golden-vectors` | Q4 — the native runner discovers (directory walk, no hardcoded lists) and executes **every** committed vector under `testdata/vectors/<format-version>/`; malformed or unclassifiable files and empty discovery fail loudly. Schema + add-a-vector procedure: `testdata/vectors/README.md`. The append-only freeze guard is the separate `vector-freeze` lane (Q6). |
 | `secret-guard` | Q2 — no vault-export/wallet-key file signatures anywhere in the checkout (PEM private keys, EVM keystore JSON, age/minisign secret keys, the reserved `ANTSEAL VAULT EXPORT` magic); self-tests each run by planting fakes in a temp dir (testdata/README.md, secret-material convention). |
 | `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources` against the committed `deny.toml` (licenses stubbed until Q29). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
 
@@ -51,6 +51,12 @@ Live lanes (wave 4 — P14/Q5):
 | --- | --- |
 | `wasm32-core-tests` | P14 — **NEW required context.** `antseal-core`'s `--lib` unit tests **execute** on `wasm32-unknown-unknown` (a libtest binary for that target has zero imports, so `scripts/wasm-test-runner.mjs` runs it under plain `WebAssembly.instantiate` in node; wired as cargo's `runner` in `.cargo/config.toml`). Because the target has no stdio, the runner also asserts an in-memory **execution witness** — "all tests passed" and "zero tests ran" are otherwise indistinguishable. Second step: `scripts/wasm-toolchain-audit.sh` (getrandom recipe per wasm32 graph + wasm-bindgen crate↔CLI pin equality). Doc: [docs/wasm-toolchain.md](docs/wasm-toolchain.md). |
 | `wasm-bitmatch` | Q5 — every committed golden vector executed through `antseal_core::test_util::vectors` produces a **byte-identical** transcript (report bytes + per-vector recomputed digests, SHA-256 included) natively and under wasm32. Harness: `crates/wasm-bitmatch` (test-only, no wasm-bindgen — D18 stays free); its `build.rs` embeds vectors by walking `testdata/vectors/`, so **new vectors need no lane change**. The lane **self-tests first, every run**: an injected wasm32-only divergence must turn the comparison red before a green comparison is trusted (`./scripts/wasm-bitmatch.sh --self-test`). |
+
+Live lanes (wave 5 — Q6):
+
+| Lane | What it asserts |
+| --- | --- |
+| `vector-freeze` | Q6 — **NEW required context.** Per format version, `testdata/vectors/v<n>/FROZEN.sha256` pins the exact bytes of every committed vector **and** is that version's must-exist list: `golden-vectors` can only fail on files it finds, so a **deleted** vector is caught here, as is a committed vector left *outside* the manifest. Two independent layers: coreutils `sha256sum -c` (no shared code with antseal) and `crates/antseal-core/tests/vector_freeze.rs` (directives, misfiled/unfrozen/stray classes, per-version retention, `#! pending` must-exist obligations). **Self-tests first, every run**: a mutated and a deleted vector must both turn the digest check red (`./scripts/vector-freeze.sh --self-test`). Add a vector with `./scripts/vector-freeze.sh --update`. Contract: `testdata/vectors/README.md`; retention policy: `testdata/README.md`. |
 
 Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
 task; **a green mount-point lane asserts nothing until then**):
