@@ -423,6 +423,27 @@ Unlisted values reject at parse (F5).
 
 Shape frozen across **all** versions (§1 rule 6). No reserved range.
 
+**Why it is frozen, not merely stable (F10).** The manifest's version
+discriminant sits *inside* the `body` bstr (§7.2 key 0), so a verifier must
+decode this envelope **before** it can read the version at all. The envelope
+is therefore the one map that can never carry a version-specific change:
+whatever parses it has to work for every version that will ever exist,
+including versions written after that parser shipped. Anything a future
+version needs to say goes inside the body, where dispatch can see it.
+
+Consequences, all asserted:
+
+- The envelope has **no reserved band** — reserving space would imply a
+  future field, and there can be none. Any key besides 0/1 is
+  `manifest-unknown-key`, never `manifest-reserved-key`.
+- The envelope has **no discriminant of its own**. Adding one would be
+  redundant with key 0 of the body and could disagree with it.
+- Dispatch order differs between the two artifacts, deliberately: the
+  **bundle**'s discriminant (§7.6 key 0) is a top-level key of the file, so
+  an unsupported bundle is rejected from its first bytes; the **manifest
+  body**'s is one layer in, so its rejection follows the envelope decode.
+  See §9, "Version dispatch order".
+
 | key | field | type | presence | len/shape | status |
 | --- | --- | --- | --- | --- | --- |
 | 0 | `body` | bstr | req | var — embedded canonical-CBOR body (§7.2); `work_id` = SHA-256 of exactly these bytes; verifiers never re-encode (line 74) | proposed |
@@ -1058,6 +1079,39 @@ violation).
 - A reserved key is *assigned* only by a recorded format decision; v1.x
   assignments must be additive (new optional field) — anything else is a
   version bump (line 123).
+
+### Version dispatch order (F10) — status: proposed
+
+Two independent discriminants, read at two different depths:
+
+| artifact | discriminant | read after | unsupported ⇒ |
+| --- | --- | --- | --- |
+| `.sealproof` bundle | §7.6 key 0 | nothing — first key of the file | `bundle-unsupported-format-version` |
+| manifest body | §7.2 key 0 | the §7.1 envelope decode | `manifest-unsupported-format-version` |
+
+Frozen facts:
+
+1. **The discriminant is key 0 in both maps.** Canonical maps ascend
+   (§1 rule 3), so key 0 is first on the wire whenever present, and reading
+   the version is a constant-cost peek regardless of artifact size. A
+   hostile oversized artifact declaring an unknown version is rejected
+   before any section is walked — earlier than F11's caps apply.
+2. **The two discriminants are independent.** A v1 bundle may one day carry
+   a v2 manifest; the two rejections are separate codes in separate families
+   (D78) and must stay separable.
+3. **The §7.1 envelope shape is frozen across all versions**, because it is
+   what you must parse in order to find the manifest's version (§7.1).
+4. **Unsupported ≠ malformed.** An artifact declaring a version with no
+   decoder yields the version error and *nothing else* — never a
+   canonicality error, never an unknown/reserved-key error, even when the
+   rest of the artifact would also fail v1 validation. Conversely a
+   *missing* discriminant is `*-missing-key` and a non-canonical one is the
+   `cbor-*` class: "too new" and "corrupt" are different claims about the
+   sender and never merge.
+5. **A released version is decodable forever** (line 123). Support is added
+   by appending a row to the dispatch table, never by widening an older
+   version's decoder. Code side: `antseal_core::format`
+   (`SUPPORTED_VERSIONS`, `VersionDispatch`, the `V1` admission witness).
 
 ## 10. Touched-file explicit `file_id` — decision: YES (proposed)
 

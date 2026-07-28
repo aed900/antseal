@@ -78,6 +78,12 @@ fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> 
             continue;
         }
         let name = entry_name(&entry)?;
+        // F10's per-version roster is an auxiliary, not a vector: it carries
+        // no `kind`/`inputs`/`expect` and is checked by `vector_index.rs`.
+        // Listed before the `.json` arm so it is never executed as a vector.
+        if name == "INDEX.json" {
+            continue;
+        }
         if name.ends_with(".json") {
             let bytes = fs::read(&entry)
                 .map_err(|e| format!("{}: cannot read vector file: {e}", entry.display()))?;
@@ -92,8 +98,8 @@ fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> 
         } else {
             return Err(format!(
                 "{}: unclassifiable file under vectors/{version}/ — every file must be a \
-                 vector (*.json) or a documented auxiliary (README.md, *.py, FROZEN.sha256); \
-                 nothing is silently skipped (Q4)",
+                 vector (*.json) or a documented auxiliary (README.md, *.py, FROZEN.sha256, \
+                 INDEX.json); nothing is silently skipped (Q4)",
                 entry.display()
             ));
         }

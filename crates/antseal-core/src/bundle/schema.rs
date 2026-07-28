@@ -77,6 +77,7 @@ use crate::codec::encode::MapEncoder;
 use crate::codec::{CanonicalDecoder, CanonicalEncoder, DecodeError, EncodeError, encode_item};
 use crate::content::ggm::NodeAddress;
 use crate::crypto::material::{Key32, NodeHash32, Salt16, Seed32};
+use crate::format::{SUPPORTED_VERSIONS, V1, VersionDispatch};
 use crate::manifest::{ContentAddress, Nonce24};
 
 use super::error::{
@@ -1607,24 +1608,45 @@ impl<'b> BundleV1<'b> {
             .collect()
     }
 
-    /// Strict-decode a v1 bundle — **layer 1 of three** (registry §7.6.3).
+    /// Decode a bundle **through F10's version dispatch** — layer 1 of three
+    /// (registry §7.6.3).
+    ///
+    /// The discriminant (registry §7.6 key 0) is read first, by
+    /// [`crate::format::peek_format_version`], and the matching row of the
+    /// `version -> decoder` table runs; a version with no row is
+    /// [`BundleError::UnsupportedFormatVersion`] and nothing else. Unlike
+    /// the manifest body's, this discriminant is a top-level key of the file
+    /// itself, so it is readable from the first bytes — an unsupported
+    /// bundle is rejected before any section is walked.
+    ///
+    /// The embedded manifest is **not** decoded here (D78), and its version
+    /// is a separate discriminant with a separate rejection. F9's
+    /// `SealProof::decode` composes layers 2 and 3 on top.
+    ///
+    /// # Errors
+    ///
+    /// [`BundleError::UnsupportedFormatVersion`] for a version this build
+    /// has no decoder for; otherwise whatever the selected version's decoder
+    /// returns — for v1, [`BundleError::Cbor`] for canonicality failures at
+    /// this layer plus every `bundle-*` schema class.
+    pub fn decode(input: &'b [u8]) -> Result<Self, BundleError> {
+        VersionDispatch::v1_only(FORMAT_VERSION_V1, Self::decode_v1).decode(input)
+    }
+
+    /// Strict-decode a **v1** bundle.
+    ///
+    /// Reachable only with a [`V1`] witness, i.e. only from version dispatch
+    /// (F10) — so no future version can widen or otherwise disturb this
+    /// path. That is the structural half of MVP-SPEC.md line 123.
     ///
     /// Every read goes through the F3 strict reader and every item is read
     /// *typed*, so this pass is simultaneously the canonicality pass; there
     /// is no skipped subtree and no second walk. `finish` rejects trailing
     /// bytes, so [`Self::manifest_bytes`] and the sections together account
     /// for the whole input.
-    ///
-    /// The embedded manifest is **not** decoded here (D78). F9's
-    /// `SealProof::decode` composes layers 2 and 3 on top, and their failures
-    /// arrive as a different error type entirely.
-    ///
-    /// # Errors
-    ///
-    /// [`BundleError::Cbor`] for canonicality failures at this layer, plus
-    /// every `bundle-*` schema class.
-    pub fn decode(input: &'b [u8]) -> Result<Self, BundleError> {
+    fn decode_v1(admitted: V1<'b>) -> Result<Self, BundleError> {
         const MAP: BundleMapId = BundleMapId::Bundle;
+        let input = admitted.bytes();
         let mut d = CanonicalDecoder::new(input);
         let mut reader = d.map().map_err(cbor)?;
 
@@ -1644,8 +1666,15 @@ impl<'b> BundleV1<'b> {
             match k {
                 key::bundle::FORMAT_VERSION => {
                     let found = d.u64().map_err(cbor)?;
+                    // Dispatch already read this value and selected this
+                    // decoder for it; re-checking guards against the peek
+                    // and the schema pass ever disagreeing (see
+                    // `crate::format`).
                     if found != FORMAT_VERSION_V1 {
-                        return Err(BundleError::UnsupportedFormatVersion { found });
+                        return Err(BundleError::UnsupportedFormatVersion {
+                            found,
+                            supported: SUPPORTED_VERSIONS,
+                        });
                     }
                     format_version = Some(found);
                 }
@@ -1678,8 +1707,9 @@ impl<'b> BundleV1<'b> {
         }
         d.finish().map_err(cbor)?;
 
-        // The discriminant must be present; its *value* was checked as it was
-        // read (F10 will read it before dispatch).
+        // The discriminant must be present. A bundle with no version field
+        // is *malformed*, not *unsupported* — F10 keeps the two claims
+        // separate, so this stays `bundle-missing-key`.
         format_version.ok_or(missing(MAP, key::bundle::FORMAT_VERSION))?;
 
         Self::new(BundleParts {
@@ -1968,6 +1998,25 @@ mod tests {
 
     fn seed(byte: u8) -> Seed32 {
         Seed32::from_bytes([byte; 32])
+    }
+
+    /// F10's cross-parser guard, bundle side: the v1 decoder re-checks the
+    /// discriminant dispatch read, so the peek and the schema pass can never
+    /// silently disagree about the first key. Only reachable by minting the
+    /// witness directly — production code has no such constructor.
+    #[test]
+    fn the_v1_decoder_rechecks_the_discriminant_dispatch_read() {
+        let bundle = encode_item(|e| {
+            e.map(|m| {
+                m.entry(key::bundle::FORMAT_VERSION, |e| e.u64(2))?;
+                m.entry(key::bundle::MANIFEST, |e| e.bytes(&[0u8]))
+            })
+        })
+        .expect("encode");
+        assert!(matches!(
+            BundleV1::decode_v1(V1::admit_for_test(&bundle)),
+            Err(BundleError::UnsupportedFormatVersion { found: 2, .. })
+        ));
     }
 
     fn address(level: u8, index: u64) -> NodeAddress {

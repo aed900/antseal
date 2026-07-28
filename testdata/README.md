@@ -66,6 +66,12 @@ vectors retained in CI forever". Concretely:
    runner can only fail on files it finds). A version directory without a
    manifest is a hard CI failure. Mechanism, directive vocabulary, and the
    before/after-Q14 rules: `vectors/README.md`.
+   Alongside it each version carries an `INDEX.json` **roster** (F10): what
+   exists, who owns it, what it pins, and what the version still owes. The
+   two are mutually enforcing (`tests/vector_index.rs`) and the roster's
+   `format_version` must name a version
+   `antseal_core::format::SUPPORTED_VERSIONS` lists — so a retained
+   version's vectors and its decoder can never drift apart.
 4. **`vectors/README.md` is the authoritative statement of this policy's
    mechanics**; this section states the policy itself. **Q27** (format-
    stability policy doc) must reference both rather than restate them, and

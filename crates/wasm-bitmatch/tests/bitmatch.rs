@@ -27,7 +27,12 @@ fn vectors_root() -> PathBuf {
         .join("vectors")
 }
 
-/// Every `*.json` under the tree, as repo-relative forward-slash paths.
+/// Every `*.json` **vector** under the tree, as repo-relative forward-slash
+/// paths. F10's per-version `INDEX.json` roster is excluded: it is a
+/// documented auxiliary, not a vector, and carries no `kind`/`inputs`/`expect`
+/// for the executor to run (`testdata/vectors/README.md`). This walk is the
+/// independent cross-check of `build.rs`'s, so the exclusion has to be stated
+/// in both — that is the point of having two.
 fn walk_committed(dir: &Path, out: &mut BTreeSet<String>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
@@ -37,6 +42,8 @@ fn walk_committed(dir: &Path, out: &mut BTreeSet<String>) {
             .path();
         if path.is_dir() {
             walk_committed(&path, out);
+        } else if path.file_name().is_some_and(|n| n == "INDEX.json") {
+            // auxiliary — see above
         } else if path.extension().is_some_and(|ext| ext == "json") {
             let text = path.display().to_string().replace('\\', "/");
             let at = text

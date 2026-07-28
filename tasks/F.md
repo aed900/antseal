@@ -210,6 +210,19 @@
   - Harness proven able to fail: a temporarily injected panic is caught by the target, then removed.
   - Targets handed to Q with documented run commands for CI.
 
+### F18 — Tamper rows + a property for the F10 version/reserved-slot surfaces
+- Milestone: M0
+- Size: S
+- Deps: F10, F15; Q: the Q7 tamper harness + the Q8 completeness registry
+- Spec: Tamper matrix — every mutation fails with a **distinct** error (MVP-SPEC.md line 168); Format stability (line 123)
+- Discovered by: **F10** (2026-07-28). F10 landed four now-reachable rejection classes — `manifest-unsupported-format-version`, `bundle-unsupported-format-version`, `manifest-reserved-key`, `bundle-reserved-key` — and **none of them has a tamper row**. `testdata/tamper/MATRIX.json` has no version or reserved-slot case at all, and Q8's completeness check does not catch the gap because these are *project-added* rows rather than spec-enumerated M0 cases: the line-168 enumeration predates the reserved-slot mechanism. They are exactly the mutations a third-party verifier must be able to tell apart ("your file is from a newer antseal" vs "your file is corrupt"), so leaving them unrowed leaves the most user-visible distinction in the format untested at the harness level.
+- Do: Add four `project_added` rows to `testdata/tamper/MATRIX.json` + the Q7 registry: bundle discriminant bumped to 2; manifest body discriminant bumped to 2; a reserved key injected into a manifest map; a reserved key injected into a bundle map. Each row mutates exactly one thing on a valid base fixture (R6's constructor once it exists; the hand-rolled wire writers until then — `tests/format_version_dispatch.rs` already builds every one of these byte strings). Also add the property `F10` proves case-wise but not universally: for arbitrary input bytes, `format::peek_format_version(x) == Some(v)` with `v ∉ SUPPORTED_VERSIONS` ⟹ decode fails with that family's version code, and decode *success* ⟹ the peek returned `Some(1)` — i.e. the peek and the schema pass can never disagree on any input, not just the ones a test enumerates.
+- Accept:
+  - Four rows in the Q7 registry, all four outcomes pairwise distinct and distinct from every existing row (`check_registry` is the proof).
+  - Rows recorded as `project_added` in `MATRIX.json` with the rationale above, so Q8 does not read them as spec cases.
+  - The peek/decode agreement property runs in the F16 suite with a recorded seed; a deliberately mis-wired peek makes it fail.
+- Notes: The two version rows are the natural home for a **third-party-verifier wording check** later (M3/R): the message a user sees for "too new" must be actionable, and the `supported` payload F10 added to both error variants is what makes that possible without reaching into the crate.
+
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.
 - Complete v1 wire registry: integer key assignments, reserved-slot ranges, signatures-container encoding, anchor-status enum wire values, byte-range representation (start+length vs start+end), integer time encoding for claimed time and fetch dates, GGM cover/path node-coordinate encoding (with G), explicit `file_id` in touched-file bundle entries or not — blocks F5, F8 — must freeze at M0 Definitions sign-off.

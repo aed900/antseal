@@ -695,3 +695,130 @@ fn no_bundle_map_grows_a_deliberately_absent_field() {
     assert_eq!(BundleMapId::CoveredReveal.assigned_keys(), [0, 1, 2, 3, 4]);
     assert_eq!(BundleMapId::NonCoveredReveal.assigned_keys(), [0, 1, 2, 3]);
 }
+
+/// **Registry §7.1 + §9 "Version dispatch order" (F10).** The registry's
+/// `version_dispatch` block records four facts a permanent format rests on;
+/// each is compared against the code that implements it.
+///
+/// The load-bearing one is the envelope freeze: the manifest body's
+/// discriminant sits *inside* the body bstr, so the `{body, signatures}`
+/// envelope must be parsed before the version is readable at all. It is
+/// therefore the one map that can never carry a version-specific change —
+/// which is exactly why it has no reserved band.
+#[test]
+fn code_version_dispatch_matches_the_registry() {
+    let root = registry();
+    let vd = get(&root, "version_dispatch", "registry root");
+
+    // 1. The supported-version list is the same on both sides.
+    let listed: Vec<u64> = as_array(
+        get(vd, "supported_versions", "version_dispatch"),
+        "versions",
+    )
+    .iter()
+    .map(|v| {
+        v.as_u64()
+            .unwrap_or_else(|| panic!("supported_versions must be uints, got {v}"))
+    })
+    .collect();
+    assert_eq!(
+        listed,
+        antseal_core::format::SUPPORTED_VERSIONS.to_vec(),
+        "registry `version_dispatch.supported_versions` ≠ `format::SUPPORTED_VERSIONS`"
+    );
+
+    // 2. Both discriminants sit at key 0 of their own top-level map, and the
+    //    registry's key number matches the code constant.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for d in as_array(
+        get(vd, "discriminants", "version_dispatch"),
+        "discriminants",
+    ) {
+        let artifact = get_str(d, "artifact", "discriminant");
+        let key = get(d, "key", "discriminant")
+            .as_u64()
+            .expect("discriminant key must be a uint");
+        assert_eq!(
+            key,
+            antseal_core::format::VERSION_KEY,
+            "{artifact}: the discriminant must be key 0 — canonical maps ascend, \
+             so only key 0 is readable as a constant-cost peek"
+        );
+        let code_key = match artifact {
+            "bundle" => bundle_key::bundle::FORMAT_VERSION,
+            "manifest_body" => antseal_core::manifest::registry::key::body::FORMAT_VERSION,
+            other => panic!("unregistered discriminant artifact `{other}`"),
+        };
+        assert_eq!(key, code_key, "{artifact}: registry key ≠ code constant");
+        // The stable code the registry names is the one the error emits.
+        let registry_code = get_str(d, "unsupported_code", "discriminant");
+        let emitted = match artifact {
+            "bundle" => antseal_core::bundle::BundleError::UnsupportedFormatVersion {
+                found: 2,
+                supported: antseal_core::format::SUPPORTED_VERSIONS,
+            }
+            .code(),
+            _ => antseal_core::manifest::ManifestError::UnsupportedFormatVersion {
+                found: 2,
+                supported: antseal_core::format::SUPPORTED_VERSIONS,
+            }
+            .code(),
+        };
+        assert_eq!(
+            registry_code, emitted,
+            "{artifact}: registry code ≠ emitted"
+        );
+        assert!(seen.insert(artifact), "duplicate discriminant `{artifact}`");
+    }
+    assert_eq!(
+        seen,
+        BTreeSet::from(["bundle", "manifest_body"]),
+        "exactly two versioned top-level maps exist in v1"
+    );
+
+    // 3. The two codes are distinct — a v1 bundle carrying a v2 manifest must
+    //    not render like a v2 bundle (D78: separate families, permanently).
+    assert_ne!(
+        antseal_core::bundle::BundleError::UnsupportedFormatVersion {
+            found: 2,
+            supported: antseal_core::format::SUPPORTED_VERSIONS,
+        }
+        .code(),
+        antseal_core::manifest::ManifestError::UnsupportedFormatVersion {
+            found: 2,
+            supported: antseal_core::format::SUPPORTED_VERSIONS,
+        }
+        .code(),
+    );
+
+    // 4. The envelope freeze, on both sides. The registry states it in prose;
+    //    the code states it as "no reserved band" — the observable form.
+    assert!(
+        get_str(vd, "envelope_frozen_across_versions", "version_dispatch").contains("body bstr"),
+        "the registry must record WHY the envelope is frozen, not just that it is"
+    );
+    assert_eq!(
+        MapId::Envelope.reserved_band(),
+        None,
+        "the envelope must reserve nothing: it is parsed before the version is \
+         known, so no future field can ever be added to it"
+    );
+    assert_eq!(
+        registry_reserved_band(&root, MapId::Envelope.registry_name()),
+        None,
+        "registry: the envelope must declare no reserved range"
+    );
+    // …and it carries no discriminant of its own, which would be redundant
+    // with body key 0 and could disagree with it. Checked on the *table*
+    // side, which fails the moment someone adds the row.
+    let envelope = map_entry(&root, MapId::Envelope.registry_name());
+    for field in as_array(get(envelope, "fields", "envelope"), "envelope") {
+        assert_ne!(
+            get_str(field, "name", "envelope field"),
+            "format_version",
+            "the envelope must not carry its own discriminant: it is parsed \
+             BEFORE any version is known, and a second copy could disagree \
+             with the body's"
+        );
+    }
+}

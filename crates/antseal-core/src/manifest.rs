@@ -50,6 +50,27 @@
 //!    a lie; that is what the verifier is for (the sealer is an adversary,
 //!    spec line 121).
 //!
+//! # Version dispatch and the line-123 stability contract (F10)
+//!
+//! [`ManifestBodyV1::decode`] is **not** the v1 decoder: it is F10's
+//! dispatch entry point. It reads the discriminant (registry §7.2 key 0)
+//! first and routes to the row that claims it; a version with no row is
+//! [`ManifestError::UnsupportedFormatVersion`] and nothing else — never a
+//! canonicality or unknown-key error, because "this artifact is newer than
+//! this verifier" and "this artifact is corrupt" are different claims. The
+//! v1 decoder itself is reachable only with [`crate::format::V1`], an
+//! admission witness with no public constructor, so a future v2 cannot
+//! reach in and alter v1's byte behaviour.
+//!
+//! The discriminant sits **inside** the body `bstr`, so body dispatch
+//! necessarily follows the envelope decode. That is what freezes the
+//! envelope's `{0: body, 1: signatures}` shape across every version: it is
+//! what you must parse in order to find the version, so whatever parses it
+//! has to work for versions written after that parser shipped. Hence its
+//! deliberate lack of a reserved band (registry §7.1, §9).
+//!
+//! Full policy: [`crate::format`].
+//!
 //! # Construction is validation
 //!
 //! A schema-invalid [`ManifestBodyV1`] cannot exist: every field is

@@ -42,6 +42,7 @@ use crate::crypto::commit::CommitmentDigest;
 use crate::crypto::disclosure::UnitBinding;
 use crate::crypto::error::SigAlg;
 use crate::crypto::secrets::SealId;
+use crate::format::{SUPPORTED_VERSIONS, V1, VersionDispatch};
 
 use super::error::{AlgPosition, CondField, ContainerField, EnumId, FixedLenField, ManifestError};
 use super::registry::{
@@ -1062,19 +1063,41 @@ impl ManifestBodyV1 {
         self.files.iter().map(|f| f.units().len() as u64).sum()
     }
 
-    /// Strict-decode a v1 body from the exact bytes the envelope carried.
+    /// Decode a manifest body **through F10's version dispatch**.
+    ///
+    /// The discriminant (registry §7.2 key 0) is read first, by
+    /// [`crate::format::peek_format_version`], and the matching row of the
+    /// `version -> decoder` table runs; a version with no row is
+    /// [`ManifestError::UnsupportedFormatVersion`] and nothing else. Because
+    /// the field sits inside the body `bstr`, this happens *after* the
+    /// envelope decode — which is exactly why the envelope's
+    /// `{0: body, 1: signatures}` shape is frozen across all versions
+    /// (registry §7.1, §9).
+    ///
+    /// # Errors
+    ///
+    /// [`ManifestError::UnsupportedFormatVersion`] for a version this build
+    /// has no decoder for; otherwise whatever the selected version's decoder
+    /// returns — for v1, [`ManifestError::Body`] for canonicality failures
+    /// (the F6 inner layer) and the `manifest-*` schema classes.
+    pub fn decode(body_bytes: &[u8]) -> Result<Self, ManifestError> {
+        VersionDispatch::v1_only(FORMAT_VERSION_V1, Self::decode_v1).decode(body_bytes)
+    }
+
+    /// Strict-decode a **v1** body from the exact bytes the envelope carried.
+    ///
+    /// Reachable only with a [`V1`] witness, i.e. only from version dispatch
+    /// (F10) — so no future version can widen or otherwise disturb this
+    /// path: a v2 body decoder takes a different witness and lives in its
+    /// own module. That is the structural half of MVP-SPEC.md line 123.
     ///
     /// Every read goes through the F3 strict reader and every item is
     /// read *typed* — no subtree is skipped — so this pass subsumes
     /// [`crate::codec::check_canonical`]: canonicality and schema are
     /// established together, and `finish` rejects trailing bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`ManifestError::Body`] for canonicality failures (the F6 inner
-    /// layer) and the `manifest-*` schema classes for everything else.
-    pub fn decode(body_bytes: &[u8]) -> Result<Self, ManifestError> {
+    fn decode_v1(input: V1<'_>) -> Result<Self, ManifestError> {
         const MAP: MapId = MapId::Body;
+        let body_bytes = input.bytes();
         let mut d = CanonicalDecoder::new(body_bytes);
         let mut reader = d.map().map_err(body_layer)?;
 
@@ -1092,8 +1115,16 @@ impl ManifestBodyV1 {
             match k {
                 key::body::FORMAT_VERSION => {
                     let found = d.u64().map_err(body_layer)?;
+                    // Dispatch already read this value and selected this
+                    // decoder for it. Re-checking is the guard against the
+                    // peek and the schema pass ever disagreeing about the
+                    // first key — two parsers silently diverging is exactly
+                    // the class of bug a permanent format cannot afford.
                     if found != FORMAT_VERSION_V1 {
-                        return Err(ManifestError::UnsupportedFormatVersion { found });
+                        return Err(ManifestError::UnsupportedFormatVersion {
+                            found,
+                            supported: SUPPORTED_VERSIONS,
+                        });
                     }
                     format_version = Some(found);
                 }
@@ -1136,8 +1167,9 @@ impl ManifestBodyV1 {
         }
         d.finish().map_err(body_layer)?;
 
-        // The discriminant itself must be present; its *value* was
-        // checked as it was read (F10 will read it before dispatch).
+        // The discriminant itself must be present. An artifact with no
+        // version field is *malformed*, not *unsupported* — F10 keeps the
+        // two claims separate, so this stays `manifest-missing-key`.
         format_version.ok_or(missing(MAP, key::body::FORMAT_VERSION))?;
 
         Self::new(
@@ -1245,6 +1277,30 @@ pub fn encode_body(body: ManifestBodyV1) -> Result<Vec<u8>, EncodeError> {
 mod tests {
     use super::*;
     use crate::manifest::fixtures;
+
+    /// F10's cross-parser guard: the v1 decoder re-checks the discriminant it
+    /// was dispatched on, so if [`crate::format::peek_format_version`] and
+    /// this schema pass ever disagreed about the first key, the artifact is
+    /// rejected rather than silently decoded as v1.
+    ///
+    /// Only reachable by minting the witness directly — production code has
+    /// no such constructor, which is the point.
+    #[test]
+    fn the_v1_decoder_rechecks_the_discriminant_dispatch_read() {
+        // A body declaring v2, handed to the v1 decoder as if dispatch had
+        // (wrongly) selected it.
+        let body = encode_item(|e| {
+            e.map(|m| {
+                m.entry(key::body::FORMAT_VERSION, |e| e.u64(2))?;
+                m.entry(key::body::APP_VERSION, |e| e.str("x"))
+            })
+        })
+        .expect("encode");
+        assert!(matches!(
+            ManifestBodyV1::decode_v1(V1::admit_for_test(&body)),
+            Err(ManifestError::UnsupportedFormatVersion { found: 2, .. })
+        ));
+    }
 
     #[test]
     fn byte_range_exposes_width_and_checked_end() {

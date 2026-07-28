@@ -112,14 +112,20 @@ fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, 
             continue;
         }
         let name = file_name(&entry);
+        // F10's per-version roster is an auxiliary, not a vector: it carries
+        // no `kind`/`inputs`/`expect`, so embedding it would hand the bit-match
+        // executor a file it cannot run.
+        if name == "INDEX.json" {
+            continue;
+        }
         if name.ends_with(".json") {
             found.push((repo_relative(&entry), version.to_owned(), entry));
         } else {
             assert!(
                 name == "README.md" || name == "FROZEN.sha256" || name.ends_with(".py"),
                 "{}: unclassifiable file under vectors/{version}/ — every file must be a vector \
-                 (*.json) or a documented auxiliary (README.md, *.py, FROZEN.sha256); nothing is \
-                 silently skipped (Q4/Q5)",
+                 (*.json) or a documented auxiliary (README.md, *.py, FROZEN.sha256, INDEX.json); \
+                 nothing is silently skipped (Q4/Q5)",
                 entry.display()
             );
         }

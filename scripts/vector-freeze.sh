@@ -49,6 +49,11 @@ esac
 
 VECTORS="testdata/vectors"
 MANIFEST="FROZEN.sha256"
+# F10's per-version roster. An auxiliary, not a vector: it is the list *of*
+# the frozen set and changes whenever a vector lands, so freezing it would
+# make every registration read as a format event. Held to the tree — and
+# cross-checked against this manifest — by tests/vector_index.rs.
+INDEX="INDEX.json"
 
 # Prefer coreutils; fall back to the Perl `shasum` shipped on macOS. Comments
 # are stripped before piping, so both tools see only digest lines.
@@ -123,7 +128,7 @@ self-test)
     exit 1
   fi
 
-  victim="$(find "${SCRATCH}" -name '*.json' | LC_ALL=C sort | head -n 1)"
+  victim="$(find "${SCRATCH}" -name '*.json' ! -name "${INDEX}" | LC_ALL=C sort | head -n 1)"
   if [ -z "${victim}" ]; then
     echo "::error::no vector files to tamper with"
     exit 1
@@ -158,8 +163,8 @@ update)
     fi
     status="$(sed -n 's/^#! status  *//p' "${manifest}" | head -n 1)"
     old="$(grep -v '^#' "${manifest}" || true)"
-    new="$( cd "${dir}" && find . -name '*.json' | sed 's|^\./||' | LC_ALL=C sort \
-              | while IFS= read -r f; do "${SUM[@]}" "${f}"; done )"
+    new="$( cd "${dir}" && find . -name '*.json' ! -name "${INDEX}" | sed 's|^\./||' \
+              | LC_ALL=C sort | while IFS= read -r f; do "${SUM[@]}" "${f}"; done )"
 
     if [ "${status}" = "frozen" ]; then
       # Append-only: every existing line must survive byte-identically.

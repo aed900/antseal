@@ -412,15 +412,26 @@ pub enum BundleError {
     },
 
     // ── Version ─────────────────────────────────────────────────────
-    /// The bundle's `format_version` is not 1. F10 owns version *dispatch*
-    /// (reading key 0 before selecting a schema); until it lands, the v1
-    /// bundle decoder rejects anything else here, keyed by this same error.
+    /// The bundle declares a `format_version` with no decoder in this build
+    /// (F10). Raised by `crate::format`'s version dispatch **before** any
+    /// schema decode, so a newer-than-this-verifier bundle is never reported
+    /// as corrupt: it is neither a canonicality error nor an unknown-key
+    /// error.
+    ///
     /// Distinct from the manifest's own version error: the two discriminants
-    /// are independent (registry §7.6 key 0).
-    #[error("unsupported bundle format_version {found} (this decoder implements v1)")]
+    /// are independent (registry §7.6 key 0 vs §7.2 key 0), so a v1 bundle
+    /// may legitimately carry a v2 manifest one day and the two rejections
+    /// must stay separable.
+    #[error(
+        "unsupported bundle format_version {found}; this build decodes {}",
+        crate::format::supported_versions_str(supported)
+    )]
     UnsupportedFormatVersion {
         /// The version the bundle declares.
         found: u64,
+        /// Every version this build *can* decode
+        /// ([`crate::format::SUPPORTED_VERSIONS`]).
+        supported: &'static [u64],
     },
 
     // ── Presence groups (registry §7.8) ─────────────────────────────
@@ -534,6 +545,15 @@ impl BundleError {
     }
 }
 
+/// F10: the bundle family's unsupported-version rejection, so
+/// `crate::format`'s version dispatch can raise it without knowing anything
+/// about the bundle schema.
+impl crate::format::VersionRejection for BundleError {
+    fn unsupported_version(found: u64, supported: &'static [u64]) -> Self {
+        Self::UnsupportedFormatVersion { found, supported }
+    }
+}
+
 /// One exemplar per distinct schema-level [`BundleError::code`] — every
 /// (variant, discriminant) pair exactly once, with pairwise-distinct
 /// `Display` renderings.
@@ -588,7 +608,10 @@ pub(crate) fn all_code_exemplars() -> Vec<BundleError> {
     }
     exemplars.extend([
         E::UnknownAnchorStatus { value: 7 },
-        E::UnsupportedFormatVersion { found: 2 },
+        E::UnsupportedFormatVersion {
+            found: 2,
+            supported: crate::format::SUPPORTED_VERSIONS,
+        },
         E::OtsUpgradeGroupIncomplete { missing_key: 3 },
         E::UnitRevealedTwice { unit_id: 5 },
         E::FullRevealWithoutTouchedFile { file_id: 2 },
@@ -712,7 +735,10 @@ mod tests {
                 got: 16,
             },
             BundleError::UnknownAnchorStatus { value: 7 },
-            BundleError::UnsupportedFormatVersion { found: 2 },
+            BundleError::UnsupportedFormatVersion {
+                found: 2,
+                supported: crate::format::SUPPORTED_VERSIONS,
+            },
             BundleError::OtsUpgradeGroupIncomplete { missing_key: 2 },
             BundleError::UnitRevealedTwice { unit_id: 0 },
             BundleError::FullRevealWithoutTouchedFile { file_id: 0 },
@@ -853,8 +879,11 @@ mod tests {
                 "anchor_status: unregistered value 7",
             ),
             (
-                BundleError::UnsupportedFormatVersion { found: 2 },
-                "unsupported bundle format_version 2 (this decoder implements v1)",
+                BundleError::UnsupportedFormatVersion {
+                    found: 2,
+                    supported: crate::format::SUPPORTED_VERSIONS,
+                },
+                "unsupported bundle format_version 2; this build decodes v1",
             ),
             (
                 BundleError::OtsUpgradeGroupIncomplete { missing_key: 3 },
