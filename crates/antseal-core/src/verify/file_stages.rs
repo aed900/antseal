@@ -31,7 +31,7 @@
 //!   when its canonical-domain units are all revealed **whether or not its
 //!   mirror is**; conversely a mirror-only reveal is *partial*. The
 //!   exemption is routed through G7's
-//!   [`full_reveal_concat_exempt`](crate::content::mirror::full_reveal_concat_exempt)
+//!   [`full_reveal_concat_exempt`](crate::content::mirror::full_reveal_concat_exempt())
 //!   so there is exactly one definition of it.
 //! - **`N(F) ≠ ∅` (anti-vacuity).** R3's tiling accepts a hand-built
 //!   `size = 0` file with **zero** units (`cursor == size` at 0). Without
@@ -60,16 +60,29 @@
 //! | 3 | `full(F)` ∧ `file_salt` absent | [`VerifyError::FullRevealMaterialMissing`] `{FileSalt}` |
 //! | 4 | `full(F)` ∧ [`FineTree::Present`] ∧ `s_root` absent | [`VerifyError::FullRevealMaterialMissing`] `{SRoot}` |
 //! | 5 | `full(F)` ∧ [`FineTree::Absent`] ∧ `s_root` present | [`VerifyError::FullRevealSRootWithoutFineTree`] (D74) |
-//! | 6 | present material with the wrong exact length | [`VerifyError::WrongLength`] (defensive; see below) |
+//! | 6 | present material with the wrong exact length (`file_salt`, then `s_root`) | [`VerifyError::WrongLength`] (defensive; see below) |
 //! | 7 | `full(F)`: concat(non-mirror bytes) ≠ `canon_commit`/`raw_commit` | [`VerifyError::ConcatCommitMismatch`] |
 //! | 8 | `full(F)` ∧ fine tree: rebuild from `s_root` ≠ `fine_root` | [`VerifyError::FineRootRebuildMismatch`] |
 //! | 9 | `full(F)` ∧ mirror revealed: mirror bytes ≠ `raw_commit` | [`VerifyError::RawCommitMismatch`] |
 //! | 10 | `full(F)` ∧ mirror revealed ∧ text: `canonicalize_v(raw) ≠ canonical` | [`VerifyError::RawMirrorCanonicalizationMismatch`] |
 //!
-//! Rows 1–5 are the *classification* pass ([`classify_file_reveal`]); rows
+//! Rows 1–6 are the *classification* pass ([`classify_file_reveal`]); rows
 //! 7–10 are the *content* pass ([`check_full_reveal_content`]). Both run
 //! inside one file's turn, in that order, so the two arms of the
 //! classification cannot drift apart into separate stages (D28 rider 2).
+//!
+//! Rows 4 and 5 are mutually exclusive ([`FineTree::Present`] versus
+//! [`FineTree::Absent`]), so their relative order is unobservable; the
+//! classifier writes them as one exhaustive match over the 2×2 of
+//! (fine-tree state, `s_root` presence) precisely so all four combinations
+//! — two legal, two rejected — are named rather than defaulted. Row 3 does
+//! precede row 5, and that ordering is asserted.
+//!
+//! Row 5 is **D74** (`docs/decisions/D74-extraneous-full-reveal-s-root.md`).
+//! It is what makes D28's totality claim total: strip units and the leak arm
+//! fires, strip material and the missing arm fires, **add** material and
+//! this arm fires — so a third party cannot alter a bundle's reveal shape
+//! undetected in any direction.
 //!
 //! ## Cross-stage precedence
 //!
@@ -104,7 +117,7 @@
 //! descriptor-recorded Unicode version and requires byte-equality with the
 //! validated canonical bytes (MVP-SPEC.md line 121). The mode is **not a
 //! parameter anywhere in this module's API**: it is fixed inside
-//! [`recompute_canonical_from_mirror`], which no caller can influence.
+//! `recompute_canonical_from_mirror` (private), which no caller can influence.
 //!
 //! That is enforcement, not preference. A `--force-text` file's mirror bytes
 //! are by definition *not* valid UTF-8 (that is why the file needed forcing,
@@ -146,6 +159,81 @@
 //! mirroring F5's manifest shapes without depending on them, exactly as R3
 //! does. Every wire quantity is `u64` — adversary-controlled wire values are
 //! never `usize` (the R2 convention).
+//!
+//! R5 calls exactly one function:
+//!
+//! ```text
+//! let summaries: Vec<FileRevealSummary> =
+//!     check_file_stages(&manifest_view, &bundle_view, &verified)?;
+//! ```
+//!
+//! where `verified[i].bytes` is the `Vec<u8>` R2's
+//! [`verify_revealed_unit`](super::unit_stages::verify_revealed_unit)
+//! returned for that unit, and the three views are populated from the
+//! decoded manifest body and bundle:
+//!
+//! - [`FileView`] per file-table entry, in **manifest file order** (its
+//!   index is the `file_id`, spec line 76): `size`, `canon` from
+//!   [`CanonMode`](crate::manifest::body::CanonMode), `raw_commit`, and
+//!   `fine_tree` from [`FineTree`](crate::manifest::body::FineTree).
+//! - [`FileUnitEntry`] per unit-table entry: `unit_id`, `file_id`, `kind`.
+//! - [`FullRevealMaterialEntry`] per bundle full-reveal entry, carrying the
+//!   **wire bytes** of `file_salt`/`s_root` — R5 does not pre-convert them,
+//!   because their optionality is what the classification adjudicates.
+//!
+//! The returned summaries are in manifest file order and are material-free;
+//! R5 copies `is_full()` into each
+//! [`FileReveal::fully_revealed`](super::report::FileReveal) and uses the
+//! [`RevealCensus`] counts for the revealed/unrevealed span rendering.
+//!
+//! # What R7 owes (tamper rows and positive fixtures)
+//!
+//! Every row below is reachable from this module today; the unit tests here
+//! construct each one and can be lifted into R7's registry against R6's
+//! fixture builder. Codes are pairwise distinct, so Q7's registry sweep
+//! accepts the set:
+//!
+//! | row id | expected code |
+//! |---|---|
+//! | `verify-partial-reveal-salt-leak-file-salt` | `partial-reveal-salt-leak-file-salt` |
+//! | `verify-partial-reveal-salt-leak-s-root` | `partial-reveal-salt-leak-s-root` |
+//! | `verify-full-reveal-missing-file-salt` | `full-reveal-material-missing-file-salt` |
+//! | `verify-full-reveal-missing-s-root` | `full-reveal-material-missing-s-root` |
+//! | `verify-full-reveal-s-root-without-fine-tree` | `full-reveal-s-root-without-fine-tree` |
+//! | `verify-concat-commit-mismatch-canon` | `concat-commit-mismatch-canon` |
+//! | `verify-concat-commit-mismatch-raw` | `concat-commit-mismatch-raw` |
+//! | `verify-fine-root-rebuild-mismatch` | `fine-root-rebuild-mismatch` |
+//! | `verify-raw-commit-mismatch` | `raw-commit-mismatch` |
+//! | `verify-raw-mirror-canonicalization-mismatch` | `raw-mirror-canonicalization-mismatch` |
+//! | `verify-unknown-unicode-version` | `content-unknown-unicode-version` |
+//!
+//! **Two things that are deliberately NOT rows:**
+//!
+//! 1. **The unit-strip downgrade.** Dropping one revealed unit from a
+//!    full-reveal bundle (leaving `file_salt` attached) surfaces as
+//!    `partial-reveal-salt-leak-file-salt` — the *same* outcome as the
+//!    isolation row, because the two mutations are one observable failure.
+//!    `check_registry` would correctly refuse the second row. It is asserted
+//!    here as the property
+//!    `no_single_unit_deletion_from_a_full_reveal_verifies`, and belongs in
+//!    R10 (D28's record documents this trap).
+//! 2. **A forced-text mirror mismatch.** It shares
+//!    `raw-mirror-canonicalization-mismatch` with the ordinary row above.
+//!    What R7 owes instead is a **positive fixture** —
+//!    `full-reveal-forced-text-mirror`, a full reveal whose raw mirror is
+//!    invalid UTF-8, which MUST verify. That fixture is the *only* artifact
+//!    that distinguishes a [`TextMode::Forced`] recompute from a
+//!    [`TextMode::Detected`] one: under `Detected` it fails with
+//!    `content-canonicalize-invalid-utf8`. Without it, D20's mode rule is
+//!    untested at the bundle level. Modelled here by
+//!    `forced_mode_is_enforced_for_invalid_utf8_mirrors`.
+//!
+//! The rest of D28's positive-fixture matrix — `full-reveal-fine-tree-text`,
+//! `full-reveal-no-fine-tree-binary`, `full-reveal-empty-file`,
+//! `full-reveal-via-enumerated-units`, `full-reveal-without-mirror`,
+//! `partial-reveal-two-of-three-units`, `degenerate-zero-unit-file` — has one
+//! named test each in this module's `tests`, so R6 has a shape checklist and
+//! R7 has a "the rule is not over-broad" set.
 //!
 //! [`FineTree::Present`]: crate::manifest::body::FineTree::Present
 //! [`FineTree::Absent`]: crate::manifest::body::FineTree::Absent
@@ -766,7 +854,7 @@ pub fn check_concat_commit(
 /// bullet: such a full reveal "runs only the concat→commit check".
 ///
 /// The rebuild goes through G9's
-/// [`rebuild_fine_root`](crate::content::fine_tree::rebuild_fine_root), the
+/// [`rebuild_fine_root`](crate::content::fine_tree::rebuild_fine_root()), the
 /// *same* [`FineTreeBuilder`](crate::content::fine_tree::FineTreeBuilder) the
 /// sealer ran — deliberately not a second implementation that could drift.
 /// It returns `None` only for empty content, which contradicts a manifest
@@ -1176,6 +1264,68 @@ mod tests {
         assert_eq!(shapes.len(), 1);
         assert!(shapes[0].is_full());
         assert_eq!(shapes[0].file_id(), 0);
+    }
+
+    /// R4 accept, stated directly against the four sub-checks: a
+    /// text-with-mirror full reveal runs **all of** concat→`canon_commit`,
+    /// tree rebuild→`fine_root`, mirror→`raw_commit`, and
+    /// `canonicalize_v(raw) == canonical` — and a `--no-fine-tree` full
+    /// reveal runs *only* the concat check.
+    ///
+    /// Each check is proven load-bearing on this same fixture shape by its
+    /// own negative test below (`concat_commit_mismatch_rows`,
+    /// `fine_root_rebuild_mismatch_row`, `raw_commit_mismatch_row`,
+    /// `raw_mirror_canonicalization_mismatch_row`).
+    #[test]
+    fn text_with_mirror_runs_all_four_checks_and_no_fine_tree_runs_one() {
+        let fixture = Fixture::text(0, b"alpha\r\n\r\nbeta\r\n", true);
+        let files = [fixture.view()];
+        let units = fixture.units(2);
+        let material = [fixture.material()];
+        let verified = fixture.verified(2);
+        let shape = classify_file_reveal(
+            &files[0],
+            &units,
+            &bundle(&fixture.all_unit_ids(2), &material),
+        )
+        .expect("classifies as Full");
+        let FileRevealShape::Full(evidence) = &shape else {
+            panic!("expected a full reveal, got {shape:?}");
+        };
+        assert_eq!(evidence.concat_commit_kind(), ContentCommitKind::Canon);
+        assert!(matches!(
+            evidence.fine_tree(),
+            FullRevealFineTree::Present { .. }
+        ));
+
+        let content = concat_non_mirror_bytes(0, &verified);
+        assert_eq!(content, fixture.content, "the two units reassemble");
+        check_concat_commit(evidence, &content).expect("concat opens canon_commit");
+        check_fine_root_rebuild(evidence, &content).expect("rebuild matches fine_root");
+        let mirror = fixture.mirror.as_ref().expect("CRLF source has a mirror");
+        check_raw_mirror(evidence, mirror, &content)
+            .expect("mirror opens raw_commit and canonicalizes to the content");
+
+        // The `--no-fine-tree` shape: the rebuild is structurally a no-op,
+        // and it is the *type* that says so.
+        let binary = Fixture::binary(1, b"binary payload", false);
+        let files = [binary.view()];
+        let no_tree = [FullRevealMaterialEntry {
+            file_id: 1,
+            file_salt: Some(&TEST_FILE_SALT),
+            s_root: None,
+        }];
+        let shape = classify_file_reveal(&files[0], &binary.units(1), &bundle(&[0], &no_tree))
+            .expect("classifies as Full");
+        let FileRevealShape::Full(evidence) = &shape else {
+            panic!("expected a full reveal, got {shape:?}");
+        };
+        assert_eq!(evidence.concat_commit_kind(), ContentCommitKind::Raw);
+        assert!(matches!(evidence.fine_tree(), FullRevealFineTree::Absent));
+        check_fine_root_rebuild(evidence, &binary.content)
+            .expect("no fine tree => no rebuild to run");
+        // Even a wholly wrong byte string cannot fail the absent rebuild.
+        check_fine_root_rebuild(evidence, b"nonsense").expect("still a no-op");
     }
 
     /// `full-reveal-no-fine-tree-binary`: all units + `file_salt`, **no**

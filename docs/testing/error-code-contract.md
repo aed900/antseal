@@ -121,5 +121,22 @@ kebab-case id, and never edit an existing row's expected code.
   by a committed artifact either. First genuine cross-domain near-miss
   recorded and kept separable: R's pipeline-level `path-commit-mismatch` vs
   C's primitive-level `crypto-path-commit-mismatch`.
+- **2026-07-28** — R4 appended four codes across two domains. R (unprefixed):
+  `full-reveal-s-root-without-fine-tree` (decision D74 — the *unexpected
+  material* direction, completing D28's present-set-==-required-set rule).
+  G (`content-`): `content-unknown-unicode-version` and
+  `content-canonicalize-invalid-utf8`, a **new family** on
+  `crate::canon::{CanonicalizeError, UnicodeVersionError}` with its own
+  layer-1 meta-test (`canon::tests`), which additionally asserts
+  disjointness from `ContentError`'s codes — two families now share the
+  `content-` prefix, so within-prefix distinctness needs proving, not
+  assuming. Both reach the pipeline through R's new
+  `VerifyError::Canon` wrapper arm with the inner code surfaced unchanged
+  (§2). R's `VerifyError` universe: **79** distinct codes over 23 variants.
+  Worth recording as a §2 illustration: `content-unknown-unicode-version`
+  ("this verifier is too old") and R's `raw-mirror-canonicalization-mismatch`
+  ("these bytes do not canonicalize to that content") are outcomes of the
+  *same check* on the *same field* and must never merge — a second genuine
+  near-miss of the `path-commit-mismatch` kind, kept separable.
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.
