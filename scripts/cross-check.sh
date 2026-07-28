@@ -25,6 +25,9 @@
 #                                     + Unicode NormalizationTest    (T0)
 #   6. crosscheck_cbor.py             canonical CBOR, work_id        (T1)
 #                                     + RFC 8949 Appendix A          (T0)
+#   7. crosscheck-report.py           verification-report byte
+#                                     format, D29's nine syntactic
+#                                     rules                     (T1, no T0)
 #
 # `reference.py` runs FIRST and unconditionally: if the reference's own known
 # answers fail, every downstream agreement is worthless, and this ordering
@@ -119,6 +122,18 @@ fi
 for path in "${root}"/testdata/vectors/v*/crosscheck_cbor.py; do
   [ -f "${path}" ] && cbor_checkers+=("${path}")
 done
+# The repo-level checkers: Q38's report-format reader and Q41's provenance
+# enforcer. Discovered by glob, not named, for the same reason every other
+# surface above is — a third one added later is picked up with no edit here,
+# and cannot be silently left out of `--check` or `--self-test`.
+#
+# One script serves every format version: both walk `testdata/` themselves
+# rather than being copied per version, because their subjects (a decision
+# record and a provenance record) are shared across versions.
+repo_checkers=()
+for path in "${root}"/scripts/crosscheck-*.py; do
+  [ -f "${path}" ] && repo_checkers+=("${path}")
+done
 
 if [ "${#references[@]}" -eq 0 ]; then
   echo "::error::no testdata/vectors/v*/crypto/reference.py found — the T0 known-answer" \
@@ -136,11 +151,31 @@ if [ "${#cbor_checkers[@]}" -eq 0 ]; then
        "pass vacuously. Discovery is broken, or the checker was deleted." >&2
   exit 1
 fi
+# The must-exist half of the glob above: discovery can only fail on what it
+# finds, so the checkers that must exist are written down.
+for required in crosscheck-report.py crosscheck-provenance.py; do
+  if [ ! -f "${root}/scripts/${required}" ]; then
+    echo "::error::scripts/${required} is missing. crosscheck-report.py is the only" \
+         "implementation outside antseal-core that reads the D29 report byte format (Q38);" \
+         "crosscheck-provenance.py is the only thing that enforces the externally-sourced" \
+         "fixtures' digests (Q41). Without either, the lane passes over a hole." >&2
+    exit 1
+  fi
+done
 
 rel() { printf '%s' "${1#"${root}"/}"; }
 
 # ── --check ────────────────────────────────────────────────────────────────
 if [ "${mode}" = "check" ]; then
+  # Q41 runs BEFORE everything, for the same reason reference.py runs before
+  # the generators: every T0 claim in this lane rests on externally-sourced
+  # bytes being the bytes NIST and Unicode actually published. If those have
+  # drifted, the agreements downstream are agreements with a forgery, and
+  # that must be legible instead of showing up as a passing lane.
+  note "cross-check: external-fixture provenance (Q41) — scripts/crosscheck-provenance.py"
+  "$python" "${root}/scripts/crosscheck-provenance.py" --check
+  merge_rc $?
+
   for path in "${references[@]}"; do
     note "cross-check: reference known answers (T0) — $(rel "${path}")"
     "$python" "${path}"
@@ -163,9 +198,18 @@ if [ "${mode}" = "check" ]; then
     merge_rc $?
   done
 
+  for path in "${repo_checkers[@]}"; do
+    case "${path}" in
+      */crosscheck-provenance.py) continue ;;  # already ran, first
+    esac
+    note "cross-check: $(rel "${path}") --check"
+    "$python" "${path}" --check
+    merge_rc $?
+  done
+
   if [ "${status}" -eq 0 ]; then
-    printf '\ncross-check PASSED: %d reference self-test(s), %d generator(s), %d CBOR checker(s)\n' \
-      "${#references[@]}" "${#generators[@]}" "${#cbor_checkers[@]}"
+    printf '\ncross-check PASSED: %d reference self-test(s), %d generator(s), %d CBOR checker(s), %d repo checker(s)\n' \
+      "${#references[@]}" "${#generators[@]}" "${#cbor_checkers[@]}" "${#repo_checkers[@]}"
   fi
   exit "${status}"
 fi
@@ -230,6 +274,29 @@ elif mutation == "byte":
         sys.exit(f"{victim} is empty and cannot be mutated")
     data[0] ^= 0x01
     victim.write_bytes(bytes(data))
+elif mutation.startswith("field:"):
+    # `field:<marker>:<key>` — flip the first hex digit of the string value of
+    # the first `"<key>": "<hex>"` appearing after `<marker>`.
+    #
+    # Text-level rather than parse-and-re-dump, so the file's formatting is
+    # untouched and the ONLY difference is that one nibble. C27 needs that
+    # precision: signatures.json's ML-DSA fields are handed to the re-derivation
+    # rather than produced by it, so the byte diff stays green by construction
+    # and the red must come from `check_mldsa_half` — which is exactly the
+    # property being proven.
+    import re
+
+    _, marker, key = mutation.split(":", 2)
+    text = victim.read_text(encoding="utf-8")
+    anchor = text.find(marker)
+    if anchor < 0:
+        sys.exit(f"self-test marker {marker!r} not found in {victim}")
+    match = re.compile(rf'"{re.escape(key)}"\s*:\s*"([0-9a-f]+)"').search(text, anchor)
+    if match is None:
+        sys.exit(f"no hex-valued {key!r} after {marker!r} in {victim}")
+    start = match.start(1)
+    flipped = "1" if text[start] == "0" else "0"
+    victim.write_text(text[:start] + flipped + text[start + 1 :], encoding="utf-8")
 elif mutation.startswith("replace:"):
     # A targeted, semantic mutation: `replace:<from>:<to>`. Errors loudly if
     # the anchor is gone, so a refactor cannot silently disarm the proof.
@@ -305,6 +372,20 @@ for path in "${generators[@]}"; do
         continue
       fi
       prove_can_fail "$(rel "${path}") committed vectors" "${script}" "${victim}" "hex"
+
+      # C27. The generic fault above lands in the first *.json of the
+      # directory (commitments.json), so signatures.json's ML-DSA half was
+      # never fault-planted — and it was the one field pair the checker took
+      # on trust. These two prove otherwise. Note that the byte-diff leg
+      # STAYS green for them by construction: the re-derivation is handed
+      # those fields, so it re-emits whatever the file says. The red comes
+      # from check_mldsa_half and nowhere else, which is the proof C27 owes.
+      if [ -f "${dir}/signatures.json" ]; then
+        prove_can_fail "$(rel "${path}") mldsa65.public_key (C27)" \
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":public_key'
+        prove_can_fail "$(rel "${path}") mldsa65.signature (C27)" \
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":signature'
+      fi
       ;;
   esac
 done
@@ -322,6 +403,21 @@ for path in "${cbor_checkers[@]}"; do
     0) ;;
     1) selftest_status=1 ;;
     *) [ "${selftest_status}" -eq 0 ] && selftest_status="${rc}" ;;
+  esac
+done
+
+# 6-7. The report-format reader and the provenance enforcer both carry their
+#      own per-property planted faults (Q38: 12 properties, Q41: one per
+#      enforced record plus the roster-drift guards), for the same reason
+#      F14 does: one generic "flip a hex digit" fault would prove a single
+#      property and leave the rest unobserved.
+for extra in "${repo_checkers[@]}"; do
+  note "self-test: $(rel "${extra}") (built-in)"
+  "$python" "${extra}" --self-test
+  rc=$?
+  case "${rc}" in
+    0) ;;
+    *) selftest_status=1 ;;
   esac
 done
 
