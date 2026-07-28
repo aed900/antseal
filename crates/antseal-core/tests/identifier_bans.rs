@@ -57,7 +57,7 @@ const BANNED: &[(&str, &str)] = &[
 const ENFORCEMENT_SITES: &[(&str, &str)] = &[
     ("identifier_bans.rs", "this file defines the ban list"),
     (
-        "format_registry_draft.rs",
+        "format_registry_freeze.rs",
         "the registry §7.6.1 checked-absence test names the forbidden field \
          names so it can assert no wire map grows one",
     ),

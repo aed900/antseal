@@ -126,8 +126,8 @@ fn every_fixture_shape_round_trips_byte_identically() {
             &mut bundle,
             key::bundle::TSA_ANCHORS,
             bundle_wire::section(&[
-                bundle_wire::tsa_anchor(status.to_wire(), 0, None),
-                bundle_wire::tsa_anchor(status.to_wire(), 3, Some("https://freetsa.org/tsr")),
+                bundle_wire::tsa_anchor(status.to_wire(), 0, 0x30),
+                bundle_wire::tsa_anchor(status.to_wire(), 3, 0x31),
             ]),
         );
         cases.push((status.registry_value_name(), bundle_wire::encode(&bundle)));
@@ -189,8 +189,8 @@ fn anchor_capture_order_is_preserved_not_sorted() {
             &mut b,
             key::bundle::TSA_ANCHORS,
             bundle_wire::section(&[
-                bundle_wire::tsa_anchor(0, 0, Some("a")),
-                bundle_wire::tsa_anchor(0, 0, Some("b")),
+                bundle_wire::tsa_anchor(0, 0, 0xAA),
+                bundle_wire::tsa_anchor(0, 0, 0xBB),
             ]),
         );
         bundle_wire::encode(&b)
@@ -201,8 +201,8 @@ fn anchor_capture_order_is_preserved_not_sorted() {
             &mut b,
             key::bundle::TSA_ANCHORS,
             bundle_wire::section(&[
-                bundle_wire::tsa_anchor(0, 0, Some("b")),
-                bundle_wire::tsa_anchor(0, 0, Some("a")),
+                bundle_wire::tsa_anchor(0, 0, 0xBB),
+                bundle_wire::tsa_anchor(0, 0, 0xAA),
             ]),
         );
         bundle_wire::encode(&b)
@@ -212,7 +212,7 @@ fn anchor_capture_order_is_preserved_not_sorted() {
     assert_round_trips("anchors in capture order", &forward);
     assert_round_trips("anchors in the other capture order", &reversed);
     let decoded = BundleV1::decode(&reversed).expect("decodes");
-    assert_eq!(decoded.tsa_anchors()[0].source(), Some("b"));
+    assert_eq!(decoded.tsa_anchors()[0].token().as_slice(), [0xBB; 128]);
 }
 
 /// The reveal-side path: build a bundle from typed values, encode it, and
@@ -240,7 +240,6 @@ fn seal_side_construction_encodes_and_decodes() {
             OpaqueBytes::from_vec(vec![0x30; 32]),
             vec![OpaqueBytes::from_vec(vec![0xC0; 24])],
             1_767_225_601,
-            Some("https://freetsa.org/tsr".to_owned()),
         )],
         receipt: Some(
             ReceiptRecord::new(

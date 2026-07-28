@@ -1,37 +1,70 @@
-//! F4 draft gate: internal consistency of the machine-readable wire-format
-//! registry mirror (`docs/format/registry-v1.json`; normative text in
-//! `docs/format/registry-v1.md`).
+//! **F4 freeze gate** for the v1 wire-format registry — the normative
+//! document `docs/format/registry-v1.md`, its machine mirror
+//! `docs/format/registry-v1.json`, and the code that implements them.
 //!
-//! Scope at DRAFT stage — the registry freezes only at the Q14
-//! `format-v1-freeze` gate:
+//! Renamed from `format_registry_draft.rs` at the Q14 `format-v1-freeze`
+//! gate (D8 §12). The registry is now **frozen**: every number, name and
+//! rule it records is format-permanent, and changing one is a
+//! format-version event (MVP-SPEC.md line 123), not an edit.
 //!
-//! - the JSON parses;
-//! - every map key, enum value, tuple index, and reserved-range bound is an
-//!   unsigned integer (F4 accept: "no negative or non-integer map keys
-//!   anywhere in the registry");
-//! - no duplicate key numbers within any single map (nor duplicate values
-//!   within any single enum; tuple element indexes are contiguous);
-//! - reserved ranges are well-formed, mutually disjoint, and collide with
-//!   no assigned key in the same map/enum;
-//! - assigned map keys and reserved ranges respect the v1 single-byte key
-//!   band (`0..=23`, registry §1 rule 4);
-//! - every draft item carries a registered status marker
-//!   (`proposed` / `pending-D9` / `pending-D17`).
+//! D8 §14 names the assertion set so it cannot be under-delivered.
 //!
-//! # The 1:1 code ⟷ registry cross-check (F5/F8, registry §§7.15, 14)
+//! # A — mirror internal consistency
 //!
-//! The second half of this file is the assertion both
-//! `manifest::registry` and `bundle::registry` claim in their module docs:
-//! **every constant in those modules equals its registry row**. Map keys,
-//! reserved bands, closed-enum values and their registry spellings, fixed
-//! scalar lengths, tuple arities, and the v1 key-band bound are each read
-//! from the JSON mirror and compared against the code. Changing a number on
-//! either side without changing the other fails here — which is the point:
-//! after Q14 either change is a format-version event (MVP-SPEC.md line 123).
+//! The JSON parses and `registry_version == 1`; every map key, enum value,
+//! tuple index and reserved-range bound is an unsigned integer (F4 accept:
+//! "no negative or non-integer map keys anywhere in the registry"); no
+//! duplicate key numbers within a map, nor duplicate values within an enum;
+//! reserved ranges are well-formed, mutually disjoint, and collide with no
+//! assigned key; every assigned key and reserved bound sits in the v1
+//! single-byte band `0..=23` (registry §1 rule 4); the `maps[]` set is
+//! exactly the fourteen registered names.
 //!
-//! It also pins registry §7.6.1's **checked absences** on the table side: no
-//! bundle map may grow a nonce, a signature container, a stored
-//! `work_id`/`anchor_digest`/`seal_id`, or a reveal-shape discriminant.
+//! # B — freeze state
+//!
+//! The document status is `frozen-v1`; every item's status **equals**
+//! `frozen-v1` — equality, not membership in an allow-list, because an item
+//! added with no status, with `proposed`, or with a novel spelling must all
+//! fail identically; and none of the four pre-freeze strings occurs anywhere
+//! in the mirror at any depth. That last one catches what an allow-list
+//! structurally cannot: a `notes` string that still says "proposed", which
+//! is how prose rots.
+//!
+//! # C — code ⟷ mirror
+//!
+//! The assertion both `manifest::registry` and `bundle::registry` claim in
+//! their module docs: **every constant in those modules equals its registry
+//! row**, in both directions. C1 map identity, C2 key numbers, C3 reserved
+//! bands, C4 closed enums, C5 `sig_alg` (**both** code copies, C's and F's,
+//! each against the mirror directly), C6 field **names**, C7 scalar lengths,
+//! C8 tuple arities, C9 the nineteen D10 caps with their error codes, C10
+//! the report's `AnchorState` against the wire's `AnchorStatus`.
+//!
+//! # D — document ⟷ mirror
+//!
+//! Registry §14 claims the JSON "mirrors this document 1:1". Until the
+//! freeze nothing in the tree parsed the `.md` at all, so the claim was
+//! unbacked — and the mirror had silently drifted from its own source.
+//! This file now reads the document and compares its mechanical tables to
+//! the mirror: §7's map tables (keys, **names**, reserved bands and named
+//! slots), §6's enum tables, §2's fixed-length table, §11's cap table.
+//! Brittleness to formatting is a feature after the freeze: the normative
+//! document should not be reformatted silently.
+//!
+//! # E — recorded non-assertions
+//!
+//! Deliberate, not forgotten (registry §14): presence rules are expressed in
+//! code by Rust types and cannot be reflected without a macro; validation
+//! tiers have no code representation at all; §12's spec-coverage checklist
+//! is prose; the receipt payload's internal layout is deliberately outside
+//! the registry. One narrowing is recorded at its own assertion:
+//! [`the_document_scalar_table_matches_the_mirror`] compares **lengths**,
+//! because §2 groups by byte length while `scalars[]` names by role.
+//!
+//! This file also pins registry §7.6.1's **checked absences** on the table
+//! side: no bundle map may grow a nonce, a signature container, a stored
+//! `work_id`/`anchor_digest`/`seal_id`, a reveal-shape discriminant, a TSA
+//! `source` string, or a receipt chain identifier.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -52,8 +85,26 @@ const REGISTRY_PATH: &str = concat!(
     "/../../docs/format/registry-v1.json"
 );
 
-/// Status vocabulary the F4 task brief registers for draft items.
-const ALLOWED_ITEM_STATUSES: [&str; 3] = ["proposed", "pending-D9", "pending-D17"];
+const DOC_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../docs/format/registry-v1.md"
+);
+
+/// The **only** legal item status in a frozen v1 registry (D8 §12).
+///
+/// Not an allow-list: equality is strictly stronger, and after Q14 the
+/// stronger property is what the document needs. The moment a v1.1 item is
+/// drafted into a reserved slot this fails, forcing the v1.1 author to
+/// extend the vocabulary consciously at their own gate rather than sliding
+/// a proposal into a frozen document.
+const FROZEN_ITEM_STATUS: &str = "frozen-v1";
+
+/// The document-level marker, which is the same string.
+const FROZEN_DOC_STATUS: &str = FROZEN_ITEM_STATUS;
+
+/// Markers that were legal before the freeze and are illegal after it —
+/// asserted absent from the whole mirror, at any depth, in any field.
+const PRE_FREEZE_MARKERS: [&str; 4] = ["proposed", "pending-D9", "pending-D17", "draft-until-Q14"];
 
 fn registry() -> Value {
     let text = std::fs::read_to_string(REGISTRY_PATH)
@@ -136,8 +187,9 @@ fn registry_json_parses() {
     );
     assert_eq!(
         get_str(&root, "status", "registry root"),
-        "draft-until-Q14",
-        "F4 is a draft deliverable; the freeze happens at Q14 (flip deliberately)"
+        FROZEN_DOC_STATUS,
+        "the registry froze at the Q14 `format-v1-freeze` gate (D8 §12); a \
+         document that still calls itself a draft is lying about its own state"
     );
     // The six-plus keyed structures the F4 brief names must all be present.
     for expected in [
@@ -255,15 +307,16 @@ fn reserved_ranges_do_not_collide_with_assigned_keys() {
     }
 }
 
+/// **B — every frozen item carries the frozen marker, by equality.**
 #[test]
-fn every_draft_item_carries_a_registered_status_marker() {
+fn every_frozen_item_carries_the_frozen_marker() {
     fn walk(value: &Value, path: &str, violations: &mut Vec<String>) {
         match value {
             Value::Object(map) => {
                 if let Some(status) = map.get("status").and_then(Value::as_str)
-                    && !ALLOWED_ITEM_STATUSES.contains(&status)
+                    && status != FROZEN_ITEM_STATUS
                 {
-                    violations.push(format!("{path}: unregistered status `{status}`"));
+                    violations.push(format!("{path}: status `{status}`"));
                 }
                 for (key, child) in map {
                     walk(child, &format!("{path}.{key}"), violations);
@@ -280,9 +333,9 @@ fn every_draft_item_carries_a_registered_status_marker() {
 
     let root = registry();
     let mut violations = Vec::new();
-    // The root-level `status` is the document lifecycle marker
-    // (`draft-until-Q14`), checked separately in `registry_json_parses`;
-    // item statuses live under these five sections (`caps` joined at F11).
+    let mut marked = 0usize;
+    // The root-level `status` is the document marker, checked separately in
+    // `registry_json_parses`; item statuses live under these five sections.
     for section in ["scalars", "enums", "tuples", "maps", "caps"] {
         walk(
             get(&root, section, "registry root"),
@@ -290,11 +343,71 @@ fn every_draft_item_carries_a_registered_status_marker() {
             &mut violations,
         );
     }
+    // Count them too: a walk that found nothing to check would pass vacuously.
+    fn count(value: &Value, marked: &mut usize) {
+        match value {
+            Value::Object(map) => {
+                if map.get("status").and_then(Value::as_str).is_some() {
+                    *marked += 1;
+                }
+                for child in map.values() {
+                    count(child, marked);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|c| count(c, marked)),
+            _ => {}
+        }
+    }
+    for section in ["scalars", "enums", "tuples", "maps", "caps"] {
+        count(get(&root, section, "registry root"), &mut marked);
+    }
+
     assert!(
         violations.is_empty(),
-        "status markers outside the F4 vocabulary {ALLOWED_ITEM_STATUSES:?}:\n{}",
+        "a frozen registry admits exactly one item status, `{FROZEN_ITEM_STATUS}`:\n{}",
         violations.join("\n")
     );
+    // The arithmetic, so a future edit can tell a real change from a
+    // miscount. D8 §12 counted **156** pre-freeze item markers (147
+    // `proposed` + 9 `pending-D17`) plus the document marker = 157 `status`
+    // fields. Three sit outside the five walked sections — the document
+    // marker itself, `version_dispatch` and `profile.time_encoding` — and
+    // one item marker left v1 with `tsa_anchor` key 4 (D8 §1). 157 − 3 − 1.
+    assert_eq!(
+        marked, 153,
+        "a different count means an item gained or lost its status marker"
+    );
+    let raw = std::fs::read_to_string(REGISTRY_PATH).expect("mirror is readable");
+    assert_eq!(
+        raw.matches(&format!("\"status\": \"{FROZEN_ITEM_STATUS}\""))
+            .count(),
+        156,
+        "every `status` field in the mirror, walked or not, must be frozen"
+    );
+}
+
+/// **B — no pre-freeze marker survives anywhere in the mirror.**
+///
+/// A prohibition, not an allow-list entry. The four strings must not occur
+/// at any depth, in any field — including key names and free prose, which is
+/// the case an allow-list over `status` fields structurally cannot catch.
+#[test]
+fn no_pre_freeze_marker_survives_anywhere() {
+    let raw = std::fs::read_to_string(REGISTRY_PATH)
+        .unwrap_or_else(|e| panic!("cannot read {REGISTRY_PATH}: {e}"));
+    for marker in PRE_FREEZE_MARKERS {
+        assert!(
+            !raw.contains(marker),
+            "`{marker}` still occurs in the frozen mirror. It is illegal for a v1 \
+             item: an item that still says so is either a question that escaped \
+             the gate or a lie about the document's state, and both are worse \
+             than a failing test. A v1.1 item needs its own vocabulary, extended \
+             deliberately at its own gate."
+        );
+    }
+    // The test-of-the-test: the strings really are searchable in this file's
+    // own terms, so a typo in `PRE_FREEZE_MARKERS` cannot make it vacuous.
+    assert!(raw.contains(FROZEN_ITEM_STATUS));
 }
 
 // ===========================================================================
@@ -668,6 +781,35 @@ fn no_bundle_map_grows_a_deliberately_absent_field() {
         "nonces come from the manifest — the single source of truth (line 114)",
     )];
 
+    // Banned on the TSA artifact specifically (D8 §1): the informational
+    // `source` string left v1. It was bound by nothing — the bundle is
+    // unsigned, so any relay can rewrite it — and consumed by nothing: the
+    // report pipeline refuses in writing to copy bundle-recorded anchor
+    // metadata, and a verdict's source identity comes from the verified
+    // certificate chain. Key 4 is now plain reserved.
+    let banned_on_tsa: &[(&str, &str)] = &[(
+        "source",
+        "D8 §1 removed the TSA source string from v1: unbindable (unsigned bundle), \
+         unconsumed (verify::pipeline refuses it), and rendered beside a verdict",
+    )];
+
+    // Banned on the receipt (D8 §3b): a sealer-written chain identifier would
+    // steer the verifier's RPC choice. The chain is pinned by the verifier.
+    let banned_on_receipt: &[(&str, &str)] = &[
+        (
+            "chain_id",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+        (
+            "chain",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+        (
+            "network",
+            "the chain is pinned by the verifier (line 137), never named by the artifact",
+        ),
+    ];
+
     let mut violations = Vec::new();
     for map in BundleMapId::ALL {
         let name = map.registry_name();
@@ -681,6 +823,12 @@ fn no_bundle_map_grows_a_deliberately_absent_field() {
             let mut rules = banned_everywhere.to_vec();
             if in_reveal {
                 rules.extend_from_slice(banned_in_reveals);
+            }
+            if map == BundleMapId::TsaAnchor {
+                rules.extend_from_slice(banned_on_tsa);
+            }
+            if map == BundleMapId::ReceiptRecord {
+                rules.extend_from_slice(banned_on_receipt);
             }
             if let Some((_, why)) = rules.iter().find(|(b, _)| *b == field_name) {
                 violations.push(format!("maps.{name}.{field_name}: {why}"));
@@ -1345,4 +1493,563 @@ fn code_error_maps_match_the_registry_for_the_layer_wide_arms() {
     };
     assert_eq!(too_large.map(), MapId::Envelope);
     assert_eq!(too_large.layer(), Layer::Envelope);
+}
+
+// ===========================================================================
+// C5 / C6 / C10 — the three code ⟷ mirror gaps D8 §14 named
+// ===========================================================================
+
+/// **C5 — `sig_alg`, BOTH code copies, each against the mirror directly.**
+///
+/// There are two mappings at HEAD: C's (`crypto::sig_policy`) and F's
+/// (`manifest::registry`, the one the codec actually uses). D8 §7 ruled the
+/// duplication *stays* — this table is the single normative source of the
+/// numbers, and how many `match` arms the crate has is a code-organisation
+/// matter the registry does not own. What had to close is the pin: before
+/// the freeze only F's copy was driven against the mirror, and C's was tied
+/// to it indirectly by a sibling test bounded at id 20. Two hops, one of
+/// them bounded, for a format-permanent numbering. Now both copies are
+/// asserted against the JSON directly, over the full registered set and the
+/// full reserved band.
+#[test]
+fn code_sig_alg_mappings_match_the_registry_on_both_copies() {
+    use antseal_core::crypto::sig_policy;
+
+    let root = registry();
+    let table = registry_enum_values(&root, "sig_alg");
+    assert!(!table.is_empty(), "the sig_alg enum must not be empty");
+
+    for (value, name) in &table {
+        // F's copy — the one the manifest decoder and encoder call.
+        let via_f = manifest_registry::sig_alg_from_wire(*value)
+            .unwrap_or_else(|| panic!("sig_alg {value} ({name}) is registered but F rejects it"));
+        assert_eq!(manifest_registry::sig_alg_to_wire(via_f), *value);
+        // C's copy — pinned to the same row, not to F's answer.
+        let via_c = sig_policy::sig_alg_from_id(*value)
+            .unwrap_or_else(|| panic!("sig_alg {value} ({name}) is registered but C rejects it"));
+        assert_eq!(sig_policy::sig_alg_to_id(via_c), *value);
+        assert_eq!(
+            via_f, via_c,
+            "sig_alg {value} ({name}) decodes to two different algorithms"
+        );
+    }
+
+    // Both directions: no code-assigned id missing from the table.
+    for alg in SigAlg::ALL {
+        for (which, id) in [
+            (
+                "manifest::registry",
+                manifest_registry::sig_alg_to_wire(alg),
+            ),
+            ("crypto::sig_policy", sig_policy::sig_alg_to_id(alg)),
+        ] {
+            assert!(
+                table.iter().any(|(v, _)| *v == id),
+                "{which} assigns sig_alg {id} to {alg} but the registry does not list it"
+            );
+        }
+    }
+
+    // The whole reserved band rejects in both copies. An unregistered value
+    // is a hard parse reject, never a silently ignored one — and the band is
+    // read from the mirror, so it cannot be bounded at a hand-typed number.
+    let entry = enum_entry(&root, "sig_alg");
+    let mut band_values = 0usize;
+    for range in as_array(get(entry, "reserved", "sig_alg"), "sig_alg") {
+        let first = get_u64(range, "first", "sig_alg");
+        let last = get_u64(range, "last", "sig_alg");
+        for value in first..=last {
+            band_values += 1;
+            assert!(
+                manifest_registry::sig_alg_from_wire(value).is_none(),
+                "sig_alg {value} is reserved but manifest::registry accepts it"
+            );
+            assert!(
+                sig_policy::sig_alg_from_id(value).is_none(),
+                "sig_alg {value} is reserved but crypto::sig_policy accepts it"
+            );
+        }
+    }
+    assert!(band_values > 0, "the reserved band must not be empty");
+
+    // The 16-value universe is load-bearing for D10 as well as for §6.2:
+    // §11's recorded non-cap on sig_policy/pubkeys/signatures is justified
+    // BY it, so widening the band would require minting three caps.
+    let universe = table.len() + band_values;
+    assert_eq!(
+        universe, 16,
+        "the sig_alg universe is frozen at 16 values — D10's recorded non-cap \
+         on sig_policy/pubkeys/signatures depends on it (registry §6.2, §11)"
+    );
+    assert_eq!(
+        sig_policy::FIRST_RESERVED_ID,
+        table.len() as u64,
+        "the first reserved id must abut the registered set"
+    );
+}
+
+/// **C6 — field NAMES, not just numbers (task F33).**
+///
+/// C2 compares key *numbers* only, so a field could be renamed in the
+/// registry with no test failure — and the registry document is the
+/// normative text a third-party verifier implements from. Worse, registry
+/// §7.6.1's checked absences are a **name**-based ban list
+/// (`no_bundle_map_grows_a_deliberately_absent_field`), so a rename is
+/// exactly the mutation that evades them: call a resurrected TSA `source`
+/// field `provenance` and every numeric check still passes.
+///
+/// Both directions, per map, as ordered `(key, name)` pairs.
+#[test]
+fn code_field_names_match_the_registry() {
+    let root = registry();
+
+    let mut checked = 0usize;
+    let mut check = |name: &str, pairs: Vec<(u64, &'static str)>| {
+        let entry = map_entry(&root, name);
+        let from_registry: Vec<(u64, String)> = as_array(get(entry, "fields", name), name)
+            .iter()
+            .map(|f| (get_u64(f, "key", name), get_str(f, "name", name).to_owned()))
+            .collect();
+        let from_code: Vec<(u64, String)> =
+            pairs.into_iter().map(|(k, n)| (k, n.to_owned())).collect();
+        assert_eq!(
+            from_code, from_registry,
+            "maps.{name}: the code's (key, name) pairs differ from the registry's"
+        );
+        checked += from_registry.len();
+    };
+
+    for map in MapId::ALL {
+        let keys = map.assigned_keys();
+        let names = map.field_names();
+        assert_eq!(
+            keys.len(),
+            names.len(),
+            "maps.{}: assigned_keys() and field_names() must stay parallel",
+            map.registry_name()
+        );
+        check(
+            map.registry_name(),
+            keys.iter().copied().zip(names.iter().copied()).collect(),
+        );
+    }
+    for map in BundleMapId::ALL {
+        let keys = map.assigned_keys();
+        let names = map.field_names();
+        assert_eq!(
+            keys.len(),
+            names.len(),
+            "maps.{}: assigned_keys() and field_names() must stay parallel",
+            map.registry_name()
+        );
+        check(
+            map.registry_name(),
+            keys.iter().copied().zip(names.iter().copied()).collect(),
+        );
+    }
+    // 28 manifest-side (2 + 8 + 7 + 4 + 7) + 40 bundle-side
+    // (10 + 3 + 5 + 4 + 3 + 5 + 4 + 3 + 3). The `tsa_anchor` term is 4, not
+    // 5: D8 §1 removed key 4's `source` from v1.
+    assert_eq!(
+        checked, 68,
+        "the fourteen v1 maps assign 68 keys between them; a different count \
+         means a field was added or removed, which is a format-version event"
+    );
+
+    // The per-key accessor agrees with the parallel lists, and answers `None`
+    // outside the assigned set — including on `tsa_anchor` key 4, which D8 §1
+    // removed from v1.
+    for map in BundleMapId::ALL {
+        for (key, name) in map.assigned_keys().iter().zip(map.field_names()) {
+            assert_eq!(map.field_name(*key), Some(*name));
+        }
+        let (first, last) = map.reserved_band();
+        for key in first..=last {
+            assert_eq!(
+                map.field_name(key),
+                None,
+                "maps.{}: reserved key {key} must have no field name",
+                map.registry_name()
+            );
+        }
+    }
+    assert_eq!(
+        BundleMapId::TsaAnchor.field_name(4),
+        None,
+        "tsa_anchor key 4 left v1 with D8 §1 — it is reserved, not a named field"
+    );
+}
+
+/// **C10 — the report's `AnchorState` against the wire's `AnchorStatus`.**
+///
+/// Two independent seven-variant enums with byte-identical kebab-case
+/// spellings, and nothing bound them. The independence is deliberate — the
+/// report is a *separate, non-wire* format (D27/D29) and a verifier derives
+/// its own state rather than copying the sealer's — but report v1 freezes at
+/// Q14 alongside the wire (D84 §7), so an unpinned pair would let one
+/// taxonomy ship under two names.
+#[test]
+fn report_anchor_state_matches_the_wire_anchor_status() {
+    use antseal_core::verify::report::AnchorState;
+
+    let root = registry();
+    let wire: Vec<&str> = registry_enum_values(&root, AnchorStatus::REGISTRY_NAME)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    let report: Vec<&str> = AnchorState::ALL.iter().map(|s| s.wire_name()).collect();
+    assert_eq!(
+        report, wire,
+        "the report's AnchorState spellings, in order, must equal the wire \
+         enum's registry_value_name list"
+    );
+
+    // …and the wire enum's own code copy still matches the mirror in order,
+    // so the chain report -> mirror -> wire code closes.
+    let from_code: Vec<&str> = AnchorStatus::ALL
+        .iter()
+        .map(|s| s.registry_value_name())
+        .collect();
+    assert_eq!(from_code, wire);
+    assert_eq!(wire.len(), 7, "the spec's taxonomy has seven states");
+}
+
+// ===========================================================================
+// D — document ⟷ mirror (registry §14's "mirrors this document 1:1")
+// ===========================================================================
+//
+// Nothing in the tree parsed `registry-v1.md` before the freeze, which is
+// why §14's claim was unbacked and why the mirror had drifted from its own
+// source (D8 §17 items 6, 7, 9). These assertions read the document and
+// compare its **mechanical tables** — the ones that are data rather than
+// prose — to the mirror.
+
+/// The normative document, read once per assertion.
+fn document() -> String {
+    std::fs::read_to_string(DOC_PATH).unwrap_or_else(|e| panic!("cannot read {DOC_PATH}: {e}"))
+}
+
+/// The cells of one Markdown table row, trimmed. `None` for a non-row line.
+fn table_row(line: &str) -> Option<Vec<&str>> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+        return None;
+    }
+    Some(
+        trimmed
+            .trim_start_matches('|')
+            .trim_end_matches('|')
+            .split('|')
+            .map(str::trim)
+            .collect(),
+    )
+}
+
+/// Strip the backticks a registry table puts around every identifier.
+fn unticked(cell: &str) -> &str {
+    cell.trim_matches('`')
+}
+
+/// The rows of the first table under `heading_prefix` whose header line is
+/// `header`, as cell vectors.
+fn table_under<'a>(doc: &'a str, heading_prefix: &str, header: &str) -> Vec<Vec<&'a str>> {
+    let mut lines = doc.lines().skip_while(|l| !l.starts_with(heading_prefix));
+    assert!(
+        lines.next().is_some(),
+        "the document has no heading starting `{heading_prefix}`"
+    );
+    let mut rows = Vec::new();
+    let mut in_table = false;
+    for line in lines {
+        if line.starts_with("## ") || line.starts_with("### ") {
+            break;
+        }
+        if !in_table {
+            if line.trim() == header {
+                in_table = true;
+            }
+            continue;
+        }
+        match table_row(line) {
+            // The `| --- | … |` separator.
+            Some(cells) if cells.iter().all(|c| c.chars().all(|ch| ch == '-')) => {}
+            Some(cells) => rows.push(cells),
+            None => break,
+        }
+    }
+    assert!(
+        !rows.is_empty(),
+        "no `{header}` table found under `{heading_prefix}`"
+    );
+    rows
+}
+
+/// Parse a band cell like `8–23` (en dash) or `4-23` into its bounds.
+fn band_bounds(cell: &str) -> Option<(u64, u64)> {
+    let (first, last) = cell
+        .split_once('\u{2013}')
+        .or_else(|| cell.split_once('-'))?;
+    Some((first.trim().parse().ok()?, last.trim().parse().ok()?))
+}
+
+/// **D — §7's map tables: keys, NAMES, named reserved slots and bands.**
+///
+/// The section number each map lives in is read from the mirror's own
+/// `doc_section` pointer, so the mirror says where its source is rather than
+/// the test hard-coding a fifteenth copy of the mapping.
+#[test]
+fn the_document_map_tables_match_the_mirror() {
+    const HEADER: &str = "| key | field | type | presence | len/shape |";
+    let doc = document();
+    let root = registry();
+
+    let mut sections_checked = 0usize;
+    for entry in as_array(get(&root, "maps", "registry root"), "maps") {
+        let name = get_str(entry, "name", "maps");
+        let section = get_str(entry, "doc_section", name);
+        let rows = table_under(&doc, &format!("### {section} "), HEADER);
+
+        let mut doc_fields: Vec<(u64, String)> = Vec::new();
+        let mut doc_named: Vec<(u64, String)> = Vec::new();
+        let mut doc_bands: Vec<(u64, u64)> = Vec::new();
+        for cells in &rows {
+            assert_eq!(
+                cells.len(),
+                5,
+                "maps.{name}: §{section}'s rows have five columns after the \
+                 freeze — the status column was deleted (D8 §15)"
+            );
+            let (key_cell, name_cell, presence) = (cells[0], cells[1], cells[3]);
+            if let Ok(key) = key_cell.parse::<u64>() {
+                if presence.contains("reserved") {
+                    doc_named.push((key, unticked(name_cell).to_owned()));
+                } else {
+                    doc_fields.push((key, unticked(name_cell).to_owned()));
+                }
+            } else if let Some(bounds) = band_bounds(key_cell) {
+                doc_bands.push(bounds);
+            } else {
+                panic!("maps.{name}: §{section} row has an unparseable key cell `{key_cell}`");
+            }
+        }
+
+        let mirror_fields: Vec<(u64, String)> = as_array(get(entry, "fields", name), name)
+            .iter()
+            .map(|f| (get_u64(f, "key", name), get_str(f, "name", name).to_owned()))
+            .collect();
+        assert_eq!(
+            doc_fields, mirror_fields,
+            "maps.{name}: §{section}'s (key, field) rows differ from the mirror"
+        );
+
+        let mut mirror_named: Vec<(u64, String)> = Vec::new();
+        let mut mirror_bands: Vec<(u64, u64)> = Vec::new();
+        for range in as_array(get(entry, "reserved", name), name) {
+            let first = get_u64(range, "first", name);
+            let last = get_u64(range, "last", name);
+            match range.get("name").and_then(Value::as_str) {
+                Some(slot) => {
+                    assert_eq!(
+                        first, last,
+                        "maps.{name}: a named reserved slot is one key, not a range"
+                    );
+                    mirror_named.push((first, slot.to_owned()));
+                }
+                None => mirror_bands.push((first, last)),
+            }
+        }
+        assert_eq!(
+            doc_named, mirror_named,
+            "maps.{name}: §{section}'s named reserved slots differ from the mirror"
+        );
+        assert_eq!(
+            doc_bands, mirror_bands,
+            "maps.{name}: §{section}'s reserved band row differs from the mirror"
+        );
+        sections_checked += 1;
+    }
+    assert_eq!(
+        sections_checked, 14,
+        "all fourteen registered maps must have a §7.x table"
+    );
+}
+
+/// **D — §6's enum tables against `enums[]`.**
+///
+/// §6.1 and §6.2 are one row per value; §6.3 packs three small enums into
+/// one table as `0 = \x60name\x60, 1 = \x60name\x60` cells. Both shapes are read.
+#[test]
+fn the_document_enum_tables_match_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    // §6.1 `anchor_status` — `| value | state | headline-eligible |`.
+    let rows = table_under(&doc, "### 6.1 ", "| value | state | headline-eligible |");
+    let from_doc: Vec<(u64, String)> = rows
+        .iter()
+        .map(|c| {
+            (
+                c[0].parse().expect("§6.1 value cell is a uint"),
+                unticked(c[1]).to_owned(),
+            )
+        })
+        .collect();
+    let from_mirror: Vec<(u64, String)> = registry_enum_values(&root, "anchor_status")
+        .into_iter()
+        .map(|(v, n)| (v, n.to_owned()))
+        .collect();
+    assert_eq!(
+        from_doc, from_mirror,
+        "§6.1 differs from enums.anchor_status"
+    );
+
+    // §6.2 `sig_alg` — `| value | algorithm | pubkey | signature | notes |`,
+    // with the reserved band as its own row.
+    let rows = table_under(
+        &doc,
+        "### 6.2 ",
+        "| value | algorithm | pubkey | signature | notes |",
+    );
+    let mut from_doc: Vec<(u64, String)> = Vec::new();
+    let mut doc_band: Option<(u64, u64)> = None;
+    for cells in &rows {
+        if let Ok(value) = cells[0].parse::<u64>() {
+            from_doc.push((value, unticked(cells[1]).to_owned()));
+        } else {
+            doc_band = band_bounds(cells[0]);
+        }
+    }
+    let from_mirror: Vec<(u64, String)> = registry_enum_values(&root, "sig_alg")
+        .into_iter()
+        .map(|(v, n)| (v, n.to_owned()))
+        .collect();
+    assert_eq!(from_doc, from_mirror, "§6.2 differs from enums.sig_alg");
+    let mirror_band = as_array(
+        get(enum_entry(&root, "sig_alg"), "reserved", "sig_alg"),
+        "r",
+    )
+    .iter()
+    .map(|r| {
+        (
+            get_u64(r, "first", "sig_alg"),
+            get_u64(r, "last", "sig_alg"),
+        )
+    })
+    .next();
+    assert_eq!(
+        doc_band, mirror_band,
+        "§6.2's reserved row differs from the mirror's band"
+    );
+
+    // §6.3 — three enums, one row each, values inline.
+    let rows = table_under(&doc, "### 6.3 ", "| enum | values |");
+    let mut seen = BTreeSet::new();
+    for cells in &rows {
+        let enum_name = unticked(cells[0].split_whitespace().next().expect("enum name"));
+        let from_doc: Vec<(u64, String)> = cells[1]
+            .split(", ")
+            .filter_map(|pair| {
+                let (value, name) = pair.split_once(" = ")?;
+                // Trailing prose after the last value is separated by a
+                // space, so take only the backticked identifier.
+                let name = name.split(' ').next()?;
+                Some((value.trim().parse().ok()?, unticked(name).to_owned()))
+            })
+            .collect();
+        let from_mirror: Vec<(u64, String)> = registry_enum_values(&root, enum_name)
+            .into_iter()
+            .map(|(v, n)| (v, n.to_owned()))
+            .collect();
+        assert_eq!(
+            from_doc, from_mirror,
+            "§6.3's `{enum_name}` row differs from the mirror"
+        );
+        seen.insert(enum_name.to_owned());
+    }
+    assert_eq!(
+        seen,
+        BTreeSet::from([
+            "descriptor_kind".to_owned(),
+            "fine_tree_domain".to_owned(),
+            "unit_kind".to_owned(),
+        ]),
+        "§6.3 must carry exactly the three small closed enums"
+    );
+
+    // Both directions: no mirror enum without a document table.
+    let mirrored: BTreeSet<String> = as_array(get(&root, "enums", "registry root"), "enums")
+        .iter()
+        .map(|e| get_str(e, "name", "enums").to_owned())
+        .collect();
+    let documented: BTreeSet<String> = seen
+        .into_iter()
+        .chain(["anchor_status".to_owned(), "sig_alg".to_owned()])
+        .collect();
+    assert_eq!(mirrored, documented);
+}
+
+/// **D — §2's fixed-length table against `scalars[]`, by length.**
+///
+/// **Recorded narrowing** (D8 §14's E-family discipline, applied to an
+/// assertion rather than to an omission): §2 groups fields *by byte length*
+/// and names them in prose, while `scalars[]` names them *by role* with
+/// synthetic keys (`salt16`, `commit32`, `hash32`). The two are not
+/// row-comparable, and a substring match on the prose would pin editorial
+/// wording rather than format facts — it fails on "every GGM cover seed" vs
+/// `seed32`'s "GGM cover seeds" while catching nothing real. What *is* a
+/// format fact, and what this asserts, is the **set of lengths**: both
+/// directions, so deleting a length row from either side goes red.
+#[test]
+fn the_document_scalar_table_matches_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    let rows = table_under(&doc, "## 2. ", "| bytes | fields | source |");
+    let from_doc: BTreeSet<u64> = rows
+        .iter()
+        .map(|c| c[0].parse().expect("§2 byte cell is a uint"))
+        .collect();
+    let from_mirror: BTreeSet<u64> = as_array(get(&root, "scalars", "registry root"), "scalars")
+        .iter()
+        .map(|s| get_u64(s, "length", "scalars"))
+        .collect();
+    assert_eq!(
+        from_doc, from_mirror,
+        "§2's byte lengths and scalars[].length must be the same set"
+    );
+    assert_eq!(rows.len(), from_doc.len(), "§2 lists each length once");
+}
+
+/// **D — §11's cap table against `caps.entries[]`, by name, value and code.**
+#[test]
+fn the_document_cap_table_matches_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    let rows = table_under(
+        &doc,
+        "## 11. ",
+        "| constant | value | applies to | error code |",
+    );
+    let from_doc: BTreeMap<String, (u64, String)> = rows
+        .iter()
+        .map(|c| {
+            (
+                unticked(c[0]).to_owned(),
+                (
+                    c[1].parse().expect("§11 value cell is a uint"),
+                    unticked(c[3]).to_owned(),
+                ),
+            )
+        })
+        .collect();
+    let from_mirror: BTreeMap<String, (u64, String)> = registry_caps(&root)
+        .into_iter()
+        .map(|(name, row)| (name.to_owned(), (row.value, row.code.to_owned())))
+        .collect();
+    assert_eq!(
+        from_doc, from_mirror,
+        "§11's cap table and caps.entries[] must agree on name, value and code"
+    );
+    assert_eq!(from_doc.len(), 19, "D10 froze nineteen caps");
 }

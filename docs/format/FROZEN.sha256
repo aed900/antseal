@@ -1,0 +1,60 @@
+# antseal wire-registry freeze manifest — format version v1  (task Q50)
+#
+# `docs/format/registry-v1.md` IS format v1: it is the normative text a
+# third-party verifier implements from, and `registry-v1.json` is its
+# machine mirror. Everything else in the project that freezes — golden
+# vectors, error codes, report bytes — freezes *relative to it*.
+#
+# Until this file existed, both were outside every freeze mechanism in the
+# project. `scripts/vector-freeze.sh` covers `testdata/vectors/v<n>/*.json`
+# only, and nothing pinned a byte of the registry.
+#
+# The consequence was sharpest for the 19 D10 parser caps. They are pinned
+# by `format_registry_freeze::code_caps_match_the_registry`, which asserts
+# in both directions that `codec::caps`'s constants equal the mirror's
+# `caps.entries[].value`. That is a CONSISTENCY check, not a PIN: a
+# coordinated edit of both files in one commit passes the entire suite,
+# forever. Post-freeze that is a silent format change — and the caps decide
+# whether a given `.sealproof` is a valid v1 bundle, which D84 §7 puts
+# explicitly inside the freeze. The same shape covered every other registry
+# fact: map keys, field names, reserved bands, scalar lengths, tuple
+# arities, enum values, version dispatch. All were "code and JSON must
+# agree"; none was "this value is X".
+#
+# This file is what makes a post-freeze change to either document a
+# deliberate, reviewable act rather than an invisible one.
+#
+# This file is `sha256sum -c` compatible (lines starting with `#` are
+# comments to GNU coreutils), so the digests can be checked with a tool
+# that shares no code with antseal:
+#
+#     cd docs/format && grep -v '^#' FROZEN.sha256 | sha256sum -c -
+#
+# The authoritative checker is `crates/antseal-core/tests/format_freeze.rs`,
+# driven by `scripts/format-freeze.sh`. Both reuse the directive parser and
+# the manifest model of the Q6 vector freeze
+# (`crates/antseal-core/tests/freeze_manifest/mod.rs`), so `#! status
+# frozen` has exactly one meaning in this repo.
+#
+# ── directives (`#!`), parsed by the checker ────────────────────────────
+#
+#   manifest-version  this file's own schema version
+#   format-version    the wire format version these documents define
+#   status            pre-freeze | frozen
+#   freeze-gate       the task that flips `status` to `frozen`
+#
+# `status frozen` (set at Q14): digests are permanent,
+# `scripts/format-freeze.sh --update` refuses to modify or drop an entry,
+# and an addition — a `registry-v2.*` pair — is the only legal change. A
+# byte change to a frozen entry is a format-version event (MVP-SPEC.md
+# line 123; procedure Q27), never an edit.
+#
+#! manifest-version 1
+#! format-version v1
+#! status frozen
+#! freeze-gate Q14
+#
+# ── frozen digests ─────────────────────────────────────────────────────
+#
+2f576892e596715271bff96a194495f1579740ccd2d4ef61758ab3086c2da97d  registry-v1.json
+e542809e95f44a6ddda31e75820dbf59c7a4cc86b3ece35640c4e409c18f92e7  registry-v1.md

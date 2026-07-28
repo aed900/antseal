@@ -108,21 +108,22 @@ pub fn ots_anchor(status: u64, upgraded: bool) -> Vec<(u64, Vec<u8>)> {
 }
 
 /// A TSA anchor artifact (registry §7.9).
+///
+/// `token_tag` fills the opaque token, so two artifacts in one bundle are
+/// distinguishable **by their own bytes**. There is deliberately no
+/// provenance field to tell them apart by: D8 §1 removed `source` from v1,
+/// and key 4 is now plain reserved.
 #[must_use]
-pub fn tsa_anchor(status: u64, intermediates: usize, source: Option<&str>) -> Vec<(u64, Vec<u8>)> {
+pub fn tsa_anchor(status: u64, intermediates: usize, token_tag: u8) -> Vec<(u64, Vec<u8>)> {
     let certs: Vec<Vec<u8>> = (0..intermediates)
         .map(|i| bstr(&[0xC0 + i as u8; 48]))
         .collect();
-    let mut entries = vec![
+    vec![
         (key::tsa_anchor::STATUS, uint(status)),
-        (key::tsa_anchor::TOKEN, bstr(&[0x30; 128])),
+        (key::tsa_anchor::TOKEN, bstr(&[token_tag; 128])),
         (key::tsa_anchor::INTERMEDIATES, array(&certs)),
         (key::tsa_anchor::FETCH_DATE, uint(1_767_225_601)),
-    ];
-    if let Some(url) = source {
-        entries.push((key::tsa_anchor::SOURCE, tstr(url)));
-    }
-    entries
+    ]
 }
 
 /// The opt-in Arbitrum receipt record (registry §7.10).
@@ -250,10 +251,7 @@ pub fn default_bundle() -> Vec<(u64, Vec<u8>)> {
         (key::bundle::MANIFEST, bstr(&embedded_manifest())),
         (key::bundle::STORAGE_RECORD, map(&storage_record())),
         (key::bundle::OTS_ANCHORS, section(&[ots_anchor(2, true)])),
-        (
-            key::bundle::TSA_ANCHORS,
-            section(&[tsa_anchor(0, 2, Some("https://freetsa.org/tsr"))]),
-        ),
+        (key::bundle::TSA_ANCHORS, section(&[tsa_anchor(0, 2, 0x30)])),
         (key::bundle::RECEIPT, map(&receipt())),
         (
             key::bundle::COVERED_REVEALS,

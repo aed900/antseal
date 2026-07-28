@@ -53,6 +53,13 @@
   - A machine-readable table mirrors the doc; a test asserts code constants match it 1:1.
   - No negative or non-integer map keys anywhere in the registry.
 - Notes: Address length must come from ant-core 0.5.0 source (via S1), not assumption. Decide here whether touched-file bundle entries carry an explicit `file_id` key.
+- **[2026-07-28] FROZEN** per **D8** (`docs/decisions/D8-wire-registry-final.md`). Thirty sections of `docs/format/registry-v1.md` moved, plus the whole JSON mirror; the draft gate `tests/format_registry_draft.rs` became `tests/format_registry_freeze.rs` (16 tests → 24). Recorded outcomes:
+  - **One wire-surface deletion**, D8's single overturn of the draft: `tsa_anchor` key 4 (`source`) leaves v1 and becomes plain reserved (band `5..=23` → `4..=23`), its absence checked. The string was bound by nothing (the bundle is unsigned, so any relay could rewrite it) and consumed by nothing (`verify/pipeline.rs` refuses it in writing), and it was the only assigned key in v1 with no spec line behind it. **This was not separable from the freeze**, contrary to D8 §16E's split of it into a follow-on task: `code_map_keys_match_the_registry` compares both directions, so deleting the field from the mirror without deleting it from `bundle::registry` turns the suite red immediately.
+  - **One under-determined field given a total definition**: the receipt's `block_number` is now the *minimum* block number over key 0's transactions. S1 §12 verified that a payment is several transactions, each in its own block, so "the payment's block number" named nothing and two honest implementations would have produced different bytes for the same seal.
+  - **The status vocabulary is a prohibition, not an allow-list.** `frozen-v1` is the only legal item status, asserted by **equality**; `proposed`, `pending-D9`, `pending-D17` and `draft-until-Q14` must not occur anywhere in the mirror at any depth, including key names and prose. The document's tables lose their status column entirely (84 identical cells); the per-item markers live only in the mirror, where the test reads them.
+  - **Both deliberately armed tripwires fired**, verified empirically by running the pre-flip test against the flipped mirror.
+  - **Four assertion gaps closed**: C5 (both `sig_alg` code copies against the mirror directly, closing a two-hop chain bounded at id 20), C6 (field **names** — F33), C10 (report `AnchorState` ⟷ wire `AnchorStatus`), and **D**, the family that makes §14's "mirrors this document 1:1" true at all: nothing in the tree had ever parsed the `.md`, which is why the mirror had drifted from its own source.
+  - Surfaced from this task: **F42**, **F43**, **F44**, **Q57**, **Q58**.
 
 ### F5 — Define manifest body schema types + parse-time presence/shape validation
 - Milestone: M0
@@ -402,6 +409,18 @@
   - If added: both sides built at the same profile, the self-test still goes red at that profile, and no vector or transcript byte changes.
 - Notes: Do **not** simply switch the existing lane to release — debug and release are different codegen, and dropping the debug pass would trade one blind spot for another. The question is whether to have both.
 
+### F33 — Assert the registry's field **names**, not just its key numbers
+- Milestone: M0
+- Size: S
+- Deps: F4 (the registry), F26/D86 (which surfaced it); Q14 (the gate)
+- Spec: Definitions & encoding (MVP-SPEC.md lines 71–79); Format stability (line 123)
+- Discovered by: **F26/D86** (2026-07-28). The 1:1 code ⟷ registry cross-check compared key *numbers* only, so a field could be renamed on either side with no test failure — and the registry document is the **normative text a third-party verifier implements from**, where the name is what a reader implements against. Worse, registry §7.6.1's checked absences are a **name-based ban list**: `no_bundle_map_grows_a_deliberately_absent_field` rejects a field called `nonce`, `signature`, `work_id`, `is_full_reveal`. A rename is therefore precisely the mutation that evades them — reintroduce the removed TSA `source` field as `provenance` and every numeric check still passes. Without this, "1:1" meant "the numbers line up", which is not what registry §14 claims.
+- Do: Have the two registries expose a name per key, then assert per map that the ordered `(key, name)` pairs equal `maps[].fields[].{key,name}` exactly, both directions. Land it inside the freeze test rather than as a separate mechanism — it is D8's assertion **C6**, one member of the A/B/C/D/E set, and splitting it would give the freeze two homes.
+- Accept:
+  - A rename on either side turns the suite red (test-of-the-test, both directions).
+  - Reserved keys answer `None` — in particular `tsa_anchor` key 4, which D8 §1 removed from v1.
+  - The key count is asserted, so a field added or removed is visible as such rather than as a diff nobody counts.
+- **[2026-07-28] LANDED** with F4, as assertion C6 of `format_registry_freeze.rs`. `MapId` and `BundleMapId` gain `field_names()` — parallel to `assigned_keys()`, with the parallelism itself asserted — and `field_name(key) -> Option<&str>`. 68 `(key, name)` pairs across fourteen maps, both directions. Also lands **D** (the document ⟷ mirror family), which makes the name check three-way: code, mirror and the normative `.md` must all agree, so a rename in the document alone is caught too.
 ### F36 — Per-layer `cbor-truncated` fixtures: F25's third consumer, still owed
 - Milestone: M0
 - Size: S
@@ -415,7 +434,6 @@
   - Any layer where truncation turns out to be unreachable in one mutation is recorded as a named non-fixture with the argument, not omitted.
 - Also here, and it may deserve its own id: **the cross-check's schema branch inspects the outer layer only.** `tamper_sweep` asserts a schema-level fixture is "perfectly good CBOR", but calls `strict_render(data)` on the whole file and stops — it does not descend into embedded `bstr` layers the way the `cbor-` branch does. So a fixture whose *inner* layer is non-canonical passes on the strength of its envelope. That is not hypothetical: F22's `body-units-over-cap` is exactly it, and unavoidably so — `MAX_UNIT_COUNT` is 2^16, so no committed fixture can supply the entries its head claims. The fix is not to delete the fixture but to make the situation *declared*: descend into embedded layers for schema fixtures too, and let a fixture record in `FIXTURES.json` that its inner layer is non-canonical by construction, with the reason. Then the loophole is a data row rather than an accident of where the checker stops. This is F14's artifact and co-owned with Q, which is why it is recorded rather than done inside F22.
 - Notes: F27's `(surface, code, layer)` distinctness assertion is the natural place these are checked once it lands; sequence after it, or expect to touch its allow-list.
-
 ### F37 — Merge the three reverse-coverage sweeps into one lane, and wire F23 to F22's non-rows
 - Milestone: M0
 - Size: S
@@ -431,7 +449,6 @@
   - Each namespace's test-of-the-test still goes red on a synthetic extra code.
   - Every accounting list is checked live in both directions (the code exists; the row or owner exists).
 - Notes: Worth landing before Q14 for the same reason F23 and F24 were: after the freeze an unrowed code is an unrowed code forever, and three sweeps that each cover two thirds of the ground are easy to mistake for full coverage.
-
 ### F38 — The every-anchor-kind fixture base has no provenance check; the two committed ones do
 - Milestone: M0
 - Size: S
@@ -444,7 +461,6 @@
   - Whatever is chosen applies to *any* fixture base that is not one of the two committed ones, not just this one — the emitter records it uniformly, for committed and synthesized fixtures alike.
   - No committed fixture grows past the 64 KiB ceiling, and no 256 MiB/16 MiB buffer becomes a file.
 - Notes: The two size-cap recipes (`bundle-oversized`, `manifest-oversized`) do not have this problem: their bases *are* the two committed, diffed ones. It is specifically the third base that is unanchored, and it is now load-bearing for two fixtures rather than one.
-
 ### F39 — Decide the row policy for the 65 unrowed `manifest-`/`bundle-` schema-shape codes
 - Milestone: M0
 - Size: M
@@ -457,6 +473,48 @@
   - Every added row's outcome is pairwise distinct from every existing row (`check_registry` is the proof), and every added row is `project_added` in `MATRIX.json` with a justification — MVP-SPEC.md line 168 predates all of these.
   - F23's check passes with the `owed` lists emptied of everything this task took.
 - Notes: Check reachability before writing a row rather than after: a code no decode surface can emit is a *finding* about the schema (or about a defensive arm that is correctly unreachable, like `unhandled_assigned_key`), and its honest end state is a named non-row, not a fixture that cannot be built. Cheap now, permanent after Q14: an unrowed code the freeze catches is an unrowed code for ever.
+### F42 — The registry's prose restatements of machine-checkable facts are unchecked, and now frozen
+- Milestone: M0
+- Size: S
+- Deps: F4 (the freeze), Q50 (the digest); the `format_registry_freeze` D-family
+- Spec: Definitions & encoding (MVP-SPEC.md lines 71–79); Format stability (line 123)
+- Discovered by: **F4/Q50** (2026-07-28), while executing the freeze. Assertion family D now parses the registry's *tables* — §7's fourteen map tables, §6's enums, §2's lengths, §11's caps — but three blocks state the same facts again **in prose or in a second table**, and none is checked:
+  - **§7.15** lists every bundle map's reserved band inline (`bundle → 10..=23`, `storage_record → 3..=23`, …). During this freeze it had to be hand-edited from `tsa_anchor → 5..=23` to `4..=23`; a mistake would have shipped a normative sentence contradicting the mirror four sections away.
+  - **§9's headroom table** (free slots per map) was hand-computed at the freeze and is arithmetic over the same data.
+  - **§12's spec-coverage checklist** maps ~60 spec items to registry rows and is the F4 accept criterion; D8 §14 records it as a deliberate non-assertion because spec lines are prose, but the *registry-row* half of every row (`§7.5 key 4`) is perfectly checkable.
+  All three are now frozen, so a disagreement between them and the mirror is permanent rather than merely wrong.
+- Do: Extend family D to parse §7.15's band list and §9's headroom table and compare both to `maps[].reserved`, deriving the headroom rather than trusting the printed number. For §12, check the right-hand column's `§7.x key N` references resolve to an assigned key of that map — leaving the spec-line half as the recorded non-assertion it already is. Where a block turns out to restate the mirror with no added meaning, prefer deleting it over checking it: the registry should say each thing once.
+- Accept:
+  - A band edited in §7.15 alone, or a headroom cell edited in §9 alone, turns the suite red.
+  - Every §12 registry-row reference resolves; a reference to a reserved or nonexistent key fails.
+  - No new normative content: this asserts what the document already says.
+- Notes: The general lesson is worth recording where a future editor sees it — **a frozen document may state a fact twice only if something checks the two copies**, which is the same rule the registry applies to the wire (§7.6.1's "a stored copy could disagree with the bytes it summarizes").
+### F43 — The checked-absence guard sweeps only bundle maps, and only field rows
+- Milestone: M0
+- Size: S
+- Deps: F4/D8 §1 (which added two absences), F33/C6 (which made the guard name-based *and* asserted)
+- Spec: Reveal bundle (MVP-SPEC.md lines 112–114); sealer-as-adversary (line 121)
+- Discovered by: **F4** (2026-07-28), while adding D8's two new checked absences. `no_bundle_map_grows_a_deliberately_absent_field` has two blind spots that the freeze makes permanent:
+  1. **It sweeps `BundleMapId::ALL` only.** The manifest side is never swept, yet §12 records `work_id` and `anchor_digest` as *derived, never stored* — a rule about the whole format, not about the bundle. A `work_id` field appearing in `manifest_body` would create exactly the second authority §7.6.1 exists to prevent, and nothing would notice.
+  2. **It reads `fields[]` only.** A banned name added as a **named reserved slot** (`reserved[].name`, the shape `range_reveals` and `chain_inputs` use) passes the guard untouched — and a named slot is precisely how a v1.x author would reintroduce a field, since §9 makes that the sanctioned additive path.
+- Do: Sweep both map families and both row kinds. Split the ban list by scope with a reason per entry — format-wide (`work_id`, `anchor_digest`, the reveal-shape discriminants), bundle-wide (a signature container, `seal_id`), reveal-scoped (`nonce`), artifact-scoped (the TSA `source` string), receipt-scoped (a chain identifier) — so each ban states *where* it binds instead of being a flat list whose scope is implied by which loop reads it.
+- Accept:
+  - A banned name added to a manifest map, or as a named reserved slot in any map, turns the suite red (two tests-of-the-test).
+  - Every ban carries its scope and its reason; the existing bundle-side bans keep their current behaviour exactly.
+  - No registry content changes.
+- Notes: Cheap now and unfixable later in one direction: after the freeze, an absence that grew back is a format-version event to remove.
+### F44 — A frozen registry cites a spec that is not frozen
+- Milestone: M0
+- Size: S
+- Deps: F4 (the freeze), Q50 (the registry digest), Q58 (the citation convention, Q-side)
+- Spec: Format stability (MVP-SPEC.md line 123); Milestones M0 (line 153)
+- Discovered by: **F4** (2026-07-28), from the inside. `docs/format/registry-v1.md` is now frozen and digest-pinned, and it cites `MVP-SPEC.md` **by line number** well over a hundred times — "line 91", "line 98", "line 121", "line 137" carry load-bearing meaning in almost every section. `MVP-SPEC.md` itself is frozen by nothing: no digest, no lint. Editing one line of the spec — even inserting a paragraph above it — silently invalidates a *frozen normative document* everywhere, and the freeze mechanism cannot notice, because the registry's bytes did not change. `scripts/check-traceability.py` covers the `FREEZE-BOUNDARY` block and the milestone matrix only; spec line citations are outside the lint entirely.
+- Do: Decide the F-side half of the problem: whether `MVP-SPEC.md` joins the Q50 freeze manifest at Q14 (it is the input every frozen document quotes, so freezing the registry without it freezes half a statement), or whether the registry's citations move to section anchors. Record which, with the reason; implement whichever is chosen. If the spec is frozen, record how a *deliberate* spec revision then proceeds — that procedure is Q27's and must exist before the tag, not after the first time someone needs it.
+- Accept:
+  - A recorded decision, and either a digest entry for `MVP-SPEC.md` or a citation form that survives spec edits.
+  - A shifted spec line turns something red (test-of-the-test), rather than being discovered by a confused reader.
+  - No registry content changes as a side effect.
+- Notes: Q58 owns the lint and the general citation convention across `docs/`; this entry owns the narrower, sharper question — that the *frozen* document's correctness depends on an *unfrozen* one. The two should land together or the answer will be split across them.
 
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.

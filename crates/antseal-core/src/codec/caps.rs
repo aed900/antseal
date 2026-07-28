@@ -388,7 +388,7 @@ mod tests {
 
     /// Every byte/count cap by name — used by the wasm32-reachability check
     /// above and by the registry cross-check in
-    /// `tests/format_registry_draft.rs`, which reads the same 19 rows from
+    /// `tests/format_registry_freeze.rs`, which reads the same 19 rows from
     /// `docs/format/registry-v1.json`.
     const ALL_BYTE_AND_COUNT_CAPS: [(&str, u64); 18] = [
         ("MAX_BUNDLE_BYTES", MAX_BUNDLE_BYTES),

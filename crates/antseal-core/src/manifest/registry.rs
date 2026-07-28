@@ -5,7 +5,7 @@
 //! `docs/format/registry-v1.json`. Every **map key**, **reserved band**,
 //! **closed-enum value and spelling**, **fixed byte length**, and **tuple
 //! arity** below is asserted equal to its registry row by
-//! `crates/antseal-core/tests/format_registry_draft.rs`
+//! `crates/antseal-core/tests/format_registry_freeze.rs`
 //! (`code_map_keys_match_the_registry`,
 //! `code_reserved_bands_match_the_registry`, `code_enums_match_the_registry`,
 //! `code_scalar_lengths_match_the_registry`,
@@ -257,6 +257,64 @@ impl MapId {
                 key::unit::ADDRESS,
             ],
         }
+    }
+
+    /// The registry **name** of each assigned key, in the same order as
+    /// [`Self::assigned_keys`].
+    ///
+    /// Names are load-bearing, not documentation: the registry document is
+    /// the normative text a third-party verifier implements from, and
+    /// registry §7.6.1's checked absences are a *name*-based ban list that a
+    /// rename would silently evade. Pinning `(key, name)` pairs rather than
+    /// key numbers alone is what makes §14's "mirrors this document 1:1"
+    /// true (assertion C6; task F33).
+    #[must_use]
+    pub const fn field_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Envelope => &["body", "signatures"],
+            Self::Body => &[
+                "format_version",
+                "app_version",
+                "seal_id",
+                "title",
+                "claimed_time",
+                "pubkeys",
+                "sig_policy",
+                "files",
+            ],
+            Self::FileEntry => &[
+                "path_commit",
+                "raw_commit",
+                "canon_commit",
+                "size",
+                "descriptor",
+                "fine_root",
+                "units",
+            ],
+            Self::Descriptor => &[
+                "kind",
+                "fine_tree_present",
+                "fine_tree_domain",
+                "unicode_version",
+            ],
+            Self::UnitEntry => &[
+                "unit_id",
+                "kind",
+                "range",
+                "true_length",
+                "unit_commit",
+                "nonce",
+                "address",
+            ],
+        }
+    }
+
+    /// The registry name of one assigned key, or `None` if the key is not
+    /// assigned in v1.
+    #[must_use]
+    pub fn field_name(self, key: u64) -> Option<&'static str> {
+        let position = self.assigned_keys().iter().position(|&k| k == key)?;
+        self.field_names().get(position).copied()
     }
 
     /// The map's reserved-for-v1.x band, or `None` for the envelope —

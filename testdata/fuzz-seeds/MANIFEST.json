@@ -184,7 +184,7 @@
       "target": "manifest_decode"
     },
     {
-      "bytes": 192106,
+      "bytes": 192046,
       "count": 32,
       "seeds": [
         {
@@ -340,14 +340,14 @@
         {
           "file": "bundle_decode/every-anchor-kind.bin",
           "id": "every-anchor-kind",
-          "len": 9749,
-          "sha256": "f4222ffc295efb8cb5c9209429207d03e60602fad4dee1b2b4fbc811994b5093"
+          "len": 9719,
+          "sha256": "eec66c8c805f00cfdf87a8d14fadec9fed783bcf8fcc79ecb03c39d89d89238f"
         },
         {
           "file": "bundle_decode/every-anchor-kind-no-receipt.bin",
           "id": "every-anchor-kind-no-receipt",
-          "len": 9627,
-          "sha256": "019fa9bdc07185f165934bd99aec7f012c99a4040b992d7db5e06d8f4ea80e9f"
+          "len": 9597,
+          "sha256": "6b3fe1baebb8fda84e9c984c93dee6f7ec254b1e9133547b7508b13e42973d78"
         },
         {
           "file": "bundle_decode/f15-bundle-duplicate-map-key.bin",
