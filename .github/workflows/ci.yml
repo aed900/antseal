@@ -491,7 +491,7 @@ jobs:
         run: |
           set -u
           cargo test -p antseal-core --locked --test tamper_matrix --test tamper_crypto -- --nocapture
-          matched="$(cargo test -p antseal-core --locked --test tamper_matrix --list 2>/dev/null | grep -c ': test$' || true)"
+          matched="$(cargo test -p antseal-core --locked --test tamper_matrix -- --list 2>/dev/null | grep -c ': test$' || true)"
           echo "tamper-matrix suite: matched ${matched} test(s) in the registry target"
           if [ "${matched}" -eq 0 ]; then
             echo "::error::tamper-matrix registry target is EMPTY — the harness or the completeness check is broken"
