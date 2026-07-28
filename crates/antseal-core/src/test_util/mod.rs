@@ -24,6 +24,12 @@
 //!   distinct-outcome and no-panic assertions, and the row-addition
 //!   procedure every domain (F15/C17/G19/A21/R7) registers rows through.
 //!   Error-code contract: `docs/testing/error-code-contract.md`.
+//! - [`tamper_coverage`] — the **reverse** coverage accounting (F23): every
+//!   code an F-side error family can emit is claimed by a row, by a named
+//!   integration-target row, or by a task recorded as owing one. Q8's
+//!   registry maps the *spec's* enumeration onto rows and structurally
+//!   cannot catch a code nobody wrote a spec case for; this maps the *error
+//!   enums* onto rows, the direction R7 already guards for R's namespace.
 //! - [`tamper_rows_crypto`] — C's own registry slice for that harness
 //!   (C17): the M0 crypto tamper rows, plus the mutation helpers R7's
 //!   bundle-level fixtures reuse.
@@ -153,6 +159,8 @@ pub mod fixture_rng;
 pub mod strategies;
 #[cfg(feature = "test-util")]
 pub mod tamper;
+#[cfg(feature = "test-util")]
+pub mod tamper_coverage;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]

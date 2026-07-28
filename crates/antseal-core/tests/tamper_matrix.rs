@@ -526,6 +526,40 @@ fn the_format_fixture_table_agrees_with_the_live_registry() {
     );
 }
 
+/// **F23's other half.** The reverse-coverage check is a lib test, so it
+/// cannot see the rows that live in this target — Q7's seed rows and F20's
+/// anchor rows. It therefore *names* them, and this is where the naming is
+/// checked: every code recorded as claimed by an integration-target row must
+/// be claimed by a row that actually exists here and actually binds it.
+///
+/// Without this, the accounting could go stale in the one direction the lib
+/// test cannot observe: delete an integration row and its code would still
+/// read as covered.
+#[test]
+fn every_integration_claimed_code_is_backed_by_a_live_row() {
+    use antseal_core::test_util::tamper_coverage::DOMAINS;
+
+    let rows = all_rows();
+    for domain in DOMAINS {
+        for (code, row_id) in domain.claimed_in_integration_target {
+            let row = rows.iter().find(|r| r.id == *row_id).unwrap_or_else(|| {
+                panic!(
+                    "{}: `{code}` is recorded as claimed by row `{row_id}`, which is in no \
+                     registry slice",
+                    domain.name
+                )
+            });
+            assert_eq!(
+                row.expected,
+                ExpectedOutcome::ErrorCode(code),
+                "{}: row `{row_id}` is recorded as claiming `{code}`, but it expects something \
+                 else",
+                domain.name
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Q8 — completeness against the spec's M0 row list
 // (module docs: tests/tamper_completeness/mod.rs; registry:
