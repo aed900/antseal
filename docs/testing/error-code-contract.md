@@ -205,5 +205,41 @@ kebab-case id, and never edit an existing row's expected code.
   ("these bytes do not canonicalize to that content") are outcomes of the
   *same check* on the *same field* and must never merge — a second genuine
   near-miss of the `path-commit-mismatch` kind, kept separable.
+- **2026-07-28 (M0 wave 4, R5)** — the orchestration appended three codes,
+  all in R's unprefixed namespace and all of the *same* class: bundle and
+  manifest each well formed, the two inconsistent with each other. §2 already
+  assigns that class to R, and R5 is the first task with both layers decoded
+  at once, so it is the first task that can observe one.
+  - `revealed-unit-file-not-touched` — **D80**, exactly the spelling the
+    decision record recommended. Not a `bundle-` code: mapping `unit_id →
+    file_id` needs the signed unit table, which D78 keeps out of layer 1.
+    Distinct from, and not redundant with, F8's tier-`[X]`
+    `bundle-full-reveal-without-touched-file`.
+  - `covered-unit-revealed-as-non-covered` /
+    `non-covered-unit-revealed-as-covered` — a unit shipped in the reveal
+    section its manifest binding forbids. Named from the **bundle's**
+    mistake, since that is what a tamper row mutates.
+
+  R also gained the `Decode` wrapper arm over F9's `SealProofError`, which
+  surfaces `bundle-`, `manifest-` and delegated `cbor-` codes unchanged (§2).
+  R's `VerifyError` universe: **84** distinct codes over 26 variants.
+
+  Two records worth keeping from wiring the exemplar list:
+
+  1. `ManifestError::SigPolicyEmpty` and `CryptoError::SigPolicyEmpty` have
+     word-for-word identical `Display` text. Their *codes* differ, which is
+     the contract's point, but R's exemplar list has to avoid pairing them
+     because the Display-distinctness meta-test sees only the text. A third
+     near-miss of the `path-commit-mismatch` kind, kept separable.
+  2. **R3's `wrong-length-ggm-covering-seed` is not reachable through
+     `verify_bundle`.** F8 decodes every disclosed salt, seed, key and node
+     hash into a fixed-size type, so a wrong-length one is rejected at
+     layer 1 as `bundle-wrong-length-cover-seed` and never reaches R's
+     length group — which R5 still runs, as a backstop, over the decoded
+     values. R7's pending row `verify-wrong-length-ggm-covering-seed` should
+     therefore either bind the `bundle-` code or be a direct-call row on
+     `check_field_length`; it cannot be a pipeline row as written. The same
+     applies to the other five `wrong-length-*` classes.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.
