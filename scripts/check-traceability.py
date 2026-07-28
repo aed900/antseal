@@ -8,6 +8,10 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         across every file that carries a copy (Q37).
     --matrix            Every test named by the verification-coverage
                         traceability matrix actually resolves (Q13).
+    --decisions         Every decision cited in code or in a normative doc
+                        resolves to a record, a registered alternative home,
+                        or an open register entry; and nothing cites the
+                        frozen wire registry by line number (Q57, Q58).
 
 Run with no arguments to run every check.
 
@@ -463,9 +467,115 @@ def resolve(reference: str) -> str | None:
 
 # ── entry point ─────────────────────────────────────────────────────────────
 
+
+# ── check 3: cited decisions resolve, and nobody cites the registry by line ──
+# Q57 + Q58. Two failures with one shape: a pointer whose target nothing
+# verifies. A decision cited as normative in code with no record is an argument
+# a third party cannot read; a line-number citation into a document that just
+# froze is a pointer that rots on the next edit and says nothing when it does.
+
+DECISION_DIR = "docs/decisions"
+
+# Where the sweep looks. Normative surfaces only — TODO.md is the register
+# itself and tasks/*.md are working notes, so neither is a citation site.
+DECISION_SCAN = ["crates", "docs/format", "docs/testing"]
+DECISION_SUFFIXES = {".rs", ".md", ".json", ".py"}
+
+# Decisions that are recorded, but not in a file of their own. Each entry is
+# the home, so "no file" is a recorded fact rather than an omission. Adding to
+# this list is a deliberate act; leaving a decision out of it is a failure.
+DECISIONS_HOMED_ELSEWHERE = {
+    11: "docs/research/S1-ant-core-api-survey.md (address length, pinned from ant-core source)",
+    12: "docs/decisions/D7-cbor-crate.md §D12 (the cross-check nominee)",
+    16: "docs/research/C11-signature-probe.md §9 (the probe that decided it)",
+}
+
+# A citation is only a decision reference if the number is an allocated id.
+# Without this bound the sweep reports Unicode surrogate D800 in a comment as a
+# missing decision — which is how a lint teaches people to ignore it.
+def allocated_decision_ids() -> set[int]:
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    return {int(n) for n in re.findall(r"^- \[[ x]\] \*\*D(\d+)\*\*", todo, re.M)}
+
+
+def open_decision_ids() -> set[int]:
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    return {int(n) for n in re.findall(r"^- \[ \] \*\*D(\d+)\*\*", todo, re.M)}
+
+
+def check_decisions(failures: Failures) -> None:
+    check = "decisions"
+
+    recorded = set()
+    for path in (ROOT / DECISION_DIR).glob("D*.md"):
+        m = re.match(r"D(\d+)-", path.name)
+        if m:
+            recorded.add(int(m.group(1)))
+
+    allocated = allocated_decision_ids()
+    if not allocated:
+        failures.add(check, "no decision ids found in TODO.md's register — the bound is vacuous")
+        return
+    still_open = open_decision_ids()
+
+    cited: dict[int, set[str]] = {}
+    line_citations: list[str] = []
+    for sub in DECISION_SCAN:
+        base = ROOT / sub
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in DECISION_SUFFIXES:
+                continue
+            if "target" in path.parts:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            rel = str(path.relative_to(ROOT))
+            for n in re.findall(r"\bD(\d+)\b", text):
+                cited.setdefault(int(n), set()).add(rel)
+            # Q58: the registry froze; a line number into it rots on any edit.
+            for hit in re.findall(r"registry-v1\.(?:md|json):\d+", text):
+                line_citations.append(f"{rel}: {hit}")
+
+    for number in sorted(cited):
+        if number > max(allocated):
+            continue  # not an allocated id — see the bound above
+        if number in recorded or number in DECISIONS_HOMED_ELSEWHERE or number in still_open:
+            continue
+        where = ", ".join(sorted(cited[number])[:3])
+        failures.add(
+            check,
+            f"D{number} is cited as normative ({where}) but has no record, no "
+            f"registered home in DECISIONS_HOMED_ELSEWHERE, and no open entry "
+            f"in TODO.md's register",
+        )
+
+    for hit in line_citations:
+        failures.add(
+            check,
+            f"{hit} cites the frozen wire registry by LINE NUMBER. Cite the "
+            f"section instead (e.g. `registry §7.14 key 1`): the registry is "
+            f"frozen, its line numbers are not, and a rotted pointer is silent",
+        )
+
+    if not failures:
+        homed = len(DECISIONS_HOMED_ELSEWHERE)
+        in_bound = [n for n in cited if n <= max(allocated)]
+        print(
+            f"[{check}] ok — {len(in_bound)} distinct decisions cited, all "
+            f"resolve ({len(recorded)} have records, {homed} homed elsewhere, "
+            f"{len(still_open)} still open in the register); "
+            f"no line-number citations into the registry"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
+    "decisions": check_decisions,
 }
 
 
@@ -563,6 +673,28 @@ def self_test() -> int:
                 "tasks/Q.md",
                 lambda t: t.replace("- [ ] **Report-version evolution", "- [X] **Report-version evolution", 1),
                 "green",
+            ),
+            (
+                "decisions",
+                "crates/antseal-core/src/bundle/error.rs",
+                lambda t: t.replace("D78", "D77000", 1),
+                "green",
+            ),
+            (
+                # The Q57 failure, faithfully: a decision marked RESOLVED in the
+                # register whose record was never written. D18 is cited in
+                # crates/wasm-bitmatch and is legitimately open today, so
+                # flipping its checkbox is exactly "resolved, no record".
+                "decisions",
+                "TODO.md",
+                lambda t: t.replace("- [ ] **D18**", "- [x] **D18**", 1),
+                "red",
+            ),
+            (
+                "decisions",
+                "docs/testing/error-code-contract.md",
+                lambda t: t + "\n\nSee `docs/format/registry-v1.md:1097` for the rule.\n",
+                "red",
             ),
             (
                 "matrix",
