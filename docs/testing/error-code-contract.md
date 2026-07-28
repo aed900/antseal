@@ -241,5 +241,34 @@ kebab-case id, and never edit an existing row's expected code.
      `check_field_length`; it cannot be a pipeline row as written. The same
      applies to the other five `wrong-length-*` classes.
 
+- **2026-07-28 (M0 wave 5, F10)** — **zero codes minted, zero renamed.** F10
+  re-homed `bundle-unsupported-format-version` (F9 raised it inline) and
+  `manifest-unsupported-format-version` behind the version-dispatch table in
+  `antseal_core::format`, and drove the two reserved-slot codes
+  (`manifest-reserved-key`, `bundle-reserved-key`) from every reserved key of
+  every v1 map. All four strings are unchanged, which is the contract working
+  as intended: the *implementation* of a rejection may move, and its payload
+  and wording may change, but its identity may not.
+
+  Two records:
+
+  1. Both `UnsupportedFormatVersion` variants gained a
+     `supported: &'static [u64]` field and were reworded ("…; this build
+     decodes v1"). §1 permits both — `Display` is free, the code is not — and
+     the payload is carried as *data* rather than pre-rendered so a
+     third-party verifier can render its own actionable message.
+  2. F10 makes a **precedence** rule part of the contract: an artifact
+     declaring an unsupported version reports the version code and *nothing
+     else*, even when it would also fail v1 validation on a reserved key, an
+     unknown key, a missing field or canonicality. The converse also holds —
+     a *missing* discriminant is `*-missing-key` and a non-canonical one is
+     the `cbor-*` class. "Too new" and "corrupt" are different claims about
+     the sender and must never merge; the pairing is asserted mutation by
+     mutation with a v1 control for each.
+
+  Gap recorded, not closed: none of these four codes has a tamper row —
+  `MATRIX.json` has no version or reserved-slot case, and Q8 does not catch it
+  because they are project-added rather than spec-enumerated. Owned by **F18**.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1.
