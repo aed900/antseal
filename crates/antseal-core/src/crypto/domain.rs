@@ -82,6 +82,20 @@ pub const MAX_DOMAIN_TAG: u8 = 0x06;
 /// named const, never a literal (grep-enforced by
 /// `no_other_module_hardcodes_domain_tag_bytes`).
 ///
+/// # The `parts` slice shape is secret hygiene, not just an optimization (C23)
+///
+/// Several preimages routed through here are **secret**: the GGM child
+/// derivation `0x06 ‖ s_v ‖ b` carries a covering seed, and every commitment
+/// carries a salt. Streaming the parts means this crate never owns a buffer
+/// holding them — the only owned bytes are the returned public digest, and
+/// what is left inside the hasher is wiped on drop by `sha2`'s `zeroize`
+/// feature (D88; `docs/zeroization-audit.md` table E).
+///
+/// **Do not "simplify" this to concatenate into a `Vec` and hash once.** That
+/// would silently reintroduce a caller-owned secret preimage buffer with no
+/// `Drop`, which is exactly the class C23 swept for — and, unlike the hasher's
+/// internal buffer, no dependency feature would wipe it.
+///
 /// ```
 /// use antseal_core::crypto::domain::{TAG_UNIT_COMMIT, tagged_sha256};
 ///

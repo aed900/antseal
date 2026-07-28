@@ -59,6 +59,8 @@
 //! stack. So the cost of verifying a proof is bounded by the *proof*, never
 //! by the file it claims to describe.
 
+use zeroize::Zeroize;
+
 use crate::content::ggm::NodeAddress;
 use crate::content::unit::ByteRange;
 use crate::crypto::material::{Salt16, Seed32};
@@ -249,11 +251,17 @@ impl FineTreeError {
 
 /// The offered seed of a length-checked wire node.
 fn seed_of(node: &WireNode<'_>) -> Result<Seed32, FineTreeError> {
-    let bytes = <[u8; 32]>::try_from(node.bytes).map_err(|_| FineTreeError::BadSeedLength {
+    let mut bytes = <[u8; 32]>::try_from(node.bytes).map_err(|_| FineTreeError::BadSeedLength {
         expected: DISCLOSED_LEN,
         got: node.bytes.len(),
     })?;
-    Ok(Seed32::from_bytes(bytes))
+    // C23: a bundle-supplied GGM covering seed, copied into a buffer we own.
+    // `[u8; N]` has no `Drop`, so wipe it once the value is inside the
+    // zeroizing newtype. The seed still lives in the caller's wire slice —
+    // that copy is the bundle's, not ours.
+    let seed = Seed32::from_bytes(bytes);
+    bytes.zeroize();
+    Ok(seed)
 }
 
 /// Classify the offered cover: over-broad first (the security-bearing

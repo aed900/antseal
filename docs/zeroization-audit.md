@@ -13,14 +13,32 @@ sweep that found the gaps the spec line does not anticipate.
 compile-time `const` assertions in
 `crates/antseal-core/src/crypto.rs::zeroization_sweep`, evaluated whenever the
 crate's test target compiles — on native *and* on
-`wasm32-unknown-unknown`. A dependency bump that silently dropped a `zeroize`
-feature fails the build; it cannot pass a green test suite. Per-module
-assertions also exist (C5/C9/C10/C13); the roll-up is what answers "is
-anything missing?".
+`wasm32-unknown-unknown`. A dependency bump that silently dropped the
+`zeroize` feature of `ed25519-dalek`, `ml-dsa` or `chacha20poly1305` fails the
+build; it cannot pass a green test suite. Per-module assertions also exist
+(C5/C9/C10/C13); the roll-up is what answers "is anything missing?".
 
-**Honest part.** Five residual risks (R1–R5) are recorded below. R1 is a
-genuine gap in a third-party crate with no available fix. None of the five is
-papered over.
+**[2026-07-28, D88] The sweep does not cover every `zeroize` feature.** The
+sentence above once read "a dependency bump that silently dropped a `zeroize`
+feature fails the build", full stop. That is **false for `sha2`**, and the
+distinction is the whole subject of R1's disposition: `sha2/zeroize` wipes
+through ordinary **drop glue** on `Sha256VarCore` and `BlockBuffer`, not
+through a `ZeroizeOnDrop` bound, so no `const` assertion in
+`zeroization_sweep` can observe whether it is enabled.
+
+C24 guards it with three separate test binaries instead
+(`docs/dependency-policy.md` §1 tabulates what each one catches):
+`tests/digest_zeroize_link.rs` (compile-time — `sha2::digest::zeroize` does
+not resolve without it, which proves `BlockBuffer`'s `Drop` but is blind to
+`sha2`'s own feature, since `hmac/zeroize` forwards `digest/zeroize` too),
+`tests/feature_pins.rs` (the pin line still says what it must), and
+`tests/zeroization_residue.rs` (the bytes are actually wiped). D88 §7 called
+this a property with "**no** compile-time detector"; that is slightly too
+strong — a *partial* one exists, and C24 uses it, but it cannot stand alone.
+
+**Honest part.** Five residual risks (R1–R5) are recorded below. **Four
+stand; R1 is resolved** (2026-07-28, D88) with a narrowed, permanently
+accepted residue. None of the five is papered over.
 
 ---
 
@@ -73,7 +91,12 @@ exactly what a routine version bump loses silently, so all four are asserted.
 | `ml_dsa::SigningKey<MlDsa65>` | ξ | `ml-dsa` feature `zeroize` (non-default; D14) |
 | `ml_dsa::ExpandedSigningKey<MlDsa65>` | `rho`, `K`, `tr`, `s1`, `s2`, `t0` | same |
 | `chacha20poly1305::XChaCha20Poly1305` | the cipher's internal key copy | `chacha20poly1305` feature `zeroize` |
-| `hkdf::Hkdf<Sha256>` (internal `Hmac<Sha256>`) | the PRK-keyed HMAC state | **none available — see R1** |
+| `hkdf::Hkdf<Sha256>` (internal `Hmac<Sha256>`) | the PRK-keyed HMAC state | **`sha2` feature `zeroize` (D88)** — not `hmac`'s; the wipe comes from `Sha256VarCore`'s and `BlockBuffer`'s `Drop`, reached through drop glue |
+
+Only the first four rows are `const`-asserted: `Hmac<Sha256>` does **not**
+implement `ZeroizeOnDrop` under any feature (D88 §1), so the last row is
+covered by the C22 residue tests instead. Its entry is not a weaker claim —
+it is a claim about a different mechanism.
 
 ## E. Intermediate buffers
 
@@ -90,12 +113,81 @@ exactly what a routine version bump loses silently, so all four are asserted.
 | `signing_message(body)` (`Vec<u8>`) | `sig_ed25519` | Not wiped, **deliberately**: it is `ctx ‖ 0x00 ‖ manifest body`, and the plaintext manifest body ships in the clear inside every `.sealproof`. Nothing vault-secret is in it. |
 | Ciphertexts, public keys, signatures | throughout | Public by construction. |
 | `FileSalt::expose_bytes_for_test_vectors` | `material` | Gated behind the `test-vectors` feature, which no shipped build enables. |
+| `Sha256` block buffer (GGM child preimage `0x06 ‖ s_v ‖ b`) | `crypto::domain::tagged_sha256`, reached from `content::ggm::child_seed` | **Wiped** — `sha2/zeroize` (D88). Before D88 the parent seed was fully recoverable from the dropped hasher; measured (94 of 104 bytes non-zero, seed verbatim). |
+
+## F. Caller-owned secret preimage and truncation buffers (C23, 2026-07-28)
+
+Tables A–E were scoped to `crypto/`. D88 §9.6 asked for the same sweep over
+**`content/`** and over the plain `[u8; N]` buffers *we* own — not the
+newtypes, which wipe, and not third-party internals, which `sha2/zeroize`
+now wipes, but the raw arrays in between. `[u8; N]` has no `Drop`, so a
+truncation or a slice-to-array conversion leaves a full copy of the secret on
+the stack unless it is wiped by hand.
+
+Every hit below is **library code**, on a production path, and every one is
+now wiped. None of these changes a derived byte: they add a wipe *after* the
+value has been moved into its newtype.
+
+| Buffer | Where | Held | Disposition |
+| --- | --- | --- | --- |
+| `[u8; 16]` salt truncation | `content::ggm::SaltTree::salt` | `salt_i` | **Wiped** — `salt.zeroize()` after the value is inside `Salt16`. |
+| `[u8; 32]` leaf-seed copy | `content::fine_tree::ggm_walk::GgmWalker::next_salt` | a full **GGM leaf seed** | **Removed entirely.** The truncation now reads straight out of the borrowed `Seed32`; no 32-byte copy is materialised. This one fired on *every leaf of every fine tree*. |
+| `[u8; 16]` salt truncation | same | `salt_i` | **Wiped.** |
+| `[u8; 32]` cover-seed parse | `content::fine_tree::verify::seed_of` | a bundle-supplied **covering seed** | **Wiped** after the value is inside `Seed32`. The wire slice itself is the caller's copy, not ours. |
+| `[u8; 16]` slice→array | `crypto::material::Salt16::try_from_slice` | bundle-supplied `unit_salt`/`path_salt` | **Wiped.** |
+| `[u8; 32]` slice→array | `crypto::material::<Seed32 as TryFrom<&[u8]>>::try_from` | bundle-supplied `s_root` / covering seed | **Wiped.** |
+| tagged SHA-256 preimages | `crypto::domain::tagged_sha256` | GGM seeds, every commitment salt | **No owned buffer exists** — parts are streamed into the hasher as slices, so the only owned bytes are the public digest. Documented at the function as a hygiene requirement, because concatenating into a `Vec` would silently recreate the whole class. |
+
+Deliberately **not** wiped, and why: the unnamed `[u8; 32]` temporaries at
+`ggm::SaltTree::derive_along`, `ggm_walk::GgmWalker::new` and
+`cover::descend`, where `*seed.as_bytes()` is passed by value into
+`Seed32::from_bytes`. These are compiler-managed argument temporaries with no
+binding to wipe; closing them means changing `from_bytes` to take a reference
+across the whole material API. Recorded rather than fixed — the window is one
+function call and the owning newtype wipes.
 
 ---
 
 ## Residual risks
 
-### R1 — HKDF/HMAC internal key state is never wiped, and no available feature fixes it
+### R1 — HKDF/HMAC internal key state (**RESOLVED 2026-07-28 by D88**; a narrowed residue remains)
+
+**[2026-07-28, D88]** Resolved by enabling the non-default `zeroize`
+feature on the `sha2 =0.11.0` pin: drop glue then wipes the PRK-keyed HMAC
+state, both SHA-256 chaining states, every per-block clone, and the block
+buffer that held `W` verbatim — measured, not inferred. C21's finding that
+"no feature fixes it" was wrong: `digest`'s `buffer_fixed!` `ZeroizeOnDrop`
+arm is a marker impl with no `Drop`, so the `ZeroizeOnDrop` bound on
+`Hmac<D>` was never the mechanism. **Narrowed residue, accepted
+permanently:** four plain `hybrid_array::Array` stack temporaries have no
+`Drop` under any feature — the discarded PRK in `Hkdf::extract`,
+`expand_multi_info`'s `prev` OKM block, `get_der_key`'s 64-byte
+`key ⊕ 0x5c` derived-key block, and `finalize_fixed_core`'s inner hash.
+Closing them means reimplementing HKDF *and* HMAC in-house, which moves two
+frozen primitives into our own code; option (c) alone would close only the
+first two. Exposure is stack-resident, never heap, never logged, never
+serialized, for the duration of one derivation — the same window in which
+`W` is resident anyway.
+
+Measured at C22 on the exact workspace pins, by
+`crates/antseal-core/tests/zeroization_residue.rs`:
+
+| probe (all with the fixture `W` = `0x00 0x01 … 0x1f`) | before | after |
+| --- | --- | --- |
+| dropped `Hkdf<Sha256>` (144 B) — PRK-keyed HMAC state | 114 B non-zero | **0 — fully wiped** |
+| dropped `HkdfExtract<Sha256>` (144 B) — `W` buffered uncompressed | 108 B non-zero, **`W` recoverable verbatim** | **0 — fully wiped** |
+| dropped `Sha256` (104 B) over a GGM child preimage | 94 B non-zero, **parent seed recoverable verbatim** | **0 — fully wiped** |
+
+Re-measured cost (D88 §5's gate is 10 % against G18's budget; these are
+minimum-of-many-short-bursts samples, which is why they survive a loaded
+machine): SHA-256 over 34 B **+3.5 %**, over 65 B **+2.2 %**, over 4 KiB
+**≈0 %**, HKDF-SHA256 32 B OKM **+2.4 %**. Well under the gate. The 4 KiB
+figure is ≈0 rather than D88 §5's estimated +4.3 %, which is what the
+mechanism predicts: the wipe is a fixed ~104-byte cost amortized over 64
+block compressions.
+
+The original finding, retained for the record (the register's "never by
+silently rewriting history" rule):
 
 **Severity: the highest in this document.** Every `derive_*` call builds an
 `hkdf::Hkdf<Sha256>` from `W`. That value holds an `Hmac<Sha256>` keyed with
@@ -104,7 +196,12 @@ the HKDF **PRK**, and `Hkdf::extract` additionally materialises the raw
 holding either can produce every unit key, every salt, the fine seed and both
 signing seeds. Neither is zeroized.
 
-Why it cannot currently be fixed:
+Why it cannot currently be fixed — **SUPERSEDED, the conclusion is wrong.**
+Both bullets are individually true and were verified against the pinned
+sources again at D88; the *inference* from them is not. `digest`'s
+`ZeroizeOnDrop` arm emits a marker impl with **no `Drop`**, so the trait was
+never what wipes — ordinary drop glue on the fields is, and the field that
+needs a `Drop` lives in **`sha2`**, a crate neither bullet examined:
 
 - `hkdf = "=0.13.0"` exposes **no** `zeroize` feature, and its
   `GenericHkdf<H>` derives `Clone, Debug` with no `Drop` and no `Zeroize`.
@@ -118,7 +215,13 @@ Why it cannot currently be fixed:
 
 So this is precisely the case C21's acceptance criterion anticipates: *"the
 documented reason none is possible, e.g. crate-internal key state inside a
-third-party crate."*
+third-party crate."* — **it was not**: option (d) existed and cost one word.
+C21 also **undercounted** the exposure. `expand_multi_info` *clones* the
+PRK-keyed HMAC once per 32-byte output block and keeps a `prev` OKM block
+past the loop; `HmacCore::new_from_slice` leaves a 64-byte block holding
+`key ⊕ 0x5c`, trivially inverted; and the `W` in the extract buffer is not
+merely "`W`-equivalent" but `W` itself, in the clear. None of that appears in
+the "one stack-resident `Hkdf` plus one discarded PRK" scope below.
 
 Scope and mitigation: the exposure is one stack-resident `Hkdf` per
 derivation call, living only for the duration of `hkdf_expand`, plus one
@@ -135,6 +238,17 @@ zeroizing HMAC. Option (c) is ~40 lines and already has an independent RFC
 5869 reference implementation in this crate's tests, so it is cheaper than it
 sounds — but it moves a **frozen derivation** into our own code, which is a
 deliberate decision, not a drive-by.
+
+**C22's answer (D88, 2026-07-28): none of the three.** Option (d) — enable
+`sha2`'s non-default `zeroize` feature — was not on the list, and it
+dominates all three: (a) accepts a live contradiction of a normative spec
+line when a one-word fix exists; (b) would not compile as specified and would
+wipe nothing if it did; (c) is strictly weaker than (d) on its own, because
+in-house HKDF still calls `hmac::Hmac` and so cannot reach the block buffer
+holding `W` or `get_der_key`'s `key ⊕ 0x5c` block. **Recorded revisit
+trigger:** if a future task must also wipe `get_der_key`'s block (a hardened
+target, an attested enclave), reopen with (c)+HMAC as one unit, not (c)
+alone.
 
 ### R2 — `PartialRevealDisclosure`'s `Vec` growth strands un-wiped salts
 
@@ -234,5 +348,9 @@ Dynamic counterparts (already in the suite, not re-derived here):
   freeze).
 - `docs/threat-model.md` §2.1 (vault theft), §2.10 (this caveat).
 - `docs/dependency-policy.md` — the pin-governance rules R1's follow-up must
-  respect.
-- `tasks/C.md` C22 — the R1 follow-up.
+  respect; §1 records that `sha2`'s `zeroize` feature is load-bearing.
+- `docs/decisions/D88-hkdf-hmac-zeroization.md` — R1's disposition.
+- `tasks/C.md` C22 — the R1 follow-up (landed); C23 — the caller-owned
+  preimage-buffer sweep; C24 — the feature guard.
+- `crates/antseal-core/tests/zeroization_residue.rs` — the only guard for a
+  property with no compile-time detector.

@@ -60,6 +60,8 @@
 //! G11's leaf-exact cover construction, not by this derivation layer, which
 //! answers exactly what it is asked.
 
+use zeroize::Zeroize;
+
 use crate::crypto::domain::{TAG_GGM_SALT_CHILD, tagged_sha256};
 use crate::crypto::material::{Salt16, Seed32};
 
@@ -443,9 +445,14 @@ impl<'a> SaltTree<'a> {
             index,
             remaining: self.depth,
         });
+        // C23: the truncation buffer is a copy of secret salt bytes that we
+        // own and `[u8; N]` has no `Drop`, so it is wiped explicitly once the
+        // value is inside the zeroizing newtype.
         let mut salt = [0u8; Salt16::LEN];
         salt.copy_from_slice(&seed.as_bytes()[..Salt16::LEN]);
-        Some(Salt16::from_bytes(salt))
+        let wrapped = Salt16::from_bytes(salt);
+        salt.zeroize();
+        Some(wrapped)
     }
 
     /// Walk from `s_root` along a path. O(1) auxiliary state, no allocation;
