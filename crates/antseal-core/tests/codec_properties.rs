@@ -483,3 +483,187 @@ fn mutation_classes_map_onto_distinct_real_codec_codes() {
         );
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// F18 — the peek and the schema pass never disagree, on ANY input
+// ───────────────────────────────────────────────────────────────────────
+//
+// F10 proves version dispatch case-wise, over an enumerated list of
+// discriminants and mutations. What it cannot state is the *universal* form,
+// which is what a third-party verifier actually relies on:
+//
+//   1. `peek_format_version(x) == Some(v)` with `v` outside
+//      `SUPPORTED_VERSIONS`  =>  decode fails with that family's version
+//      code — never a canonicality code, never an unknown-key code, so
+//      "your file is from a newer antseal" can never be rendered as "your
+//      file is corrupt";
+//   2. decode *succeeds*  =>  the peek returned `Some(1)` — the peek and
+//      the schema pass can never disagree about what the first key says.
+//
+// The one documented exception is stated, not hidden: D10 §5 makes the O(1)
+// `input.len() > MAX_BUNDLE_BYTES` check the FIRST statement of
+// `BundleV1::decode`, ahead of the peek, so an oversized artifact declaring
+// an unsupported version is `bundle-too-large` (cheapest rejection wins).
+// The property asserts that precondition rather than assuming the generator
+// never reaches it.
+
+/// A peek implementation. Parameterised so the property below can be re-run
+/// against a deliberately mis-wired peek (`the_agreement_property_can_fail`),
+/// which is what proves it is not vacuous.
+type Peek = fn(&[u8]) -> Option<u64>;
+
+/// Both directions of the F18 agreement, for one input. `Err` carries the
+/// disagreement in reviewer-readable prose.
+fn peek_decode_agreement(peek: Peek, input: &[u8]) -> Result<(), String> {
+    use antseal_core::bundle::BundleV1;
+    use antseal_core::format::SUPPORTED_VERSIONS;
+    use antseal_core::manifest::ManifestBodyV1;
+
+    let peeked = peek(input);
+
+    // Direction 1, manifest half. `ManifestBodyV1::decode` reaches dispatch
+    // with no pre-check of its own (the manifest's size cap binds the
+    // *envelope*, one layer out), so this arm has no precondition.
+    if let Some(v) = peeked
+        && !SUPPORTED_VERSIONS.contains(&v)
+    {
+        match ManifestBodyV1::decode(input) {
+            Ok(_) => {
+                return Err(format!(
+                    "a body declaring v{v} decoded, but v{v} is not supported"
+                ));
+            }
+            Err(e) if e.code() != "manifest-unsupported-format-version" => {
+                return Err(format!(
+                    "a body declaring the unsupported v{v} was rejected as `{}` — an unsupported \
+                     version must never be reported as a different fault",
+                    e.code()
+                ));
+            }
+            Err(_) => {}
+        }
+
+        // Direction 1, bundle half, with D10 §5's documented precondition.
+        if input.len() as u64 <= antseal_core::codec::caps::MAX_BUNDLE_BYTES {
+            match BundleV1::decode(input) {
+                Ok(_) => {
+                    return Err(format!(
+                        "a bundle declaring v{v} decoded, but v{v} is not supported"
+                    ));
+                }
+                Err(e) if e.code() != "bundle-unsupported-format-version" => {
+                    return Err(format!(
+                        "a bundle declaring the unsupported v{v} was rejected as `{}`",
+                        e.code()
+                    ));
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    // Direction 2: acceptance implies the peek read the one supported
+    // version. Stated over both families because each re-reads the
+    // discriminant from the same bytes the peek read.
+    if ManifestBodyV1::decode(input).is_ok() && peeked != Some(1) {
+        return Err(format!(
+            "a body decoded but the peek reported {peeked:?} rather than Some(1)"
+        ));
+    }
+    if BundleV1::decode(input).is_ok() && peeked != Some(1) {
+        return Err(format!(
+            "a bundle decoded but the peek reported {peeked:?} rather than Some(1)"
+        ));
+    }
+    Ok(())
+}
+
+/// The real peek — the same function `VersionDispatch::decode` consults.
+fn real_peek(input: &[u8]) -> Option<u64> {
+    antseal_core::format::peek_format_version(input)
+}
+
+/// A peek that reads the first key's value **without** the strict reader's
+/// canonicality rules, by pattern-matching the two-byte prefix of a small
+/// map. Used only by the test-of-the-test: it agrees with the real peek on
+/// canonical input and disagrees on a non-shortest version head, which is
+/// exactly the disagreement direction 1 must catch.
+fn mis_wired_peek(input: &[u8]) -> Option<u64> {
+    match input {
+        // `map(n), key 0, 0x18 vv` — a NON-shortest one-byte-argument uint.
+        // The real peek refuses this (the artifact is not canonical CBOR, so
+        // its declared version is not trustworthy); this one reports it.
+        [head, 0x00, 0x18, value, ..] if (0xA1..=0xB7).contains(head) => Some(u64::from(*value)),
+        _ => real_peek(input),
+    }
+}
+
+proptest! {
+    #![proptest_config(strategies::integration_test_config(0x5EED_F162, REGRESSIONS))]
+
+    /// **F18's property, over arbitrary bytes.** Most inputs are not
+    /// versioned at all, which is the point: the peek must decline rather
+    /// than guess, and neither direction may fire spuriously.
+    #[test]
+    fn peek_and_decode_agree_on_arbitrary_bytes(
+        input in proptest::collection::vec(any::<u8>(), 0..96)
+    ) {
+        if let Err(why) = peek_decode_agreement(real_peek, &input) {
+            prop_assert!(false, "{}", why);
+        }
+    }
+
+    /// **F18's property, over REAL artifacts at an arbitrary version.** The
+    /// arbitrary-bytes arm above almost never reaches direction 1's
+    /// antecedent; this one reaches it every case, on the golden vectors'
+    /// own bytes with only the discriminant rewritten (canonically, so the
+    /// only fault is the version).
+    #[test]
+    fn peek_and_decode_agree_on_real_artifacts_at_any_version(version in any::<u64>()) {
+        use antseal_core::test_util::tamper_rows_version as f18;
+
+        let body = f18::body_at_version(version).expect("the golden body re-versions");
+        if let Err(why) = peek_decode_agreement(real_peek, &body) {
+            prop_assert!(false, "{}", why);
+        }
+
+        let manifest = f18::manifest_at_version(version).expect("the golden manifest re-versions");
+        // The envelope carries no discriminant of its own, so the peek reads
+        // `None` over it — the layer-3 body is where the version lives.
+        prop_assert_eq!(real_peek(&manifest), None);
+        let expect_ok = version == 1;
+        prop_assert_eq!(Manifest::decode(&manifest).is_ok(), expect_ok);
+
+        let bundle = f18::bundle_at_version(version).expect("the golden bundle re-versions");
+        if let Err(why) = peek_decode_agreement(real_peek, &bundle) {
+            prop_assert!(false, "{}", why);
+        }
+        prop_assert_eq!(real_peek(&bundle), Some(version));
+    }
+}
+
+/// **Test of the test.** A peek that disagrees with the strict reader — here,
+/// one that reads a *non-shortest* version head the real peek refuses —
+/// makes the property fail, and fail with the disagreement named.
+///
+/// Without this, `peek_and_decode_agree_*` could pass by asserting nothing.
+#[test]
+fn the_agreement_property_can_fail() {
+    // `{0: 2}` with the value written non-shortest: canonically invalid, so
+    // the real peek declines and the decoder reports the canonicality fault.
+    let non_shortest_v2: &[u8] = &[0xA1, 0x00, 0x18, 0x02];
+    assert_eq!(real_peek(non_shortest_v2), None);
+    assert!(
+        peek_decode_agreement(real_peek, non_shortest_v2).is_ok(),
+        "the real peek must agree with the decoder here"
+    );
+
+    // The mis-wired peek claims the artifact declares v2, so direction 1
+    // demands the version code — and the decoder says `cbor-non-shortest-int`.
+    let failure = peek_decode_agreement(mis_wired_peek, non_shortest_v2)
+        .expect_err("a mis-wired peek must break the property");
+    assert!(
+        failure.contains("cbor-non-shortest-int"),
+        "the failure must name the disagreement, got: {failure}"
+    );
+}

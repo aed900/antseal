@@ -31,6 +31,21 @@
 /// registry it checks against — [`all_rows`] — is this file's.
 mod tamper_completeness;
 
+/// F20's anchor-schema rows. They live in this target rather than in
+/// `test_util` because their base is [`bundle_wire`], the hand-rolled
+/// canonical writer — the only route to a shape F8 deliberately made
+/// **unrepresentable** in the typed API (module docs).
+mod tamper_rows_anchor;
+
+/// The hand-rolled CBOR writers F20's rows are built on. `bundle_wire`
+/// depends on `manifest_wire` for its primitive item writers, so both are
+/// declared here.
+#[path = "manifest_wire/mod.rs"]
+mod manifest_wire;
+
+#[path = "bundle_wire/mod.rs"]
+mod bundle_wire;
+
 use antseal_core::codec::decode::check_canonical;
 use antseal_core::crypto::commit::path_commit;
 use antseal_core::crypto::error::CryptoError;
@@ -409,8 +424,10 @@ fn all_rows() -> Vec<TamperRow> {
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_fine_tree::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_format::ROWS);
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_version::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_structural::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_pipeline::ROWS);
+    rows.extend_from_slice(tamper_rows_anchor::ROWS);
     rows
 }
 
@@ -507,6 +524,40 @@ fn the_format_fixture_table_agrees_with_the_live_registry() {
         claimed >= antseal_core::test_util::tamper_rows_format::ROWS.len(),
         "every F15 row must be backed by at least one fixture"
     );
+}
+
+/// **F23's other half.** The reverse-coverage check is a lib test, so it
+/// cannot see the rows that live in this target — Q7's seed rows and F20's
+/// anchor rows. It therefore *names* them, and this is where the naming is
+/// checked: every code recorded as claimed by an integration-target row must
+/// be claimed by a row that actually exists here and actually binds it.
+///
+/// Without this, the accounting could go stale in the one direction the lib
+/// test cannot observe: delete an integration row and its code would still
+/// read as covered.
+#[test]
+fn every_integration_claimed_code_is_backed_by_a_live_row() {
+    use antseal_core::test_util::tamper_coverage::DOMAINS;
+
+    let rows = all_rows();
+    for domain in DOMAINS {
+        for (code, row_id) in domain.claimed_in_integration_target {
+            let row = rows.iter().find(|r| r.id == *row_id).unwrap_or_else(|| {
+                panic!(
+                    "{}: `{code}` is recorded as claimed by row `{row_id}`, which is in no \
+                     registry slice",
+                    domain.name
+                )
+            });
+            assert_eq!(
+                row.expected,
+                ExpectedOutcome::ErrorCode(code),
+                "{}: row `{row_id}` is recorded as claiming `{code}`, but it expects something \
+                 else",
+                domain.name
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

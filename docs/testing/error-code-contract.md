@@ -165,6 +165,20 @@ the code set of frozen surfaces is permanent.
    observable failure" while it is still cheap to fix, instead of at the
    moment `check_registry` refuses the pair.
 
+4. **Reverse coverage** — layers 1–3 all run *spec → rows* or *rows → rows*,
+   so none of them can see a code nobody wrote a spec case for. This layer
+   runs **enum → rows**: every code an error family can emit must be claimed
+   by a row, by a named row in an integration target, or by an entry naming
+   the task that owes it. R7 added it for R's unprefixed namespace
+   (`every_unprefixed_verify_code_has_a_row_or_a_named_owner`) and it earned
+   itself by surfacing two unowned codes; F23 added the `bundle-`/`manifest-`
+   twin (`test_util::tamper_coverage`, generic over a `CoverageDomain` so the
+   `cbor-` family's sibling is data rather than a third implementation).
+   Both run in the `tamper-matrix` lane. The layer does **not** assert that
+   every code deserves a row — a representative per cap family may be right,
+   and a code may be structurally unreachable — only that whichever is true,
+   somebody wrote it down.
+
 A collision found at layer 2 is **not** fixed by editing the registry: it
 means two mutations are genuinely indistinguishable to a verifier, and the
 fix is a new error variant with its own code in the owning domain.

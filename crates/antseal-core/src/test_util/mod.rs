@@ -24,6 +24,12 @@
 //!   distinct-outcome and no-panic assertions, and the row-addition
 //!   procedure every domain (F15/C17/G19/A21/R7) registers rows through.
 //!   Error-code contract: `docs/testing/error-code-contract.md`.
+//! - [`tamper_coverage`] — the **reverse** coverage accounting (F23): every
+//!   code an F-side error family can emit is claimed by a row, by a named
+//!   integration-target row, or by a task recorded as owing one. Q8's
+//!   registry maps the *spec's* enumeration onto rows and structurally
+//!   cannot catch a code nobody wrote a spec case for; this maps the *error
+//!   enums* onto rows, the direction R7 already guards for R's namespace.
 //! - [`tamper_rows_crypto`] — C's own registry slice for that harness
 //!   (C17): the M0 crypto tamper rows, plus the mutation helpers R7's
 //!   bundle-level fixtures reuse.
@@ -41,6 +47,12 @@
 //!   the same canonicality fault in the body, the envelope, the bundle map
 //!   and the embedded manifest is four fixtures and one code. Committed
 //!   bytes + mapping table: `testdata/tamper/format/`.
+//! - [`tamper_rows_version`] — F's other registry slice (F18): the two rows
+//!   over F10's version dispatch, each a **one-byte** bump of a golden
+//!   vector's `format_version`. Separate from [`tamper_rows_format`] because
+//!   the mutation is not a canonicality or key-band fault at all: it is the
+//!   one rejection a third-party verifier must render as *"your file is from
+//!   a newer antseal"* rather than *"your file is corrupt"*.
 //! - [`tamper_rows_structural`] — R's registry slice (R7): the M0
 //!   structural rows, mutated from [`bundle_fixtures`] works and driven
 //!   through `verify_bundle` wherever the mutation is reachable there.
@@ -148,6 +160,8 @@ pub mod strategies;
 #[cfg(feature = "test-util")]
 pub mod tamper;
 #[cfg(feature = "test-util")]
+pub mod tamper_coverage;
+#[cfg(feature = "test-util")]
 pub mod tamper_rows_crypto;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_fine_tree;
@@ -157,6 +171,8 @@ pub mod tamper_rows_format;
 pub mod tamper_rows_pipeline;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_structural;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_version;
 pub mod vectors;
 pub mod vectors_bundle;
 pub mod vectors_cbor_diag;

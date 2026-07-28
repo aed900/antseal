@@ -725,6 +725,41 @@
       "row_id": "content-fine-root-leaf-seed-tail-not-zero",
       "owner": "G",
       "why": "D83: a level == d cover payload's upper 16 bytes are never read as key material, so v1 fixes them at zero and checks them. Before D83 this mutation had NO observable effect — the row was unlandable as written, which is what forced the decision. The fixture flips one bit of byte 16..32 of a leaf-level cover entry in an odd-boundary reveal (n = 6, reveal {2}, node (3,2))."
+    },
+    {
+      "row_id": "version-manifest-unsupported",
+      "owner": "F",
+      "why": "F18. MVP-SPEC.md line 168's enumeration predates F10's version dispatch, so this is project-added by construction. The mutation is ONE byte — the manifest body's `format_version`, bumped 1 -> 2 on the golden vector's own bytes — and it is the rejection a third-party verifier must render as \"your file is from a newer antseal\" rather than \"your file is corrupt\" (spec line 123, format stability). Without a row, the most user-visible distinction in the format is untested at the harness level: F10 proves it case-wise from hand-built bytes, but nothing put it in the cross-domain distinctness sweep."
+    },
+    {
+      "row_id": "version-bundle-unsupported",
+      "owner": "F",
+      "why": "F18, the bundle half. A separate row rather than a second fixture because the two discriminants are INDEPENDENT (registry §7.6 key 0 vs §7.2 key 0) and carry separate permanent codes (D30/D78: `manifest-` and `bundle-` never merge) — so a v1 bundle wrapping a v2 manifest is a manifest version error, and this row is what pins that the bundle's own discriminant has its own outcome."
+    },
+    {
+      "row_id": "anchor-schema-short-block-header",
+      "owner": "F",
+      "why": "F20. Line 168's M2 anchor half names anchor SEMANTICS rows (A21's, pending above); the anchor artifacts' SHAPE is F8's and is not enumerated there at all, so every row below is project-added by construction. This one shortens the D79 upgrade group's `block_header` to 79 bytes. Rows prefixed `anchor-schema-` so the M0 shape rows and A21's M2 semantic rows cannot double-claim. The 81-byte twin is deliberately NOT a second row — `BundleError::WrongLength` carries no over/under discriminator and the field has one correct length — and is pinned as a named test in the slice."
+    },
+    {
+      "row_id": "anchor-schema-partial-upgrade-group",
+      "owner": "F",
+      "why": "F20. Two of D79's three upgrade-group keys present: the state D79 chose to make unrepresentable in the typed API (`OtsUpgrade` holds all three) rather than merely rejected, so the ONLY route to it is a writer that does not share the schema's assumptions. Decided without ever reading `status`, which is the property D79 exists for — the sealer writes `status` and must never get a lever on the decoder."
+    },
+    {
+      "row_id": "anchor-schema-unknown-status",
+      "owner": "F",
+      "why": "F20. An `anchor_status` of 7 — one past v1's registered band. The closed enum exists so a newer producer meeting an older verifier is a parse-time reject rather than a silently ignored value; without a row that guarantee was proven only at unit level and never entered the cross-domain distinctness sweep."
+    },
+    {
+      "row_id": "anchor-schema-empty-tx-hashes",
+      "owner": "F",
+      "why": "F20. An Arbitrum receipt whose `tx_hashes` list is empty — 'a payment with no transaction', which F8 rejects because it is malformed rather than 'no payment' (absence of a receipt is the absent section). Its deliberate asymmetry with an empty TSA `intermediates` list, which IS legal, is pinned in the slice's named tests."
+    },
+    {
+      "row_id": "anchor-schema-short-tx-hash",
+      "owner": "F",
+      "why": "F20. A 31-byte transaction hash in the receipt: the length rule on the one receipt field that is not opaque. Distinct from the block-header length row because `FixedLenField` discriminates the field, which is what lets a verifier say WHICH artifact is malformed."
     }
   ],
   "non_rows": [
