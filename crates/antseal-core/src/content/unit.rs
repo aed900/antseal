@@ -487,7 +487,12 @@ mod tests {
     use super::*;
     use crate::canon::UnicodeVersion;
     use crate::content::descriptor::{ContentKind, FineTreeOptOut};
+    // Property tests need the proptest-bearing `test-util` tier, which the
+    // wasm32 `--lib` test build deliberately does not enable (P14,
+    // docs/wasm-toolchain.md). Everything else in this module runs on both.
+    #[cfg(feature = "test-util")]
     use crate::test_util::strategies::proptest_config;
+    #[cfg(feature = "test-util")]
     use proptest::prelude::*;
 
     fn text_desc(size: u64, opt_out: FineTreeOptOut) -> CanonDescriptor {
@@ -842,6 +847,7 @@ mod tests {
 
     /// Plans of 1..=4 files, each 1..=4 normal units of 0..=64 bytes, some
     /// with mirrors.
+    #[cfg(feature = "test-util")]
     fn plans() -> impl Strategy<Value = Vec<FileUnitPlan>> {
         let file = (
             proptest::collection::vec(0u64..=64, 1..=4),
@@ -866,6 +872,7 @@ mod tests {
         proptest::collection::vec(file, 1..=4)
     }
 
+    #[cfg(feature = "test-util")]
     proptest! {
         #![proptest_config(proptest_config(0x0064_0002))]
 

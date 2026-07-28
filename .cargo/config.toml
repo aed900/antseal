@@ -1,0 +1,49 @@
+# Cargo configuration — WASM lane (P14).
+#
+# Normative companion doc: docs/wasm-toolchain.md (which dependency sits on
+# which `getrandom` line, where each knob lives, how the lanes run).
+#
+# NOTE ON CWD: cargo executes a test binary — and therefore its `runner` —
+# with the current directory set to the **package root** of the crate under
+# test, NOT the directory cargo was invoked from. Hence the `../../` in the
+# runner path below: every wasm32-tested package lives two levels below the
+# workspace root (`crates/<pkg>/`, per the MVP-SPEC Architecture tree), so
+# the relative path is stable for all of them and independent of where the
+# developer or CI happened to run `cargo` from.
+
+[target.wasm32-unknown-unknown]
+
+# ── Headless wasm32 test runner (P14) ───────────────────────────────────────
+# Makes `cargo test --target wasm32-unknown-unknown` execute instead of
+# failing to exec a `.wasm`. The runner instantiates the libtest binary with
+# `WebAssembly.instantiate` and calls its exported `main` — the module has
+# ZERO imports (verified per run by the runner), so no JS glue, no
+# wasm-bindgen, and no browser are involved. Precedent and prior art:
+# docs/research/C11-signature-probe.md §5, which executed the pinned
+# signature crates on wasm32 exactly this way and got a byte-identical
+# transcript.
+#
+# This is a TEST-EXECUTION choice only. It commits nothing about D18
+# (whether the shipped wasm-bindgen surface lives inside antseal-core or in
+# a wrapper crate) — no wasm-bindgen surface exists yet in either place.
+runner = ["node", "../../scripts/wasm-test-runner.mjs"]
+
+# ── The getrandom recipe (MVP-SPEC.md line 153) ─────────────────────────────
+# Half of the two-part recipe for a mixed workspace. The `--cfg` below is the
+# knob the getrandom **0.3 and 0.4** lines require; the other half is the
+# per-crate feature knob (`wasm_js` on 0.3/0.4, `js` on the 0.2 line), which
+# lives in the Cargo manifest of whichever crate first pulls getrandom into a
+# wasm32 build.
+#
+# Today NOTHING in any wasm32 build graph pulls getrandom: antseal-core's
+# normal graph is RNG-free by construction (C5/C9 take an injected
+# `TryCryptoRng`; `rand_core = "=0.10.1"` is a pure trait crate), and the
+# only getrandom edges in the whole lockfile come from `proptest`, which the
+# wasm32 test build excludes (crates/antseal-core/Cargo.toml, target-split
+# dev-dependencies). The flag is therefore inert — an unused `--cfg` is not
+# an error — and it is set NOW so the recipe is already in place, in the
+# durable location, on the day a getrandom-bearing dependency arrives.
+#
+# When that day comes, `scripts/getrandom-audit.sh` (CI lane
+# `wasm32-core-tests`) fails loudly and names the missing feature knob.
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

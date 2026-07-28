@@ -108,7 +108,14 @@ pub fn tagged_sha256(tag: u8, parts: &[&[u8]]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The source-scanning discipline test below reads the crate's own
+    // `src/` tree at run time. That is the one genuinely native-only test in
+    // this crate: `wasm32-unknown-unknown` has no filesystem, so it is
+    // excluded from the `wasm32-core-tests` lane (P14,
+    // docs/wasm-toolchain.md). It stays a first-class native test.
+    #[cfg(not(target_arch = "wasm32"))]
     use std::fs;
+    #[cfg(not(target_arch = "wasm32"))]
     use std::path::{Path, PathBuf};
 
     /// The seven tags, exactly as registered by MVP-SPEC.md line 79.
@@ -207,6 +214,7 @@ mod tests {
     ///    docs; MVP-SPEC.md lines 75, 79).
     ///
     /// Relies on `cargo fmt --check` (CI) normalizing token spacing.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn no_other_module_hardcodes_domain_tag_bytes() {
         let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -268,6 +276,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let entries =
             fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));

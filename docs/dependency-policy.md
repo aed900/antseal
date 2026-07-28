@@ -88,7 +88,12 @@ fallout, with this checklist completed in the PR description:
 - Dev-tools whose output or verdict the project depends on are exact-pinned
   wherever they are installed (CI workflows, scripts, docs):
   **wasm-pack**, **wasm-bindgen-cli** (must equal the `wasm-bindgen` crate
-  pin — a mismatch breaks the build), **cargo-deny `=0.19.8`** (its verdict
+  pin — a mismatch breaks the build; **neither is installed yet**: P14's
+  wasm32 test-execution and bit-match lanes use no wasm-bindgen at all, and
+  pinning one now would pre-empt D18 — the equality rule is enforced from
+  the moment either pin appears by `scripts/wasm-toolchain-audit.sh`, CI
+  lane `wasm32-core-tests`; rationale in
+  [wasm-toolchain.md](wasm-toolchain.md) §4), **cargo-deny `=0.19.8`** (its verdict
   gates merges; pinned at P13 per [D19](decisions/D19-advisory-lane.md) —
   installed with `cargo install cargo-deny --version 0.19.8 --locked` in
   both the per-PR `audit-deny` job and the weekly `advisory-cron`
@@ -103,6 +108,10 @@ fallout, with this checklist completed in the PR description:
 
 - CI (P8): `--locked` in every resolving lane; the `core-dep-graph` lane
   guards antseal-core's dependency purity.
+- CI (P14): the `wasm32-core-tests` lane runs
+  `scripts/wasm-toolchain-audit.sh`, which enforces the getrandom recipe on
+  every wasm32 build graph and the wasm-bindgen crate↔CLI pin equality of §5
+  ([wasm-toolchain.md](wasm-toolchain.md)).
 - cargo-deny advisory lane, per-PR + weekly schedule (P13, M0).
 - Weekly upstream-bump check: report-only, human-reviewed PR required for
   any pin change (P19).

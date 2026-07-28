@@ -11,7 +11,9 @@
 - **components** — `rustfmt`, `clippy` (the fmt/clippy CI lanes depend on
   them).
 - **targets** — `wasm32-unknown-unknown` (the `wasm32-core` CI lane builds
-  `antseal-core` for it from the stub stage onward).
+  `antseal-core` for it from the stub stage onward; since P14 the
+  `wasm32-core-tests` lane also **executes** antseal-core's unit tests on it
+  — [wasm-toolchain.md](wasm-toolchain.md)).
 
 ## Edition
 
@@ -46,12 +48,17 @@ care as a format change.
 Consumers of this pin:
 
 - **R** — the M3 reproducible wasm-pack build recipe pins this toolchain
-  version (together with the wasm-pack/wasm-bindgen-cli pins from P14).
-- **Q** — CI lanes (including the future native↔WASM bit-match lanes) take
-  the toolchain exclusively from `rust-toolchain.toml`.
+  version (together with the wasm-pack/wasm-bindgen-cli pins, which P14
+  deliberately did **not** land: the M0 wasm lanes use no wasm-bindgen at
+  all, and pinning it would pre-empt D18 — rationale and the standing
+  enforcement check in [wasm-toolchain.md](wasm-toolchain.md) §4).
+- **Q** — CI lanes (including the native↔WASM bit-match lane) take the
+  toolchain exclusively from `rust-toolchain.toml`.
 
 ## Cross-references
 
 - [dependency-policy.md](dependency-policy.md) — pin governance and the
   bump procedure this policy defers to (P7).
+- [wasm-toolchain.md](wasm-toolchain.md) — the wasm32 side: getrandom
+  recipe, wasm32 test execution, the bit-match lane (P14/Q5).
 - `.github/workflows/ci.yml` — CI honoring the pin via `rustup show` (P8).

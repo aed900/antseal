@@ -37,10 +37,15 @@
 #   Q15/Q16/Q19/Q31: devnet E2E venue / anchor-fixture lane / playwright
 #        page lane / release + signing — later milestones, new jobs or
 #        workflows
-#   P14: wasm32-core gains the exact getrandom recipe (feature `js` for the
-#        0.2 line, `wasm_js` + RUSTFLAGS --cfg getrandom_backend="wasm_js"
-#        for 0.3/0.4) once crypto deps land; recipe mirrored in
-#        .cargo/config.toml
+#   P14: LANDED as the NEW lane `wasm32-core-tests` (a new required-status
+#        context, +1 on the branch-protection payload — see
+#        docs/ci-verification.md). It executes antseal-core's unit tests on
+#        wasm32-unknown-unknown through the node runner wired as cargo's
+#        `runner` in .cargo/config.toml, and audits the getrandom recipe
+#        (feature `js` for the 0.2 line, `wasm_js` + --cfg
+#        getrandom_backend="wasm_js" for 0.3/0.4 — the `--cfg` half lives in
+#        .cargo/config.toml) plus the wasm-bindgen crate/CLI pin equality.
+#        `wasm32-core` keeps its build-only job. Doc: docs/wasm-toolchain.md
 name: ci
 
 on:
@@ -100,7 +105,8 @@ jobs:
 
   # antseal-core must ALWAYS build for wasm32-unknown-unknown: WASM-safety is
   # enforced from the stub stage (MVP-SPEC.md M0 — "wasm32 build in CI from
-  # day one"). P14 upgrades this lane with the getrandom recipe.
+  # day one"). The getrandom recipe now lives in .cargo/config.toml and is
+  # audited by the `wasm32-core-tests` lane below (P14).
   wasm32-core:
     name: wasm32-core
     runs-on: ubuntu-latest
@@ -112,6 +118,39 @@ jobs:
           rustup show
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+
+  # P14 (new context): antseal-core's unit tests EXECUTE on
+  # wasm32-unknown-unknown — the spec's WASM requirement is about behavior on
+  # the verifier's real target, which a build lane alone cannot show.
+  #
+  # How it runs (docs/wasm-toolchain.md): a Rust libtest binary built for this
+  # target has ZERO imports and exports `main` + `memory`, so
+  # `scripts/wasm-test-runner.mjs` executes it under plain
+  # `WebAssembly.instantiate` in node — no wasm-bindgen, no browser, nothing
+  # that would pre-empt decision D18. cargo invokes it automatically via the
+  # `runner` in .cargo/config.toml. Stdout does not exist on this target, so
+  # the runner also asserts the in-memory execution witness (non-vacuity:
+  # "all tests passed" and "zero tests ran" are otherwise indistinguishable).
+  #
+  # Second step: the getrandom-recipe + wasm-bindgen-pin audit. It is green
+  # and inert today (no wasm32 graph pulls getrandom, nothing installs
+  # wasm-bindgen-cli) and goes red the moment either arrives unconfigured.
+  wasm32-core-tests:
+    name: wasm32-core-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: node version (wasm host; floor asserted by the runner, not pinned)
+        run: node --version
+      - name: Execute antseal-core unit tests on wasm32-unknown-unknown
+        run: cargo test -p antseal-core --lib --target wasm32-unknown-unknown --locked
+      - name: Audit the getrandom recipe and the wasm-bindgen pin equality
+        run: ./scripts/wasm-toolchain-audit.sh
 
   # antseal-core's NORMAL dependency graph must never gain an async runtime,
   # network, or I/O crate (WASM-safety + churn isolation; MVP-SPEC.md

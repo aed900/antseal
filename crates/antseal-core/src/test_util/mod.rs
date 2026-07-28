@@ -1,7 +1,17 @@
-//! Shared test infrastructure (Q2/Q3/Q4), compiled only with the
-//! `test-util` feature.
+//! Shared test infrastructure (Q2/Q3/Q4/Q5).
 //!
-//! Two residents:
+//! # Two feature tiers (P14)
+//!
+//! - **`test-vectors`** — the WASM-safe subset: [`vectors`] and
+//!   [`TEST_MASTER_SECRET_W`]. I/O-free, allocation-only, activates **zero**
+//!   optional dependencies, and therefore compiles for
+//!   `wasm32-unknown-unknown` and leaves the `core-dep-graph` lane's verdict
+//!   untouched. This is what the Q5 native↔WASM bit-match harness enables.
+//! - **`test-util`** — `test-vectors` plus the proptest-bearing residents
+//!   ([`strategies`], [`tamper`]) and the `proptest` re-export. Native
+//!   test targets only.
+//!
+//! Residents:
 //!
 //! - [`strategies`] — the shared proptest strategies and the deterministic
 //!   [`proptest` config builder](strategies::proptest_config) every
@@ -24,6 +34,10 @@
 //! antseal-core = { workspace = true, features = ["test-util"] }
 //! ```
 //!
+//! A consumer that only needs the WASM-safe subset (the Q5 bit-match
+//! harness) asks for `features = ["test-vectors"]` instead — the only
+//! feature of this crate a *normal* dependency edge may enable.
+//!
 //! **Never** enable `test-util` from a normal dependency edge: it activates
 //! test-only dependencies (proptest) that are neither WASM-safe nor part of
 //! the audited normal dependency graph. proptest itself is re-exported
@@ -32,13 +46,16 @@
 //! their own proptest, so exactly one lockfile-frozen version serves the
 //! whole workspace.
 
+#[cfg(feature = "test-util")]
 pub mod strategies;
+#[cfg(feature = "test-util")]
 pub mod tamper;
 pub mod vectors;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component
 /// crates use this re-export instead of declaring the dependency, so the
 /// version cannot skew between domains.
+#[cfg(feature = "test-util")]
 pub use proptest;
 
 /// The **documented fixed test seed** of the secret-material convention

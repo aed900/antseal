@@ -45,6 +45,12 @@ Live lanes (wave 2 — Q2/Q4/P13):
 | `secret-guard` | Q2 — no vault-export/wallet-key file signatures anywhere in the checkout (PEM private keys, EVM keystore JSON, age/minisign secret keys, the reserved `ANTSEAL VAULT EXPORT` magic); self-tests each run by planting fakes in a temp dir (testdata/README.md, secret-material convention). |
 | `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources` against the committed `deny.toml` (licenses stubbed until Q29). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
 
+Live lanes (wave 4 — P14):
+
+| Lane | What it asserts |
+| --- | --- |
+| `wasm32-core-tests` | P14 — **NEW required context.** `antseal-core`'s `--lib` unit tests **execute** on `wasm32-unknown-unknown` (a libtest binary for that target has zero imports, so `scripts/wasm-test-runner.mjs` runs it under plain `WebAssembly.instantiate` in node; wired as cargo's `runner` in `.cargo/config.toml`). Because the target has no stdio, the runner also asserts an in-memory **execution witness** — "all tests passed" and "zero tests ran" are otherwise indistinguishable. Second step: `scripts/wasm-toolchain-audit.sh` (getrandom recipe per wasm32 graph + wasm-bindgen crate↔CLI pin equality). Doc: [docs/wasm-toolchain.md](docs/wasm-toolchain.md). |
+
 Mount-point lanes (Q1 — placeholder jobs whose content lands with the named
 task; **a green mount-point lane asserts nothing until then**):
 
@@ -107,6 +113,11 @@ The owning task (remaining: Q5/Q7/Q9 — Q4 and P13 claimed theirs):
 - [ ] `cargo build -p antseal-core --target wasm32-unknown-unknown` green —
       antseal-core stays WASM-safe (no I/O, async-runtime, or network
       crates in its normal dependency graph)
+- [ ] `cargo test -p antseal-core --lib --target wasm32-unknown-unknown
+      --locked` green (needs node ≥ 18) and
+      `./scripts/wasm-toolchain-audit.sh` green — antseal-core's unit tests
+      still **run** on the verifier's target and no unconfigured `getrandom`
+      entered a wasm32 graph ([docs/wasm-toolchain.md](docs/wasm-toolchain.md))
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
 - [ ] `cargo deny --locked check advisories bans sources` green with the
