@@ -57,6 +57,8 @@
 //! through `BundleV1::new` — so a failure here is a seam bug, never a
 //! sampling accident.
 
+use antseal_core::bundle::SealProof;
+use antseal_core::content::ggm::depth_for_leaf_count;
 use antseal_core::test_util::bundle_fixtures::{
     FileSelection, Selection, Tweak, build_tweaked, shapes,
 };
@@ -183,6 +185,47 @@ fn find_unique(haystack: &[u8], needle: &[u8]) -> usize {
 /// strides the complement, because ~7900 full verifications is a
 /// two-and-a-half-minute test and the strided half re-derives the same
 /// conclusion in seconds.
+///
+/// # Why the equality is general, and not a property of this one bundle
+/// (R36)
+///
+/// It was corpus-dependent when first written, and knowing *which* corpus
+/// property carried it is the point of this section.
+///
+/// A GGM cover node at the grid's leaf level (`level == d`) covers exactly
+/// one leaf, so the verifier descends zero levels and reads only
+/// `salt_i = payload[..16]`. Bytes 16..32 of that 32-byte disclosure were
+/// therefore a **third** unauthenticated region — 16 bytes per such node,
+/// which the GGM walker never reads. The reason this test passed anyway is
+/// that no fixture produced such a node: by **D83 §1 Fact 2**, a cover of
+/// leaves `[a, b)` of an `n`-leaf file contains a `level == d` node
+///
+/// ```text
+///     iff   d == 0   ∨   a is odd   ∨   (b is odd ∧ b < n)
+/// ```
+///
+/// and every fixture length and split boundary was even. Note what that
+/// rule is *about*: **unit boundaries**, not file parity. The tempting
+/// shorthand "iff `n` is odd" is false — by D83 §1 Fact 1 the whole-file
+/// cover `[0, n)` is the single root node for every `n`, so an unsplit
+/// odd-length file discloses no leaf-level node at all. The rule is
+/// re-derived from `minimal_cover` itself, exhaustively, by
+/// `tests/leaf_level_cover_shapes.rs`, so it cannot rot into a comment.
+///
+/// **D83 resolved as option B**: a `level == d` payload is now
+/// `salt_i ‖ 0x00·16` on the wire, and a non-zero tail is rejected with
+/// `fine-root-leaf-seed-tail-not-zero` at both disclosure sites (the cover
+/// entry, and `full_reveal.s_root` at `n == 1`). The region is authenticated
+/// — not by a MAC, but by being constrained to a single admissible value,
+/// which is the same thing from a mutation's point of view. So the equality
+/// is now true **in general**, for the stated reason, rather than true of
+/// this corpus.
+///
+/// The third block below is what keeps that honest: R37 added fixtures that
+/// *do* carry a leaf-level payload, and every byte of one is swept
+/// exhaustively and required to be rejected. Without it, the corpus
+/// dependence could return silently the next time a shape is retired —
+/// which is exactly how it arose.
 #[test]
 fn the_unauthenticated_region_at_m0_is_exactly_the_storage_record() {
     // `valid-multi-file-mixed`, which has empty anchor sections.
@@ -235,6 +278,60 @@ fn the_unauthenticated_region_at_m0_is_exactly_the_storage_record() {
         checked > 200,
         "the strided half only checked {checked} bytes"
     );
+
+    // R36: the third candidate region, swept exhaustively on a bundle that
+    // actually has one. `valid-multi-file-mixed` has none — every unit
+    // boundary in it is even — so this half must run on a different shape,
+    // and it is located by content exactly as the storage record above is.
+    let leaf_bundle = seed_corpus()
+        .into_iter()
+        .find(|(name, _)| *name == "valid-leaf-level-cover-partial")
+        .map(|(_, bytes)| bytes)
+        .expect("R37's odd-boundary shape is in the seed corpus");
+    let proof = SealProof::decode(&leaf_bundle).expect("a valid seed decodes");
+    let file_size = proof.manifest().body().files()[0].size();
+    let depth = depth_for_leaf_count(file_size).expect("the file has leaves");
+    let entry = proof.bundle().covered_reveals()[0]
+        .cover()
+        .iter()
+        .find(|entry| entry.address().level() == depth)
+        .expect("this shape's cover has a level == d node — see the doc comment's rule");
+    let payload = *entry.seed().as_bytes();
+    assert_eq!(
+        &payload[16..],
+        &[0u8; 16],
+        "the honest disclosure is not in D83's canonical form"
+    );
+
+    let start = find_unique(&leaf_bundle, &payload);
+    for offset in 0..payload.len() {
+        let mut mutated = leaf_bundle.clone();
+        mutated[start + offset] ^= 0xFF;
+        let outcome = drive(&mutated);
+        assert!(
+            matches!(outcome, Outcome::Rejected(_)),
+            "byte {offset} of a level == {depth} GGM payload is unauthenticated. Bytes 0..16 are \
+             `salt_i` and bind through the fine root; bytes 16..32 are inert as key material and \
+             are authenticated only because D83 fixes them at zero. If this fired on an offset \
+             >= 16, D83's rule is not being enforced on some path and the equality above is \
+             false again — fix the check, never this bound."
+        );
+        // Which half rejected it is the load-bearing part, not just that
+        // something did: the tail must fail *as a canonicality violation*.
+        // Asserting only "rejected" would stay green if the tail check were
+        // deleted and the salt half happened to shift the rejection
+        // elsewhere, which is the failure mode D83 was opened to close.
+        let expected = if offset < 16 {
+            "fine-root-binding-failed"
+        } else {
+            "fine-root-leaf-seed-tail-not-zero"
+        };
+        assert_eq!(
+            outcome,
+            Outcome::Rejected(expected),
+            "byte {offset} of the payload rejected with the wrong class"
+        );
+    }
 }
 
 /// The **anchor artifacts** are the other inert region at M0 — and unlike
@@ -281,6 +378,16 @@ fn m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage() {
 /// precisely on one bundle, this sweeps every mutation kind over every
 /// valid shape and requires rejection, skipping only mutations that landed
 /// entirely inside an exempt region or changed nothing.
+///
+/// **The bound stays two-term — `88 + 67` — and that is a D83 result, not
+/// an oversight (R36).** A leaf-level GGM payload's upper 16 bytes were the
+/// candidate third term; D83 resolved as option B, fixing them at zero and
+/// checking them, so they are not inert and contribute nothing here. The
+/// corpus this now quantifies over *contains* such payloads (R37's
+/// odd-boundary and `n == 1` shapes, added to `seed_corpus` by G24), so the
+/// bound holding is evidence rather than an absence of evidence. If a
+/// future decision ever accepted such a malleability, this is where its
+/// third term belongs.
 #[test]
 fn byte_changing_mutations_outside_the_inert_regions_are_rejected() {
     let corpus = corpus();
