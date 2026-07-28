@@ -156,11 +156,138 @@
 - Size: S
 - Deps: Q5, Q6, Q8, Q11, Q12, Q13; P: encoder-crate pin + `ant-core` pin re-verified at M0 start (P9/P10); C: HKDF-distinctness golden test + WASM probe verdict (C3/C11); F: Definitions-section registries frozen (F4); G: pinned Unicode/NFC version recorded (G1)
 - Spec: Revision note (line 5); Security assumptions (line 99); Milestones M0 (line 153)
-- Do: Write and execute the freeze checklist: Definitions section frozen (CBOR profile + pinned encoder, domain-tag registry, id encodings, length-prefixed HKDF info, pinned Unicode version, signature context string); all M0 golden vectors committed and frozen (Q6) including the must-exist list; independent cross-check clean (Q11); tamper M0 registry fully implemented (Q8); HKDF-distinctness golden test green; WASM bit-match green (Q5); WASM probe decision recorded; Security-assumptions sign-off recorded (Q12); traceability M0 rows filled (Q13). Freeze is an annotated `format-v1-freeze` tag plus CHANGELOG entry.
+- Do: Write and execute the freeze checklist: Definitions section frozen (CBOR profile + pinned encoder, domain-tag registry, id encodings, length-prefixed HKDF info, pinned Unicode version, signature context string); all M0 golden vectors committed and frozen (Q6) including the must-exist list; independent cross-check clean (Q11); tamper M0 registry fully implemented (Q8); HKDF-distinctness golden test green; WASM bit-match green (Q5); WASM probe decision recorded; Security-assumptions sign-off recorded (Q12); traceability M0 rows filled (Q13). **Plus every row in the `#### Q14 freeze checklist — normative rows` block immediately below this entry** (landed by Q37): the D84 freeze boundary, the three coupled report-version constants, the D86 decode-layer closure, the D88 zeroization disposition, the D75-contingent-on-D83 row, and the D31 cross-check row. Freeze is an annotated `format-v1-freeze` tag plus CHANGELOG entry.
 - Accept:
   - Checklist committed; every item objectively green before the tag exists
   - Tag + CHANGELOG entry present; sign-off names/dates recorded
   - Any post-tag change to frozen material requires a format-version bump per Q27 policy
+  - Every row in the normative-rows block below is ticked, **including the ones that record something as closed** — a row that says "known-and-accepted, not open" is ticked by verifying the evidence it names, not by agreeing with it
+  - `scripts/check-traceability.py --freeze-boundary` green (the D84 rows here and in `docs/format/anchor-artifact-limits.md` §2 have not drifted)
+
+#### Q14 freeze checklist — normative rows
+
+> Landed by **Q37** (2026-07-28, M0 wave 6). These are the rows the gate
+> quotes; Q14's `Do` above is the procedure that executes them. Rows marked
+> *verbatim* are byte-identical copies of a decision record's own wording and
+> must not be paraphrased — a paraphrase is how the two drift.
+
+**Freeze boundary (D84 §7, verbatim).** Mirrored byte-identically in
+`docs/format/anchor-artifact-limits.md` §2, which is what A5 and A11 read.
+The two copies are drift-checked by
+`scripts/check-traceability.py --freeze-boundary`.
+
+<!-- FREEZE-BOUNDARY:BEGIN — D84 §7 verbatim. Byte-identical copies live in `docs/format/anchor-artifact-limits.md` §2 (A27) and here; `scripts/check-traceability.py --freeze-boundary` fails if they drift. Edit D84 first, then both copies. -->
+
+- [ ] **Anchor-artifact freeze scope (D84).** Inside the v1 freeze: the
+  anchor **envelope** — that an `.ots`, a TSA token, an intermediate
+  certificate and a receipt payload are opaque CBOR `bstr`s in their
+  registered keys (`docs/format/registry-v1.md` §7.8, §7.9); D10's byte and
+  count caps over those fields — rows 6, 7, 8, 9, 16, 17, 18, 19:
+  `MAX_OTS_ANCHOR_COUNT`, `MAX_TSA_ANCHOR_COUNT`, `MAX_INTERMEDIATE_COUNT`,
+  `MAX_TX_HASH_COUNT`, `MAX_OTS_BYTES`, `MAX_TSA_TOKEN_BYTES`,
+  `MAX_CERT_BYTES`, `MAX_RECEIPT_PAYLOAD_BYTES` — with their error codes;
+  and rules **F1–F4** of D84 §4 (limits are
+  evaluated only in the anchor stage; an over-limit artifact fails that
+  anchor alone as `invalid`; limits may afterwards be raised, never
+  lowered). **Outside the v1 freeze:** every numeric limit on the
+  *internal* structure of those artifacts — DER nesting depth, certificate
+  count and size within a validated chain, signed-attribute count, `.ots`
+  op count, operand length, branch depth/width, attestation count. Those
+  are verifier policy over foreign formats, are set at M2 against A25's
+  recorded real artifacts (MVP-SPEC.md lines 153 and 155 place them there),
+  and are **not** an exception to line 123 — under F1–F3 no released
+  verifier ever rendered a verdict that depends on them, because M0/M1
+  render every anchor `absent` (R12 replaces that stub at M2).
+- [ ] **Report-version evolution is not blocked by this freeze.** The Q14
+  freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
+  D29 records that adding fields after the freeze requires a version bump,
+  not that no bump may occur. M2's anchor stage will populate anchor states
+  that report v1 does not carry and will therefore ship report **v2**; that
+  is ordinary versioned evolution under line 123, whose promise is that v1
+  reports remain verifiable, not that v1 is the last version.
+
+<!-- FREEZE-BOUNDARY:END -->
+
+**Coupled version constants — the row that makes a bump impossible to
+half-land.**
+
+- [ ] **Report-format version constants: all three, in one edit (R32, D29 §8,
+  D87).** `REPORT_VERSION == 1` is not the whole bump. **Three** constants are
+  coupled and only **one** of the two couplings is machine-checked:
+  1. `antseal_core::verify::report::REPORT_VERSION`
+     (`crates/antseal-core/src/verify/report.rs`) — the first key of every
+     serialized report;
+  2. `wasm_bitmatch::TRANSCRIPT_VERSION`
+     (`crates/wasm-bitmatch/src/lib.rs`), whose own doc comment declares the
+     coupling — *"`0` while D29 is a recommendation; Q14 freezes the report
+     byte format and this becomes `1`"*;
+  3. `EXPECTED_TRANSCRIPT_VERSION` (`scripts/wasm-bitmatch.mjs`), the node
+     comparator's copy of (2).
+
+  **(2) ↔ (3) is enforced at runtime** — `scripts/wasm-bitmatch.mjs` compares
+  them and fails the lane ("update `EXPECTED_TRANSCRIPT_VERSION` together with
+  `wasm_bitmatch::TRANSCRIPT_VERSION`"). **(1) → (2) is enforced by nothing at
+  all**: no compiler, no test, and no lane couples the report version to the
+  transcript version. R32's own entry names only (1), so following R32 to the
+  letter leaves the transcript declaring version `0` for a frozen v1 report
+  format. The gate therefore confirms **by `grep`, not by memory**: all three
+  read `1`; every case in `testdata/vectors/v1/report/verification-reports.json`
+  pins bytes beginning `{"report_version":1`; `scripts/vector-freeze.sh --update`
+  has been re-run and `FROZEN.sha256` matches; and the `wasm-bitmatch` lane is
+  green *after* the bump, not only before it. **Q40** replaces this row's first
+  clause with a machine check; until Q40 lands, this row is the only guard.
+
+**Report-format scope — what the freeze does and does not close.**
+
+- [ ] **The decode layer is never a report field (D86, permanent).** `layer` is
+  reserved forever in the report's namespace for the **evidence layer** and the
+  **storage-linkage layer** (MVP-SPEC.md lines 118–119). The *decode* layer of
+  registry §7.6.3 is **failure context only**: `VerificationReport` exists only
+  for a bundle that passed (D27 §4), so a decode layer can never have a report
+  to appear in. This is not "not yet" — it is closed for v1 and every future
+  report version. If U30's `--json` **failure** envelope carries it (D65's call,
+  M3), the field is named `decode_layer` and lives outside `VerificationReport`.
+  The gate records this as **decided, not open**, so no later reader
+  re-litigates it as a gap.
+
+**Known-and-closed dispositions (so the gate does not read silence as an open
+question).**
+
+- [ ] **Zeroization dispositions closed (C21/C22/D88).** `Cargo.toml` shows
+  `sha2 = { version = "=0.11.0", default-features = false, features =
+  ["zeroize"] }`; `crates/antseal-core/tests/zeroization_residue.rs` green
+  on native; `docs/zeroization-audit.md` R1 carries the dated D88
+  disposition and its narrowed residue; R2–R5 carry dated accepted
+  dispositions. **Known-and-accepted, not open.**
+
+
+- [ ] **Full-reveal cover shape (D75) — closed *contingent on D83.*** D75 is
+  RESOLVED and ratified: a full reveal ships per-unit covers **and** `s_root`
+  (`covered_reveal.cover`, registry §7.11 key 3, stays required at tier [P]).
+  **This row may not be ticked while D83 is open.** D75's discharged open
+  action carries an exception whose subject is exactly D83's inert leaf-level
+  seed tails: the two routes to `fine_root` agree transitively on every byte
+  any check reads, and the bytes they may disagree on are the ones D83 governs.
+  If D83 shortens or canonicalizes the tail, D75's original discharge becomes
+  true as written and the exception is deleted; if D83 accepts the malleability,
+  the exception becomes permanent and D75 carries it for good. Either way the
+  amendment is written **after** D83, not before. Tick this row only once D83 is
+  RESOLVED and D75's amendment records which branch was taken. Related: **R36**
+  (no committed fixture currently produces a leaf-level cover node — every
+  fixture length is even, so `n` is never odd) and **R37**.
+
+**Independent cross-check (D31 §10, verbatim).**
+
+- [ ] **Independent cross-check clean (Q11/F14/D31).** `docs/testing/
+  cross-check.md` carries a dated report for this freeze commit with
+  **zero discrepancies**, naming per surface the vehicle, its exact version,
+  the vector count and the evidence tier (T0 external oracle / T1
+  independent re-implementation / T2 same-ecosystem agreement). Every
+  surface in D31 §2 rows 1–13 is present at T0 or T1. **Row 14
+  (`ml-dsa`↔`fips204`) is T2 and does not count toward this row** — it is
+  D14's fallback-equivalence evidence. The `cross-check` CI lane is green
+  and unconditional, and `scripts/cross-check.sh` iterates every retained
+  format version rather than a hard-coded `v1`.
 
 ### Q15 — Decide and implement the devnet E2E execution strategy
 - Milestone: M1
@@ -293,10 +420,12 @@
 - Size: S
 - Deps: Q6, Q14; G: Unicode-table retention mechanism (G1); R: page multi-version support (R28)
 - Spec: Format stability (line 123); Canonicalization Unicode versioning (line 83); Milestones M4 (line 157)
-- Do: State the normative policy: every released manifest/bundle format version remains verifiable by all future CLI and page releases; per-version golden vectors are retained in CI indefinitely (Q6 mechanism); the hosted page supports all released versions; NFC normalization tables are retained per descriptor-recorded Unicode version so aging bundles never false-positive as tampered; evolution prefers reserved slots over breaking changes; define what forces a format-version bump and the freeze procedure for a new version (mirroring Q14).
+- Do: State the normative policy: every released manifest/bundle format version remains verifiable by all future CLI and page releases; per-version golden vectors are retained in CI indefinitely (Q6 mechanism); the hosted page supports all released versions; NFC normalization tables are retained per descriptor-recorded Unicode version so aging bundles never false-positive as tampered; evolution prefers reserved slots over breaking changes; define what forces a format-version bump and the freeze procedure for a new version (mirroring Q14). **Carry the v1 freeze boundary forward (Q37/D84 §7)**: reproduce the boundary statement so it survives past M0 — inside the freeze, the anchor **envelope** (opaque `bstr`s in their registered keys) and D10's byte/count caps over it, plus rules **F1–F4** of `docs/format/anchor-artifact-limits.md`; outside it, every numeric limit on the *internal* structure of a foreign artifact (`.ots` ops, DER nesting, chain certificate count/size, signed attributes). State plainly that artifact-internal limits are **verifier policy over foreign formats and are NOT an exception to MVP-SPEC.md line 123** — under F1–F3 no released verifier ever rendered a verdict that depends on them. **This document is the third copy of that rule; extend `scripts/check-traceability.py --freeze-boundary` to cover it in the same commit — no separate task, because a copy added without its lint is the drift this row exists to prevent.**
 - Accept:
   - Policy doc committed, citing the Q6 retention guard and R's multi-version support as enforcement
   - Unicode-version retention and reserved-slot preference stated; version-bump criteria defined
+  - The freeze-boundary statement is present, names artifact-internal limits as verifier policy over foreign formats rather than an exception to line 123, and is byte-identical to Q14's block and A27's §2 — asserted by the drift lint, not by review
+- Notes: **This task, not Q19, is the format-stability policy.** D84's F4, D84 §Consequences item 3, and Q37's original entry all cited "Q19"; Q19 is the M3 playwright lane. Corrected 2026-07-28 — see Q37's Correction note.
 
 ### Q28 — Audit all copy for positioning and canonical-URL consistency
 - Milestone: M4
@@ -400,15 +529,16 @@
 ### Q37 — Record the v1 freeze boundary in the Q14 checklist and the stability policy
 - Milestone: M0
 - Size: S
-- Deps: D84; Q14 (this is a checklist edit Q14 executes); Q19 (the stability policy it also lands in); A27 (the mirror A5/A11 read)
+- Deps: D84; Q14 (this is a checklist edit Q14 executes); **Q27** (the stability policy it also lands in — **not Q19**, see Notes); A27 (the mirror A5/A11 read)
 - Spec: Format stability (MVP-SPEC.md line 123); Milestones M0/M2 (lines 153, 155)
 - Discovered by: **D84** (2026-07-28). The freeze gate currently has no statement of what is *outside* the freeze. Without one, a later reader has two equally available misreadings: that A's M2 artifact limits were frozen and may never move, or that anything not listed is free — including the anchor envelope, which is frozen. D84 §7 writes the boundary in both directions; this task lands it where the gate can quote it.
-- Do: Add D84 §7's two rows verbatim to Q14's freeze checklist — the anchor-artifact freeze-scope row (what is inside: the opaque-`bstr` envelope, D10 rows 6–9 and 16–19 with their codes, rules F1–F4; what is outside: every numeric limit on artifact-internal structure) and the report-version-evolution row (the Q14 freeze fixes report **v1**; M2's anchor stage ships report v2, which is ordinary versioned evolution under line 123, not a freeze violation). Carry the same freeze-boundary statement into Q19's format-stability policy so it survives past M0, and cross-reference A27's contract.
+- Do: Add D84 §7's two rows verbatim to Q14's freeze checklist — the anchor-artifact freeze-scope row (what is inside: the opaque-`bstr` envelope, D10 rows 6–9 and 16–19 with their codes, rules F1–F4; what is outside: every numeric limit on artifact-internal structure) and the report-version-evolution row (the Q14 freeze fixes report **v1**; M2's anchor stage ships report v2, which is ordinary versioned evolution under line 123, not a freeze violation). Carry the same freeze-boundary statement into **Q27's** format-stability policy so it survives past M0, and cross-reference A27's contract. **Also fold into the same checklist block the rows that have no other home**: the three coupled report-version constants (D87 §6 — R32 names only one of three), the D86 decode-layer closure, the D88 zeroization disposition, the D75 row that is contingent on D83, and the D31 §10 cross-check row.
 - Accept:
   - Both rows present in Q14's checklist, byte-identical to D84 §7 and to A27's mirror.
-  - Q19's policy text states the boundary and names artifact-internal limits as verifier policy over foreign formats, **not** as an exception to line 123.
-  - A test or checklist-lint asserts the three copies (Q14 row, A27 doc, Q19 policy) have not drifted — three hand-maintained copies of one rule is how the rule dies.
-- Notes: The second row exists because R32's `REPORT_VERSION` 0 → 1 bump lands in the same wave, which makes "the report format is frozen" an easy and wrong thing to conclude.
+  - **Q27's** policy text states the boundary and names artifact-internal limits as verifier policy over foreign formats, **not** as an exception to line 123.
+  - A test or checklist-lint asserts the copies of the boundary rule have not drifted — hand-maintained copies of one rule is how the rule dies. **Two copies exist at M0** (Q14's block, A27's doc), checked by `scripts/check-traceability.py --freeze-boundary`; the third (Q27's policy) appears at M4, and extending the lint to it is written into Q27's own `Do`/`Accept` rather than deferred to a task of its own.
+- Notes: The report-version-evolution row exists because R32's `REPORT_VERSION` 0 → 1 bump lands in the same wave, which makes "the report format is frozen" an easy and wrong thing to conclude.
+- **Correction, 2026-07-28 (Q37 execution)**: D84's F4, D84 §Consequences item 3, and this entry as originally written all cited **"Q19"** for the format-stability policy. **Q19 is the headless-browser (playwright) page-verification CI lane, an M3 task.** The format-stability policy doc is **Q27**, and the freeze procedure it mirrors is **Q14**. All three citations are the same slip; it is corrected in this entry and in Q27, and recorded — with D84's F4 text left byte-identical to the record — as an editorial note in `docs/format/anchor-artifact-limits.md` §1.
 
 ### Q38 — Cross-check the verification-report byte format against an independent reader
 - Milestone: M0
@@ -422,6 +552,19 @@
   - Self-test: a deliberately mutated copy (a float introduced; a key reordered; an uppercase hex digit) makes the checker fail, once for each property — a checker never observed failing proves nothing.
   - Iterates `testdata/vectors/v*/report/`, not a hard-coded `v1`.
 - Notes: Tier is **T1 with no T0 anchor** and the report must say so — the contract is ours, so there is nothing external to check it against. That is the honest ceiling here, not a shortfall.
+
+### Q40 — Machine-check the three coupled report-format version constants
+- Milestone: M0
+- Size: S
+- Deps: R32 (the bump this guards); Q5 (the bit-match lane the constants live in); D87 §6 (the routing that found it)
+- Spec: Format stability (MVP-SPEC.md line 123); Verification (line 167); Milestones M0 (line 153)
+- Discovered by: **Q37** (2026-07-28), executing D87 §6's routing. Three constants must move together at the report-format freeze — `antseal_core::verify::report::REPORT_VERSION`, `wasm_bitmatch::TRANSCRIPT_VERSION`, and `EXPECTED_TRANSCRIPT_VERSION` in `scripts/wasm-bitmatch.mjs`. **Exactly one of the two couplings is enforced.** The `.mjs` comparator checks itself against `TRANSCRIPT_VERSION` at runtime and fails the lane on a mismatch — that pair is safe. Nothing whatsoever couples `REPORT_VERSION` to `TRANSCRIPT_VERSION`: not the compiler, not a test, not a lane. `TRANSCRIPT_VERSION`'s own doc comment promises it becomes `1` when Q14 freezes the report byte format, and that promise is enforced by nobody. R32's entry names only `REPORT_VERSION`, so following R32 exactly leaves the transcript declaring version `0` over a frozen v1 report format — the same shape of Q14 trap R32 exists to close, reproduced one file over.
+- Do: Add a test in `crates/wasm-bitmatch` asserting `wasm_bitmatch::TRANSCRIPT_VERSION == antseal_core::verify::report::REPORT_VERSION`, with a comment stating *why* they are one number rather than two (the transcript serializes under D29's rules, so the transcript's format version and the report's format version freeze together). That single assertion closes the unenforced half; the `.mjs` runtime check already closes the other, so the chain becomes complete. If a future version ever needs the two to diverge, the test is the place that must be deliberately edited — which is the point.
+- Accept:
+  - The test exists and is green at the current values, and goes red when either constant is changed alone (test-of-the-test: flip one, watch it fail, restore).
+  - Q14's coupled-version-constants row cites this test instead of instructing a `grep`.
+  - `crates/wasm-bitmatch` still builds for `wasm32-unknown-unknown`; the assertion is a native test, not a `const` assertion in the wasm path.
+- Notes: Deliberately a test and not a `const _: () = assert!(...)`: the wasm-bitmatch crate is compiled for wasm32 in the lane, and a const assertion there would couple a build failure to a documentation-shaped invariant. A red test names the problem; a failed const evaluation does not.
 
 ## Open decisions (Q)
 - Independent cross-check vehicles and permanence — which second implementations per surface (Python `cbor2` for CBOR; Python crypto stack for HKDF/commitments/GGM; whether ml-dsa↔fips204 cross-crate + ACVP KATs counts as "independent" for ML-DSA), and one-shot audit artifact vs permanent CI lane (proposal: both). Blocks Q11, Q14. Must land by M0. — **[2026-07-28]** RESOLVED (D31): one vehicle per surface, graded **T0 external oracle / T1 independent re-implementation / T2 same-ecosystem agreement**. CBOR keeps D12's `cbor2 ==6.1.3` for **decode only** — our own RFC 8949 §4.2.1 encoder is the encoding authority, which retires D7 §D12's length-first ordering caveat instead of documenting it. Crypto/GGM/padding/canonicalization reuse the Python references C16/G15/G3 already landed, each now **required to carry a T0 known-answer anchor** (RFC 5869 App. A, RFC 8032 §7.1, Unicode `NormalizationTest.txt` + a `unidata_version == '17.0.0'` assertion). **ML-DSA-65: NIST ACVP replayed against `ml-dsa =0.1.1` — T0, the strongest tier, and the answer to this entry's own question is that `ml-dsa`↔`fips204` is T2 and is NOT independence** (it is D14's fallback-equivalence check, retained and labelled as such). Permanence: **both**, and the two are not redundant — the dated one-shot report is the evidence *for* the freeze, the permanent unconditional `cross-check` lane is the guard *after* it. Buildable breakdown for Q11/F14 in D31 §9; Q14's verbatim row in §10. Found a gap: the report byte format has no cross-check at all → **Q38**.

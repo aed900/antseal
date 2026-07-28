@@ -342,6 +342,19 @@
   - A compile-time or test-time assertion pins `receive_cap <= MAX_*_BYTES` for both, so a later loosening of one cannot silently outrun the other.
 - Notes: The receive-side caps are **not** format surface (D84 §3) — they are network-path policy and may change freely, subject only to the `≤` constraint.
 
+### A29 — Carry F2/F3 into R12's Accept criteria (the edit D84 flagged but could not make)
+- Milestone: M2 (the edit to `tasks/R.md` may be made as soon as that file is free)
+- Size: S
+- Deps: A27 (the contract); R12 (the anchor stage that replaces the M0 `absent` stub); A5/A11 (the fixtures that make the case testable)
+- Spec: Format stability (MVP-SPEC.md line 123); Verifier web page — verdict taxonomy (lines 127–137); Milestones M2 (line 155)
+- Discovered by: **D84** §Consequences item 6 (2026-07-28), which states the requirement and then says plainly *"Flagged, not edited — `tasks/R.md` is another planner's this wave."* A requirement that lives only in a decision record's consequences list is a requirement the implementing task never sees; **F19 → F14 is the precedent that this needs a task with an owner**, and A owns the contract even though the edit lands in R's file.
+- Do: Add to R12's Accept criteria the **F2/F3 blast-radius case**: an anchor artifact that exceeds one of A5's or A11's artifact-internal limits renders **`invalid`** for **that anchor alone** — the bundle still decodes, the manifest verdict is unchanged, the evidence layer is unchanged, and every other anchor renders exactly as it would have. Add the **F1** counterpart too: no artifact-internal limit is reachable from `SealProof::decode`, demonstrated rather than asserted. Cross-reference `docs/format/anchor-artifact-limits.md` from R12 so the anchor stage is implemented against the contract instead of against memory of it.
+- Accept:
+  - R12's entry names the F2/F3 case and the F1 non-reachability property, and cites the contract doc.
+  - The case is implementable from A5/A11 fixtures alone (no new fixture family invented for it).
+  - The edit is a `tasks/R.md` change only — no code, no format surface, no constants.
+- Notes: This exists because the wave-6 file-ownership split made a cross-domain edit impossible in the wave that discovered it. If `tasks/R.md` is free when this is picked up, it is a five-minute task; the risk it guards against is that it is never picked up at all.
+
 ## Open decisions (A)
 - **A-OD1 — State for a chain invalid at genTime** (expired-at-genTime): map to `invalid` (with a distinct error detail) or `internally-consistent-only`? Recommendation: `invalid`, keeping `internally-consistent-only` for structurally-untrusted-root closure; the tamper matrix only mandates distinctness from `valid-at-stamping-cert-since-expired`. Blocks: A9, A18, A21. Must land: early M2.
 - **A-OD2 — Default OTS calendar set** (≥2; candidates alice.btc.calendar.opentimestamps.org, bob.btc.calendar.opentimestamps.org, finney.calendar.eternitywall.com), with execution-time liveness verification. Blocks: A13, A25. Must land: M2.
