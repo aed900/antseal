@@ -25,6 +25,14 @@
 //!
 //! # The rendering (the whole contract — F14 implements exactly this)
 //!
+//! Normative statement of the whole cross-check contract — where the sidecar
+//! lives, this table, the four checks, and what F14 must confirm rather than
+//! assume — is `docs/testing/cbor-cross-check.md` (F19); the same table is
+//! restated in `testdata/vectors/README.md` § "The diagnostic sidecar", and
+//! implemented a second time in `scripts/cbor_crosscheck.py`. The four are
+//! held together by `crates/antseal-core/tests/cbor_crosscheck_contract.rs`,
+//! so editing one and forgetting the rest goes red.
+//!
 //! | CBOR item | JSON |
 //! | --- | --- |
 //! | unsigned integer (major 0) | a JSON number, non-negative |

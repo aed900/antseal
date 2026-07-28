@@ -161,6 +161,20 @@ inner layer is rendered separately under its own name (`envelope`, `body`,
 `manifest`, …). The layer boundary stays explicit because that boundary *is*
 F6/F9's three-layer strict decode.
 
+A case commits exactly **one** byte string — the outermost layer
+(`manifest_bytes` / `bundle_bytes`). There is deliberately **no**
+`body_bytes` field, so an inner layer's bytes must be read out of the
+enclosing item; `work_id`'s pre-image comes out of the envelope's key-0 byte
+string, which is what demonstrates that `work_id` hashes the *embedded*
+bytes and never a re-encoding.
+
+**The full F14 contract — sidecar location, the rendering table, the four
+checks, and the two things to confirm rather than assume — is
+`docs/testing/cbor-cross-check.md` (F19).** The table above, that document,
+and `test_util::vectors_cbor_diag` are three statements of one rule; a drift
+test (`crates/antseal-core/tests/cbor_crosscheck_contract.rs`) keeps them
+pointing at each other.
+
 | `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no
