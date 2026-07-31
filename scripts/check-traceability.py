@@ -647,13 +647,45 @@ def self_test() -> int:
             ignore=shutil.ignore_patterns(".git", "target", "node_modules"),
         )
 
+        # Q66 — the gate-state fixtures derive their mutation from whatever
+        # state the row is in, never from a hardcoded `- [ ]` literal. The
+        # first fixtures wrote the literals out, so the moment Q14's execution
+        # ticked the normative rows all three mutations matched nothing and
+        # this self-test failed vacuous — red from the gate commit onward,
+        # invisible until the lane first ran locally (`local-gate.sh` gained
+        # the lane in the same commit as this fix).
+        def strip_marker(row: str):
+            """Delete the checkbox marker ahead of `row`, whatever its state."""
+            pattern = re.compile(r"- \[[ xX]\] (\*\*" + re.escape(row) + ")")
+            return lambda t: pattern.sub(r"- \1", t, count=1)
+
+        def flip_tick(row: str):
+            """Tick an unticked `row`, untick a ticked one — always a real change."""
+            pattern = re.compile(r"- \[([ xX])\] (\*\*" + re.escape(row) + ")")
+            return lambda t: pattern.sub(
+                lambda m: ("- [x] " if m.group(1) == " " else "- [ ] ") + m.group(2),
+                t,
+                count=1,
+            )
+
+        def retick_upper(row: str):
+            """Rewrite `row`'s marker to the uppercase `[X]` form (to `[ ]` if
+            already uppercase) — the case-insensitivity bound."""
+            pattern = re.compile(r"- \[([ xX])\] (\*\*" + re.escape(row) + ")")
+            return lambda t: pattern.sub(
+                lambda m: ("- [ ] " if m.group(1) == "X" else "- [X] ") + m.group(2),
+                t,
+                count=1,
+            )
+
         # (check, file, mutation, expect) where expect is "red" or "green".
         #
-        # The two "green" cases are Q49's: a ticked checkbox is gate state and
-        # must be tolerated. They are not decoration — without them the
-        # normalisation could widen to "compare nothing" and no case would
-        # notice. The "red" cases bound it from the other side: change a word,
-        # or delete the marker instead of ticking it, and the check still bites.
+        # The two "green" cases are Q49's: a checkbox marker is gate state and
+        # must be tolerated in either direction and either case. They are not
+        # decoration — without them the normalisation could widen to "compare
+        # nothing" and no case would notice. The "red" cases bound it from the
+        # other side: change a word, or delete the marker instead of ticking
+        # it, and the check still bites.
         cases = [
             (
                 "freeze-boundary",
@@ -668,19 +700,19 @@ def self_test() -> int:
             (
                 "freeze-boundary",
                 "tasks/Q.md",
-                lambda t: t.replace("- [ ] **Anchor-artifact freeze scope", "- **Anchor-artifact freeze scope", 1),
+                strip_marker("Anchor-artifact freeze scope"),
                 "red",
             ),
             (
                 "freeze-boundary",
                 "tasks/Q.md",
-                lambda t: t.replace("- [ ] **Anchor-artifact freeze scope", "- [x] **Anchor-artifact freeze scope", 1),
+                flip_tick("Anchor-artifact freeze scope"),
                 "green",
             ),
             (
                 "freeze-boundary",
                 "tasks/Q.md",
-                lambda t: t.replace("- [ ] **Report-version evolution", "- [X] **Report-version evolution", 1),
+                retick_upper("Report-version evolution"),
                 "green",
             ),
             (

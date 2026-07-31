@@ -45,6 +45,13 @@ run format-freeze scripts/format-freeze.sh
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
 
+# Q66 — the traceability lane, which until 2026-07-31 was the one required
+# context this gate did not run. Its self-test fixtures rotted the moment Q14
+# ticked the gate rows, and the red sat invisible for want of exactly this
+# line: a lane that never runs locally is not evidence either (Q43's rule,
+# in its local dual).
+run traceability scripts/ci-lanes.sh traceability
+
 # F14 — the independent cross-check (decision D31; contract:
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
 # it shares no code with the crate it checks.
