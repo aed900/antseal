@@ -859,6 +859,7 @@ pub const FIXTURE_SLICES: &[&[FormatFixture]] = &[
     FIXTURES,
     super::tamper_rows_caps::FIXTURES,
     super::tamper_rows_cbor::FIXTURES,
+    super::tamper_rows_mirror::FIXTURES,
 ];
 
 /// Every format-level fixture, across every slice, in emit order.

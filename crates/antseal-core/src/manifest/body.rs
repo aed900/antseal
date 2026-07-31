@@ -664,10 +664,11 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    /// Assemble a file entry, checking the three rules this level owns:
+    /// Assemble a file entry, checking the four rules this level owns:
     /// the unit table is non-empty, it contains at least one `kind = normal`
-    /// unit, and every unit's coverage mode agrees with the file's fine-tree
-    /// state and the unit's own kind.
+    /// unit, it contains at most one `kind = raw-mirror` unit, and every
+    /// unit's coverage mode agrees with the file's fine-tree state and the
+    /// unit's own kind.
     ///
     /// # Errors
     ///
@@ -684,6 +685,14 @@ impl FileEntry {
     ///   canonical, and G5 emits the `[0,0)` Normal unit alongside the mirror
     ///   even in the degenerate BOM-only case — so the rule costs nothing and
     ///   makes the shape unrepresentable in any decoded manifest.
+    /// - [`ManifestError::MultipleRawMirrors`] — more than one raw-mirror
+    ///   unit (**D23 clause 3**, enforced here by **F40**). Rows 9–10 of the
+    ///   verification order open exactly one mirror against `raw_commit` and
+    ///   the canonicalization recompute, and tiling exempts mirrors by kind,
+    ///   so a second mirror would ride along bound by nothing but its own
+    ///   sealer-chosen `unit_commit` — a second, contradictory "original"
+    ///   inside a clean-verifying bundle, the exact shape line 121's MUST
+    ///   exists to prevent.
     /// - [`ManifestError::UnexpectedField`] — a fine-tree-covered unit
     ///   carries a `unit_commit` (spec line 94: covered content is bound
     ///   *solely* by `fine_root`, so a second commitment would let a
@@ -714,6 +723,42 @@ impl FileEntry {
         if !units.iter().any(|unit| unit.kind() == UnitKind::Normal) {
             return Err(ManifestError::EmptyContainer {
                 field: ContainerField::NormalUnits,
+            });
+        }
+        // D23 clause 3 (F40). At most one raw mirror per file: mirror
+        // existence is the per-file predicate `raw_bytes ≠ canonical_bytes`,
+        // and a predicate has one witness. Only that witness is bound by the
+        // raw-mirror↔canonical MUST (spec line 121, verification rows 9–10),
+        // and tiling exempts mirrors by kind (R3, deliberate) — so a second
+        // mirror would be constrained by nothing but its own sealer-chosen
+        // `unit_commit`: a second, contradictory "original", signed and
+        // anchored inside a clean-verifying bundle.
+        //
+        // The position is frozen and observable in both directions, like
+        // D77's above. It must come **after** the D77 normal-units check, so
+        // an input violating both rules at once (a mirror-only table with two
+        // mirrors) keeps reporting `manifest-empty-normal-units` — inputs F5
+        // already rejected keep their code, and this rule claims only inputs
+        // F5 previously *accepted* plus two-mirror shapes the coverage loop
+        // below would have mis-attributed (the D82 discipline for adding a
+        // check to a frozen order). And it must come **before** the coverage
+        // loop, for D77's own recorded reason: multiplicity is a whole-table
+        // shape fault decided on `kind` alone, and the shape error must win
+        // over whichever per-unit `unit_commit` error a malformed second
+        // mirror happens to trip first. The attack shape this rule exists for
+        // — both mirrors carrying the `unit_commit` a non-covered unit must
+        // carry — is coverage-consistent, so the loop can never be the layer
+        // that catches it; no committed vector, fixture, or row pins a
+        // two-mirror input (every generator produced 0 or 1 mirrors — the
+        // 2026-07-31 review's finding), so winning over the loop re-labels
+        // no pinned outcome.
+        let mirrors = units
+            .iter()
+            .filter(|unit| unit.kind() == UnitKind::RawMirror)
+            .count();
+        if mirrors > 1 {
+            return Err(ManifestError::MultipleRawMirrors {
+                count: mirrors as u64,
             });
         }
         for unit in &units {
@@ -787,8 +832,10 @@ impl FileEntry {
     /// file's **last** unit as a seal-side construction rule, but the
     /// verifier must stay correct against hand-built manifests that
     /// ignore it (`docs/decisions/D23-raw-mirror-placement.md`,
-    /// Consequences). At most one mirror exists per file (the mirror
-    /// predicate is per-file), so the first match is the mirror.
+    /// Consequences). At most one mirror exists per file — not an
+    /// assumption but a [`Self::new`] invariant (D23 clause 3, enforced
+    /// since **F40**; `manifest-multiple-raw-mirrors`), and every decoded
+    /// entry funnels through `new` — so `find` is total, not first-wins.
     #[must_use]
     pub fn raw_mirror(&self) -> Option<&UnitEntry> {
         self.units.iter().find(|u| u.kind() == UnitKind::RawMirror)

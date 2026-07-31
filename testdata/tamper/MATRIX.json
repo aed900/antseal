@@ -810,6 +810,11 @@
       "row_id": "cbor-malformed",
       "owner": "F",
       "why": "As `cbor-tag`: an unrowed, unowned `cbor-` code. Kept as a row rather than a representative-only candidate because a head byte no canonical item can start with is the commonest hostile-input shape after truncation (spec line 187) and the fixture costs one byte. The fixture replaces `touched_files[0].file_id` with a reserved additional-info-28 head — at layer 1 rather than in the body, because F14's cross-check descends into embedded layers only where `cbor2` can load them, and a body carrying a reserved head byte does not load, so the sweep could not confirm it."
+    },
+    {
+      "row_id": "manifest-multiple-raw-mirrors",
+      "owner": "F",
+      "why": "D23 clause 3 decides `at most one raw mirror per file`, and the 2026-07-31 adversarial review (findings 1-3, high) found NO layer implemented it: a file with units {Normal, RawMirror, RawMirror} decoded and verified clean, with only one mirror bound by the raw-mirror<->canonical MUST (MVP-SPEC.md line 121, rows 9-10) and the second — tiling-exempt by kind per R3's deliberate exemption — riding along signed and anchored, bound by nothing but its own sealer-chosen unit_commit: a second, contradictory `original` inside a clean-verifying bundle. F40 landed the count rule in FileEntry::new and minted `manifest-multiple-raw-mirrors` (routine append, D30 section 3). Not named at line 168 — the enumeration predates the review. The fixture keeps every OTHER rule satisfied on purpose (D77's Normal present, ordinals sequential, both mirrors carrying their mandatory unit_commit, canonical CBOR at every layer), so the row pins the count rule and nothing else."
     }
   ],
   "non_rows": [

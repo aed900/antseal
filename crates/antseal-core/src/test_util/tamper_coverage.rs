@@ -438,6 +438,7 @@ mod tests {
         rows.extend_from_slice(super::super::tamper_rows_crypto::ROWS);
         rows.extend_from_slice(super::super::tamper_rows_fine_tree::ROWS);
         rows.extend_from_slice(super::super::tamper_rows_format::ROWS);
+        rows.extend_from_slice(super::super::tamper_rows_mirror::ROWS);
         rows.extend_from_slice(super::super::tamper_rows_version::ROWS);
         rows.extend_from_slice(super::super::tamper_rows_structural::ROWS);
         rows.extend_from_slice(super::super::tamper_rows_pipeline::ROWS);

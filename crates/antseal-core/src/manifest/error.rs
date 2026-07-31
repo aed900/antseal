@@ -585,6 +585,26 @@ pub enum ManifestError {
         /// The id the entry stores.
         found: u64,
     },
+
+    /// A file's unit table carries more than one `kind = raw-mirror` unit
+    /// (**D23 clause 3**: at most one mirror per file — mirror existence
+    /// is the per-file predicate `raw_bytes ≠ canonical_bytes`, and a
+    /// predicate has one witness, not a list of them).
+    ///
+    /// The rule is security-bearing, not stylistic. Only one mirror is
+    /// bound by the raw-mirror↔canonical MUST of MVP-SPEC.md line 121
+    /// (the `raw_commit` opening and the `canonicalize_v(raw) ==
+    /// canonical` recompute); mirrors are tiling-exempt by `kind` (R3,
+    /// deliberate), so a second mirror would be constrained by nothing
+    /// but its own sealer-chosen `unit_commit` — a second, contradictory
+    /// "original", signed and anchored inside a clean-verifying bundle.
+    /// Found by the 2026-07-31 adversarial review (findings 1–3); closed
+    /// at F5 by **F40**.
+    #[error("file has {count} raw-mirror units; a file has at most one")]
+    MultipleRawMirrors {
+        /// How many `kind = raw-mirror` units the table carries (≥ 2).
+        count: u64,
+    },
 }
 
 impl ManifestError {
@@ -702,6 +722,11 @@ impl ManifestError {
 
             // unit_entry key 0
             Self::UnitIdMismatch { .. } => MapId::UnitEntry,
+
+            // file_entry key 6 — like D77's `NormalUnits`, a rule of the
+            // `units` array as a whole, not of any one entry, so it names
+            // the file-entry map rather than the unit-entry map.
+            Self::MultipleRawMirrors { .. } => MapId::FileEntry,
         }
     }
 
@@ -808,6 +833,7 @@ impl ManifestError {
                 AlgPosition::Signatures => "manifest-unregistered-alg-signatures",
             },
             Self::UnitIdMismatch { .. } => "manifest-unit-id-mismatch",
+            Self::MultipleRawMirrors { .. } => "manifest-multiple-raw-mirrors",
         }
     }
 }
@@ -911,6 +937,7 @@ pub(crate) fn all_code_exemplars() -> Vec<ManifestError> {
             expected: 4,
             found: 9,
         },
+        E::MultipleRawMirrors { count: 2 },
     ]);
     exemplars
 }
@@ -929,7 +956,7 @@ mod tests {
         let exemplars = all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            48,
+            49,
             "one exemplar per distinct code — update deliberately"
         );
 
@@ -1036,6 +1063,7 @@ mod tests {
                 expected: 1,
                 found: 2,
             },
+            ManifestError::MultipleRawMirrors { count: 2 },
         ];
         for variant in one_of_each {
             assert!(
@@ -1211,6 +1239,10 @@ mod tests {
                     found: 9,
                 },
                 "unit_id 9 does not match its manifest-order ordinal 4",
+            ),
+            (
+                ManifestError::MultipleRawMirrors { count: 2 },
+                "file has 2 raw-mirror units; a file has at most one",
             ),
         ];
         for (err, want) in expected {

@@ -64,6 +64,11 @@
 //!   `DecodeError` codes that were reachable but unrowed, and the reverse
 //!   coverage check that maps `DecodeError`'s whole exemplar list onto rows
 //!   or named owners.
+//! - [`tamper_rows_mirror`] — F's raw-mirror multiplicity slice (F40): the
+//!   D23-clause-3 row (`manifest-multiple-raw-mirrors`) over a committed
+//!   two-mirror fixture, plus the **rejecting-direction** generator for the
+//!   ≥ 2-mirror shape — deliberately outside [`strategies`], whose
+//!   generators are schema-valid by contract.
 //! - [`tamper_rows_version`] — F's other registry slice (F18): the two rows
 //!   over F10's version dispatch, each a **one-byte** bump of a golden
 //!   vector's `format_version`. Separate from [`tamper_rows_format`] because
@@ -190,6 +195,8 @@ pub mod tamper_rows_crypto;
 pub mod tamper_rows_fine_tree;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_format;
+#[cfg(feature = "test-util")]
+pub mod tamper_rows_mirror;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_pipeline;
 #[cfg(feature = "test-util")]

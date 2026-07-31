@@ -550,6 +550,23 @@
         "sha256": "14a8775e85fb078fc895af4a7c9197a06931818477c837e88f62ddf1cfb52b87"
       },
       "surface": "SealProof::decode"
+    },
+    {
+      "base": "manifest",
+      "expected": {
+        "code": "manifest-multiple-raw-mirrors",
+        "layer": "manifest body"
+      },
+      "id": "body-second-raw-mirror",
+      "mutation": "grow file 0's unit table to [normal, raw-mirror, raw-mirror], both mirrors fully well-formed",
+      "row": "manifest-multiple-raw-mirrors",
+      "source": {
+        "file": "body-second-raw-mirror.cbor",
+        "kind": "file",
+        "len": 591,
+        "sha256": "345d8bf27c5a73a3eca81b152f2d49d40396b64285656a26aabb0c795a4e1f3a"
+      },
+      "surface": "Manifest::decode"
     }
   ],
   "format_version": "v1",

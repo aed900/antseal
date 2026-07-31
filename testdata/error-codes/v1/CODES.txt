@@ -154,6 +154,7 @@ manifest-missing-fine-tree-domain
 manifest-missing-key
 manifest-missing-unicode-version
 manifest-missing-unit-commit
+manifest-multiple-raw-mirrors
 manifest-reserved-key
 manifest-sig-policy-empty
 manifest-too-large

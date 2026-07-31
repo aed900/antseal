@@ -54,3 +54,38 @@ ordinals with no gaps.
   verifier stays correct even against hand-built manifests that violate
   the placement rule (they fail signature/commitment checks only if
   actually inconsistent).
+
+## Amendment (2026-08-01, F40): clause 3 was unenforced, and the last bullet over-claimed
+
+The 2026-07-31 adversarial code review (findings 1–3, `high`;
+`docs/reviews/2026-07-31-adversarial-code-review.md`) found clause 3
+("at most one mirror per file") **decided here, repeated as prose on
+`FileEntry::raw_mirror`, and implemented by no layer** — while every
+fixture and generation strategy produced 0 or 1 mirrors, so the suites
+were structurally blind to it.
+
+The final Consequences bullet's parenthetical — hand-built manifests
+violating this decision's rules "fail signature/commitment checks only if
+actually inconsistent" — was thereby **false for the multiplicity
+dimension**: a file with units `{Normal, RawMirror, RawMirror}` failed
+*nothing*. Verification rows 9–10 bind exactly one mirror to
+`raw_commit`/canonicalization; tiling exempts mirrors by `kind`
+(deliberately, per that same bullet); and the second mirror's own
+sealer-chosen `unit_commit` opens fine — so a second, contradictory
+"original" sat signed and anchored inside a clean-verifying bundle,
+precisely what MVP-SPEC.md line 121's MUST exists to prevent. The
+parenthetical is true of clause 1–2 (placement) violations only.
+
+Since **F40**, clause 3 is enforced at F5: `FileEntry::new`
+(`crates/antseal-core/src/manifest/body.rs`) rejects a second
+`kind = raw-mirror` unit as `manifest-multiple-raw-mirrors` — a routine
+post-freeze code append under D30 §3, positioned after D77's normal-units
+check and before the coverage loop (the position argument is recorded at
+the check site and pinned by
+`the_mirror_count_rule_is_ordered_after_d77_and_before_coverage`).
+Clauses 1–2 remain seal-side construction rules exactly as recorded
+above: the verifier still locates the mirror by `kind`, never by
+position — but the `find` is now total rather than first-wins, because
+the multi-mirror shape is unrepresentable in any constructed or decoded
+manifest. Consumer-side reconciliation of the two pickers that disagreed
+while the shape was representable is **R53**.

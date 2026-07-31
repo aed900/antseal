@@ -779,6 +779,47 @@ kebab-case id, and never edit an existing row's expected code.
      The asymmetry with the neighbouring per-algorithm signature codes is
      principled: there the *check itself* is per-algorithm.
 
+- **2026-08-01 (M0 post-freeze residue, F40)** — **one code minted**:
+  `manifest-multiple-raw-mirrors`, on the new variant
+  `ManifestError::MultipleRawMirrors { count }`. Universe **193 → 194**
+  (`manifest-` 48 → 49; the two review lanes ran in parallel against the
+  191-code base and C28's append above reached `main` first), snapshot
+  re-blessed. The mint is exactly the
+  §3 shape declared routine: **adding** is unrestricted before and after the
+  freeze — what Q14 made permanent is the *existing* set — and the Q52 gate
+  passes an addition by design ("adding a code passes", §4a). No code was
+  renamed, re-scoped, or removed.
+
+  The occasion is the 2026-07-31 adversarial review's one real defect
+  (findings 1–3, `high`): **D23 clause 3** ("at most one raw mirror per
+  file") was decided, repeated as prose on `FileEntry::raw_mirror`, and
+  implemented by no layer, while every fixture and strategy generated 0 or 1
+  mirrors — so a file with units `{Normal, RawMirror, RawMirror}` decoded
+  and verified clean with only one mirror bound by the line-121 MUST
+  (rows 9–10; mirrors are tiling-exempt by `kind`), the second riding along
+  signed and anchored as a second, contradictory "original". F40 landed the
+  count rule in `FileEntry::new`, **after** D77's normal-units check (an
+  input violating both keeps `manifest-empty-normal-units` — previously
+  rejected inputs keep their codes) and **before** the coverage loop (D77's
+  own shape-beats-binding order; the attack shape is coverage-consistent, so
+  the loop can never catch it). Enforcing a decided-but-unimplemented rule
+  is a *tightening to spec conformance*, not a format change: such a
+  manifest was never conformant, and no committed vector, fixture, or row
+  pins one.
+
+  Row: `manifest-multiple-raw-mirrors` (slice
+  `antseal_core::test_util::tamper_rows_mirror`, F40), backed by the
+  committed fixture `body-second-raw-mirror` — canonical CBOR at every
+  layer with every *other* rule satisfied, so the row pins the count rule
+  and nothing else — declared `project_added` in `MATRIX.json` (line 168's
+  enumeration predates the review). The rejecting-direction ≥ 2-mirror
+  generator lives in the same slice, deliberately **not** in
+  `strategies` (whose generators are schema-valid by contract; `arb_file`
+  now records that D23 clause 3, like D77, holds there by construction).
+  Consumer-side reconciliation of the two disagreeing mirror pickers is
+  **R53**, which lands after this and inherits a rule that makes the
+  disagreement unreachable from any decoded manifest.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
   as the enforcement, and with §3's "before the Q14 freeze a code may still

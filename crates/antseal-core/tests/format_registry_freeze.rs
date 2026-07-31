@@ -1401,6 +1401,14 @@ fn code_error_maps_match_the_registry() {
                 "unit_id",
                 key::unit::UNIT_ID,
             ),
+            // F40 / D23 clause 3: like D77's `NormalUnits`, a rule of the
+            // `units` array as a whole (`maps.file_entry` key 6), not of any
+            // one unit entry.
+            (
+                E::MultipleRawMirrors { count: 2 },
+                "units",
+                key::file::UNITS,
+            ),
         ]);
     }
 

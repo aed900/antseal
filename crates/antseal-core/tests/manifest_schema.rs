@@ -892,6 +892,20 @@ fn every_reject_case_carries_a_distinct_error_code() {
         ]),
     ));
 
+    cases.push((
+        "two raw mirrors in one file",
+        body_with_file(w::file_entry(
+            1,
+            true,
+            1024,
+            vec![
+                w::covered_unit(0, 0, 1024),
+                w::noncovered_unit(1, 1, 0, 1030),
+                w::noncovered_unit(2, 1, 512, 600),
+            ],
+        )),
+    ));
+
     let mut b = w::default_body();
     w::set(&mut b, key::body::FORMAT_VERSION, w::uint(2));
     cases.push(("unsupported format_version", b));
@@ -1167,6 +1181,152 @@ fn in_memory_construction_runs_the_same_validation() {
         Err(ManifestError::EmptyContainer {
             field: ContainerField::NormalUnits
         })
+    );
+
+    // D23 clause 3 / F40: a non-empty unit table with a Normal unit but TWO
+    // raw mirrors. Constructible ≡ decodable — `FileEntry::decode` routes
+    // through `new` (body.rs), so closing the shape here closes it for every
+    // decoded manifest as well; `reject_a_file_with_two_raw_mirrors` is the
+    // decode-path twin of this arm. Both mirrors carry the `unit_commit` a
+    // non-covered unit must, so the coverage rules alone would accept this —
+    // which is precisely why the count rule has to exist.
+    let mirror = |id: u64, seed: u8| {
+        UnitEntry::new(
+            id,
+            UnitKind::RawMirror,
+            ByteRange::new(0, 20),
+            20,
+            UnitBinding::NonCovered {
+                unit_commit: [seed; 32],
+            },
+            Nonce24::from_bytes([seed; 24]),
+            ContentAddress::from_bytes([seed; 32]),
+        )
+    };
+    let normal = UnitEntry::new(
+        0,
+        UnitKind::Normal,
+        ByteRange::new(0, 16),
+        16,
+        UnitBinding::FineTreeCovered,
+        Nonce24::from_bytes([0; 24]),
+        ContentAddress::from_bytes([0; 32]),
+    );
+    assert_eq!(
+        FileEntry::new(
+            [0; 32],
+            [0; 32],
+            CanonMode::Text {
+                canon_commit: [3; 32],
+                unicode_version: "unicode-17.0.0".to_owned(),
+            },
+            16,
+            FineTree::Present { root: [1; 32] },
+            vec![normal, mirror(1, 0x41), mirror(2, 0x42)],
+        )
+        .map(|_| ()),
+        Err(ManifestError::MultipleRawMirrors { count: 2 })
+    );
+}
+
+/// **D23 clause 3 (F40): a file with two raw mirrors is rejected.**
+///
+/// This is the exact shape the 2026-07-31 adversarial review demonstrated
+/// clean-verifying (findings 1–3): units `{0: Normal (covered), 1: RawMirror,
+/// 2: RawMirror}`, every other rule satisfied — ordinals sequential, D77's
+/// Normal present, and *both* mirrors carrying the `unit_commit` a
+/// non-covered unit must carry, so the coverage loop has nothing to object
+/// to. Before F40 this decoded clean, and only mirror 1 was bound by rows
+/// 9–10; mirror 2 rode along signed and anchored, bound by nothing but its
+/// own sealer-chosen commitment — a second, contradictory "original"
+/// (MVP-SPEC.md line 121). The red-direction run is recorded in F40's
+/// report: both this decode path and the direct-construction path accepted
+/// the shape on the pre-fix tree.
+#[test]
+fn reject_a_file_with_two_raw_mirrors() {
+    let file = w::file_entry(
+        1,
+        true,
+        1024,
+        vec![
+            w::covered_unit(0, 0, 1024),
+            w::noncovered_unit(1, 1, 0, 1030),
+            w::noncovered_unit(2, 1, 512, 600),
+        ],
+    );
+    reject(
+        &body_with_file(file),
+        &ManifestError::MultipleRawMirrors { count: 2 },
+    );
+
+    // The count is the real count, not a boolean: three mirrors say three.
+    let file = w::file_entry(
+        1,
+        true,
+        1024,
+        vec![
+            w::covered_unit(0, 0, 1024),
+            w::noncovered_unit(1, 1, 0, 1030),
+            w::noncovered_unit(2, 1, 512, 600),
+            w::noncovered_unit(3, 1, 512, 601),
+        ],
+    );
+    reject(
+        &body_with_file(file),
+        &ManifestError::MultipleRawMirrors { count: 3 },
+    );
+}
+
+/// **F40's frozen check order, in both directions** (the D77 pattern one
+/// rule down):
+///
+/// - an input violating D77 *and* the mirror-count rule at once — a
+///   mirror-only table with two mirrors — keeps reporting
+///   `manifest-empty-normal-units`: inputs F5 already rejected keep their
+///   code, and the new rule claims only previously-accepted inputs plus the
+///   coverage loop's mis-attributions below;
+/// - a two-mirror file whose *second* mirror is also malformed (missing its
+///   `unit_commit`) reports the shape error, not the per-unit
+///   `manifest-missing-unit-commit` the coverage loop would have tripped —
+///   the same shape-beats-binding order D77 recorded, because which
+///   per-unit error fires first is an iteration accident while the table
+///   fault is the stable fact.
+#[test]
+fn the_mirror_count_rule_is_ordered_after_d77_and_before_coverage() {
+    // Edge 1: both shape rules violated — D77's (frozen first) wins.
+    let file = w::file_entry(
+        1,
+        false,
+        0,
+        vec![
+            w::noncovered_unit(0, 1, 0, 12),
+            w::noncovered_unit(1, 1, 0, 34),
+        ],
+    );
+    reject(
+        &body_with_file(file),
+        &ManifestError::EmptyContainer {
+            field: ContainerField::NormalUnits,
+        },
+    );
+
+    // Edge 2: two mirrors AND a binding fault on the second — the shape
+    // error wins over the coverage loop.
+    let mut second = w::noncovered_unit(2, 1, 512, 600);
+    w::remove(&mut second, key::unit::UNIT_COMMIT);
+    let file = w::file_entry(
+        1,
+        true,
+        1024,
+        vec![
+            w::covered_unit(0, 0, 1024),
+            w::noncovered_unit(1, 1, 0, 1030),
+            second,
+        ],
+    );
+    reject(
+        &body_with_file(file),
+        &ManifestError::MultipleRawMirrors { count: 2 },
     );
 }
 

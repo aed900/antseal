@@ -358,7 +358,12 @@ fn arb_unit(kind: UnitKind, covered: bool) -> impl Strategy<Value = UnitEntry> {
 /// plus the raw mirror only a text file may carry. **D77 holds by
 /// construction** — the normal-unit list is never empty, so a mirror is only
 /// ever appended alongside real normal units and a mirror-only file is
-/// ungeneratable.
+/// ungeneratable. **D23 clause 3 holds by construction too** — the mirror
+/// list is `usize::from(mirror)` long, i.e. 0 or 1, so a multi-mirror file
+/// is equally ungeneratable here; the *rejecting*-direction ≥ 2-mirror
+/// generator lives with the row that pins it
+/// ([`super::tamper_rows_mirror::arb_two_plus_mirror_units`]), because this
+/// module's generators are schema-valid by contract.
 pub fn arb_file(caps: GenCaps) -> impl Strategy<Value = FileEntry> {
     (
         any::<bool>(), // text?
