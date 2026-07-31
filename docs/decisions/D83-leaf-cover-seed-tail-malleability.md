@@ -814,6 +814,35 @@ reason rather than by omission.
 
 ---
 
+# COMPLIANCE AMENDMENT — 2026-07-31 (verification audit)
+
+## C1. The `n == 1` rule is a recorded spec deviation, not merely a canonical form
+
+§3 frames only option **C** as a spec amendment. The 2026-07-31
+spec-alignment audit found that framing incomplete: at `n == 1`, option
+**B** substitutes a *value* the spec names, not just a canonical form.
+MVP-SPEC.md line 96 says the fine-seed `s_root` **itself** is conveyed on a
+full-file reveal, and its degenerate-case rule (`salt_0 = s_root[..16]`)
+presumes the conveyed 32 bytes ARE `s_root`. Under B the wire field named
+`s_root` carries `salt_0 ‖ 0x00·16` whenever `n == 1` — byte-for-byte a
+different value than the true seed — and a sealer who ships the true seed
+per that line's plain reading is rejected with
+`fine-root-leaf-seed-tail-not-zero`.
+
+So, for the record: **this is a deviation from MVP-SPEC.md line 96's
+conveyance rule at `n == 1`, deliberately taken.** It is
+verification-equivalent (the verifier reads only `[..16]` there — the very
+inertness that raised D83), it strictly reduces disclosed key material (§2's
+"the true `s_root`'s upper 16 bytes now never leave the vault" *is* this
+deviation, stated without the label, and it is the direction line 96's own
+no-ancestor rule argues for), and it is frozen at Q14 with a code, a row and
+re-emitted vectors behind it. The spec-wins protocol (TODO.md header)
+requires a conflict to be flagged rather than silently diverged; until this
+amendment the record flagged it only for the option it rejected. Nothing
+here changes any rule, byte or code.
+
+---
+
 # ORIGINAL RECORD (2026-07-28) — retained as the analysis that framed the decision
 
 The material below is the record as written when G20 surfaced the finding. It
