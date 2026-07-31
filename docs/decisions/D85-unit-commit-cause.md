@@ -418,3 +418,17 @@ work, something outside D85's scope was changed and the change is wrong.
    code (§3).
 5. Confirmation that no `VerifyError` variant gained a field and no
    `code()` arm changed.
+
+## Post-freeze correction — 2026-07-31
+
+Item 3's "confirming **85 / 27**" was true of the lane that implemented
+R33 and stale on the merged tree: G23 (D83) had minted
+`fine-root-leaf-seed-tail-not-zero` hours earlier the same day, so the R
+universe at the freeze is **86 distinct codes over 28 variants** (27 of
+them exemplar-represented; `FineRootSeedTailNotCanonical` deliberately
+delegates). `verify/error.rs`'s `DISTINCT_CODES = 86` is the source of
+truth. The claim this record exists for — **D85 minted nothing** — is
+unaffected; `aa169ac` simply was not the merged freeze tree. The same
+stale count had propagated to TODO.md's register entry,
+`docs/decisions/README.md` and `docs/testing/error-code-contract.md` §7,
+all corrected 2026-07-31.

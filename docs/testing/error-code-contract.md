@@ -691,12 +691,17 @@ kebab-case id, and never edit an existing row's expected code.
      committed and live sets, so dropping a code is only ever a hand edit
      with a reviewable diff.
 
-- **2026-07-28 (M0 wave 7, D85/R33)** — **no code minted**; R's universe
-  stays at **85** distinct codes over **27** variants. R33 ratified the
+- **2026-07-28 (M0 wave 7, D85/R33)** — **no code minted**; R33 ratified the
   non-row `pipeline-level-wrong-unit-salt` and, in doing so, generalised
   the R8 entry above from `unit_commit` to **every salted-commitment
   opening in R's pipeline** (`unit_commit`, `path_commit`, `canon_commit`,
-  `raw_commit`).
+  `raw_commit`). *(2026-07-31 correction: this entry originally closed
+  "R's universe stays at 85 distinct codes over 27 variants" — stale at
+  writing. G23/D83's `fine-root-leaf-seed-tail-not-zero` had landed hours
+  earlier the same day, so the universe at the freeze is **86 distinct
+  codes over 28 variants**, 27 of them exemplar-represented
+  (`FineRootSeedTailNotCanonical` deliberately delegates). D85 itself
+  minted nothing, which is the claim this entry exists to record.)*
 
   The generalisation needed more than D81's analogy, because the
   asymmetry R33 names is real: unlike an AEAD tag's inputs, a commitment
