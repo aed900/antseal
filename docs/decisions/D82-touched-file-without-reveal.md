@@ -164,7 +164,13 @@ Forecloses filename-only disclosure until a format version defines it.
    D82 the set is exactly determined by the revealed set, so *any* deviation
    in either direction is a named error, and the relay-splice of evidence 5
    stops being silent. Same shape as D74's 2×2 over (fine-tree state,
-   `s_root` presence).
+   `s_root` presence). [Scope note, 2026-07-31 — adversarial review,
+   finding 7: total over *disagreement between the two sets*, in both
+   directions. A consistent whole-file narrowing (a file's reveal entries,
+   `touched_files` entry and `full_reveals` entry removed together)
+   shrinks both sets in step, keeps them equal, and correctly fires
+   nothing — by design and harmlessly, because the unsigned bundle claims
+   only what it discloses. See D28's 2026-07-31 amendment.]
 4. **Derived, never declared.** The bundle does not get to assert what was
    disclosed; it is computed from the signed unit table and the revealed set
    (D28 rider 1, `file_stages.rs:11-25`). A touched entry with no reveal is

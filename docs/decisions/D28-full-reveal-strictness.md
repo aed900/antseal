@@ -1,6 +1,6 @@
 # D28 — Full-reveal strictness: missing `file_salt`/`s_root` is a hard failure
 
-- **Status: RESOLVED — strict (hard-fail); there is no "weaker full reveal" shape in v1**
+- **Status: RESOLVED — strict (hard-fail); there is no "weaker full reveal" shape in v1. Rationale 3's closing totality claim corrected by the 2026-07-31 amendment at the end of this record; outcome unaffected**
 - **Date: 2026-07-28**
 - **Owning task: R4** (consumed by R5 orchestration, R6 fixtures, R7/R8 tamper
   rows, R13/R16 builder, R15/U28 disclosure preview, F8 bundle schema, Q8
@@ -303,9 +303,15 @@ that adds it will break the harness; that is the harness working.
    `s_root`) from a valid full-reveal bundle and hand the recipient a
    weaker proof that still verifies clean, with nothing in the report
    saying so. Under Option A that deletion is a named hard error. Together
-   with the isolation arm the property becomes total: **a third party
-   cannot alter a bundle's reveal shape undetected** — strip units and the
-   leak arm fires, strip salts and the missing arm fires.
+   with the isolation arm, every **inconsistent** shape edit is a named
+   error: strip some of a file's units but leave the material and the leak
+   arm fires; strip the material but leave the units and the missing arm
+   fires. [Amended 2026-07-31 — adversarial review, finding 7: this
+   sentence originally claimed totality over *all* third-party shape
+   alteration. It is total only over inconsistent edits — a consistent
+   narrowing (a file's reveal entries, `touched_files` entry and
+   `full_reveals` entry removed together) fires neither arm, by design,
+   and is not a threat. See the amendment at the end of this record.]
 4. **The freeze is one-directional, and strict is the reversible choice.**
    Line 123 makes format stability normative. Strict → permissive is a
    legal future relaxation (bundles built under the strict rule keep
@@ -504,3 +510,84 @@ Numbers are the orchestrator's to assign.
    without a change thanks to the anti-vacuity clause, so this is a
    tightening-for-tidiness question (new R3/F5 code, permanent at Q14),
    not a blocker. Owner R3/F5. Lowest priority of the four.
+
+---
+
+## Amendment — 2026-07-31 (adversarial code review, finding 7): rationale 3's closing claim was not a totality
+
+Rationale 3 originally closed by claiming that, with the isolation arm and
+the missing arm together, no third party can alter a bundle's reveal shape
+without detection. That is true of every **inconsistent** edit and false as
+a totality, and the false form propagated: D74 rationale 3 quoted it
+verbatim, D74's wave-6 audit re-affirmed it "in any direction", and **D74
+was decided partly on its strength** (D74 carries matching dated notes).
+Corrected here at source; the sentence in rationale 3 now states the scoped
+claim.
+
+### The counterexample — consistent narrowing
+
+Remove one file's disclosure footprint *coherently*: its revealed-unit
+entries, its `touched_files` entry, and (when present) its `full_reveals`
+entry, together. Every detection arm's precondition vanishes with the
+evidence it would have judged:
+
+- rows 1–2 (the leak arm) need `file_salt`/`s_root` present — removed;
+- rows 3–4 (the missing arm) need `full(F)` — no unit of `F` is revealed;
+- D80 (`revealed-unit-file-not-touched`) needs a revealed unit of `F` —
+  none remains;
+- D82 (`touched-file-without-revealed-unit`) needs a `touched_files`
+  entry for `F` — removed;
+- F8's `bundle-full-reveal-without-touched-file` needs a `full_reveals`
+  entry — removed.
+
+The file classifies `Untouched` and the bundle verifies clean.
+
+### Why consistent narrowing is not a threat, and must not be re-opened as one
+
+The bundle is unsigned **by design** — only the manifest is signed and
+anchored — and a bundle claims exactly what it discloses, nothing more. A
+consistently narrowed bundle therefore asserts strictly *less*, and
+everything it still asserts remains independently checked. Stronger: every
+bundle-side disclosed value is fixed per work at seal time (HKDF-derived
+from `W`, or committed in the manifest) and the encoding is canonical, so
+the review's verifier confirmed the narrowed bundle is **byte-identical to
+an honest narrower bundle** the sealer could have issued. No verifier-side
+check can distinguish two identical artifacts, so this is not a detection
+gap a future check could close — short of signing bundles, which v1
+rejects by design. What a third party gains is suppression of evidence it
+was asked to relay: a denial-of-evidence nuisance in the same family as
+the union-not-closed residual (R35). The original, wider bundle still
+exists and still verifies, and only the sealer can widen a reveal.
+
+### The corrected statement, scoped
+
+A third party cannot make a bundle claim *more* than the sealer disclosed,
+or anything *different*. Every inconsistent edit fails with a named code:
+
+| Edit | Named error |
+|---|---|
+| strip some of a file's revealed units, leaving the full-reveal material | rows 1–2, `partial-reveal-salt-leak-*` |
+| strip the material, leaving the units | rows 3–4, `full-reveal-material-missing-*` |
+| add material the manifest's fine-tree state excludes | row 5, `full-reveal-s-root-without-fine-tree` (D74) |
+| strip a file's `touched_files` entry while any reveal of it remains | `revealed-unit-file-not-touched` (D80) |
+| strip all of a file's reveals while its `touched_files` entry remains | `touched-file-without-revealed-unit` (D82) |
+| keep a `full_reveals` entry without its `touched_files` entry | `bundle-full-reveal-without-touched-file` (F8) |
+
+What a third party *can* do is make a bundle claim **less**, wholesale,
+per file — and the result is indistinguishable from, and equivalent to, an
+honest narrower bundle. R10's byte-binding equality
+(`the_unauthenticated_region_at_m0_is_exactly_the_storage_record`) is
+unaffected: it quantifies over bytes *present* in a bundle, not over
+coherent removals.
+
+### Outcome unaffected
+
+Strictness (Option A) stands on rationales 1, 2 and the true half of 3:
+the silent-48-byte deletion *inside a still-full reveal* is exactly what
+the missing arm exists to catch. Corrected in the same pass: D74 rationale
+3, D74's provenance quote and wave-6 audit, the D74 row of
+`docs/decisions/README.md`, D82 rationale 3 (scope note),
+`crates/antseal-core/src/verify/file_stages.rs` module docs (row-5
+paragraph), and the `verify-full-reveal-s-root-without-fine-tree` entry of
+`testdata/tamper/MATRIX.json`. (Q67, from
+`docs/reviews/2026-07-31-adversarial-code-review.md` finding 7.)

@@ -2,7 +2,10 @@
 
 - **Status: RESOLVED — reject, with its own distinct code. Re-audited and
   **ratified** at M0 wave 6 (2026-07-28); three corrections and one
-  residual appended below, none of them changing the outcome**
+  residual appended below, none of them changing the outcome. The D28
+  shape-totality clause that rationale 3 and the wave-6 audit inherited
+  was corrected 2026-07-31 (adversarial review, finding 7) — dated notes
+  in place below; outcome again unaffected**
 - **Date: 2026-07-28**
 - **Owning task: R4** (consumed by F8 bundle schema, R7 tamper rows, R13/R16
   builder, Q8 completeness)
@@ -71,13 +74,22 @@ is no `FileSalt` arm, for the reason above.
    bundle is *not* signed, so any relay can add one. Under Option B, adding
    48 bytes of arbitrary data to a valid bundle is undetectable; under
    Option A it is a named error.
-3. **It completes D28's totality property.** D28 rationale 3 claims *a third
-   party cannot alter a bundle's reveal shape undetected* — strip units and
-   the leak arm fires, strip salts and the missing arm fires. Option B would
-   leave one hole in that sentence: *add* material and nothing fires. With
-   Option A the material rules are total over the 2×2 of (fine-tree state,
-   `s_root` presence), which is how R4's classifier is literally written —
-   an exhaustive match with all four combinations named.
+3. **It closes the add-material direction of D28's material rules.** D28
+   makes the *inconsistent* strips named errors — strip some of a file's
+   units but leave the material and the leak arm fires; strip the material
+   but leave the units and the missing arm fires. Option B would leave the
+   symmetric hole: *add* material and nothing fires. With Option A the
+   material rules are total over the 2×2 of (fine-tree state, `s_root`
+   presence), which is how R4's classifier is literally written — an
+   exhaustive match with all four combinations named. [Amended 2026-07-31
+   — adversarial review, finding 7: this rationale originally opened by
+   quoting D28 rationale 3's shape-totality claim as established. That
+   claim was corrected the same day in both records: detection is total
+   over *inconsistent* edits only, and a consistent whole-file narrowing
+   (a file's reveal entries, `touched_files` entry and `full_reveals`
+   entry removed together) fires nothing, by design and harmlessly — the
+   unsigned bundle claims only what it discloses. See D28's 2026-07-31
+   amendment. The add-material argument above stands unchanged.]
 4. **Derived, never declared — applied consistently.** The bundle does not
    get to assert a shape (D28 rider 1). Tolerating an `s_root` the manifest
    says cannot exist would let the bundle contradict the signed manifest
@@ -163,11 +175,16 @@ arguments are different and both survive:
   rejects it as `bundle-missing-key` first). That layering fact is what
   makes the single-code shape correct rather than merely convenient.
 - **R4's**: the permissive reading left a hole in D28's rationale 3. Strip
-  units and the leak arm fires; strip material and the missing arm fires;
-  **add** material and nothing fired. The manifest is signed and anchored
-  but the bundle is not, so any relay could append 48 bytes to a valid
-  bundle with nothing in the report saying so. Rejecting makes the material
-  rules total, which is what D28 already claimed to be true.
+  some units but leave the material and the leak arm fires; strip material
+  but leave the units and the missing arm fires; **add** material and
+  nothing fired. The manifest is signed and anchored but the bundle is
+  not, so any relay could append 48 bytes to a valid bundle with nothing
+  in the report saying so. Rejecting makes the material rules total over
+  §7.14 presence. [Amended 2026-07-31: as made, this argument closed by
+  endorsing D28 rationale 3's shape-totality claim ("which is what D28
+  already claimed to be true"); that claim was corrected the same day
+  (adversarial review, finding 7 — see D28's amendment), and the
+  endorsement is retired. The add-material argument stands without it.]
 
 The superseded file (`D74-extraneous-s-root.md`) was removed rather than
 kept as a duplicate; nothing in it is lost — F8's argument is quoted above.
@@ -247,9 +264,10 @@ move; no row edit is implied.
 
 ### Audit — is the totality claim (rationale 3) actually total?
 
-Rationale 3 claims that after D74 *a third party cannot alter a bundle's
-reveal shape undetected in any direction*. Re-audited across the whole v1
-bundle, not just §7.14:
+Rationale 3, as originally written (corrected 2026-07-31 — see the dated
+note at the end of this section), claimed that after D74 shape-alteration
+detection was total: no direction of third-party edit escapes. Re-audited
+across the whole v1 bundle, not just §7.14:
 
 - **§7.14, both directions** — closed by rows 1–5.
 - **§7.13 `touched_files`, both directions** — closed by **D80**
@@ -286,6 +304,34 @@ contains a size-1 block iff `n` is odd, and every fixture's content length
 and split boundary is even (34, 30, 12/12/10, 10/10/10). See D75's wave-6
 amendment for the full analysis and the ordering constraint it puts on
 D83.
+
+#### 2026-07-31 — the audit's answer was wrong: the claim is not total
+
+(Adversarial code review, finding 7.) This audit swept per-section edits —
+each direction of each section, plus the cross-section presence couplings
+— and every bullet above is true. What it never enumerated is the
+**coordinated** edit: remove one file's reveal entries, its
+`touched_files` entry and its `full_reveals` entry *together*, and every
+arm's precondition vanishes with the evidence — D80 has no revealed unit
+of the file left to find untouched, D82 no touched entry left to find
+unrevealed, rows 1–4 no material present and no `full(F)` — so the file
+classifies `Untouched` and the bundle verifies clean. The byte-level
+generalisation quoted above is unaffected: it quantifies over bytes
+*present* in a bundle, not over coherent removals.
+
+Consistent narrowing is **not a vulnerability**, and must not be re-opened
+as one: the bundle is unsigned by design and claims only what it
+discloses, and the narrowed bundle is byte-identical to an honest narrower
+bundle of the same work (every bundle-side disclosed value is fixed per
+work at seal time; the encoding is canonical) — indistinguishable in
+principle, so no future check can close this short of signing bundles,
+which v1 rejects by design. It is denial of evidence, the same family as
+the union-not-closed residual below (R35): the wider original still
+verifies, and only the sealer can widen a reveal. The corrected scope —
+detection is total over **inconsistent** edits; a third party can make a
+bundle claim less, never more, never differently — is stated in full in
+D28's 2026-07-31 amendment, and rationale 3 above now carries the
+corrected form.
 
 ### Residual this record does not name — `.sealproof` bundles are not union-closed
 

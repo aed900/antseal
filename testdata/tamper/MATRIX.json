@@ -669,7 +669,7 @@
     {
       "row_id": "verify-full-reveal-s-root-without-fine-tree",
       "owner": "R",
-      "why": "D74's direction: EXTRA material. An `s_root` attached to a `--no-fine-tree` file's full reveal is rejected, which is what makes D28's present-set-==-required-set rule total — strip units and the leak arm fires, strip material and the missing arm fires, add material and this one does, so a third party cannot alter a bundle's reveal shape undetected in any direction."
+      "why": "D74's direction: EXTRA material. An `s_root` attached to a `--no-fine-tree` file's full reveal is rejected, which makes D28's present-set-==-required-set rule total over full-reveal material: strip some units but leave the material and the leak arm fires, strip material but leave the units and the missing arm fires, add material and this one does. Totality over material presence, not over reveal shape at large — a consistent whole-file narrowing (reveal entries + touched_files entry + full_reveals entry removed together) fires nothing, by design and harmlessly: the unsigned bundle claims only what it discloses (D28/D74 amendments, 2026-07-31)."
     },
     {
       "row_id": "verify-concat-commit-mismatch-canon",

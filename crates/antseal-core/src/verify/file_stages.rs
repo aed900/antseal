@@ -89,10 +89,18 @@
 //! precede row 5, and that ordering is asserted.
 //!
 //! Row 5 is **D74** (`docs/decisions/D74-extraneous-full-reveal-s-root.md`).
-//! It is what makes D28's totality claim total: strip units and the leak arm
-//! fires, strip material and the missing arm fires, **add** material and
-//! this arm fires — so a third party cannot alter a bundle's reveal shape
-//! undetected in any direction.
+//! It closes the add-material direction of D28's material rules: strip some
+//! of a file's units but leave the material and the leak arm fires (rows
+//! 1–2), strip material but leave the units and the missing arm fires (rows
+//! 3–4), add material a fine-tree-less file cannot carry and this arm
+//! fires. That totality is over *material presence per file*, not over
+//! reveal shape at large (D28/D74 amendments, 2026-07-31): a consistent
+//! narrowing — a file's reveal entries, `touched_files` entry and
+//! `full_reveals` entry removed together — fires nothing and the file
+//! classifies `Untouched`, by design and harmlessly, because the
+//! unsigned-by-design bundle claims only what it discloses, and the
+//! narrowed bundle is byte-identical to an honest narrower bundle of the
+//! same work.
 //!
 //! ## Cross-stage precedence
 //!
