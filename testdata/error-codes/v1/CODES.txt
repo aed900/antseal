@@ -110,6 +110,7 @@ crypto-non-zero-padding
 crypto-padding-length-mismatch
 crypto-path-commit-mismatch
 crypto-path-salt-length
+crypto-pubkeys-duplicate
 crypto-raw-commit-mismatch
 crypto-rng-failure
 crypto-seed-length
@@ -122,6 +123,7 @@ crypto-signature-missing-ed25519
 crypto-signature-missing-ml-dsa-65
 crypto-signature-unlisted-ed25519
 crypto-signature-unlisted-ml-dsa-65
+crypto-signatures-duplicate
 crypto-unit-commit-mismatch
 crypto-unit-salt-length
 duplicate-unit-reveal

@@ -43,7 +43,7 @@
 //! what v1 ships — D14). The verification result carries [`PolicyLabel`] so
 //! R can render "hybrid (PQ)" vs "Ed25519-only" unambiguously.
 
-use super::error::{CryptoError, SigAlg};
+use super::error::{CryptoError, SigAlg, SigMaterialKind};
 use super::material::MasterSecretRef;
 use super::{sig_ed25519, sig_mldsa};
 
@@ -219,17 +219,30 @@ pub fn sign_body(w: MasterSecretRef<'_>, policy: &SigPolicy, body: &[u8]) -> Alg
 /// **present set == policy set**.
 ///
 /// `pubkeys` and `signatures` are `(algorithm, bytes)` pairs as enumerated
-/// from the body's `pubkeys` map and the envelope's `signatures` map — both
-/// already duplicate-free and exact-length by F's schema, and re-checked
-/// here so this function is safe to call on any input.
+/// from the body's `pubkeys` map and the envelope's `signatures` map. F's
+/// schema already guarantees both are duplicate-free and exact-length (a
+/// repeated map key dies as `cbor-duplicate-map-key` before decode
+/// completes), and **both properties are independently re-checked here** —
+/// duplicates by the scan below, lengths by each algorithm's
+/// `try_from_slice` — so this function is safe to call on any input, not
+/// only on schema-validated material. Without the duplicate re-check the
+/// first-wins `lookup` would quietly verify one of two conflicting entries,
+/// and a last-wins or duplicate-rejecting implementation would reach a
+/// different verdict on the same input — the cross-implementation
+/// divergence class MVP-SPEC.md line 73 names (C28).
 ///
 /// Order of checks is fixed for deterministic first-error reporting:
-/// unlisted signatures first (a present-but-unlisted entry is a structural
-/// lie about the policy), then, per policy algorithm in order, missing
-/// signature → missing key → the algorithm's own verification.
+/// duplicate entries first, pubkeys before signatures (a duplicated
+/// algorithm makes "the entry for algorithm X" ambiguous, so nothing else
+/// is adjudicated); then unlisted signatures (a present-but-unlisted entry
+/// is a structural lie about the policy); then, per policy algorithm in
+/// order, missing signature → missing key → the algorithm's own
+/// verification.
 ///
 /// # Errors
 ///
+/// - [`CryptoError::SigMaterialDuplicate`] — the same algorithm appears
+///   more than once in `pubkeys` or in `signatures` (listed or not).
 /// - [`CryptoError::SignatureUnlisted`] — a signature for an algorithm the
 ///   policy does not list.
 /// - [`CryptoError::SignatureMissing`] — a listed algorithm has no
@@ -244,6 +257,15 @@ pub fn verify_body(
     signatures: &[(SigAlg, Vec<u8>)],
     body: &[u8],
 ) -> Result<PolicyLabel, CryptoError> {
+    for (kind, entries) in [
+        (SigMaterialKind::Pubkeys, pubkeys),
+        (SigMaterialKind::Signatures, signatures),
+    ] {
+        if let Some(alg) = first_duplicate(entries) {
+            return Err(CryptoError::SigMaterialDuplicate { kind, alg });
+        }
+    }
+
     for (alg, _) in signatures {
         if !policy.requires(*alg) {
             return Err(CryptoError::SignatureUnlisted { alg: *alg });
@@ -272,11 +294,29 @@ pub fn verify_body(
     Ok(policy.label())
 }
 
+/// First-wins by construction — which is exactly why [`verify_body`] runs
+/// [`first_duplicate`] before any lookup: on duplicate-free input (the only
+/// input that survives the scan) first-wins and last-wins are the same
+/// function.
 fn lookup(entries: &[(SigAlg, Vec<u8>)], alg: SigAlg) -> Option<&[u8]> {
     entries
         .iter()
         .find(|(entry_alg, _)| *entry_alg == alg)
         .map(|(_, bytes)| bytes.as_slice())
+}
+
+/// The first algorithm to appear twice in `entries`, if any — the C28
+/// duplicate re-check backing [`verify_body`]'s any-input safety claim.
+/// Quadratic in shape but constant in practice: with only
+/// [`SigAlg::ALL`]`.len()` distinct algorithms, a duplicate exists within
+/// the first three entries or not at all.
+fn first_duplicate(entries: &[(SigAlg, Vec<u8>)]) -> Option<SigAlg> {
+    entries.iter().enumerate().find_map(|(index, (alg, _))| {
+        entries[..index]
+            .iter()
+            .any(|(seen, _)| seen == alg)
+            .then_some(*alg)
+    })
 }
 
 #[cfg(test)]
@@ -524,6 +564,88 @@ mod tests {
             verify_body(&downgraded, &keys, &kept, &downgraded_body)
                 .expect_err("a downgraded body is not signed"),
             CryptoError::SignatureInvalid {
+                alg: SigAlg::Ed25519
+            }
+        );
+    }
+
+    // ── C28: duplicate entries in the material collections ──
+
+    /// The adversarial-review input (2026-07-31 finding 5), verbatim:
+    /// `[(Ed25519, valid), (Ed25519, garbage), (MlDsa65, valid)]`. Before
+    /// the C28 re-check this returned `Ok(Hybrid)` — the duplicate passed
+    /// the unlisted loop (`requires(Ed25519)` is true for it) and the
+    /// first-wins `lookup` never inspected the garbage — while a last-wins
+    /// or duplicate-rejecting implementation reached a different verdict
+    /// on the same input, the cross-implementation divergence class
+    /// MVP-SPEC.md line 73 names.
+    #[test]
+    fn a_duplicate_signature_entry_is_rejected_not_first_wins_verified() {
+        let policy = SigPolicy::hybrid();
+        let (keys, mut sigs) = signed(&policy);
+        // Well-formed length, garbage content: a first-wins verifier
+        // passes without ever looking at it.
+        sigs.insert(1, (SigAlg::Ed25519, vec![0x99; 64]));
+
+        assert_eq!(
+            verify_body(&policy, &keys, &sigs, BODY)
+                .expect_err("a duplicated listed algorithm must be rejected"),
+            CryptoError::SigMaterialDuplicate {
+                kind: SigMaterialKind::Signatures,
+                alg: SigAlg::Ed25519
+            }
+        );
+    }
+
+    /// The pubkeys side of the same check — and with a **byte-identical**
+    /// duplicate: the invariant being re-checked is F's map shape (a CBOR
+    /// map cannot carry the same key twice), which does not care whether
+    /// the two values happen to agree.
+    #[test]
+    fn a_duplicate_pubkey_entry_is_rejected_even_when_byte_identical() {
+        let policy = SigPolicy::hybrid();
+        let (mut keys, sigs) = signed(&policy);
+        let duplicate = keys[0].clone();
+        keys.insert(1, duplicate);
+
+        assert_eq!(
+            verify_body(&policy, &keys, &sigs, BODY).expect_err("a duplicated pubkey entry"),
+            CryptoError::SigMaterialDuplicate {
+                kind: SigMaterialKind::Pubkeys,
+                alg: SigAlg::Ed25519
+            }
+        );
+    }
+
+    /// The documented first-error order: the duplicate scan adjudicates
+    /// collection shape before any cross-collection comparison, so a
+    /// duplicate of an *unlisted* algorithm reports the duplicate, not
+    /// `SignatureUnlisted` — and pubkeys is scanned before signatures.
+    #[test]
+    fn duplicate_scan_precedes_the_unlisted_check_and_pubkeys_precede_signatures() {
+        let policy = SigPolicy::ed25519_only();
+        let (keys, mut sigs) = signed(&policy);
+        let mldsa = sig_mldsa::sign(w(), BODY).as_bytes().to_vec();
+        sigs.push((SigAlg::MlDsa65, mldsa.clone()));
+        sigs.push((SigAlg::MlDsa65, mldsa));
+        assert_eq!(
+            verify_body(&policy, &keys, &sigs, BODY).expect_err("duplicate beats unlisted"),
+            CryptoError::SigMaterialDuplicate {
+                kind: SigMaterialKind::Signatures,
+                alg: SigAlg::MlDsa65
+            }
+        );
+
+        let policy = SigPolicy::hybrid();
+        let (mut keys, mut sigs) = signed(&policy);
+        let key = keys[0].clone();
+        keys.insert(1, key);
+        let sig = sigs[0].clone();
+        sigs.insert(1, sig);
+        assert_eq!(
+            verify_body(&policy, &keys, &sigs, BODY).expect_err("pubkeys is scanned first"),
+            CryptoError::SigMaterialDuplicate {
+                kind: SigMaterialKind::Pubkeys,
                 alg: SigAlg::Ed25519
             }
         );

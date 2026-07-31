@@ -739,6 +739,46 @@ kebab-case id, and never edit an existing row's expected code.
   is carried by task **R51**; until it lands, the generalisation is
   argued at four sites and asserted at one.
 
+- **2026-07-31 (C28, from the adversarial review's finding 5)** — C appended
+  **two codes**: `crypto-pubkeys-duplicate` and
+  `crypto-signatures-duplicate`, on the new variant
+  `CryptoError::SigMaterialDuplicate { kind: SigMaterialKind, alg: SigAlg }`.
+  `crypto-` 25 → 27; universe 191 → 193; R's `VerifyError` delegated set
+  grows by the same two through the `Crypto` wrapper arm (§2), 86 → 88.
+  A post-freeze **append**, which §3 and §4a's additions-only table make
+  routine; nothing was renamed or re-scoped.
+
+  `sig_policy::verify_body`'s doc promised that `pubkeys` and `signatures`
+  are "re-checked here so this function is safe to call on any input", but
+  only exact-length was; the unlisted loop passes a duplicate of a *listed*
+  algorithm and the first-wins `lookup` then verifies whichever entry comes
+  first — so `[(ed25519, valid), (ed25519, garbage), (ml-dsa-65, valid)]`
+  returned `Ok(Hybrid)` on the pub API while a last-wins or
+  duplicate-rejecting implementation reaches a different verdict on the same
+  input (the divergence class MVP-SPEC.md line 73 names). The check now
+  exists, making the doc true. Unreachable through the shipped pipeline —
+  F's strictly-ascending map keys reject the wire form as
+  `cbor-duplicate-map-key` first — hence low severity, no spec case, and
+  **no tamper row**: recorded here for Q55's reverse-coverage sweep as a
+  pub-API-only code pair with named tests
+  (`crypto::sig_policy::tests::a_duplicate_signature_entry_is_rejected_not_first_wins_verified`
+  and siblings).
+
+  Two contract points:
+
+  1. **Not a reuse of `crypto-sig-policy-duplicate`, deliberately.** That
+     code asserts the *policy list* repeats an algorithm; in every input
+     this check rejects, the policy is valid and a *material map* repeats a
+     key. Reusing it would have been exactly the re-scope §3 forbids
+     (C17's lesson).
+  2. **The duplicated algorithm is payload, not a code discriminant** —
+     the codes fan per collection only. This applies the D85/R33
+     generalisation above (*codes name the check that failed, not the field
+     that was wrong*): the check is the per-collection duplicate scan, and
+     the algorithm is where it tripped, like `NonZeroPadding`'s `offset`.
+     The asymmetry with the neighbouring per-algorithm signature codes is
+     principled: there the *check itself* is per-algorithm.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
   as the enforcement, and with §3's "before the Q14 freeze a code may still

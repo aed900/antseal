@@ -1091,9 +1091,10 @@ mod tests {
     /// `fine-root-leaf-seed-tail-not-zero`), plus the 2 exemplified composition arms
     /// of the Decode wrapper arm (R5: one `bundle-*`, one `manifest-*`),
     /// plus the 15 delegated `cbor-*` codes of the Codec wrapper arm (12
-    /// codec variants, ForbiddenType×3), plus the 25 delegated `crypto-*`
+    /// codec variants, ForbiddenType×3), plus the 27 delegated `crypto-*`
     /// codes of the Crypto wrapper arm (CommitmentMismatch×5,
-    /// SaltLength×3, four signature variants ×2 algorithms, 9 single-code
+    /// SaltLength×3, four signature variants ×2 algorithms,
+    /// SigMaterialDuplicate×2 collections (C28), 9 single-code
     /// variants), plus the 2 delegated `content-*` codes of the Canon
     /// wrapper arm (R4).
     ///
@@ -1102,8 +1103,8 @@ mod tests {
     /// `RevealedUnitFileNotTouched` (R5); the 16th is D82's
     /// `TouchedFileWithoutRevealedUnit` (R5), the converse of the 15th.
     ///
-    /// 16 + (6+4+2+2+2+2+8) + 2 + 15 + 25 + 2 = 86.
-    const DISTINCT_CODES: usize = 86;
+    /// 16 + (6+4+2+2+2+2+8) + 2 + 15 + 27 + 2 = 88.
+    const DISTINCT_CODES: usize = 88;
 
     /// Exhaustive-match distinctness over the line-121-derived taxonomy:
     /// every (variant, discriminant) exemplar yields a distinct, stable,
@@ -1202,7 +1203,7 @@ mod tests {
             // One exemplar per delegated cbor-* code (F3).
             ("Codec", 15),
             // One exemplar per delegated crypto-* code (R2).
-            ("Crypto", 25),
+            ("Crypto", 27),
             // One exemplar per delegated content-* canonicalization code (R4).
             ("Canon", 2),
         ]

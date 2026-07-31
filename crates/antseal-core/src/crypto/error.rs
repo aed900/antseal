@@ -113,6 +113,34 @@ impl fmt::Display for SigAlg {
     }
 }
 
+/// Which per-algorithm material collection carried a duplicate entry — the
+/// body's `pubkeys` map or the envelope's `signatures` map, as enumerated
+/// for `crypto::sig_policy::verify_body` (C28). Named after the registry
+/// maps themselves (MVP-SPEC.md line 97), matching the wire schema's
+/// `manifest::sigmap::SigMaterial` naming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SigMaterialKind {
+    /// The body's `pubkeys` map.
+    Pubkeys,
+    /// The envelope's `signatures` map.
+    Signatures,
+}
+
+impl SigMaterialKind {
+    /// Every kind, for pairwise-distinctness tests.
+    pub const ALL: [Self; 2] = [Self::Pubkeys, Self::Signatures];
+}
+
+impl fmt::Display for SigMaterialKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Pubkeys => "pubkeys",
+            Self::Signatures => "signatures",
+        })
+    }
+}
+
 /// Every crypto failure class, one distinct variant each (tasks/C.md C4;
 /// MVP-SPEC.md line 168). Payloads are kinds/lengths/offsets only — never
 /// secret or input bytes (module docs).
@@ -201,6 +229,28 @@ pub enum CryptoError {
     #[error("sig_policy lists an unregistered algorithm id")]
     SigPolicyUnknownAlg,
 
+    /// A `pubkeys` or `signatures` collection carries the same algorithm
+    /// more than once. F's schema makes this unrepresentable on the wire (a
+    /// repeated map key is `cbor-duplicate-map-key`), and
+    /// `crypto::sig_policy::verify_body` re-checks it (C28) so its
+    /// first-wins entry lookup can never silently pick one of two
+    /// conflicting entries on non-schema input — the cross-implementation
+    /// divergence class MVP-SPEC.md line 73 names. Deliberately **not** a
+    /// reuse of [`CryptoError::SigPolicyDuplicate`], which asserts a
+    /// different fact (the *policy list* repeats an algorithm; here the
+    /// policy is valid and a *material map* repeats a key). The duplicated
+    /// algorithm rides as payload rather than fanning the code, because the
+    /// failed check is the per-collection duplicate scan — codes name the
+    /// check, not the field (`docs/testing/error-code-contract.md`,
+    /// D85/R33 entry).
+    #[error("{kind} contains a duplicate entry for algorithm {alg}")]
+    SigMaterialDuplicate {
+        /// Which collection carried the duplicate.
+        kind: SigMaterialKind,
+        /// The duplicated algorithm.
+        alg: SigAlg,
+    },
+
     /// A policy-listed signature is absent. The hybrid rule — present
     /// signature set MUST equal the policy set — hard-fails here rather than
     /// passing on one good signature (spec line 97; tamper matrix line 168).
@@ -282,6 +332,12 @@ impl CryptoError {
             Self::SigPolicyEmpty => "crypto-sig-policy-empty",
             Self::SigPolicyDuplicate => "crypto-sig-policy-duplicate",
             Self::SigPolicyUnknownAlg => "crypto-sig-policy-unknown-alg",
+            // Fans out per collection only: the duplicated algorithm is
+            // payload, not a code discriminant (see the variant docs).
+            Self::SigMaterialDuplicate { kind, .. } => match kind {
+                SigMaterialKind::Pubkeys => "crypto-pubkeys-duplicate",
+                SigMaterialKind::Signatures => "crypto-signatures-duplicate",
+            },
             Self::SignatureMissing { alg } => match alg {
                 SigAlg::Ed25519 => "crypto-signature-missing-ed25519",
                 SigAlg::MlDsa65 => "crypto-signature-missing-ml-dsa-65",
@@ -304,8 +360,10 @@ impl CryptoError {
 }
 
 /// One exemplar per distinct [`CryptoError::code`] — every (variant,
-/// discriminant) pair exactly once, with pairwise-distinct `Display`
-/// renderings (payload values chosen so no two collide). Consumed by this
+/// code-fanning discriminant) pair exactly once, with pairwise-distinct
+/// `Display` renderings (payload values chosen so no two collide).
+/// Payload-only fields — lengths, offsets, and `SigMaterialDuplicate`'s
+/// `alg` — are held at a fixed value, since they do not change the code. Consumed by this
 /// module's code tests and by `verify::error::all_error_exemplars`, which
 /// wraps each in the `VerifyError::Crypto` arm so the R-side distinctness
 /// meta-test covers the delegated codes too (F3's `cbor-*` precedent).
@@ -348,6 +406,12 @@ pub fn all_code_exemplars() -> Vec<CryptoError> {
         E::SigPolicyDuplicate,
         E::SigPolicyUnknownAlg,
     ]);
+    for kind in SigMaterialKind::ALL {
+        exemplars.push(E::SigMaterialDuplicate {
+            kind,
+            alg: SigAlg::Ed25519,
+        });
+    }
     for alg in SigAlg::ALL {
         exemplars.extend([
             E::SignatureMissing { alg },
@@ -396,6 +460,10 @@ mod tests {
             CryptoError::SigPolicyEmpty,
             CryptoError::SigPolicyDuplicate,
             CryptoError::SigPolicyUnknownAlg,
+            CryptoError::SigMaterialDuplicate {
+                kind: SigMaterialKind::Signatures,
+                alg: SigAlg::Ed25519,
+            },
             CryptoError::SignatureMissing {
                 alg: SigAlg::MlDsa65,
             },
@@ -419,7 +487,7 @@ mod tests {
         let all = one_of_each();
         assert_eq!(
             all.len(),
-            15,
+            16,
             "keep this list exhaustive when adding variants"
         );
         for i in 0..all.len() {
@@ -441,7 +509,7 @@ mod tests {
     /// change to a rendering is a reviewed event.
     #[test]
     fn display_renders_metadata_only() {
-        let expected: [(CryptoError, &str); 15] = [
+        let expected: [(CryptoError, &str); 16] = [
             (
                 CryptoError::CommitmentMismatch {
                     kind: CommitmentKind::Unit,
@@ -490,6 +558,13 @@ mod tests {
             (
                 CryptoError::SigPolicyUnknownAlg,
                 "sig_policy lists an unregistered algorithm id",
+            ),
+            (
+                CryptoError::SigMaterialDuplicate {
+                    kind: SigMaterialKind::Signatures,
+                    alg: SigAlg::Ed25519,
+                },
+                "signatures contains a duplicate entry for algorithm ed25519",
             ),
             (
                 CryptoError::SignatureMissing {
@@ -545,6 +620,11 @@ mod tests {
         assert_eq!(salt_names, ["unit_salt", "path_salt", "file_salt"]);
         let alg_names: Vec<String> = SigAlg::ALL.iter().map(ToString::to_string).collect();
         assert_eq!(alg_names, ["ed25519", "ml-dsa-65"]);
+        let material_names: Vec<String> = SigMaterialKind::ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(material_names, ["pubkeys", "signatures"]);
     }
 
     /// `CryptoError` implements `std::error::Error` (thiserror) with no
@@ -557,10 +637,11 @@ mod tests {
     }
 
     /// Stable-code contract (D30 open decision; Q7): one exemplar per
-    /// (variant, discriminant) pair — 25 in total — with pairwise-distinct
-    /// `crypto-`-prefixed kebab-case codes and pairwise-distinct Display
-    /// strings (the property `verify::error`'s meta-test relies on when it
-    /// wraps these in the `VerifyError::Crypto` arm).
+    /// (variant, code-fanning discriminant) pair — 27 in total — with
+    /// pairwise-distinct `crypto-`-prefixed kebab-case codes and
+    /// pairwise-distinct Display strings (the property `verify::error`'s
+    /// meta-test relies on when it wraps these in the
+    /// `VerifyError::Crypto` arm).
     #[test]
     fn codes_are_pairwise_distinct_and_prefixed() {
         use std::collections::BTreeSet;
@@ -568,8 +649,8 @@ mod tests {
         let exemplars = super::all_code_exemplars();
         assert_eq!(
             exemplars.len(),
-            25,
-            "one exemplar per (variant, discriminant) pair"
+            27,
+            "one exemplar per (variant, code-fanning discriminant) pair"
         );
 
         let codes: BTreeSet<&'static str> = exemplars.iter().map(CryptoError::code).collect();
