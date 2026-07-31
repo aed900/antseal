@@ -574,6 +574,36 @@
   - The runner's fallback message stays honest: zero or several candidates must never be resolved by guessing.
 - Notes: The **`__heap_base`** dependency is the sturdiest part — it is wasm-ld's, not std's, and the runner already refuses to attribute anything without it. The fragile parts are the two textual shapes. A crate-side alternative (a panic hook writing a magic-prefixed record into a static) would pin the *message* but still not the *name*: libtest sets no thread name on this target and passes the description to nothing observable, so the progress line really is the only place the running test's identity exists at trap time.
 
+### R53 — The two raw-mirror consumers disagree, and the report claims a mirror nothing checked
+- Milestone: M0 (post-freeze residue)
+- Size: S
+- Deps: R4, R5, F40
+- Spec: raw-mirror↔canonical binding (MVP-SPEC.md line 121); D23 clause 3; D28
+- Discovered by: the **2026-07-31 adversarial code review** (findings 1–3 `high`, finding 8 `medium`).
+- Problem: two defects on one seam.
+  1. **First-wins vs last-wins.** `check_full_reveal_content` (`verify/file_stages.rs:1119`) resolves "the mirror" with `.iter().find(…)` — first wins, and only that one gets row 9 (`raw_commit` opening) and row 10 (`canonicalize_v(raw) == canonical`). `reveal_set` (`verify/pipeline.rs:930`) assigns `raw_mirror` in a loop with no break — **last wins**, and that is the one the report names. On a two-mirror file the checked mirror and the reported mirror are different objects.
+  2. **`raw_mirror` is emitted for partial reveals.** `report.rs:416-419` documents it as full-reveal-only with `raw_size` = "the raw file size", but its producer gates it on `revealed_ids.contains(unit_id)` alone — while `fully_revealed`, two lines below at `pipeline.rs:982`, *does* consult `is_full()`. The asymmetry is the bug. `check_raw_mirror` is reachable only via `check_full_reveal_content`, which `check_file_stages:1161-1163` invokes only for `FileRevealShape::Full`, so on a partial reveal the report carries a mirror whose bytes were never opened against `raw_commit` (no `file_salt` exists) and never canonicalization-bound. A renderer following the documented meaning shows an attacker-chosen document as "the original file".
+- Do: For (1), make the two consumers share one resolution — a single accessor both call — so they cannot drift again even if F40's rule were ever relaxed; a comment asserting they agree is not sufficient (that is exactly what D23 clause 3 was). For (2), gate the `raw_mirror` arm on the same `is_full()` the sibling field already consults, or — if a partial-reveal mirror is genuinely wanted in the report — give it a field name and doc that state it is unbound, and record why the weaker datum is worth emitting.
+- Accept:
+  - One resolution path for "the file's mirror", used by both the check and the report; a test that would go red if a second one appeared.
+  - A partial reveal carrying a mirror produces a report that either omits `raw_mirror` or marks it unverified — pinned in a golden vector.
+  - A report vector for the two-mirror case (post-F40 it is a rejection; the vector pins *which* code).
+- Notes: F40 makes (1) unreachable from decoded input. Do it anyway: `reveal_set` and `file_stages` are independently reachable through the pub API, and the review's whole thesis is that unenforced agreements between two components are what rot. (2) is independent of F40 and is the live one.
+
+### R54 — Quadratic pre-authentication scans: the caps admit a product nothing bounds
+- Milestone: M0 (post-freeze residue)
+- Size: M
+- Deps: R3, R4, F11
+- Spec: D10 §5's frozen complexity table; parser caps (D10)
+- Discovered by: the **2026-07-31 adversarial code review** (finding 6 `medium→low`, plus U1 and U3, same class at two more sites).
+- Problem: stages 2 and 3 are built from nested linear scans over adversary-controlled counts, and the signature stage is **stage 5**, so none of that work is gated on any authenticator. D10 itself states in bold that both count caps are reachable simultaneously inside `MAX_MANIFEST_BYTES` (~10.2 MiB) — and **nothing bounds their product**. A legal ~8 MiB bundle declaring `MAX_FILE_COUNT` = 16384 and `MAX_UNIT_COUNT` = 65536 with *no reveals at all* forces ~10⁹ iterations in `check_tiling` (`structural.rs:277`) plus ~10⁹ more in `check_manifest_refs` (`structural.rs:205-213`) — the latter for a check that **cannot fail**, since `flatten_units` derives `file_id` from the enumerate index rather than from a wire field. Same shape at `file_stages.rs:746` (per-file loops rescanning the work-global unit table; ~1.9e10 scans on a *valid* at-cap bundle against ~18 MB of honest AEAD work) and at `bundle/schema.rs:1462` (tier-[X] cross-section rules, Θ(|noncovered|×|covered|), inside the stage D10 §5 labels O(input)). In the browser verifier this is a hang.
+- Do: Index rather than reorder. Build the file→units map once per verification and share it across stages 2, 3, 4 and `reveal_set`; replace `file_exists`'s linear scan; make the cross-section rules set-based. Then either bound the product in D10 or state explicitly that it is unbounded and that the implementation is linear regardless. Re-check D10 §5's table against the code afterwards — the finding is partly that the table asserts a complexity the code does not have.
+- Accept:
+  - The at-cap no-reveal bundle above verifies in time linear in input, demonstrated by a measurement, not an argument.
+  - `check_manifest_refs`' tautological arm is either removed or documented as unreachable-by-construction (see U17, which says the same of `proof_unit_refs`).
+  - D10 §5's complexity table matches the implementation, row by row.
+- Notes: **Stage 5 running last is correct and must not be "fixed"** — the manifest is self-signed, so an attacker can always mint a valid signature over a forged body and an earlier signature check would gate nothing. The review verified this explicitly. The defect is the scan shape, not the order.
+
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.

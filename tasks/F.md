@@ -554,6 +554,39 @@
   - Every added row's outcome is pairwise distinct from every existing row (`check_registry` is the proof), and every added row is `project_added` in `MATRIX.json` with a justification — MVP-SPEC.md line 168 predates all of these.
   - F23's check passes with the `owed` lists emptied of everything this task took.
 - Notes: Check reachability before writing a row rather than after: a code no decode surface can emit is a *finding* about the schema (or about a defensive arm that is correctly unreachable, like `unhandled_assigned_key`), and its honest end state is a named non-row, not a fixture that cannot be built. Cheap now, permanent after Q14: an unrowed code the freeze catches is an unrowed code for ever.
+### F40 — Enforce D23 clause 3: at most one raw mirror per file
+- Milestone: M0 (post-freeze residue)
+- Size: S
+- Deps: F5
+- Spec: raw-mirror↔canonical binding (MVP-SPEC.md line 121); D23 clause 3 (`docs/decisions/D23-raw-mirror-placement.md:23`)
+- Discovered by: the **2026-07-31 adversarial code review** (`docs/reviews/2026-07-31-adversarial-code-review.md`, findings 1–3, `high`) — found independently by three lanes, then re-verified by hand.
+- Problem: D23 decided "at most one mirror per file" and `FileEntry::raw_mirror`'s prose repeats it as though it were enforced. **No layer implements it.** `FileEntry::new` (`manifest/body.rs:694-743`) checks only units-non-empty, ≥1 `Normal` (D77) and coverage/binding agreement; `validate_unit_ordinals` accepts sequential ids; `check_tiling` exempts mirrors by `kind` so a second mirror's range is unconstrained. A file carrying two `RawMirror` units therefore verifies clean while only one of them is bound by rows 9–10 — a second, contradictory "original", signed and anchored as part of the work, which is exactly what line 121's MUST exists to prevent. Invisible to the suites because every fixture and the proptest strategy generate 0 or 1 mirrors.
+- Do: Add the count rule to `FileEntry::new`, positioned in the frozen validation order deliberately (state the choice and its reason the way D77's comment does — it must come after `units.is_empty()` and its position relative to the coverage loop must be argued, not incidental). Mint a new `manifest-…` stable error code for it: legal and routine under D30 §3's append-only rule (`error_universe.rs:358` — "adding is routine and unrestricted, renaming is not"), and this is a *tightening to spec conformance*, not a format change, since such a manifest was never conformant. Add the tamper row, and extend at least one fixture/strategy to generate two mirrors so the rule is exercised in the direction that was previously blind.
+- Accept:
+  - A two-mirror manifest is rejected at `FileEntry::new` with the new code, in both the decode and the direct-construction paths.
+  - The error universe snapshot is re-blessed and the new code appears with the census incremented; no existing code renamed or lost.
+  - A planted-fault check: remove the rule and watch a *specific* named test go red (not merely "an error happened").
+  - The proptest strategy or a fixture can produce ≥2 mirrors, and did so before the rule landed.
+- Notes: Pairs with **R53**, which owns the consumer-side disagreement this rule makes unreachable. Land F40 first: R53's defence-in-depth argument is different once the shape is impossible.
+
+### F41 — Sweep the documented structural guarantees that the code does not implement
+- Milestone: M0 (post-freeze residue)
+- Size: M
+- Deps: F5, F11
+- Spec: verifiers never re-encode (MVP-SPEC.md line 74); D10 §3
+- Discovered by: the **2026-07-31 adversarial code review** (findings 4 `medium`, U4, U5, U11, U12) — the review's headline pattern: *the dominant defect class here is not wrong code, it is recorded claims the code does not implement.*
+- Problem: four separate places assert a structural guarantee that does not exist.
+  1. **`ManifestBodyV1` is documented as not `Clone`** — `manifest/body.rs:995-999` says the never-re-encode rule "is enforced by the borrow checker rather than by documentation"; line 1003 derives `Clone` unconditionally. Repeated at `envelope.rs:13-16`, `envelope.rs:163-164`, and in `encode_body`'s rustdoc. `encode_body(manifest.body().clone())` compiles today. The harm is that the docs explicitly tell reviewers this bug class is "not a code-review finding".
+  2. **"constructible == decodable" is false** — `BundleV1::new`, `ReceiptRecord::new`, `TsaAnchor::new`, `ManifestBodyV1::new` enforce none of the D10 count caps the decode path enforces, so the seal side can emit an artifact no verifier — including antseal's own — can decode (`bundle/schema.rs:1430`).
+  3. **`sig_policy`'s no-cap justification is unsound** — duplicate-freedom is validated *after* the array is fully materialised, so ~16M single-byte elements are read and pushed before anything fails (`manifest/body.rs:1197`). The same wrong argument is recorded in D10 §3 and in the error-code contract.
+  4. **`ids.rs`'s no-domain-tag reason is self-contradictory** — CBOR uint `0x00` is an admitted canonical v1 item *and* equals `TAG_FINE_TREE_LEAF`; `no_canonical_v1_item_can_start_with_a_domain_tag_byte` (`ids.rs:211`) asserts a false universal while checking three cherry-picked items (`manifest/ids.rs:25`).
+- Do: For each, decide **make it true or make the doc honest** — and record which, because the two have different costs. (1) is the load-bearing one: either drop the `Clone` derive and fix the F16 call site that needs it, or delete the borrow-checker claim from all four sites and replace it with whatever actually enforces the rule. For (4), fix the test's universal *and* the recorded reason at source.
+- Accept:
+  - No doc in `manifest/`, `bundle/` or `codec/` asserts a structural guarantee that grep cannot confirm.
+  - Each of the four resolved with the choice recorded inline.
+  - (4)'s test asserts something true, and a planted counterexample (`0x00`) is in it.
+- Notes: Deliberately one task, not four: the *class* is the finding, and fixing them singly is how the class regrows. Related notes not in scope but worth reading together: U14, U20, U21, U22 in the review.
+
 ### F42 — The registry's prose restatements of machine-checkable facts are unchecked, and now frozen
 - Milestone: M0
 - Size: S
@@ -596,6 +629,7 @@
   - A shifted spec line turns something red (test-of-the-test), rather than being discovered by a confused reader.
   - No registry content changes as a side effect.
 - Notes: Q58 owns the lint and the general citation convention across `docs/`; this entry owns the narrower, sharper question — that the *frozen* document's correctness depends on an *unfrozen* one. The two should land together or the answer will be split across them.
+
 ### F49 — The two allocation bounds F30 did not measure: the round-trip peak and `TOTAL_FACTOR`
 - Milestone: M0 (record) / M1 (act)
 - Size: S

@@ -351,6 +351,19 @@
   - `docs/testing/cross-check.md` §5's "by design" row is corrected rather than deleted, and still names ACVP as the real vehicle.
 - Notes: Leg 2 is specific to the **final** FIPS 204 (August 2024). The 2023 draft omitted the `k ‖ ℓ` domain separator, so an implementation of the draft fails this check — deliberately, since `ml-dsa =0.1.1` implements the final standard and a silent regression to draft behaviour is exactly the kind of thing a golden vector should catch. `MLDSA65_RESIDUE_SHA256` moves with the vector: if the ML-DSA half is ever legitimately re-emitted the constant moves in the same commit, exactly as that file's `FROZEN.sha256` entry does, and the failure message prints the observed digest so the update is a copy-paste. It is deliberately not auto-updatable — "regenerate until it agrees" is the move D31 §11 item 5 forbids.
 
+### C28 — `verify_body`'s claimed duplicate re-check does not exist, and `lookup` is first-wins
+- Milestone: M0 (post-freeze residue)
+- Size: XS
+- Deps: C14
+- Spec: no first-wins/last-wins divergence between conforming implementations (MVP-SPEC.md line 73)
+- Discovered by: the **2026-07-31 adversarial code review** (finding 5, `medium→low` after verification).
+- Problem: `crypto/sig_policy.rs:221-224` documents that pubkeys and signatures are "both already duplicate-free and exact-length by F's schema, and re-checked here **so this function is safe to call on any input**". Exact-length *is* re-checked (`try_from_slice` → `NonCanonicalSignature`). Duplicate-freedom is **not**: the unlisted-algorithm loop (247-251) only tests `policy.requires(alg)`, which a duplicate of a listed algorithm passes, and `lookup` (275-280) is `Iterator::find` — strictly first-wins. A caller of the pub API passing `[(Ed25519, valid), (Ed25519, garbage), (MlDsa65, valid)]` gets `Ok(Hybrid)`; a last-wins or duplicate-rejecting implementation reaches a different verdict on the same input.
+- Do: Either add the duplicate check the doc promises (making the "safe on any input" claim true), or delete that clause and state plainly that the function's contract requires a duplicate-free input which only F's schema establishes. Prefer the former — it is a few lines and the doc already told everyone it was there.
+- Accept:
+  - A duplicated listed algorithm is rejected, or the doc no longer claims it is.
+  - The chosen behaviour has a test with a *duplicate* in it, not just a well-formed input.
+- Notes: Not reachable through the shipped pipeline — F's schema does reject duplicates before `verify_body` sees them — which is why the verifier corrected this down to `low`. It matters because `antseal-core` is a published API surface and this is a cross-implementation divergence class the spec names explicitly. Related, and deliberately separate: **U16** in the review (a missing *pubkey* is reported as `crypto-signature-missing-*`, collapsing two distinct mutations onto one code).
+
 ## Open decisions (C)
 - **ed25519-dalek exact pin (2.x vs 3.0.0)** — chosen from C11's probe with P; blocks C11→C12, C15, C16; must land by M0 (start). — **[2026-07-27]** RESOLVED (D13): `=3.0.0`; C12 consumption shape `default-features = false, features = ["alloc","zeroize"]`; never enable `legacy_compatibility` (C11 report §9).
 - **Primary ML-DSA crate (`ml-dsa =0.1.1` vs `fips204 =0.4.6` fallback) and whether the Ed25519-only `sig_policy` fallback ships** — outcome of the C11 WASM probe; blocks C13, C14, C15, C16; M0. — **[2026-07-27]** RESOLVED (D14): primary `ml-dsa =0.1.1` (wasm32 executed bit-match; canonical rejection complete at `Signature::decode` — C13 needs NO pre-validation layer); fips204 pinned-unconsumed byte-identical fallback; **Ed25519-only fallback NOT shipped**. C13: use `sign_deterministic`/`verify_with_context`, enable the non-default `zeroize` feature, zeroize ξ caller-side.
