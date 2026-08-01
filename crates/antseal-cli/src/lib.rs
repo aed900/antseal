@@ -31,11 +31,17 @@ use std::process::ExitCode;
 use antseal_core as _;
 
 /// Full CLI entry: parse, dispatch, and map every outcome to its
-/// documented exit code. Testable — it never calls `process::exit`.
+/// documented exit code (the U2 table in [`error`]). Testable — it never
+/// calls `process::exit`.
 ///
-/// Exit codes at U1 (the full U2 table extends this): 0 success (also
-/// `--help`/`--version`, clap's convention), 2 usage error, and the
-/// [`error::CliError::exit_code`] values for dispatched failures.
+/// Error rendering is deterministic per D51: the human message goes to
+/// stderr in every mode; under `--json` stdout additionally carries
+/// exactly one structured error object ([`error::CliError::to_json`],
+/// provisional until U3's versioned envelope) with the same exit code as
+/// plain mode. clap-level failures keep clap's convention — help/version
+/// on stdout with code 0, usage errors on stderr with code 2 (the `usage`
+/// class code; argv that cannot parse has no reliable `--json` yet, a
+/// known U3 refinement).
 pub fn main_entry<I, T>(args: I) -> ExitCode
 where
     I: IntoIterator<Item = T>,
@@ -44,9 +50,6 @@ where
     let cli = match cli::Cli::parse_checked(args) {
         Ok(cli) => cli,
         Err(clap_err) => {
-            // `print` writes help/version to stdout and usage errors to
-            // stderr; `exit_code` is 0 for the former, 2 for the latter —
-            // clap's own convention, kept as the documented usage code.
             let code = clap_err.exit_code();
             let _ = clap_err.print();
             return ExitCode::from(u8::try_from(code).unwrap_or(1));
@@ -56,6 +59,9 @@ where
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err}");
+            if cli.globals.json {
+                println!("{}", err.to_json());
+            }
             ExitCode::from(err.exit_code())
         }
     }

@@ -22,6 +22,10 @@ path = "src/main.rs"
 [dependencies]
 antseal-core.workspace = true
 clap.workspace = true
+# Exact-pinned workspace-wide for R1's report-byte reasons (D29); consumed
+# here only for the `--json` error envelope (U2; the versioned envelope
+# schema is U3's).
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

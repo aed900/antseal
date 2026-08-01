@@ -1,0 +1,68 @@
+[internal] class=internal code=1
+  internal error: journal write returned an impossible state (this is a bug in antseal — please report it)
+[usage] class=usage code=2
+  usage error: --wallet import requires --wallet-key-fd in machine mode
+[not-implemented-m2] class=not-implemented code=3
+  `antseal status` is not implemented until M2: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
+[not-implemented-m3] class=not-implemented code=3
+  `antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
+[io-error] class=io-error code=4
+  I/O error: reading ./notes.txt: denied
+[consent-declined] class=consent-not-obtained code=10
+  consent declined: nothing was paid, anchored, or uploaded
+[consent-machine-mode] class=consent-not-obtained code=10
+  consent required but not obtainable: machine mode (--json, non-TTY stdin, or --passphrase-fd 0) never prompts — pass --yes to consent in advance; nothing was paid, anchored, or uploaded
+[import-refused-existing-vault] class=consent-not-obtained code=10
+  refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)
+[passphrase-no-channel] class=passphrase-unavailable code=11
+  passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' "$PASS" | antseal … --passphrase-fd 0`
+[passphrase-fd-read-failed] class=passphrase-unavailable code=11
+  passphrase unavailable: reading the --passphrase-fd descriptor failed
+[passphrase-fd-empty] class=passphrase-unavailable code=11
+  passphrase unavailable: the --passphrase-fd input was empty
+[passphrase-fd-forbidden-byte] class=passphrase-unavailable code=11
+  passphrase unavailable: the --passphrase-fd input contains interior NUL/LF/CR bytes, which the interactive prompt could never produce (channel parity, D41)
+[passphrase-fd-over-cap] class=passphrase-unavailable code=11
+  passphrase unavailable: the --passphrase-fd input exceeded the 1 KiB cap (D41)
+[vault-auth-failure] class=vault-auth-failure code=12
+  vault authentication failed: wrong passphrase, or the vault store or header has been modified or corrupted
+[vault-kdf-memory] class=vault-kdf-memory code=13
+  cannot allocate the 256 MiB this vault's key derivation requires: the memory floor is a security parameter (a stolen vault decrypts permanent public ciphertexts, forever) and antseal will not create or open a weaker vault; use a machine with more allocatable memory (D40)
+[vault-kdf-params-out-of-range] class=vault-kdf-params-out-of-range code=14
+  vault KDF parameters are outside the accepted range (argon2id m_cost 1073741824 KiB exceeds the 4194304 KiB cap): refusing to run the KDF on an out-of-range header (D40 §3)
+[vault-lock-held-with-pid] class=vault-lock-held code=15
+  another antseal process (pid 4242) holds the vault lock at /home/user/.antseal/vault.lock; retry when it finishes
+[vault-lock-held-unknown-pid] class=vault-lock-held code=15
+  another antseal process holds the vault lock at /home/user/.antseal/vault.lock; retry when it finishes
+[vault-newer-version] class=vault-newer-version code=16
+  this vault was created by a newer antseal (vault format v2; this build supports up to v1): upgrade antseal instead of downgrading the vault
+[insufficient-ant-token] class=insufficient-ant-token code=20
+  insufficient ANT for this seal: the quote needs 1500000000000000000 atto-ANT but the wallet holds 20000000000000000; fund the wallet with ANT and re-run (nothing was paid or uploaded)
+[insufficient-eth-gas] class=insufficient-eth-gas code=21
+  insufficient ETH for gas: the payment transaction needs about 90000000000000 wei but the wallet holds 1000000000; fund the wallet with ETH for gas and re-run (nothing was paid or uploaded)
+[anchor-gate-abort] class=anchor-gate-abort code=22
+  no RFC 3161 timestamp token could be obtained, so the seal aborts before anything is paid or uploaded (the anchor gate); re-run when a TSA is reachable, or pass --force-degraded to proceed with a loudly recorded degraded anchor set
+[network-failure] class=network-failure code=23
+  network failure: quote_batch: no peers reachable
+[resume-source-changed] class=resume-safety-abort code=24
+  resume safety abort: a source file changed since the interrupted seal: resume never re-encrypts (re-using a journaled nonce on new plaintext would break the encryption), so this seal is abandoned; re-run `antseal seal` to start a fresh one
+[resume-staged-bytes-missing] class=resume-safety-abort code=24
+  resume safety abort: the staged ciphertext bytes of the interrupted seal are missing from the vault: resume never re-encrypts, so this seal is abandoned; re-run `antseal seal` to start a fresh one (any payment already made is forfeited — the deliberate safety-over-cost choice)
+[resume-overlap-not-exact] class=resume-overlap-not-exact code=25
+  these inputs overlap an incomplete seal without matching it exactly (2 of 3 paths match incomplete work a1b2c3): re-run with exactly the original path list to resume it, with a disjoint path list to start a fresh seal, or abandon it first (D45)
+[resume-flag-mismatch] class=resume-flag-mismatch code=26
+  these inputs match an incomplete seal but the seal-shaping flags differ (incomplete work a1b2c3 was started without --split): re-run with the original flags to resume, or abandon the incomplete seal first (D45)
+[invalid-seal-argument-one] class=invalid-seal-argument code=27
+  invalid seal argument: ./src is a directory (seal takes files only)
+[invalid-seal-argument-many] class=invalid-seal-argument code=27
+  invalid seal arguments: ./src is a directory (seal takes files only); ./notes.txt appears twice
+[refused-overwrite] class=refused-overwrite code=30
+  restore refused to overwrite 2 existing file(s) whose bytes differ from the sealed content; the differing files are untouched — move them aside and re-run to write the sealed versions (D48)
+[malformed-restore-record] class=malformed-restore-record code=31
+  malformed restore record: unit 3 names no target path (the vault record cannot drive a safe restore)
+[export-self-verify-failed] class=export-self-verify-failed code=32
+  the written vault export failed its mandatory self-verification: the file on disk is NOT a usable backup — delete it and re-run `antseal vault export` (D47)
+[import-auth-failed] class=import-auth-failed code=33
+  vault import authentication failed: wrong passphrase, or the export file has been modified or truncated
+[import-newer-version] class=import-newer-version code=34
+  this export file was written by a newer antseal (export format v3; this build supports up to v1): upgrade antseal to import it
