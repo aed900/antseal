@@ -4,8 +4,16 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
+# NOT a WASM crate: this crate is the Autonomi storage/payment boundary and
+# never enters the verifier page's graph — it must never be added to a wasm
+# CI lane. It is also deliberately dep-light until S6: the `ant-core` adapter
+# (and its ~570-package transitive graph, P16 §5) lands behind this boundary
+# at S6 as a deliberate event; S2/S3 keep the trait + mock consumable
+# without it.
+
 [dependencies]
 antseal-core.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

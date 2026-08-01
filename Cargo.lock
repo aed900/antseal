@@ -55,6 +55,7 @@ name = "antseal-net"
 version = "0.0.0"
 dependencies = [
  "antseal-core",
+ "thiserror",
 ]
 
 [[package]]
