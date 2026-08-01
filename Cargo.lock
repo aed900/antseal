@@ -997,9 +997,13 @@ dependencies = [
 name = "antseal-net"
 version = "0.0.0"
 dependencies = [
+ "ant-core",
  "antseal-core",
  "antseal-net",
+ "getrandom 0.3.4",
  "thiserror 2.0.19",
+ "url",
+ "zeroize",
 ]
 
 [[package]]
