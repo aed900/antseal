@@ -32,6 +32,12 @@ rust-version = "1.92.0"
 # `*`: the cargo-deny bans lane (P13, deny.toml) rejects wildcard
 # requirements workspace-wide, path deps included.
 antseal-core = { path = "crates/antseal-core", version = "=0.0.0" }
+# Same class. Declared here (single version-declaration point) for the
+# consumers of `antseal-net`'s `StorageBackend`/`MockBackend`: the crate's
+# own self-dev-dep (the house `test-util` feature pattern, S3 — see
+# antseal-core's identical edge) and, from M1 integration, `antseal-cli`'s
+# dev-dependency edge for pipeline tests (D34's forced sub-finding).
+antseal-net = { path = "crates/antseal-net", version = "=0.0.0" }
 
 # Autonomi client (exact-pin class: storage/payment surface, network
 # consensus). Re-verified at M0 start, 2026-07-27: 0.5.0 is the newest

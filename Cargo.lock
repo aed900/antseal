@@ -32,6 +32,7 @@ name = "antseal-anchor"
 version = "0.0.0"
 dependencies = [
  "antseal-core",
+ "thiserror",
 ]
 
 [[package]]
@@ -75,6 +76,8 @@ name = "antseal-net"
 version = "0.0.0"
 dependencies = [
  "antseal-core",
+ "antseal-net",
+ "thiserror",
 ]
 
 [[package]]

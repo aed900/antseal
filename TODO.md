@@ -291,8 +291,8 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [ ] **P20** (S) Dependency-graph containment assertions for the devnet era: default `--workspace` build/test lanes never compile `ant-node`; `self_encryption` never a direct antseal dependency (D35's prohibition — P15 lands the check, this extends it); alloy pinned in lockstep with evmlib — after P15,P16,S2 · discovered by D35/D52/P16 planning 2026-08-01
 
 ### Storage & pipeline (S)
-- [ ] **S2** (M) Batch-first `StorageBackend` trait + Blob/CostQuote/PaymentReceipt/Address types; churn-boundary enforcement — after S1
-- [ ] **S3** (M) `MockBackend` with fault injection + call-order logging — after S2
+- [x] **S2** (M) Batch-first `StorageBackend` trait + Blob/CostQuote/PaymentReceipt/Address types; churn-boundary enforcement — after S1 ✅ 2026-08-01 — trait + full type set in antseal-net (D32 cap constructor-enforced with a typed error; D37 map-shaped receipt skeleton; D33 payment-RPC scope note in the churn-boundary rustdoc; InsufficientAnt/InsufficientGas distinct by type); ant-core dep deliberately deferred to S6, tests driven by a hand-rolled std-only block_on
+- [x] **S3** (M) `MockBackend` with fault injection + call-order logging — after S2 ✅ 2026-08-01 — behind non-default `test-util` (house self-dev-dep pattern; cli-consumable per D34's sub-finding); deterministic median-×3 quoting with per-round fresh quote hashes, sequential sub-batch receipts (forceable cap), one-shot faults at every backend-reachable S16/S18 kill point, full call log + consumed ordering assertion; address fn injectable (S21 wires S4's rule as the default)
 - [ ] **S4** (L) Deterministic self_encryption address recomputation in antseal-core (WASM-safe; seal-time + linkage-layer primitive) — after S1,P15
 - [ ] **S5** (M) Network mapping arbitrum-one/arbitrum-sepolia/devnet → chain/contracts/RPC/peers + wallet keygen/import-validation/address ops (for U11) — after S1,P16
 - [ ] **S6** (L) `AntCoreBackend` over prepare→pay→finalize in ONE adapter file; never data_upload/chunk_put — after S1,S2,S4,S5
@@ -309,9 +309,10 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [ ] **S17** (L) M1 E2E on devnet via library APIs: multi-file --split seal, restore, UNANCHORED verify, --live — after S6,S12–S15 + P16 + R5
 - [ ] **S18** (L) M1 kill/resume matrix on devnet: pay/finalize kill, mid-upload kill, changed-source abandon, real SIGKILL — after S11,S16,S17
 - [ ] **S19** (M) Clean-tree restore from vault backup only (E2E) — after S14,S17 + U12
+- [ ] **S21** (S) MockBackend default address fn → S4's `compute_storage_address` (mock↔S4 address-equality test; delete the stand-in digest) — after S3,S4 · discovered by S3 (wave-1 lane β) 2026-08-01
 
 ### Anchor stub (A)
-- [ ] **A1** (S) Zero-anchor seal contract + minimal `absent`/UNANCHORED aggregate path (pre-M2 state machine) — after F13
+- [x] **A1** (S) Zero-anchor seal contract + minimal `absent`/UNANCHORED aggregate path (pre-M2 state machine) — after F13 ✅ 2026-08-01 — `AnchorGate` trait + `NoAnchorGate` + the normative zero-anchor contract (mainnet-rejection MUST rule stated; U13/S13 enforcement cross-referenced) in antseal-anchor; `antseal_core::verify::aggregate` zero-headline-eligible flag (report bytes untouched — derived data only); F13's committed empty-anchor + every-anchor-kind vectors library-verify UNANCHORED; no code path mints a headline time from an empty/ineligible set (tested); core wasm32-clean
 
 ### Verify-side live check (R)
 - [ ] **R11** (S) Library live-check wrapper over S15 (manifest-shaped for M1; bundle-shaped at M3) — after S15
