@@ -86,6 +86,26 @@ ANTSEAL_DEVNET_DATA_DIR                 node store root (under .devnet/)
 ANTSEAL_DEVNET_PID                      launcher pid (same as launcher.pid)
 ```
 
+### Running the real-backend test suite against a live devnet (S6–S8)
+
+The `antseal-net` adapter suite is double-gated: the `ant-backend` cargo
+feature (never in default CI) AND the `ANTSEAL_DEVNET_ENV` variable
+pointing at a live run's env export — unset, every test **skips with a
+message** (and a stale export whose launcher pid is dead also skips).
+D52's scheduled lane and the S17 harness drive it; by hand:
+
+```bash
+scripts/devnet/local-up --nodes 14          # in the launcher checkout
+ANTSEAL_DEVNET_ENV="$PWD/.devnet/env" \
+    cargo test -p antseal-net --features ant-backend --test devnet_backend
+scripts/devnet/local-down                    # always, including on failure
+```
+
+The suite serializes itself (each test stands up an in-process client
+node — heavy on 2 cores) and uses run-scoped blob content, so re-runs
+against one devnet stay meaningful. Re-point `ANTSEAL_DEVNET_ENV` after
+every `local-up`; the export is run-scoped.
+
 ## Wallet funding story (ANT + ETH)
 
 There is no faucet and no funding step: **Anvil pre-funds its well-known

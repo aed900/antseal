@@ -70,16 +70,22 @@ pub struct BlobPaymentRecord {
 
 /// Landing status of one payment sub-batch transaction.
 ///
-/// Skeleton enum — S6/S7 extend it deliberately if the awaited-receipt
-/// flow needs more states (e.g. a reverted-tx arm).
+/// The reverted arm was added at S6 (the extension the skeleton
+/// anticipated): the awaited-receipt flow observes `status == false`
+/// directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxStatus {
     /// Submitted; landing not yet observed (the journal-first record —
     /// the hash is durable even if the receipt await is interrupted,
-    /// D33 Decision 2).
+    /// D33 Decision 2). Backfill resolves it to one of the other arms.
     Submitted,
-    /// The awaited transaction receipt reports the tx mined.
+    /// The awaited transaction receipt reports the tx mined successfully.
     Confirmed,
+    /// The awaited transaction receipt reports the tx mined but
+    /// **reverted** (S6): gas was spent, **no ANT moved**, and the
+    /// sub-batch's quotes are deliberately NOT in the quote→tx map (they
+    /// are unpaid). The record is journaled as evidence of the gas spend.
+    Reverted,
 }
 
 /// One sub-batch transaction's journal record — exactly D37 Decision 2's
