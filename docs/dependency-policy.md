@@ -23,7 +23,7 @@ lands):
 | `ml-dsa` — **pinned `=0.1.1` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md); C11 probe)**: primary ML-DSA-65; pre-1.0, unaudited; all three 2026 advisories patched in 0.1.1 (only CVE-2026-22705 has a RUSTSEC ID — P13 must watch GHSA/osv.dev, not RUSTSEC alone); wasm32 probe passed with executed native↔wasm bit-match | PQC signature format | P12 — landed (declaration-only until C13) |
 | `fips204` — **pinned `=0.4.6` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md))**: fallback impl, dormant since 2024-12 (accepted for a fallback); probe-proven byte-identical keygen + deterministic sign vs `ml-dsa`, so activation needs no re-derivation; normally consumed by no crate | PQC signature fallback | P12 — landed (declaration-only) |
 | `opentimestamps` (spec pin `=0.2.0`) | `.ots` wire format. **Scope: wire-format codec only** — the calendar HTTP client is in-house (antseal-anchor); no networking surface of the crate may be used | P18 (A) |
-| `self_encryption` | deterministic ciphertext-address recomputation; **must equal the exact version ant-core's graph locks** — skew breaks the storage-linkage layer | P15 |
+| `blake3` — **pinned `=1.8.5` 2026-08-01 (P15; decision [D35](decisions/D35-self-encryption-dependency-mode.md))**: current stable on crates.io, and the same version ant-core 0.5.0's packaged lock records — matching is tidy, **not** load-bearing: BLAKE3 is a fixed function, and the golden vectors, not the crate version, are the determinism authority, so this pin has **no lockstep semantics** with ant-core bumps. `default-features = false` (drops `std`, the only default feature): the normal graph is pure no_std Rust (arrayref/arrayvec/cfg-if/constant_time_eq — no getrandom, no rand, no I/O, no threads); `rayon` (nondeterministic thread pool), `mmap` (I/O) and `wasm32_simd` deliberately OFF. P15 probe 2026-08-01: wasm32-unknown-unknown build passes on the pinned toolchain, and the official BLAKE3-team spec vectors match on both the x86 asm path and `pure`. Declaration-only until S4 consumes it | storage-address recomputation: S4's `compute_storage_address` and the M3 storage-linkage layer recompute ant-protocol's `compute_address` = BLAKE3-256 of the blob bytes (network consensus) | P15 (D35) — landed (declaration-only until S4) |
 | AEAD/HKDF/SHA-2 stack — **HKDF/SHA-2 part nominated 2026-07-27 (C1–C4): `sha2 = "=0.11.0"`, `hkdf = "=0.13.0"`, `hmac = "=0.13.0"`** (current stable verified on crates.io; RUSTSEC clean — sha2's only advisory RUSTSEC-2021-0100 affects 0.9.7 only, hkdf/hmac have none; `hmac` is hkdf's HMAC layer, also the tests' RFC 5869 reference). **XChaCha20-Poly1305 part nominated 2026-07-27 (C9): `chacha20poly1305 = "=0.11.0"`** (current stable, same RustCrypto generation as the sha2 0.11/hkdf 0.13 pins; RUSTSEC — no advisories on record). Every permanent unit/manifest ciphertext byte comes out of it. Features `alloc` + `zeroize` only; **default features OFF so `getrandom` never enters antseal-core** (injected-RNG-only policy, C5/C9; wasm recipe is P14's). Underlying `aead`/`chacha20`/`poly1305`/`cipher` versions frozen by Cargo.lock (§3) | ciphertext format + key derivation | C |
 | Unicode/NFC data crate — **nominated 2026-07-27 (G1): `unicode-normalization = "=0.1.25"`, shipping Unicode data 17.0.0 behind the frozen descriptor string `unicode-17.0.0`** ([D25](decisions/D25-unicode-normalization.md)); the data version is frozen into manifests, and every shipped table is retained forever | canonicalization output bytes | G |
 | Argon2/scrypt (vault KDF) | vault format | U/C |
@@ -50,6 +50,26 @@ Three separate guards exist instead (C24), and none is redundant:
 The stack's other feature selections are ordinary consumption shape; this one
 is a security property whose failure mode is silent, which is why it is
 called out here rather than left in the row.
+
+**`self_encryption` is prohibited, not pinned (P15, decision
+[D35](decisions/D35-self-encryption-dependency-mode.md)).** Until 2026-08-01
+this table carried a `self_encryption` row ("must equal the exact version
+ant-core's graph locks"). D35 dissolved the need: under D32's
+blob-=-one-chunk model the storage address is BLAKE3-256 of the ciphertext
+bytes, so no antseal crate uses `self_encryption` for anything — and three
+independent grounds (GPL-3.0 with no linking exception; mandatory
+tokio/tempfile/rayon/rand deps; wasm32-hostile) disqualify it from ever
+becoming a dependency. The rule is therefore a **prohibition**:
+`self_encryption` must never be a *direct* dependency of any antseal crate —
+it remains a transitive, never-invoked-by-us dependency inside ant-core's
+graph, linked only into net/cli binaries (D6's distribution note stands).
+Enforced on every run by `scripts/ci-lanes.sh dep-graph` (declared-manifest
+scan plus, once the crate is in the locked graph, a resolved-graph
+immediate-parent check). The old move-only-in-lockstep clause is **retired**:
+the transitive version simply follows ant-core's lock and is *recorded*,
+never pinned by us, at every ant-core bump (§4 checklist; S20's survey).
+The `blake3` row above is D35's replacement primitive and deliberately has
+no lockstep semantics of its own.
 
 **This list grows — it is a floor, not a ceiling.** G nominates the
 Unicode/NFC crate (with its exact Unicode data version) at M0, and C
@@ -93,9 +113,10 @@ fallout, with this checklist completed in the PR description:
       byte-exact (M0 onward). A vector change is a format event — it is
       justified explicitly, never regenerated silently
 - [ ] For `ant-core`: devnet E2E green (local devnet, P16; Sepolia-mode
-      where payment surfaces changed, P17), and the locked
-      `self_encryption` version re-recorded — the two move only in lockstep
-      (P15)
+      where payment surfaces changed, P17), and the `self_encryption`
+      version its graph locks re-recorded — recorded, never pinned: no
+      antseal crate may depend on it directly (D35 prohibition, P15; the
+      old move-only-in-lockstep clause is retired)
 - [ ] For toolchain bumps: [toolchain.md](toolchain.md) procedure —
       `rust-toolchain.toml`, `rust-version`, `clippy.toml` move together in
       one commit

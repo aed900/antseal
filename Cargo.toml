@@ -49,6 +49,32 @@ antseal-net = { path = "crates/antseal-net", version = "=0.0.0" }
 # lockstep with the locked self_encryption version (0.36.0 at this pin; P15).
 ant-core = "=0.5.0"
 
+# EXACT-PIN CLASS (consensus-affecting): BLAKE3-256 is the v1 storage-address
+# function — S4's `compute_storage_address(blob_bytes)` in antseal-core and
+# the M3 storage-linkage layer both recompute the address ant-protocol
+# derives (`compute_address` = `blake3::hash`, data_types.rs:10-12). Decision
+# D35 (docs/decisions/D35-self-encryption-dependency-mode.md): this pin
+# REPLACES any self_encryption dependency — no antseal crate declares
+# self_encryption, ever (enforced by `scripts/ci-lanes.sh dep-graph`).
+# 1.8.5 = current stable on crates.io AND the version ant-core 0.5.0's
+# packaged lock records — matching is tidy, not load-bearing: BLAKE3 is a
+# fixed function and the golden vectors, not the crate version, are the
+# determinism authority (D35 decision 3). NO lockstep semantics with
+# ant-core bumps. default-features = false drops `std` (the only default);
+# the resulting normal graph is pure no_std Rust (arrayref/arrayvec/cfg-if/
+# constant_time_eq — no getrandom, no rand, no I/O, no threads). `rayon` is
+# optional and stays OFF (nondeterministic thread pool has no place in
+# core); `mmap` OFF (I/O); `wasm32_simd` OFF (one canonical portable path on
+# wasm; output is implementation-independent anyway). Native x86 builds add
+# target-gated `cpufeatures` (runtime SIMD dispatch) and build-dep `cc`
+# (x86 asm) — neither compiles on wasm32-unknown-unknown. P15 probe
+# 2026-08-01: wasm32 build PASSES with this exact shape on toolchain 1.92.0,
+# and the official spec vectors (BLAKE3-team test_vectors.json) match on
+# both the x86 asm path and `--features pure`. Declared pin only until S4
+# consumes it (does not enter Cargo.lock; the ant-core graph's own blake3
+# is lock-frozen at the same 1.8.5).
+blake3 = { version = "=1.8.5", default-features = false }
+
 # EXACT-PIN CLASS (format-affecting): the deterministic-CBOR codec every
 # hashed/signed/stored byte flows through (MVP-SPEC.md line 73). Decision
 # record: docs/decisions/D7-cbor-crate.md (P10/F1). Features: `alloc` only —
