@@ -655,6 +655,42 @@
   - A planted fault: re-introduce one non-canonical head and watch the guard go red.
 - Notes: The tamper-matrix rows are already safe by construction — a row *is* an expected code. This is about the tests that live beside them, where the assertion is a bound or a `is_err()`.
 
+### F51 — Fold F40's mirror-count rule into the frozen registry at the next sanctioned revision
+- Milestone: M0 (post-freeze residue; executes at the next registry revision, whenever that is)
+- Size: XS
+- Deps: F40
+- Spec: D23 clause 3; registry §7.3 key 6
+- Discovered by: **F40** (2026-08-01), while landing the rule.
+- Problem: the frozen `docs/format/registry-v1.{md,json}` §7.3 key 6 `rule` cell records D77's rule but cannot record F40's — `FROZEN.sha256` is `#! status frozen` and `--update` refuses modified entries. Until the next sanctioned registry revision, a third-party verifier implementing from the registry alone will accept two-mirror manifests; the normative record today is the error-code contract §7 entry + D23's dated amendment + the code.
+- Do: at the next sanctioned registry revision, fold "at most one `kind = raw-mirror` unit [P] (D23 §3, F40)" into §7.3 key 6's rule cell and the §12 coverage row. Do **not** open the freeze for this alone — ride the next revision.
+- Accept:
+  - The registry states the rule and the freeze digest is re-blessed via the sanctioned revision mechanism.
+  - The registry cross-check tests (both directions) stay green.
+- Notes: The general hazard is F42's — a frozen document restating rules — but here the document is *missing* one; the registry's completeness claim (§12) is what makes the gap visible.
+
+### F52 — Stale `owed` accounting in the reverse-coverage sweep
+- Milestone: M0 (post-freeze residue)
+- Size: XS
+- Deps: F22, F23
+- Discovered by: **F40** (2026-08-01), wiring its row into `tamper_coverage`.
+- Problem: several codes F22 already rowed (`manifest-too-many-units`, `manifest-too-large`, `bundle-too-many-intermediates`, `bundle-cert-too-large`) still sit in `tamper_coverage.rs`'s `owed` lists naming F22 — invisible only because `lib_rows()` omits the caps/cbor slices, which also weakens the staleness guard those lists exist to be.
+- Do: add the missing slices to `lib_rows()` and empty the satisfied `owed` entries, or record why they are excluded. Prefer the former — the sweep should see every lib slice (F39-adjacent; F37 will want one mechanism anyway).
+- Accept:
+  - No `owed` entry names a task whose row already landed.
+  - A satisfied-but-still-listed `owed` entry turns the suite red (that is the staleness guard actually guarding).
+
+### F53 — Encode-side aggregate size gate: the named residual of "constructible == decodable"
+- Milestone: M1 (manifest half, with the seal pipeline; bundle half with R34 at M3 — placement in the M0 F-block is organizational, all F tasks live here)
+- Size: S
+- Deps: F41. Consumers, not deps: S12 (seal pipeline), R34 (bundle builder).
+- Spec: D10 (`MAX_MANIFEST_BYTES` / `MAX_BUNDLE_BYTES`); F41's D10 amendment
+- Discovered by: **F41** (2026-08-01) — the residual it named rather than hid.
+- Problem: F41 gave all six constructors the decode-side count caps, but `MAX_MANIFEST_BYTES`/`MAX_BUNDLE_BYTES` are properties of *encoded* artifacts no constructor can see, so the seal side can still emit an over-size artifact no verifier — including antseal's own — will decode. Recorded at the claim sites (schema.rs / manifest.rs module docs) and in F41's D10 amendment.
+- Do: at seal time, before payment/upload, enforce `len(encode_envelope(..)) <= MAX_MANIFEST_BYTES`; at bundle build (R34), `len(encode_bundle(..)) <= MAX_BUNDLE_BYTES`. Reuse the decode-side codes/variants — no new codes expected.
+- Accept:
+  - An over-cap construction is rejected at encode with the same code decode would report; red-then-green with an at-cap+1 artifact.
+  - The claim-site docs drop their residual clause, and F41's D10 amendment is updated to say the gate landed.
+
 ## Open decisions (F)
 - CBOR encoder crate + exact pinned version (candidate `minicbor`), including the in-house-codec contingency trigger — blocks F2, F3 (and transitively all codecs) — must land by M0 (jointly with P10). — **[2026-07-27]** RESOLVED (D7): `minicbor = "=2.3.0"` pinned; all line-73 rejection classes implementable on public probe APIs (evidence: crates/antseal-core/tests/cbor_pin_eval.rs); derive stays off — F5–F9 use manual `Encode`/`Decode` impls; contingency trigger recorded in docs/decisions/D7-cbor-crate.md.
 - Complete v1 wire registry: integer key assignments, reserved-slot ranges, signatures-container encoding, anchor-status enum wire values, byte-range representation (start+length vs start+end), integer time encoding for claimed time and fetch dates, GGM cover/path node-coordinate encoding (with G), explicit `file_id` in touched-file bundle entries or not — blocks F5, F8 — must freeze at M0 Definitions sign-off.

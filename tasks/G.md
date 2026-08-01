@@ -349,6 +349,19 @@
   - `tamper_rows_fine_tree::helpers`' table gains the third entry, keeping its seam-visibility contract intact
 - Notes: The salt-half counterparts are deliberately **not** rows: they exist to show the two halves of one 32-byte field fail as different classes, which is an argument about the rule rather than a row of the matrix. Say so where they live, so a later reader does not promote them.
 
+### G29 — `mirror_selectable`'s "R re-checks it" claim is enforced by nothing
+- Milestone: M0 (post-freeze residue)
+- Size: S
+- Deps: G7, R53
+- Spec: D28 (partial+mirror is an accepted verifier input); D23
+- Discovered by: **R53** (2026-08-01) — its red-direction bundle (a *partial* reveal selecting the mirror) **verifies**, correctly per D28, while `content/mirror.rs::mirror_selectable`'s doc claims "R re-checks it on any bundle it is handed"; no caller of the predicate exists anywhere in `src/verify/`.
+- Problem: the same decided-but-enforced-nowhere disease F40/R53 treated, one seam over — the seal-side selection rule (mirror only with a whole-file reveal, bare-`--units` rejection) has no verifier-side counterpart, and the doc says it does. Since R53, the *report* no longer names an unbound mirror on a partial reveal, which contains the consequence; the false claim about a verifier-side re-check remains.
+- Do: decide — (a) enforce a verifier-side rule (mirror revealed ⇒ file reveal shape is Full): a post-freeze behaviour change needing a recorded decision plus a D30 §3 error append, and it rejects bundles D28 currently deems acceptable; or (b) correct the doc to match D28's deliberate acceptance of partial+mirror, naming R53's report gate as the containment. Lean **(b)** unless a concrete threat is articulated — a mirror unit on a partial reveal is unit-verified like any other unit and no longer presented as "the original".
+- Accept:
+  - Doc and mechanism agree; grep finds no surviving "R re-checks" claim.
+  - If (a): red-then-green with a partial+mirror bundle and a named code, tamper row included. If (b): the corrected doc cites R53's gate, and a test citing the doc pins the partial+mirror verify-and-contain behaviour.
+- Notes: this is the decision-shaped remainder of review finding 8; R53's structural work made both outcomes cheap.
+
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
 - Canonicalization micro-semantics: lone CR → LF (in addition to CRLF), strip exactly one leading BOM with interior U+FEFF preserved, and the fixed pipeline order (BOM → EOL → NFC). Blocks G2, G3. M0. — **[2026-07-27]** RESOLVED (D21) with one recorded deviation from this entry's proposal: strip **ALL** leading U+FEFF (contiguous run), not exactly one — strip-exactly-one violates G2's normative idempotence proptest on multi-BOM inputs; interior U+FEFF preserved; one-pass EOL (CR CR LF → LF LF); order decode → BOM → EOL → NFC frozen (docs/decisions/D21-canonicalization-micro-semantics.md). G3 must pin the double-BOM and BOM-only-file fixtures.

@@ -934,6 +934,30 @@ question).**
   - If any current test or comment cites the totality claim as its reason, it is re-justified or retired.
 - Notes: The review's headline pattern is that this project's dominant defect class is recorded claims the code does not implement (see `docs/reviews/2026-07-31-adversarial-code-review.md`, "The pattern worth naming"). This is the decision-register instance of it, and it is the one that matters most, because D74 was *decided* partly on the strength of the false clause.
 
+### Q68 — The report-kind vector set is structurally closed post-freeze
+- Milestone: M0 (post-freeze residue; decide before any new report shape needs freezing)
+- Size: S
+- Deps: Q6, R9, R30
+- Discovered by: **R53** (2026-08-01), trying to pin a corrected report shape.
+- Problem: the report-kind executor (`vectors_report::check_shape_coverage`) requires **every** report-kind document to carry all 11 `REQUIRED_SHAPES`, while the frozen 21-case document may not change a byte — so no new report vector can be committed at all: a minimal second document structurally cannot pass, and a full duplicate document would fork the frozen bytes. New shapes are pinned only as in-tree tests (R53's precedent: D29 byte-snapshot + R30 digest row, native+wasm).
+- Do: decide whether M0-shape coverage should hold across the **union** of discovered report documents (an executor change; zero frozen bytes move) so future shapes can be frozen without a format event — or record that the report vector set is closed until v2 and in-tree pins are the sanctioned mechanism. Either outcome is a one-paragraph record where the executor lives.
+- Accept:
+  - The decision is recorded at `REQUIRED_SHAPES`/the executor, naming R53's precedent.
+  - If the union rule: it lands with a test proving a minimal one-shape document + the frozen document together satisfy coverage, and that a shape missing from the union still fails.
+- Notes: without this, every future report-affecting fix pays R53's workaround cost, and the freeze quietly converts "frozen" into "closed".
+
+### Q69 — Doc-named-test liveness: rustdoc pointers must resolve
+- Milestone: M1 (quality infra; no freeze interaction)
+- Size: S
+- Deps: F41
+- Discovered by: **F41** (2026-08-01) — `ids.rs`'s naming-ban pointer named a test and a file that never existed; nothing could notice.
+- Problem: docs that name their enforcing test rot silently when the test is renamed, moved, or never written; the class is greppable and is the rustdoc instance of F42's registry-prose problem. The review's pattern ("recorded claims the code does not implement") includes claims about *tests*.
+- Do: a discipline test that extracts backtick-quoted `fn`-shaped names and `tests/*.rs` paths from doc comments and asserts each resolves (start with `manifest/`, `bundle/`, `codec/`, `crypto/`; allowlist mechanism for deliberate forward references, each carrying a task id).
+- Accept:
+  - The `ids.rs` case, re-planted, is caught.
+  - Zero unexplained allowlist entries; each names the task that will land the referenced test.
+- Notes: keep it heuristic and honest — the goal is catching pointers to *nothing*, not proving pointers point at the right assertion (that is review work).
+
 ## Open decisions (Q)
 - Independent cross-check vehicles and permanence — which second implementations per surface (Python `cbor2` for CBOR; Python crypto stack for HKDF/commitments/GGM; whether ml-dsa↔fips204 cross-crate + ACVP KATs counts as "independent" for ML-DSA), and one-shot audit artifact vs permanent CI lane (proposal: both). Blocks Q11, Q14. Must land by M0. — **[2026-07-28]** RESOLVED (D31): one vehicle per surface, graded **T0 external oracle / T1 independent re-implementation / T2 same-ecosystem agreement**. CBOR keeps D12's `cbor2 ==6.1.3` for **decode only** — our own RFC 8949 §4.2.1 encoder is the encoding authority, which retires D7 §D12's length-first ordering caveat instead of documenting it. Crypto/GGM/padding/canonicalization reuse the Python references C16/G15/G3 already landed, each now **required to carry a T0 known-answer anchor** (RFC 5869 App. A, RFC 8032 §7.1, Unicode `NormalizationTest.txt` + a `unidata_version == '17.0.0'` assertion). **ML-DSA-65: NIST ACVP replayed against `ml-dsa =0.1.1` — T0, the strongest tier, and the answer to this entry's own question is that `ml-dsa`↔`fips204` is T2 and is NOT independence** (it is D14's fallback-equivalence check, retained and labelled as such). Permanence: **both**, and the two are not redundant — the dated one-shot report is the evidence *for* the freeze, the permanent unconditional `cross-check` lane is the guard *after* it. Buildable breakdown for Q11/F14 in D31 §9; Q14's verbatim row in §10. Found a gap: the report byte format has no cross-check at all → **Q38**.
 - Deterministic verification-report byte format compared by the bit-match harness (exact serialized output contract with R/F). Blocks Q4, Q5. Must land by M0.

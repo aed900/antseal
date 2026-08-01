@@ -364,6 +364,19 @@
   - The chosen behaviour has a test with a *duplicate* in it, not just a well-formed input.
 - Notes: Not reachable through the shipped pipeline — F's schema does reject duplicates before `verify_body` sees them — which is why the verifier corrected this down to `low`. It matters because `antseal-core` is a published API surface and this is a cross-implementation divergence class the spec names explicitly. Related, and deliberately separate: **U16** in the review (a missing *pubkey* is reported as `crypto-signature-missing-*`, collapsing two distinct mutations onto one code).
 
+### C29 — `verify_body` silently ignores unlisted pubkeys
+- Milestone: M0 (post-freeze residue)
+- Size: XS
+- Deps: C28, C14
+- Spec: no first-wins/last-wins/lenient divergence between conforming implementations (MVP-SPEC.md line 73)
+- Discovered by: **C28** (2026-08-01), while confirming finding 5.
+- Problem: the present-set == policy-set rule is enforced for `signatures` only. A `pubkeys` entry for an algorithm the policy does not list draws no error and no lookup — it cannot change the verdict here, but an implementation that also rejects unlisted pubkeys reaches a different verdict on the same input: the same spec-line-73 divergence class C28 just treated, one collection over.
+- Do: decide — enforce symmetry (reject an unlisted pubkeys entry; reuse an honest variant or append per D30 §3) or record the acceptance in `verify_body`'s doc with the reason. Either way the doc must state exactly what is checked, which is the standard C28 set.
+- Accept:
+  - A test with an unlisted pubkey entry in it pins the chosen behaviour.
+  - `verify_body`'s doc matches the mechanism; no silent asymmetry survives undocumented.
+- Notes: U16 (missing-pubkey collapses onto `crypto-signature-missing-*`; Display text then factually wrong) stays deliberately separate; C28's report records a one-line fix sketch if it is ever promoted to a task.
+
 ## Open decisions (C)
 - **ed25519-dalek exact pin (2.x vs 3.0.0)** — chosen from C11's probe with P; blocks C11→C12, C15, C16; must land by M0 (start). — **[2026-07-27]** RESOLVED (D13): `=3.0.0`; C12 consumption shape `default-features = false, features = ["alloc","zeroize"]`; never enable `legacy_compatibility` (C11 report §9).
 - **Primary ML-DSA crate (`ml-dsa =0.1.1` vs `fips204 =0.4.6` fallback) and whether the Ed25519-only `sig_policy` fallback ships** — outcome of the C11 WASM probe; blocks C13, C14, C15, C16; M0. — **[2026-07-27]** RESOLVED (D14): primary `ml-dsa =0.1.1` (wasm32 executed bit-match; canonical rejection complete at `Signature::decode` — C13 needs NO pre-validation layer); fips204 pinned-unconsumed byte-identical fallback; **Ed25519-only fallback NOT shipped**. C13: use `sign_deterministic`/`verify_with_context`, enable the non-default `zeroize` feature, zeroize ξ caller-side.

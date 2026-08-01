@@ -220,7 +220,7 @@
   - Snapshot tests cover every one of the 7 states' rendering, headline, claimed-time, divergence, UNANCHORED, receipt class, overlay, sig label, storage-linkage pass/fail lines — an exhaustive-enumeration test fails if any state lacks a snapshot
   - Grep-style test: CLI and page sources contain no verdict-wording literals outside the table
   - Wording reviewed against positioning constraints (checklist in the test file header)
-- Notes: Overlay-vs-headline layout must be frozen here (see Open decisions) since snapshots pin it.
+- Notes: Overlay-vs-headline layout must be frozen here (see Open decisions) since snapshots pin it. **R53 (2026-08-01)**: a partial reveal's revealed mirror is now verified-but-unreported (`raw_mirror` is full-reveal-only in the report, per its own doc). The wording set needs a stated policy for a mirror unit's bytes in that state — it is an ordinary revealed unit, and must never be presented as "the original file" (that phrasing is reserved for the rows-9–10-bound mirror of a full reveal).
 
 ### R19 — Implement the redaction-view model and CLI renderer
 - Milestone: M3
@@ -603,6 +603,18 @@
   - `check_manifest_refs`' tautological arm is either removed or documented as unreachable-by-construction (see U17, which says the same of `proof_unit_refs`).
   - D10 §5's complexity table matches the implementation, row by row.
 - Notes: **Stage 5 running last is correct and must not be "fixed"** — the manifest is self-signed, so an attacker can always mint a valid signature over a forged body and an earlier signature check would gate nothing. The review verified this explicitly. The defect is the scan shape, not the order.
+
+### R55 — Promote the partial-with-mirror pin into the frozen vector set at the next opening
+- Milestone: parked — executes at Q68's union rule or the next format-version event, whichever first
+- Size: XS
+- Deps: R53, Q68
+- Discovered by: **R53** (2026-08-01).
+- Problem: `split-multi-unit/partial-with-mirror` — the shape that exposed review finding 8 — is pinned only by in-tree tests (the D29 byte-snapshot and an R30 digest row asserted on native **and** wasm32), because the report-kind vector set cannot grow post-freeze (Q68). A frozen cross-implementation vector is the stronger permanent form: it survives test refactors and is what third parties replay.
+- Do: when Q68's union rule lands or a format-version event opens the set, add the vector (both lanes, bit-match, INDEX roster) and retire nothing — the in-tree pins stay as the second leg.
+- Accept:
+  - Vector committed + frozen + bit-matched; INDEX/coverage/cross-check green.
+  - The R30 digest row and the vector agree byte-for-byte (one definition of the case).
+- Notes: XS by design — the fixture, catalogue case, and digest already exist; this is carriage, not construction.
 
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
