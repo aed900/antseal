@@ -90,7 +90,7 @@ fn parse_options() -> Result<Options, String> {
     Ok(Options {
         nodes,
         dir,
-        stabilization_secs: env_parse("ANTSEAL_DEVNET_STABILIZATION_SECS")?.map(|s: u64| s),
+        stabilization_secs: env_parse::<u64>("ANTSEAL_DEVNET_STABILIZATION_SECS")?,
         node_logs: std::env::var("ANTSEAL_DEVNET_NODE_LOGS").is_ok_and(|v| v == "1"),
     })
 }
@@ -112,8 +112,8 @@ fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>, String> {
 /// removes the node stores without our help.
 fn build_config(options: &Options, data_dir: PathBuf) -> DevnetConfig {
     let mut config = match options.nodes {
-        n if n == 5 => DevnetConfig::minimal(),
-        n if n == 10 => DevnetConfig::small(),
+        5 => DevnetConfig::minimal(),
+        10 => DevnetConfig::small(),
         n => DevnetConfig {
             node_count: n,
             ..DevnetConfig::default()

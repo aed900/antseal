@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# P16 — one-command local devnet DOWN.
+#
+# The whole devnet is ONE process tree: the launcher (nodes are its tokio
+# tasks) plus its Anvil child, which dies with it. So down = SIGTERM the pid
+# from `.devnet/launcher.pid` and wait. On a clean shutdown the launcher
+# removes manifest/env/pidfile itself and `cleanup_data_dir` removes the node
+# stores; this script then removes the log, leaving `.devnet/` EMPTY — the
+# no-residue contract (tasks/P.md P16 accept). An unclean stop (timeout →
+# SIGKILL) deliberately keeps everything for diagnosis; `local-reset` is the
+# scorched-earth cleanup.
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo" || exit 1
+
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m::error::local-down: %s\033[0m\n' "$*" >&2; exit 1; }
+
+devdir="$repo/.devnet"
+pidfile="$devdir/launcher.pid"
+
+if [ ! -f "$pidfile" ]; then
+  note "no pidfile at $pidfile — nothing to stop"
+  # A launcher without a pidfile would be a bug, but say so instead of
+  # leaving a zombie devnet burning two cores silently. The pattern matches
+  # the EXEC PATH, not the bare crate name — a bare-name -f match would also
+  # hit unrelated processes whose command line mentions the crate (an editor
+  # on crates/devnet-launcher/src/…, a grep, this very script).
+  if pgrep -f 'target/release/devnet-launcher' >/dev/null 2>&1; then
+    printf '::warning::a devnet-launcher process exists WITHOUT a pidfile:\n' >&2
+    pgrep -af 'target/release/devnet-launcher' >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+pid="$(cat "$pidfile")"
+if ! kill -0 "$pid" 2>/dev/null; then
+  note "stale pidfile (pid $pid is gone) — removing it"
+  rm -f "$pidfile"
+  exit 0
+fi
+
+note "SIGTERM -> launcher (pid $pid); waiting for clean shutdown"
+kill -TERM "$pid" 2>/dev/null || die "could not signal pid $pid"
+
+timeout="${ANTSEAL_DEVNET_DOWN_TIMEOUT:-90}"
+waited=0
+while kill -0 "$pid" 2>/dev/null; do
+  if [ "$waited" -ge "$timeout" ]; then
+    printf '::warning::launcher did not exit within %ss — SIGKILL. Node data/exports may remain under %s; run scripts/devnet/local-reset.\n' "$timeout" "$devdir" >&2
+    kill -KILL "$pid" 2>/dev/null
+    exit 1
+  fi
+  sleep 1; waited=$((waited + 1))
+done
+
+# Clean exit: the launcher removed manifest/env/pidfile, the node stack
+# removed data/. The log is the last artifact standing — remove it so the
+# post-down listing is EMPTY, which is what "no residue" means here.
+rm -f "$devdir/launcher.log"
+note "devnet stopped after ${waited}s; residue check of $devdir:"
+if [ -d "$devdir" ] && [ -n "$(ls -A "$devdir" 2>/dev/null)" ]; then
+  ls -la "$devdir"
+  die "unexpected residue above — the launcher's cleanup missed something; local-reset clears it, but this is a bug worth reporting"
+fi
+note "no residue: .devnet/ is empty"

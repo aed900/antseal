@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# P16 — one-command local devnet RESET: down (best effort) + remove ALL
+# devnet state. The recovery path after an unclean stop (SIGKILL'd launcher,
+# machine crash) and the "give me a pristine devnet" button — every `local-up`
+# deploys fresh contracts on a fresh Anvil chain anyway, so there is nothing
+# in `.devnet/` worth preserving, ever.
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo" || exit 1
+
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+
+devdir="$repo/.devnet"
+
+# Stop a live launcher first (ignore its residue verdict — we are about to
+# delete everything regardless).
+if [ -f "$devdir/launcher.pid" ]; then
+  "$repo/scripts/devnet/local-down" || true
+fi
+# Belt and suspenders for the no-pidfile zombie case local-down warns about.
+# Exec-path pattern, deliberately: a bare-name `pkill -f devnet-launcher`
+# would TERM any process whose command line merely mentions the crate — an
+# editor on crates/devnet-launcher/src/…, for instance.
+if pgrep -f 'target/release/devnet-launcher' >/dev/null 2>&1; then
+  note "killing stray devnet-launcher process(es)"
+  pkill -TERM -f 'target/release/devnet-launcher' 2>/dev/null || true
+  sleep 2
+  pkill -KILL -f 'target/release/devnet-launcher' 2>/dev/null || true
+fi
+
+rm -rf "$devdir"
+note "removed $devdir"
+if [ -e "$devdir" ]; then
+  printf '::error::local-reset: %s still exists\n' "$devdir" >&2
+  exit 1
+fi
+note "reset complete: no devnet state remains"
