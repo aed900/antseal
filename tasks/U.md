@@ -41,6 +41,12 @@
   - `--json` output parses as a single JSON document with zero stray stdout bytes (nags/warnings verified on stderr)
   - non-TTY + no `--yes` on `seal`/`reveal` aborts with the defined code, in both plain and `--json` modes; the abort-not-hang harness covers every subcommand in machine mode
 - Notes: Accept criteria extend per command as U11–U30 land (each adds its fixture). Open decision 15 closed by **D51** (2026-08-01) — the contract above is decided; U14 consumes U3's machine-mode determination rather than probing on its own.
+- **[2026-08-01 execution note (U3 landed; wave 2 lane η)]** Module `src/machine.rs` (envelope + registry + single detection point) + suite `tests/machine_mode.rs`; committed fixture `tests/snapshots/json-envelopes.txt` (ANTSEAL_BLESS regeneration, one entry per command + success examples — the "committed example docs + shape test" reading of the fixtures requirement). Choices + interpretations, argued in the module docs:
+  1. **Envelope v1** = `{v, command, network, ok, result|error}` — `v` is the version marker the entry's "versioned envelope" requires; the inner `error` object is **U2's provisional shape finalized UNCHANGED** (`class`/`exit_code`/`message`; `to_json` renamed `error_object`, envelope embeds it verbatim — asserted). `command`/`network` are null only on the unparseable-argv path.
+  2. **Prompt-class registry** rides the same exhaustive `match` as `command_name` (a new subcommand fails compile until named AND registered); rows per D51's table — consent(--yes) on seal+reveal, authentication(--passphrase-fd) on every vault-touching command, configuration(D39 flags) on init, destructive-confirm(channel NONE, v1 disposition refuse-always) on vault import, verify = zero prompts. Channel truthfulness is tested (declared --yes must parse on its command); the only channel-less prompt is asserted to be exactly the import overwrite.
+  3. **Abort-not-hang harness**: every command × {plain, --json} × closed stdin against the REAL binary under a real watchdog (kill + loud failure at 120 s — the harness can lose); asserts the typed class per cell (stubs → 3; export → 11; import-over-vault → 10), stdout emptiness in plain errors, and exactly one parseable envelope under --json. Stubs therefore emit valid machine-mode JSON errors by construction (main_entry composes the envelope for every error).
+  4. **Two documented envelope exemptions**: `--help`/`--version` stay clap text on stdout (intrinsic surfaces, not command invocations); unparseable argv emits a best-effort null-command envelope only when the literal `--json` token is present in argv (token scan — the U2-noted refinement closed; false-positive-as-flag-value documented harmless). Machine-mode detection is the single point `machine_mode_for` (delegating to ε's stdin-isatty primitive); commands.rs's passphrase seam now routes through it.
+  5. Envelope `network` = flag-or-default at U3; U4 upgrades it to the flag > config > default resolution in its own commit.
 
 ### U4 — Implement config file with network mapping and override slots
 - Milestone: M1
@@ -53,6 +59,11 @@
   - `--network devnet` and `arbitrum-sepolia` resolve to distinct endpoint/contract sets supplied by S's schema
   - malformed config → distinct exit code; unknown keys warn (forward-compat) rather than crash
 - Notes: Milestone inference — config is unassigned in spec; M1 needs network mapping for the devnet E2E.
+- **[2026-08-01 execution note (U4 landed; wave 2 lane η)]** Module `src/config.rs` + suite `tests/config_file.rs` + user doc `docs/config.md`. Choices + deviations, argued in the module docs:
+  1. **No contract/RPC-default duplication into config** — the entry's "per-network contracts/RPC endpoints (schema from S)" is implemented as: config consumes S5's pure `NetworkId`/`NetworkConfig` (antseal-net default features; containment asserted — no alloy/ant-core in cli's normal tree), chain ids/contracts/default-RPCs stay net's pinned constants, and config carries only a per-network `rpc_url` override SLOT (`[networks.<id>]`; consumer S6). Deviation per the updated lane direction: a hand-edited contract address is the drift hazard S5's evmlib byte-equality test exists to prevent.
+  2. **Precedence made mechanically possible**: `--network` now parses as `Option` (a clap-level default would make an explicit `--network arbitrum-one` indistinguishable from absence) — a deliberate parse-semantics amendment to the frozen surface, help snapshot re-blessed (the visible change: the default note moves into the flag's help text). `effective_network` = flag > config > built-in arbitrum-one; the table test includes the explicit-flag-equals-default row only Option makes expressible; the U3 envelope's `network` field now reports the config-resolved value (proven end-to-end by spawned-binary tests).
+  3. **Hand-parsed strict TOML subset** (no new deps, per the lane brief): sections, string keys, single-line string arrays, both quote forms, no escapes/ints/multiline/inline-tables — everything outside the subset is a per-line typed error, never a misparse; grammar documented in-module and in docs/config.md. **New U2 class `malformed-config` = exit 17** (the Accept's "distinct exit code"; table/ALL/snapshot updated in the same commit): missing file = defaults, malformed = hard error for EVERY command (silently dropped overrides are the config-tamper failure mode D42 names). Unknown top-level keys/sections WARN on stderr (forward compat); invalid values for recognized keys (unknown network id, non-http(s) URL, wrong type, duplicates) are hard errors.
+  4. Reserved slots landed with validated shapes: `[anchors] tsa_urls` (U26/M2 — the URL-shape check the U26 Accept wants exists now), `[verify] bitcoin_endpoints`/`arbitrum_endpoints` (U30/M3). `initial_config_text` ships for U11's init writer. The D42/D47 cross-test: an exported config survives import byte-identically AND still loads + resolves.
 
 ### U5 — Design vault store layout, versioned header, and crash-safe file discipline
 - Milestone: M1
@@ -121,7 +132,7 @@
   - wrap mode recorded in header; header tamper (mode flip) → AEAD auth failure; a header claiming mode 2 → the distinct "wrap mode not supported" error (tested)
   - declining the offer leaves a passphrase-only vault (mode 0) byte-compatible with U6 tests
   - no keystore crate in the workspace graph (dependency assertion)
-- Notes: Not on the M1 E2E critical path — may land late-M1. The OS-keystore platform scope + implementation is D50's recorded post-D72 follow-up (see the D72 register row); D47's export carries the keyfile factor unchanged.
+- Notes: Not on the M1 E2E critical path — may land late-M1. The OS-keystore platform scope + implementation is D50's recorded post-D72 follow-up (see the D72 register row); D47's export carries the keyfile factor unchanged. **[2026-08-01, from U12]** `vault import` currently REFUSES any export with wrap mode ≠ 0 (an `internal`-class error — never a silent mode-0 downgrade of a wrapped backup; `vault/export.rs::validate_payload`): U8 must extend the export payload with the keyfile-wrap parameters it defines, teach import to reconstruct a mode-1 vault, and re-map that refusal to its distinct error — the same re-map obligation U6's unlock left it.
 
 ### U9 — Implement per-work record store (vault records + journal persistence API)
 - Milestone: M1
@@ -154,6 +165,10 @@
 - Accept:
   - wallet record decrypts only via the sub-key path; corrupting the wallet record leaves work records readable, and vice versa
   - wallet key bytes never appear outside C's zeroizing types; U21 harness covers wallet-path errors
+- **[2026-08-01 execution note (U10 landed; wave 2 lane η)]** Module `vault/wallet.rs` + `UnlockedVault::wallet_subkey` (session.rs); suite `tests/wallet_record.rs` + in-module key-isolation tests. Choices, argued inline:
+  1. **Sub-key = HKDF-SHA256(salt = "", ikm = vault key, info = `"antseal-cli vault v1: wallet record sub-key"`)** — same construction family as C's derivations; label frozen by a tripwire test (changing it orphans stored wallet records). The record rides the existing cipher.rs AEAD (`RecordIdentity::Wallet`, id 1, reserved by U9) so both splice defenses hold: key AND identity; the key half proven in isolation by a crate-internal forgery test (main-key blob, correct identity → auth failure).
+  2. **"Sign-capable handle" for M1 = `WalletKeyHandle`** (no Clone/Display, redacted Debug, zeroize-on-drop, single `secret_bytes()` accessor): the raw-bytes-under-narrow-scope accessor S's pay path consumes. NO evmlib/ant-core edge enters antseal-cli — the seam is documented in the module rustdoc: scalar validation happens at `init` against the pinned evmlib parse (U11, S-side, behind `ant-backend`) and at seal time in the backend adapter; this module stores/returns 32 opaque secret bytes only.
+  3. New crate edges: `hkdf`/`sha2` (existing workspace pins; sha2 carries the D88 zeroize feature via the single declaration). The end-to-end sentinel scan remains U21's; in-tree coverage = Debug redaction + error classes (auth-fail/absent-is-None/wrong-length-collapses-to-auth).
 
 ### U11 — Implement `init`: vault create, wallet generate/import, funding instructions, network config
 - Milestone: M1
@@ -183,6 +198,13 @@
   - import-over-existing-vault refusal tested — and no bypass flag parses; `--json` fixtures for both subcommands
   - incomplete works (journal state) survive the round trip so a resumable seal stays resumable; cache-state entries are absent from the export (asserted) and their absence post-import is not an error
 - Notes: Milestone inference — needed by M1 E2E's vault-backup restore (S19); M4 drill (Q32) consumes it. Q2's secret-guard gains its exclusion event when the magic literal lands (D47 flags it — same PR).
+- **[2026-08-01 execution note (U12 landed; wave 2 lane η)]** Module `vault/export.rs` (format + both engines) + handlers in `src/commands.rs` (run.rs dispatch goes live for `vault export|import`); suite `tests/vault_export.rs` + in-module failpoint tests. Interpretations + deviations, each argued in the module docs:
+  1. **Payload = plaintext logical state, re-encrypted at import into a NEW vault** (fresh vault salt/key, records re-encrypted through the current store APIs) — the reading D47's layout-independence argument compels; "round-trip byte-identical" is satisfied at the logical layer (meta fields, journal/receipt/anchor/wallet/config bytes) and by S19's restore at integration. Schema: uint-keyed maps + sorted arrays-of-pairs only (the house codec is deliberately uint-map-only); works sorted by seal_id; strict v1 reader (unknown keys reject). D43 enforced BOTH ways: writer exports journal entries only for state ≠ complete; reader rejects cache bytes in a claimed-complete work. Cache exclusion proven by arithmetic in the flagship test (3×2×200 kB planted cache; file < one blob).
+  2. **Self-verify runs on the synced temp file, then renames** (deviation-in-mechanism from D47's "write then verify", recorded): identical bytes verified (rename is metadata-only), and a re-export onto an existing backup path can never replace a good backup with a bad file. The verify is the FULL import-side validator (`validate_export_bytes` — one rule, two call sites) incl. a fresh KDF from the file's own header, + SHA-256 digest compare vs the in-memory payload.
+  3. **Import order**: existing-vault refusal FIRST (before even reading the file — tested), then bounded read (1 GiB v1 cap; over-cap collapses into import-auth as outside-the-format), then pre-auth header parse under the D40 caps **before the passphrase is collected** (a bomb header is rejected without prompting — proven by a panicking passphrase closure), then KDF → AEAD → strict decode → cross-validation, then temp-dir build + one atomic directory rename + post-install verify (fresh unlock + full walk). Existing-vault refusal is absolute in every mode incl. TTY (the task text + D51's "no bypass in v1" read over D47's looser "without explicit confirmation" phrasing; the D51 prompt-class registry will record the destructive-confirm class with channel *none, refuse-always*).
+  4. **Non-zero wrap modes refuse at import** (never a silent mode-0 downgrade of a wrapped export); U8 re-maps to its distinct error — the session.rs unlock precedent. Post-auth payload malformation = `internal` (only our writer or the passphrase holder can author it); post-release payload schema changes are format_version bump events (recorded for U18's bookkeeping flag — v1 ships no bookkeeping slot; pre-release U18 may extend v1 while both sides move together).
+  5. Default filename `antseal-vault-export-YYYYMMDD-HHMMSS.sealvault` (UTC, std-only Hinnant civil-date; timestamped so repeated exports never silently replace a backup); extension advisory, identification by magic. Export holds the U5 single-writer lock for a consistent multi-record snapshot. Machine mode at the passphrase seam honors `--json` (the ε primitive covers non-TTY/fd-0; commands.rs adds the `--json`-with-TTY clause) — U3 folds this into its framework.
+  6. The secret-guard exclusion landed same-commit, exact-path (`crates/antseal-cli/src/vault/export.rs` only); tests reference `EXPORT_MAGIC`, never the literal — the guard itself caught the first draft's literal in the test file, which is the system working.
 
 ### U13 — Orchestrate the seal pipeline in exact normative order (M1 scope, `--no-anchor`)
 - Milestone: M1
@@ -260,7 +282,7 @@
 - Accept:
   - first seal without prior export → nag on stderr (also under `--json`); after `vault export`, subsequent seals don't nag
   - nag copy snapshot-tested, contains both loss and theft framings, no "notary"/unqualified-"priority" wording
-- Notes: Q24 (M4) later harmonizes the doc pages with these nags — consumer, not a dep; CLI nag copy is U's.
+- Notes: Q24 (M4) later harmonizes the doc pages with these nags — consumer, not a dep; CLI nag copy is U's. **[2026-08-01, from U12]** "Track 'export performed' in the vault" has no substrate yet: the store has no vault-global bookkeeping slot and the v1 export payload no bookkeeping key — that machinery is **U34** (discovered; land with or before this task).
 
 ### U19 — Implement `list` (works, incomplete state, per-work cost)
 - Milestone: M1
@@ -434,6 +456,18 @@
   - D72-resolved branch taken explicitly (implementation OR recorded limitation, never silence)
   - if implemented: the U7 byte-semantics suite passes on a Windows CI lane over a real non-stdin handle; no change to the frozen semantics or the fd-0 path
   - if recorded: help text + release docs state the limit; the typed `FdReadFailed` behavior is snapshot-covered
+
+### U34 — Vault-global bookkeeping record slot (store + cipher registry + export carriage)
+*(discovered 2026-08-01 by U12's payload design — the prerequisite machinery for U18's export-performed flag)*
+- Milestone: M1 (with or before U18)
+- Size: S
+- Deps: U9 (store), U12 (export payload); U18 is the consumer
+- Spec: Vault (line 143); D42 (bookkeeping is enumerated INSIDE the AEAD); D47 (payload contents)
+- Do: The record store has no vault-global slot besides the wallet, and the v1 export payload deliberately ships no bookkeeping key (U12 note 4). Add: a new `RecordClass` id (next free: 6) + AAD identity for a vault-bookkeeping record; a store slot (`store/bookkeeping` beside `store/check`/`store/wallet`); read/write APIs; and the D47 payload key that carries it through export/import. Pre-release this extends payload format v1 while writer and reader move together (recorded in `vault/export.rs` module docs); if any release has shipped, it is an export `format_version` bump instead.
+- Accept:
+  - bookkeeping record round-trips create → reopen; splice into/out of the slot fails authentication (the D42 matrix extends by one row)
+  - export → wipe → import carries the record; a payload WITHOUT the key still imports (older exports stay valid)
+  - U18's export-performed flag implemented over it stops the nag after `vault export` (its own Accept — may land in the same change)
 
 ## Open decisions (U) — each: the decision, blocking task IDs, milestone it must land by
 1. `init` interaction model — pure interactive wizard vs convenience flags (canonical surface enumerates no `init` flags) — blocks U1, U11 — M1 — **[2026-08-01]** RESOLVED (D39): the dichotomy was false — TTY wizard with a flag/fd equivalent for every question; v1 flag set enumerated as a deliberate U1 amendment; existing-vault refusal absolute, no `--force` (docs/decisions/D39-init-interaction-model.md)

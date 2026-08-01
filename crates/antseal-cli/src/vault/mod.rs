@@ -93,6 +93,7 @@
 //! both stand on these two primitives.
 
 pub mod cipher;
+pub mod export;
 pub mod fs;
 pub mod header;
 pub mod kdf;
@@ -100,3 +101,4 @@ pub mod layout;
 pub mod lock;
 pub mod session;
 pub mod store;
+pub mod wallet;

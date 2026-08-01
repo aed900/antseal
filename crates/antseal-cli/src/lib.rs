@@ -21,8 +21,12 @@
 //! risk 4). Consume it from outside this workspace at your own risk.
 
 pub mod cli;
+mod commands;
+pub mod config;
 pub mod error;
+pub mod machine;
 pub mod passphrase;
+pub mod rng;
 mod run;
 pub mod vault;
 
@@ -36,36 +40,80 @@ use antseal_core as _;
 /// documented exit code (the U2 table in [`error`]). Testable — it never
 /// calls `process::exit`.
 ///
-/// Error rendering is deterministic per D51: the human message goes to
-/// stderr in every mode; under `--json` stdout additionally carries
-/// exactly one structured error object ([`error::CliError::to_json`],
-/// provisional until U3's versioned envelope) with the same exit code as
-/// plain mode. clap-level failures keep clap's convention — help/version
-/// on stdout with code 0, usage errors on stderr with code 2 (the `usage`
-/// class code; argv that cannot parse has no reliable `--json` yet, a
-/// known U3 refinement).
+/// The machine-output contract lives in [`machine`] (U3): under `--json`,
+/// stdout carries exactly one versioned envelope per invocation — success
+/// or failure — with the same exit code as plain mode; every human byte
+/// goes to stderr. clap-level outcomes keep clap's convention:
+/// help/version render on stdout with code 0 (the documented intrinsic
+/// exemption), and unparseable argv exits 2 with clap's message on
+/// stderr — plus a best-effort null-command envelope on stdout when the
+/// literal `--json` token is present in argv (the parse that failed is
+/// the only intent source there; see [`machine::argv_requests_json`]).
 pub fn main_entry<I, T>(args: I) -> ExitCode
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
+    let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let json_token = machine::argv_requests_json(&args);
     let cli = match cli::Cli::parse_checked(args) {
         Ok(cli) => cli,
         Err(clap_err) => {
+            use clap::error::ErrorKind;
+            let intrinsic = matches!(
+                clap_err.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            );
             let code = clap_err.exit_code();
+            let rendered = clap_err.render().to_string();
             let _ = clap_err.print();
+            if json_token && !intrinsic {
+                println!("{}", machine::unparseable_argv_envelope(&rendered));
+            }
             return ExitCode::from(u8::try_from(code).unwrap_or(1));
         }
     };
-    match run::run(&cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("error: {err}");
-            if cli.globals.json {
-                println!("{}", err.to_json());
-            }
-            ExitCode::from(err.exit_code())
+    let command = machine::command_name(&cli.command);
+    let fail = |network: &str, err: &error::CliError| -> ExitCode {
+        eprintln!("error: {err}");
+        if cli.globals.json {
+            println!("{}", machine::error_envelope(command, network, err));
         }
+        ExitCode::from(err.exit_code())
+    };
+
+    // The config file (U4): missing = defaults; malformed = a hard error
+    // for every command (its `network` field falls back to
+    // flag-or-built-in — the config that would have supplied the middle
+    // layer is exactly what failed). Unknown-key warnings go to stderr,
+    // never stdout.
+    let config = match config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            let network = cli
+                .globals
+                .network
+                .map_or(antseal_net::NetworkId::default().as_str(), |n| n.as_str());
+            return fail(network, &err);
+        }
+    };
+    for warning in &config.warnings {
+        eprintln!("warning: {warning}");
+    }
+    // flag > config > built-in default (U4's precedence rule).
+    let network = config::effective_network(cli.globals.network, &config).as_str();
+
+    match run::run(&cli) {
+        Ok(outcome) => {
+            if cli.globals.json {
+                println!(
+                    "{}",
+                    machine::success_envelope(command, network, outcome.json)
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => fail(network, &err),
     }
 }
 

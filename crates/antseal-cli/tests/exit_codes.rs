@@ -32,7 +32,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 24] = [
+const TABLE: [(ErrorClass, u8, &str); 25] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -52,6 +52,7 @@ const TABLE: [(ErrorClass, u8, &str); 24] = [
     ),
     (ErrorClass::VaultLockHeld, 15, "vault-lock-held"),
     (ErrorClass::VaultNewerVersion, 16, "vault-newer-version"),
+    (ErrorClass::MalformedConfig, 17, "malformed-config"),
     (
         ErrorClass::InsufficientAntToken,
         20,
@@ -261,6 +262,16 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             },
         ),
         (
+            "malformed-config",
+            CliError::MalformedConfig {
+                path: PathBuf::from("/home/user/.antseal/config.toml"),
+                line: 3,
+                detail: "`default_network` must be one of arbitrum-one, arbitrum-sepolia, \
+                         devnet (got `ropsten`)"
+                    .into(),
+            },
+        ),
+        (
             "insufficient-ant-token",
             CliError::InsufficientAntToken {
                 required_atto: 1_500_000_000_000_000_000,
@@ -459,21 +470,29 @@ fn display_output_is_single_line_and_fully_rendered() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// JSON error object (provisional shape until U3's envelope)
+// JSON error object (U2's shape, finalized by U3 as the envelope's
+// inner `error` member)
 // ─────────────────────────────────────────────────────────────────────
 
 #[test]
 fn json_error_object_carries_class_code_and_message() {
     for (label, err) in exemplars() {
-        let v = err.to_json();
-        assert_eq!(v["ok"], serde_json::json!(false), "{label}");
-        assert_eq!(v["error"]["class"], err.class().name(), "{label}");
+        let v = err.error_object();
+        assert_eq!(v["class"], err.class().name(), "{label}");
         assert_eq!(
-            v["error"]["exit_code"],
+            v["exit_code"],
             serde_json::json!(err.exit_code()),
             "{label}"
         );
-        assert_eq!(v["error"]["message"], err.to_string().as_str(), "{label}");
+        assert_eq!(v["message"], err.to_string().as_str(), "{label}");
+        // And through the U3 envelope, unchanged (the finalization
+        // claim, executed).
+        let env = antseal_cli::machine::error_envelope("list", "arbitrum-one", &err);
+        assert_eq!(env["ok"], serde_json::json!(false), "{label}");
+        assert_eq!(
+            env["error"], v,
+            "{label}: envelope embeds the object verbatim"
+        );
     }
 }
 
@@ -495,10 +514,13 @@ fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
     assert_eq!(plain.status.code(), json.status.code(), "D51: same code");
     assert_eq!(json.status.code(), Some(3), "not-implemented class code");
 
-    // stdout parses as exactly one JSON document, no stray bytes.
+    // stdout parses as exactly one JSON document, no stray bytes — the
+    // U3 envelope around U2's error object.
     let stdout = String::from_utf8(json.stdout).expect("utf-8 stdout");
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim_end_matches('\n')).expect("single JSON document");
+    assert_eq!(doc["v"], serde_json::json!(1));
+    assert_eq!(doc["command"], serde_json::json!("list"));
     assert_eq!(doc["ok"], serde_json::json!(false));
     assert_eq!(doc["error"]["class"], "not-implemented");
     assert_eq!(doc["error"]["exit_code"], serde_json::json!(3));

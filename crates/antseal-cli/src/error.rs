@@ -4,9 +4,9 @@
 //! `CliError` belongs to exactly one [`ErrorClass`]; every class has
 //! exactly one exit code. `main_entry` maps deterministically — plain mode
 //! prints `error: <Display>` on stderr, `--json` mode additionally emits
-//! one structured error object on stdout (provisional shape until U3's
-//! versioned envelope) — and the code is identical in both modes (D51
-//! invariant 2).
+//! exactly one U3 envelope on stdout (`crate::machine` owns the envelope;
+//! this module owns the inner `error` object, U2's shape finalized) — and
+//! the code is identical in both modes (D51 invariant 2).
 //!
 //! # The exit-code table (committed; unit-tested in `tests/exit_codes.rs`)
 //!
@@ -24,6 +24,7 @@
 //! | 14   | `vault-kdf-params-out-of-range` | D40 §3: pre-auth header caps, before any KDF allocation; also `vault import` headers (D47) |
 //! | 15   | `vault-lock-held` | U5: another antseal process holds the single-writer lock |
 //! | 16   | `vault-newer-version` | U5: vault header written by a newer antseal |
+//! | 17   | `malformed-config` | U4: `config.toml` present but unreadable — never silently ignored (missing = defaults) |
 //! | 20   | `insufficient-ant-token` | distinct from gas by spec (core flow 1) |
 //! | 21   | `insufficient-eth-gas` | distinct from token by spec (core flow 1) |
 //! | 22   | `anchor-gate-abort` | zero TSA tokens and no `--force-degraded`; aborts pre-payment |
@@ -63,6 +64,16 @@ use thiserror::Error;
 /// Display helper: `" (pid N)"` when the lock holder's pid is known.
 fn pid_suffix(pid: Option<u32>) -> String {
     pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
+}
+
+/// Display helper: `":<line>"` when a config line is known (0 = a
+/// whole-file problem, no fragment).
+fn line_suffix(line: usize) -> String {
+    if line == 0 {
+        String::new()
+    } else {
+        format!(":{line}")
+    }
 }
 
 /// Display helper: pluralizing `s`.
@@ -214,6 +225,7 @@ pub enum ErrorClass {
     VaultKdfParamsOutOfRange,
     VaultLockHeld,
     VaultNewerVersion,
+    MalformedConfig,
     InsufficientAntToken,
     InsufficientEthGas,
     AnchorGateAbort,
@@ -231,7 +243,7 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 24] = [
+    pub const ALL: [ErrorClass; 25] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -256,6 +268,7 @@ impl ErrorClass {
         ErrorClass::ExportSelfVerifyFailed,
         ErrorClass::ImportAuthFailed,
         ErrorClass::ImportNewerVersion,
+        ErrorClass::MalformedConfig,
     ];
 
     /// The documented exit code (the table in the module docs).
@@ -273,6 +286,7 @@ impl ErrorClass {
             ErrorClass::VaultKdfParamsOutOfRange => 14,
             ErrorClass::VaultLockHeld => 15,
             ErrorClass::VaultNewerVersion => 16,
+            ErrorClass::MalformedConfig => 17,
             ErrorClass::InsufficientAntToken => 20,
             ErrorClass::InsufficientEthGas => 21,
             ErrorClass::AnchorGateAbort => 22,
@@ -305,6 +319,7 @@ impl ErrorClass {
             ErrorClass::VaultKdfParamsOutOfRange => "vault-kdf-params-out-of-range",
             ErrorClass::VaultLockHeld => "vault-lock-held",
             ErrorClass::VaultNewerVersion => "vault-newer-version",
+            ErrorClass::MalformedConfig => "malformed-config",
             ErrorClass::InsufficientAntToken => "insufficient-ant-token",
             ErrorClass::InsufficientEthGas => "insufficient-eth-gas",
             ErrorClass::AnchorGateAbort => "anchor-gate-abort",
@@ -424,6 +439,23 @@ pub enum CliError {
          supports up to v{supported}): upgrade antseal instead of downgrading the vault"
     )]
     VaultNewerVersion { found: u64, supported: u32 },
+
+    /// U4: `config.toml` exists but cannot be honored — a hard, precise
+    /// error on every command (silently dropped overrides are worse than
+    /// a loud stop; a MISSING file is simply the defaults).
+    #[error(
+        "malformed config at {}{}: {detail} — fix or remove config.toml (docs/config.md \
+         documents the accepted schema and subset); a config that cannot be read is never \
+         silently ignored",
+        .path.display(),
+        line_suffix(*.line)
+    )]
+    MalformedConfig {
+        path: PathBuf,
+        /// 1-based line; 0 for whole-file problems.
+        line: usize,
+        detail: String,
+    },
 
     /// Distinct from gas by spec (core flow 1): the ANT token balance
     /// cannot cover the quote.
@@ -550,6 +582,7 @@ impl CliError {
             CliError::VaultKdfParamsOutOfRange { .. } => ErrorClass::VaultKdfParamsOutOfRange,
             CliError::VaultLockHeld { .. } => ErrorClass::VaultLockHeld,
             CliError::VaultNewerVersion { .. } => ErrorClass::VaultNewerVersion,
+            CliError::MalformedConfig { .. } => ErrorClass::MalformedConfig,
             CliError::InsufficientAntToken { .. } => ErrorClass::InsufficientAntToken,
             CliError::InsufficientEthGas { .. } => ErrorClass::InsufficientEthGas,
             CliError::AnchorGateAbort => ErrorClass::AnchorGateAbort,
@@ -572,19 +605,18 @@ impl CliError {
         self.class().exit_code()
     }
 
-    /// The provisional `--json` error object (U2). U3's versioned
-    /// envelope (`command`, `network`, `ok`, `result|error`) supersedes
-    /// this shape; until then, machine mode still gets exactly one JSON
-    /// document on stdout with a stable `error.class`.
+    /// The `--json` error object — the inner `error` member of the U3
+    /// versioned envelope ([`crate::machine::error_envelope`]). The shape
+    /// is U2's provisional one, **finalized unchanged** by U3: `class`
+    /// (the stable kebab identifier), `exit_code`, `message`. Changing
+    /// any of these three keys is a machine-interface event (the
+    /// committed envelope fixtures pin them).
     #[must_use]
-    pub fn to_json(&self) -> serde_json::Value {
+    pub fn error_object(&self) -> serde_json::Value {
         serde_json::json!({
-            "ok": false,
-            "error": {
-                "class": self.class().name(),
-                "exit_code": self.exit_code(),
-                "message": self.to_string(),
-            }
+            "class": self.class().name(),
+            "exit_code": self.exit_code(),
+            "message": self.to_string(),
         })
     }
 }
@@ -623,6 +655,7 @@ mod tests {
             ErrorClass::ExportSelfVerifyFailed => 21,
             ErrorClass::ImportAuthFailed => 22,
             ErrorClass::ImportNewerVersion => 23,
+            ErrorClass::MalformedConfig => 24,
         }
     }
 
