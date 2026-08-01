@@ -100,3 +100,4 @@ pub mod layout;
 pub mod lock;
 pub mod session;
 pub mod store;
+pub mod wallet;

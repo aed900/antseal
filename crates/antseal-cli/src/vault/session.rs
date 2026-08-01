@@ -127,6 +127,39 @@ impl UnlockedVault {
     ) -> Result<SecretBuf, CliError> {
         Ok(open_record(&self.key, &self.header_bytes, identity, blob)?)
     }
+
+    /// The wallet sub-key (U10): HKDF-SHA256 of the vault key under the
+    /// wallet domain label — the one recorded exception to U6's
+    /// single-vault-key schedule. Derived on demand, never stored; the
+    /// caller ([`crate::vault::wallet`]) drops it after the record
+    /// operation, and [`VaultKey`] wipes on that drop.
+    ///
+    /// Label separation is the whole mechanism: the sub-key is
+    /// computationally independent of the vault key (HKDF-Expand under a
+    /// distinct `info`), so corrupting/decrypting one domain says nothing
+    /// about the other, and a future external-signer build can delete the
+    /// wallet record without touching any work record's key schedule.
+    /// # Errors
+    ///
+    /// [`CliError::Internal`] on HKDF-Expand failure — structurally
+    /// unreachable for a fixed 32-byte output (32 ≤ 255·HashLen), kept
+    /// total rather than panicking, and never degraded into a silent
+    /// all-zero key (which the *encrypt* side would happily use).
+    pub(crate) fn wallet_subkey(&self) -> Result<VaultKey, CliError> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        use zeroize::Zeroize;
+
+        let hk = Hkdf::<Sha256>::new(Some(&[]), self.key.as_bytes());
+        let mut okm = [0u8; 32];
+        hk.expand(super::wallet::WALLET_SUBKEY_INFO, &mut okm)
+            .map_err(|_| CliError::Internal {
+                detail: "HKDF-Expand failed for the fixed-length wallet sub-key".to_owned(),
+            })?;
+        let key = VaultKey::from_bytes(okm);
+        okm.zeroize();
+        Ok(key)
+    }
 }
 
 /// Create a fresh vault (the primitive under U11's `init`).
@@ -287,8 +320,9 @@ pub(crate) fn unlock_vault_impl(
 
 /// Read a file with a hard byte cap (defensive: beside-files are
 /// adversary-suppliable, so no read may be unbounded). Returns raw
-/// `io::Error` so callers can branch on `NotFound`.
-fn read_bounded(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+/// `io::Error` so callers can branch on `NotFound`. Shared with the
+/// wallet-record (U10) and export (U12) readers.
+pub(crate) fn read_bounded(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
     // `cap` is a small constant; the +0/+1 slack is the caller's choice.

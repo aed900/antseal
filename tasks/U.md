@@ -154,6 +154,10 @@
 - Accept:
   - wallet record decrypts only via the sub-key path; corrupting the wallet record leaves work records readable, and vice versa
   - wallet key bytes never appear outside C's zeroizing types; U21 harness covers wallet-path errors
+- **[2026-08-01 execution note (U10 landed; wave 2 lane η)]** Module `vault/wallet.rs` + `UnlockedVault::wallet_subkey` (session.rs); suite `tests/wallet_record.rs` + in-module key-isolation tests. Choices, argued inline:
+  1. **Sub-key = HKDF-SHA256(salt = "", ikm = vault key, info = `"antseal-cli vault v1: wallet record sub-key"`)** — same construction family as C's derivations; label frozen by a tripwire test (changing it orphans stored wallet records). The record rides the existing cipher.rs AEAD (`RecordIdentity::Wallet`, id 1, reserved by U9) so both splice defenses hold: key AND identity; the key half proven in isolation by a crate-internal forgery test (main-key blob, correct identity → auth failure).
+  2. **"Sign-capable handle" for M1 = `WalletKeyHandle`** (no Clone/Display, redacted Debug, zeroize-on-drop, single `secret_bytes()` accessor): the raw-bytes-under-narrow-scope accessor S's pay path consumes. NO evmlib/ant-core edge enters antseal-cli — the seam is documented in the module rustdoc: scalar validation happens at `init` against the pinned evmlib parse (U11, S-side, behind `ant-backend`) and at seal time in the backend adapter; this module stores/returns 32 opaque secret bytes only.
+  3. New crate edges: `hkdf`/`sha2` (existing workspace pins; sha2 carries the D88 zeroize feature via the single declaration). The end-to-end sentinel scan remains U21's; in-tree coverage = Debug redaction + error classes (auth-fail/absent-is-None/wrong-length-collapses-to-auth).
 
 ### U11 — Implement `init`: vault create, wallet generate/import, funding instructions, network config
 - Milestone: M1
