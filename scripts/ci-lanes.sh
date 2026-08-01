@@ -73,6 +73,50 @@ count_matched() {
 }
 
 lane_dep_graph() {
+  # ── P15/D35: the self_encryption prohibition ────────────────────────────
+  # `self_encryption` exists ONLY as a transitive dependency inside
+  # ant-core's graph (GPL-3.0 with no linking exception; mandatory
+  # tokio/tempfile/rayon/rand — wasm32-dead; docs/decisions/
+  # D35-self-encryption-dependency-mode.md). No antseal crate may DECLARE
+  # it: a direct edge anywhere would put GPL code one `use` away from the
+  # permissive core and the redistributable verifier page, and D32 removed
+  # every reason to want one (storage addresses are BLAKE3-256 — the
+  # pinned `blake3`, not self_encryption, is the recomputation primitive).
+  #
+  # The check reads DECLARED manifests (`cargo metadata --no-deps` needs no
+  # dependency resolution), not the resolved tree: a declaration is the
+  # thing D35 prohibits, it is visible before any lock entry exists for it,
+  # and normal/dev/build/target-gated/optional edges ALL appear in it — a
+  # feature-gated edge cannot hide. Red direction proven at P15 (2026-08-01)
+  # by planting the edge in a member manifest and in
+  # [workspace.dependencies]; both runs failed on the messages below.
+  note "P15/D35: self_encryption must be a direct dependency of NO antseal crate"
+  local detector='"name":"self_encryption"'
+  # Self-test FIRST, every run (the secret-guard pattern): the detector must
+  # trip on a planted declaration — in the compact-JSON shape cargo metadata
+  # actually emits for a dependency entry — before the real verdict is
+  # trusted.
+  local planted='{"name":"self_encryption","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.36"}'
+  if ! printf '%s\n' "$planted" | grep -qF "$detector"; then
+    printf '::error::dep-graph self-test FAILED: the detector does not match a planted self_encryption dependency entry — fix the detector before trusting any green verdict\n'
+    return 1
+  fi
+  local declared
+  declared="$(cargo metadata --format-version 1 --no-deps --locked)" || return 1
+  if printf '%s\n' "$declared" | grep -qF "$detector"; then
+    printf '::error::P15/D35 violation: a workspace crate DECLARES self_encryption as a direct dependency. It is GPL-3.0 and wasm32-hostile, and D32/D35 removed every reason to depend on it (addresses are blake3). Candidate declaration sites:\n'
+    grep -n 'self_encryption' crates/*/Cargo.toml Cargo.toml 2>/dev/null || true
+    return 1
+  fi
+  # A [workspace.dependencies] entry nobody references yet would not appear
+  # in package metadata — but it is a standing invitation to add the edge,
+  # so it is banned with the same severity.
+  if grep -En '^[[:space:]]*self_encryption[[:space:]]*=' Cargo.toml; then
+    printf '::error::P15/D35 violation: [workspace.dependencies] carries a self_encryption entry (line above). The prohibition covers the declaration point too — remove it; docs/dependency-policy.md §1 records why\n'
+    return 1
+  fi
+  printf 'OK: no antseal crate declares self_encryption (D35 prohibition).\n'
+
   note "antseal-core's NORMAL dependency graph must be I/O-free"
   local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2) ' tree offenders
   tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)" || return 1
@@ -84,6 +128,31 @@ lane_dep_graph() {
     return 1
   fi
   printf 'OK: no forbidden I/O/async/network crate in the normal graph.\n'
+
+  # ── P15/D35, resolved-graph half ────────────────────────────────────────
+  # From the moment ant-core's graph is consumed (P16's launcher, S6's
+  # adapter), self_encryption IS in the locked graph — transitively. Its
+  # immediate parents must then contain no workspace crate: workspace
+  # members print with their local path in parentheses, registry crates do
+  # not, so a parent line containing " (/" is a workspace crate holding a
+  # direct edge. This half catches what a declared-manifest scan cannot: a
+  # path/patch sneak that renames the declaration but still resolves to the
+  # crate.
+  if grep -q '^name = "self_encryption"$' Cargo.lock; then
+    note "self_encryption is in the locked graph (transitive) — checking its immediate parents"
+    local inverse parents bad
+    inverse="$(cargo tree -i self_encryption --workspace --all-features -e normal,build,dev --prefix depth --depth 1 --locked)" || return 1
+    parents="$(printf '%s\n' "$inverse" | grep '^1' || true)"
+    printf 'immediate parents:\n%s\n' "${parents:-(none)}"
+    bad="$(printf '%s\n' "$parents" | grep -F ' (/' || true)"
+    if [ -n "$bad" ]; then
+      printf '::error::P15/D35 violation: a WORKSPACE crate is an immediate parent of self_encryption in the resolved graph:\n%s\n' "$bad"
+      return 1
+    fi
+    printf 'OK: every parent of self_encryption is an upstream crate, none is ours.\n'
+  else
+    printf 'self_encryption is not in the locked graph at all (no ant-core consumer yet) — prohibition vacuously holds.\n'
+  fi
 }
 
 lane_cross_os() {

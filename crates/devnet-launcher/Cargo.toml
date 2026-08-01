@@ -1,0 +1,59 @@
+# P16 — the local devnet launcher (in-process Autonomi nodes + Anvil).
+#
+# NOT A PRODUCT CRATE. Never published (`publish = false`), never depended on
+# by any other crate, deliberately NOT named `antseal-*` — the wasm-bitmatch
+# precedent. It exists so `scripts/devnet/local-{up,down,reset}` have one
+# committed, lock-sharing binary to run instead of an out-of-tree checkout of
+# upstream's example (the example ships inside the pinned ant-core crate
+# archive, but hardcodes 25 nodes and writes the funded dev key into the
+# SHARED ~/.local/share/ant/ — see docs/research/P16-devnet-feasibility.md §6
+# for why we drive the same `LocalDevnet` API ourselves).
+#
+# FEATURE DISCIPLINE (the whole point of this manifest): `default = []`.
+# Every dependency is optional and sits behind the non-default `devnet`
+# feature, so a default `cargo build/test --workspace` compiles NOTHING here
+# but the featureless stub in main.rs — the ~600-package ant-node graph
+# (P16 memo §5: 128 → ~700 lock entries) is resolved into Cargo.lock (locks
+# cover all member features) but never built by default lanes. P20 turns
+# that into a standing CI assertion. Build it the one sanctioned way:
+#
+#     scripts/devnet/local-up            # or:
+#     cargo run --release -p devnet-launcher --features devnet
+#
+# RELEASE, not debug: every connection pair runs post-quantum QUIC handshakes
+# (ML-KEM-768 + ML-DSA-65) at stabilization time; debug-mode PQC burns the
+# stabilization timeout on 2 cores (memo §7).
+
+[package]
+name = "devnet-launcher"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+# Default features EMPTY — see the header comment.
+default = []
+# The heavy graph. ant-core's own `devnet` feature (= `dep:ant-node` inside
+# ant-core) is enabled on the edge below; our direct ant-node edge exists to
+# force the exact `=0.15.0` resolution (workspace pin) and to name
+# `ant_node::devnet::DevnetConfig` directly.
+devnet = [
+    "dep:ant-core",
+    "dep:ant-node",
+    "dep:tokio",
+    "dep:tracing-subscriber",
+]
+
+# Versions live ONLY in the root [workspace.dependencies]
+# (docs/dependency-policy.md §2).
+[dependencies]
+ant-core = { workspace = true, features = ["devnet"], optional = true }
+ant-node = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "time", "macros"], optional = true }
+# To surface the node/client tracing output (saorsa QUIC, storage, payments)
+# on stderr under RUST_LOG — same shape as upstream's example.
+tracing-subscriber = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# P16 — one-command local devnet UP (in-process Autonomi nodes + Anvil).
+#
+#   scripts/devnet/local-up [--nodes N]
+#
+# Builds (release, `devnet` feature — the ONLY sanctioned way the heavy
+# ant-node graph is ever compiled; default workspace lanes never see it) and
+# backgrounds `devnet-launcher`, then waits for the environment export to
+# appear. Everything the devnet produces lives under the repo-local,
+# GITIGNORED `.devnet/`:
+#
+#   manifest.json   full-fidelity JSON (DevnetManifest shape; embeds the
+#                   funded Anvil dev key — a well-known public constant)
+#   env             flat KEY=VALUE lines for shell/harness consumers
+#   launcher.pid    the launcher process = the devnet's lifetime
+#   launcher.log    stdout+stderr of the launcher (node tracing included)
+#   data/           per-node LMDB stores (removed on clean shutdown)
+#
+# Knobs: --nodes N (or ANTSEAL_DEVNET_NODES; default 14, range 5..=25 —
+# 5 = smoke preset, 14 = upstream-e2e parity, 25 = upstream default),
+# ANTSEAL_DEVNET_STABILIZATION_SECS, ANTSEAL_DEVNET_UP_TIMEOUT (seconds the
+# poll below waits; default 300), RUST_LOG (launcher stderr verbosity).
+# Runbook: docs/devnet/local-devnet.md. Feasibility: docs/research/
+# P16-devnet-feasibility.md. First release build measured ~13 min warm /
+# ~19 min cold on the 2-core reference host (estimate was 45-90 min);
+# subsequent runs reuse the target dir and boot in seconds.
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo" || exit 1
+
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m::error::local-up: %s\033[0m\n' "$*" >&2; exit 1; }
+
+devdir="$repo/.devnet"
+pidfile="$devdir/launcher.pid"
+manifest="$devdir/manifest.json"
+logfile="$devdir/launcher.log"
+
+nodes="${ANTSEAL_DEVNET_NODES:-14}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --nodes) shift; nodes="${1:-}"; [ -n "$nodes" ] || die "--nodes needs a value";;
+    *) die "unknown argument: $1 (usage: local-up [--nodes N])";;
+  esac
+  shift
+done
+
+# anvil is host tooling spawned by the launcher via PATH lookup (evmlib /
+# alloy node-bindings). Foundry's default install location is appended
+# automatically so a fresh shell works; a missing binary is a hard, named
+# error — nothing else in this script can succeed without it.
+if ! command -v anvil >/dev/null 2>&1; then
+  export PATH="$HOME/.foundry/bin:$PATH"
+fi
+command -v anvil >/dev/null 2>&1 \
+  || die "anvil not found on PATH (nor in ~/.foundry/bin). Install foundry — docs/devnet/local-devnet.md, Host requirements."
+note "anvil: $(anvil --version | head -1)"
+
+# One devnet per checkout: a live pid means up already ran. (The -n guard
+# matters: an empty pidfile would otherwise test -d /proc/ — which exists.)
+if [ -f "$pidfile" ]; then
+  oldpid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [ -n "$oldpid" ] && [ -d "/proc/$oldpid" ]; then
+    die "a devnet is already running (pid $oldpid). Run scripts/devnet/local-down first."
+  fi
+fi
+
+note "building devnet-launcher (release, --features devnet) — first build measured ~13-19 min on the 2-core reference host"
+cargo build --release -p devnet-launcher --features devnet --locked \
+  || die "release build failed"
+
+mkdir -p "$devdir"
+rm -f "$manifest" "$devdir/env"
+note "starting the devnet: $nodes nodes (log: $logfile)"
+nohup "$repo/target/release/devnet-launcher" --nodes "$nodes" --dir "$devdir" \
+  > "$logfile" 2>&1 &
+launcher=$!
+
+# The manifest appears only AFTER stabilization (LocalDevnet::start returns
+# once every node reaches its connection floor), so its existence IS the
+# ready signal. A dead launcher before that is a boot failure — surface the
+# log instead of spinning. `alive` reads the process STATE: the launcher is
+# a child of this shell, so a plain `kill -0` would stay true on its ZOMBIE
+# after death (we never `wait` on it) and the death branch would never fire.
+alive() {
+  local state
+  state="$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" || return 1
+  [ -n "$state" ] && [ "$state" != "Z" ]
+}
+timeout="${ANTSEAL_DEVNET_UP_TIMEOUT:-300}"
+waited=0
+while [ ! -f "$manifest" ]; do
+  if ! alive "$launcher"; then
+    printf '\n'; tail -25 "$logfile" >&2
+    die "launcher (pid $launcher) died before the devnet became ready — log tail above, full log: $logfile"
+  fi
+  if [ "$waited" -ge "$timeout" ]; then
+    kill -TERM "$launcher" 2>/dev/null
+    printf '\n'; tail -25 "$logfile" >&2
+    die "devnet not ready after ${timeout}s (stabilization timeout or overload) — SIGTERM sent; log tail above. Try fewer nodes: local-up --nodes 10 (or 5)."
+  fi
+  sleep 2; waited=$((waited + 2))
+done
+
+note "devnet READY after ~${waited}s"
+grep -m1 'devnet-launcher: READY' "$logfile" || true
+note "environment export:"
+printf '    manifest: %s\n    env:      %s\n' "$manifest" "$devdir/env"
+note "consume it:  source .devnet/env   (see docs/devnet/local-devnet.md, Environment surface)"
+note "stop it:     scripts/devnet/local-down"

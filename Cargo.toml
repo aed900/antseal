@@ -10,6 +10,14 @@ members = [
     # resolved from different lockfiles would be meaningless: it must share
     # this workspace's single Cargo.lock and exact pins.
     "crates/wasm-bitmatch",
+    # Devnet launcher (P16), never published — the wasm-bitmatch precedent.
+    # Its DEFAULT features are EMPTY: the ~600-package ant-node graph is
+    # declared behind its non-default `devnet` feature, so default
+    # `--workspace` build/test lanes compile none of it (the lockfile still
+    # records the full union — locks cover all member features). Only
+    # scripts/devnet/local-up builds it, with --features devnet, in release
+    # (D52 venue; P20 makes the containment a standing lane).
+    "crates/devnet-launcher",
 ]
 
 [workspace.package]
@@ -48,6 +56,54 @@ antseal-net = { path = "crates/antseal-net", version = "=0.0.0" }
 # not enter Cargo.lock). Bumps follow dependency-policy §4 and move in
 # lockstep with the locked self_encryption version (0.36.0 at this pin; P15).
 ant-core = "=0.5.0"
+
+# EXACT-PIN CLASS (network-consensus-affecting; policy §1 row at P16): the
+# in-process devnet node stack that ant-core's `devnet` feature activates
+# (`devnet = ["dep:ant-node"]`). ant-core 0.5.0's own requirement is caret
+# "0.15.0", deterministic today only by accident — no other 0.15.x is
+# published and 0.16.0 (2026-07-29) is outside the caret — so the day
+# upstream ships 0.15.1 a fresh resolve would silently move the entire node
+# stack. This exact pin closes that window (P16 memo §5, recorded before the
+# lock landed). Consumed ONLY by the never-published devnet-launcher behind
+# its non-default `devnet` feature — never by a product crate; it must stay
+# inside ant-core's own ant-node requirement and moves only within an
+# ant-core bump review (dependency-policy §4).
+ant-node = "=0.15.0"
+
+# Async runtime for the devnet-launcher binary ONLY (outside the exact-pin
+# class; the resolved version is frozen by Cargo.lock §3 and is the same
+# tokio the ant-core/ant-node graph resolves — one tokio in the tree). No
+# default features here; the launcher enables rt-multi-thread/signal/time on
+# its own edge. Product crates: antseal-core stays tokio-free (dep-graph
+# lane guards it); whether antseal-net's S6 adapter takes a tokio edge is
+# S6's own recorded decision, not implied by this line.
+tokio = { version = "1", default-features = false }
+
+# EXACT-PIN CLASS (consensus-affecting): BLAKE3-256 is the v1 storage-address
+# function — S4's `compute_storage_address(blob_bytes)` in antseal-core and
+# the M3 storage-linkage layer both recompute the address ant-protocol
+# derives (`compute_address` = `blake3::hash`, data_types.rs:10-12). Decision
+# D35 (docs/decisions/D35-self-encryption-dependency-mode.md): this pin
+# REPLACES any self_encryption dependency — no antseal crate declares
+# self_encryption, ever (enforced by `scripts/ci-lanes.sh dep-graph`).
+# 1.8.5 = current stable on crates.io AND the version ant-core 0.5.0's
+# packaged lock records — matching is tidy, not load-bearing: BLAKE3 is a
+# fixed function and the golden vectors, not the crate version, are the
+# determinism authority (D35 decision 3). NO lockstep semantics with
+# ant-core bumps. default-features = false drops `std` (the only default);
+# the resulting normal graph is pure no_std Rust (arrayref/arrayvec/cfg-if/
+# constant_time_eq — no getrandom, no rand, no I/O, no threads). `rayon` is
+# optional and stays OFF (nondeterministic thread pool has no place in
+# core); `mmap` OFF (I/O); `wasm32_simd` OFF (one canonical portable path on
+# wasm; output is implementation-independent anyway). Native x86 builds add
+# target-gated `cpufeatures` (runtime SIMD dispatch) and build-dep `cc`
+# (x86 asm) — neither compiles on wasm32-unknown-unknown. P15 probe
+# 2026-08-01: wasm32 build PASSES with this exact shape on toolchain 1.92.0,
+# and the official spec vectors (BLAKE3-team test_vectors.json) match on
+# both the x86 asm path and `--features pure`. Declared pin only until S4
+# consumes it (does not enter Cargo.lock; the ant-core graph's own blake3
+# is lock-frozen at the same 1.8.5).
+blake3 = { version = "=1.8.5", default-features = false }
 
 # EXACT-PIN CLASS (format-affecting): the deterministic-CBOR codec every
 # hashed/signed/stored byte flows through (MVP-SPEC.md line 73). Decision
