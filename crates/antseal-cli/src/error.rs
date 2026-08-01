@@ -24,6 +24,7 @@
 //! | 14   | `vault-kdf-params-out-of-range` | D40 §3: pre-auth header caps, before any KDF allocation; also `vault import` headers (D47) |
 //! | 15   | `vault-lock-held` | U5: another antseal process holds the single-writer lock |
 //! | 16   | `vault-newer-version` | U5: vault header written by a newer antseal |
+//! | 17   | `malformed-config` | U4: `config.toml` present but unreadable — never silently ignored (missing = defaults) |
 //! | 20   | `insufficient-ant-token` | distinct from gas by spec (core flow 1) |
 //! | 21   | `insufficient-eth-gas` | distinct from token by spec (core flow 1) |
 //! | 22   | `anchor-gate-abort` | zero TSA tokens and no `--force-degraded`; aborts pre-payment |
@@ -63,6 +64,16 @@ use thiserror::Error;
 /// Display helper: `" (pid N)"` when the lock holder's pid is known.
 fn pid_suffix(pid: Option<u32>) -> String {
     pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
+}
+
+/// Display helper: `":<line>"` when a config line is known (0 = a
+/// whole-file problem, no fragment).
+fn line_suffix(line: usize) -> String {
+    if line == 0 {
+        String::new()
+    } else {
+        format!(":{line}")
+    }
 }
 
 /// Display helper: pluralizing `s`.
@@ -214,6 +225,7 @@ pub enum ErrorClass {
     VaultKdfParamsOutOfRange,
     VaultLockHeld,
     VaultNewerVersion,
+    MalformedConfig,
     InsufficientAntToken,
     InsufficientEthGas,
     AnchorGateAbort,
@@ -231,7 +243,7 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 24] = [
+    pub const ALL: [ErrorClass; 25] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -256,6 +268,7 @@ impl ErrorClass {
         ErrorClass::ExportSelfVerifyFailed,
         ErrorClass::ImportAuthFailed,
         ErrorClass::ImportNewerVersion,
+        ErrorClass::MalformedConfig,
     ];
 
     /// The documented exit code (the table in the module docs).
@@ -273,6 +286,7 @@ impl ErrorClass {
             ErrorClass::VaultKdfParamsOutOfRange => 14,
             ErrorClass::VaultLockHeld => 15,
             ErrorClass::VaultNewerVersion => 16,
+            ErrorClass::MalformedConfig => 17,
             ErrorClass::InsufficientAntToken => 20,
             ErrorClass::InsufficientEthGas => 21,
             ErrorClass::AnchorGateAbort => 22,
@@ -305,6 +319,7 @@ impl ErrorClass {
             ErrorClass::VaultKdfParamsOutOfRange => "vault-kdf-params-out-of-range",
             ErrorClass::VaultLockHeld => "vault-lock-held",
             ErrorClass::VaultNewerVersion => "vault-newer-version",
+            ErrorClass::MalformedConfig => "malformed-config",
             ErrorClass::InsufficientAntToken => "insufficient-ant-token",
             ErrorClass::InsufficientEthGas => "insufficient-eth-gas",
             ErrorClass::AnchorGateAbort => "anchor-gate-abort",
@@ -424,6 +439,23 @@ pub enum CliError {
          supports up to v{supported}): upgrade antseal instead of downgrading the vault"
     )]
     VaultNewerVersion { found: u64, supported: u32 },
+
+    /// U4: `config.toml` exists but cannot be honored — a hard, precise
+    /// error on every command (silently dropped overrides are worse than
+    /// a loud stop; a MISSING file is simply the defaults).
+    #[error(
+        "malformed config at {}{}: {detail} — fix or remove config.toml (docs/config.md \
+         documents the accepted schema and subset); a config that cannot be read is never \
+         silently ignored",
+        .path.display(),
+        line_suffix(*.line)
+    )]
+    MalformedConfig {
+        path: PathBuf,
+        /// 1-based line; 0 for whole-file problems.
+        line: usize,
+        detail: String,
+    },
 
     /// Distinct from gas by spec (core flow 1): the ANT token balance
     /// cannot cover the quote.
@@ -550,6 +582,7 @@ impl CliError {
             CliError::VaultKdfParamsOutOfRange { .. } => ErrorClass::VaultKdfParamsOutOfRange,
             CliError::VaultLockHeld { .. } => ErrorClass::VaultLockHeld,
             CliError::VaultNewerVersion { .. } => ErrorClass::VaultNewerVersion,
+            CliError::MalformedConfig { .. } => ErrorClass::MalformedConfig,
             CliError::InsufficientAntToken { .. } => ErrorClass::InsufficientAntToken,
             CliError::InsufficientEthGas { .. } => ErrorClass::InsufficientEthGas,
             CliError::AnchorGateAbort => ErrorClass::AnchorGateAbort,
@@ -622,6 +655,7 @@ mod tests {
             ErrorClass::ExportSelfVerifyFailed => 21,
             ErrorClass::ImportAuthFailed => 22,
             ErrorClass::ImportNewerVersion => 23,
+            ErrorClass::MalformedConfig => 24,
         }
     }
 

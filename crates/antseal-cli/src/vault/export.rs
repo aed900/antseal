@@ -128,6 +128,7 @@ use super::store::{
     MAX_RECORD_FILE_BYTES, StoreError, WorkRecord, WorkState, WorkStore, validate_slot_name,
 };
 use super::wallet::{WALLET_KEY_LEN, WalletKeyHandle, load_wallet_key, store_wallet_key};
+use crate::config::MAX_CONFIG_BYTES;
 use crate::error::CliError;
 
 /// The Q2-reserved export magic — exact bytes, frozen forever
@@ -154,10 +155,6 @@ const MAX_EXPORT_HEADER_BODY_BYTES: usize = 1024;
 
 /// Cap on the informational writer-version string in the payload.
 const MAX_WRITER_VERSION_BYTES: usize = 64;
-
-/// Cap on embedded `config.toml` bytes (shared with U4's loader — config
-/// is a small operator-preference file, never data).
-pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 
 /// AEAD nonce length (XChaCha20-Poly1305).
 const EXPORT_NONCE_LEN: usize = 24;

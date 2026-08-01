@@ -32,7 +32,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 24] = [
+const TABLE: [(ErrorClass, u8, &str); 25] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -52,6 +52,7 @@ const TABLE: [(ErrorClass, u8, &str); 24] = [
     ),
     (ErrorClass::VaultLockHeld, 15, "vault-lock-held"),
     (ErrorClass::VaultNewerVersion, 16, "vault-newer-version"),
+    (ErrorClass::MalformedConfig, 17, "malformed-config"),
     (
         ErrorClass::InsufficientAntToken,
         20,
@@ -258,6 +259,16 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             CliError::VaultNewerVersion {
                 found: 2,
                 supported: 1,
+            },
+        ),
+        (
+            "malformed-config",
+            CliError::MalformedConfig {
+                path: PathBuf::from("/home/user/.antseal/config.toml"),
+                line: 3,
+                detail: "`default_network` must be one of arbitrum-one, arbitrum-sepolia, \
+                         devnet (got `ropsten`)"
+                    .into(),
             },
         ),
         (

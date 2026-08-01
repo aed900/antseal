@@ -123,17 +123,22 @@ fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
 }
 
 #[test]
-fn network_accepts_exactly_the_three_networks_and_defaults_to_mainnet() {
+fn network_accepts_exactly_the_three_networks_and_absence_is_none() {
     for (value, expected) in [
         ("arbitrum-one", Network::ArbitrumOne),
         ("arbitrum-sepolia", Network::ArbitrumSepolia),
         ("devnet", Network::Devnet),
     ] {
         let cli = parse(&["antseal", "--network", value, "list"]).expect("valid network");
-        assert_eq!(cli.globals.network, expected);
+        assert_eq!(cli.globals.network, Some(expected));
     }
-    let cli = parse(&["antseal", "list"]).expect("default network");
-    assert_eq!(cli.globals.network, Network::ArbitrumOne);
+    // Absence parses as None ON PURPOSE (U4): the arbitrum-one default is
+    // applied by `config::effective_network` (flag > config > default),
+    // where an explicit `--network arbitrum-one` must stay
+    // distinguishable from no flag at all. The precedence table lives in
+    // tests/config_file.rs.
+    let cli = parse(&["antseal", "list"]).expect("no flag");
+    assert_eq!(cli.globals.network, None);
 
     let err = parse(&["antseal", "--network", "mainnet", "list"]).expect_err("unknown network");
     assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
@@ -142,7 +147,7 @@ fn network_accepts_exactly_the_three_networks_and_defaults_to_mainnet() {
 #[test]
 fn network_is_global_and_parses_after_the_subcommand() {
     let cli = parse(&["antseal", "list", "--network", "devnet"]).expect("global position");
-    assert_eq!(cli.globals.network, Network::Devnet);
+    assert_eq!(cli.globals.network, Some(Network::Devnet));
 }
 
 #[test]

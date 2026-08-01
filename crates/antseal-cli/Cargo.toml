@@ -21,6 +21,12 @@ path = "src/main.rs"
 
 [dependencies]
 antseal-core.workspace = true
+# U4: the config file consumes S5's PURE network half (NetworkId /
+# NetworkConfig — chain ids and names; contract addresses stay net's
+# pinned constants, never duplicated into config). Default features only:
+# the ant-backend graph must not enter this crate (containment lane
+# checks `cargo tree -p antseal-cli -e normal` for alloy/ant-core).
+antseal-net.workspace = true
 clap.workspace = true
 # Exact-pinned workspace-wide for R1's report-byte reasons (D29); consumed
 # here only for the `--json` error envelope (U2; the versioned envelope

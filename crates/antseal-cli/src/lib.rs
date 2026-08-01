@@ -22,6 +22,7 @@
 
 pub mod cli;
 mod commands;
+pub mod config;
 pub mod error;
 pub mod machine;
 pub mod passphrase;
@@ -73,7 +74,35 @@ where
         }
     };
     let command = machine::command_name(&cli.command);
-    let network = cli.globals.network.as_str();
+    let fail = |network: &str, err: &error::CliError| -> ExitCode {
+        eprintln!("error: {err}");
+        if cli.globals.json {
+            println!("{}", machine::error_envelope(command, network, err));
+        }
+        ExitCode::from(err.exit_code())
+    };
+
+    // The config file (U4): missing = defaults; malformed = a hard error
+    // for every command (its `network` field falls back to
+    // flag-or-built-in — the config that would have supplied the middle
+    // layer is exactly what failed). Unknown-key warnings go to stderr,
+    // never stdout.
+    let config = match config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            let network = cli
+                .globals
+                .network
+                .map_or(antseal_net::NetworkId::default().as_str(), |n| n.as_str());
+            return fail(network, &err);
+        }
+    };
+    for warning in &config.warnings {
+        eprintln!("warning: {warning}");
+    }
+    // flag > config > built-in default (U4's precedence rule).
+    let network = config::effective_network(cli.globals.network, &config).as_str();
+
     match run::run(&cli) {
         Ok(outcome) => {
             if cli.globals.json {
@@ -84,13 +113,7 @@ where
             }
             ExitCode::SUCCESS
         }
-        Err(err) => {
-            eprintln!("error: {err}");
-            if cli.globals.json {
-                println!("{}", machine::error_envelope(command, network, &err));
-            }
-            ExitCode::from(err.exit_code())
-        }
+        Err(err) => fail(network, &err),
     }
 }
 

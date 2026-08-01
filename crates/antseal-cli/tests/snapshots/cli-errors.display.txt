@@ -42,6 +42,8 @@
   another antseal process holds the vault lock at /home/user/.antseal/vault.lock; retry when it finishes
 [vault-newer-version] class=vault-newer-version code=16
   this vault was created by a newer antseal (vault format v2; this build supports up to v1): upgrade antseal instead of downgrading the vault
+[malformed-config] class=malformed-config code=17
+  malformed config at /home/user/.antseal/config.toml:3: `default_network` must be one of arbitrum-one, arbitrum-sepolia, devnet (got `ropsten`) — fix or remove config.toml (docs/config.md documents the accepted schema and subset); a config that cannot be read is never silently ignored
 [insufficient-ant-token] class=insufficient-ant-token code=20
   insufficient ANT for this seal: the quote needs 1500000000000000000 atto-ANT but the wallet holds 20000000000000000; fund the wallet with ANT and re-run (nothing was paid or uploaded)
 [insufficient-eth-gas] class=insufficient-eth-gas code=21

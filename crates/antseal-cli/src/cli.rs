@@ -60,16 +60,16 @@ pub struct Cli {
 /// Global flags, valid on every subcommand.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum
-    /// Sepolia, chain 421614, not Ethereum Sepolia)
-    #[arg(
-        long,
-        global = true,
-        value_enum,
-        default_value_t = Network::ArbitrumOne,
-        value_name = "NETWORK"
-    )]
-    pub network: Network,
+    /// Target network (default: arbitrum-one, or config.toml's
+    /// default_network — flag > config > default; "arbitrum-sepolia" is
+    /// Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+    //
+    // Parses as `Option` ON PURPOSE (U4): with a clap-level default an
+    // explicit `--network arbitrum-one` would be indistinguishable from
+    // absence, and the config file could never sit between flag and
+    // built-in default. Resolution lives in `crate::config`.
+    #[arg(long, global = true, value_enum, value_name = "NETWORK")]
+    pub network: Option<Network>,
 
     /// Machine output: exactly one JSON document on stdout; all human copy
     /// on stderr; never prompts (machine mode, D51)
