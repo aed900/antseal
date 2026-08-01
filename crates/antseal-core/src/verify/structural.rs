@@ -53,6 +53,8 @@
 //! quantity is `u64` — adversary-controlled wire values are never `usize`
 //! (the R2 convention).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::crypto::commit::{CommitmentDigest, verify_path_commit};
 use crate::crypto::error::SaltKind;
 use crate::crypto::material::Salt16;
@@ -199,12 +201,31 @@ pub fn check_disclosed_lengths(fields: &[DisclosedField]) -> Result<(), VerifyEr
 /// Manifest-internal referential integrity: every unit names a file that
 /// exists.
 ///
+/// # Unreachable from `verify_bundle` — kept as the pub-API backstop (R54)
+///
+/// Through the pipeline this check **cannot fail**: R5's `flatten_units`
+/// derives each row's `file_id` from its file's *enumerate index* over the
+/// decoded file table — it is not a wire field — and `structural_files`
+/// enumerates the same table, so every unit's `file_id` is a file-table
+/// index by construction. (The same tautology-by-construction holds for
+/// `proof_unit_refs` in [`check_reveal_refs`], whose pipeline population is
+/// a subset of the revealed ids by construction — recorded as U17.) The
+/// check is kept because this is a pub stage function a caller can drive
+/// with hand-built views — the same reason row 6 of R4's table and the
+/// `path_salt` re-check below exist — and `unknown-file-ref` also has two
+/// *pipeline-reachable* emission sites in this module (the touched-file arm
+/// of [`check_reveal_refs`], which the `verify-unknown-file-ref` tamper row
+/// drives, and [`check_path_commits`]), so the code's reachability does not
+/// rest on this arm.
+///
 /// # Errors
 ///
-/// [`VerifyError::UnknownFileRef`] for the first dangling `file_id`.
+/// [`VerifyError::UnknownFileRef`] for the first dangling `file_id` in
+/// manifest unit order.
 pub fn check_manifest_refs(manifest: &ManifestView<'_>) -> Result<(), VerifyError> {
+    let file_ids = file_id_set(manifest);
     for unit in manifest.units {
-        if !file_exists(manifest, unit.file_id) {
+        if !file_ids.contains(&unit.file_id) {
             return Err(VerifyError::UnknownFileRef {
                 file_id: unit.file_id,
             });
@@ -230,25 +251,36 @@ pub fn check_reveal_refs(
     manifest: &ManifestView<'_>,
     bundle: &BundleView<'_>,
 ) -> Result<(), VerifyError> {
-    for (index, unit_id) in bundle.revealed_unit_ids.iter().enumerate() {
-        if !manifest.units.iter().any(|unit| unit.unit_id == *unit_id) {
+    // Built once per call (R54): the pre-R54 shape rescanned the unit table
+    // and the reveal prefix per revealed id — Θ(|revealed| × |units|). The
+    // per-id check order (existence, then duplicate) is unchanged, and
+    // `seen` equals the prefix set exactly because an id enters it only
+    // after passing the existence check every earlier id also passed.
+    let unit_ids: BTreeSet<u64> = manifest.units.iter().map(|unit| unit.unit_id).collect();
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    for unit_id in bundle.revealed_unit_ids {
+        if !unit_ids.contains(unit_id) {
             return Err(VerifyError::UnknownUnitRef { unit_id: *unit_id });
         }
-        if bundle.revealed_unit_ids[..index].contains(unit_id) {
+        if !seen.insert(*unit_id) {
             return Err(VerifyError::DuplicateUnitReveal { unit_id: *unit_id });
         }
     }
 
+    let file_ids = file_id_set(manifest);
     for touched in bundle.touched_files {
-        if !file_exists(manifest, touched.file_id) {
+        if !file_ids.contains(&touched.file_id) {
             return Err(VerifyError::UnknownFileRef {
                 file_id: touched.file_id,
             });
         }
     }
 
+    // `seen` is the revealed set: the loop above either visited every
+    // revealed id or returned, so membership here means exactly what the
+    // pre-R54 `revealed_unit_ids.contains` meant.
     for unit_id in bundle.proof_unit_refs {
-        if !bundle.revealed_unit_ids.contains(unit_id) {
+        if !seen.contains(unit_id) {
             return Err(VerifyError::UnknownUnitRef { unit_id: *unit_id });
         }
     }
@@ -273,23 +305,28 @@ pub fn check_reveal_refs(
 ///
 /// [`VerifyError::TilingViolation`] or [`VerifyError::RawMirrorInTilingSet`].
 pub fn check_tiling(manifest: &ManifestView<'_>) -> Result<(), VerifyError> {
+    // The file→units grouping, built once (R54): the pre-R54 shape
+    // re-filtered the whole unit table per file — Θ(|files| × |units|),
+    // ~2³⁰ steps at the D10 cap product, reachable by a legal no-reveal
+    // bundle (2026-07-31 review, finding 6). Each group preserves manifest
+    // unit order, files are still visited in file-table order, and the
+    // error arms are untouched, so every verdict and first error is
+    // unchanged.
+    let groups = units_by_file(manifest);
+    let empty: Vec<&UnitEntry> = Vec::new();
     for file in manifest.files {
-        let normal: Vec<&UnitEntry> = manifest
-            .units
+        let with_mirrors = groups.get(&file.file_id).unwrap_or(&empty);
+        let normal: Vec<&UnitEntry> = with_mirrors
             .iter()
-            .filter(|unit| unit.file_id == file.file_id && unit.kind == UnitKind::Normal)
+            .filter(|unit| unit.kind == UnitKind::Normal)
+            .copied()
             .collect();
 
         let Err(kind) = tile(&normal, file.size) else {
             continue;
         };
 
-        let with_mirrors: Vec<&UnitEntry> = manifest
-            .units
-            .iter()
-            .filter(|unit| unit.file_id == file.file_id)
-            .collect();
-        if tile(&with_mirrors, file.size).is_ok()
+        if tile(with_mirrors, file.size).is_ok()
             && let Some(mirror) = with_mirrors
                 .iter()
                 .find(|unit| unit.kind == UnitKind::RawMirror)
@@ -358,12 +395,15 @@ pub fn check_path_commits(
     manifest: &ManifestView<'_>,
     touched_files: &[TouchedFile<'_>],
 ) -> Result<(), VerifyError> {
+    // First-wins by construction (R54): the map keeps the first file-table
+    // entry per `file_id`, exactly what the pre-R54 per-touched `.find`
+    // rescan returned — including on a hand-built table with a repeated id.
+    let mut file_by_id: BTreeMap<u64, &FileEntry> = BTreeMap::new();
+    for file in manifest.files {
+        file_by_id.entry(file.file_id).or_insert(file);
+    }
     for touched in touched_files {
-        let Some(file) = manifest
-            .files
-            .iter()
-            .find(|file| file.file_id == touched.file_id)
-        else {
+        let Some(file) = file_by_id.get(&touched.file_id) else {
             return Err(VerifyError::UnknownFileRef {
                 file_id: touched.file_id,
             });
@@ -386,8 +426,23 @@ pub fn check_path_commits(
     Ok(())
 }
 
-fn file_exists(manifest: &ManifestView<'_>, file_id: u64) -> bool {
-    manifest.files.iter().any(|file| file.file_id == file_id)
+/// Every distinct `file_id` in the file table — the O(log n) replacement
+/// for the per-lookup `file_exists` rescan (R54).
+fn file_id_set(manifest: &ManifestView<'_>) -> BTreeSet<u64> {
+    manifest.files.iter().map(|file| file.file_id).collect()
+}
+
+/// `file_id` → that file's unit-table entries, in manifest unit order —
+/// borrowed entries, never copies (R54). Grouping is by exact `file_id`
+/// equality, so duplicate file-table ids resolve to one shared group and
+/// units naming no file sit in groups nothing looks up, both exactly as
+/// the per-file filter behaved.
+fn units_by_file<'a>(manifest: &ManifestView<'a>) -> BTreeMap<u64, Vec<&'a UnitEntry>> {
+    let mut groups: BTreeMap<u64, Vec<&'a UnitEntry>> = BTreeMap::new();
+    for unit in manifest.units {
+        groups.entry(unit.file_id).or_default().push(unit);
+    }
+    groups
 }
 
 #[cfg(test)]

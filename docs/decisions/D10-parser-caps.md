@@ -941,3 +941,66 @@ the schema and body module docs rather than papered over:
 artifacts, which no constructor of parts can see; enforcing them at
 encode/seal time belongs to the M1/M3 pipelines and is raised as a task
 proposal in F41's report, not silently claimed here.
+
+## Amendment from R54 (2026-08-01) — the count-cap product is deliberately unbounded, and §5's cost column is made true
+
+**No cap value changes, no error code moves or mints (the universe stays
+194), no verdict moves, no report byte moves.** This amends *cost claims*
+and records one deliberate non-cap, from the 2026-07-31 adversarial
+review (finding 6 `medium→low` verifier-confirmed, plus U1/U3, the same
+class at two more sites): nested pre-authentication scans whose work was
+driven by the very counts §2 proves simultaneously reachable.
+
+**1. Nothing bounds the count-cap product, and that is now a recorded
+decision rather than an omission.** §2 proves `MAX_FILE_COUNT` (2¹⁴) and
+`MAX_UNIT_COUNT` (2¹⁶) reachable at once inside `MAX_MANIFEST_BYTES`, so
+`files × units` reaches 2³⁰ inside a legal **~6.5 MiB no-reveal bundle**
+(measured: 6 853 816 B, `tests/verify_scan_shape.rs`); the reveal-section
+caps (rows 10–11) likewise admit `covered × noncovered` = 2³² inside
+`MAX_BUNDLE_BYTES` (two disjoint at-cap sections cost ~44 MiB at the
+272-byte ciphertext floor). The caps bound each *count*; no rule bounds
+any *product*, and none is added. The review found the verify pipeline's
+stages 2–4, the report's reveal set, and this decision's own layer-1
+cross-section rules built as nested linear scans over exactly those
+counts — on the order of 10⁹ iterations for the at-cap no-reveal bundle,
+none of it gated on any authenticator (stage 5 running last is
+**correct** and the review verified so explicitly: the manifest is
+self-signed, so an attacker can always mint a valid signature over a
+forged body and an earlier signature check would gate nothing). Measured
+on the project's 2-core box: **28.96 s** debug / **3.11 s** release to
+verify that bundle — in the browser verifier, a hang. R54 replaced every
+such scan with an index built once per verification (`BTreeSet`/
+`BTreeMap` over ids; the file→rows grouping that the pipeline's own
+flattening yields for free), after which the same bundle verifies in
+**2.61 s** debug / **0.13 s** release and scales ~2.0× for a 2× input
+(pre-R54: ~3.7–4.5×). `tests/verify_scan_shape.rs` is the permanent
+guard. **A product cap would therefore mint a permanent code (D30 §3)
+for inputs the verifier now handles in time near-linear in their encoded
+size, and is rejected.** The per-count caps stand unchanged;
+implementations owe scan shapes linear in the input, not smaller inputs.
+
+**2. §5's cost column, re-checked row by row against the post-R54
+code.** The finding was partly that the table asserted a complexity the
+code did not have:
+
+| row | claim | verdict |
+| --- | --- | --- |
+| 1 (`bundle-too-large`) | O(1) | **Holds** — the first statement of `BundleV1::decode`, before the decoder is constructed. |
+| 2 (layer-1 CBOR + bundle schema) | O(input) | **Was false; true post-R54.** The walk and the per-head cap checks were element-linear, but `BundleV1::new` — which the decode path runs — closed with two tier-`[X]` cross-section rules that rescanned the other section per element: Θ(\|noncovered\| × \|covered\|) and Θ(\|full\| × \|touched\|), worst legal ≈ 2³² (U3). Both are now single merge scans over the strictly-ascending order the same constructor has already enforced by that point, first errors byte-for-byte unchanged. |
+| 3 (`manifest-too-large`) | O(1) | **Holds** — the first statement of `Manifest::decode`. |
+| 4 (layers 2/3 + manifest schema) | O(manifest) | **Holds** — decode loops are element-linear with clamped allocations (F30); `FileEntry::new`'s D77/F40/coverage checks visit only the file's own units; `ManifestBodyV1::new`'s cap budget and `validate_unit_ordinals` visit each unit once; `validate_sig_policy` is bounded by the 16-value `sig_alg` universe (§3). |
+
+The table's scope is stage 1 only; for the record, the stages the review
+actually indicted now do index-build work of O((files + units + reveals)
+· log) plus per-subject constant-time lookups — stage 2's structural and
+coherence groups, stage 3's per-unit reveal dispatch, stage 4's
+file-stage classification and full-reveal content checks, and the
+report's reveal set all share the shape. One residue is documented
+rather than deleted: `check_manifest_refs`' arm is
+unreachable-by-construction from the pipeline (R5 derives every row's
+`file_id` from the file table's enumerate index — the same
+tautology-by-construction U17 records for `proof_unit_refs`), and its
+doc comment records both that and where `unknown-file-ref`'s
+pipeline-reachable emissions live (`check_reveal_refs`' touched-file
+arm, driven by the `verify-unknown-file-ref` tamper row, and
+`check_path_commits`), so no code's reachability rests on it.

@@ -104,6 +104,8 @@
 //! [`TsaAnchor::source`]: crate::bundle::TsaAnchor::source
 //! [`sig_policy::verify_body`]: crate::crypto::sig_policy::verify_body
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::bundle::{BundleV1, CoveredReveal, NonCoveredReveal, SealProof};
 use crate::content::fine_tree::{FineRoot, RangeProofView, WireNode, verify_range};
 use crate::content::unit::ByteRange as ContentByteRange;
@@ -351,7 +353,7 @@ fn run(
 
     // ── Stage 2: structural (R3) then coherence (R5) ───────────────────
     let struct_files = structural_files(body);
-    let struct_units = structural_units(&rows);
+    let struct_units = structural_units(rows.rows());
     let touched = touched_files(bundle);
     let revealed_ids = bundle.revealed_unit_ids();
     let proof_refs: Vec<u64> = bundle
@@ -374,7 +376,7 @@ fn run(
         },
     )?;
 
-    let coherence_units = coherence_units(&rows);
+    let coherence_units = coherence_units(rows.rows());
     let reveals = revealed_unit_refs(bundle);
     let touched_ids: Vec<u64> = touched.iter().map(|file| file.file_id).collect();
     check_coherence(
@@ -386,7 +388,7 @@ fn run(
     )?;
 
     // ── Stage 3: per-unit evidence (R2) ────────────────────────────────
-    let (verified_owned, unit_failures) = run_unit_stage(bundle, body, &rows, mode);
+    let (verified_owned, unit_failures) = run_unit_stage(bundle, body, rows.rows(), mode);
     if let Some(failures) = into_failures(unit_failures) {
         return Err(failures);
     }
@@ -410,7 +412,7 @@ fn run(
         .map(|file| file.fine_tree().root().copied())
         .collect();
     let file_views = file_views(body, &fine_roots);
-    let file_units = file_unit_entries(&rows);
+    let file_units = file_unit_entries(rows.rows());
     let full_material = full_reveal_material(bundle);
     let summaries = check_file_stages(
         &FileStageManifestView {
@@ -459,14 +461,54 @@ fn run(
 // stage 2 inputs
 // ---------------------------------------------------------------------------
 
-/// The manifest unit table, flattened in manifest order.
-fn flatten_units(body: &ManifestBodyV1) -> Vec<UnitRow<'_>> {
+/// The flattened manifest unit table plus the file→rows grouping its own
+/// construction yields for free (R54).
+///
+/// [`flatten_units`] emits each file's rows contiguously, files in
+/// file-table order, `file_id` = the enumerate index — so `spans[file_id]`
+/// is exactly the half-open `rows` range that file owns. Built **once** per
+/// verification: the grouping is what lets [`reveal_set`] visit each file's
+/// own rows instead of re-filtering the whole table per file — the
+/// Θ(|files| × |units|) shape the 2026-07-31 review's finding 6 measured at
+/// ~2³⁰ steps for a legal at-cap no-reveal bundle. It holds ranges into
+/// `rows`, never copies of them.
+struct UnitRows<'m> {
+    /// Every unit row, in manifest order (= `unit_id` order, F5's pin).
+    rows: Vec<UnitRow<'m>>,
+    /// `spans[file_id]` = that file's contiguous range of `rows` indices.
+    spans: Vec<core::ops::Range<usize>>,
+}
+
+impl<'m> UnitRows<'m> {
+    /// The whole table, for the consumers that are 1:1 with it.
+    fn rows(&self) -> &[UnitRow<'m>] {
+        &self.rows
+    }
+
+    /// The rows `file_id` owns, in manifest order; empty for an id outside
+    /// the file table (defensive — the pipeline only asks about enumerated
+    /// files).
+    fn for_file(&self, file_id: u64) -> &[UnitRow<'m>] {
+        usize::try_from(file_id)
+            .ok()
+            .and_then(|index| self.spans.get(index))
+            .and_then(|span| self.rows.get(span.clone()))
+            .unwrap_or(&[])
+    }
+}
+
+/// The manifest unit table, flattened in manifest order, grouped by file as
+/// a by-product (module type above).
+fn flatten_units(body: &ManifestBodyV1) -> UnitRows<'_> {
     let mut rows = Vec::new();
+    let mut spans = Vec::with_capacity(body.files().len());
     for (index, file) in body.files().iter().enumerate() {
         let file_id = u64::try_from(index).unwrap_or(u64::MAX);
+        let start = rows.len();
         rows.extend(file.units().iter().map(|entry| UnitRow { file_id, entry }));
+        spans.push(start..rows.len());
     }
-    rows
+    UnitRows { rows, spans }
 }
 
 fn structural_files(body: &ManifestBodyV1) -> Vec<StructuralFileEntry> {
@@ -609,6 +651,20 @@ fn run_unit_stage(
     let mut verified = Vec::new();
     let mut failures = Vec::new();
 
+    // Both reveal lookups built once (R54): the pre-R54 shape rescanned
+    // each section per manifest row — Θ(|units| × |reveals|) on a fully
+    // revealed work (2026-07-31 review, U1's class). First-wins per id
+    // mirrors the `.find` it replaces; a repeated id within a section is
+    // undecodable anyway (F8's strictly-ascending rule).
+    let mut covered_by_id: BTreeMap<u64, &CoveredReveal> = BTreeMap::new();
+    for reveal in bundle.covered_reveals() {
+        covered_by_id.entry(reveal.unit_id()).or_insert(reveal);
+    }
+    let mut noncovered_by_id: BTreeMap<u64, &NonCoveredReveal> = BTreeMap::new();
+    for reveal in bundle.noncovered_reveals() {
+        noncovered_by_id.entry(reveal.unit_id()).or_insert(reveal);
+    }
+
     for row in rows {
         let unit_id = row.unit_id();
         let Some(file) = body
@@ -618,14 +674,8 @@ fn run_unit_stage(
             // Unreachable: R3 group 2 proved every unit's file exists.
             continue;
         };
-        let covered = bundle
-            .covered_reveals()
-            .iter()
-            .find(|reveal| reveal.unit_id() == unit_id);
-        let noncovered = bundle
-            .noncovered_reveals()
-            .iter()
-            .find(|reveal| reveal.unit_id() == unit_id);
+        let covered = covered_by_id.get(&unit_id).copied();
+        let noncovered = noncovered_by_id.get(&unit_id).copied();
 
         let outcome = match (row.entry.binding(), covered, noncovered) {
             (UnitBinding::FineTreeCovered, Some(reveal), None) => {
@@ -928,12 +978,24 @@ fn anchor_stubs(bundle: &BundleV1<'_>) -> Vec<AnchorResult> {
 fn reveal_set(
     body: &ManifestBodyV1,
     bundle: &BundleV1<'_>,
-    rows: &[UnitRow<'_>],
+    rows: &UnitRows<'_>,
     revealed_ids: &[u64],
     summaries: &[FileRevealSummary],
 ) -> Result<RevealSet, VerifyError> {
     let mut files = Vec::new();
     let mut unrevealed_files = Vec::new();
+
+    // Built once (R54): the per-file work below visits each file's own
+    // rows via the shared [`UnitRows`] grouping instead of re-filtering the
+    // whole table per file, and membership/`touched_files` lookups are a
+    // set and a first-wins map instead of per-row and per-file rescans
+    // (the R53-noted residue). Same rows in the same order per file, so
+    // the report bytes are unchanged.
+    let revealed: BTreeSet<u64> = revealed_ids.iter().copied().collect();
+    let mut touched_by_id = BTreeMap::new();
+    for entry in bundle.touched_files() {
+        touched_by_id.entry(entry.file_id()).or_insert(entry);
+    }
 
     for (index, file) in body.files().iter().enumerate() {
         let file_id = u64::try_from(index).unwrap_or(u64::MAX);
@@ -941,9 +1003,9 @@ fn reveal_set(
         let mut unrevealed_spans = Vec::new();
         let mut touched = false;
 
-        for row in rows.iter().filter(|row| row.file_id == file_id) {
+        for row in rows.for_file(file_id) {
             let unit_id = row.unit_id();
-            let is_revealed = revealed_ids.contains(&unit_id);
+            let is_revealed = revealed.contains(&unit_id);
             touched |= is_revealed;
             // Spans cover the tiling domain only; the mirror sits outside
             // it and is resolved below, through the R53 accessor.
@@ -973,10 +1035,14 @@ fn reveal_set(
         // the full-reveal content check calls (R53), so the mirror this
         // report names is the mirror rows 9–10 opened. (An untouched file
         // reveals nothing, so resolving after the arm above loses no case.)
+        // The candidates are the file's own rows — the accessor's
+        // owning-file test still runs, and rows of other files were never
+        // candidates it could return (R54).
         let revealed_mirror = resolve_raw_mirror(
             file_id,
-            rows.iter()
-                .filter(|row| revealed_ids.contains(&row.unit_id())),
+            rows.for_file(file_id)
+                .iter()
+                .filter(|row| revealed.contains(&row.unit_id())),
         );
 
         revealed_spans.sort_by_key(|span| span.start);
@@ -985,11 +1051,7 @@ fn reveal_set(
         // D80 guarantees a `touched_files` entry exists for every file with
         // a revealed unit; the error arm is the unreachable backstop, and it
         // reports the same rule that would have caught it in stage 2.
-        let Some(entry) = bundle
-            .touched_files()
-            .iter()
-            .find(|entry| entry.file_id() == file_id)
-        else {
+        let Some(entry) = touched_by_id.get(&file_id).copied() else {
             let unit_id = revealed_spans.first().map_or_else(
                 || revealed_mirror.map_or(0, UnitRow::unit_id),
                 |span| span.unit_id,

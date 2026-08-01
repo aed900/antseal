@@ -1557,20 +1557,32 @@ impl<'b> BundleV1<'b> {
             full_reveals.iter().map(FullReveal::file_id),
         )?;
 
-        // Both sections are sorted by now, so membership tests are honest
-        // linear scans over deduplicated ids.
+        // Both cross-section rules are single merge scans over sequences
+        // the ordering rules above have already proved strictly ascending
+        // (R54). The pre-R54 shape rescanned the other section per element
+        // — Θ(|noncovered| × |covered|), up to ~2³² steps for two at-cap
+        // disjoint reveal sections, all of it inside stage 1 and therefore
+        // ahead of any authenticator (2026-07-31 review, U3). The merge
+        // walks each outer section in the same ascending order and decides
+        // membership exactly where the rescan did, so the first error is
+        // byte-for-byte unchanged; ascending outer ids are what let the
+        // inner cursor advance monotonically without ever backtracking.
+        let mut covered_ids = covered_reveals
+            .iter()
+            .map(CoveredReveal::unit_id)
+            .peekable();
         for reveal in &noncovered_reveals {
-            if covered_reveals
-                .iter()
-                .any(|c| c.unit_id() == reveal.unit_id())
-            {
+            while covered_ids.next_if(|&id| id < reveal.unit_id()).is_some() {}
+            if covered_ids.peek() == Some(&reveal.unit_id()) {
                 return Err(BundleError::UnitRevealedTwice {
                     unit_id: reveal.unit_id(),
                 });
             }
         }
+        let mut touched_ids = touched_files.iter().map(TouchedFile::file_id).peekable();
         for full in &full_reveals {
-            if !touched_files.iter().any(|t| t.file_id() == full.file_id()) {
+            while touched_ids.next_if(|&id| id < full.file_id()).is_some() {}
+            if touched_ids.peek() != Some(&full.file_id()) {
                 return Err(BundleError::FullRevealWithoutTouchedFile {
                     file_id: full.file_id(),
                 });

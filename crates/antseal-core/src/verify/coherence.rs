@@ -131,6 +131,8 @@
 //! the same two arms at the dispatch site (unreachable after this stage,
 //! and yielding the identical codes), mirroring R4's row-6 backstop.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::error::{BindingMode, VerifyError};
 
 /// The manifest-side projection one coherence check needs per unit.
@@ -219,11 +221,17 @@ pub fn check_touched_coverage(
     units: &[CoherenceUnit],
     bundle: &CoherenceBundleView<'_>,
 ) -> Result<(), VerifyError> {
+    // Both memberships as sets, built once (R54): the pre-R54 shape
+    // rescanned `reveals` per unit — Θ(|units| × |reveals|) on a fully
+    // revealed work. Units are still visited in manifest order, so the
+    // first error is unchanged.
+    let revealed = revealed_id_set(bundle);
+    let touched = touched_id_set(bundle);
     for unit in units {
-        if !is_revealed(bundle, unit.unit_id) {
+        if !revealed.contains(&unit.unit_id) {
             continue;
         }
-        if !bundle.touched_file_ids.contains(&unit.file_id) {
+        if !touched.contains(&unit.file_id) {
             return Err(VerifyError::RevealedUnitFileNotTouched {
                 unit_id: unit.unit_id,
                 file_id: unit.file_id,
@@ -258,20 +266,29 @@ pub fn check_touched_exactness(
     units: &[CoherenceUnit],
     bundle: &CoherenceBundleView<'_>,
 ) -> Result<(), VerifyError> {
-    let mut seen: Vec<u64> = Vec::new();
+    // Built once (R54): `files_with_a_reveal` answers, per file, exactly
+    // the question the pre-R54 shape answered by rescanning the whole unit
+    // table (and, inside that, the whole reveal list) for every
+    // first-occurrence file — Θ(|files| × |units| × |reveals|) at worst,
+    // and quadratic even on a no-reveal bundle through the linear `seen`
+    // probe. Subjects are still first-occurrence files in manifest unit
+    // order, so the reported file is unchanged.
+    let revealed = revealed_id_set(bundle);
+    let touched = touched_id_set(bundle);
+    let files_with_a_reveal: BTreeSet<u64> = units
+        .iter()
+        .filter(|unit| revealed.contains(&unit.unit_id))
+        .map(|unit| unit.file_id)
+        .collect();
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
     for unit in units {
-        if seen.contains(&unit.file_id) {
+        if !seen.insert(unit.file_id) {
             continue;
         }
-        seen.push(unit.file_id);
-        if !bundle.touched_file_ids.contains(&unit.file_id) {
+        if !touched.contains(&unit.file_id) {
             continue;
         }
-        let revealed = units
-            .iter()
-            .filter(|other| other.file_id == unit.file_id)
-            .any(|other| is_revealed(bundle, other.unit_id));
-        if !revealed {
+        if !files_with_a_reveal.contains(&unit.file_id) {
             return Err(VerifyError::TouchedFileWithoutRevealedUnit {
                 file_id: unit.file_id,
             });
@@ -292,15 +309,22 @@ pub fn check_reveal_sections(
     units: &[CoherenceUnit],
     bundle: &CoherenceBundleView<'_>,
 ) -> Result<(), VerifyError> {
+    // First-wins by construction (R54): the map keeps the first reveal per
+    // `unit_id`, exactly what the pre-R54 per-unit `.find` rescan returned
+    // — including on a hand-built view listing one unit in both sections
+    // (unreachable through the pipeline: R3 group 3 already rejected the
+    // duplicate). Units are still visited in manifest order.
+    let mut section_by_id: BTreeMap<u64, RevealSection> = BTreeMap::new();
+    for reveal in bundle.reveals {
+        section_by_id
+            .entry(reveal.unit_id)
+            .or_insert(reveal.section);
+    }
     for unit in units {
-        let Some(reveal) = bundle
-            .reveals
-            .iter()
-            .find(|reveal| reveal.unit_id == unit.unit_id)
-        else {
+        let Some(section) = section_by_id.get(&unit.unit_id) else {
             continue;
         };
-        if reveal.section.required_binding() != unit.binding {
+        if section.required_binding() != unit.binding {
             return Err(VerifyError::RevealModeMismatch {
                 unit_id: unit.unit_id,
                 manifest_binding: unit.binding,
@@ -310,11 +334,14 @@ pub fn check_reveal_sections(
     Ok(())
 }
 
-fn is_revealed(bundle: &CoherenceBundleView<'_>, unit_id: u64) -> bool {
-    bundle
-        .reveals
-        .iter()
-        .any(|reveal| reveal.unit_id == unit_id)
+/// Every revealed `unit_id`, as a set (R54).
+fn revealed_id_set(bundle: &CoherenceBundleView<'_>) -> BTreeSet<u64> {
+    bundle.reveals.iter().map(|reveal| reveal.unit_id).collect()
+}
+
+/// Every touched `file_id`, as a set (R54).
+fn touched_id_set(bundle: &CoherenceBundleView<'_>) -> BTreeSet<u64> {
+    bundle.touched_file_ids.iter().copied().collect()
 }
 
 #[cfg(test)]

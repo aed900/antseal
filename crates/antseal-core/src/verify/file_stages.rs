@@ -270,6 +270,8 @@
 //! [`FineTree::Absent`]: crate::manifest::body::FineTree::Absent
 //! [`LeafSeedTailNotZero`]: crate::content::fine_tree::FineTreeError::LeafSeedTailNotZero
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::canon::{CanonicalBytes, CanonicalizeError, UnicodeVersionError, canonicalize_v_forced};
 use crate::content::fine_tree::{check_leaf_level_payload, rebuild_fine_root};
 use crate::content::ggm::{NodeAddress, depth_for_leaf_count};
@@ -804,6 +806,25 @@ pub fn classify_file_reveal<'a>(
     units: &[FileUnitEntry],
     bundle: &FileStageBundleView<'_>,
 ) -> Result<FileRevealShape<'a>, VerifyError> {
+    // Direct pub-API drives pay one set build per call; the stage entry
+    // point builds its indexes once for the whole file table instead (R54).
+    let revealed: BTreeSet<u64> = bundle.revealed_unit_ids.iter().copied().collect();
+    classify_file_reveal_indexed(file, units, &revealed, bundle.material_for(file.file_id))
+}
+
+/// [`classify_file_reveal`] against pre-built lookups (R54): `revealed_ids`
+/// is the bundle's revealed-id set, and `material` is the first
+/// [`FullRevealMaterialEntry`] naming this file, both exactly as the pub
+/// wrapper derives them per call and [`check_file_stages`] derives them
+/// once per verification. `units` may be the whole manifest unit table or
+/// any subsequence containing all of this file's rows in manifest order —
+/// the per-file filter still runs, so extra rows change nothing.
+fn classify_file_reveal_indexed<'a>(
+    file: &FileView<'a>,
+    units: &[FileUnitEntry],
+    revealed_ids: &BTreeSet<u64>,
+    material: Option<&FullRevealMaterialEntry<'_>>,
+) -> Result<FileRevealShape<'a>, VerifyError> {
     let file_id = file.file_id;
 
     // N(F): the file's non-mirror units — the tiling/concatenation domain.
@@ -812,7 +833,7 @@ pub fn classify_file_reveal<'a>(
     let mut revealed_non_mirror: u64 = 0;
     let mut revealed_any = false;
     for unit in units.iter().filter(|unit| unit.file_id == file_id) {
-        let revealed = bundle.revealed_unit_ids.contains(&unit.unit_id);
+        let revealed = revealed_ids.contains(&unit.unit_id);
         revealed_any |= revealed;
         if participates_in_concat(unit.kind) {
             total_non_mirror += 1;
@@ -830,7 +851,6 @@ pub fn classify_file_reveal<'a>(
         total_non_mirror_units: total_non_mirror,
     };
 
-    let material = bundle.material_for(file_id);
     let file_salt_bytes = material.and_then(|entry| entry.file_salt);
     let s_root_bytes = material.and_then(|entry| entry.s_root);
 
@@ -1222,11 +1242,46 @@ pub fn check_file_stages(
     bundle: &FileStageBundleView<'_>,
     verified: &[VerifiedUnitBytes<'_>],
 ) -> Result<Vec<FileRevealSummary>, VerifyError> {
+    // Every lookup this stage repeats per file is built ONCE here (R54):
+    // the pre-R54 shape rescanned the work-global unit table, the revealed
+    // list, the material list and the verified table for every file —
+    // Θ(|files| × |units|) before any reveal, ~2³⁰ steps for a legal at-cap
+    // no-reveal bundle (2026-07-31 review, finding 6/U1). The groups hold
+    // the stage's own `Copy` projections — the verified *bytes* stay
+    // borrowed exactly once — and preserve input order per file, so every
+    // filter downstream sees the same rows in the same order and every
+    // verdict, census and first error is unchanged. `material_by_file` is
+    // first-wins, which is what [`FileStageBundleView::material_for`]'s
+    // `.find` returned.
+    let revealed: BTreeSet<u64> = bundle.revealed_unit_ids.iter().copied().collect();
+    let mut units_by_file: BTreeMap<u64, Vec<FileUnitEntry>> = BTreeMap::new();
+    for unit in manifest.units {
+        units_by_file.entry(unit.file_id).or_default().push(*unit);
+    }
+    let mut material_by_file: BTreeMap<u64, &FullRevealMaterialEntry<'_>> = BTreeMap::new();
+    for entry in bundle.full_material {
+        material_by_file.entry(entry.file_id).or_insert(entry);
+    }
+    let mut verified_by_file: BTreeMap<u64, Vec<VerifiedUnitBytes<'_>>> = BTreeMap::new();
+    for unit in verified {
+        verified_by_file
+            .entry(unit.file_id)
+            .or_default()
+            .push(*unit);
+    }
+
     let mut summaries = Vec::with_capacity(manifest.files.len());
     for file in manifest.files {
-        let shape = classify_file_reveal(file, manifest.units, bundle)?;
+        let file_units = units_by_file
+            .get(&file.file_id)
+            .map_or(&[][..], Vec::as_slice);
+        let material = material_by_file.get(&file.file_id).copied();
+        let shape = classify_file_reveal_indexed(file, file_units, &revealed, material)?;
         if let FileRevealShape::Full(evidence) = &shape {
-            check_full_reveal_content(evidence, verified)?;
+            let file_verified = verified_by_file
+                .get(&file.file_id)
+                .map_or(&[][..], Vec::as_slice);
+            check_full_reveal_content(evidence, file_verified)?;
         }
         summaries.push(shape.summary());
     }
