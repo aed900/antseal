@@ -1,0 +1,208 @@
+# D37 — Multi-tx payment handling: `pay()` emits ⌈n/256⌉ sequential txs, journaled per sub-batch; the receipt's core is the quote→tx **map** plus per-blob `proof_bytes` — a flat `Vec<TxHash>` cannot resume a seal
+
+- **Status: RESOLVED. The register's cap inputs are confirmed against source
+  (256 transfers per EVM tx; 256 merkle leaves; ant-core's internal 64-chunk
+  driver waves — the last correctly understood as upstream's driver shape,
+  not a cap antseal ever hits). The register's receipt conclusion —
+  "`PaymentReceipt` needs `Vec<TxHash>`" — is overturned as materially
+  insufficient: `finalize_batch_payment` consumes a `HashMap<QuoteHash,
+  TxHash>` and errors on any missing entry, and the store-usable artifact per
+  blob is its `proof_bytes`; a bare list of hashes can neither rebuild proofs
+  nor resume finalize. Three further rulings the register did not contain:
+  (1) merkle payment mode is **excluded** from the paid path — its proofs and
+  results carry no tx hashes at all, so the spec's "one Merkle-batch EVM tx"
+  phrase is a recorded deviation; (2) `Client::batch_pay` is **forbidden** in
+  the native fallback — its error path discards the partial paid map,
+  converting a mid-sequence failure into stranded payments; drive
+  `Wallet::pay_for_quotes` directly if the fallback is ever used; (3) a
+  journaled receipt is PUT-usable only within the node-side proof-validity
+  window (`QUOTE_MAX_AGE_SECS`, currently 24 h) — a post-pay resume is
+  time-boxed, which S11/S18 and the user docs must carry.**
+- **Date: 2026-08-01**
+- **Owner: S7 (receipt contents) and S6 (pay/finalize implementation);
+  S11/S16/S18 consume the resume semantics**
+- **Blocks: S6, S7 (register "multi-tx payment handling", due M1)**
+- Companion: D33 (block-number locus; per-tx enrichment slots), D32 (blob =
+  chunk ⇒ one non-zero transfer per blob), S1 memo §3-§9/§12.
+
+## Context
+
+The spec shapes `pay(&CostQuote) -> PaymentReceipt` with the comment "one
+Merkle-batch EVM tx" (MVP-SPEC.md lines 34, 64) and simultaneously requires
+the receipt to capture "EVM tx hash(es)" — plural — "+ block number + quote
+preimages + `PaidChunk.proof_bytes`", complete from day one so the v1.1
+verification chain never needs a reseal (lines 69, 110, 181). S1 §5/§12
+found the tension: upstream's merkle path is the one payment mode that
+*cannot* satisfy capture, and the wave/single-node path caps transfers per
+transaction, so `pay` may emit several txs. D37 fixes the multi-tx contract:
+the caps, the sequencing, the journal timing, the receipt shape, and the
+resume semantics that receipt must support.
+
+## Evidence (all re-verified 2026-08-01; ant-core archive sha256 matches P9)
+
+### Caps and tx multiplicity
+
+| # | Fact | Citation |
+| --- | --- | --- |
+| 1 | `MAX_TRANSFERS_PER_TRANSACTION = 256` | `evmlib-0.9.0/src/contract/payment_vault/mod.rs:11` |
+| 2 | `pay_for_quotes` filters zero-amount entries, then splits into `chunks(MAX_TRANSFERS_PER_TRANSACTION)` — one `TxHash` per sub-batch, all quotes of a sub-batch mapped to it | `evmlib-0.9.0/src/wallet.rs:432-460` |
+| 3 | Exactly **one** non-zero transfer per chunk: quotes sorted by price, the median quote paid 3×, every other amount zero (`SINGLE_NODE_PAYMENT_MULTIPLIER = 3`) — so 256 transfers/tx ⇒ **256 blobs/tx** | `ant-core-0.5.0/src/data/client/batch.rs:59-95`; `src/data/client/payment.rs:17` |
+| 4 | The external-signer calldata builder performs the same 256-chunking, returning `HashMap<Calldata, Vec<QuoteHash>>` per sub-batch tx | `evmlib-0.9.0/src/external_signer.rs:64-99` |
+| 5 | `PAYMENT_WAVE_SIZE = 64` governs only ant-core's own `batch_upload_chunks*` driver (one `batch_pay` per 64-chunk wave) — a driver antseal never calls (no receipt capture); it is not a protocol cap | `ant-core-0.5.0/src/data/client/batch.rs:30,466-501` |
+| 6 | Merkle path: ≤ `MAX_LEAVES = 2^8 = 256` leaves per tx, 7-day on-chain expiry | `evmlib-0.9.0/src/merkle_payments/merkle_tree.rs:19-24` |
+
+### Capture and its failure modes
+
+| # | Fact | Citation |
+| --- | --- | --- |
+| 7 | The merkle handler submits, reads the `MerklePaymentMade` event from its own receipt, returns `(PoolHash, Amount, GasInfo)` — **the tx hash is dropped**; `MerkleBatchPaymentResult` carries proofs/costs/timestamp, no hashes | `evmlib-0.9.0/src/contract/payment_vault/handler.rs:90-115`; `ant-core-0.5.0/src/data/client/merkle.rs:131-147` |
+| 8 | `PayForQuotesError(pub Error, pub BTreeMap<QuoteHash, TxHash>)` — a mid-sequence failure **carries the already-paid map**; each loop iteration attaches the map-so-far | `evmlib-0.9.0/src/wallet.rs:378,449-455` |
+| 9 | `Client::batch_pay` destroys that map: `.map_err(\|PayForQuotesError(err, _)\| Error::Payment(format!(…)))` — paid sub-batches become unidentifiable through this API's error path | `ant-core-0.5.0/src/data/client/batch.rs:446-452` |
+| 10 | `build_paid_chunks` requires a tx hash for **every** non-zero quote, else errors; per blob it emits `proof_bytes` = tag `0x01` + rmp(`PaymentProof { peer_quotes, tx_hashes, commitment_sidecars }`) — the quote preimages and the blob's tx hash(es) travel inside | `ant-core-0.5.0/src/data/client/batch.rs:291-331`; `ant-protocol-2.3.0/src/payment/proof.rs:17-99` |
+| 11 | `finalize_batch_payment(prepared, &HashMap<QuoteHash, TxHash>)` is pure (no wallet, no network) — proofs can be built the moment hashes exist | `ant-core-0.5.0/src/data/client/batch.rs:337-343` |
+| 12 | `PreparedChunk` is not serializable ("contains non-serializable network types") — but its `peer_quotes: Vec<(EncodedPeerId, PaymentQuote)>` and sidecars are serde types, and `PaymentIntent` is serde | `ant-core-0.5.0/src/data/client/file.rs:1016-1021`; `evmlib-0.9.0/src/data_payments.rs:21-30,70-115`; `batch.rs:250-262` |
+
+### Resume reality
+
+| # | Fact | Citation |
+| --- | --- | --- |
+| 13 | Upstream's own crash-resume cache for single-node payments persists exactly `(chunk_address, proof_bytes)` per chunk "immediately after each wave's `batch_pay` confirms, before the wave's PUT phase" — without the proofs "the on-chain payment is 'stranded'" | `ant-core-0.5.0/src/data/client/cached_single.rs:1-37` (module docs) |
+| 14 | **Proof-validity window**: "On-chain quote receipts have a finite validity window (`QUOTE_MAX_AGE_SECS` in `ant-node`, currently 24 h). After that, storers reject the proof even if the file is otherwise resumable" — upstream's cache expires at 24 h to match; "at worst the user re-pays" | `cached_single.rs:48-58` (module docs) |
+| 15 | The store-with-proof surface available to a resumed process: `chunk_put_with_proof(content, proof, target_peer, addrs)` is public; `chunk_put_to_close_group` is `pub(crate)`; `finalize_chunk` needs a live `PreparedChunk`. PUT targets are re-derivable without payment: `prepare_chunk_payment` returns `Ok(None)` for already-stored blobs (skip) or a fresh quote plan whose `quoted_peers` serve as targets while its payment plan is discarded unpaid | `ant-core-0.5.0/src/data/client/chunk.rs:404,534-541,1032-1050`; `batch.rs:354-415` |
+
+## The overturn, stated plainly
+
+The register asked whether `pay` may emit several txs and answered the
+receipt question with "`Vec<TxHash>`". Multi-tx: **yes, confirmed** —
+⌈non-zero-transfers/256⌉ transactions, and by row 3 non-zero transfers =
+blob count, so a seal of ≤ 256 blobs (units + raw mirrors + encrypted
+manifest — the overwhelmingly common case) is one tx and the spec's "one tx"
+survives as the common case, not the contract. But the receipt conclusion
+fails a concrete test the register never ran: *crash after the tx lands,
+before any store*. To complete that seal without re-paying, the journaled
+receipt must reconstruct, for every blob, a proof the network will accept —
+which needs the per-blob quote preimages and the quote→tx association
+(rows 10-11), or the finished `proof_bytes` themselves (row 13). A flat
+`Vec<TxHash>` retains neither; it cannot even tell which blob a hash paid
+for. Upstream reached the same conclusion for its own resume path and
+persists `(address, proof_bytes)` (row 13). "Plural hashes" was the visible
+tip of the actual requirement: **the receipt is a proof-reconstruction
+record, not a hash list.**
+
+## Decision
+
+1. **Payment mode charter**: the paid path uses chunk-level single-node
+   payments exclusively (`prepare_chunk_payment` → intent → sub-batch txs →
+   finalize). Merkle mode is excluded for MVP — rows 6-7: no tx hashes in
+   handler returns, results, or proofs ⇒ receipt completeness (spec line
+   110) is unsatisfiable through it. `PaymentMode::Auto`'s 64-chunk
+   threshold is therefore irrelevant to antseal; S6 must never route through
+   `data_upload_with_mode`/merkle surfaces (already excluded by D32's API
+   charter).
+2. **Multi-tx sequencing (external-signer primary flow)**: `pay()` builds
+   per-sub-batch calldata (≤ 256 transfers each, row 4 semantics), then
+   submits **sequentially**; as each sub-batch tx lands, `pay()` journals
+   that sub-batch's record — `{tx_hash, block_number (D33), status,
+   quote_hash set}` — **before submitting the next**. A crash mid-sequence
+   can therefore lose at most the one tx currently inside the pay→journal
+   atomicity window — the same window S12 already treats as the critical
+   barrier in the single-tx case; sequencing adds no new loss class.
+3. **Native fallback discipline**: if the wallet flow is ever driven, it
+   calls `ant_protocol::evm`-re-exported `Wallet::pay_for_quotes` directly
+   and handles `PayForQuotesError(err, partial_map)` — journaling the
+   partial map before surfacing the error. `Client::batch_pay` is forbidden
+   (row 9 — its error path erases the evidence of money spent). Post-error
+   resume treats mapped quotes as paid and pays only the unpaid remainder.
+4. **`PaymentReceipt` shape (S7 implements; deterministic serde per S7)**:
+   - per blob: `{address, peer_quotes (preimages), commitment_sidecars,
+     proof_bytes}` — `proof_bytes` built via the pure
+     `finalize_batch_payment` immediately after the last needed hash exists
+     (row 11), so the journaled receipt is store-ready with no live
+     `PreparedChunk` (row 12/13);
+   - payment-wide: the `quote_hash → tx_hash` map (BTreeMap for
+     deterministic encoding), per-tx `{block_number?, status}` enrichment
+     slots (D33), `storage_cost_atto`, gas summary;
+   - the spec's four element classes (hashes, block number, preimages,
+     proof_bytes) all present; hashes and preimages appear both flat and
+     inside `proof_bytes` — redundancy accepted, since `proof_bytes` is
+     opaque upstream-versioned bytes and the flat fields are what the v1.1
+     chain and `--json` consumers read.
+5. **Resume/finalize contract over public APIs** (row 15): for each blob —
+   already stored? (`Ok(None)`/`chunk_exists`) skip; else re-resolve PUT
+   targets via an unpaid quote round, then `chunk_put_with_proof` with the
+   **journaled** `proof_bytes`. No new payment exists on this path by
+   construction; the fresh quote plan's payment field is dropped unpaid.
+6. **Time-boxed resume (new, from row 14)**: journaled proofs are
+   network-acceptable for ~`QUOTE_MAX_AGE_SECS` (24 h, node-side policy).
+   A post-pay resume attempted after the window may be rejected by storers;
+   the payment is then stranded and completing the seal requires re-payment
+   — surfaced as a distinct, consented error, never silent. This is a
+   node-policy constant, not ours to freeze: S9/S18 pin the observed devnet
+   behavior; S20 watches it across bumps.
+
+## Spec conformance — recorded deviations
+
+- **"one Merkle-batch EVM tx" (lines 34, 64)**: deviated. The phrase assumed
+  upstream's merkle batching exposes capture; rows 6-7 prove the opposite,
+  and line 110's completeness requirement ("captured in full at payment
+  time … tx hashes") is the normative one — the same resolution S1 §9
+  recommended and this record ratifies. `pay()`'s doc comment should read
+  "one EVM tx per ≤256-blob sub-batch; single tx in the common case".
+- **"one `eth_getTransactionReceipt`" (line 69)**: reads per tx hash under
+  multi-tx (D33 Decision 1) — an interpretation, not a deviation.
+- The receipt's plural "hash(es)" (line 69) is confirmed load-bearing,
+  exactly as the S1 memo flagged.
+
+## Consequences — task-text edits at integration
+
+- **tasks/S.md S2**: `PaymentReceipt` skeleton note — map-shaped core +
+  per-blob proof records (Decision 4), not a hash list; distinct error slot
+  for the expired-proof stranded state.
+- **tasks/S.md S6**: Do — replace "emitting one Merkle-batch EVM tx (or the
+  upstream-capped multi-tx sequence, all hashes captured)" with Decision 2's
+  sequential sub-batch contract; add the `batch_pay` prohibition (native
+  fallback drives `Wallet::pay_for_quotes` directly, Decision 3); Accept —
+  the ">cap batches succeed with all tx hashes surfaced" row stays, now with
+  the per-sub-batch journal ordering asserted via mock call log.
+- **tasks/S.md S7**: Do — contents finalized per Decision 4; instant-capture
+  clause extended to **per sub-batch as each lands** (the memo §12 note,
+  now normative); Accept — multi-tx round-trip test covers ≥ 2 sub-batches
+  (257+ blobs) with per-tx enrichment slots.
+- **tasks/S.md S11**: resume path re-specified over Decision 5's public-API
+  sequence; **new abandon-adjacent state**: proofs-expired (row 14) →
+  distinct error + re-consent before any re-payment; journaled-nonce rules
+  unchanged (re-payment re-uploads the same staged ciphertexts — no
+  re-encryption, so no `(k_u, nonce)` interaction).
+- **tasks/S.md S16/S18**: kill matrix gains the mid-sequence barrier
+  (between sub-batch txs) and the S18 devnet variant asserts exactly-once
+  payment per sub-batch across kill+resume; S18 adds an expired-proof case
+  if devnet node policy is practically testable (else S9 documents the
+  constant's observed value).
+- **tasks/S.md S9**: pin the observed `QUOTE_MAX_AGE_SECS` behavior note
+  alongside the D32 cap constants.
+- **tasks/U.md (docs/UX note)**: `list`/`status` should nag on
+  post-pay-incomplete works with the 24 h clock in mind ("resume promptly");
+  wallet-hygiene docs already planned (unchanged).
+- **TODO.md register D37 row** — integration's edit.
+
+## Residual risks
+
+1. **`QUOTE_MAX_AGE_SECS` is upstream node policy** — invisible in the
+   client crates, changeable in any node release, and devnet node versions
+   may drift from mainnet's. Mitigation: S9 records the observed value with
+   its source; S20/P19 watch; the resume path treats storer rejection of a
+   valid-looking proof as the distinct stranded state rather than a generic
+   network error.
+2. **Redundant capture (flat fields + `proof_bytes`)** can theoretically
+   disagree if upstream changes proof serialization across a bump; S7's
+   completeness test should assert flat fields == fields parsed from
+   `proof_bytes` via `deserialize_proof`
+   (`ant-protocol-2.3.0/src/payment/proof.rs:96-110`) at capture time.
+3. **Sequential submission lengthens the pay window** for very large seals
+   (>256 blobs): more wall-clock between first and last tx, more exposure to
+   the S12 atomicity barriers. Accepted: correctness (per-sub-batch capture)
+   over latency; the common case is one tx.
+4. **Fresh-quote PUT-target resolution on resume** (Decision 5) briefly
+   re-contacts the quoting path; if upstream ever makes quote *collection*
+   itself stateful or paid, the resume story must be re-decided (S20 bump
+   gate).

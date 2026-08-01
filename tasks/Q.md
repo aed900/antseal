@@ -320,16 +320,16 @@ question).**
   and unconditional, and `scripts/cross-check.sh` iterates every retained
   format version rather than a hard-coded `v1`.
 
-### Q15 — Decide and implement the devnet E2E execution strategy
+### Q15 — Implement the devnet E2E execution strategy (venue decided by D52)
 - Milestone: M1
 - Size: M
 - Deps: Q1; S: M1 E2E test suite (S17/S18/S19) + devnet environment scripts (P16)
-- Spec: Milestones M1 (line 154); Verification M1 (line 172)
-- Do: Measure the 25-node devnet + Anvil resource footprint on a GitHub-hosted runner and decide the venue: a CI job (with cached node binaries) if it fits, otherwise a documented `scripts/e2e-devnet.sh` local gate required before merging storage-touching PRs, optionally plus a scheduled self-hosted job. Wrap S's suite (multi-file `--split` seal, kill-between-pay-and-finalize → no-double-payment, kill-mid-upload → byte-identical resume + nonce-reuse-guard abort, restore-from-backup, UNANCHORED library verify, `--live` re-fetch) with deterministic setup/teardown and node/Anvil log capture on failure.
+- Spec: Milestones M1 (line 154); Verification M1 (line 172); D52 (docs/decisions/D52-devnet-e2e-venue.md)
+- Do: The venue is **decided — D52 (2026-08-01), which deliberately inverted this task's measure-then-decide framing** (the decision was derivable from recorded facts: branch protection 403s on Free-private so a required context is unenforceable; the hosted runner is the same 2-core class against a 688-package graph vs the 10 GiB cache cap; S18's SIGKILL matrix is flake-prone there; and the "(cached node binaries)" premise of the original task text is **obsolete** — P16's nodes are in-process, there are no node binaries). Implement it: (1) the **required local gate** — `scripts/e2e-devnet.sh`, mandatory before merging storage-touching changes, producing scripted evidence per the Q14 pattern; (2) the **scheduled, non-required GitHub-hosted job** at reduced node count on the fuzz-nightly pattern, landing only if its measured runtime fits the minutes budget (measurement now serves lane-sizing, not the venue choice). Wrap S's suite (multi-file `--split` seal, kill-between-pay-and-finalize → no-double-payment, kill-mid-upload → byte-identical resume + nonce-reuse-guard abort, restore-from-backup, UNANCHORED library verify, `--live` re-fetch) with deterministic setup/teardown and node/Anvil log capture on failure. Record D52's **promote-to-required trigger** (plan upgrade or the Q65 public flip, after ≥20 clean scheduled runs with warm runtime ≤15 min) and the **scheduled-lane triage convention**: a red scheduled run gets a wave-bookkeeping note; **two consecutive reds block storage-wave starts** until diagnosed.
 - Accept:
-  - Venue decision recorded with measurements; chosen mechanism runs S's full M1 suite green
+  - `scripts/e2e-devnet.sh` runs S's full M1 suite green and emits the evidence artifact; the scheduled hosted lane exists, is non-required, and its measured runtime is recorded against the minutes budget
   - Failure runs upload node + Anvil logs as artifacts
-  - Contributor doc states when the gate is mandatory
+  - Contributor doc states when the local gate is mandatory (storage-touching changes), the triage convention, and the promote-to-required trigger verbatim from D52
 
 ### Q16 — Establish anchor CI lanes and the real-network smoke policy
 - Milestone: M2

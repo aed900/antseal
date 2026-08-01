@@ -66,7 +66,7 @@
   - Truth-table tests for `is_fine_tree_covered`: covered normal unit → no unit_commit slot; `--no-fine-tree` whole-file unit → commit present; raw-mirror → commit present; empty-file unit → commit present
   - Empty file → exactly one unit, byte-range [0,0), `true_length` 0
   - `size` semantics unit tests for text (canonical count) vs binary (raw count)
-- Notes: "Permanently whole-file-reveal-only" for `--no-fine-tree` files falls out of the single-unit rule (its one unit = the whole file); no extra reveal predicate needed beyond G7's mirror rule.
+- Notes: "Permanently whole-file-reveal-only" for `--no-fine-tree` files falls out of the single-unit rule (its one unit = the whole file); no extra reveal predicate needed beyond G7's mirror rule. **[D46, 2026-08-01]** The unit model may assume every input is a **regular file**: U13's seal plan validation hard-errors on directories, non-regular files, and duplicate paths before any G code runs — no directory or special-file semantics exist here.
 
 ### G6 — `--split blank-lines` paragraph splitting with precisely defined boundary semantics
 - Milestone: M0
@@ -174,6 +174,7 @@
   - Determinism test: two runs bit-identical
   - Property: every output satisfies G5/G6/G7 invariants (tiling, id uniqueness, mirror exemptions, commit-presence rule)
   - No I/O; wasm32 build passes
+- Notes: **[D46, 2026-08-01]** The entry point may assume its per-file inputs are **regular files** — U13's plan validation (files-only rule) rejects directories, non-regular files, and duplicate arguments before assembly runs; G14 needs no defensive directory handling of its own.
 
 ### G15 — Fine-tree/GGM golden vectors: unbalanced n = 6 (MSB-first pin) + edge cases
 - Milestone: M0
