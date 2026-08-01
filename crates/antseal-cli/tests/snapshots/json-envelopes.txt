@@ -1,0 +1,24 @@
+[init] error
+{"command":"init","error":{"class":"not-implemented","exit_code":3,"message":"`antseal init` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[seal] error
+{"command":"seal","error":{"class":"not-implemented","exit_code":3,"message":"`antseal seal` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[list] error
+{"command":"list","error":{"class":"not-implemented","exit_code":3,"message":"`antseal list` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[show] error
+{"command":"show","error":{"class":"not-implemented","exit_code":3,"message":"`antseal show` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[status] error
+{"command":"status","error":{"class":"not-implemented","exit_code":3,"message":"`antseal status` is not implemented until M2: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[restore] error
+{"command":"restore","error":{"class":"not-implemented","exit_code":3,"message":"`antseal restore` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[reveal] error
+{"command":"reveal","error":{"class":"not-implemented","exit_code":3,"message":"`antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[verify] error
+{"command":"verify","error":{"class":"not-implemented","exit_code":3,"message":"`antseal verify` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+[vault export] error
+{"command":"vault export","error":{"class":"passphrase-unavailable","exit_code":11,"message":"passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' \"$PASS\" | antseal … --passphrase-fd 0`"},"network":"arbitrum-one","ok":false,"v":1}
+[vault import] error
+{"command":"vault import","error":{"class":"consent-not-obtained","exit_code":10,"message":"refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)"},"network":"arbitrum-one","ok":false,"v":1}
+[vault export] result
+{"command":"vault export","network":"arbitrum-one","ok":true,"result":{"bytes":4096,"file":"/home/user/antseal-vault-export-20260801-160000.sealvault","self_verified":true,"works":5},"v":1}
+[vault import] result
+{"command":"vault import","network":"arbitrum-one","ok":true,"result":{"config_restored":true,"vault_dir":"/home/user/.antseal","wallet_restored":true,"works":5},"v":1}

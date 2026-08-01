@@ -304,7 +304,8 @@ fn errors_never_carry_input() {
     for err in failures {
         let display = err.to_string();
         let debug = format!("{err:?}");
-        let json = err.to_json().to_string();
+        let json =
+            antseal_cli::machine::error_envelope("vault export", "arbitrum-one", &err).to_string();
         for rendered in [&display, &debug, &json] {
             assert!(
                 !rendered.contains("SENTINEL"),

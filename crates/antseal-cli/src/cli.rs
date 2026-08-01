@@ -94,6 +94,19 @@ pub enum Network {
     Devnet,
 }
 
+impl Network {
+    /// The canonical CLI spelling (also the U3 envelope's `network`
+    /// value) — identical to the clap value-enum rendering.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Network::ArbitrumOne => "arbitrum-one",
+            Network::ArbitrumSepolia => "arbitrum-sepolia",
+            Network::Devnet => "devnet",
+        }
+    }
+}
+
 /// The canonical command tree (MVP-SPEC.md line 149 order).
 #[derive(Debug, Subcommand)]
 pub enum Command {

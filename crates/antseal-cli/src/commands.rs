@@ -23,7 +23,7 @@ use antseal_core::crypto::secrets::SecretBuf;
 
 use crate::cli::GlobalArgs;
 use crate::error::{CliError, PassphraseFailure};
-use crate::passphrase::{PassphrasePurpose, machine_mode, obtain_passphrase};
+use crate::passphrase::{PassphrasePurpose, obtain_passphrase};
 use crate::rng::OsEntropy;
 use crate::vault::export::{EXPORT_FILE_EXTENSION, export_vault, import_vault};
 use crate::vault::layout::{BesideFile, VaultLayout};
@@ -52,14 +52,16 @@ impl Ui {
     }
 }
 
-/// Collect the vault passphrase under the D51 machine-mode rule (module
-/// docs). `purpose` is `Unlock` for both export and import — the
-/// passphrase already exists; no strength floor, no confirmation.
+/// Collect the vault passphrase under the D51 machine-mode rule.
+/// `purpose` is `Unlock` for both export and import — the passphrase
+/// already exists; no strength floor, no confirmation. Machine mode
+/// arrives from [`crate::machine::machine_mode_for`] — the single
+/// detection point (D51) — never from a local isatty probe.
 fn collect_passphrase(
     globals: &GlobalArgs,
     purpose: PassphrasePurpose,
 ) -> Result<SecretBuf, CliError> {
-    if globals.passphrase_fd.is_none() && machine_mode(globals.json, globals.passphrase_fd) {
+    if globals.passphrase_fd.is_none() && crate::machine::machine_mode_for(globals) {
         return Err(CliError::PassphraseUnavailable {
             reason: PassphraseFailure::NoChannel,
         });

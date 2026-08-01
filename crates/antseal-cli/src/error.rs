@@ -4,9 +4,9 @@
 //! `CliError` belongs to exactly one [`ErrorClass`]; every class has
 //! exactly one exit code. `main_entry` maps deterministically — plain mode
 //! prints `error: <Display>` on stderr, `--json` mode additionally emits
-//! one structured error object on stdout (provisional shape until U3's
-//! versioned envelope) — and the code is identical in both modes (D51
-//! invariant 2).
+//! exactly one U3 envelope on stdout (`crate::machine` owns the envelope;
+//! this module owns the inner `error` object, U2's shape finalized) — and
+//! the code is identical in both modes (D51 invariant 2).
 //!
 //! # The exit-code table (committed; unit-tested in `tests/exit_codes.rs`)
 //!
@@ -572,19 +572,18 @@ impl CliError {
         self.class().exit_code()
     }
 
-    /// The provisional `--json` error object (U2). U3's versioned
-    /// envelope (`command`, `network`, `ok`, `result|error`) supersedes
-    /// this shape; until then, machine mode still gets exactly one JSON
-    /// document on stdout with a stable `error.class`.
+    /// The `--json` error object — the inner `error` member of the U3
+    /// versioned envelope ([`crate::machine::error_envelope`]). The shape
+    /// is U2's provisional one, **finalized unchanged** by U3: `class`
+    /// (the stable kebab identifier), `exit_code`, `message`. Changing
+    /// any of these three keys is a machine-interface event (the
+    /// committed envelope fixtures pin them).
     #[must_use]
-    pub fn to_json(&self) -> serde_json::Value {
+    pub fn error_object(&self) -> serde_json::Value {
         serde_json::json!({
-            "ok": false,
-            "error": {
-                "class": self.class().name(),
-                "exit_code": self.exit_code(),
-                "message": self.to_string(),
-            }
+            "class": self.class().name(),
+            "exit_code": self.exit_code(),
+            "message": self.to_string(),
         })
     }
 }
