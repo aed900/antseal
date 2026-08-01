@@ -20,7 +20,9 @@ use antseal_core::manifest::ContentAddress;
 /// Ordered/hashable so it can key the per-address stores and deterministic
 /// maps this crate's backends maintain. Displayed as 64 lowercase hex
 /// characters (the house rendering for 32-byte digests).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Address([u8; Address::LEN]);
 
 impl Address {

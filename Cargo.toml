@@ -57,6 +57,44 @@ antseal-net = { path = "crates/antseal-net", version = "=0.0.0" }
 # lockstep with the locked self_encryption version (0.36.0 at this pin; P15).
 ant-core = "=0.5.0"
 
+# EXACT-PIN CLASS, lockstep with ant-core (S6): the wire-protocol crate
+# ant-core itself depends on, added as a DIRECT edge because the S6 adapter
+# needs surfaces ant-core does not re-export — `QuoteHash`/`TxHash`/`Amount`
+# common types, `payment::{deserialize_single_node_proof, PaymentProof}`
+# (the S7 capture-consistency parse), `evm::contract::payment_vault`
+# (calldata builders + `MAX_TRANSFERS_PER_TRANSACTION`), and
+# `evm::utils::TransactionConfig`. ant-protocol's own header names itself
+# "the single version-pin point" and asks downstream NOT to take a direct
+# evmlib dep (ant-protocol-2.3.0/src/lib.rs:75-92) — this edge honors that:
+# one protocol crate, no evmlib line. =2.3.0 is exactly what ant-core 0.5.0
+# resolves in Cargo.lock (2.3.1 exists upstream and is deliberately NOT
+# taken); the pin MOVES ONLY inside an ant-core bump review (S20,
+# dependency-policy §4), never alone. Consumed by antseal-net behind the
+# non-default `ant-backend` feature only.
+ant-protocol = "=2.3.0"
+
+# EXACT-PIN CLASS, lockstep with the evmlib the ant-core graph locks (D33
+# Decision 4): the S6 adapter drives the external-signer payment flow —
+# builds each ≤256-transfer sub-batch tx itself and awaits its receipt, the
+# very object the block number is captured from — which needs the alloy
+# `Provider` trait in scope plus the Ethereum `TransactionRequest`/receipt
+# types. evmlib exposes its concrete provider (`Wallet::to_provider()`) but
+# re-exports no trait (evmlib-0.9.0/src/utils.rs:184-200), so the trait
+# import is unavoidably a direct edge. =1.8.3 is the version evmlib 0.9.0's
+# caret "1.0.32" resolves in Cargo.lock; features are a strict SUBSET of
+# evmlib's own activation set (evmlib-0.9.0/Cargo.toml [dependencies.alloy]),
+# so this line adds ZERO packages and ZERO features to the resolved graph.
+# Moves only in lockstep with an evmlib move inside an ant-core bump review.
+alloy = { version = "=1.8.3", default-features = false, features = ["network", "provider-http", "rpc-types", "std"] }
+
+# Lockstep with the locked graph (S6): `ant_core::Client::prepare_chunk_payment`
+# takes `bytes::Bytes` and `DataChunk.content` is `Bytes` — the adapter must
+# construct/consume the type, so the edge is required and exact-pinned to the
+# version the ant-core graph already locks (adds zero packages). Consumed by
+# antseal-net behind `ant-backend` only; moves only within an ant-core bump
+# review.
+bytes = "=1.12.1"
+
 # EXACT-PIN CLASS (network-consensus-affecting; policy §1 row at P16): the
 # in-process devnet node stack that ant-core's `devnet` feature activates
 # (`devnet = ["dep:ant-node"]`). ant-core 0.5.0's own requirement is caret

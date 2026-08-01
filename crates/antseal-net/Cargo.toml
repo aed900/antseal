@@ -48,13 +48,39 @@ test-util = []
 # ant-core itself anyway. If S6 later needs a surface ant-core does not
 # re-export (e.g. `http_provider` per D33), adding `ant-protocol` then is a
 # deliberate pin event, not this feature's concern.
-ant-backend = ["dep:ant-core", "dep:getrandom03", "dep:url", "dep:zeroize"]
+ant-backend = [
+    "dep:ant-core",
+    "dep:ant-protocol",
+    "dep:alloy",
+    "dep:bytes",
+    "dep:getrandom03",
+    "dep:url",
+    "dep:zeroize",
+]
 
 [dependencies]
 antseal-core.workspace = true
 thiserror.workspace = true
+# Serde derives on the receipt/quote/address types (S7): the journaled
+# `PaymentReceipt` is U9's opaque vault slot, so the types carry
+# `Serialize`/`Deserialize` in the DEFAULT graph (the pipeline journals
+# receipts without the backend feature). Derive feature only — the exact
+# workspace pin (=1.0.229), no codec here: the byte format is U9's, the
+# deterministic envelope (`JournalReceipt`, version tag) is this crate's.
+serde.workspace = true
 # --- `ant-backend` half (all optional; see the feature comment) ---
 ant-core = { workspace = true, optional = true }
+# Direct protocol edge for the surfaces ant-core does not re-export
+# (QuoteHash/TxHash/Amount, payment-proof parse, payment_vault calldata,
+# TransactionConfig); exact-pinned in lockstep with ant-core — rationale on
+# the workspace entry (S6).
+ant-protocol = { workspace = true, optional = true }
+# The alloy `Provider` trait + Ethereum tx/receipt types for the
+# external-signer submission `pay()` drives itself (D33 Decision 4);
+# lockstep-pinned to the evmlib-locked version — workspace entry.
+alloy = { workspace = true, optional = true }
+# `Bytes` values for `prepare_chunk_payment`/`DataChunk` — workspace entry.
+bytes = { workspace = true, optional = true }
 # OS-CSPRNG for wallet keygen (S5/U11); rationale on the workspace entry.
 getrandom03 = { workspace = true, optional = true }
 # For the CustomNetwork struct literal (devnet mapping); rationale on the
@@ -75,6 +101,18 @@ antseal-net = { workspace = true, features = ["test-util"] }
 # `alternate_test_secret`, never a fresh committed key-shaped literal
 # (testdata/README.md; project rule 6).
 antseal-core = { workspace = true, features = ["test-util"] }
+# S6's recorded tokio decision (the workspace tokio entry defers it here):
+# the adapter LIBRARY takes NO tokio edge — its futures run on the caller's
+# runtime (`antseal-cli` brings tokio at U1) and it schedules no timers or
+# tasks of its own. The dev-only edge below exists solely so the
+# feature-gated adapter/devnet tests can stand up a real runtime
+# (`ant_core::Client` and the alloy transport park on reactor-driven I/O
+# that `test_util::block_on`'s noop-waker loop cannot drive). Same tokio
+# the ant-core graph resolves; dev-dependency = never in any product graph.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Deterministic-encoding evidence for the S7 serde tests only (the vault
+# codec itself is U9's choice): the exact-pinned workspace serde_json.
+serde_json.workspace = true
 
 [lints]
 workspace = true

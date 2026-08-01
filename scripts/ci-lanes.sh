@@ -137,6 +137,63 @@ lane_dep_graph() {
   fi
   printf 'OK: no forbidden I/O/async/network/RNG crate in the normal graph.\n'
 
+  # ── S6: ant-core adapter containment ────────────────────────────────────
+  # Two rules from the S6 accept rows:
+  #
+  # (a) FORBIDDEN CALL SITES — `.data_upload(` / `.data_upload_with_mode(` /
+  #     `.chunk_put(` / `.batch_pay(` appear NOWHERE in workspace source.
+  #     Their results carry no payment data (`DataUploadResult`, S1 §10) or
+  #     their error path destroys the partial paid map (`batch_pay`, D37
+  #     ruling 2). Method-call position with an exact name boundary, so
+  #     `chunk_put_with_proof(` — the sanctioned store primitive — cannot
+  #     match.
+  # (b) UPSTREAM-USE CONFINEMENT — `ant_core::` / `ant_protocol::` tokens on
+  #     CODE lines (comment-leading lines are citations, which the house
+  #     style REQUIRES everywhere — e.g. `ant_protocol::MAX_CHUNK_SIZE` in
+  #     blob.rs docs — and are not dependencies) appear only in the
+  #     containment allowlist: the ONE adapter impl file (ant_backend.rs),
+  #     S5's EVM half (evm.rs), the feature-gated devnet suite that parses
+  #     the adapter's real bytes via upstream's own deserializer (S7
+  #     capture-consistency — tests consuming upstream to VERIFY the
+  #     adapter are the point), and the never-published devnet-launcher.
+  #     Churn from an ant-core bump is thereby bounded to exactly these
+  #     files (S20's procedure relies on it).
+  note "S6: forbidden upstream call sites + ant-core usage confinement"
+  local forbidden_calls='[.](data_upload|data_upload_with_mode|chunk_put|batch_pay)[[:space:]]*[(]'
+  local allowlist='crates/antseal-net/src/ant_backend.rs
+crates/antseal-net/src/evm.rs
+crates/antseal-net/tests/devnet_backend.rs
+crates/devnet-launcher/src/devnet.rs
+crates/devnet-launcher/src/main.rs'
+  # Self-test FIRST (house pattern): both detectors must trip on planted
+  # violations before any green verdict is trusted.
+  local s6tmp
+  s6tmp="$(mktemp -d)"
+  printf 'fn f(c: &C) { let _ = c.chunk_put(bytes); }\n' > "$s6tmp/planted_call.rs"
+  printf 'use ant_core::data::Client;\n' > "$s6tmp/planted_use.rs"
+  if ! grep -rqE "$forbidden_calls" "$s6tmp" || ! grep -rq 'ant_core::' "$s6tmp"; then
+    printf '::error::S6 containment self-test FAILED: a planted violation was not detected — fix the detector before trusting any green verdict\n'
+    rm -rf "$s6tmp"; return 1
+  fi
+  rm -rf "$s6tmp"
+  local call_hits
+  call_hits="$(grep -rnE --include='*.rs' "$forbidden_calls" crates/ || true)"
+  if [ -n "$call_hits" ]; then
+    printf '::error::S6 violation: a forbidden upstream call site (data_upload/chunk_put/batch_pay — no payment capture, or capture-destroying error path):\n%s\n' "$call_hits"
+    return 1
+  fi
+  local upstream_files stray
+  # Code lines only: lines whose first non-whitespace is `//` (doc/line
+  # comments — the citation style) are filtered before the verdict.
+  upstream_files="$(grep -rnE --include='*.rs' 'ant_core::|ant_protocol::' crates/ \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' | cut -d: -f1 | sort -u || true)"
+  stray="$(printf '%s\n' "$upstream_files" | grep -vxF -f <(printf '%s\n' "$allowlist") | grep -v '^$' || true)"
+  if [ -n "$stray" ]; then
+    printf '::error::S6 violation: ant_core/ant_protocol used outside the containment allowlist (the one adapter impl file + evm.rs + the devnet suite + devnet-launcher):\n%s\n' "$stray"
+    return 1
+  fi
+  printf 'OK: no forbidden call sites; upstream use confined to the adapter allowlist.\n'
+
   # ── P15/D35, resolved-graph half ────────────────────────────────────────
   # From the moment ant-core's graph is consumed (P16's launcher, S6's
   # adapter), self_encryption IS in the locked graph — transitively. Its

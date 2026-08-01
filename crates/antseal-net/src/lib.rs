@@ -67,6 +67,10 @@
 //! verifier page's dependency graph.
 
 pub mod address;
+// The ONE ant-core adapter impl file (S6) — the churn-containment unit the
+// StorageBackend boundary exists for. Same non-default feature as `evm`.
+#[cfg(feature = "ant-backend")]
+pub mod ant_backend;
 pub mod backend;
 pub mod blob;
 pub mod error;
@@ -89,6 +93,8 @@ pub mod receipt;
 pub mod test_util;
 
 pub use address::Address;
+#[cfg(feature = "ant-backend")]
+pub use ant_backend::{AntCoreBackend, BalanceReport, CaptureHook, PreflightReport};
 pub use backend::StorageBackend;
 pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
 pub use error::StorageError;
@@ -100,4 +106,7 @@ pub use quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,
     QuotePreimage, RewardsAddress, TxHash,
 };
-pub use receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
+pub use receipt::{
+    BlobPaymentRecord, GasSummary, JournalReceipt, PaymentReceipt, RECEIPT_JOURNAL_VERSION,
+    ReceiptFormatError, TxRecord, TxStatus,
+};

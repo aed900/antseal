@@ -1006,11 +1006,17 @@ dependencies = [
 name = "antseal-net"
 version = "0.0.0"
 dependencies = [
+ "alloy",
  "ant-core",
+ "ant-protocol",
  "antseal-core",
  "antseal-net",
+ "bytes",
  "getrandom 0.3.4",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
+ "tokio",
  "url",
  "zeroize",
 ]

@@ -27,7 +27,9 @@ use crate::Address;
 /// deterministic `BTreeMap`. `Debug` prints a hex prefix only and there
 /// is deliberately no `Display`: quote hashes are receipt material and
 /// must not drift into logs or error messages (S7 hygiene).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct QuoteHash([u8; 32]);
 
 impl QuoteHash {
@@ -55,7 +57,9 @@ impl core::fmt::Debug for QuoteHash {
 /// Receipt material: `Debug` prints a hex prefix only, no `Display`
 /// (wallet-linkability hygiene, S7 — a tx hash identifies the paying
 /// wallet on a public chain).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct TxHash([u8; 32]);
 
 impl TxHash {
@@ -80,7 +84,9 @@ impl core::fmt::Debug for TxHash {
 
 /// A node's 20-byte EVM rewards address (upstream `RewardsAddress` =
 /// alloy `Address`, `evmlib-0.9.0/src/common.rs:11`).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct RewardsAddress([u8; 20]);
 
 impl RewardsAddress {
@@ -106,7 +112,9 @@ impl core::fmt::Debug for RewardsAddress {
 /// A quoting node's 32-byte encoded peer id — raw
 /// BLAKE3(ML-DSA-65 public key) upstream
 /// (`evmlib-0.9.0/src/data_payments.rs:21-25`).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct EncodedPeerId([u8; 32]);
 
 impl EncodedPeerId {
@@ -151,7 +159,7 @@ fn debug_hex_prefix(
 /// [`CostQuote`] and again in the `PaymentReceipt` (D37 Decision 4:
 /// redundancy with the opaque `proof_bytes` accepted — the flat fields
 /// are what the chain and `--json` consumers read).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QuotePreimage {
     /// The quoted chunk address (upstream `content: XorName`).
     pub content: Address,
@@ -175,7 +183,7 @@ pub struct QuotePreimage {
 /// One `(peer, quote)` pair — upstream `peer_quotes:
 /// Vec<(EncodedPeerId, PaymentQuote)>`, the material `proof_bytes` are
 /// built from (`ant-core-0.5.0/src/data/client/batch.rs:291-331`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PeerQuote {
     /// The quoting node.
     pub peer_id: EncodedPeerId,
@@ -193,7 +201,7 @@ pub struct PeerQuote {
 /// `payment.rs:17`) — so a blob contributes exactly one non-zero
 /// transfer, and D37's 256-transfers-per-tx cap is a 256-**blobs**-per-tx
 /// cap.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QuotePaymentEntry {
     /// The quote this line pays (key into the receipt's quote→tx map).
     pub quote_hash: QuoteHash,
@@ -206,7 +214,7 @@ pub struct QuotePaymentEntry {
 }
 
 /// What storing one blob costs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BlobCost {
     /// The network already holds this chunk — a **zero-cost line**:
     /// upstream `prepare_chunk_payment` returns `Ok(None)` when
@@ -231,7 +239,7 @@ pub enum BlobCost {
 }
 
 /// One blob's line in the quote.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlobQuote {
     /// The blob's chunk address (BLAKE3-256 of its bytes, D32; computed
     /// by the backend — upstream derives it inside
@@ -252,7 +260,7 @@ pub struct BlobQuote {
 /// A quote is a **single-use spend authorization input**: a journaled
 /// quote is never paid (D36) — resume always re-quotes and re-consents,
 /// and `pay` takes the exact quote object consent affirmed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CostQuote {
     /// Per-blob lines, in the order of the quoted `&[Blob]` slice.
     pub blobs: Vec<BlobQuote>,
