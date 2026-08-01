@@ -117,17 +117,25 @@ lane_dep_graph() {
   fi
   printf 'OK: no antseal crate declares self_encryption (D35 prohibition).\n'
 
-  note "antseal-core's NORMAL dependency graph must be I/O-free"
-  local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2) ' tree offenders
+  note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
+  # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
+  # storage-address function must be a pure function of its input):
+  # `getrandom`/`rand`/`rand_chacha` are banned from the normal graph.
+  # `rand_core` is deliberately NOT banned — it is the pinned pure-trait
+  # crate (zero deps; the injected-CSPRNG API contract of C5/C9) and
+  # structurally cannot reach an OS RNG; the `^rand ` entry's trailing
+  # space keeps it unmatched. blake3 is consumed with default-features off
+  # precisely so none of these enter (workspace Cargo.toml pin comment).
+  local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
   tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)" || return 1
   printf '%s\n' "$tree"
   offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
   if [ -n "$offenders" ]; then
-    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network crates:\n'
+    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network/RNG crates:\n'
     printf '%s\n' "$offenders"
     return 1
   fi
-  printf 'OK: no forbidden I/O/async/network crate in the normal graph.\n'
+  printf 'OK: no forbidden I/O/async/network/RNG crate in the normal graph.\n'
 
   # ── P15/D35, resolved-graph half ────────────────────────────────────────
   # From the moment ant-core's graph is consumed (P16's launcher, S6's

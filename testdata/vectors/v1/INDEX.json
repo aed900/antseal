@@ -10,7 +10,7 @@
       "path": "bundle/bundle.json",
       "kind": "bundle",
       "task": "F13",
-      "pins": "bundle kind: canonical .sealproof bytes for ten reveal shapes with three-layer diagnostic sidecars \u2014 including the two G24 shapes that carry a `level == d` GGM cover payload in D83's canonical `salt || 0x00*16` form (the n = 6 odd-boundary partial reveal, and the n = 1 file where that payload and `s_root` are the same 32 bytes) — INCLUDING the empty-anchor (UNANCHORED) bundle, a .sealproof carrying no OTS artifact, no TSA artifact and no receipt, which is the named M0 milestone artifact this slug's must-exist obligation owed (MVP-SPEC.md lines 112-114, 153)"
+      "pins": "bundle kind: canonical .sealproof bytes for ten reveal shapes with three-layer diagnostic sidecars — including the two G24 shapes that carry a `level == d` GGM cover payload in D83's canonical `salt || 0x00*16` form (the n = 6 odd-boundary partial reveal, and the n = 1 file where that payload and `s_root` are the same 32 bytes) — INCLUDING the empty-anchor (UNANCHORED) bundle, a .sealproof carrying no OTS artifact, no TSA artifact and no receipt, which is the named M0 milestone artifact this slug's must-exist obligation owed (MVP-SPEC.md lines 112-114, 153)"
     },
     {
       "slug": "crypto-commitments",
@@ -88,6 +88,13 @@
       "kind": "report",
       "task": "R9",
       "pins": "report kind: every M0 shape's canonical bundle mapped to the byte-exact serialized VerificationReport verify_bundle produces for it — full text reveal, partial reveal with leaf-exact covers, per-unit reveal at unbalanced n=6 (MSB-first GGM indexing through the pipeline), binary, --no-fine-tree, raw-mirror full reveal, empty and one-byte files, multi-file with an unrevealed committed placeholder, and the empty-anchor (UNANCHORED) bundle; report_json is the D29 encoding and the native<->WASM bit-match medium, and the set R28's multi-version suite extends per released version (MVP-SPEC.md lines 153, 167, 169)"
+    },
+    {
+      "slug": "storage-address-ladder",
+      "path": "storage/storage-address.json",
+      "kind": "storage-address",
+      "task": "S4",
+      "pins": "the D32 storage-address rule: address = BLAKE3-256 of the blob bytes (compute_address, ant-protocol-2.3.0/src/data_types.rs:10-12), pinned over the S4 size ladder (0 / 272 smallest padded-unit ciphertext / 65552 mid / 4194047 max unit plaintext / 4194064 max plaintext-derived ciphertext / 4194304 = MAX_CHUNK_SIZE cap edge) with cap+1 committed as a typed REJECTION — no v1 address exists over the cap (MVP-SPEC.md lines 34, 119; D32 decisions 3/5); inputs are generative (official i%251 BLAKE3 pattern) so the 4 MiB rungs stay out of D87's embedded-bytes budget"
     }
   ],
   "pending": []

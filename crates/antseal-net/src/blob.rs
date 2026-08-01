@@ -14,12 +14,18 @@
 /// The Autonomi chunk-size cap, in bytes: a blob larger than this cannot be
 /// stored (D32 hard invariant).
 ///
-/// Pinned to the upstream constant `ant_protocol::MAX_CHUNK_SIZE`
-/// (`4 * 1024 * 1024`, `ant-protocol-2.3.0/src/chunk.rs:19`; D32 evidence
-/// row 3). Note this is a **different** constant from `self_encryption`'s
-/// env-overridable `4_190_208`, which is irrelevant to antseal under
-/// D32/D35. S9 freezes the value against the pinned upstream source; a
-/// change here is a deliberate bump event (S20), never a drive-by.
+/// An **alias of [`antseal_core::storage::MAX_CHUNK_SIZE`]** (S4): the
+/// constant lives in `antseal-core` — the WASM-safe crate the M3 linkage
+/// layer runs from, which cannot depend on this one — and this crate
+/// re-exports it over its existing `antseal-core` dependency edge, so the
+/// two crates structurally cannot disagree (a test below pins the alias in
+/// case someone ever re-literalizes it). Value pinned to the upstream
+/// constant `ant_protocol::MAX_CHUNK_SIZE` (`4 * 1024 * 1024`,
+/// `ant-protocol-2.3.0/src/chunk.rs:19`; D32 evidence row 3). Note this is
+/// a **different** constant from `self_encryption`'s env-overridable
+/// `4_190_208`, which is irrelevant to antseal under D32/D35. S9 freezes
+/// the value against the pinned upstream source; a change is a deliberate
+/// bump event (S20), never a drive-by.
 ///
 /// Why the client side must enforce it: upstream's
 /// `prepare_chunk_payment` computes the address and quote plan with **no
@@ -29,7 +35,7 @@
 /// (`ProtocolError::ChunkTooLarge`). The authoritative rejection is S12's
 /// plan validation, before consent/anchor/quote; this constructor is
 /// defense in depth beneath it.
-pub const MAX_CHUNK_SIZE: usize = 4_194_304;
+pub const MAX_CHUNK_SIZE: usize = antseal_core::storage::MAX_CHUNK_SIZE;
 
 /// Constructing a [`Blob`] over [`MAX_CHUNK_SIZE`] bytes was refused.
 ///
@@ -127,6 +133,20 @@ mod tests {
         // here loud on its own.
         assert_eq!(MAX_CHUNK_SIZE, 4 * 1024 * 1024);
         assert_eq!(MAX_CHUNK_SIZE, 4_194_304);
+    }
+
+    #[test]
+    fn cap_constant_is_shared_with_core_not_duplicated() {
+        // S4's cross-crate rule: core owns the constant (it cannot depend
+        // on net), net aliases it. This test is what keeps a future edit
+        // from re-literalizing the alias and letting the two drift.
+        assert_eq!(MAX_CHUNK_SIZE, antseal_core::storage::MAX_CHUNK_SIZE);
+        // And the cap relates to S4's address rule exactly as documented:
+        // cap-edge input has an address, cap+1 has none.
+        assert!(antseal_core::storage::compute_storage_address(&vec![0u8; MAX_CHUNK_SIZE]).is_ok());
+        assert!(
+            antseal_core::storage::compute_storage_address(&vec![0u8; MAX_CHUNK_SIZE + 1]).is_err()
+        );
     }
 
     #[test]
