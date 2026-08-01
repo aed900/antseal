@@ -99,3 +99,4 @@ pub mod kdf;
 pub mod layout;
 pub mod lock;
 pub mod session;
+pub mod store;

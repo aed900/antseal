@@ -135,6 +135,15 @@
   - all record content unreadable without vault unlock; `W` exposed to callers only as C's zeroizing type; a record blob moved between slots fails authentication (D42 AAD)
   - staged-ciphertext retention per **D43**: the journal → cache reclassification at `complete` is a state-tag write (same bytes); cache-state entries are **excluded from `vault export`** and their loss is never an error, while journal-state entries are always exported
 - Notes: This is the storage substrate for S's resume semantics — S owns *when/what* to journal, U9 owns *where/how durably*.
+- **[2026-08-01 execution note (U9 landed; wave 2 lane ε)]** Module `vault/store.rs` + suite `tests/work_store.rs`. Shape: one directory per work (`store/works/<seal-id-hex>/` — seal_id is the store key, drawn at seal start; work_id is a meta field set once the manifest exists) holding `meta` (versioned canonical-CBOR WorkRecord: `W`, seal_id, network, state + degraded/unanchored flags, both D45 path lists, the D45 shaping-flag set, optional work_id/cost/D36-consent), `journal/<entry>` (opaque S10 bytes keyed by canonical-decimal u64), `receipt` (opaque bytes; single atomic fsync'd write), `anchors/<slot>` (opaque A bytes; slot grammar `[a-z0-9][a-z0-9._-]{0,63}`). Deviations + recorded choices, inline in the module docs:
+  1. **Receipt/journal content is opaque bytes, not typed structs**: `PaymentReceipt` has no serde today — "deterministic serde for vault persistence" is S7's recorded deliverable, exactly as journal-entry shapes are S10's — so the store API takes/returns bytes and the U9/S boundary stays where the task text drew it ("S owns when/what, U9 where/how durably"). No antseal-net dependency enters antseal-cli at U9. The entry's "store the journaled PaymentReceipt" is satisfied as the durable slot + atomicity contract; the byte contract lands with S7/S10.
+  2. **Enumeration without decrypting bodies = readdir + small meta decrypts**: no plaintext index exists (D42 puts indexes inside the AEAD); the directory listing of random-hex names is the index. Executed proof: with every journal/receipt file flipped to garbage, `list_works` + `load_meta` still answer. Honest limit re-recorded from U5/U6: file-count/size/mtime metadata of a locked vault is visible; content and linkage are not.
+  3. **D43 reclassification = `mark_complete` (a meta state-tag write)**: proven byte-identical journal files across the transition. The cache-exclusion consumer is U12's export; the tag is what it reads.
+  4. **The D42 splice matrix U5 deferred is executed at file level**: meta↔meta across works, journal entry across works, journal entry across entry keys, receipt→meta (class confusion), anchor slot→slot — every swap is an authentication failure; intact neighbors still open (falsifiability).
+  5. **Record-schema versioning**: `[version, body]` envelope like the vault header; a future-version meta refuses distinctly (never parses the body) and maps to the vault-newer-version class (code 16 — message says "vault format", record version noted as the same family; U2 owns any wording split).
+  6. **UTF-8-only paths in v1 records** (`utf8_paths` helper for U13): non-UTF-8 spellings refuse via D46's invalid-argument class pre-consent. Recorded v1 limitation.
+  7. Journal-entry filenames are canonical decimal (leading-zero names are alien — `"007"` beside `"7"` would alias one AAD entry key onto two files); alien entries anywhere in the store are loud (`VaultAuthFailure` collapse), never silently skipped; inert `.tmp` dotfiles from the U5 atomic writer are the one skipped shape.
+  8. Consent record carries D36's exact field set `{total_ant_atto, gas_estimate_wei, consent_time, channel: interactive|yes-flag}` (u128 amounts as 16-byte BE bstr — CBOR uint stops at u64); latest-wins single field per D36 rule 4.
 
 ### U10 — Store Arbitrum wallet key under its own vault sub-key
 - Milestone: M1
@@ -413,6 +422,18 @@
   - hygiene harness green across the full command set at trace verbosity
   - drill feedback items closed; release binary's `--help` snapshot matches the frozen canonical surface exactly
 - Notes: Binary signing, sha256sums, and distribution channel are Q's (Q30/Q31).
+
+### U33 — Windows `--passphrase-fd` for non-stdin descriptors (or a formally recorded release limitation)
+*(discovered 2026-08-01 by U7's implementation; gated on D72 — no work before the release-target set is decided)*
+- Milestone: M4 (with D72; drop with a recorded reason if Windows is not a target)
+- Size: S
+- Deps: U7 (the channel + frozen byte semantics); D72 (release targets — open, due M4)
+- Spec: D41 (docs/decisions/D41-noninteractive-passphrase-channel.md); U7's platform-limit note (crates/antseal-cli/src/passphrase.rs module docs)
+- Do: U7's std-only fd mechanism reaches non-stdin descriptors through `/dev/fd/<n>`, which Windows lacks — today every non-stdin `--passphrase-fd` on Windows fails with the typed `FdReadFailed` reason, while `--passphrase-fd 0` (the degenerate stdin case, and the primary scripting shape `printf | antseal …`) works everywhere via `std::io::stdin`. IF D72 names Windows a release target: either implement non-stdin fd reading there (inherited-handle plumbing — likely requires a deliberate `unsafe`/platform-crate decision, argued like U7's rpassword row) or formally record "stdin-only on Windows" in the release docs + `--passphrase-fd` help text, with the D41 byte semantics unchanged either way. If Windows is not a D72 target, close this task with a one-line register note.
+- Accept:
+  - D72-resolved branch taken explicitly (implementation OR recorded limitation, never silence)
+  - if implemented: the U7 byte-semantics suite passes on a Windows CI lane over a real non-stdin handle; no change to the frozen semantics or the fd-0 path
+  - if recorded: help text + release docs state the limit; the typed `FdReadFailed` behavior is snapshot-covered
 
 ## Open decisions (U) — each: the decision, blocking task IDs, milestone it must land by
 1. `init` interaction model — pure interactive wizard vs convenience flags (canonical surface enumerates no `init` flags) — blocks U1, U11 — M1 — **[2026-08-01]** RESOLVED (D39): the dichotomy was false — TTY wizard with a flag/fd equivalent for every question; v1 flag set enumerated as a deliberate U1 amendment; existing-vault refusal absolute, no `--force` (docs/decisions/D39-init-interaction-model.md)
