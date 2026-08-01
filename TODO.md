@@ -3,7 +3,7 @@
 **Source of truth for scope**: `MVP-SPEC.md` (Revision 2, 2026-07-27 — frozen; `SPEC-REVIEW.md` already folded in). When this list and the spec disagree, the spec wins; flag the conflict, don't silently diverge.
 **Source of truth for status**: this file. Full per-task detail (Do / Accept / Notes / spec line refs) lives in `tasks/{P,F,C,G,S,A,R,U,Q}.md` — one file per domain, task IDs are stable and permanent.
 
-Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **321 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **88 decisions D1–D88** of which **66 are resolved**, 6 milestone gates. Counts below are current, not original.
+Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **322 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **88 decisions D1–D88** of which **66 are resolved**, 6 milestone gates. Counts below are current, not original.
 
 | Domain | Prefix | Scope | Tasks |
 |---|---|---|---|
@@ -14,7 +14,7 @@ Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversaria
 | Storage | S | StorageBackend, payments, journal/resume, restore | 20 |
 | Anchors | A | OTS, RFC 3161, receipt classification, verdict states | 29 |
 | Reveal & verify | R | bundle build, verification pipeline, verifier web page | 51 |
-| CLI & vault | U | command surface, vault, config, UX | 32 |
+| CLI & vault | U | command surface, vault, config, UX | 33 |
 | Quality & release | Q | test infra, CI, threat model, docs, release | 62 |
 
 ---
@@ -446,6 +446,7 @@ Gate = **Q34 evidence bundle**: Sepolia-mode E2E green; exactly ONE mainnet smok
 - [ ] **Q65** (M) Publish-scope decision + the pre-public scrub it gates — **triggered by any move to make the repo public** (one of the three options for branch protection, which is plan-blocked). `MVP-SPEC.md` **cannot** be removed (126 refs + 13 citations inside the frozen registry; the traceability lane resolves against its line numbers); only `MVP-SPEC.orig.md` and `SPEC-REVIEW.md` are unreferenced. Repo is private and nothing is exposed today — deferred by the maintainer 2026-07-28 — after Q22,Q28,Q27
 - [ ] **U32** (M) CLI release freeze: exit codes/JSON schemas/help snapshots frozen; final hygiene + positioning audits; drill-feedback fixes — after U1–U30
 - [ ] **U33** (S) Windows `--passphrase-fd` for non-stdin fds: implement (handle plumbing) or formally record the stdin-only limitation — after U7 ⛔ D72 (release-target set; discovered 2026-08-01 by U7 — `/dev/fd` has no Windows equivalent; fd 0 works everywhere)
+- [ ] **U34** (S) Vault-global bookkeeping record slot: new cipher record class + store slot + D47 payload key — the machinery U18's export-performed flag needs and U9/U12 deliberately did not ship — after U9,U12; land with or before U18 (discovered 2026-08-01 by U12's payload design: the store has no vault-global non-wallet record, and the v1 export schema has no bookkeeping key; pre-release the payload may extend within format v1 while both sides move together — post-release it is a version bump, recorded in vault/export.rs)
 
 ## Continuous (6 tasks)
 

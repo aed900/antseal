@@ -132,7 +132,7 @@
   - wrap mode recorded in header; header tamper (mode flip) → AEAD auth failure; a header claiming mode 2 → the distinct "wrap mode not supported" error (tested)
   - declining the offer leaves a passphrase-only vault (mode 0) byte-compatible with U6 tests
   - no keystore crate in the workspace graph (dependency assertion)
-- Notes: Not on the M1 E2E critical path — may land late-M1. The OS-keystore platform scope + implementation is D50's recorded post-D72 follow-up (see the D72 register row); D47's export carries the keyfile factor unchanged.
+- Notes: Not on the M1 E2E critical path — may land late-M1. The OS-keystore platform scope + implementation is D50's recorded post-D72 follow-up (see the D72 register row); D47's export carries the keyfile factor unchanged. **[2026-08-01, from U12]** `vault import` currently REFUSES any export with wrap mode ≠ 0 (an `internal`-class error — never a silent mode-0 downgrade of a wrapped backup; `vault/export.rs::validate_payload`): U8 must extend the export payload with the keyfile-wrap parameters it defines, teach import to reconstruct a mode-1 vault, and re-map that refusal to its distinct error — the same re-map obligation U6's unlock left it.
 
 ### U9 — Implement per-work record store (vault records + journal persistence API)
 - Milestone: M1
@@ -282,7 +282,7 @@
 - Accept:
   - first seal without prior export → nag on stderr (also under `--json`); after `vault export`, subsequent seals don't nag
   - nag copy snapshot-tested, contains both loss and theft framings, no "notary"/unqualified-"priority" wording
-- Notes: Q24 (M4) later harmonizes the doc pages with these nags — consumer, not a dep; CLI nag copy is U's.
+- Notes: Q24 (M4) later harmonizes the doc pages with these nags — consumer, not a dep; CLI nag copy is U's. **[2026-08-01, from U12]** "Track 'export performed' in the vault" has no substrate yet: the store has no vault-global bookkeeping slot and the v1 export payload no bookkeeping key — that machinery is **U34** (discovered; land with or before this task).
 
 ### U19 — Implement `list` (works, incomplete state, per-work cost)
 - Milestone: M1
@@ -456,6 +456,18 @@
   - D72-resolved branch taken explicitly (implementation OR recorded limitation, never silence)
   - if implemented: the U7 byte-semantics suite passes on a Windows CI lane over a real non-stdin handle; no change to the frozen semantics or the fd-0 path
   - if recorded: help text + release docs state the limit; the typed `FdReadFailed` behavior is snapshot-covered
+
+### U34 — Vault-global bookkeeping record slot (store + cipher registry + export carriage)
+*(discovered 2026-08-01 by U12's payload design — the prerequisite machinery for U18's export-performed flag)*
+- Milestone: M1 (with or before U18)
+- Size: S
+- Deps: U9 (store), U12 (export payload); U18 is the consumer
+- Spec: Vault (line 143); D42 (bookkeeping is enumerated INSIDE the AEAD); D47 (payload contents)
+- Do: The record store has no vault-global slot besides the wallet, and the v1 export payload deliberately ships no bookkeeping key (U12 note 4). Add: a new `RecordClass` id (next free: 6) + AAD identity for a vault-bookkeeping record; a store slot (`store/bookkeeping` beside `store/check`/`store/wallet`); read/write APIs; and the D47 payload key that carries it through export/import. Pre-release this extends payload format v1 while writer and reader move together (recorded in `vault/export.rs` module docs); if any release has shipped, it is an export `format_version` bump instead.
+- Accept:
+  - bookkeeping record round-trips create → reopen; splice into/out of the slot fails authentication (the D42 matrix extends by one row)
+  - export → wipe → import carries the record; a payload WITHOUT the key still imports (older exports stay valid)
+  - U18's export-performed flag implemented over it stops the nag after `vault export` (its own Accept — may land in the same change)
 
 ## Open decisions (U) — each: the decision, blocking task IDs, milestone it must land by
 1. `init` interaction model — pure interactive wizard vs convenience flags (canonical surface enumerates no `init` flags) — blocks U1, U11 — M1 — **[2026-08-01]** RESOLVED (D39): the dichotomy was false — TTY wizard with a flag/fd equivalent for every question; v1 flag set enumerated as a deliberate U1 amendment; existing-vault refusal absolute, no `--force` (docs/decisions/D39-init-interaction-model.md)
