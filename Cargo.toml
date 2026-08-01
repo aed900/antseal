@@ -344,7 +344,11 @@ thiserror = "2"
 # the locked graph transitively via the ant-core stack, so this line adds no
 # new package). antseal-core NEVER declares it: the core-dep-graph lane bans
 # getrandom/rand from core's normal graph (S4's no-RNG audit).
-getrandom = "0.3"
+# KEY ALIAS (wave-2 stage-A merge fix): the plain `getrandom` key above is the
+# CLI's exact-pinned 0.4 generation; this 0.3-generation entry keeps its own
+# deliberately-distinct rationale under an aliased key — two generations
+# coexist on purpose, one per consumer, neither silently absorbing the other.
+getrandom03 = { package = "getrandom", version = "0.3" }
 # URL type for constructing evmlib's `CustomNetwork` (S5's devnet →
 # EvmNetwork mapping, behind `ant-backend`). `CustomNetwork.rpc_url_http`
 # is `reqwest::Url`, which IS `url::Url` re-exported

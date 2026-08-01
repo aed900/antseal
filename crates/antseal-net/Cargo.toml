@@ -48,7 +48,7 @@ test-util = []
 # ant-core itself anyway. If S6 later needs a surface ant-core does not
 # re-export (e.g. `http_provider` per D33), adding `ant-protocol` then is a
 # deliberate pin event, not this feature's concern.
-ant-backend = ["dep:ant-core", "dep:getrandom", "dep:url", "dep:zeroize"]
+ant-backend = ["dep:ant-core", "dep:getrandom03", "dep:url", "dep:zeroize"]
 
 [dependencies]
 antseal-core.workspace = true
@@ -56,7 +56,7 @@ thiserror.workspace = true
 # --- `ant-backend` half (all optional; see the feature comment) ---
 ant-core = { workspace = true, optional = true }
 # OS-CSPRNG for wallet keygen (S5/U11); rationale on the workspace entry.
-getrandom = { workspace = true, optional = true }
+getrandom03 = { workspace = true, optional = true }
 # For the CustomNetwork struct literal (devnet mapping); rationale on the
 # workspace entry.
 url = { workspace = true, optional = true }

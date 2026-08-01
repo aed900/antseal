@@ -144,7 +144,7 @@ pub struct WalletKey {
 }
 
 impl WalletKey {
-    /// Generate a fresh key from the **OS CSPRNG** (`getrandom`, the OS
+    /// Generate a fresh key from the **OS CSPRNG** (`getrandom` 0.3 via the `getrandom03` alias, the OS
     /// entropy syscall surface), validated through the pinned upstream
     /// parse before it is ever returned (D44: generation and import share
     /// one acceptance gate).
@@ -158,7 +158,7 @@ impl WalletKey {
     pub fn generate() -> Result<Self, WalletOpsError> {
         for _ in 0..GENERATE_ATTEMPTS {
             let mut raw = [0u8; 32];
-            if getrandom::fill(&mut raw).is_err() {
+            if getrandom03::fill(&mut raw).is_err() {
                 raw.zeroize();
                 return Err(WalletOpsError::EntropySource);
             }
