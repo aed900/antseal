@@ -1106,7 +1106,9 @@ fn parse_canonical_u64(name: &str) -> Option<u64> {
     name.parse().ok()
 }
 
-fn validate_slot_name(slot: &str) -> Result<(), StoreError> {
+/// Anchor-slot grammar check (shared with the U12 export validator —
+/// slots that could never live in the store must not import either).
+pub(crate) fn validate_slot_name(slot: &str) -> Result<(), StoreError> {
     let bytes = slot.as_bytes();
     // Empty first: everything below indexes past the head byte.
     let Some((head, rest)) = bytes.split_first() else {

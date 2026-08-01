@@ -21,8 +21,10 @@
 //! risk 4). Consume it from outside this workspace at your own risk.
 
 pub mod cli;
+mod commands;
 pub mod error;
 pub mod passphrase;
+pub mod rng;
 mod run;
 pub mod vault;
 
@@ -58,7 +60,17 @@ where
         }
     };
     match run::run(&cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(outcome) => {
+            if cli.globals.json {
+                // Provisional success shape until U3's versioned envelope
+                // (mirrors the U2 error object's `ok` discriminator).
+                println!(
+                    "{}",
+                    serde_json::json!({ "ok": true, "result": outcome.json })
+                );
+            }
+            ExitCode::SUCCESS
+        }
         Err(err) => {
             eprintln!("error: {err}");
             if cli.globals.json {

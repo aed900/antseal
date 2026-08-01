@@ -250,8 +250,16 @@ lane_secret_guard() {
     local a b
     a="$(ex '"ciphertext"')" ; b="$(ex '"kdfparams"')"
     hits+="$(comm -12 <(printf '%s\n' "$a" | sort -u) <(printf '%s\n' "$b" | sort -u))"$'\n'
-    # (3) Reserved antseal vault-export magic (testdata/README.md).
-    hits+="$(ex 'ANTSEAL[ ]VAULT[ ]EXPORT')"$'\n'
+    # (3) Reserved antseal vault-export magic (testdata/README.md). The
+    #     ONE sanctioned source occurrence is the format module that
+    #     defines the EXPORT_MAGIC constant — the U12 exclusion event the
+    #     Q2 convention anticipated (recorded 2026-08-01; tests reference
+    #     the constant, never the literal). Excluded by EXACT PATH, not
+    #     basename, so a stray export file named export.rs anywhere else
+    #     still trips the scan; the self-test's planted fake lives under
+    #     a temp root and is unaffected by this repo-rooted path.
+    hits+="$(ex 'ANTSEAL[ ]VAULT[ ]EXPORT' \
+             | grep -vxF "$root/crates/antseal-cli/src/vault/export.rs" || true)"$'\n'
     # (4) age / minisign secret-key markers.
     hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
     hits+="$(ex 'minisign encrypted secret key')"$'\n'

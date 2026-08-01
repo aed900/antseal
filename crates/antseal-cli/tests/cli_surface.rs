@@ -334,12 +334,14 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
 
 #[test]
 fn stub_milestones_are_named_per_command() {
+    // Rows shrink as real handlers land (U1's arrival map): `vault
+    // export|import` left this list at U12.
     for (args, milestone) in [
         (vec!["status", "w1"], "M2"),
         (vec!["show", "w1"], "M3"),
         (vec!["reveal", "w1", "--all"], "M3"),
         (vec!["verify", "b.sealproof"], "M3"),
-        (vec!["vault", "export"], "M1"),
+        (vec!["restore", "w1"], "M1"),
     ] {
         let out = antseal_bin().args(&args).output().expect("spawn antseal");
         assert_eq!(out.status.code(), Some(3), "{args:?}");

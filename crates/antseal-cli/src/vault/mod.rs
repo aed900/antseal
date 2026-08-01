@@ -93,6 +93,7 @@
 //! both stand on these two primitives.
 
 pub mod cipher;
+pub mod export;
 pub mod fs;
 pub mod header;
 pub mod kdf;

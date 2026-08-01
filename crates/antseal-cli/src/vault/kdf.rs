@@ -439,6 +439,36 @@ impl KdfParams {
         Ok(KdfParams { alg, salt })
     }
 
+    /// The same algorithm and parameters with a **fresh** random salt —
+    /// D47's export-KDF rule: copy the vault's algorithm + parameters
+    /// (they already satisfy the floors this type enforces), never its
+    /// salt, so the export AEAD key is a distinct domain from the vault
+    /// key.
+    ///
+    /// # Errors
+    ///
+    /// [`KdfError::RngFailure`] when the injected source fails.
+    pub fn with_fresh_salt<R: TryCryptoRng + ?Sized>(&self, rng: &mut R) -> Result<Self, KdfError> {
+        let mut salt = [0u8; KDF_SALT_LEN];
+        rng.try_fill_bytes(&mut salt)
+            .map_err(|_| KdfError::RngFailure)?;
+        Ok(KdfParams {
+            alg: self.alg,
+            salt,
+        })
+    }
+
+    /// Which registered KDF these parameters use (for D47's import,
+    /// which creates the fresh vault with the same algorithm *family* —
+    /// creation then writes the frozen D40 values, as always).
+    #[must_use]
+    pub fn selection(&self) -> KdfSelection {
+        match self.alg {
+            KdfAlg::Argon2id { .. } => KdfSelection::Argon2id,
+            KdfAlg::Scrypt { .. } => KdfSelection::Scrypt,
+        }
+    }
+
     /// The KDF's peak arena requirement in MiB (for the typed low-RAM
     /// error message; D40 §2's "use a machine with ≥ …" guidance).
     #[must_use]

@@ -110,6 +110,12 @@ from real secrets, vault exports, wallet keys/keystores, mnemonics — must
   formats can be *discussed*; if source code ever legitimately needs a
   matching literal (e.g. a keystore import parser), extend the guard's
   exclusions in the same PR as a reviewed event.
+  **Recorded exclusion events:** [2026-08-01, U12] the vault-export magic
+  literal landed in `crates/antseal-cli/src/vault/export.rs` (the module
+  that defines `EXPORT_MAGIC`); the guard excludes exactly that path from
+  pattern (3), by exact path rather than basename, in the same commit.
+  Tests and every other source file reference the constant, never the
+  literal — a second literal occurrence anywhere is still a scan failure.
 - Anchor fixtures (M2) contain real *public* cryptographic material (TSA
   certificates, timestamp tokens, calendar proofs over fixture digests) —
   that is fine; the rule bars *private/secret* material only.
