@@ -4,12 +4,27 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
+# D34 (docs/decisions/D34-seal-pipeline-placement.md): this package carries
+# BOTH targets. The library `antseal_cli` is the orchestration layer — the
+# seal/resume/restore pipelines (and, at M3, the reveal flow) as library code
+# over injected backend/gate/journal/consent interfaces, so the M1 E2E can
+# drive sealing without spawning the binary (MVP-SPEC.md line 154 "via
+# library APIs"). The binary stays the spec tree's `antseal` with `main.rs`
+# as a thin argv→lib driver.
+[lib]
+name = "antseal_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "antseal"
 path = "src/main.rs"
 
 [dependencies]
 antseal-core.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

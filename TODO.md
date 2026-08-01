@@ -317,7 +317,7 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [ ] **R11** (S) Library live-check wrapper over S15 (manifest-shaped for M1; bundle-shaped at M3) — after S15
 
 ### CLI & vault (U)
-- [ ] **U1** (M) `antseal-cli` scaffold with the FULL canonical clap surface frozen day one (later commands stubbed) — after P5, P1
+- [x] **U1** (M) `antseal-cli` scaffold with the FULL canonical clap surface frozen day one (later commands stubbed) — after P5, P1 ✅ 2026-08-01 — full canonical tree + D39/D41 amendments as `antseal_cli` lib (D34) with thin main; clap 4.6.5 caret-per-policy (no color/wrap_help — deterministic help); 12-node help snapshot committed + parse-rule tests (18); stubs return typed "not implemented until M<x>"; tracing stderr-only via RUST_LOG
 - [ ] **U2** (M) Exit-code scheme + thiserror CLI error taxonomy (distinct token/gas/anchor/vault/resume codes) — after U1
 - [ ] **U3** (M) `--json` framework: one-document contract, schema registry per command, non-TTY rules — after U1,U2
 - [ ] **U4** (M) Config file: network mapping + TSA/endpoint override slots; precedence flag>config>default — after U1,U5

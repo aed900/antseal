@@ -1,0 +1,431 @@
+════ antseal ════
+Seal your work into permanent encrypted public storage with independently verifiable timestamps; later, reveal all of it — or any chosen part — to anyone, with proof it belongs to what you sealed.
+
+Usage: antseal [OPTIONS] <COMMAND>
+
+Commands:
+  init     Create the vault: passphrase, wallet key (generate or import), funding instructions, network config
+  seal     Seal files into permanent encrypted public storage (paid, irreversible; every cheap failable step runs first)
+  list     List sealed works, incomplete seals, pending-anchor nags, and per-work cost
+  show     Show every unit of a work: file, byte-range, size, local snippet — the preview for `reveal --units`
+  status   Show per-anchor status; `--upgrade` completes pending OTS attestations
+  restore  Fetch ciphertexts, decrypt with vault keys, verify against the manifest commitments, write the original files
+  reveal   Build a self-contained proof bundle disclosing the whole work or chosen units (irreversible disclosure; asks for confirmation)
+  verify   Verify a proof bundle offline (third-party; needs no vault and never prompts)
+  vault    Encrypted vault backup: export to / import from a single file
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+════ antseal init ════
+Create the vault: passphrase, wallet key (generate or import), funding instructions, network config
+
+Usage: antseal init [OPTIONS]
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --wallet <SOURCE>
+          Wallet key source: generate a fresh key, or import existing key material via --wallet-key-fd
+
+          Possible values:
+          - generate: Generate a fresh key and print its address + funding instructions
+          - import:   Import existing key material (format per D44) via --wallet-key-fd
+          
+          [default: generate]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --wallet-key-fd <FD>
+          Read wallet key material from file descriptor <FD> (D41 mechanism; must differ from --passphrase-fd). Only meaningful with `--wallet import`
+
+      --kdf <KDF>
+          Vault key-derivation function (D40). scrypt is an explicit operator choice and needs MORE memory (~1 GiB vs argon2id's 256 MiB) — it is not a low-RAM escape
+
+          Possible values:
+          - argon2id: Argon2id m=256 MiB, t=3, p=1 (the default)
+          - scrypt:   scrypt N=2^20, r=8, p=1 (~1 GiB — more memory than argon2id, chosen for construction preference, never for resources)
+          
+          [default: argon2id]
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+      --wrap <WRAP>
+          Optional extra wrap for the master secret (D50 registry; default: declined)
+
+          Possible values:
+          - none:    No extra wrap: passphrase-only vault (the default)
+          - keyfile: Wrap the master secret with a generated high-entropy keyfile, required alongside the passphrase at every unlock
+          
+          [default: none]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal seal ════
+Seal files into permanent encrypted public storage (paid, irreversible; every cheap failable step runs first)
+
+Usage: antseal seal [OPTIONS] <PATH>...
+
+Arguments:
+  <PATH>...
+          Files to seal (files only — a directory argument is a hard error, D46)
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --title <TITLE>
+          Title embedded in the manifest — visible to every bundle recipient (`seal` warns about this)
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --split <MODE>
+          Unit-splitting strategy for text files
+
+          Possible values:
+          - blank-lines: Split text into units at blank-line boundaries (D22)
+
+      --force-text
+          Treat inputs as text even where detection says binary (D20)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+      --no-fine-tree <GLOB>
+          Exclude files matching <GLOB> from the fine-grained byte tree: they become whole-file-revealable only, permanently
+
+      --dry-run
+          Run every free step and print the plan + true cost quote; nothing is paid, anchored, or uploaded (D49)
+
+      --yes
+          Consent in advance to the permanence gate (for scripts; the consent report still prints)
+
+      --force-degraded
+          Proceed even if fewer than one TSA token was obtained (records a degraded anchor set, loudly)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal list ════
+List sealed works, incomplete seals, pending-anchor nags, and per-work cost
+
+Usage: antseal list [OPTIONS]
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal show ════
+Show every unit of a work: file, byte-range, size, local snippet — the preview for `reveal --units`
+
+Usage: antseal show [OPTIONS] <WORK-ID>
+
+Arguments:
+  <WORK-ID>
+          The work to show
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal status ════
+Show per-anchor status; `--upgrade` completes pending OTS attestations
+
+Usage: antseal status [OPTIONS] <WORK-ID>
+
+Arguments:
+  <WORK-ID>
+          The work to query
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --upgrade
+          Poll OTS calendars and upgrade pending attestations now
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal restore ════
+Fetch ciphertexts, decrypt with vault keys, verify against the manifest commitments, write the original files
+
+Usage: antseal restore [OPTIONS] <WORK-ID>
+
+Arguments:
+  <WORK-ID>
+          The work to restore
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+  -o <DIR>
+          Output directory (default per D48's output policy)
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal reveal ════
+Build a self-contained proof bundle disclosing the whole work or chosen units (irreversible disclosure; asks for confirmation)
+
+Usage: antseal reveal [OPTIONS] <--all|--units <UNIT>> <WORK-ID>
+
+Arguments:
+  <WORK-ID>
+          The work to reveal from
+
+Options:
+      --all
+          Reveal every unit of the work
+
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --units <UNIT>
+          Reveal exactly these units (work-global ordinals as printed by `show`), e.g. --units 3,5
+
+  -o <FILE>
+          Write the proof bundle here
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+      --include-receipt
+          Include the Arbitrum payment receipt in the bundle (off by default — it exposes the paying wallet)
+
+      --yes
+          Consent in advance to the disclosure confirmation (for scripts)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal verify ════
+Verify a proof bundle offline (third-party; needs no vault and never prompts)
+
+Usage: antseal verify [OPTIONS] <BUNDLE>
+
+Arguments:
+  <BUNDLE>
+          The `.sealproof` bundle to verify
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --online
+          Also confirm the Bitcoin header and Arbitrum tx via two pinned, must-agree public endpoints per source
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --live
+          Also re-fetch ciphertexts from Autonomi and byte-compare them against the bundle to prove persistence
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal vault ════
+Encrypted vault backup: export to / import from a single file
+
+Usage: antseal vault [OPTIONS] <COMMAND>
+
+Commands:
+  export  Write the whole vault as one encrypted backup file (same passphrase, proven by the unlock export performs; D47)
+  import  Reconstruct the vault directory from an export file on a clean machine (validates fully before touching anything; refuses an existing vault)
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal vault export ════
+Write the whole vault as one encrypted backup file (same passphrase, proven by the unlock export performs; D47)
+
+Usage: antseal vault export [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]
+          Output file (default naming per U12)
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal vault import ════
+Reconstruct the vault directory from an export file on a clean machine (validates fully before touching anything; refuses an existing vault)
+
+Usage: antseal vault import [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          The export file to import
+
+Options:
+      --network <NETWORK>
+          Target network (upstream's naming; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          
+          [default: arbitrum-one]
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
