@@ -38,9 +38,10 @@ scripts/devnet/local-down            # SIGTERM the launcher; verify NO residue
 scripts/devnet/local-reset           # down (best effort) + rm -rf .devnet — the recovery path
 ```
 
-- **First `local-up` is dominated by the release build: ~45–90 min on
-  2 cores** (measured value in Boot evidence below). Subsequent runs reuse
-  `target/` and boot in well under two minutes.
+- **First `local-up` is dominated by the release build: measured ~13 min
+  warm / ~19 min cold on the 2-core reference host** (the 45–90 min estimate
+  proved pessimistic; Boot evidence below). Subsequent runs reuse `target/`
+  and boot in seconds.
 - Release is mandatory, not preference: debug-mode ML-KEM-768/ML-DSA-65
   handshakes burn the node-stabilization timeout (memo §7).
 - Node count: default **14** = upstream's own e2e parity count
@@ -127,9 +128,42 @@ unclean stop (timeout → SIGKILL) keeps everything for diagnosis;
   itself on the next start; `local-reset` if in doubt.
 - **Port collision**: ports are OS-random per run (base_port in
   20000–60000); re-run `local-up`.
+- **SIGTERM during boot** is safe: the launcher arms its signal handlers
+  *before* `LocalDevnet::start`, so an early `local-down` cancels the boot
+  (Anvil dies with the dropped `Testnet`; node data may remain —
+  `local-reset`). A **SIGKILL** — the one out-of-contract stop — skips
+  destructors and can orphan the Anvil child; `local-reset` detects and
+  names surviving `anvil` processes but deliberately does not auto-kill
+  them (nothing on Anvil's command line proves it is ours).
 
 ## Boot evidence
 
 *(Dated records; the numbers the E2E harness plans against.)*
 
 <!-- BOOT-EVIDENCE -->
+
+### 2026-08-01 — first boot (P16 execution, lane γ)
+
+Host: 2-core Pentium G4400 @ 3.3 GHz, 7.7 GiB RAM, otherwise idle.
+Toolchain 1.92.0, anvil 1.5.1-stable.
+
+| Measurement | Value |
+| --- | --- |
+| First release build (`--features devnet`, 736-package graph) | **12 m 45 s wall / 21 m 34 s user** — after a 5 m 47 s `cargo check` pass had warmed the shared build-script/proc-macro artifacts, so treat **~19 min as the cold-start total**. Far under the memo's 45–90 min estimate. `target/` grew to 7.2 GiB |
+| Boot-to-stable, **14 nodes** (default) | **6.2 s** launcher-internal (Anvil spawn + both contract deploys + 14 nodes + stabilization); ~8 s script-observed. Memo estimated 30–60 s |
+| Boot-to-stable, 5 nodes (smoke preset) | 1.6 s |
+| Idle footprint | launcher (all 14 nodes in-process) 54 MB RSS + anvil 20 MB |
+| Chain id | `eth_chainId` → `0x7a69` = 31337 (Anvil default, as documented above) |
+| Contracts deployed | token address from the manifest answers `eth_getCode` with 7 889 bytes; payment vault with 3 937 bytes |
+| Funding | account 0 holds ≈9 999.79 ETH (10 000 minus deploy gas) and **2 500 000 ANT** — the full premined supply (`balanceOf` = `0x211654585005212800000`) |
+| Env export | 10/10 keys in `.devnet/env`; manifest complete (14 nodes, 3 bootstrap multiaddrs, evm block); `.devnet` confirmed git-ignored (`git check-ignore`) |
+| `local-down` | clean in 1 s; `.devnet/` verified **empty**; the Anvil child died with the launcher |
+| `local-reset` | `.devnet/` removed entirely; no `anvil`/launcher process remained |
+
+**The E2E harness plans against: default 14 nodes, single-digit-second
+readiness on an idle host; keep the full 120 s stabilization timeout as the
+budget for loaded conditions** (this machine also runs agent lanes — the
+memo's 30–60 s estimate assumed contention, and the timeout, not the happy
+path, is what harness deadlines must fit). The 25-node parity mode was not
+exercised (14 is upstream's own e2e count; 25 remains the documented flake
+zone).

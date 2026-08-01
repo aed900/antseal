@@ -221,13 +221,35 @@ async fn run_devnet(
     env_path: &Path,
     config: DevnetConfig,
 ) -> Result<(), Box<dyn Error>> {
+    // The signal streams exist BEFORE the boot starts. Until a handler is
+    // installed, SIGTERM's default disposition kills the process outright —
+    // destructors skipped — and boot takes up to the stabilization timeout:
+    // a `local-down` issued in that window would orphan the Anvil child.
+    // With the streams armed, an early SIGTERM/SIGINT instead cancels the
+    // `start` future (dropping the partially-built Testnet kills Anvil; the
+    // runtime drop in `boot` reaps any already-spawned node tasks). The node
+    // data dir can survive that abort path — `local-reset` clears it, and
+    // the runbook says so.
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     let boot_started = Instant::now();
-    let mut devnet = LocalDevnet::start(config)
-        .await
-        .map_err(|e| format!("devnet failed to start: {e}"))?;
+    let mut devnet = tokio::select! {
+        result = LocalDevnet::start(config) => {
+            result.map_err(|e| format!("devnet failed to start: {e}"))?
+        }
+        _ = sigterm.recv() => {
+            println!("devnet-launcher: SIGTERM during boot — aborting");
+            return Err("aborted by SIGTERM during boot (partial node data may remain; scripts/devnet/local-reset clears it)".into());
+        }
+        result = tokio::signal::ctrl_c() => {
+            result?;
+            println!("devnet-launcher: SIGINT during boot — aborting");
+            return Err("aborted by SIGINT during boot (partial node data may remain; scripts/devnet/local-reset clears it)".into());
+        }
+    };
     let boot_secs = boot_started.elapsed().as_secs_f64();
 
-    let outcome = export_and_wait(&devnet, manifest_path, env_path, boot_secs).await;
+    let outcome = export_and_wait(&devnet, &mut sigterm, manifest_path, env_path, boot_secs).await;
 
     // Shutdown runs on BOTH paths — the export failing must still stop the
     // nodes and let `cleanup_data_dir` remove the stores.
@@ -241,6 +263,7 @@ async fn run_devnet(
 
 async fn export_and_wait(
     devnet: &LocalDevnet,
+    sigterm: &mut tokio::signal::unix::Signal,
     manifest_path: &Path,
     env_path: &Path,
     boot_secs: f64,
@@ -265,7 +288,6 @@ async fn export_and_wait(
         manifest_path.display()
     );
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         _ = sigterm.recv() => println!("devnet-launcher: SIGTERM — shutting down"),
         result = tokio::signal::ctrl_c() => {

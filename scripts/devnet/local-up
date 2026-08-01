@@ -21,8 +21,9 @@
 # ANTSEAL_DEVNET_STABILIZATION_SECS, ANTSEAL_DEVNET_UP_TIMEOUT (seconds the
 # poll below waits; default 300), RUST_LOG (launcher stderr verbosity).
 # Runbook: docs/devnet/local-devnet.md. Feasibility: docs/research/
-# P16-devnet-feasibility.md. First release build is ~45-90 min on 2 cores;
-# subsequent runs reuse the target dir.
+# P16-devnet-feasibility.md. First release build measured ~13 min warm /
+# ~19 min cold on the 2-core reference host (estimate was 45-90 min);
+# subsequent runs reuse the target dir and boot in seconds.
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -65,7 +66,7 @@ if [ -f "$pidfile" ]; then
   fi
 fi
 
-note "building devnet-launcher (release, --features devnet) — first build is ~45-90 min on 2 cores"
+note "building devnet-launcher (release, --features devnet) — first build measured ~13-19 min on the 2-core reference host"
 cargo build --release -p devnet-launcher --features devnet --locked \
   || die "release build failed"
 

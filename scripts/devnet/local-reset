@@ -29,6 +29,15 @@ if pgrep -f 'target/release/devnet-launcher' >/dev/null 2>&1; then
   pkill -KILL -f 'target/release/devnet-launcher' 2>/dev/null || true
 fi
 
+# A SIGKILL'd launcher (the one out-of-contract stop) skips destructors and
+# can orphan its Anvil child. Anvil carries nothing repo-identifying on its
+# command line, so auto-killing would risk an unrelated user process —
+# detect and NAME it instead; the operator decides.
+if pgrep -x anvil >/dev/null 2>&1; then
+  printf '::warning::anvil process(es) still running — if one is an orphan of a SIGKILLed devnet launcher, kill it manually:\n' >&2
+  pgrep -ax anvil >&2
+fi
+
 rm -rf "$devdir"
 note "removed $devdir"
 if [ -e "$devdir" ]; then
