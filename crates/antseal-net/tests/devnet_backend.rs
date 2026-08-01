@@ -101,16 +101,31 @@ fn funded_key(env: &DevnetEnv) -> WalletKey {
     WalletKey::import(env.wallet_private_key()).expect("devnet export carries a valid funded key")
 }
 
-/// Deterministic, devnet-unique test blobs: every run must use fresh
-/// bytes (chunks persist across tests within one devnet run), so blobs
-/// are derived from the run's base port + a per-call label.
+/// Fresh test blobs per invocation: chunks persist for a devnet run's
+/// lifetime, and one devnet may serve several suite invocations (a
+/// re-run against the same `local-up` must not find its "fresh" blobs
+/// already stored), so the seed mixes the devnet identity with this
+/// process id and a nanosecond stamp. Tests that WANT an already-stored
+/// blob re-use a `Blob` value, never this generator.
 fn test_blobs(env: &DevnetEnv, label: &str, sizes: &[usize]) -> Vec<Blob> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     sizes
         .iter()
         .enumerate()
         .map(|(index, &size)| {
             let mut bytes = Vec::with_capacity(size.max(8));
-            let seed = format!("{}:{}:{}:{}", env.base_port(), env.pid(), label, index);
+            let seed = format!(
+                "{}:{}:{}:{}:{}:{}",
+                env.base_port(),
+                env.pid(),
+                std::process::id(),
+                stamp,
+                label,
+                index
+            );
             let mut acc: u64 = 0xcbf2_9ce4_8422_2325;
             for b in seed.bytes() {
                 acc = (acc ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
@@ -268,9 +283,274 @@ async fn devnet_s6_round_trip_idempotency_and_zero_cost_lines() {
     );
 }
 
-// A compile-time witness that the receipt type re-exports stay reachable
-// for the suite (the S7 tests grow from here).
-#[allow(dead_code)]
-fn receipt_type_reachable(receipt: &PaymentReceipt) -> usize {
-    receipt.txs.len()
+// ===========================================================================
+// S7 — receipt completeness, capture consistency, multi-sub-batch, backfill
+// ===========================================================================
+
+/// The S7 completeness checklist (accept row 1): every element class the
+/// spec's receipt requires (MVP-SPEC.md lines 69/110; D37 Decision 4) is
+/// populated on a receipt from a REAL devnet pay.
+fn assert_receipt_complete(receipt: &PaymentReceipt) {
+    assert!(!receipt.blobs.is_empty(), "per-blob records exist");
+    for record in &receipt.blobs {
+        // Element class: per-blob triple {address, preimages, proof_bytes}.
+        assert!(!record.payments.is_empty(), "payment ledger lines");
+        assert!(
+            record.payments.iter().any(|line| line.amount_atto > 0),
+            "one non-zero (median-paid) line per blob"
+        );
+        assert!(
+            !record.peer_quotes.is_empty(),
+            "full signed quote preimages"
+        );
+        for peer_quote in &record.peer_quotes {
+            assert!(!peer_quote.quote.node_pub_key.is_empty(), "node key");
+            assert!(!peer_quote.quote.node_signature.is_empty(), "node sig");
+            assert!(peer_quote.quote.timestamp_unix_secs > 0, "quote timestamp");
+        }
+        assert!(!record.proof_bytes.is_empty(), "store-ready proof bytes");
+    }
+    // Element class: the quote→tx map, complete over non-zero lines.
+    assert!(
+        receipt.covers_all_paid_quotes(),
+        "map covers every paid quote"
+    );
+    // Element class: tx hashes + block-number slots, filled at capture.
+    assert!(!receipt.txs.is_empty(), "per-tx records exist");
+    for tx in &receipt.txs {
+        assert_eq!(tx.status, antseal_net::TxStatus::Confirmed);
+        assert!(
+            tx.block_number.is_some(),
+            "block number from the awaited receipt"
+        );
+        assert!(!tx.quote_hashes.is_empty(), "sub-batch membership recorded");
+    }
+    assert!(receipt.storage_cost_atto > 0);
+    assert!(receipt.gas.gas_cost_wei > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s7_completeness_capture_consistency_and_backfill() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("backend connects");
+
+    let batch = test_blobs(&env, "s7-capture", &[512, 2_048]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    let receipt = backend.pay(&quote).await.expect("pay");
+
+    // ── Completeness checklist after a real devnet pay ────────────────
+    assert_receipt_complete(&receipt);
+
+    // ── Capture consistency (S7 accept; D37 residual risk 2): the
+    //    journaled proof_bytes parse via UPSTREAM's own deserializer and
+    //    agree with the flat fields — captured bytes ARE the bytes
+    //    finalize needs, not a lookalike. ──────────────────────────────
+    for record in &receipt.blobs {
+        assert_eq!(
+            ant_protocol::detect_proof_type(&record.proof_bytes),
+            Some(ant_protocol::ProofType::SingleNode),
+            "single-node proof tag (0x01)"
+        );
+        let parsed =
+            ant_protocol::payment::proof::deserialize_single_node_proof(&record.proof_bytes)
+                .expect("upstream deserializer accepts the journaled bytes");
+
+        // Flat tx hashes == parsed tx hashes (order: the blob's non-zero
+        // lines in ledger order, exactly as upstream builds them).
+        let expected_hashes: Vec<[u8; 32]> = record
+            .payments
+            .iter()
+            .filter(|line| line.amount_atto > 0)
+            .map(|line| {
+                receipt
+                    .tx_map
+                    .get(&line.quote_hash)
+                    .map(|tx| *tx.as_bytes())
+                    .expect("covered by the map")
+            })
+            .collect();
+        let parsed_hashes: Vec<[u8; 32]> = parsed.tx_hashes.iter().map(|hash| hash.0).collect();
+        assert_eq!(
+            parsed_hashes, expected_hashes,
+            "flat tx hashes == proof tx hashes"
+        );
+
+        // Flat preimages == parsed preimages, field for field.
+        assert_eq!(
+            parsed.proof_of_payment.peer_quotes.len(),
+            record.peer_quotes.len()
+        );
+        for (flat, (peer_id, quote)) in record
+            .peer_quotes
+            .iter()
+            .zip(&parsed.proof_of_payment.peer_quotes)
+        {
+            assert_eq!(flat.peer_id.as_bytes(), peer_id.as_bytes());
+            assert_eq!(flat.quote.content.as_bytes(), &quote.content.0);
+            let parsed_secs = quote
+                .timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            assert_eq!(flat.quote.timestamp_unix_secs, parsed_secs);
+            assert_eq!(
+                alloy::primitives::U256::from(flat.quote.price_atto),
+                quote.price
+            );
+            assert_eq!(
+                flat.quote.rewards_address.as_bytes(),
+                &quote.rewards_address.0.0
+            );
+            assert_eq!(flat.quote.node_pub_key, quote.pub_key);
+            assert_eq!(flat.quote.node_signature, quote.signature);
+            assert_eq!(flat.quote.committed_key_count, quote.committed_key_count);
+            assert_eq!(flat.quote.commitment_pin, quote.commitment_pin);
+        }
+
+        // Sidecars travel verbatim.
+        assert_eq!(parsed.commitment_sidecars, record.commitment_sidecars);
+    }
+
+    // ── Enrichment-failure path (S7 accept): strip the block numbers —
+    //    the journaled shape after a receipt-await interruption — then
+    //    backfill idempotently with NO new payment. ────────────────────
+    let mut stripped = receipt.clone();
+    for tx in &mut stripped.txs {
+        tx.block_number = None;
+        tx.status = antseal_net::TxStatus::Submitted;
+    }
+    let nonce_before = wallet_nonce(&backend, &env).await;
+    let filled = backend
+        .backfill_block_numbers(&mut stripped)
+        .await
+        .expect("backfill");
+    assert_eq!(filled, receipt.txs.len(), "every stripped slot refilled");
+    assert_eq!(
+        stripped, receipt,
+        "backfill restored the captured values exactly"
+    );
+    // Idempotent: a second run fills nothing and changes nothing.
+    let refilled = backend
+        .backfill_block_numbers(&mut stripped)
+        .await
+        .expect("backfill again");
+    assert_eq!(refilled, 0);
+    assert_eq!(stripped, receipt);
+    assert_eq!(
+        wallet_nonce(&backend, &env).await,
+        nonce_before,
+        "backfill performed no payment"
+    );
+
+    // The paid batch still finalizes with the backfilled receipt.
+    let addresses = backend
+        .finalize_batch(&stripped, &batch)
+        .await
+        .expect("finalize with backfilled receipt");
+    assert_eq!(addresses.len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s7_multi_sub_batch_sequential_txs_with_capture_hook() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+
+    // The capture hook records every cumulative receipt it is handed —
+    // the journal-write seam (the write itself is S10/S12's).
+    let captured: std::sync::Arc<Mutex<Vec<PaymentReceipt>>> =
+        std::sync::Arc::new(Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&captured);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("backend connects")
+        // The sanctioned test seam (mirrors the mock's): cap 2 ⇒ 5 blobs
+        // pay as 3 REAL sequential EVM txs.
+        .with_max_transfers_per_tx(2)
+        .with_capture_hook(std::sync::Arc::new(move |receipt: &PaymentReceipt| {
+            sink.lock()
+                .expect("capture sink lock")
+                .push(receipt.clone());
+        }));
+
+    let batch = test_blobs(&env, "s7-multitx", &[64, 128, 256, 512, 1_024]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    let nonce_before = wallet_nonce(&backend, &env).await;
+    let receipt = backend.pay(&quote).await.expect("pay");
+
+    // ≥ 2 sub-batches, sequential, every quote mapped (S6/S7 accept).
+    assert_eq!(receipt.txs.len(), 3, "ceil(5 transfers / cap 2)");
+    let sizes: Vec<usize> = receipt.txs.iter().map(|tx| tx.quote_hashes.len()).collect();
+    assert_eq!(sizes, vec![2, 2, 1], "sub-batches partition in order");
+    assert_eq!(receipt.tx_map.len(), 5, "every quote mapped to a tx");
+    assert!(receipt.covers_all_paid_quotes());
+    let distinct: std::collections::BTreeSet<_> = receipt
+        .txs
+        .iter()
+        .map(|tx| *tx.tx_hash.as_bytes())
+        .collect();
+    assert_eq!(distinct.len(), 3, "three distinct on-chain txs");
+    // Sequential landings: block numbers monotonically non-decreasing,
+    // and 3 payment txs + 1 approve really hit the chain.
+    let blocks: Vec<u64> = receipt
+        .txs
+        .iter()
+        .map(|tx| tx.block_number.expect("captured"))
+        .collect();
+    assert!(
+        blocks.windows(2).all(|w| w[0] <= w[1]),
+        "submission order: {blocks:?}"
+    );
+    assert_eq!(
+        wallet_nonce(&backend, &env).await,
+        nonce_before + 4,
+        "exact-allowance approve + 3 sequential sub-batch txs"
+    );
+
+    // Hook timing (D37 Decision 2): one cumulative capture per landing,
+    // strictly ordered — payload k carries exactly k tx records, each a
+    // prefix of the final sequence — and the LAST payload equals the
+    // returned receipt (instant-capture: the value is complete the
+    // moment pay returns).
+    let captures = captured.lock().expect("capture sink lock");
+    assert_eq!(captures.len(), 3, "one capture per sub-batch landing");
+    for (index, capture) in captures.iter().enumerate() {
+        assert_eq!(capture.txs.len(), index + 1, "cumulative tx records");
+        assert_eq!(
+            capture.txs[..],
+            receipt.txs[..=index],
+            "capture {index} is a prefix of the final tx sequence"
+        );
+        assert!(
+            capture.covers_all_paid_quotes(),
+            "every capture is internally finalize-consistent"
+        );
+        // Blobs whose sub-batch has landed carry store-ready proofs:
+        // sub-batches partition the 5 blobs as 2 + 2 + 1.
+        assert_eq!(capture.blobs.len(), [2, 4, 5][index]);
+    }
+    assert_eq!(*captures.last().expect("nonempty"), receipt);
+    drop(captures);
+
+    // The multi-tx receipt finalizes and serves.
+    let addresses = backend
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize");
+    for (blob, address) in batch.iter().zip(&addresses) {
+        assert_eq!(
+            backend.get_data(*address).await.expect("serves"),
+            blob.as_bytes()
+        );
+    }
 }

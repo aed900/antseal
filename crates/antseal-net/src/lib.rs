@@ -106,4 +106,7 @@ pub use quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,
     QuotePreimage, RewardsAddress, TxHash,
 };
-pub use receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
+pub use receipt::{
+    BlobPaymentRecord, GasSummary, JournalReceipt, PaymentReceipt, RECEIPT_JOURNAL_VERSION,
+    ReceiptFormatError, TxRecord, TxStatus,
+};
