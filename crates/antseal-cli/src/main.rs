@@ -1,10 +1,11 @@
-//! `antseal` command-line interface — stub only. clap + tokio (and every
-//! other CLI dependency) arrive with U1; until then the binary stays
-//! dependency-free by design (P5).
+//! `antseal` binary — a thin driver over the `antseal_cli` library (D34):
+//! install the stderr-only tracing subscriber, then hand argv to
+//! [`antseal_cli::main_entry`]. All parsing, dispatch, and exit-code policy
+//! live in the library so tests and the M1 E2E drive the same code paths.
 
-// Intentional dependency edge: the CLI is a thin shell over antseal-core.
-use antseal_core as _;
+use std::process::ExitCode;
 
-fn main() {
-    println!("{} {}", env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION"));
+fn main() -> ExitCode {
+    antseal_cli::init_tracing();
+    antseal_cli::main_entry(std::env::args_os())
 }

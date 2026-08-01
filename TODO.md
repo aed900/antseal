@@ -317,11 +317,11 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [ ] **R11** (S) Library live-check wrapper over S15 (manifest-shaped for M1; bundle-shaped at M3) — after S15
 
 ### CLI & vault (U)
-- [ ] **U1** (M) `antseal-cli` scaffold with the FULL canonical clap surface frozen day one (later commands stubbed) — after P5, P1
-- [ ] **U2** (M) Exit-code scheme + thiserror CLI error taxonomy (distinct token/gas/anchor/vault/resume codes) — after U1
+- [x] **U1** (M) `antseal-cli` scaffold with the FULL canonical clap surface frozen day one (later commands stubbed) — after P5, P1 ✅ 2026-08-01 — full canonical tree + D39/D41 amendments as `antseal_cli` lib (D34) with thin main; clap 4.6.5 caret-per-policy (no color/wrap_help — deterministic help); 12-node help snapshot committed + parse-rule tests (18); stubs return typed "not implemented until M<x>"; tracing stderr-only via RUST_LOG
+- [x] **U2** (M) Exit-code scheme + thiserror CLI error taxonomy (distinct token/gas/anchor/vault/resume codes) — after U1 ✅ 2026-08-01 — 24 classes, distinct codes 1–34 (40–49 reserved for U30), every 2026-08-01 decided class carried; import-refused-existing-vault routes to consent-not-obtained per D51's prompt-class table; token≠gas in code AND message; Display snapshot (34 exemplars) committed, no secret-typed fields; --json emits one provisional error object with identical exit code
 - [ ] **U3** (M) `--json` framework: one-document contract, schema registry per command, non-TTY rules — after U1,U2
 - [ ] **U4** (M) Config file: network mapping + TSA/endpoint override slots; precedence flag>config>default — after U1,U5
-- [ ] **U5** (M) Vault store layout, versioned header, atomic writes + lockfile — after U1
+- [x] **U5** (M) Vault store layout, versioned header, atomic writes + lockfile — after U1 ✅ 2026-08-01 — layout with the D42 three-beside partition structural (closed BesideFile enum; store/ = ciphertext-only), versioned header (frozen magic+[version,body] envelope, opaque capped KDF slot for U6, D50 wrap registry, golden vector + 12-case tamper matrix, newer-version → code 16), atomic temp+fsync+rename with deterministic kill matrix, flock-backed unlink-free lockfile (kernel-arbitrated staleness); AEAD/splice tests land with U6/U9
 - [ ] **U6** (M) Vault encryption: Argon2id m≥256 MiB t=3 p=1 / scrypt N≥2²⁰, 16-B salt, KDF header bound as AAD (downgrade = auth failure) — after U5
 - [ ] **U7** (M) Passphrase UX: no-echo prompts, strength floor, non-interactive supply, zeroizing buffers — after U6
 - [ ] **U8** (M) Optional keyfile / OS-keystore wrap for W (recorded in AAD-bound header) — after U6,U7,U11

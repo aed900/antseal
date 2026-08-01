@@ -198,6 +198,29 @@ rand_core = "=0.10.1"
 
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
+# CLI argument surface (U1). Outside the exact-pin class by the policy's own
+# §1 text (which names clap): nothing format-, crypto-, or consensus-
+# affecting flows through it, so a caret-major requirement + the committed
+# Cargo.lock (§3) is the governance (resolved 4.6.5 at U1, verified current
+# on crates.io 2026-08-01). Two extra guards make even a deliberate §4 bump
+# loud: U1's committed help-surface snapshot pins the rendered output, and
+# `Command::debug_assert` pins the parse-tree invariants. Features are
+# minimal and deliberate: default features OFF to exclude `color` (no ANSI —
+# byte-stable snapshots, clean piping) and to keep `wrap_help` out (no
+# terminal-size probing — help renders identically on every terminal and in
+# CI); `std` is clap's mandatory base; `derive` is U1's task-text choice
+# (tasks/U.md:13 "clap derive"); help/usage/error-context/suggestions keep
+# parse errors actionable. Growth (e.g. `env`) would be a reviewed event.
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+# Structured logging for the CLI (U1): stderr only, env-filter driven —
+# RUST_LOG is the sanctioned verbosity surface; the canonical flag surface
+# is closed and gains no verbosity flags (tasks/U.md:13). Outside the
+# exact-pin class (policy §1); resolved versions (0.1.44 / 0.3.23 at U1)
+# frozen by Cargo.lock. tracing-subscriber: default features OFF drops
+# `ansi` (no color codes on stderr — logs stay grep/pipe-clean) and pulls
+# exactly the fmt writer + RUST_LOG filtering.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 # Test infrastructure only, never format-affecting: property testing
 # (C3/C18; conventions in docs/testing/proptest-conventions.md, Q3).
 # Resolved version frozen by Cargo.lock (1.11.0 at Q3). Reaches test code
