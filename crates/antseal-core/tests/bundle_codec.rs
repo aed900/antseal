@@ -230,17 +230,23 @@ fn seal_side_construction_encodes_and_decodes() {
             Nonce24::from_bytes([0xA1; 24]),
             Key32::from_bytes([0xA2; 32]),
         ),
-        ots_anchors: vec![OtsAnchor::new(
-            AnchorStatus::Attested,
-            OpaqueBytes::from_vec(vec![0x4F; 16]),
-            Some(OtsUpgrade::new(870_000, [0xB7; 80], 1_767_225_600)),
-        )],
-        tsa_anchors: vec![TsaAnchor::new(
-            AnchorStatus::Proven,
-            OpaqueBytes::from_vec(vec![0x30; 32]),
-            vec![OpaqueBytes::from_vec(vec![0xC0; 24])],
-            1_767_225_601,
-        )],
+        ots_anchors: vec![
+            OtsAnchor::new(
+                AnchorStatus::Attested,
+                OpaqueBytes::from_vec(vec![0x4F; 16]),
+                Some(OtsUpgrade::new(870_000, [0xB7; 80], 1_767_225_600)),
+            )
+            .expect("under the D10 caps"),
+        ],
+        tsa_anchors: vec![
+            TsaAnchor::new(
+                AnchorStatus::Proven,
+                OpaqueBytes::from_vec(vec![0x30; 32]),
+                vec![OpaqueBytes::from_vec(vec![0xC0; 24])],
+                1_767_225_601,
+            )
+            .expect("under the D10 caps"),
+        ],
         receipt: Some(
             ReceiptRecord::new(
                 vec![[0xE0; 32]],

@@ -83,8 +83,11 @@
 //!
 //! A schema-invalid [`BundleV1`] cannot exist: every field is private and
 //! both construction paths — [`BundleV1::new`] (reveal side) and
-//! [`BundleV1::decode`] (verify side) — funnel through the same checks. See
-//! [`schema`] for the rules that are unrepresentable rather than checked.
+//! [`BundleV1::decode`] (verify side) — funnel through the same checks,
+//! including the D10 count and artifact caps (F41). The one residual —
+//! the two aggregate byte caps are properties of *encoded* artifacts,
+//! checked on decode — is named in [`schema`]'s module docs, along with
+//! the rules that are unrepresentable rather than checked.
 //!
 //! # Secret hygiene (project rule 6)
 //!

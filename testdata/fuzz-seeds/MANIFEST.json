@@ -184,8 +184,8 @@
       "target": "manifest_decode"
     },
     {
-      "bytes": 192046,
-      "count": 32,
+      "bytes": 199023,
+      "count": 33,
       "seeds": [
         {
           "file": "bundle_decode/single-text-with-mirror--full.bin",
@@ -228,6 +228,12 @@
           "id": "split-multi-unit--full-via-enumerated-units",
           "len": 7670,
           "sha256": "58f3362240866af2f40b43d7c289c939cb1aa984c2f24e7bbcf826e8e9eda8bd"
+        },
+        {
+          "file": "bundle_decode/split-multi-unit--partial-with-mirror.bin",
+          "id": "split-multi-unit--partial-with-mirror",
+          "len": 6977,
+          "sha256": "fea984e238824edb39388ce01d39c37862ba5f1f4c4ebb9fe4339700566eee0c"
         },
         {
           "file": "bundle_decode/split-multi-unit--all.bin",

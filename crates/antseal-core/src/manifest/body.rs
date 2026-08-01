@@ -1039,15 +1039,29 @@ const fn is_covered(fine_tree: FineTree, kind: UnitKind) -> bool {
 /// different Rust type reached through F10's version dispatch, which is
 /// why the discriminant sits at key 0 and therefore first on the wire.
 ///
-/// **Not `Clone`, on purpose.** [`Manifest`](super::Manifest) hands out
-/// `&ManifestBodyV1`, and [`encode_body`] consumes its argument, so a
-/// verifier holding a decoded manifest has no way to re-encode the body —
-/// the "verifiers never re-encode" rule of spec line 74 is enforced by
-/// the borrow checker rather than by documentation.
-// `Clone` is what lets F16 state "encoding is a function of the value alone"
-// — encode the *same* body twice and byte-compare. It carries no secret
-// material (project rule 6): every field is a public wire value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// **Not `Clone` in any production build, on purpose** (F41).
+/// [`Manifest`](super::Manifest) hands out `&ManifestBodyV1` and
+/// [`encode_body`] consumes its argument, so without `Clone` a verifier
+/// holding a decoded manifest has no owned body to feed back to the
+/// encoder — re-encoding a received body is a compile error in every
+/// build without the `test-util` feature, and the `const` probe after
+/// this type fails compilation of such builds (`cargo check`, the wasm32
+/// lanes, every shipped artifact) if `Clone` ever returns. That is the
+/// real mechanism behind the "verifiers never re-encode" rule of spec
+/// line 74; an earlier revision of this doc claimed the type was
+/// unconditionally not `Clone` while the derive said otherwise.
+///
+/// The `cfg_attr` re-opens `Clone` **under `test-util` only**: F16's
+/// determinism property ("encoding is a function of the value alone") and
+/// the decode→re-encode round-trip in `tests/codec_properties.rs` must
+/// encode the same value twice and byte-compare, which needs a second
+/// owned copy. `test-util` is wired as a dev-dependency-only feature
+/// (crate `Cargo.toml`), so the carve-out exists on test targets and
+/// nowhere else.
+// No secret material rides on the derive (project rule 6): every field
+// is a public wire value.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "test-util", derive(Clone))]
 pub struct ManifestBodyV1 {
     app_version: String,
     seal_id: SealId,
@@ -1058,13 +1072,47 @@ pub struct ManifestBodyV1 {
     files: Vec<FileEntry>,
 }
 
+// The compile-time half of the claim above: a production build (no
+// `test-util`) must not have `Clone` on `ManifestBodyV1`. If the gate is
+// widened or the derive made unconditional again, method resolution below
+// is ambiguous between the two blanket impls and the build fails — on
+// `cargo check`, and on the wasm32 `test-vectors` lane. Same mechanism as
+// `static_assertions::assert_not_impl_any`, inlined so the production
+// dependency set stays unchanged.
+#[cfg(not(feature = "test-util"))]
+const _: fn() = || {
+    trait AmbiguousIfClone<A> {
+        fn guard() {}
+    }
+    impl<T> AmbiguousIfClone<()> for T {}
+    impl<T: Clone> AmbiguousIfClone<u8> for T {}
+    // One applicable impl ⇒ `A` infers to `()`; a `Clone` impl on the
+    // body makes both apply and inference fails, which is the assertion.
+    let _ = <ManifestBodyV1 as AmbiguousIfClone<_>>::guard;
+};
+
 impl ManifestBodyV1 {
-    /// Assemble a body, running the whole-body validation — the same
-    /// function [`Self::decode`] runs, so "constructible" and "decodable"
-    /// are one predicate and a schema-invalid body cannot exist.
+    /// Assemble a body, running the whole-body validation **and** the D10
+    /// count caps the decode path enforces — so a body the seal side can
+    /// construct is one every v1 decoder admits, with one named residual.
+    ///
+    /// The decode path funnels through this function; the cap checks here
+    /// can never fire there ([`Self::decode`] already enforced the same
+    /// caps on the claimed counts during the walk), so decode precedence
+    /// is untouched and the checks bind the direct-construction path
+    /// only (F41 — before that, `new` skipped the caps and could build a
+    /// body whose encoding no v1 verifier accepts).
+    ///
+    /// **Residual, on purpose:** `MAX_MANIFEST_BYTES` is a property of
+    /// the *encoded* envelope, invisible to a constructor. Staying under
+    /// it is the seal pipeline's obligation at encode time.
     ///
     /// # Errors
     ///
+    /// - [`ManifestError::ListTooLong`] — more than
+    ///   [`MAX_FILE_COUNT`] files, or a file whose units overflow the
+    ///   work-global [`MAX_UNIT_COUNT`] budget (same codes and payloads
+    ///   as the decode path).
     /// - [`ManifestError::SigPolicyEmpty`] — empty `sig_policy` (spec
     ///   line 97: otherwise a signature-less manifest could verify
     ///   vacuously).
@@ -1081,6 +1129,30 @@ impl ManifestBodyV1 {
         sig_policy: Vec<SigAlg>,
         files: Vec<FileEntry>,
     ) -> Result<Self, ManifestError> {
+        // The D10 caps first, mirroring the decode path's *total* order
+        // (there they fire during the walk, before this function runs).
+        let claimed = files.len() as u64;
+        if claimed > MAX_FILE_COUNT {
+            return Err(ManifestError::ListTooLong {
+                list: ManifestListKind::Files,
+                claimed,
+                cap: MAX_FILE_COUNT,
+            });
+        }
+        // Same walk, same budget, same payload as decode: the reported
+        // `claimed` is the unit count of the file that broke the
+        // work-global budget.
+        let mut budget = DecodeBudget::new();
+        for file in &files {
+            let claimed = file.units().len() as u64;
+            if budget.take_units(claimed).is_err() {
+                return Err(ManifestError::ListTooLong {
+                    list: ManifestListKind::Units,
+                    claimed,
+                    cap: MAX_UNIT_COUNT,
+                });
+            }
+        }
         validate_sig_policy(&sig_policy)?;
         if files.is_empty() {
             return Err(ManifestError::EmptyContainer {
@@ -1241,12 +1313,21 @@ impl ManifestBodyV1 {
                     pubkeys = Some(SigAlgMap::decode(&mut d, SigMaterial::Pubkey, body_layer)?);
                 }
                 key::body::SIG_POLICY => {
-                    // A recorded **non-cap** (D10 §3): the registered
-                    // `sig_alg` universe is `0..=15` and duplicates are
-                    // rejected, so element 17 of a hostile array always fails
-                    // on an existing code before any cap could fire. The
-                    // clamp still applies — a cap and a clamp are different
-                    // mechanisms, and only the clamp bounds allocation.
+                    // A recorded **non-cap** (D10 §3, justification
+                    // corrected by F41). Rejection is guaranteed: the
+                    // `sig_alg` band is 16 ids, v1 registers two, so a
+                    // duplicate-free policy has <= 2 elements and any
+                    // longer array dies on
+                    // `manifest-unregistered-alg-sig-policy` (inline,
+                    // below) or `manifest-duplicate-alg-sig-policy` (in
+                    // `Self::new`, **after** this loop materialises the
+                    // list). Guaranteed is not early: an all-registered
+                    // hostile array is read and pushed to the end of the
+                    // input before the duplicate check runs. That work and
+                    // the vector are bounded by MAX_MANIFEST_BYTES — each
+                    // element costs >= 1 wire byte — which, not early
+                    // failure, is why no cap is needed. The clamp still
+                    // applies: only the clamp bounds the pre-allocation.
                     let claimed = d.array().map_err(body_layer)?;
                     let mut list =
                         Vec::with_capacity(clamped_capacity::<SigAlg>(claimed, d.remaining()));
@@ -1372,10 +1453,14 @@ fn validate_unit_ordinals(files: &[FileEntry]) -> Result<(), ManifestError> {
 /// entry point, and the **only** way to produce body bytes.
 ///
 /// Consumes the body: a decoded [`Manifest`](super::Manifest) lends out
-/// `&ManifestBodyV1` and the type is not `Clone`, so no verification path
-/// can reach this function. Verifiers hash the bytes they received
+/// `&ManifestBodyV1`, and in production builds the type is not `Clone`
+/// (the `test-util` gate and its compile-time guard live on
+/// [`ManifestBodyV1`]), so no verification path can hand a *received*
+/// body back to this function. Verifiers hash the bytes they received
 /// ([`super::Manifest::body_bytes`]); they never re-encode (spec
-/// line 74).
+/// line 74). The `test-util` round-trip properties do clone and
+/// re-encode — deliberately: they prove the *encoder* reproduces
+/// received bytes, and are not a verification path.
 ///
 /// # Errors
 ///
@@ -1415,6 +1500,80 @@ mod tests {
             ManifestBodyV1::decode_v1(V1::admit_for_test(&body)),
             Err(ManifestError::UnsupportedFormatVersion { found: 2, .. })
         ));
+    }
+
+    /// F41: `new` enforces the two D10 count caps with the decode path's
+    /// codes and payloads, so the seal side cannot assemble a body whose
+    /// encoding no v1 decoder admits. Red before the fix: both
+    /// constructions returned `Ok`. Planted-fault direction: remove the
+    /// cap block at the top of `new` and this goes red again.
+    #[test]
+    fn new_enforces_the_file_and_unit_count_caps() {
+        use crate::codec::caps::{MAX_FILE_COUNT, MAX_UNIT_COUNT};
+
+        fn covered_file(first_unit_id: u64, unit_count: u64) -> FileEntry {
+            let units = (0..unit_count)
+                .map(|i| {
+                    UnitEntry::new(
+                        first_unit_id + i,
+                        UnitKind::Normal,
+                        ByteRange::new(i, 1),
+                        1,
+                        UnitBinding::FineTreeCovered,
+                        Nonce24::from_bytes([7; 24]),
+                        ContentAddress::from_bytes([8; 32]),
+                    )
+                })
+                .collect();
+            FileEntry::new(
+                fixtures::commit32(1),
+                fixtures::commit32(2),
+                CanonMode::Binary,
+                unit_count,
+                FineTree::Present {
+                    root: fixtures::commit32(3),
+                },
+                units,
+            )
+            .expect("cap-test file is otherwise schema-valid")
+        }
+        let body = |files: Vec<FileEntry>| {
+            ManifestBodyV1::new(
+                "app".to_owned(),
+                SealId::from_bytes([9; 16]),
+                String::new(),
+                0,
+                fixtures::ed25519_pubkeys(),
+                vec![SigAlg::Ed25519],
+                files,
+            )
+        };
+
+        // One file, one unit over the work-global budget: same code and
+        // payload the decode-path `DecodeBudget` walk reports.
+        let err = body(vec![covered_file(0, MAX_UNIT_COUNT + 1)]).expect_err("over the budget");
+        assert!(matches!(
+            err,
+            ManifestError::ListTooLong {
+                list: ManifestListKind::Units,
+                claimed,
+                cap,
+            } if claimed == MAX_UNIT_COUNT + 1 && cap == MAX_UNIT_COUNT
+        ));
+        assert_eq!(err.code(), "manifest-too-many-units");
+
+        // One file over the file cap, one unit each.
+        let files = (0..=MAX_FILE_COUNT).map(|i| covered_file(i, 1)).collect();
+        let err = body(files).expect_err("over the file cap");
+        assert!(matches!(
+            err,
+            ManifestError::ListTooLong {
+                list: ManifestListKind::Files,
+                claimed,
+                cap,
+            } if claimed == MAX_FILE_COUNT + 1 && cap == MAX_FILE_COUNT
+        ));
+        assert_eq!(err.code(), "manifest-too-many-files");
     }
 
     #[test]

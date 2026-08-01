@@ -425,6 +425,9 @@ kebab-case id, and never edit an existing row's expected code.
       registered `sig_alg` universe is 16 values and duplicate-freedom is
       already enforced, so an existing code always fires first. They are still
       allocation-clamped: a cap and a clamp are different mechanisms.
+      *(The "fires first" half of this sentence is corrected for
+      `sig_policy` by the 2026-08-01 F41 entry below: guaranteed, but only
+      after the array is materialised, bounded by `MAX_MANIFEST_BYTES`.)*
     - **`bundle-too-large` beats every other bundle code**, including the
       `cbor-` canonicality classes and `bundle-unsupported-format-version`,
       because D10 §5 puts the O(1) size check as the first statement of the
@@ -819,6 +822,44 @@ kebab-case id, and never edit an existing row's expected code.
   Consumer-side reconciliation of the two disagreeing mirror pickers is
   **R53**, which lands after this and inherits a rule that makes the
   disagreement unreachable from any decoded manifest.
+
+- **2026-08-01 (F41, from the adversarial review's U4/U12)** — **no codes
+  minted, renamed, or re-scoped**; the universe stays **194**. One
+  correction to this document's own record and one reachability note:
+
+  1. The 2026-07-28 entry's recorded non-code reason — *"an existing code
+     always fires first"* — was unsound for `sig_policy`, the one *array*
+     among the three lists it covers: duplicate-freedom is checked in
+     `ManifestBodyV1::new`, **after** the decode loop has materialised the
+     list, so an all-registered hostile array is read and pushed to the
+     end of the input before `manifest-duplicate-alg-sig-policy` fires.
+     The non-code stands on a different ground, now the recorded one: that
+     work and the resulting vector are bounded by `MAX_MANIFEST_BYTES`
+     (every element costs ≥ 1 wire byte), so a cap would mint a permanent
+     code (§3) for inputs that are already guaranteed-rejected. For the
+     two *maps* (`pubkeys`, `signatures`) the early-failure half is true —
+     strictly-ascending keys plus registration reject during the walk.
+     The same entry's "the registered `sig_alg` universe is 16 values"
+     conflates the reserved band (16 ids) with the registered set (2 in
+     v1). Both corrected at source: D10 carries a dated F41 amendment, and
+     the `sig_policy` arm of `ManifestBodyV1::decode_v1` now records the
+     sound argument.
+
+  2. Reachability, not a mint: the D10 cap codes (`bundle-too-many-*`,
+     `bundle-*-too-large`, `manifest-too-many-*`, minus the two
+     whole-input sizes) are now also reachable from the
+     **direct-construction path** — `BundleV1::new`, `TsaAnchor::new`,
+     `OtsAnchor::new`, `ReceiptRecord::new`, `CoveredReveal::new` and
+     `ManifestBodyV1::new` enforce the same caps with the same variants
+     and payloads, so the seal side can no longer assemble an artifact no
+     v1 decoder accepts. Decode-path precedence is untouched — the walk's
+     head checks still fire first and the constructor re-checks are
+     unreachable on that path — so no tamper row moves and §4a sees no
+     diff. Named tests:
+     `manifest::body::tests::new_enforces_the_file_and_unit_count_caps`,
+     `bundle::schema::tests::anchor_and_receipt_construction_enforces_the_decode_side_caps`,
+     `…::covered_reveal_construction_enforces_the_cover_and_path_caps`,
+     `…::bundle_construction_enforces_the_section_caps_ahead_of_ordering_rules`.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a

@@ -20,15 +20,22 @@
 //! fine-tree leaf, `0x01` node, `0x02` `unit_commit`, `0x03` `raw_commit`,
 //! `0x04` `canon_commit`, `0x05` `path_commit`, `0x06` GGM salt child
 //! (spec line 79; [`crate::crypto::domain`]). These two functions hash
-//! **raw deterministic-CBOR bytes** and are domain-separated *by
-//! construction*: a canonical CBOR item's first byte is a head byte, and
-//! the v1 profile admits only major types 0, 2, 3, 4, 5 — so the first
-//! byte is always `>= 0x20` (major type 1 and up), never `0x00..=0x06`.
-//! In fact both pre-images here start with a map head (`0xa2` for the
-//! envelope, `0xa8` for the v1 body), and even the smallest admissible
-//! item — the empty byte string `0x40` — clears the tag range. Prefixing
-//! a tag would therefore add no separation, and would break the property
-//! that `work_id` is the hash of *exactly the bytes that were signed*.
+//! **raw deterministic-CBOR bytes** and are domain-separated by
+//! construction *of their two pre-image languages*, not by a property of
+//! canonical items in general: a body is the v1 body **map** (head `0xa8`
+//! today; any additive v1.x key keeps it a map head) and an envelope is
+//! the envelope **map** (head `0xa2`), and every canonical CBOR map head
+//! is `>= 0xa0` — far above the `0x00..=0x06` tag range. The general
+//! claim would be false, and this doc once asserted it (F41): the v1
+//! profile admits top-level `uint` items, and the canonical encoding of
+//! the integer `0` is the single byte `0x00`, which **is**
+//! `TAG_FINE_TREE_LEAF`. No bare integer is a body or an envelope — both
+//! schemas require a map — which is the whole argument;
+//! `pre_images_are_maps_whose_heads_clear_the_tag_range` below executes
+//! it, counterexample included, and the F16 vector checker asserts it on
+//! every committed golden vector. Prefixing a tag would therefore add no
+//! separation, and would break the property that `work_id` is the hash of
+//! *exactly the bytes that were signed*.
 //!
 //! Domain separation between the two *functions* comes from their
 //! pre-images being different languages: a body is a map with key 0 =
@@ -46,8 +53,10 @@
 //!
 //! The spec bans the bare phrase "manifest hash" (line 75): the two
 //! digests are never interchangeable and a single fuzzy name invites
-//! anchoring the wrong one. `manifest_ids_ban_the_ambiguous_identifier`
-//! in `tests/manifest_ids.rs` greps the tree to keep it that way.
+//! anchoring the wrong one. `no_source_file_uses_a_banned_identifier` in
+//! `tests/identifier_bans.rs` greps the tracked sources (`manifest_hash`
+//! is on its ban list) to keep it that way. (F41: this note used to name
+//! a test and file that never existed.)
 
 use core::fmt;
 
@@ -203,17 +212,19 @@ mod tests {
         assert!(format!("{:?}", AnchorDigest::from_bytes([0; 32])).starts_with("AnchorDigest("));
     }
 
-    /// The domain-tag non-collision argument, executed: no canonical v1
-    /// item can start with a byte in the `0x00..=0x06` tag range, so
-    /// hashing raw CBOR is separated from every tagged pre-image by
-    /// construction (spec line 79).
+    /// The domain-tag non-collision argument, executed **with its
+    /// counterexample** (F41). The separation holds because both
+    /// pre-images are CBOR *maps*; it does **not** hold for canonical
+    /// items in general, and this test's predecessor asserted that false
+    /// universal over three cherry-picked non-`uint` items.
     #[test]
-    fn no_canonical_v1_item_can_start_with_a_domain_tag_byte() {
+    fn pre_images_are_maps_whose_heads_clear_the_tag_range() {
         use crate::codec::check_canonical;
         use crate::crypto::domain::{
             MAX_DOMAIN_TAG, TAG_CANON_COMMIT, TAG_FINE_TREE_LEAF, TAG_FINE_TREE_NODE,
             TAG_GGM_SALT_CHILD, TAG_PATH_COMMIT, TAG_RAW_COMMIT, TAG_UNIT_COMMIT,
         };
+        use crate::manifest::fixtures;
 
         for tag in [
             TAG_FINE_TREE_LEAF,
@@ -231,19 +242,39 @@ mod tests {
             assert_eq!(tag >> 5, 0, "tag bytes are major-type-0 heads");
         }
 
-        // Every pre-image these functions take is a canonical CBOR map,
-        // whose head byte is >= 0xa0 — far above the tag range; even the
-        // smallest items of the other admitted major types clear it.
-        for bytes in [
-            &[0xa0u8][..], // {} — smallest map
-            &[0x40],       // '' — smallest byte string
-            &[0x80],       // [] — smallest array
+        // The planted counterexample: the canonical encoding of the
+        // integer 0 is the single byte 0x00, an admitted canonical item
+        // that *is* TAG_FINE_TREE_LEAF. So "no canonical v1 item can
+        // start with a domain-tag byte" is false, and the argument below
+        // must not — and does not — rest on it.
+        assert_eq!(TAG_FINE_TREE_LEAF, 0x00);
+        check_canonical(&[TAG_FINE_TREE_LEAF])
+            .expect("uint 0 is a canonical item, first byte in the tag range");
+
+        // What is true: the pre-images of `work_id` (body bytes) and
+        // `anchor_digest` (envelope bytes) are canonical CBOR maps, and
+        // every canonical map head byte is >= 0xa0 > MAX_DOMAIN_TAG.
+        // Checked on real sealed fixtures, not on hand-picked minima.
+        const { assert!(0xa0 > MAX_DOMAIN_TAG) };
+        let sealed = fixtures::text_with_mirror_manifest();
+        for (name, bytes) in [
+            (
+                "envelope (anchor_digest pre-image)",
+                sealed.envelope.as_slice(),
+            ),
+            ("body (work_id pre-image)", sealed.body.as_slice()),
         ] {
-            check_canonical(bytes).expect("fixture is canonical");
+            let head = *bytes.first().expect("fixture is non-empty");
+            assert_eq!(head >> 5, 5, "{name} must start with a map head");
             assert!(
-                bytes[0] > MAX_DOMAIN_TAG,
-                "canonical v1 items start above the tag range"
+                head > MAX_DOMAIN_TAG,
+                "{name} head 0x{head:02x} must clear the tag range"
             );
         }
+        // Today's exact shapes: {0: body, 1: signatures} and the 8-key v1
+        // body. An additive v1.x key would move these to 0xa3/0xa9 — still
+        // map heads — so the two asserts above are the load-bearing ones.
+        assert_eq!(sealed.envelope[0], 0xa2);
+        assert_eq!(sealed.body[0], 0xa8);
     }
 }

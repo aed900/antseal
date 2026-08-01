@@ -29,8 +29,20 @@
 //!
 //! A schema-invalid [`BundleV1`] cannot exist: every field is private and
 //! both construction paths — [`BundleV1::new`] (reveal side) and
-//! [`BundleV1::decode`] (verify side) — funnel through the same checks, so
-//! "constructible" and "decodable" are the same predicate.
+//! [`BundleV1::decode`] (verify side) — funnel through the same checks,
+//! **including the D10 §1 count and artifact-size caps** (F41: the caps
+//! originally ran only at the array/`bstr` heads of the decode path, so
+//! the constructors could assemble an anchor set or reveal set whose
+//! encoding no v1 decoder accepts — and this doc claimed otherwise). On
+//! the decode path the constructor-side cap re-checks can never fire —
+//! the walk already enforced them on the claimed counts — so decode
+//! precedence and every tamper row are untouched.
+//!
+//! **One residual, named rather than hidden:** `MAX_BUNDLE_BYTES` and
+//! `MAX_MANIFEST_BYTES` are properties of *encoded* artifacts, invisible
+//! to a constructor of parts. "Constructible" equals "decodable" up to
+//! aggregate encoded size, which the reveal-side builder must keep under
+//! the two byte caps at encode time; decode checks them first.
 //!
 //! Several rules are stronger still — unrepresentable rather than checked:
 //!
@@ -98,6 +110,33 @@ use super::registry::{
 /// Wrap a codec rejection as a bundle-layer (layer 1) failure.
 const fn cbor(source: DecodeError) -> BundleError {
     BundleError::Cbor { source }
+}
+
+/// The construction-side counterpart of [`decode_section`]'s cap step
+/// (F41): reject an already-materialised list longer than its D10 cap,
+/// with the same error and payload the decode path reports at the array
+/// head. On the decode path this re-check can never fire — the head cap
+/// already bounded the element count — so it binds the
+/// direct-construction path only.
+fn check_section_cap<T>(list: BundleListKind, entries: &[T]) -> Result<(), BundleError> {
+    let claimed = entries.len() as u64;
+    let cap = list.cap();
+    if claimed > cap {
+        return Err(BundleError::ListTooLong { list, claimed, cap });
+    }
+    Ok(())
+}
+
+/// The construction-side counterpart of [`decode_opaque`]'s cap step
+/// (F41); same error, same payload, same [`OpaqueField::cap`] source as
+/// the decode path, so the two sides cannot disagree on a value.
+fn check_opaque_cap(field: OpaqueField, bytes: &OpaqueBytes) -> Result<(), BundleError> {
+    let len = bytes.len();
+    let cap = field.cap();
+    if len > cap {
+        return Err(BundleError::ArtifactTooLarge { field, len, cap });
+    }
+    Ok(())
 }
 
 /// Classify a decoded map key, converting the two non-assigned bands into
@@ -466,14 +505,25 @@ pub struct OtsAnchor {
 }
 
 impl OtsAnchor {
-    /// Assemble an OTS artifact.
-    #[must_use]
-    pub const fn new(status: AnchorStatus, ots: OpaqueBytes, upgrade: Option<OtsUpgrade>) -> Self {
-        Self {
+    /// Assemble an OTS artifact, under the same D10 byte cap the decode
+    /// path enforces (F41 — previously unchecked here, so the seal side
+    /// could embed an `.ots` no v1 decoder accepts).
+    ///
+    /// # Errors
+    ///
+    /// [`BundleError::ArtifactTooLarge`] — `ots` exceeds
+    /// [`OpaqueField::Ots`]'s cap (`bundle-ots-too-large`, as on decode).
+    pub fn new(
+        status: AnchorStatus,
+        ots: OpaqueBytes,
+        upgrade: Option<OtsUpgrade>,
+    ) -> Result<Self, BundleError> {
+        check_opaque_cap(OpaqueField::Ots, &ots)?;
+        Ok(Self {
             status,
             ots,
             upgrade,
-        }
+        })
     }
 
     /// The **sealer-recorded** status. Never trusted: the verifier derives
@@ -564,20 +614,35 @@ pub struct TsaAnchor {
 }
 
 impl TsaAnchor {
-    /// Assemble a TSA artifact.
-    #[must_use]
-    pub const fn new(
+    /// Assemble a TSA artifact, under the same D10 caps the decode path
+    /// enforces (F41), checked in the decode path's key order: token byte
+    /// cap, intermediates count cap, then each certificate's byte cap.
+    ///
+    /// # Errors
+    ///
+    /// - [`BundleError::ArtifactTooLarge`] — over-cap `token`
+    ///   (`bundle-tsa-token-too-large`) or certificate
+    ///   (`bundle-cert-too-large`).
+    /// - [`BundleError::ListTooLong`] — more than
+    ///   [`BundleListKind::Intermediates`]'s cap of certificates
+    ///   (`bundle-too-many-intermediates`).
+    pub fn new(
         status: AnchorStatus,
         token: OpaqueBytes,
         intermediates: Vec<OpaqueBytes>,
         fetch_date: u64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, BundleError> {
+        check_opaque_cap(OpaqueField::TsaToken, &token)?;
+        check_section_cap(BundleListKind::Intermediates, &intermediates)?;
+        for cert in &intermediates {
+            check_opaque_cap(OpaqueField::Certificate, cert)?;
+        }
+        Ok(Self {
             status,
             token,
             intermediates,
             fetch_date,
-        }
+        })
     }
 
     /// The **sealer-recorded** status. Never trusted.
@@ -670,19 +735,31 @@ pub struct ReceiptRecord {
 }
 
 impl ReceiptRecord {
-    /// Assemble a receipt record, checking the one shape rule this level
-    /// owns: at least one transaction hash.
+    /// Assemble a receipt record: the D10 caps the decode path enforces
+    /// (F41), in the decode path's key order, then the one shape rule this
+    /// level owns — at least one transaction hash.
+    ///
+    /// On the decode path ([`Self::decode`] funnels through here) the cap
+    /// checks can never fire: the walk already enforced them at the array
+    /// head and on the `bstr`. They bind the direct-construction path.
     ///
     /// # Errors
     ///
-    /// [`BundleError::EmptyContainer`] when `tx_hashes` is empty — a payment
-    /// has at least one transaction, so an empty list is malformed rather
-    /// than "no payment".
+    /// - [`BundleError::ListTooLong`] — more than
+    ///   [`BundleListKind::TxHashes`]'s cap of hashes
+    ///   (`bundle-too-many-tx-hashes`, as on decode).
+    /// - [`BundleError::ArtifactTooLarge`] — over-cap `payload`
+    ///   (`bundle-receipt-payload-too-large`, as on decode).
+    /// - [`BundleError::EmptyContainer`] when `tx_hashes` is empty — a
+    ///   payment has at least one transaction, so an empty list is
+    ///   malformed rather than "no payment".
     pub fn new(
         tx_hashes: Vec<[u8; TX_HASH_LEN as usize]>,
         block_number: u64,
         payload: OpaqueBytes,
     ) -> Result<Self, BundleError> {
+        check_section_cap(BundleListKind::TxHashes, &tx_hashes)?;
+        check_opaque_cap(OpaqueField::ReceiptPayload, &payload)?;
         if tx_hashes.is_empty() {
             return Err(BundleError::EmptyContainer {
                 field: ContainerField::TxHashes,
@@ -900,12 +977,20 @@ pub struct CoveredReveal {
 }
 
 impl CoveredReveal {
-    /// Assemble a covered reveal, checking the rules this level owns:
-    /// the ciphertext's length shape, a non-empty cover, and strict ascent of
-    /// both `cover` and `paths` by leaf-interval start.
+    /// Assemble a covered reveal: the two D10 count caps the decode path
+    /// enforces (F41), in the decode path's key order, then the rules this
+    /// level owns — the ciphertext's length shape, a non-empty cover, and
+    /// strict ascent of both `cover` and `paths` by leaf-interval start.
+    ///
+    /// On the decode path ([`Self::decode`] funnels through here) the cap
+    /// checks can never fire: [`decode_section`] already enforced them at
+    /// the two array heads. They bind the direct-construction path.
     ///
     /// # Errors
     ///
+    /// - [`BundleError::ListTooLong`] — over-cap `cover`
+    ///   (`bundle-too-many-cover-entries`) or `paths`
+    ///   (`bundle-too-many-path-nodes`), as on decode.
     /// - [`BundleError::CiphertextShape`] — the ciphertext is shorter than a
     ///   padding block plus the tag, or not one tag past a whole number of
     ///   blocks (registry §2).
@@ -920,6 +1005,8 @@ impl CoveredReveal {
         cover: Vec<CoverEntry>,
         paths: Vec<PathNode>,
     ) -> Result<Self, BundleError> {
+        check_section_cap(BundleListKind::Cover, &cover)?;
+        check_section_cap(BundleListKind::Paths, &paths)?;
         check_ciphertext_shape(ciphertext.len())?;
         if cover.is_empty() {
             return Err(BundleError::EmptyContainer {
@@ -1413,13 +1500,19 @@ impl<'b> BundleV1<'b> {
     /// Validate a section set into a bundle.
     ///
     /// Checks run in a **fixed order** so a given input always yields the
-    /// same rejection: the four list-ordering rules in section-key order,
-    /// then the two cross-section rules. Every one of them is tier `[X]` —
-    /// decidable from the bundle alone — which is what keeps them out of the
-    /// verify family under D78.
+    /// same rejection: the six D10 section-count caps in section-key order
+    /// (F41 — on the decode path these re-checks can never fire, because
+    /// [`decode_section`] enforced each at its array head; they bind the
+    /// direct-construction path), then the four list-ordering rules in
+    /// section-key order, then the two cross-section rules. The ordering
+    /// and cross-section rules are tier `[X]` — decidable from the bundle
+    /// alone — which is what keeps them out of the verify family under
+    /// D78.
     ///
     /// # Errors
     ///
+    /// - [`BundleError::ListTooLong`] — a section longer than its D10 cap
+    ///   (the same `bundle-too-many-*` codes the decode path reports).
     /// - [`BundleError::UnsortedList`] — a section is not strictly ascending
     ///   by its id (which also rejects a repeated id within one section).
     /// - [`BundleError::UnitRevealedTwice`] — one `unit_id` appears in both
@@ -1439,6 +1532,13 @@ impl<'b> BundleV1<'b> {
             touched_files,
             full_reveals,
         } = parts;
+
+        check_section_cap(BundleListKind::OtsAnchors, &ots_anchors)?;
+        check_section_cap(BundleListKind::TsaAnchors, &tsa_anchors)?;
+        check_section_cap(BundleListKind::CoveredReveals, &covered_reveals)?;
+        check_section_cap(BundleListKind::NonCoveredReveals, &noncovered_reveals)?;
+        check_section_cap(BundleListKind::TouchedFiles, &touched_files)?;
+        check_section_cap(BundleListKind::FullReveals, &full_reveals)?;
 
         check_ascending_ids(
             OrderedList::CoveredReveals,
@@ -2042,10 +2142,12 @@ fn encode_section<T>(
 ///
 /// # Why this borrows where `encode_body` consumes
 ///
-/// [`encode_body`](crate::manifest::encode_body) takes its body **by value**
-/// so that no verification path can re-encode a decoded manifest: the
-/// manifest's bytes are hashed (`work_id`) and signed, so "the bytes I
-/// received" and "the bytes I would produce" must never be confusable.
+/// [`encode_body`](crate::manifest::encode_body) takes its body **by
+/// value** — and `ManifestBodyV1` is not `Clone` outside `test-util`
+/// builds — so that no verification path can re-encode a decoded
+/// manifest: the manifest's bytes are hashed (`work_id`) and signed, so
+/// "the bytes I received" and "the bytes I would produce" must never be
+/// confusable.
 ///
 /// A bundle is different, and the difference is structural rather than a
 /// relaxation: **nothing hashes or signs a `.sealproof` as a whole**. It is
@@ -2118,6 +2220,122 @@ mod tests {
             check_ciphertext_shape(0).expect_err("must reject").code(),
             "bundle-ciphertext-too-short"
         );
+    }
+
+    /// F41: the D10 caps bind the **direct-construction** path with the
+    /// decode path's own codes, so a builder cannot assemble an anchor or
+    /// receipt whose encoding no v1 decoder accepts. Planted-fault
+    /// direction: neuter `check_section_cap`/`check_opaque_cap` and this
+    /// test goes red. At-cap acceptance stays with `tests/parser_caps.rs`.
+    #[test]
+    fn anchor_and_receipt_construction_enforces_the_decode_side_caps() {
+        let over_ots = OpaqueBytes::from_vec(vec![0x4F; (OpaqueField::Ots.cap() + 1) as usize]);
+        let err = OtsAnchor::new(AnchorStatus::Pending, over_ots, None).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-ots-too-large");
+
+        let over_token =
+            OpaqueBytes::from_vec(vec![0x30; (OpaqueField::TsaToken.cap() + 1) as usize]);
+        let err =
+            TsaAnchor::new(AnchorStatus::Proven, over_token, Vec::new(), 0).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-tsa-token-too-large");
+
+        let token = || OpaqueBytes::from_vec(vec![0x30; 8]);
+        let too_many = (0..=BundleListKind::Intermediates.cap())
+            .map(|_| OpaqueBytes::from_vec(vec![0xC0; 8]))
+            .collect();
+        let err = TsaAnchor::new(AnchorStatus::Proven, token(), too_many, 0).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-intermediates");
+
+        let big_cert =
+            OpaqueBytes::from_vec(vec![0xC0; (OpaqueField::Certificate.cap() + 1) as usize]);
+        let err =
+            TsaAnchor::new(AnchorStatus::Proven, token(), vec![big_cert], 0).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-cert-too-large");
+
+        let payload = || OpaqueBytes::from_vec(vec![1, 2]);
+        let hashes = vec![[0xE0; 32]; (BundleListKind::TxHashes.cap() + 1) as usize];
+        let err = ReceiptRecord::new(hashes, 0, payload()).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-tx-hashes");
+
+        let big_payload =
+            OpaqueBytes::from_vec(vec![1; (OpaqueField::ReceiptPayload.cap() + 1) as usize]);
+        let err = ReceiptRecord::new(vec![[0xE0; 32]], 0, big_payload).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-receipt-payload-too-large");
+    }
+
+    /// F41, reveal tuples: over-cap `cover`/`paths` are refused at
+    /// construction with the decode path's codes, ahead of the shape,
+    /// emptiness and ascent rules — mirroring decode's total order, where
+    /// both caps fire at their array heads before `new` runs.
+    #[test]
+    fn covered_reveal_construction_enforces_the_cover_and_path_caps() {
+        let k = || Key32::from_bytes([0x11; 32]);
+        let ct = || OpaqueBytes::from_vec(vec![0x22; 272]);
+
+        // Every entry shares one address, so the ascent rule would also
+        // reject these parts — the cap must win, as on decode.
+        let over_cover = (0..=BundleListKind::Cover.cap())
+            .map(|_| CoverEntry::new(address(1, 0), seed(0x31)))
+            .collect();
+        let err = CoveredReveal::new(0, k(), ct(), over_cover, Vec::new()).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-cover-entries");
+
+        let one_cover = vec![CoverEntry::new(address(1, 0), seed(0x31))];
+        let over_paths = (0..=BundleListKind::Paths.cap())
+            .map(|_| PathNode::new(address(1, 0), NodeHash32::from_bytes([0x41; 32])))
+            .collect();
+        let err = CoveredReveal::new(0, k(), ct(), one_cover, over_paths).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-path-nodes");
+    }
+
+    /// F41, bundle sections: an over-cap section is refused at
+    /// construction with the decode path's code, ahead of the ordering and
+    /// cross-section rules — mirroring decode's total order, where the cap
+    /// fires at the section's array head before `new` runs.
+    #[test]
+    fn bundle_construction_enforces_the_section_caps_ahead_of_ordering_rules() {
+        fn empty_parts(manifest: &[u8]) -> BundleParts<'_> {
+            BundleParts {
+                manifest,
+                storage_record: StorageRecord::new(
+                    ContentAddress::from_bytes([0xA0; 32]),
+                    Nonce24::from_bytes([0xA1; 24]),
+                    Key32::from_bytes([0xA2; 32]),
+                ),
+                ots_anchors: Vec::new(),
+                tsa_anchors: Vec::new(),
+                receipt: None,
+                covered_reveals: Vec::new(),
+                noncovered_reveals: Vec::new(),
+                touched_files: Vec::new(),
+                full_reveals: Vec::new(),
+            }
+        }
+        let manifest = [0xA5u8; 4];
+
+        // Every entry shares file_id 0 and no touched file exists, so the
+        // ascent rule *and* the cross-section rule would both reject these
+        // parts — the cap must win, as it does on decode.
+        let mut parts = empty_parts(&manifest);
+        parts.full_reveals = (0..=BundleListKind::FullReveals.cap())
+            .map(|_| FullReveal::new(0, Salt16::from_bytes([0x81; 16]), None))
+            .collect();
+        let err = BundleV1::new(parts).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-full-reveals");
+
+        let mut parts = empty_parts(&manifest);
+        parts.ots_anchors = (0..=BundleListKind::OtsAnchors.cap())
+            .map(|_| {
+                OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(vec![0x4F; 4]),
+                    None,
+                )
+                .expect("tiny anchor is under the caps")
+            })
+            .collect();
+        let err = BundleV1::new(parts).expect_err("over cap");
+        assert_eq!(err.code(), "bundle-too-many-ots-anchors");
     }
 
     /// Strict ascent rejects both a repeat and an inversion, with the same

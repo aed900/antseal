@@ -890,3 +890,54 @@ structural, and together the reason the harness could not have caught this:
 
 Cost of the fix on honest input: a reservation short by the ratio of
 in-memory to wire width, i.e. at most a `Vec` regrowth, amortised O(1).
+
+## Amendment from F41 (2026-08-01) — two corrections from the adversarial review
+
+**No cap value changes, no error code moves or mints (the universe stays
+194), no decode-path behaviour changes.** Both items come from the
+2026-07-31 adversarial review (notes U12 and U4): recorded claims the
+code did not implement.
+
+**1. §3's `sig_policy` justification was unsound as written.** The row
+says *"element 3 of a hostile array fails on an existing code before any
+cap could."* Rejection is guaranteed — that half stands: the `sig_alg`
+band is 16 ids and v1 registers two, so a duplicate-free policy has ≤ 2
+elements and any longer array dies on
+`manifest-unregistered-alg-sig-policy` or
+`manifest-duplicate-alg-sig-policy`. But not **early**, and not "before
+any cap could fire": duplicate-freedom is checked in
+`ManifestBodyV1::new`, *after* the decode loop has materialised the
+list, so an all-registered hostile array (~16M repeats of a registered
+id inside a cap-sized manifest) is read and pushed to the end of the
+input first. The sound reason the non-cap stands — now the recorded one,
+at the `sig_policy` arm of `ManifestBodyV1::decode_v1` and in the
+error-code contract's 2026-08-01 entry — is the bound, not the timing:
+that work and the resulting vector are bounded by `MAX_MANIFEST_BYTES`
+(each element costs ≥ 1 wire byte), so a cap would save nothing that
+matters while minting a permanent code (D30 §3) for inputs that are
+already guaranteed-rejected. The early-failure claim **is** true for the
+row's two *maps* (`pubkeys`, `signatures`): strictly-ascending keys plus
+registration reject entry 3 (v1 registered set) during the walk itself.
+§3's conclusion is unchanged; only its argument moves.
+
+**2. Cap enforcement now also binds the direct-construction path.** This
+decision's frame — "every cap is enforced inside verify stage 1" — was
+also the *only* enforcement: `BundleV1::new`, `TsaAnchor::new`,
+`OtsAnchor::new`, `ReceiptRecord::new`, `CoveredReveal::new` and
+`ManifestBodyV1::new` checked none of §1's count/artifact caps, while
+the schema module docs claimed "constructible" and "decodable" were one
+predicate. So the seal side could assemble and encode an artifact no v1
+verifier — including antseal's own — can decode: permanently dead bytes
+on a pay-once network. The constructors now run the same checks with the
+same error variants, codes, and payloads (`check_section_cap` /
+`check_opaque_cap` in `bundle/schema.rs`; the cap block at the top of
+`ManifestBodyV1::new`), sourced from the same `cap()` tables the
+decoders read, so the two sides cannot drift. On the decode path the
+re-checks are unreachable — the walk enforced each cap at its array
+head/`bstr` before the constructor runs — so §5's precedence and every
+tamper row are byte-for-byte untouched. **Named residual**, recorded in
+the schema and body module docs rather than papered over:
+`MAX_BUNDLE_BYTES` and `MAX_MANIFEST_BYTES` are properties of *encoded*
+artifacts, which no constructor of parts can see; enforcing them at
+encode/seal time belongs to the M1/M3 pipelines and is raised as a task
+proposal in F41's report, not silently claimed here.

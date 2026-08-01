@@ -76,11 +76,14 @@
 //! A schema-invalid [`ManifestBodyV1`] cannot exist: every field is
 //! private and both construction paths — [`ManifestBodyV1::new`] (seal
 //! side) and [`ManifestBodyV1::decode`] (verify side) — funnel through the
-//! same `validate` pass, so "constructible" and "decodable" are the same
-//! predicate. Several rules are stronger still: they are unrepresentable
-//! rather than checked (see [`body::CanonMode`], [`body::FineTree`], and
-//! [`crate::crypto::disclosure::UnitBinding`], which carries `unit_commit`
-//! iff the unit is non-covered).
+//! same `validate` pass **and the same D10 count caps** (F41), so
+//! "constructible" and "decodable" agree up to one named residual:
+//! `MAX_MANIFEST_BYTES` is a property of the *encoded* envelope, checked
+//! on decode and owed by the seal pipeline at encode time (see
+//! [`ManifestBodyV1::new`]). Several rules are stronger still: they are
+//! unrepresentable rather than checked (see [`body::CanonMode`],
+//! [`body::FineTree`], and [`crate::crypto::disclosure::UnitBinding`],
+//! which carries `unit_commit` iff the unit is non-covered).
 //!
 //! # Wire integers are `u64`
 //!

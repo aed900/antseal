@@ -9,11 +9,16 @@
 //! embedded `bstr` makes that literal: [`Manifest::body_bytes`] hands
 //! back a sub-slice of the caller's input, zero-copy, so the bytes fed to
 //! [`crate::manifest::work_id`] and to signature verification are the
-//! received ones by construction rather than by convention. There is no
-//! public path from a decoded body back to bytes: [`ManifestBodyV1`] is
-//! not `Clone` and [`encode_body`](super::body::encode_body) consumes its
-//! argument, so re-encoding is a borrow-checker error, not a code-review
-//! finding.
+//! received ones by construction rather than by convention. In a
+//! production build there is also no path from a decoded body back to
+//! bytes: [`ManifestBodyV1`] derives `Clone` only under the
+//! dev-dependency-only `test-util` feature (a compile-time guard on the
+//! type enforces the absence everywhere else) and
+//! [`encode_body`](super::body::encode_body) consumes its argument, so in
+//! every shipped verifier re-encoding a received body is a compile
+//! error, not a code-review finding. Test builds re-open that path on
+//! purpose: the F16 round-trip properties are claims *about the
+//! encoder*, not verification paths (F41).
 //!
 //! # Two strict layers, two distinguishable error classes
 //!
@@ -161,7 +166,22 @@ impl<'b> Manifest<'b> {
     }
 
     /// The decoded body. Lent, never surrendered: the caller cannot move
-    /// or clone it, which is what makes re-encoding unreachable.
+    /// it out, and outside `test-util` builds cannot clone it either
+    /// ([`ManifestBodyV1`]'s gated derive and compile-time guard), which
+    /// is what makes re-encoding a received body unreachable in
+    /// production verifiers.
+    ///
+    /// The move half holds in **every** configuration:
+    ///
+    /// ```compile_fail,E0507
+    /// use antseal_core::manifest::{Manifest, ManifestBodyV1};
+    ///
+    /// fn steal(manifest: &Manifest<'_>) -> ManifestBodyV1 {
+    ///     // error[E0507]: cannot move out of a shared reference — the
+    ///     // owned body `encode_body` would need never escapes.
+    ///     *manifest.body()
+    /// }
+    /// ```
     #[must_use]
     pub const fn body(&self) -> &ManifestBodyV1 {
         &self.body

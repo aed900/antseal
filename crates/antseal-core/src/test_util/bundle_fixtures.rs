@@ -1417,24 +1417,29 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
     match set {
         AnchorSet::Empty => (Vec::new(), Vec::new(), None),
         AnchorSet::OneOtsTwoTsa => (
-            vec![OtsAnchor::new(
-                AnchorStatus::Pending,
-                OpaqueBytes::from_vec(b"fixture .ots artifact".to_vec()),
-                None,
-            )],
+            vec![
+                OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(b"fixture .ots artifact".to_vec()),
+                    None,
+                )
+                .expect("fixture .ots is under the D10 caps"),
+            ],
             vec![
                 TsaAnchor::new(
                     AnchorStatus::Proven,
                     OpaqueBytes::from_vec(b"fixture TSA token A".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                ),
+                )
+                .expect("fixture TSA anchor is under the D10 caps"),
                 TsaAnchor::new(
                     AnchorStatus::Proven,
                     OpaqueBytes::from_vec(b"fixture TSA token B".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                ),
+                )
+                .expect("fixture TSA anchor is under the D10 caps"),
             ],
             None,
         ),
@@ -1449,13 +1454,15 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
                         FIXTURE_BLOCK_HEADER,
                         FIXTURE_CLAIMED_TIME,
                     )),
-                ),
+                )
+                .expect("fixture .ots is under the D10 caps"),
                 // …and absent, in the same bundle.
                 OtsAnchor::new(
                     AnchorStatus::Pending,
                     OpaqueBytes::from_vec(b"fixture .ots artifact, pending".to_vec()),
                     None,
-                ),
+                )
+                .expect("fixture .ots is under the D10 caps"),
             ],
             vec![
                 // Intermediates present…
@@ -1467,14 +1474,16 @@ fn anchors(set: AnchorSet) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRec
                         OpaqueBytes::from_vec(b"fixture TSA intermediate A2".to_vec()),
                     ],
                     FIXTURE_CLAIMED_TIME,
-                ),
+                )
+                .expect("fixture TSA anchor is under the D10 caps"),
                 // …and absent, so both optional shapes are committed.
                 TsaAnchor::new(
                     AnchorStatus::ValidAtStampingCertSinceExpired,
                     OpaqueBytes::from_vec(b"fixture TSA token B".to_vec()),
                     Vec::new(),
                     FIXTURE_CLAIMED_TIME,
-                ),
+                )
+                .expect("fixture TSA anchor is under the D10 caps"),
             ],
             receipt.then(|| {
                 ReceiptRecord::new(

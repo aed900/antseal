@@ -75,6 +75,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::crypto::domain::MAX_DOMAIN_TAG;
 use crate::crypto::error::SigAlg;
 use crate::crypto::sig_policy::SigPolicy;
 use crate::manifest::{
@@ -538,6 +539,28 @@ fn check_case_behaviour(case: &serde_json::Value) -> Result<(), VectorError> {
             "anchor-digest",
             "SHA-256 of the committed envelope bytes is not the committed anchor_digest".to_owned(),
         ));
+    }
+
+    // The domain-tag disjointness `crypto::domain`'s docs promise F asserts
+    // on every vector (F41 made the promise true): both digest pre-images
+    // start with a CBOR *map* head, above the 0x00..=0x06 tag range — the
+    // property that lets `work_id`/`anchor_digest` hash untagged bytes
+    // (spec line 79). It is a property of the two pre-image languages, not
+    // of canonical items in general: uint 0 encodes as 0x00.
+    for (check, bytes) in [
+        ("body-clears-domain-tag-range", body_bytes),
+        (
+            "envelope-clears-domain-tag-range",
+            envelope_bytes.as_slice(),
+        ),
+    ] {
+        let head = bytes.first().copied();
+        if head.is_none_or(|h| h >> 5 != 5 || h <= MAX_DOMAIN_TAG) {
+            return Err(at(
+                check,
+                format!("pre-image head {head:?} is not a map head above MAX_DOMAIN_TAG"),
+            ));
+        }
     }
 
     // F7's separation property, stated as a claim about *this* manifest: a
