@@ -21,6 +21,13 @@ fuzz/coverage/
 # Devnet data (local Autonomi devnet + Anvil state; P16/P17)
 devnet-data/
 *.devnet/
+# The P16 launcher's repo-local environment export (`scripts/devnet/local-up`):
+# manifest + env file embed the funded Anvil dev key — a well-known public
+# constant, but key-shaped material is never committable regardless.
+# (`*.devnet/` above technically already matches `.devnet/` — `*` matches the
+# empty string in gitignore globs — but the safety rule at the top of this
+# file says deny-by-default patterns get stated explicitly, never inferred.)
+.devnet/
 
 # Wallet & key material
 *.key
