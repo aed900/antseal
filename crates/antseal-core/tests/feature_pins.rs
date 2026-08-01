@@ -432,10 +432,12 @@ fn pin_problem(name: &str, requirement: &str, policy_version: Option<&str>) -> O
 /// format commitment.
 #[test]
 fn nothing_is_exactly_pinned_without_a_policy_row() {
-    // The internal path dep: `=0.0.0` exists only so the requirement is never
+    // The internal path deps: `=0.0.0` exists only so the requirement is never
     // cargo's implicit `*`, which deny.toml's `wildcards = "deny"` rejects.
-    // It is not a third-party version commitment and has no policy row.
-    const NOT_A_THIRD_PARTY_PIN: &[&str] = &["antseal-core"];
+    // They are not third-party version commitments and have no policy rows.
+    // (`antseal-net` joined at S3 for its self-dev-dep `test-util` edge and
+    // `antseal-cli`'s M1 dev-dependency on the mock, D34's sub-finding.)
+    const NOT_A_THIRD_PARTY_PIN: &[&str] = &["antseal-core", "antseal-net"];
 
     let class = policy_exact_pin_class();
     let manifest = workspace_manifest();

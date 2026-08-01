@@ -11,9 +11,28 @@ rust-version.workspace = true
 # at S6 as a deliberate event; S2/S3 keep the trait + mock consumable
 # without it.
 
+# Test-support surface (S3), house pattern per antseal-core: `MockBackend`
+# and the std-only `block_on` test executor live in `src/test_util/` behind
+# this NON-DEFAULT feature. It activates ZERO optional dependencies — it
+# only compiles the mock — so default builds (and every downstream normal
+# edge) exclude it entirely. DEV-DEPENDENCY EDGES ONLY: downstream test
+# consumers (the `antseal_cli` pipeline tests, per D34's forced sub-finding
+# that a `#[cfg(test)]` mock is invisible across crate boundaries) enable it
+# as
+#   [dev-dependencies]
+#   antseal-net = { workspace = true, features = ["test-util"] }
+[features]
+test-util = []
+
 [dependencies]
 antseal-core.workspace = true
 thiserror.workspace = true
+
+# The self-dev-dep that switches `test-util` on for this crate's own test
+# targets (unit + integration) while leaving the default/normal graph
+# untouched — the same edge antseal-core carries for the same reason.
+[dev-dependencies]
+antseal-net = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

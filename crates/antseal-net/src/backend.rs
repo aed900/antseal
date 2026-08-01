@@ -132,26 +132,9 @@ pub trait StorageBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::block_on;
     use crate::{BlobCost, BlobQuote, GasSummary};
     use std::collections::BTreeMap;
-    use std::future::Future;
-    use std::pin::pin;
-    use std::task::{Context, Poll, Waker};
-
-    /// Minimal std-only executor for driving the trait's futures in
-    /// tests (sanctioned by the S2 task note: hand-rolled rather than a
-    /// runtime dep — pin governance). Our backends' futures never block
-    /// on external events, so polling with the no-op waker terminates.
-    fn block_on<F: Future>(future: F) -> F::Output {
-        let mut context = Context::from_waker(Waker::noop());
-        let mut future = pin!(future);
-        loop {
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(output) => return output,
-                Poll::Pending => std::thread::yield_now(),
-            }
-        }
-    }
 
     /// A canned backend proving the trait is implementable exactly as
     /// spec lines 63–66 shape it (the real impls land in S3/S6).

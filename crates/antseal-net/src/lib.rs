@@ -54,6 +54,13 @@ pub mod error;
 pub mod quote;
 pub mod receipt;
 
+// Test-support surface (S3): `MockBackend` + the std-only `block_on`
+// executor, exported across the crate boundary for `antseal_cli`'s
+// pipeline tests (D34's forced sub-finding). Non-default feature; zero
+// optional deps — see the feature comment in Cargo.toml.
+#[cfg(feature = "test-util")]
+pub mod test_util;
+
 pub use address::Address;
 pub use backend::StorageBackend;
 pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
