@@ -288,6 +288,26 @@ scrypt = { version = "=0.12.0", default-features = false }
 # already records (the ed25519-dalek/ml-dsa getrandom-0.4 line).
 getrandom = "=0.4.3"
 
+# No-echo terminal passphrase prompting (U7; channel decision D41 — the
+# interactive half; the non-interactive half is `--passphrase-fd`, std-only).
+# Exact-pinned on the zeroize-row precedent: not format-affecting, but it is
+# the rawest secret-path input surface in the product — the passphrase
+# transits its buffers before any type of ours can wrap it — so its version
+# moves only by deliberate §4 review. Verified current on crates.io
+# 2026-08-01 (7.5.4); RUSTSEC: no advisories on record. Mechanism argued at
+# U7: a true no-echo prompt requires termios (tcsetattr), which std does not
+# expose — the alternatives were this small vetted crate or first-party
+# libc `unsafe` under the workspace deny; the crate costs two packages
+# (rpassword + rtoolbox; libc is already in the graph via getrandom, and
+# rtoolbox's serde/serde_json resolve onto the existing exact pins).
+# Residue note, recorded honestly: rpassword's internal buffer hygiene is
+# its own (rtoolbox SafeString wipes its line buffer; the returned String
+# is moved straight into C's SecretBuf) — the prompt path's transient
+# residue is bounded by that crate, reviewed at this pin, and it restores
+# termios on drop even on panic. Consumed ONLY by the interactive prompt in
+# `antseal-cli/src/passphrase.rs`; machine mode never touches it (D51).
+rpassword = "=7.5.4"
+
 # Secret-hygiene zeroization (exact-pin class per the policy table: its drop
 # semantics are load-bearing for `W`/unit-key/passphrase handling, C5/C21).
 # `alloc` for Vec-backed SecretBuf; the `derive` feature is deliberately NOT

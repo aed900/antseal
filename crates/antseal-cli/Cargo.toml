@@ -45,6 +45,8 @@ getrandom.workspace = true
 chacha20poly1305.workspace = true
 zeroize.workspace = true
 rand_core.workspace = true
+# Interactive no-echo prompt only (U7/D41); machine mode never reaches it.
+rpassword.workspace = true
 
 [dev-dependencies]
 # Seeded deterministic CSPRNG for vault tests (house pattern; the

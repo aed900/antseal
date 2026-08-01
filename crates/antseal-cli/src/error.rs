@@ -131,6 +131,15 @@ pub enum PassphraseFailure {
     FdForbiddenByte,
     /// The fd exceeded the 1 KiB read cap.
     FdOverCap,
+    /// The interactive prompt returned an empty passphrase (parity with
+    /// the fd channel's empty rejection, U7).
+    PromptEmpty,
+    /// Reading from the terminal failed (EOF at the prompt, a TTY error).
+    PromptFailed,
+    /// Create-time confirmation did not match the first entry (the
+    /// double-entry exists to catch typos; only the prompt path has it —
+    /// fd input is not typed, D41 §5).
+    ConfirmMismatch,
 }
 
 impl PassphraseFailure {
@@ -148,6 +157,12 @@ impl PassphraseFailure {
             }
             PassphraseFailure::FdOverCap => {
                 "the --passphrase-fd input exceeded the 1 KiB cap (D41)"
+            }
+            PassphraseFailure::PromptEmpty => "the passphrase entered at the prompt was empty",
+            PassphraseFailure::PromptFailed => "reading the passphrase from the terminal failed",
+            PassphraseFailure::ConfirmMismatch => {
+                "the confirmation did not match the passphrase; nothing was created — re-run \
+                 and enter the same passphrase twice"
             }
         }
     }

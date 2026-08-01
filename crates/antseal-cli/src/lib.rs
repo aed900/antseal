@@ -22,6 +22,7 @@
 
 pub mod cli;
 pub mod error;
+pub mod passphrase;
 mod run;
 pub mod vault;
 
