@@ -280,6 +280,7 @@
   - Works fully offline: file:// or a no-network browser context completes verification incl. anchor checks
   - Malformed/oversized bundles produce a graceful typed-error display (tamper fixtures dropped onto the page)
   - No external resources fetched in offline mode (asserted via R27's network interception); no framework or bundler in the repo
+- Notes: **R54 (2026-08-01)**: at-cap bundles now verify in linear time (~0.13 s release native), but multi-second wasm verifies at cap remain plausible on slow devices — the page needs a stated threshold for a progress/busy affordance (a warning or spinner, never a verdict change; D10 §11's no-local-override rule). R58's collect-mode findings decision feeds the same rendering path.
 
 ### R24 — Implement the page's online mode: browser-fetch must-agree overlay, user-overridable endpoints
 - Milestone: M3
@@ -615,6 +616,39 @@
   - Vector committed + frozen + bit-matched; INDEX/coverage/cross-check green.
   - The R30 digest row and the vector agree byte-for-byte (one definition of the case).
 - Notes: XS by design — the fixture, catalogue case, and digest already exist; this is carriage, not construction.
+
+### R56 — Extend the scan-shape guard to the valid fully-revealed at-cap work
+- Milestone: M0 (post-freeze residue; the venue decision may move it to M1)
+- Size: S
+- Deps: R54
+- Discovered by: **R54** (2026-08-01).
+- Problem: `tests/verify_scan_shape.rs` guards the **no-reveal** at-cap bundle — the shape that sidesteps every reveals-driven term. U1's own shape (a valid **fully-revealed** at-cap work, ~18 MB of honest AEAD) exercises those terms at full count; post-R54 they are indexed too, but nothing guards them, and pre-R54 the `reveal_set` mirror pass alone could have reached ~7e13 scans on that shape.
+- Do: build the fully-revealed at-cap fixture (real ciphertexts and covers — heavy; R54's builder in `verify_scan_shape.rs` is the starting point and is documented as the tree's first fully valid at-cap work) and add the same machine-speed-free ratio guard. Decide the venue — release-profile assert or an opt-in lane — since debug wall-clock at this size may be minutes on CI; record the decision and the measured cost.
+- Accept:
+  - Ratio guard proven red against a temporarily re-introduced quadratic scan.
+  - Venue recorded with the CI time impact stated.
+
+### R57 — U17: `proof_unit_refs`' tautological arm gets the R54 treatment
+- Milestone: M0 (post-freeze residue)
+- Size: XS
+- Deps: R54
+- Spec: review U17
+- Discovered by: the **2026-07-31 adversarial review** (U17, `note`, lane-reported/unverified); promoted by **R54** (2026-08-01), whose `check_manifest_refs` documentation cross-references it.
+- Problem: `proof_unit_refs` is reportedly built from the covered reveals' own ids, making its "references revealed units only" check a tautology and its `UnknownUnitRef` arm pipeline-unreachable — the same shape as `check_manifest_refs`' arm, which R54 documented rather than removed because the code must stay emitted (D30 §3 / universe gate).
+- Do: re-verify U17 first (it is unverified). If confirmed, apply the same document-or-restructure treatment; check `unknown-unit-ref`'s other emission sites before touching anything.
+- Accept:
+  - The arm is documented unreachable-by-construction (or restructured with the code still emitted); universe gate green.
+  - The documentation cross-references R54's precedent so the two arms read as one policy.
+
+### R58 — Decide a findings bound for `verify_bundle_collecting` on hostile many-failure bundles
+- Milestone: decide by M3 (the collecting mode's consumers are the page and `--json` rendering)
+- Size: S
+- Deps: R54; D27
+- Discovered by: **R54** (2026-08-01).
+- Problem: `Mode::Collect` keeps checking units after failures (D27: rendering-only list, primary-first, first element equals the fail-fast error). A hostile at-cap bundle failing every unit accumulates an unbounded findings list — the memory-shape cousin of the scan-shape defect R54 fixed. The normative fail-fast mode is unaffected.
+- Do: decide — cap the collected list (first N plus a total count), or show the existing cap constants already bound it acceptably and record why. D27's first-element invariant must survive any mechanism.
+- Accept:
+  - The decision recorded as a dated D27 amendment; the mechanism (or the recorded no-mechanism argument) exercised by a test with a many-failure bundle.
 
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
