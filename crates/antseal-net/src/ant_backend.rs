@@ -136,6 +136,37 @@ const PER_TRANSFER_GAS: u64 = 220_000;
 /// observed node behavior.
 const PROOF_VALIDITY_WINDOW_SECS: u64 = 24 * 60 * 60;
 
+/// The session wallet's balances (task S8) — structured data for U14's
+/// consent render and `--json` (serde-serializable; no secret material:
+/// the wallet address is public chain data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BalanceReport {
+    /// The paying wallet's EVM address.
+    pub wallet: crate::network::EvmAddress20,
+    /// ANT (payment-token ERC-20) balance, atto-ANT (saturating at
+    /// `u128::MAX`).
+    pub ant_atto: u128,
+    /// ETH (gas) balance, wei (saturating at `u128::MAX`).
+    pub gas_wei: u128,
+}
+
+/// A passed preflight's numbers (task S8) — what the consent screen
+/// renders beside the quote. Failure is never a report: it is the
+/// distinct [`StorageError::InsufficientAnt`] /
+/// [`StorageError::InsufficientGas`] error instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PreflightReport {
+    /// The complete quote's storage cost (every blob in the handed-in
+    /// set — S8's completeness guarantee), atto-ANT.
+    pub required_ant_atto: u128,
+    /// The wallet's ANT balance, atto-ANT.
+    pub available_ant_atto: u128,
+    /// The quote's gas estimate for the batch payment tx(s), wei.
+    pub required_gas_wei: u128,
+    /// The wallet's ETH balance, wei.
+    pub available_gas_wei: u128,
+}
+
 /// Per-sub-batch journal capture hook (D37 Decision 2 / S7 timing
 /// contract): invoked with the **cumulative** receipt-so-far after each
 /// sub-batch tx lands — strictly before the next sub-batch is submitted —
@@ -336,6 +367,64 @@ impl AntCoreBackend {
         Ok(filled)
     }
 
+    /// ANT (ERC-20 `balanceOf`) and ETH (`eth_getBalance`) balances of
+    /// the configured session wallet (task S8) — read-only, over the
+    /// re-exported [`Wallet`]'s balance surface
+    /// (`evmlib-0.9.0/src/wallet.rs:88-95`).
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Network`] when either query cannot be answered.
+    pub async fn balances(&self) -> Result<BalanceReport, StorageError> {
+        let (ant_atto, gas_wei) = self.raw_balances().await?;
+        Ok(BalanceReport {
+            wallet: crate::network::EvmAddress20::from_bytes(self.wallet.address().0.0),
+            ant_atto,
+            gas_wei,
+        })
+    }
+
+    /// Payment preflight (task S8): compare the **complete** quote —
+    /// storage ANT for every blob in the handed-in set plus the
+    /// estimated gas for the batch payment tx(s) — against both
+    /// balances.
+    ///
+    /// Checked in a fixed, documented order: **ANT first** (the primary
+    /// cost), then gas — so a doubly-underfunded wallet reports the ANT
+    /// shortfall deterministically. `pay()` re-runs this internally
+    /// before moving any money, so a preflight-passed seal can only fail
+    /// on a balance that changed after consent (and then fails BEFORE
+    /// any transaction).
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::InsufficientAnt`] /
+    /// [`StorageError::InsufficientGas`] — distinct by type (the user
+    /// remedies them differently: acquire ANT vs bridge ETH);
+    /// [`StorageError::Network`] when balances cannot be read.
+    pub async fn preflight(&self, quote: &CostQuote) -> Result<PreflightReport, StorageError> {
+        let (available_ant_atto, available_gas_wei) = self.raw_balances().await?;
+        let report = PreflightReport {
+            required_ant_atto: quote.total_ant_atto,
+            available_ant_atto,
+            required_gas_wei: quote.gas_estimate_wei,
+            available_gas_wei,
+        };
+        if report.available_ant_atto < report.required_ant_atto {
+            return Err(StorageError::InsufficientAnt {
+                required_atto: report.required_ant_atto,
+                available_atto: report.available_ant_atto,
+            });
+        }
+        if report.available_gas_wei < report.required_gas_wei {
+            return Err(StorageError::InsufficientGas {
+                required_wei: report.required_gas_wei,
+                available_wei: report.available_gas_wei,
+            });
+        }
+        Ok(report)
+    }
+
     // -- internal ----------------------------------------------------------
 
     /// Defense-in-depth cap assert at the adapter boundary (D32 Decision
@@ -397,26 +486,6 @@ impl AntCoreBackend {
                 reason: format!("ETH balance query failed: {e}"),
             })?;
         Ok((saturate_u256(ant), saturate_u256(gas)))
-    }
-
-    /// The distinct-shortfall check `pay()` runs before moving money
-    /// (S8 exposes the public preflight over the same logic). ANT is
-    /// checked first (deterministic order, documented in S8).
-    async fn check_shortfalls(&self, quote: &CostQuote) -> Result<(), StorageError> {
-        let (ant, gas) = self.raw_balances().await?;
-        if ant < quote.total_ant_atto {
-            return Err(StorageError::InsufficientAnt {
-                required_atto: quote.total_ant_atto,
-                available_atto: ant,
-            });
-        }
-        if gas < quote.gas_estimate_wei {
-            return Err(StorageError::InsufficientGas {
-                required_wei: quote.gas_estimate_wei,
-                available_wei: gas,
-            });
-        }
-        Ok(())
     }
 
     /// Exact-allowance approve (module docs): if the vault's current
@@ -638,9 +707,10 @@ impl StorageBackend for AntCoreBackend {
             staged.prepared.clear();
         }
 
-        // 2. Distinct-shortfall preflight before any money moves (S8's
-        //    logic; also run by the public preflight).
-        self.check_shortfalls(quote).await?;
+        // 2. Distinct-shortfall preflight before any money moves — the
+        //    same check the public S8 `preflight` exposes, re-run here so
+        //    pay is safe even when the pipeline skipped it.
+        self.preflight(quote).await?;
 
         // 3. The transfer list: every non-zero entry, in blob order —
         //    upstream pays the price-sorted median 3× and zeros the rest
@@ -1400,6 +1470,32 @@ mod tests {
             Err(StorageError::Quote { .. })
         ));
         assert_eq!(saturate_u256(over), u128::MAX);
+    }
+
+    #[test]
+    fn balance_and_preflight_reports_serialize_for_json_consumers() {
+        // S8 accept: structured data consumable by U's consent UX and
+        // `--json`. serde_json is the pinned evidence codec (dev-dep).
+        let balances = BalanceReport {
+            wallet: crate::network::EvmAddress20::from_bytes([0xAB; 20]),
+            ant_atto: 1_000_000,
+            gas_wei: 42,
+        };
+        let json = serde_json::to_value(balances).expect("serializes");
+        assert_eq!(json["ant_atto"], 1_000_000);
+        assert_eq!(json["gas_wei"], 42);
+
+        let report = PreflightReport {
+            required_ant_atto: 900,
+            available_ant_atto: 1_000_000,
+            required_gas_wei: 40,
+            available_gas_wei: 42,
+        };
+        let json = serde_json::to_value(report).expect("serializes");
+        assert_eq!(json["required_ant_atto"], 900);
+        assert_eq!(json["available_gas_wei"], 42);
+        let back: PreflightReport = serde_json::from_value(json).expect("round-trips");
+        assert_eq!(back, report);
     }
 
     #[test]

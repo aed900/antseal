@@ -160,6 +160,24 @@ impl fmt::Debug for EvmAddress20 {
     }
 }
 
+/// Serde as the canonical **string** form (`0x` + lowercase hex, the
+/// `Display` rendering): an EVM address is an interchange identifier and
+/// the S8 balance/preflight reports feed `--json` consumers, where a
+/// 20-number byte array would be hostile. Deserialization runs the same
+/// [`EvmAddress20::parse`] every other input path uses.
+impl serde::Serialize for EvmAddress20 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EvmAddress20 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Why an EVM address string failed to parse. Structural only — the
 /// offending input is never echoed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

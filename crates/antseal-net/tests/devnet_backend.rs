@@ -457,6 +457,176 @@ async fn devnet_s7_completeness_capture_consistency_and_backfill() {
     assert_eq!(addresses.len(), 2);
 }
 
+// ===========================================================================
+// S8 — balances, preflight, distinct shortfalls, paid ≤ quoted
+// ===========================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s8_balances_preflight_distinct_shortfalls_and_paid_within_quote() {
+    use alloy::primitives::U256;
+
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("funded backend connects");
+    let dev_wallet = key.evm_wallet(&config).expect("dev wallet builds");
+
+    // ── Balances: the funded dev wallet reports both assets ──────────
+    let balances = backend.balances().await.expect("balance query");
+    assert_eq!(balances.wallet, key.address(), "reports THIS wallet");
+    assert!(balances.ant_atto > 0, "premined ANT visible");
+    assert!(balances.gas_wei > 0, "Anvil ETH visible");
+
+    // ── True-complete quote + passing preflight ──────────────────────
+    let batch = test_blobs(&env, "s8-seal", &[600, 1_200]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    assert_eq!(
+        quote.blobs.len(),
+        batch.len(),
+        "the quote covers exactly the handed-in blob set (S8 completeness)"
+    );
+    let report = backend.preflight(&quote).await.expect("preflight passes");
+    assert_eq!(report.required_ant_atto, quote.total_ant_atto);
+    assert_eq!(report.required_gas_wei, quote.gas_estimate_wei);
+    assert_eq!(report.available_ant_atto, balances.ant_atto);
+    assert_eq!(report.available_gas_wei, balances.gas_wei);
+
+    // ── Preflight-passed seal completes with paid ≤ quoted, asserted
+    //    via Anvil balance deltas ───────────────────────────────────────
+    let ant_before = dev_wallet.balance_of_tokens().await.expect("ANT before");
+    let eth_before = dev_wallet
+        .balance_of_gas_tokens()
+        .await
+        .expect("ETH before");
+    let receipt = backend.pay(&quote).await.expect("pay");
+    let addresses = backend
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize");
+    assert_eq!(addresses.len(), batch.len());
+    let ant_after = dev_wallet.balance_of_tokens().await.expect("ANT after");
+    let eth_after = dev_wallet.balance_of_gas_tokens().await.expect("ETH after");
+
+    let ant_paid = ant_before - ant_after;
+    assert_eq!(
+        ant_paid,
+        U256::from(receipt.storage_cost_atto),
+        "on-chain ANT delta equals the receipt's storage cost"
+    );
+    assert!(
+        ant_paid <= U256::from(quote.total_ant_atto),
+        "paid ANT ≤ quoted ANT"
+    );
+    let eth_paid = eth_before - eth_after;
+    assert_eq!(
+        eth_paid,
+        U256::from(receipt.gas.gas_cost_wei),
+        "on-chain ETH delta equals the receipt's gas summary (approve + payment txs)"
+    );
+    assert!(
+        eth_paid <= U256::from(quote.gas_estimate_wei),
+        "actual gas ≤ the quote-time estimate (paid {eth_paid} vs estimate {})",
+        quote.gas_estimate_wei
+    );
+
+    // ── InsufficientAnt: a fresh wallet holding ETH but NO ANT ───────
+    // (funding-by-construction — the same below-requirement state the
+    // entry's "drain" wording targets, without mutating the shared dev
+    // wallet other tests depend on.)
+    let ant_less = WalletKey::generate().expect("keygen");
+    dev_wallet
+        .transfer_gas_tokens(
+            alloy::primitives::Address::from(*ant_less.address().as_bytes()),
+            U256::from(10u128.pow(17)), // 0.1 ETH — plenty of gas, zero ANT
+        )
+        .await
+        .expect("fund gas");
+    let ant_less_backend = AntCoreBackend::connect(&config, &ant_less)
+        .await
+        .expect("ANT-less backend connects");
+    let poor_quote = ant_less_backend
+        .quote_batch(&test_blobs(&env, "s8-antless", &[500]))
+        .await
+        .expect("quoting needs no balance");
+    let err = ant_less_backend
+        .preflight(&poor_quote)
+        .await
+        .expect_err("ANT shortfall");
+    match &err {
+        StorageError::InsufficientAnt {
+            required_atto,
+            available_atto,
+        } => {
+            assert_eq!(*required_atto, poor_quote.total_ant_atto);
+            assert_eq!(*available_atto, 0, "no ANT was ever sent to this wallet");
+        }
+        other => panic!("expected InsufficientAnt, got {other:?}"),
+    }
+    // Actionable, hash-free, key-free message.
+    let message = err.to_string();
+    assert!(message.contains("insufficient ANT"), "{message}");
+    assert!(!message.contains("0x"), "no hex material: {message}");
+    // pay() refuses identically, BEFORE any transaction (S8 guarantee:
+    // no post-consent payment beyond the quote — even a skipped
+    // preflight cannot move money it cannot cover).
+    let nonce_before = wallet_nonce(&ant_less_backend, &env).await;
+    let pay_err = ant_less_backend
+        .pay(&poor_quote)
+        .await
+        .expect_err("pay refuses the same way");
+    assert!(matches!(pay_err, StorageError::InsufficientAnt { .. }));
+    assert_eq!(
+        wallet_nonce(&ant_less_backend, &env).await,
+        nonce_before,
+        "no transaction was submitted"
+    );
+
+    // ── InsufficientGas: a fresh wallet holding ANT but NO ETH ───────
+    let gas_less = WalletKey::generate().expect("keygen");
+    dev_wallet
+        .transfer_tokens(
+            alloy::primitives::Address::from(*gas_less.address().as_bytes()),
+            U256::from(10u128.pow(18)), // 1 ANT — plenty of storage budget
+        )
+        .await
+        .expect("fund ANT");
+    let gas_less_backend = AntCoreBackend::connect(&config, &gas_less)
+        .await
+        .expect("gas-less backend connects");
+    let gasless_quote = gas_less_backend
+        .quote_batch(&test_blobs(&env, "s8-gasless", &[500]))
+        .await
+        .expect("quoting needs no balance");
+    let err = gas_less_backend
+        .preflight(&gasless_quote)
+        .await
+        .expect_err("gas shortfall");
+    match &err {
+        StorageError::InsufficientGas {
+            required_wei,
+            available_wei,
+        } => {
+            assert_eq!(*required_wei, gasless_quote.gas_estimate_wei);
+            assert_eq!(*available_wei, 0, "no ETH was ever sent to this wallet");
+        }
+        other => panic!("expected InsufficientGas, got {other:?}"),
+    }
+    let message = err.to_string();
+    assert!(message.contains("insufficient gas"), "{message}");
+    assert!(!message.contains("0x"), "no hex material: {message}");
+
+    // The two shortfalls are distinct BY TYPE (S8 accept) — the ANT-less
+    // wallet with gas reports ANT, the gas-less wallet with ANT reports
+    // gas; neither is a string comparison.
+    assert!(matches!(pay_err, StorageError::InsufficientAnt { .. }));
+    assert!(matches!(err, StorageError::InsufficientGas { .. }));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
 async fn devnet_s7_multi_sub_batch_sequential_txs_with_capture_hook() {
