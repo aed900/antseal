@@ -23,16 +23,18 @@
 //! upstream's timestamped quotes do, which is what makes the D36
 //! "a journaled quote is never paid" tests meaningful.
 //!
-//! # Addresses — the one stand-in, and its S4 seam
+//! # Addresses — the real rule, by default (S21)
 //!
-//! The real address rule is BLAKE3-256 of the blob bytes (D32), owned by
-//! S4's `compute_storage_address` in `antseal-core` — **not yet landed**
-//! when S3 executed. The mock therefore takes an injectable address
-//! function ([`MockBackend::with_address_fn`]); its default is a
-//! deterministic non-cryptographic stand-in that is NOT the network rule.
-//! Pipeline tests that compare manifest-recorded addresses against
-//! backend-returned ones must inject S4's function (task S21 flips the
-//! default to it once S4 lands, deleting the stand-in).
+//! The default address function **is the network rule**: S4's
+//! [`antseal_core::storage::compute_storage_address`] — BLAKE3-256 of the
+//! blob bytes (D32) — so manifest-recorded addresses (S4-computed) and
+//! mock-returned ones agree with no per-test wiring, exactly as they do
+//! against the real backend (whose upstream computes the same BLAKE3
+//! address; S9 asserts that equality on a devnet).
+//! [`MockBackend::with_address_fn`] remains for tests that deliberately
+//! need a divergent rule (e.g. simulating a backend that disagrees with
+//! the manifest). S3's original non-cryptographic stand-in default is
+//! deleted (task S21).
 //!
 //! # Faults
 //!
@@ -151,21 +153,22 @@ impl Default for MockBackend {
 }
 
 impl MockBackend {
-    /// A mock with the default (stand-in) address function, the upstream
+    /// A mock with the real (S4/D32) address function, the upstream
     /// 256-transfer sub-batch cap, and a base price of 100 atto-ANT.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            address_fn: standin_address,
+            address_fn: real_storage_address,
             max_transfers_per_tx: DEFAULT_MAX_TRANSFERS_PER_TX,
             base_price_atto: 100,
             inner: Mutex::new(Inner::default()),
         }
     }
 
-    /// Replace the blob→address function (module docs: inject S4's
-    /// `compute_storage_address` wherever manifest-recorded addresses
-    /// must agree with backend-returned ones).
+    /// Replace the blob→address function. The default is already the real
+    /// network rule (module docs); inject only where a test deliberately
+    /// needs a **divergent** rule — e.g. a backend whose addresses
+    /// disagree with the manifest's S4-computed ones.
     #[must_use]
     pub fn with_address_fn(mut self, address_fn: fn(&[u8]) -> Address) -> Self {
         self.address_fn = address_fn;
@@ -680,12 +683,20 @@ fn synthetic_proof_bytes(address: Address, tx_map: &BTreeMap<QuoteHash, TxHash>)
     bytes
 }
 
-/// The default blob→address stand-in (module docs): deterministic and
-/// well-dispersed but **non-cryptographic and NOT the network's
-/// BLAKE3-256 rule** — S21 replaces it with S4's
-/// `compute_storage_address` as the default.
-fn standin_address(bytes: &[u8]) -> Address {
-    Address::from_bytes(mock_digest_tagged(b"mock-address", &[bytes]))
+/// The default blob→address function: **the real network rule** — S4's
+/// `compute_storage_address`, BLAKE3-256 of the blob bytes (D32), converted
+/// at this crate's boundary type.
+///
+/// The cap rejection cannot fire through [`StorageBackend`] methods
+/// ([`Blob`]'s constructor refuses over-cap bytes), so the `expect` is a
+/// test-infrastructure contract, not a reachable library panic: only
+/// [`MockBackend::preload_third_party`] accepts raw bytes, and a test
+/// seeding an unstorable >4 MiB chunk is itself wrong (no such chunk can
+/// exist on the network to be "already stored").
+fn real_storage_address(bytes: &[u8]) -> Address {
+    antseal_core::storage::compute_storage_address(bytes)
+        .map(Address::from)
+        .expect("mock address input exceeds MAX_CHUNK_SIZE — build inputs via Blob::new")
 }
 
 /// 32-byte deterministic digest: four FNV-1a-64 lanes with distinct
@@ -726,6 +737,32 @@ mod tests {
             .iter()
             .map(|&(fill, len)| Blob::new(vec![fill; len]).expect("test blob under cap"))
             .collect()
+    }
+
+    #[test]
+    fn default_addresses_are_s4_compute_storage_address_byte_for_byte() {
+        // S21 accept: the mock's default rule IS the network rule. Ladder
+        // includes the 272-byte smallest-padded-unit ciphertext shape and
+        // brackets a BLAKE3 chunk boundary.
+        let mock = MockBackend::new();
+        for len in [0usize, 1, 272, 1023, 1024, 1025, 4096] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            let expected = antseal_core::storage::compute_storage_address(&bytes)
+                .expect("ladder stays under the cap");
+            let via_default = mock.preload_third_party(&bytes);
+            assert_eq!(
+                via_default,
+                Address::from(expected),
+                "mock default address diverges from S4 at len {len}"
+            );
+        }
+        // And through the full trait path, not just the preload helper.
+        let blob = Blob::new(vec![0xC3; 272]).expect("under cap");
+        let quote = block_on(mock.quote_batch(std::slice::from_ref(&blob))).expect("quote");
+        let s4 = antseal_core::storage::compute_storage_address(blob.as_bytes())
+            .expect("under cap")
+            .into();
+        assert_eq!(quote.blobs[0].address, s4);
     }
 
     #[test]
