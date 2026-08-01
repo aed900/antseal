@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 antseal-core.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -51,7 +51,14 @@
 //!   anchor stage (M0: `absent` per artifact). [`VerifyStage`] is that
 //!   order as a value. Everything in this module is WASM-safe: pure
 //!   data, no I/O, no async.
+//!
+//! - [`aggregate`] (task A1) — the minimal anchor aggregate over a
+//!   report's per-anchor slots: the headline-eligibility predicate and
+//!   the zero-headline-eligible (UNANCHORED) flag, so the M1 E2E can
+//!   library-verify a `--no-anchor` seal before A18 (M2) and R17 (M3).
+//!   Derived data only — never part of the serialized report bytes.
 
+pub mod aggregate;
 pub mod coherence;
 pub mod error;
 pub mod file_stages;
@@ -60,6 +67,7 @@ pub mod report;
 pub mod structural;
 pub mod unit_stages;
 
+pub use aggregate::{AnchorAggregate, aggregate_anchors, headline_eligible};
 pub use coherence::{
     CoherenceBundleView, CoherenceUnit, RevealSection, RevealedUnitRef, check_coherence,
     check_reveal_sections, check_touched_coverage,
