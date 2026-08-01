@@ -234,6 +234,60 @@ fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-65
 # (policy §3). RUSTSEC check 2026-07-27: no advisories on record.
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 
+# --- Vault KDF stack (exact-pin class: vault format; decision D40, ---
+# --- docs/decisions/D40-vault-kdf-selection.md; landed with U6) ---
+# KDF output bytes are vault-format bytes: a crate swap or bump that changes
+# output silently means every existing vault stops opening. Both KDF crates
+# are therefore exact-pinned, and RFC 9106 / RFC 7914 known-answer vectors
+# are committed (crates/antseal-cli/tests/vault_encryption.rs) so drift is
+# loud. Re-verified current on crates.io at pin time 2026-08-01 (D40 §crate
+# selection's "re-verify at pin time" clause): argon2 0.6.0 final is NOT out
+# — 0.6.0-rc.8 is still the newest release — so the rc pin stands with the
+# ml-dsa-precedent rc discipline (exact pin + RUSTSEC/GHSA watch, D40).
+#
+# argon2: the stable 0.5.3 is REJECTED (D40) — it drags a second
+# blake2 0.10/digest 0.10/block-buffer 0.10 stack into the graph with no
+# wiping story for the passphrase its buffers hold. 0.6.0-rc.8 rides the
+# digest 0.11 generation our sha2/hkdf/hmac pins already lock. Features:
+# default OFF (drops `alloc` -> we allocate the KDF arena ourselves,
+# fallibly, for D40 §2's typed low-RAM error; drops `getrandom` and
+# `password-hash` -> parameters live in our AAD-bound vault header, never
+# PHC strings); `zeroize` ON (wipes argon2's own initial_hash/blockhash
+# temporaries — measured load-bearing, see the blake2 note below).
+argon2 = { version = "=0.6.0-rc.8", default-features = false, features = ["zeroize"] }
+# blake2 is argon2's hash core (H0 sees the passphrase verbatim). Declared
+# directly for exactly one reason — the hmac-declaration precedent: argon2's
+# own `zeroize` feature does NOT forward blake2's (index metadata verified
+# 2026-08-01: argon2/zeroize = ["dep:zeroize"], blake2 dep carries no
+# features), and blake2's wiping `Drop` on the BLAKE2b core state
+# (`self.h.zeroize(); self.t.zeroize()`, blake2-0.11.0-rc.6/src/macros.rs:
+# 250-255) is gated on **blake2's own** `zeroize` feature — the same
+# marker-vs-drop-glue split D88 measured for sha2. Without this line the
+# passphrase-derived chaining state of every Argon2id H0 computation
+# survives its drop. The D88-style residue probe
+# (crates/antseal-cli/tests/kdf_residue.rs) is the behavioral guard; it was
+# proven RED with this feature removed before being believed green.
+# 0.11.0-rc.6 is what argon2's `^0.11.0-rc.5` resolves to today, pinned so
+# an upstream rc bump is a deliberate event; its digest requirement (`^0.11`)
+# unifies with the locked digest 0.11.3 — no second digest generation.
+blake2 = { version = "=0.11.0-rc.6", default-features = false, features = ["zeroize"] }
+# scrypt (the explicit-only alternative KDF, D40): stable, resolves onto our
+# exact sha2 =0.11.0 pin including the D88 zeroize drop-glue, adding no
+# second digest generation. Features: default OFF per the crate's own
+# low-level-usage guidance — `password-hash`/`kdf`/`mcf` stay off (AAD-bound
+# header, not PHC strings). Honest limit, recorded: scrypt 0.12.0 has no
+# zeroize feature at all — its internal B/V work buffers (password-derived,
+# 1 GiB at the D40 floor) are freed unwiped; the passphrase itself only
+# transits pbkdf2_hmac<Sha256>, whose state the sha2/zeroize pin wipes.
+scrypt = { version = "=0.12.0", default-features = false }
+# OS-CSPRNG wiring for the CLI (exact-pin class: secret-generation surface —
+# vault salts and record nonces are drawn from it; same rationale family as
+# the rand_core row). antseal-core stays injected-RNG-only by construction
+# (C5); the CLI is the sanctioned production caller that injects the OS
+# source, and this is its backend. 0.4.3 = the version the locked graph
+# already records (the ed25519-dalek/ml-dsa getrandom-0.4 line).
+getrandom = "=0.4.3"
+
 # Secret-hygiene zeroization (exact-pin class per the policy table: its drop
 # semantics are load-bearing for `W`/unit-key/passphrase handling, C5/C21).
 # `alloc` for Vec-backed SecretBuf; the `derive` feature is deliberately NOT
@@ -312,3 +366,38 @@ unsafe_code = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "warn"
+
+# ----------------------------------------------------------------------------
+# Dev/test optimization overrides for the memory-hard KDF stack (U6).
+# Argon2id at the D40 floor touches 256 MiB three times per derivation and
+# scrypt-at-floor streams 1 GiB; unoptimized these turn the U6 KATs and
+# vault round-trip tests from seconds into minutes. Optimization level
+# changes no output byte — the committed RFC 9106/7914 known-answer vectors
+# are exactly the tests that would catch it if it could — and debug
+# assertions stay on for every workspace crate (these are all external
+# dependencies). Measured on this 2-core host (2026-08-01), per derivation
+# at the frozen parameters: Argon2id 9.2 s unoptimized debug vs 0.7 s with
+# these overrides (0.68 s release); scrypt 64 s vs 2.4 s (2.4 s release) —
+# the U6 suite (~12 Argon2id + 3 scrypt derivations) would cost ~5 min
+# unoptimized and runs in ~23 s with the overrides.
+# ----------------------------------------------------------------------------
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
