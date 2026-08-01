@@ -408,7 +408,7 @@ pub enum CliError {
         "this vault was created by a newer antseal (vault format v{found}; this build \
          supports up to v{supported}): upgrade antseal instead of downgrading the vault"
     )]
-    VaultNewerVersion { found: u32, supported: u32 },
+    VaultNewerVersion { found: u64, supported: u32 },
 
     /// Distinct from gas by spec (core flow 1): the ANT token balance
     /// cannot cover the quote.
@@ -511,7 +511,7 @@ pub enum CliError {
         "this export file was written by a newer antseal (export format v{found}; this \
          build supports up to v{supported}): upgrade antseal to import it"
     )]
-    ImportNewerVersion { found: u32, supported: u32 },
+    ImportNewerVersion { found: u64, supported: u32 },
 }
 
 impl CliError {

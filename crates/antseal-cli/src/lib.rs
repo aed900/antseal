@@ -23,6 +23,7 @@
 pub mod cli;
 pub mod error;
 mod run;
+pub mod vault;
 
 use std::process::ExitCode;
 
