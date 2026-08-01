@@ -720,6 +720,66 @@ pub const fn participates_in_concat(kind: UnitKind) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// the raw-mirror resolution (R53)
+// ---------------------------------------------------------------------------
+
+/// A unit as [`resolve_raw_mirror`] examines it: which file owns it, and its
+/// wire kind.
+///
+/// Implemented by R2's [`VerifiedUnitBytes`] (the input to the full-reveal
+/// content check) and by the pipeline's manifest-row type (the input to the
+/// report's reveal set), so **both** consumers of "the file's raw mirror"
+/// resolve it through the same function and cannot drift.
+pub trait MirrorCandidate {
+    /// The owning `file_id`.
+    fn owning_file(&self) -> u64;
+    /// The unit's wire kind.
+    fn unit_kind(&self) -> UnitKind;
+}
+
+impl MirrorCandidate for VerifiedUnitBytes<'_> {
+    fn owning_file(&self) -> u64 {
+        self.file_id
+    }
+
+    fn unit_kind(&self) -> UnitKind {
+        self.kind
+    }
+}
+
+/// **The one resolution of "this file's raw mirror"** (R53).
+///
+/// Selection is by *kind*, through the concat-exemption predicate — a
+/// mirror is by definition the unit whose bytes do not enter the file's
+/// concatenation domain (G7's one-definition rule; never by position). The
+/// **first** candidate in iteration order wins, and both callers iterate
+/// manifest-unit-order collections over the same revealed population, so
+/// the answer is one object everywhere it is asked.
+///
+/// D23 clause 3 makes a second mirror per file unrepresentable in any
+/// decoded manifest (F40's `manifest-multiple-raw-mirrors` fires at layer
+/// 3), so first-wins is a *defined answer for direct pub-API drives*, not a
+/// behavioral fork. It exists because the pre-R53 code had two independent
+/// resolutions — the content check took the first mirror, the report's
+/// reveal set kept the last — and on a hand-built two-mirror unit table the
+/// checked mirror and the reported mirror were different objects
+/// (2026-07-31 review, findings 1–3). An agreement enforced only by prose
+/// is how that happened; this accessor is the enforcement, and
+/// `the_mirror_resolution_has_exactly_one_definition` (tests) pins that no
+/// second resolution path reappears.
+pub fn resolve_raw_mirror<'a, T>(
+    file_id: u64,
+    candidates: impl IntoIterator<Item = &'a T>,
+) -> Option<&'a T>
+where
+    T: MirrorCandidate + 'a,
+{
+    candidates
+        .into_iter()
+        .find(|unit| unit.owning_file() == file_id && !participates_in_concat(unit.unit_kind()))
+}
+
+// ---------------------------------------------------------------------------
 // stage 1: classification + the material rules (D28 rows 1–5, +6)
 // ---------------------------------------------------------------------------
 
@@ -1103,8 +1163,10 @@ pub fn check_raw_mirror(
 /// mirror's `raw_commit` opening cannot be invoked without the material, so
 /// forgetting a cross-check is a compile error, not a silent acceptance.
 ///
-/// The file's revealed mirror, if any, is found **by `kind`** among the
-/// verified units — never by position.
+/// The file's revealed mirror, if any, is found by [`resolve_raw_mirror`]
+/// — by `kind` among the verified units, never by position, and through
+/// the **same accessor** the report's reveal set calls (R53), so the
+/// mirror rows 9–10 check is the mirror the report names.
 ///
 /// # Errors
 ///
@@ -1122,10 +1184,7 @@ pub fn check_full_reveal_content(
     check_concat_commit(evidence, &content)?;
     check_fine_root_rebuild(evidence, &content)?;
 
-    if let Some(mirror) = units
-        .iter()
-        .find(|unit| unit.file_id == evidence.file_id() && !participates_in_concat(unit.kind))
-    {
+    if let Some(mirror) = resolve_raw_mirror(evidence.file_id(), units) {
         check_raw_mirror(evidence, mirror.bytes, &content)?;
     }
     Ok(())
@@ -2498,5 +2557,120 @@ mod tests {
         assert_eq!(fixture.fine_root, Some(*root.as_bytes()));
         let material = [fixture.material()];
         run(&fixture, 1, &[0], &material).expect("the honest rebuild matches");
+    }
+
+    // -----------------------------------------------------------------
+    // R53: the one raw-mirror resolution
+    // -----------------------------------------------------------------
+
+    /// The accessor selects by *kind* — never by position — scoped to the
+    /// asked-for file, and takes the **first** candidate in iteration
+    /// order, so its answer is deterministic even on a two-mirror table
+    /// (unreachable from any decoded manifest since F40's
+    /// `manifest-multiple-raw-mirrors`, but reachable through the pub
+    /// API, which is exactly where the pre-R53 first-wins/last-wins
+    /// divergence lived).
+    #[test]
+    fn resolve_raw_mirror_selects_by_kind_first_wins_per_file() {
+        let unit = |unit_id, file_id, kind| VerifiedUnitBytes {
+            unit_id,
+            file_id,
+            kind,
+            range_start: 0,
+            bytes: &[],
+        };
+        let units = [
+            unit(0, 0, UnitKind::Normal),
+            unit(1, 1, UnitKind::RawMirror), // another file's mirror
+            unit(2, 0, UnitKind::RawMirror), // file 0's mirror — first
+            unit(3, 0, UnitKind::RawMirror), // hand-built second mirror
+        ];
+        let id_of = |unit: Option<&VerifiedUnitBytes<'_>>| unit.map(|unit| unit.unit_id);
+
+        assert_eq!(id_of(resolve_raw_mirror(0, &units)), Some(2), "first wins");
+        assert_eq!(id_of(resolve_raw_mirror(1, &units)), Some(1), "per file");
+        assert_eq!(id_of(resolve_raw_mirror(2, &units)), None, "no such file");
+        assert_eq!(
+            id_of(resolve_raw_mirror(0, &units[..1])),
+            None,
+            "normal units are never a mirror, whatever their position"
+        );
+    }
+
+    /// **R53's structural pin: a second mirror-resolution path turns this
+    /// red.** The 2026-07-31 review (findings 1–3) found the content check
+    /// and the report each resolving "the file's mirror" with its own
+    /// predicate — first-wins vs last-wins — an agreement held only by
+    /// prose, exactly like the D23 clause 3 rule F40 had to retrofit. The
+    /// pin: across the two consumers' production source,
+    ///
+    /// 1. the negated concat-exemption — the mirror *selection* predicate —
+    ///    appears exactly once, inside `resolve_raw_mirror`;
+    /// 2. the report side keeps no `RawMirror` kind-test of its own outside
+    ///    `UnitRow::kind`'s wire projection;
+    /// 3. both consumers actually call the accessor.
+    ///
+    /// If this fails on a legitimate refactor, route the new code through
+    /// [`resolve_raw_mirror`] instead of updating the counts.
+    #[test]
+    fn the_mirror_resolution_has_exactly_one_definition() {
+        // Production source only: everything before the tests module.
+        let non_test = |source: &str| source.split("#[cfg(test)]").next().unwrap_or("").to_owned();
+        let stages = non_test(include_str!("file_stages.rs"));
+        let pipeline = non_test(include_str!("pipeline.rs"));
+        let count = |haystack: &str, needle: &str| haystack.matches(needle).count();
+
+        // (1) The selection predicate exists once, in the accessor.
+        assert_eq!(
+            count(&stages, "!participates_in_concat("),
+            1,
+            "a second mirror-selection predicate appeared in file_stages.rs — \
+             resolve it through resolve_raw_mirror (R53)"
+        );
+        assert_eq!(
+            count(&pipeline, "!participates_in_concat("),
+            0,
+            "a mirror-selection predicate appeared in pipeline.rs — \
+             resolve it through resolve_raw_mirror (R53)"
+        );
+        let accessor_body = stages
+            .split("pub fn resolve_raw_mirror")
+            .nth(1)
+            .and_then(|after| after.split("\n}").next())
+            .expect("resolve_raw_mirror is defined in file_stages.rs");
+        assert_eq!(
+            count(accessor_body, "!participates_in_concat("),
+            1,
+            "the one selection predicate must live inside resolve_raw_mirror"
+        );
+
+        // (2) No report-side kind-test: with the report's own
+        // `RawMirrorReveal` type name masked out, every `RawMirror` token
+        // in pipeline.rs sits inside `UnitRow::kind`'s wire projection.
+        let masked = pipeline.replace("RawMirrorReveal", "");
+        let projection = masked
+            .split("const fn kind(&self) -> UnitKind {")
+            .nth(1)
+            .and_then(|after| after.split("\n    }").next())
+            .expect("UnitRow::kind's wire projection exists");
+        assert_eq!(
+            count(&masked, "RawMirror"),
+            count(projection, "RawMirror"),
+            "a RawMirror kind-test appeared in pipeline.rs outside UnitRow::kind — \
+             mirror resolution must go through resolve_raw_mirror (R53)"
+        );
+
+        // (3) Both consumers call the accessor (the definition itself is
+        // `resolve_raw_mirror<`, so `resolve_raw_mirror(` counts calls).
+        assert_eq!(
+            count(&stages, "resolve_raw_mirror("),
+            1,
+            "check_full_reveal_content must resolve its mirror through the accessor"
+        );
+        assert_eq!(
+            count(&pipeline, "resolve_raw_mirror("),
+            1,
+            "reveal_set must resolve its mirror through the accessor"
+        );
     }
 }

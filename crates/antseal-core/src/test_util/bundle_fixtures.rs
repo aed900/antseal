@@ -383,6 +383,20 @@ pub enum FileSelection {
     /// list (not by work-global `unit_id`, so a selection survives having a
     /// file inserted before it).
     Units(Vec<usize>),
+    /// [`Self::Units`] **plus the raw mirror**, if the file has one — a
+    /// bundle no honest CLI emits (`mirror_selectable`,
+    /// MVP-SPEC.md line 92, forbids naming a mirror in a `--units` list)
+    /// but which the verifier deliberately accepts as a *partial* reveal
+    /// when the indices are a strict subset (mirrors are exempt by kind,
+    /// D28 rider 1).
+    ///
+    /// This is R53's shape: the 2026-07-31 review (finding 8) showed a
+    /// partial reveal's report naming a mirror whose bytes rows 9–10 never
+    /// bound, and no valid generator could express the shape — every
+    /// fixture revealed mirrors only via [`Self::Full`]. Naming all the
+    /// indices makes it equivalent to `Full`, the same derivation rule as
+    /// the enumerated-units case.
+    UnitsWithMirror(Vec<usize>),
     /// Reveal every normal unit, plus the raw mirror if the file has one.
     Full,
     /// Reveal every normal unit but withhold the raw mirror — still a full
@@ -815,13 +829,18 @@ pub fn build_tweaked(spec: &WorkSpec, selection: &Selection, tweak: &Tweak) -> B
         let mut file_revealed: Vec<u64> = Vec::new();
         match chosen {
             FileSelection::Untouched => {}
-            FileSelection::Units(indices) => {
+            FileSelection::Units(indices) | FileSelection::UnitsWithMirror(indices) => {
                 for &index in indices {
                     let unit = *file
                         .normal_units
                         .get(index)
                         .expect("selection names a normal unit the file has");
                     file_revealed.push(units[unit].unit_id);
+                }
+                if matches!(chosen, FileSelection::UnitsWithMirror(_))
+                    && let Some(mirror) = file.mirror_unit
+                {
+                    file_revealed.push(units[mirror].unit_id);
                 }
             }
             FileSelection::Full | FileSelection::FullNoMirror => {
@@ -1729,6 +1748,19 @@ pub mod shapes {
                 split_multi_unit(),
                 Selection(vec![FileSelection::Units(vec![0, 1, 2])]),
             ),
+            // R53 — a *partial* reveal that also reveals the raw mirror: one
+            // normal unit of three, plus the mirror. The bundle verifies
+            // (mirrors are exempt by kind, D28 rider 1), the mirror unit is
+            // AEAD/`unit_commit`-verified like any unit, but rows 9–10 never
+            // run for it — so the report must NOT name it as the file's raw
+            // mirror (2026-07-31 review finding 8). No valid generator
+            // produced this shape before; pinned by the pipeline's
+            // `partial_reveal_*` tests.
+            case(
+                "split-multi-unit/partial-with-mirror",
+                split_multi_unit(),
+                Selection(vec![FileSelection::UnitsWithMirror(vec![1])]),
+            ),
             case(
                 "split-multi-unit/all",
                 split_multi_unit(),
@@ -2169,6 +2201,10 @@ mod tests {
         (
             "split-multi-unit/full-via-enumerated-units",
             "88e484564ec77d38fd5c1cd750469b50203e5bd5b834be187c4f602205f5e0d7",
+        ),
+        (
+            "split-multi-unit/partial-with-mirror",
+            "35543a07eceebc7a01d203fe8280c5afdc65f186fa2214ae2077d4c64f5deb19",
         ),
         (
             "split-multi-unit/all",

@@ -122,7 +122,8 @@ use super::coherence::{CoherenceBundleView, CoherenceUnit, RevealSection, Reveal
 use super::error::{BindingMode, LengthField, VerifyError, VerifyFailures};
 use super::file_stages::{
     FileCanonMode, FileFineTree, FileRevealSummary, FileStageBundleView, FileStageManifestView,
-    FileUnitEntry, FileView, FullRevealMaterialEntry, VerifiedUnitBytes, check_file_stages,
+    FileUnitEntry, FileView, FullRevealMaterialEntry, MirrorCandidate, VerifiedUnitBytes,
+    check_file_stages, participates_in_concat, resolve_raw_mirror,
 };
 use super::report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
@@ -319,6 +320,19 @@ impl UnitRow<'_> {
             UnitBinding::FineTreeCovered => BindingMode::FineTreeCovered,
             UnitBinding::NonCovered { .. } => BindingMode::NonCovered,
         }
+    }
+}
+
+/// R53: the report resolves "the file's raw mirror" through the same
+/// accessor the full-reveal content check calls
+/// ([`resolve_raw_mirror`]) — never through its own kind test.
+impl MirrorCandidate for UnitRow<'_> {
+    fn owning_file(&self) -> u64 {
+        self.file_id
+    }
+
+    fn unit_kind(&self) -> UnitKind {
+        self.kind()
     }
 }
 
@@ -905,6 +919,12 @@ fn anchor_stubs(bundle: &BundleV1<'_>) -> Vec<AnchorResult> {
 /// [`super::coherence`]). Spans are sorted by start; R3's tiling check
 /// already guarantees the manifest order is that order, but sorting here
 /// keeps the report's own invariant local to the report.
+///
+/// `raw_mirror` is emitted **only for a full reveal**, and the mirror is
+/// resolved through [`resolve_raw_mirror`] — the same accessor
+/// [`check_full_reveal_content`](super::file_stages::check_full_reveal_content)
+/// uses — so the report can only ever name a mirror whose bytes rows 9–10
+/// actually checked (R53).
 fn reveal_set(
     body: &ManifestBodyV1,
     bundle: &BundleV1<'_>,
@@ -919,33 +939,24 @@ fn reveal_set(
         let file_id = u64::try_from(index).unwrap_or(u64::MAX);
         let mut revealed_spans = Vec::new();
         let mut unrevealed_spans = Vec::new();
-        let mut raw_mirror = None;
         let mut touched = false;
 
         for row in rows.iter().filter(|row| row.file_id == file_id) {
             let unit_id = row.unit_id();
             let is_revealed = revealed_ids.contains(&unit_id);
             touched |= is_revealed;
-            match row.kind() {
-                UnitKind::RawMirror => {
-                    if is_revealed {
-                        raw_mirror = Some(RawMirrorReveal {
-                            unit_id,
-                            raw_size: row.entry.true_length(),
-                        });
-                    }
-                }
-                UnitKind::Normal => {
-                    let span = UnitSpan {
-                        unit_id,
-                        start: row.entry.range().start(),
-                        end: row.entry.range().end_exclusive().unwrap_or(u64::MAX),
-                    };
-                    if is_revealed {
-                        revealed_spans.push(span);
-                    } else {
-                        unrevealed_spans.push(span);
-                    }
+            // Spans cover the tiling domain only; the mirror sits outside
+            // it and is resolved below, through the R53 accessor.
+            if participates_in_concat(row.kind()) {
+                let span = UnitSpan {
+                    unit_id,
+                    start: row.entry.range().start(),
+                    end: row.entry.range().end_exclusive().unwrap_or(u64::MAX),
+                };
+                if is_revealed {
+                    revealed_spans.push(span);
+                } else {
+                    unrevealed_spans.push(span);
                 }
             }
         }
@@ -958,6 +969,16 @@ fn reveal_set(
             continue;
         }
 
+        // The file's revealed raw mirror — resolved by the SAME accessor
+        // the full-reveal content check calls (R53), so the mirror this
+        // report names is the mirror rows 9–10 opened. (An untouched file
+        // reveals nothing, so resolving after the arm above loses no case.)
+        let revealed_mirror = resolve_raw_mirror(
+            file_id,
+            rows.iter()
+                .filter(|row| revealed_ids.contains(&row.unit_id())),
+        );
+
         revealed_spans.sort_by_key(|span| span.start);
         unrevealed_spans.sort_by_key(|span| span.start);
 
@@ -969,20 +990,33 @@ fn reveal_set(
             .iter()
             .find(|entry| entry.file_id() == file_id)
         else {
-            let unit_id = revealed_spans
-                .first()
-                .map_or_else(|| raw_mirror.map_or(0, |m| m.unit_id), |span| span.unit_id);
+            let unit_id = revealed_spans.first().map_or_else(
+                || revealed_mirror.map_or(0, UnitRow::unit_id),
+                |span| span.unit_id,
+            );
             return Err(VerifyError::RevealedUnitFileNotTouched { unit_id, file_id });
         };
 
+        let fully_revealed = summaries.get(index).is_some_and(FileRevealSummary::is_full);
         files.push(FileReveal {
             file_id,
             path: entry.path().to_owned(),
             total_size: file.size(),
-            fully_revealed: summaries.get(index).is_some_and(FileRevealSummary::is_full),
+            fully_revealed,
             revealed_spans,
             unrevealed_spans,
-            raw_mirror,
+            // Full reveals only — the same `is_full` the sibling field
+            // consults. On a partial reveal a revealed mirror is verified
+            // as a *unit* (AEAD + `unit_commit`) but rows 9–10 never open
+            // `raw_commit` with it and never bind it to the canonical
+            // bytes, so reporting it would present unbound bytes as "the
+            // original file" (2026-07-31 review, finding 8; R53).
+            raw_mirror: revealed_mirror
+                .filter(|_| fully_revealed)
+                .map(|row| RawMirrorReveal {
+                    unit_id: row.unit_id(),
+                    raw_size: row.entry.true_length(),
+                }),
         });
     }
 
@@ -2197,6 +2231,177 @@ mod tests {
                      `{generated}` — the two definitions of a valid bundle have drifted"
                 );
             }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // R53: the raw-mirror seam — one resolution, and no unbound mirror
+    // in a partial reveal's report
+    // -----------------------------------------------------------------
+    //
+    // The 2026-07-31 adversarial review (findings 1–3 `high`, finding 8
+    // `medium`): the content check and the report resolved "the file's
+    // mirror" independently (first-wins versus last-wins), and the report
+    // emitted `raw_mirror` for partial reveals even though rows 9–10 —
+    // the `raw_commit` opening and the canonicalization binding — run
+    // only for `FileRevealShape::Full`. Gated on `test-vectors` like
+    // `agreement_with_r6`, because the shapes are R6's.
+
+    #[cfg(feature = "test-vectors")]
+    mod raw_mirror_seam {
+        use super::*;
+        use crate::test_util::bundle_fixtures::{build, shapes};
+
+        /// **Finding 8, the live defect.** A partial reveal that also
+        /// reveals the file's raw mirror verifies — the mirror unit is
+        /// AEAD/`unit_commit`-verified like any revealed unit — but the
+        /// report must NOT name it as the file's `raw_mirror`: nothing
+        /// opened `raw_commit` with its bytes and nothing bound them to
+        /// the canonical rendition (rows 9–10 are full-reveal-only), so a
+        /// renderer following [`FileReveal::raw_mirror`]'s documented
+        /// meaning would present unbound bytes as "the original file".
+        ///
+        /// Before R53's gate this failed with
+        /// `raw_mirror = Some(RawMirrorReveal { unit_id: 3, .. })`.
+        #[test]
+        fn a_partial_reveals_report_omits_the_unbound_mirror() {
+            let case =
+                shapes::by_name("split-multi-unit/partial-with-mirror").expect("catalogue entry");
+            let built = build(&case.spec, &case.selection);
+
+            // The shape is what it claims: the mirror IS revealed and the
+            // normal units are a strict subset.
+            let facts = &built.files[0];
+            let mirror_id = facts.mirror_unit_id.expect("the shape has a mirror");
+            assert!(built.revealed_unit_ids.contains(&mirror_id));
+            assert!(!facts.fully_revealed);
+
+            let report =
+                verify_bundle(&built.bytes, &VerifyOptions::new()).expect("the bundle verifies");
+
+            // Every revealed unit — the mirror included — was verified as
+            // a unit. What the gate withholds is the whole-file claim,
+            // not the unit-level evidence.
+            assert_eq!(
+                report.evidence.units_verified,
+                u64::try_from(built.revealed_unit_ids.len()).expect("small"),
+            );
+
+            let file = &report.reveal.files[0];
+            assert!(!file.fully_revealed);
+            assert_eq!(
+                file.raw_mirror, None,
+                "a partial reveal's report carries a raw_mirror whose bytes rows 9–10 \
+                 never checked (2026-07-31 review, finding 8)"
+            );
+        }
+
+        /// The pinned D29 bytes for the partial-with-mirror shape — the
+        /// report-string snapshot standing in for a frozen R9 vector.
+        ///
+        /// Why not a vector: `FROZEN.sha256` is `#! status frozen`, under
+        /// which additions are the one legal change — but the `report`
+        /// kind's executor requires every document to carry all of
+        /// [`REQUIRED_SHAPES`](crate::test_util::vectors_report::REQUIRED_SHAPES),
+        /// so a minimal one-case second document cannot pass it, and the
+        /// committed 21-case document may not change a byte. Until a
+        /// format-version event re-opens the vector set, this snapshot is
+        /// the byte pin; the shape's handle
+        /// (`split-multi-unit/partial-with-mirror`) is already in R6's
+        /// catalogue so a v2 freeze can promote it.
+        #[test]
+        fn the_partial_with_mirror_report_bytes_are_pinned() {
+            let case =
+                shapes::by_name("split-multi-unit/partial-with-mirror").expect("catalogue entry");
+            let built = build(&case.spec, &case.selection);
+            let report =
+                verify_bundle(&built.bytes, &VerifyOptions::new()).expect("the bundle verifies");
+            let json = String::from_utf8(report.to_canonical_json().expect("D29 encoding"))
+                .expect("the D29 encoding is UTF-8");
+            // `units_verified` is 2 — the mirror WAS verified as a unit —
+            // while the reveal set carries `"raw_mirror":null`: unit-level
+            // evidence stays, the unproven whole-file claim goes.
+            let pinned = concat!(
+                r#"{"report_version":1,"work":{"work_id":"#,
+                r#""986a6e4297dade15e3ab93ea285fe37f455bdd886915075d9d579418cdb142c5","#,
+                r#""title":"split multi unit","format_version":1,"#,
+                r#""app_version":"antseal-fixture/1","#,
+                r#""claimed_time_informational_only":"1767225600","#,
+                r#""signature_scheme":"hybrid-pq"},"#,
+                r#""evidence":{"passed":true,"units_verified":2},"#,
+                r#""storage_linkage":"not-evaluated","anchors":[],"#,
+                r#""supporting_evidence":"none","reveal":{"files":[{"file_id":0,"#,
+                r#""path":"notes/split.md","total_size":34,"fully_revealed":false,"#,
+                r#""revealed_spans":[{"unit_id":1,"start":12,"end":24}],"#,
+                r#""unrevealed_spans":[{"unit_id":0,"start":0,"end":12},"#,
+                r#"{"unit_id":2,"start":24,"end":34}],"raw_mirror":null}],"#,
+                r#""unrevealed_files":[]}}"#,
+            );
+            assert_eq!(
+                json, pinned,
+                "the D29 report bytes for `split-multi-unit/partial-with-mirror` moved — \
+                 if deliberate, this is a report-format event (D29), not a test tweak"
+            );
+        }
+
+        /// The control: a full reveal's revealed mirror IS reported —
+        /// the gate must not suppress the datum rows 9–10 actually
+        /// checked. (The 21 frozen R9 vectors pin the same fact for
+        /// every committed full-reveal shape; this is the local pair to
+        /// the test above.)
+        #[test]
+        fn a_full_reveals_report_keeps_its_checked_mirror() {
+            let case = shapes::by_name("split-multi-unit/all").expect("catalogue entry");
+            let built = build(&case.spec, &case.selection);
+            let mirror_id = built.files[0]
+                .mirror_unit_id
+                .expect("the shape has a mirror");
+
+            let report =
+                verify_bundle(&built.bytes, &VerifyOptions::new()).expect("the bundle verifies");
+            let file = &report.reveal.files[0];
+            assert!(file.fully_revealed);
+            let mirror = file.raw_mirror.expect("a checked mirror is reported");
+            assert_eq!(mirror.unit_id, mirror_id);
+        }
+    }
+
+    /// R53's two-mirror pin at the **pipeline** surface. F40 landed D23
+    /// clause 3 in `FileEntry::new` and committed the decode-layer fixture
+    /// (`test_util::tamper_rows_mirror`); this drives the same envelope
+    /// through [`verify_bundle`], pinning that a two-mirror manifest inside
+    /// a well-formed `.sealproof` dies at stage 1 with the F40 code — it
+    /// never reaches the mirror-resolution seam the R53 accessor unified.
+    /// Gated on `test-util` because the envelope builder lives on the
+    /// tamper tier.
+    #[cfg(feature = "test-util")]
+    mod two_mirror_manifest_at_the_pipeline {
+        use super::*;
+        use crate::test_util::tamper_rows_mirror;
+
+        #[test]
+        fn a_two_mirror_manifest_dies_at_decode_with_the_f40_code() {
+            let envelope = tamper_rows_mirror::FIXTURES
+                .iter()
+                .find(|fixture| fixture.id == "body-second-raw-mirror")
+                .and_then(|fixture| (fixture.build)())
+                .expect("F40's two-mirror envelope builds");
+
+            // Graft it into an otherwise-valid bundle: layer 1 treats the
+            // embedded manifest as opaque bytes (D78), so the bundle
+            // re-encodes cleanly and the rejection is attributable to the
+            // manifest decode alone.
+            let valid_bytes = valid();
+            let mut parts = BundleV1::decode(&valid_bytes)
+                .expect("the smoke fixture decodes")
+                .into_parts();
+            parts.manifest = &envelope;
+            let grafted = encode_bundle(&BundleV1::new(parts).expect("layer-1 rules still hold"))
+                .expect("the grafted bundle re-encodes");
+
+            let failure = verify_bundle(&grafted, &VerifyOptions::new())
+                .expect_err("a two-mirror manifest must not verify");
+            assert_eq!(failure.code(), "manifest-multiple-raw-mirrors");
         }
     }
 }

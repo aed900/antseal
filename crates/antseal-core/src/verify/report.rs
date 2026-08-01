@@ -416,6 +416,15 @@ pub struct FileReveal {
     /// The file's revealed raw-mirror unit, when one rode along with a
     /// full reveal (raw byte domain — outside the tiling spans above;
     /// MVP-SPEC.md line 92).
+    ///
+    /// `Some` **implies `fully_revealed`**, and the producer enforces it
+    /// (R53): rows 9–10 — the `raw_commit` opening and the
+    /// `canonicalize_v(raw) == canonical` binding — run only for a full
+    /// reveal, so this is the one state in which the mirror's bytes are
+    /// proven to be the file's original bytes. A mirror revealed alongside
+    /// a *partial* reveal is verified as a unit but deliberately not
+    /// reported here: presenting it as "the original file" would promote
+    /// unbound bytes (2026-07-31 review, finding 8).
     pub raw_mirror: Option<RawMirrorReveal>,
 }
 
