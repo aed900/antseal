@@ -30,5 +30,28 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# --- Vault encryption stack (U6; pins + rationale in the workspace ---
+# --- Cargo.toml, decision D40) ---
+# The two KDFs of the vault header, the blake2 feature-forcing declaration
+# (argon2's hash core — the direct edge exists to switch its `zeroize`
+# feature on; see the workspace comment), the OS-CSPRNG backend, and the
+# same AEAD/zeroize stack antseal-core pins — vault keys and AADs are
+# vault-domain, the cipher and the hygiene discipline are the existing
+# ones.
+argon2.workspace = true
+blake2.workspace = true
+scrypt.workspace = true
+getrandom.workspace = true
+chacha20poly1305.workspace = true
+zeroize.workspace = true
+rand_core.workspace = true
+# Interactive no-echo prompt only (U7/D41); machine mode never reaches it.
+rpassword.workspace = true
+
+[dev-dependencies]
+# Seeded deterministic CSPRNG for vault tests (house pattern; the
+# production OS source is injected by the binary layer only).
+rand_chacha.workspace = true
+
 [lints]
 workspace = true

@@ -137,6 +137,14 @@ impl VaultLayout {
         self.store_root().join("works")
     }
 
+    /// The vault key-check record (`store/check`, U6): the AEAD over a
+    /// fixed public marker that makes wrong-passphrase and tampered-header
+    /// detection immediate and uniform at unlock.
+    #[must_use]
+    pub fn check_record_path(&self) -> PathBuf {
+        self.store_root().join("check")
+    }
+
     /// The wallet record slot under the store (own sub-key, U10).
     #[must_use]
     pub fn wallet_record_path(&self) -> PathBuf {

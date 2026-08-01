@@ -24,6 +24,12 @@
   passphrase unavailable: the --passphrase-fd input contains interior NUL/LF/CR bytes, which the interactive prompt could never produce (channel parity, D41)
 [passphrase-fd-over-cap] class=passphrase-unavailable code=11
   passphrase unavailable: the --passphrase-fd input exceeded the 1 KiB cap (D41)
+[passphrase-prompt-empty] class=passphrase-unavailable code=11
+  passphrase unavailable: the passphrase entered at the prompt was empty
+[passphrase-prompt-failed] class=passphrase-unavailable code=11
+  passphrase unavailable: reading the passphrase from the terminal failed
+[passphrase-confirm-mismatch] class=passphrase-unavailable code=11
+  passphrase unavailable: the confirmation did not match the passphrase; nothing was created — re-run and enter the same passphrase twice
 [vault-auth-failure] class=vault-auth-failure code=12
   vault authentication failed: wrong passphrase, or the vault store or header has been modified or corrupted
 [vault-kdf-memory] class=vault-kdf-memory code=13

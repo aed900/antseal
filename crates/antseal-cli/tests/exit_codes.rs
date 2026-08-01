@@ -210,6 +210,24 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 reason: PassphraseFailure::FdOverCap,
             },
         ),
+        (
+            "passphrase-prompt-empty",
+            CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::PromptEmpty,
+            },
+        ),
+        (
+            "passphrase-prompt-failed",
+            CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::PromptFailed,
+            },
+        ),
+        (
+            "passphrase-confirm-mismatch",
+            CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::ConfirmMismatch,
+            },
+        ),
         ("vault-auth-failure", CliError::VaultAuthFailure),
         (
             "vault-kdf-memory",

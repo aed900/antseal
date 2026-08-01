@@ -30,15 +30,35 @@
 //! └── store/          INSIDE the AEAD — every byte under store/ is
 //!     │               ciphertext under the vault key (U6). No plaintext
 //!     │               file may ever be created here.
+//!     ├── check       the key-check record (U6): AEAD over a fixed public
+//!     │               marker; wrong passphrase / tampered header / corrupt
+//!     │               store all fail here at unlock
 //!     ├── wallet      the Arbitrum wallet record (own sub-key, U10)
-//!     └── works/      per-work records (U9): `W`, titles, source paths,
-//!                     costs, completion state, the seal journal with
-//!                     staged ciphertext bytes (+ D43 cache state),
-//!                     `PaymentReceipt`s, consent records, invocation
-//!                     identity, and ALL anchor artifacts (`.ots`, TSA
-//!                     tokens, fetch dates) — the full MVP-SPEC.md
-//!                     line 143 enumeration.
+//!     └── works/      per-work records (U9), one directory per work named
+//!                     by the seal_id hex (random, content-free):
+//!                     ├── meta               `W`, seal_id, work_id, title,
+//!                     │                      network, source paths, costs,
+//!                     │                      state, D45 invocation
+//!                     │                      identity, D36 consent record
+//!                     ├── journal/<entry>    staged ciphertext bytes +
+//!                     │                      nonce + address (content
+//!                     │                      contract S10's; D43 cache
+//!                     │                      reclassification is a meta
+//!                     │                      state tag, same bytes)
+//!                     ├── receipt            the journaled PaymentReceipt
+//!                     └── anchors/<slot>     `.ots`, TSA tokens, fetch
+//!                                            dates (exercised M2) — the
+//!                                            full MVP-SPEC.md line 143
+//!                                            enumeration.
 //! ```
+//!
+//! Honest limit of the per-record-file design (sanctioned by the D42
+//! rider — one monolithic blob would mean decrypting gigabytes to list
+//! works): filesystem **metadata** of a locked vault is visible — how many
+//! work directories exist, entry counts, file sizes and mtimes. Names are
+//! random hex and every content byte is AEAD ciphertext, so nothing links
+//! a locked vault to any bundle, anchor, digest, or title; the count/size/
+//! timing residue is the recorded cost.
 //!
 //! # The D42 partition (docs/decisions/D42-vault-encryption-boundary.md)
 //!
@@ -72,7 +92,11 @@
 //! mutation — U5's kill-tests and the M1 pay/finalize journal integrity
 //! both stand on these two primitives.
 
+pub mod cipher;
 pub mod fs;
 pub mod header;
+pub mod kdf;
 pub mod layout;
 pub mod lock;
+pub mod session;
+pub mod store;
