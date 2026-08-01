@@ -23,16 +23,58 @@ rust-version.workspace = true
 #   antseal-net = { workspace = true, features = ["test-util"] }
 [features]
 test-util = []
+# The heavy half (S5; S6 extends it): the pinned `ant-core = "=0.5.0"`
+# client stack — evmlib/alloy payment surface, saorsa transport, the
+# ~600-package graph P16 measured — plus the two small helpers the EVM
+# wallet ops need. NON-DEFAULT, deliberately (containment rule): a default
+# `cargo build/test --workspace` compiles NONE of it, so the pure data half
+# of this crate (NetworkConfig, DevnetEnv, chain ids, env parsing) stays
+# consumable by U4/U11's config wiring without the graph. The devnet-
+# launcher precedent (root Cargo.toml) is the model; the lockfile already
+# records the full union, so enabling this feature resolves nothing new.
+# Build/test the feature path explicitly:
+#
+#     cargo test -p antseal-net --features ant-backend
+#
+# Dependency-edge choice, recorded (S5 Do: "via ant_protocol re-exports or
+# evmlib direct — decide from the sources"): ant-core, NOT evmlib/
+# ant-protocol direct. ant-core re-exports the exact surface S5 needs —
+# `EvmNetwork`/`CustomNetwork`/`Wallet`/`EvmAddress`
+# (ant-core-0.5.0/src/data/mod.rs:61-63) — through `ant_protocol::evm`,
+# whose header comment names itself "the single version-pin point" and asks
+# downstream NOT to take a direct evmlib dep (ant-protocol-2.3.0/src/
+# lib.rs:75-92). One declared edge, one pin (the workspace's existing
+# `=0.5.0`), zero lockstep bookkeeping for a second exact pin; S6 needs
+# ant-core itself anyway. If S6 later needs a surface ant-core does not
+# re-export (e.g. `http_provider` per D33), adding `ant-protocol` then is a
+# deliberate pin event, not this feature's concern.
+ant-backend = ["dep:ant-core", "dep:getrandom", "dep:url", "dep:zeroize"]
 
 [dependencies]
 antseal-core.workspace = true
 thiserror.workspace = true
+# --- `ant-backend` half (all optional; see the feature comment) ---
+ant-core = { workspace = true, optional = true }
+# OS-CSPRNG for wallet keygen (S5/U11); rationale on the workspace entry.
+getrandom = { workspace = true, optional = true }
+# For the CustomNetwork struct literal (devnet mapping); rationale on the
+# workspace entry.
+url = { workspace = true, optional = true }
+# Wipes the raw 32-byte keygen draw after hex encoding (the exact-pinned
+# workspace zeroize; SecretBuf covers every owned buffer, this covers the
+# one stack array).
+zeroize = { workspace = true, optional = true }
 
 # The self-dev-dep that switches `test-util` on for this crate's own test
 # targets (unit + integration) while leaving the default/normal graph
 # untouched — the same edge antseal-core carries for the same reason.
 [dev-dependencies]
 antseal-net = { workspace = true, features = ["test-util"] }
+# House test-support surface (fixture-secret convention): the devnet env
+# fixture's wallet key and the wallet-import fixtures derive via
+# `alternate_test_secret`, never a fresh committed key-shaped literal
+# (testdata/README.md; project rule 6).
+antseal-core = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

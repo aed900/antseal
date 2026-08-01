@@ -117,17 +117,25 @@ lane_dep_graph() {
   fi
   printf 'OK: no antseal crate declares self_encryption (D35 prohibition).\n'
 
-  note "antseal-core's NORMAL dependency graph must be I/O-free"
-  local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2) ' tree offenders
+  note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
+  # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
+  # storage-address function must be a pure function of its input):
+  # `getrandom`/`rand`/`rand_chacha` are banned from the normal graph.
+  # `rand_core` is deliberately NOT banned — it is the pinned pure-trait
+  # crate (zero deps; the injected-CSPRNG API contract of C5/C9) and
+  # structurally cannot reach an OS RNG; the `^rand ` entry's trailing
+  # space keeps it unmatched. blake3 is consumed with default-features off
+  # precisely so none of these enter (workspace Cargo.toml pin comment).
+  local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
   tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)" || return 1
   printf '%s\n' "$tree"
   offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
   if [ -n "$offenders" ]; then
-    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network crates:\n'
+    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network/RNG crates:\n'
     printf '%s\n' "$offenders"
     return 1
   fi
-  printf 'OK: no forbidden I/O/async/network crate in the normal graph.\n'
+  printf 'OK: no forbidden I/O/async/network/RNG crate in the normal graph.\n'
 
   # ── P15/D35, resolved-graph half ────────────────────────────────────────
   # From the moment ant-core's graph is consumed (P16's launcher, S6's
@@ -247,6 +255,14 @@ lane_secret_guard() {
     # (4) age / minisign secret-key markers.
     hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
     hits+="$(ex 'minisign encrypted secret key')"$'\n'
+    # (5) A committed devnet environment export (S5): the wallet-key line
+    #     of `.devnet/env` — the key name followed by an actual 64-hex
+    #     value. The export must only ever exist under gitignored
+    #     .devnet/ (docs/devnet/local-devnet.md); docs naming the KEY are
+    #     fine (*.md excluded, and the pattern requires the value), and so
+    #     are test fixtures that interpolate a runtime-derived value (no
+    #     64-hex literal after the `=` in source).
+    hits+="$(ex "ANTSEAL[_]DEVNET[_]WALLET[_]PRIVATE[_]KEY[[:space:]]*=[[:space:]]*'?(0x)?[0-9a-fA-F]{64}")"$'\n'
     hits="$(printf '%s\n' "$hits" | grep -v '^$' | sort -u || true)"
     if [ -n "$hits" ]; then
       printf '%s\n' "$hits"
@@ -263,7 +279,10 @@ lane_secret_guard() {
   printf '{"version":3,"crypto":{"ciphertext":"00","cipherparams":{},"kdf":"scrypt","kdfparams":{"n":1},"mac":"00"}}\n' > "$tmp/fake-keystore.json"
   printf 'ANTSEAL VAULT EXPORT v0 guard-self-test\n' > "$tmp/fake-vault-export.bin"
   printf 'AGE-SECRET-KEY-1SELFTESTSELFTESTSELFTEST\n' > "$tmp/fake-age.key"
-  planted=4
+  # The devnet-export wallet-key line (pattern 5): 64 x 'a' is hex-shaped
+  # enough to trip the guard and unmistakably fake.
+  printf "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='%s'\n" "$(printf 'a%.0s' $(seq 64))" > "$tmp/fake-devnet-env"
+  planted=5
   found="$(scan "$tmp" | wc -l)" || true
   if [ "$found" -ne "$planted" ]; then
     printf '::error::secret-guard self-test FAILED: planted %s fakes, detected %s — the detector is broken; fix it before trusting a green scan\n' "$planted" "$found"

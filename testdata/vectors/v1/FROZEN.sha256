@@ -63,6 +63,13 @@
 #! kind manifest F12
 #! kind bundle F13
 #
+# ADDED 2026-08-01 (S4), post-freeze: the `storage-address` kind — the D32
+# address rule (BLAKE3-256 of the blob bytes) over the S4 size ladder, with
+# cap + 1 committed as a typed REJECTION. A post-freeze kind addition is the
+# sanctioned append path (the same one the M2 `anchor` kind is reserved
+# for): new `#! kind` line + new digest line; no existing digest moves.
+#! kind storage-address S4
+#
 # Must-exist vectors this version still owes before Q14 can freeze it.
 # Each names its owning task; Q14's gate condition is ZERO pending lines.
 #
@@ -108,3 +115,4 @@ c6a85a2780a344e3291078161729758b0321f5d7e61e99082a515f9e2919011a  manifest/manif
 aa0b99d1d29e56e1bb8a3bb65542508ead5bcfc8dcf899ce54481af053cbf551  report/verification-reports.json
 6b081e19c8214f48ccfc3fbb21174f4fd2d2f31e2a7b104204fd897a13be0600  sig-reject/ed25519.json
 09b6ac360820288814627fdc3602a0958b6d78185b38c443df606786043f499d  sig-reject/ml-dsa-65.json
+307c2a171604a077e259dc5436c0b2f0a48655c0dde3e002909e4ac51eb235e5  storage/storage-address.json

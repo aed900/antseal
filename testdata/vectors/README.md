@@ -184,6 +184,7 @@ a vector. Per decision D31 it uses `cbor2` to **decode only**; the RFC 8949
 §4.2.1 canonical encoder and the canonicality judgement are its own.
 
 | `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
+| `storage-address` | M1 (S4) | `pattern` (must be `"i-mod-251"`, the official BLAKE3 test-vector input pattern) + `cases`: per case a unique `name` and a `len` — inputs are **generative** so the 4 MiB ladder rungs never enter the committed file or D87's embedded budget | `max_chunk_size` (must equal the pinned constant) + `cases`: per case `name`, `len`, and either `address` (32-byte hex — BLAKE3-256 of the pattern bytes, the D32 rule) or `rejected: "exceeds-chunk-cap"` for over-cap lengths (no v1 address exists over the cap, D32 decision 5) | the **whole** `expect` recomputed from `inputs` through `storage::compute_storage_address` and compared as one value; then ladder coverage a value comparison cannot state: a 272-byte case (smallest padded-unit ciphertext), the exact `MAX_CHUNK_SIZE` cap edge, and at least one cap+1 rejection must all be present, and every rejection must come from the typed `ExceedsChunkCap` at exactly the input's length. Format doc: `v1/storage/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a
@@ -379,12 +380,15 @@ typo is never silently ignored):
 
 **Kinds freeze at Q14** — the kind *name* and its `inputs`/`expect` payload
 shape, not the shared envelope (which carries its own `schema_version`).
-**Eleven** kinds freeze with v1: `hkdf-labels`, `commitments`, `unit-aead`,
-`manifest-aead`, `signatures`, `sig-reject`, `fine-tree`, `content-model`,
-`report`, `manifest`, `bundle`. The manifest's `#! kind` directives are the
-authoritative list — the checker requires their union to equal
-`test_util::vectors::KNOWN_KINDS`, so this sentence can go stale but the
-build cannot.
+**Eleven** kinds froze with v1 at Q14: `hkdf-labels`, `commitments`,
+`unit-aead`, `manifest-aead`, `signatures`, `sig-reject`, `fine-tree`,
+`content-model`, `report`, `manifest`, `bundle`; `storage-address` (S4)
+was **added post-freeze** through the sanctioned append path (a new
+`#! kind` line + new digest lines; no existing digest moved) — the same
+path the M2 `anchor` kind is reserved for. The manifest's `#! kind`
+directives are the authoritative list — the checker requires their union to
+equal `test_util::vectors::KNOWN_KINDS`, so this sentence can go stale but
+the build cannot.
 
 ### Retention: per version, indefinite
 

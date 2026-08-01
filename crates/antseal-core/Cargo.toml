@@ -44,6 +44,13 @@ test-util = ["test-vectors", "dep:proptest"]
 # docs/decisions/D7-cbor-crate.md). The D12 independent cross-check
 # implementation (Python cbor2) is dev-tool-only and never appears here.
 minicbor.workspace = true
+# The v1 storage-address function (S4, decisions D32/D35): BLAKE3-256 of the
+# ciphertext bytes IS the Autonomi chunk address (`compute_address`,
+# ant-protocol-2.3.0/src/data_types.rs:10-12). Feature shape and the
+# no-getrandom/no-rayon/no-mmap rationale live on the workspace pin (P15);
+# with default-features off the added normal graph is pure no_std Rust, so
+# the `core-dep-graph` and `wasm32-core` lanes stay meaningful.
+blake3.workspace = true
 chacha20poly1305.workspace = true
 # Hybrid author-signature stack (MVP-SPEC.md line 97; C12/C13). Feature
 # selection and the D13/D14 rationale live in the workspace table; both are

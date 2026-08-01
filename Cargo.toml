@@ -334,6 +334,27 @@ rand_core = "=0.10.1"
 
 # --- outside the exact-pin class (resolved versions frozen by Cargo.lock) ---
 thiserror = "2"
+# OS-CSPRNG entropy for antseal-net's EVM wallet keygen (S5; U11's generate
+# path), consumed ONLY behind net's non-default `ant-backend` feature.
+# Outside the exact-pin class by the policy's own test (§1): no byte it
+# produces is hashed, signed, stored, or paid for AS an output format — it
+# seeds a fresh secp256k1 scalar whose validity and downstream use are gated
+# by the pinned evmlib/alloy parse (D44's "accepted set = what the pinned
+# stack accepts"). Resolved version frozen by Cargo.lock (0.3.4 — already in
+# the locked graph transitively via the ant-core stack, so this line adds no
+# new package). antseal-core NEVER declares it: the core-dep-graph lane bans
+# getrandom/rand from core's normal graph (S4's no-RNG audit).
+getrandom = "0.3"
+# URL type for constructing evmlib's `CustomNetwork` (S5's devnet →
+# EvmNetwork mapping, behind `ant-backend`). `CustomNetwork.rpc_url_http`
+# is `reqwest::Url`, which IS `url::Url` re-exported
+# (reqwest-0.12.28/src/lib.rs:280), so this must resolve to the same `url`
+# the evmlib graph uses — the lock resolves exactly one (2.5.8), and any
+# future skew is a COMPILE error in the struct literal, never silent
+# drift. Chosen over calling `CustomNetwork::new`, whose parse `expect`s
+# (evmlib-0.9.0/src/lib.rs:90-99) — parsing ourselves keeps the no-panic
+# rule.
+url = "2"
 # CLI argument surface (U1). Outside the exact-pin class by the policy's own
 # §1 text (which names clap): nothing format-, crypto-, or consensus-
 # affecting flows through it, so a caret-major requirement + the committed

@@ -350,6 +350,15 @@ impl DecodeError {
 /// this honest in the other direction: a new variant fails compilation there
 /// until it has a code, and fails `codes_are_pairwise_distinct_kebab_case`
 /// here until it has an exemplar.
+///
+/// Gated like `fine_tree`'s twin (`test-util`, not `#[cfg(test)]`): its
+/// out-of-module consumers — `tamper_rows_cbor` (F24) and the Q52
+/// `error_universe` — live under the feature / `cfg(test)` respectively,
+/// and with **no** gate the bare-lib build of this crate (any
+/// `cargo clippy -p <core-dependent-crate>` compiles one) carried a
+/// permanent dead-code warning that `-D warnings` turns into a hard error
+/// (found at S21's per-crate gate, 2026-08-01).
+#[cfg(any(test, feature = "test-util"))]
 #[must_use]
 pub(crate) fn all_code_exemplars() -> Vec<DecodeError> {
     use DecodeError as E;

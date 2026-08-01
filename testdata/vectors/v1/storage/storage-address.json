@@ -1,0 +1,81 @@
+{
+  "schema": "antseal-golden-vector",
+  "schema_version": 1,
+  "format_version": "v1",
+  "kind": "storage-address",
+  "non_secret": "NON-SECRET public fixture bytes: every input is the official BLAKE3 test-vector pattern byte[i] = i % 251 at the stated length, standing in for AEAD ciphertext of the same length. No secret material is involved and nothing derives from the fixed test seed W (addresses hash public ciphertext, never secrets).",
+  "description": "D32 storage-address rule (S4): address = BLAKE3-256 of the blob bytes, over the size ladder 0 / 272 (smallest padded-unit ciphertext) / 65552 (mid) / 4194047 (max unit plaintext) / 4194064 (max plaintext-derived ciphertext) / 4194304 (MAX_CHUNK_SIZE, cap edge) — plus the committed cap+1 REJECTION case: over-cap input has no v1 address (typed error).",
+  "inputs": {
+    "pattern": "i-mod-251",
+    "cases": [
+      {
+        "name": "empty-0",
+        "len": 0
+      },
+      {
+        "name": "smallest-unit-ciphertext-272",
+        "len": 272
+      },
+      {
+        "name": "mid-64k-ciphertext-65552",
+        "len": 65552
+      },
+      {
+        "name": "max-unit-plaintext-4194047",
+        "len": 4194047
+      },
+      {
+        "name": "max-unit-ciphertext-4194064",
+        "len": 4194064
+      },
+      {
+        "name": "cap-edge-4194304",
+        "len": 4194304
+      },
+      {
+        "name": "over-cap-4194305",
+        "len": 4194305
+      }
+    ]
+  },
+  "expect": {
+    "max_chunk_size": 4194304,
+    "cases": [
+      {
+        "name": "empty-0",
+        "len": 0,
+        "address": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      },
+      {
+        "name": "smallest-unit-ciphertext-272",
+        "len": 272,
+        "address": "9f1c84a19e559be66f4c82db6b0177def831c9dfffa311feabdd84261b558cfa"
+      },
+      {
+        "name": "mid-64k-ciphertext-65552",
+        "len": 65552,
+        "address": "9a8e081d7994aa1d9787ac50518296c403c969e64780afa2165dcfc9840c73a9"
+      },
+      {
+        "name": "max-unit-plaintext-4194047",
+        "len": 4194047,
+        "address": "4dfb7a517b5de0ca0197e9a80b946d328090ad419afaa54601862dea8c6d4824"
+      },
+      {
+        "name": "max-unit-ciphertext-4194064",
+        "len": 4194064,
+        "address": "109628438ca8ce1e40e9fac6156d0d13609592ff7716180c61fb267d10c41fba"
+      },
+      {
+        "name": "cap-edge-4194304",
+        "len": 4194304,
+        "address": "4e94e6f582581a0f3855f3ce504b153e951e65036fe9e2f010b7e25473c54f98"
+      },
+      {
+        "name": "over-cap-4194305",
+        "len": 4194305,
+        "rejected": "exceeds-chunk-cap"
+      }
+    ]
+  }
+}

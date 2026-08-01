@@ -70,6 +70,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     super::vectors_report::KIND,
     super::vectors_manifest::KIND,
     super::vectors_bundle::KIND,
+    super::vectors_storage_address::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -260,6 +261,13 @@ pub fn execute_vector_bytes(
         super::vectors_bundle::KIND => {
             super::vectors_bundle::execute(envelope.inputs, envelope.expect, envelope.description)
         }
+        // S4's storage-address rule (D32): BLAKE3-256 addresses over the
+        // size ladder, cap+1 committed as a rejection.
+        super::vectors_storage_address::KIND => super::vectors_storage_address::execute(
+            envelope.inputs,
+            envelope.expect,
+            envelope.description,
+        ),
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }

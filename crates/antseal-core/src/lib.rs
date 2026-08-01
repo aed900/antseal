@@ -9,9 +9,12 @@
 //! manifest + bundle formats, and FULL verification — including all anchor
 //! verification: RFC 3161 `TimeStampResp`/`TSTInfo` parse + verify against a
 //! pinned TSA root store, `.ots` parse + op execution + embedded-header
-//! check, and deterministic Autonomi address recomputation via
-//! `self_encryption`. Verification must succeed fully offline, and the WASM
-//! build must bit-match native verification.
+//! check, and deterministic Autonomi address recomputation — BLAKE3-256 of
+//! the ciphertext bytes ([`storage`]; decisions D32/D35 record the deviation
+//! from the spec's "via `self_encryption`" phrasing, which names a mechanism
+//! ant-core 0.5.0's chunk-level storage model does not use). Verification
+//! must succeed fully offline, and the WASM build must bit-match native
+//! verification.
 
 pub mod bundle;
 pub mod canon;
@@ -28,6 +31,7 @@ pub mod crypto;
 mod error_universe;
 pub mod format;
 pub mod manifest;
+pub mod storage;
 // `test-util` implies `test-vectors` (see Cargo.toml), so gating the module
 // on the smaller feature admits both surfaces; the proptest-bearing
 // residents are gated inside.

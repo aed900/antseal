@@ -151,6 +151,14 @@
 //!   committed per-algorithm signature reject-vector suites and their
 //!   executor, which routes every case through C14's full verification
 //!   path.
+//! - [`vectors_storage_address`] — the `storage-address` vector kind (S4):
+//!   the D32 address rule (BLAKE3-256 of the blob bytes) pinned over the
+//!   size ladder up to the exact `MAX_CHUNK_SIZE` cap edge, with cap + 1
+//!   committed as a typed **rejection** — no v1 address exists over the
+//!   cap. Inputs are generative (the official `i % 251` BLAKE3 pattern), so
+//!   the 4 MiB rungs cost bytes only at execution, never in the committed
+//!   file. Independent generator:
+//!   `testdata/vectors/v1/storage/gen_vectors.py`.
 //!
 //! # Consuming this module
 //!
@@ -211,6 +219,7 @@ pub mod vectors_fine_tree;
 pub mod vectors_manifest;
 pub mod vectors_report;
 pub mod vectors_sig_reject;
+pub mod vectors_storage_address;
 
 /// The one pinned proptest the whole workspace tests with (Q3): component
 /// crates use this re-export instead of declaring the dependency, so the
