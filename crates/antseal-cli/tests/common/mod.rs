@@ -96,6 +96,71 @@ pub fn with_journal<T>(body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T) -
     body(&journal)
 }
 
+/// A vault of its own, for the tests that assert **the vault did not
+/// change**.
+///
+/// Those assertions read the whole directory tree, so they cannot share a
+/// vault with tests running in parallel — a neighbour's legitimate write
+/// would read as a violation. Isolation costs one Argon2id derivation per
+/// such test, which is the honest price of a whole-tree claim.
+pub struct IsolatedVault {
+    pub root: PathBuf,
+    pub layout: VaultLayout,
+}
+
+impl IsolatedVault {
+    pub fn create(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "antseal-cli-iso-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("mk root");
+        let layout = VaultLayout::at(root.join("vault"));
+        create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng())
+            .expect("create isolated vault");
+        Self { root, layout }
+    }
+
+    pub fn with_journal<T>(&self, body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T) -> T {
+        let vault = unlock_vault(&self.layout, &passphrase()).expect("unlock");
+        let mut rng = rng();
+        let journal = VaultJournal::new(WorkStore::new(&vault), &mut rng);
+        body(&journal)
+    }
+
+    /// Every file under the vault root, with its length and content
+    /// address — the literal form of "the vault is byte-identical".
+    pub fn fingerprint(&self) -> Vec<(String, u64, [u8; 32])> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64, [u8; 32])>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if let Ok(bytes) = std::fs::read(&path) {
+                    let digest = antseal_core::storage::compute_storage_address(&bytes)
+                        .map_or([0u8; 32], |a| *a.as_bytes());
+                    out.push((
+                        path.to_string_lossy().into_owned(),
+                        bytes.len() as u64,
+                        digest,
+                    ));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.root, &mut out);
+        out.sort();
+        out
+    }
+}
+
 /// A distinct fixture seal id per call site.
 pub fn fixture_seal_id(tag: u8) -> SealId {
     let mut bytes = [tag; 16];

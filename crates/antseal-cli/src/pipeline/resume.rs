@@ -140,31 +140,34 @@ where
         // failure here abandons rather than re-encrypts.
         let blobs = self.load_staged(seal_id, &plan)?;
 
-        // Pre-anchor kill: the anchor step never ran (or its result was
-        // lost), so re-run it. Nothing anchored is touched on any later
-        // path — anchors made before a kill stay valid (D36 rule 6).
-        let mut state = state;
-        if state == SealState::Staged {
-            let manifest = plan
-                .manifest_bytes
-                .as_deref()
-                .ok_or(SealError::NothingStaged)?;
-            self.run_anchor_gate(identity.unanchored, anchor_digest(manifest).into_bytes())
-                .await?;
-            self.journal.set_state(seal_id, SealState::Anchored)?;
-            self.barriers.at(Barrier::PostAnchor)?;
-            state = SealState::Anchored;
-        }
-
-        // Pre-pay: always re-quote and always re-consent (D36 rules 1-2).
+        // The pre-pay path, in the normative order: re-quote → re-consent
+        // → (anchor, if the kill landed before it) → pay. The anchor step
+        // runs *after* consent even on a resume, because anchoring makes
+        // network submissions that outlive the invocation and nothing is
+        // submitted on a user's behalf before they agree (spec line 34).
+        // A work killed after anchoring never re-anchors: anchors made
+        // before the kill stay valid (D36 rule 6).
         let mut paid_here = false;
         let mut paid_atto = 0_u128;
-        if state == SealState::Anchored {
-            let receipt = self.quote_consent_pay(seal_id, &blobs, false).await?;
+        if !state.is_post_pay() {
+            let anchor = if state == SealState::Staged {
+                let manifest = plan
+                    .manifest_bytes
+                    .as_deref()
+                    .ok_or(SealError::NothingStaged)?;
+                Some(anchor_digest(manifest).into_bytes())
+            } else {
+                None
+            };
+            let quote = self.backend.quote_batch(&blobs).await?;
+            self.barriers.at(Barrier::PostQuote)?;
+            let receipt = self
+                .consent_anchor_pay(seal_id, &quote, anchor, identity.unanchored, false)
+                .await?;
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
-            state = SealState::Paid;
         }
+        let state = self.journal.state(seal_id)?;
 
         debug_assert!(state.is_post_pay(), "the pre-pay branches are exhaustive");
         let receipt = self.journal.receipt(seal_id)?.ok_or(SealError::Journal(
@@ -178,7 +181,11 @@ where
             // D37/D36: the ~24 h window passed. Never silent — re-quote,
             // re-consent (with the stranded-payment warning), re-pay once.
             Err(SealError::Storage(StorageError::ProofsExpired)) => {
-                let fresh = self.quote_consent_pay(seal_id, &blobs, true).await?;
+                let quote = self.backend.quote_batch(&blobs).await?;
+                self.barriers.at(Barrier::PostQuote)?;
+                let fresh = self
+                    .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true)
+                    .await?;
                 paid_atto = paid_atto.saturating_add(fresh.storage_cost_atto);
                 paid_here = true;
                 self.finalize(seal_id, &fresh, &blobs).await?
@@ -257,26 +264,30 @@ where
     }
 
     /// The money path, in the only order it may ever run:
-    /// `quote_batch` → consent → `pay` → journal the receipt.
+    /// consent → anchor gate → `pay` → journal the receipt.
     ///
-    /// The quote handed to `pay` is the very object the consent gate was
-    /// rendered against — one binding, no re-fetch in between (D36's
+    /// The caller supplies the **fresh** quote it just fetched, and that
+    /// exact object is what the consent gate is rendered against and what
+    /// `pay` receives — one binding, no re-fetch in between (D36's
     /// pay-argument identity rule, which S16 asserts from the outside).
-    pub(super) async fn quote_consent_pay(
+    ///
+    /// `anchor` is `Some(digest)` when the anchor step still has to run
+    /// (a fresh seal, or a resume killed before it) and `None` when the
+    /// work is already anchored — anchors are never re-submitted.
+    pub(super) async fn consent_anchor_pay(
         &self,
         seal_id: &SealId,
-        blobs: &[Blob],
+        quote: &CostQuote,
+        anchor: Option<[u8; 32]>,
+        unanchored: bool,
         proofs_expired: bool,
     ) -> Result<PaymentReceipt, SealError> {
-        let quote: CostQuote = self.backend.quote_batch(blobs).await?;
-        self.barriers.at(Barrier::PostQuote)?;
-
         let request = ConsentRequest {
             seal_id: *seal_id,
-            quote: &quote,
-            blob_count: blobs.len(),
+            quote,
+            blob_count: quote.blobs.len(),
             prior: self.journal.consent(seal_id)?,
-            resume: true,
+            resume: proofs_expired || anchor.is_none(),
             proofs_expired,
         };
         match self
@@ -289,14 +300,22 @@ where
                 at_unix_secs,
             } => {
                 self.journal
-                    .put_consent(seal_id, consent_record(&quote, channel, at_unix_secs))?;
+                    .put_consent(seal_id, consent_record(quote, channel, at_unix_secs))?;
             }
             // D36 rule 3: no transition, no abandon, no state loss.
             ConsentDecision::Declined(reason) => return Err(SealError::ConsentDeclined(reason)),
         }
         self.barriers.at(Barrier::PostConsent)?;
 
-        let receipt = self.backend.pay(&quote).await?;
+        // The anchor gate: consented, and strictly before `pay`. A refusal
+        // here aborts with zero money spent.
+        if let Some(digest) = anchor {
+            self.run_anchor_gate(unanchored, digest).await?;
+            self.journal.set_state(seal_id, SealState::Anchored)?;
+            self.barriers.at(Barrier::PostAnchor)?;
+        }
+
+        let receipt = self.backend.pay(quote).await?;
         // The one window where money has moved and nothing records it.
         // With `NoBarriers` this call is the empty statement it looks like.
         self.barriers.at(Barrier::PostPayPreReceiptJournal)?;

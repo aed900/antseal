@@ -26,6 +26,7 @@ pub mod consent;
 pub mod error;
 pub mod journal;
 pub mod resume;
+pub mod seal;
 pub mod vault_journal;
 
 pub use consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
@@ -37,4 +38,7 @@ pub use journal::{
     verify_all_staged,
 };
 pub use resume::{Pipeline, SealOutcome, canonical_order};
+pub use seal::{
+    AEAD_TAG_LEN, DryRunReport, SealFile, SealRequest, SealResult, projected_ciphertext_len,
+};
 pub use vault_journal::VaultJournal;
