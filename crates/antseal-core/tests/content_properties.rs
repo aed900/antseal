@@ -76,8 +76,9 @@
 //!
 //! Per block at 256 cases: `the_reference_agrees_at_the_awkward_sizes` ~9 s,
 //! `prove_then_verify_round_trips_over_arbitrary_ranges` ~9 s, the two
-//! mutation blocks ~5 s each, `streaming_fine_root_equals_an_independent_
-//! reference` ~2 s, everything else under 1 s.
+//! mutation blocks ~5 s each,
+//! `streaming_fine_root_equals_an_independent_reference` ~2 s, everything
+//! else under 1 s.
 //!
 //! As at C18: the `cases` field cannot cap CI (see finding 1 below), so the
 //! lever for CI cost is that lane's `PROPTEST_CASES`, not anything here.

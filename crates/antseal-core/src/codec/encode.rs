@@ -74,11 +74,12 @@ impl CappedArtifact {
     /// [`ManifestError::InputTooLarge`](crate::manifest::ManifestError::InputTooLarge)
     /// and [`BundleError::InputTooLarge`](crate::bundle::BundleError::InputTooLarge),
     /// which `super::caps`' stage-1 ordering table already names in prose.
-    /// `the_encode_gate_reports_the_decode_paths_own_codes` in
-    /// `bundle::schema` and `manifest::envelope` asserts each against the
-    /// owning error's own `code()`, so the copy here cannot drift from the
-    /// original — the rule F42 recorded for the frozen registry (*a fact
-    /// may be stated twice only if something checks the two copies*).
+    /// `encode_refuses_an_envelope_one_byte_over_the_aggregate_cap` and
+    /// `encode_refuses_a_bundle_one_byte_over_the_aggregate_cap` assert each
+    /// string against the owning error's own `code()`, so the copy here
+    /// cannot drift from the original — the rule F42 recorded for the frozen
+    /// registry (*a fact may be stated twice only if something checks the two
+    /// copies*).
     #[must_use]
     pub const fn decode_code(self) -> &'static str {
         match self {
