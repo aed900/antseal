@@ -251,7 +251,14 @@ serde_json = "=1.0.151"
 # escalation gate against G18's budget. `hmac`'s own `zeroize` feature is
 # deliberately left OFF — it adds nothing once this one is on (D88 §2), and an
 # inert feature is a maintenance claim we would have to keep defending.
-sha2 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
+# `oid` ADDED 2026-08-02 (D60 §1.1) — the only edit this decision makes to an
+# existing pin, and it is load-bearing rather than tidiness:
+# `rsa::pkcs1v15::VerifyingKey::<D>::new` requires `D: AssociatedOid`, which
+# `sha2`'s `oid` feature supplies. Without it the DigiCert verification path
+# does not compile (`Sha256: AssociatedOid` is not satisfied). `zeroize` is
+# untouched — D88 stands; the two features are independent (`oid` activates
+# only `digest/oid`).
+sha2 = { version = "=0.11.0", default-features = false, features = ["oid", "zeroize"] }
 hkdf = "=0.13.0"
 # hmac is hkdf 0.13's underlying HMAC implementation (already in the locked
 # graph via hkdf's `hmac ^0.13`). Declared and exact-pinned here because it
@@ -259,6 +266,82 @@ hkdf = "=0.13.0"
 # antseal-core's tests re-derive HKDF from raw HMAC-SHA256 as the RFC 5869
 # independent reference (tasks/C.md C2 accept).
 hmac = "=0.13.0"
+
+# --- RFC 3161 / RFC 5652 / X.509 stack (exact-pin class; decision D60) -------
+# Every one of the seven is CONSUMED by `antseal-core` (A5/A8/A9) and by NO
+# other crate: all anchor *verification* lives in core (MVP-SPEC.md 47-53,
+# 106), and a second declaration site is how that containment erodes (A30
+# makes it a lane rule). Measured at D60: antseal-core's normal graph goes
+# 55 -> 82 packages, ZERO new duplicate pairs, ZERO getrandom/rand (the
+# `core-dep-graph` lane's forbidden-name regex stays green), wasm32 green.
+#
+# Two of these are PRE-RELEASE pins, both because their stable lines are
+# disqualified on measurement, not taste (D60 §1.3/§1.4):
+#   * `cms 0.2.3` forks the DER stack into two generations including a SECOND
+#     `x509-cert` — two `Certificate` types that do not interconvert, in the
+#     crate whose whole job is deciding which certificate signed a timestamp.
+#   * `rsa 0.9.10` drags `rand 0.8.7` + `rand_chacha 0.3.1` into the NORMAL
+#     graph (via num-bigint-dig), which `scripts/ci-lanes.sh`'s dep_graph
+#     forbidden regex `^(…|rand|rand_chacha) ` fails outright: not a
+#     trade-off, a build that cannot pass CI. Plus 8 new duplicate pairs
+#     including a second `signature`, `digest`, `der`, `spki` and `pkcs8`.
+# P23 owns the stabilisation watch and the yank risk. `rsa` also carries the
+# one MANDATORY `deny.toml` advisories ignore (RUSTSEC-2023-0071, Marvin:
+# a PRIVATE-key timing side channel; antseal-core holds no RSA private key
+# and only ever calls `pkcs1v15::VerifyingKey::verify`).
+#
+# `spki`, `ecdsa` and `signature` are DELIBERATELY NOT DECLARED (D60 §1.5):
+# reached as `x509_cert::spki`, `p384::ecdsa`, `p384::ecdsa::signature`. A
+# direct edge would add a pin that must move in lockstep for no benefit.
+#
+# The DER reader/writer A5's hand-written RFC 3161 types are built on. Its
+# strictness guarantees are measured, not assumed (D60 §2.1): indefinite
+# lengths, non-minimal lengths, redundant INTEGER leading zeros, BER
+# BOOLEANs, constructed OCTET STRINGs and non-DER GeneralizedTime are all
+# rejected by `Decode::from_der`. NOTE: `cms` forces `der`'s `ber` feature on
+# for the whole graph; that is proven harmless to `from_der` (which builds a
+# `SliceReader` whose `EncodingRules` is `Der`), but it makes
+# `Decode::from_ber` reachable from antseal source — a footgun with no
+# legitimate caller here, banned at lane level by A30.
+der = { version = "=0.8.1", default-features = false, features = ["alloc", "derive", "oid"] }
+# Named OID constants (`db::rfc5280::ID_KP_TIME_STAMPING`, the digest and
+# signature OIDs of D60 §3.3). Declared for the `db` feature specifically:
+# today that feature is switched on only by `cms`'s own requirement, and
+# depending on a third party's feature activation is how a `cms` drop
+# silently breaks the build.
+const-oid = { version = "=0.10.2", default-features = false, features = ["db"] }
+# `Certificate`/`TbsCertificate` parsing, `Name` comparison, and the
+# `ext::pkix` extension types (BasicConstraints, KeyUsage, ExtendedKeyUsage).
+# SUPPLIES NO PATH VALIDATION — A9 writes that (measured: no `fn verify`, no
+# `PathValidation` anywhere in its source).
+x509-cert = { version = "=0.3.0", default-features = false }
+# The RFC 5652 model: `ContentInfo`, `SignedData`, `SignerInfo`,
+# `SignedAttributes`, `CertificateChoices`, `SignerIdentifier`. PARSE ONLY —
+# every check is antseal's. It defines no RFC 3161 type (no `TstInfo`, no
+# `TimeStampReq`, no `MessageImprint` in the whole closure), which is why the
+# hand-written boundary sits at RFC 3161 and not at RFC 5652.
+cms = { version = "=0.3.0-pre.2", default-features = false }
+# ECDSA P-384 verification over a supplied prehash. FreeTSA — the normative
+# ECDSA TSA — signs `ecdsa-with-SHA512` on a P-384 key, and
+# `VerifyingKey::verify_prehash` takes the full 64-byte SHA-512 hash and
+# handles FIPS 186-5 §6.4 leftmost-bits truncation internally. P-256 is
+# deliberately NOT pinned: of nine live TSAs surveyed at D60 exactly one uses
+# ECDSA at all and it is P-384 (D60 §4; re-adding costs +1 package).
+p384 = { version = "=0.14.0", default-features = false, features = ["ecdsa", "pkcs8"] }
+# RSA PKCS#1 v1.5 verification. `encoding` gives `pkcs1`, needed to read an
+# `RSAPublicKey` out of an SPKI. `crypto-primes` rides along as a
+# non-optional dependency (prime generation, used only by keygen, which
+# antseal never calls) — recorded so it is not later mistaken for a mistake.
+rsa = { version = "=0.10.0-rc.18", default-features = false, features = ["encoding"] }
+# ESSCertID **v1** `certHash` ONLY (D60 §3.4) — never a signature digest,
+# never a messageImprint algorithm, never a cert-link digest. It is
+# unavoidable: RFC 2634 §5.4 defines `certHash` as SHA-1, and four of nine
+# live TSAs send v1 only, FreeTSA (the normative ECDSA default) among them.
+# SHA-1 is a SELECTOR here and never the trust decision — see the module doc
+# on `anchor::ess`. `default-features = false` drops `alloc` and `oid`, and
+# the absence of `oid` is itself a structural guard against SHA-1 ever being
+# selected through an `AssociatedOid` bound as a signature digest.
+sha1 = { version = "=0.11.0", default-features = false }
 
 # --- Signature stack (exact-pin class; C11 probe + decisions D13/D14, ---
 # --- probe artifacts: probes/sig-probe, report: docs/research/C11-signature-probe.md ---

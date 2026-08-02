@@ -59,6 +59,22 @@ chacha20poly1305.workspace = true
 ed25519-dalek.workspace = true
 hkdf.workspace = true
 ml-dsa.workspace = true
+# RFC 3161 / RFC 5652 / X.509 anchor-verification stack (A5/A8/A9; decision
+# D60). These seven are declared HERE AND NOWHERE ELSE: `antseal-anchor`,
+# `antseal-net` and `antseal-cli` must never declare them, because all anchor
+# verification lives in this crate (MVP-SPEC.md 47-53, 106) and a second
+# declaration site is how that containment erodes (A30's lane rule). Feature
+# shapes and the pre-release rationale live on the workspace pins. All seven
+# are RNG-free and `no_std`-shaped, so the `core-dep-graph` and `wasm32-core`
+# lanes stay meaningful — measured at D60: +27 packages, zero new duplicate
+# pairs, zero getrandom/rand, wasm32 green.
+cms.workspace = true
+const-oid.workspace = true
+der.workspace = true
+p384.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+x509-cert.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
