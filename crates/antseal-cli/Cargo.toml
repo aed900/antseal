@@ -38,9 +38,15 @@ path = "src/main.rs"
 # ant-backend`) and U13's `seal` wiring, the first production code here that
 # must name a concrete `AntCoreBackend`. The pipeline itself is generic over
 # `B: StorageBackend` and needs none of it.
+#
+# U36 added the `dep:tokio` arm. It is the same S22 containment story: the
+# runtime is an OPTIONAL dependency reachable only through this
+# non-default feature, so the default `--workspace` graph the `dep-graph`
+# lane measures is byte-for-byte what it was. See the tokio entry under
+# `[dependencies]` for why the edge exists at all.
 [features]
 default = []
-ant-backend = ["antseal-net/ant-backend"]
+ant-backend = ["antseal-net/ant-backend", "dep:tokio"]
 
 [dependencies]
 antseal-core.workspace = true
@@ -87,6 +93,24 @@ hkdf.workspace = true
 sha2.workspace = true
 # Interactive no-echo prompt only (U7/D41); machine mode never reaches it.
 rpassword.workspace = true
+# U36: the runtime S6's recorded tokio decision named in advance — "the
+# adapter LIBRARY takes NO tokio edge; its futures run on the caller's
+# runtime (`antseal-cli` brings tokio)" (antseal-net/Cargo.toml). This is
+# that caller. `ant-core`'s client and the alloy transport park on
+# reactor-driven I/O, which `test_util::block_on`'s noop-waker loop cannot
+# drive, so `crate::backend` builds a real multi-thread runtime and the
+# command layer blocks on it once.
+#
+# `optional = true` + activation only from `ant-backend` is the whole
+# containment claim: a default build resolves no tokio edge for this
+# package, so dep-graph rule 1's default-graph measurement is unchanged.
+# Deliberately NOT exact-pinned — tokio is outside dependency-policy §1's
+# class (nothing it produces is hashed, signed, stored or paid for) and
+# the workspace entry's "one tokio in the tree, the same one the ant-core
+# graph resolves" property is exactly what a competing `=` requirement
+# here would break. Features are the minimum the client needs; the
+# launcher's `signal`/`time` are its own.
+tokio = { workspace = true, features = ["rt-multi-thread", "time"], optional = true }
 
 [dev-dependencies]
 # Seeded deterministic CSPRNG for vault tests (house pattern; the
