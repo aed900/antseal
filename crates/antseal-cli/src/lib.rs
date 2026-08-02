@@ -20,6 +20,7 @@
 //! ever publishes (and freezes) is D72's open M4 decision (D34, residual
 //! risk 4). Consume it from outside this workspace at your own risk.
 
+mod backend;
 pub mod cli;
 mod commands;
 pub mod config;
@@ -28,6 +29,7 @@ pub mod listing;
 pub mod machine;
 pub mod passphrase;
 pub mod pipeline;
+pub mod restore_out;
 pub mod rng;
 mod run;
 pub mod vault;

@@ -110,6 +110,20 @@ pub(crate) fn list(globals: &GlobalArgs) -> Result<Outcome, CliError> {
     })
 }
 
+/// `restore <WORK-ID> [-o DIR]` (U20; policy and engine in
+/// [`crate::restore_out`] and [`crate::pipeline::restore`]).
+///
+/// The backend seam is reached **first**, before the vault is opened and
+/// before any passphrase is asked for: a build that cannot reach the
+/// network should say so rather than collect a secret and then refuse.
+pub(crate) fn restore(
+    _globals: &GlobalArgs,
+    _work_id: &str,
+    _output: Option<&Path>,
+) -> Result<Outcome, CliError> {
+    Err(crate::backend::unavailable("restore"))
+}
+
 /// `vault export [FILE]` (U12; format and engine in
 /// [`crate::vault::export`]).
 pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<Outcome, CliError> {

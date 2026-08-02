@@ -81,8 +81,8 @@ use antseal_core::crypto::material::MasterSecretRef;
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::crypto::unit_aead::{Nonce24 as AeadNonce, decrypt_unit};
 use antseal_core::manifest::{
-    CanonMode, ContentAddress, FileEntry, Manifest, ManifestBodyV1, UnitEntry,
-    UnitKind as WireUnitKind, work_id as manifest_work_id,
+    CanonMode, ContentAddress, FileEntry, Manifest, UnitEntry, UnitKind as WireUnitKind,
+    work_id as manifest_work_id,
 };
 use antseal_core::storage::compute_storage_address;
 use antseal_net::{Address, StorageBackend, StorageError};
@@ -581,19 +581,17 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
         for (index, entry) in body.files().iter().enumerate() {
             let file_id = index as u64;
             let recorded_path = paths[index].clone();
-            files.push(
-                match self.restore_file(seal_id, w, body, file_id, entry).await {
-                    Ok(mut file) => {
-                        file.recorded_path = recorded_path;
-                        FileOutcome::Verified(file)
-                    }
-                    Err(error) => FileOutcome::Failed(FailedFile {
-                        file_id,
-                        recorded_path,
-                        error,
-                    }),
-                },
-            );
+            files.push(match self.restore_file(seal_id, w, file_id, entry).await {
+                Ok(mut file) => {
+                    file.recorded_path = recorded_path;
+                    FileOutcome::Verified(file)
+                }
+                Err(error) => FileOutcome::Failed(FailedFile {
+                    file_id,
+                    recorded_path,
+                    error,
+                }),
+            });
         }
 
         Ok(RestoreReport {
@@ -665,7 +663,6 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
         &self,
         seal_id: &SealId,
         w: MasterSecretRef<'_>,
-        body: &ManifestBodyV1,
         file_id: u64,
         entry: &FileEntry,
     ) -> Result<VerifiedFile, FileError> {
@@ -771,14 +768,6 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
             }
         };
 
-        // `body` is threaded for the unit-count sanity check only; a file
-        // entry that claims more units than the work holds is malformed.
-        if entry.units().len() as u64 > body.units_total() {
-            return Err(FileError::MalformedRecord {
-                detail: "a file entry claims more units than the manifest holds".to_owned(),
-            });
-        }
-
         Ok(VerifiedFile {
             file_id,
             // Filled in by the caller, which owns the recorded path list.
@@ -849,8 +838,12 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
         cached: Option<&StagedBlob>,
     ) -> Result<(Vec<u8>, BlobOrigin), FetchFailure> {
         let wanted = Address::from(*address);
-        let network = self.backend.get_data(wanted).await;
-        let network_detail = match network {
+        // Why the network failure is held as the typed value rather than
+        // as text: the cache is tried in between, and re-deciding the
+        // class afterwards by inspecting a message would make the two
+        // distinct outcomes (nothing arrived / the wrong thing arrived)
+        // depend on a string.
+        let network_failure = match self.backend.get_data(wanted).await {
             Ok(bytes) => {
                 if address_matches(&bytes, address) {
                     return Ok((bytes, BlobOrigin::Network));
@@ -859,11 +852,12 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
                     address = %wanted,
                     "the network served bytes that do not hash to the requested address"
                 );
-                "the bytes served do not hash to the requested address".to_owned()
+                FetchFailure::AddressMismatch
             }
             Err(err) => {
-                tracing::debug!(address = %wanted, error = %storage_detail(&err), "fetch failed");
-                storage_detail(&err)
+                let detail = storage_detail(&err);
+                tracing::debug!(address = %wanted, error = %detail, "fetch failed");
+                FetchFailure::Unavailable { detail }
             }
         };
 
@@ -885,12 +879,7 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
             );
         }
 
-        if network_detail.starts_with("the bytes served") {
-            return Err(FetchFailure::AddressMismatch);
-        }
-        Err(FetchFailure::Unavailable {
-            detail: network_detail,
-        })
+        Err(network_failure)
     }
 
     /// The D43 cache copy of one blob, or `None` when the vault holds
