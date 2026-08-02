@@ -23,7 +23,10 @@ use antseal_core::anchor::rfc3161::TimeStampResp;
 use der::asn1::{GeneralizedTime, Int};
 use der::{Decode, ErrorKind};
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/anchors/A25-bootstrap");
+const FIXTURES: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../testdata/anchors/A25-bootstrap"
+);
 
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("{FIXTURES}/{name}")).unwrap_or_else(|e| panic!("{name}: {e}"))
@@ -294,7 +297,9 @@ fn a_token_smuggled_inside_the_status_field_is_rejected() {
     // A minimal well-formed ContentInfo: SEQUENCE { OID id-signedData,
     // [0] EXPLICIT NULL }.
     let content_info = {
-        let mut body = vec![0x06u8, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02];
+        let mut body = vec![
+            0x06u8, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
+        ];
         body.extend_from_slice(&[0xa0, 0x02, 0x05, 0x00]);
         tlv(0x30, &body)
     };

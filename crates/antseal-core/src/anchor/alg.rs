@@ -447,8 +447,8 @@ mod tests {
         );
 
         let p256_oid = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
-        let p256_params =
-            Any::new(der::Tag::ObjectIdentifier, p256_oid.as_bytes().to_vec()).expect("well-formed");
+        let p256_params = Any::new(der::Tag::ObjectIdentifier, p256_oid.as_bytes().to_vec())
+            .expect("well-formed");
         let p256 = alg("1.2.840.10045.2.1", Some(p256_params));
         assert_eq!(
             public_key_family(&p256)
@@ -460,7 +460,9 @@ mod tests {
         // An EC key with no curve at all is refused, not defaulted.
         let naked = alg("1.2.840.10045.2.1", None);
         assert_eq!(
-            public_key_family(&naked).expect_err("no curve named").code(),
+            public_key_family(&naked)
+                .expect_err("no curve named")
+                .code(),
             "anchor-spki-unsupported"
         );
 

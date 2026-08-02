@@ -188,20 +188,29 @@ pub enum AnchorError {
 
     // ── A5: the (b)-class limits (D60 §6) ───────────────────────────────
     /// More certificate material than [`super::caps::MAX_CHAIN_CERTS`].
-    #[error("token offers {count} certificates for path building, limit {}", super::caps::MAX_CHAIN_CERTS)]
+    #[error(
+        "token offers {count} certificates for path building, limit {}",
+        super::caps::MAX_CHAIN_CERTS
+    )]
     ChainCertCount {
         /// How many were offered.
         count: usize,
     },
     /// A certificate out of a token exceeds
     /// [`super::caps::MAX_CHAIN_CERT_BYTES`].
-    #[error("certificate is {bytes} B, limit {}", super::caps::MAX_CHAIN_CERT_BYTES)]
+    #[error(
+        "certificate is {bytes} B, limit {}",
+        super::caps::MAX_CHAIN_CERT_BYTES
+    )]
     ChainCertSize {
         /// The offending certificate's DER length.
         bytes: u64,
     },
     /// More signed attributes than [`super::caps::MAX_SIGNED_ATTRS`].
-    #[error("signedAttrs carries {count} attributes, limit {}", super::caps::MAX_SIGNED_ATTRS)]
+    #[error(
+        "signedAttrs carries {count} attributes, limit {}",
+        super::caps::MAX_SIGNED_ATTRS
+    )]
     SignedAttrCount {
         /// How many were present.
         count: usize,
@@ -640,10 +649,8 @@ mod tests {
     /// binds `anchor-tsa-imprint-mismatch`. A rename is not a fix.
     #[test]
     fn the_decision_ruled_codes_are_spelled_as_ruled() {
-        let codes: BTreeSet<&'static str> = all_code_exemplars()
-            .iter()
-            .map(AnchorError::code)
-            .collect();
+        let codes: BTreeSet<&'static str> =
+            all_code_exemplars().iter().map(AnchorError::code).collect();
         for ruled in [
             // D60 §7.3
             "anchor-der-not-strict",
@@ -712,10 +719,8 @@ mod tests {
             "the committed universe looks unparsed ({} entries)",
             frozen.len()
         );
-        let mine: BTreeSet<&'static str> = all_code_exemplars()
-            .iter()
-            .map(AnchorError::code)
-            .collect();
+        let mine: BTreeSet<&'static str> =
+            all_code_exemplars().iter().map(AnchorError::code).collect();
         assert!(!mine.is_empty());
         let collisions: Vec<&&str> = mine.iter().filter(|c| frozen.contains(**c)).collect();
         assert!(

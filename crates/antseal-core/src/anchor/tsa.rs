@@ -352,11 +352,11 @@ fn find_signer_cert(
 /// `der_sort_preserves_duplicates`), so a duplicate attribute type reaches
 /// here intact and must be rejected explicitly. RFC 5652 §5.3 permits each
 /// attribute type at most once.
-fn unique_attr<'a>(
-    attrs: &'a SetOfVec<x509_cert::attr::Attribute>,
+fn unique_attr(
+    attrs: &SetOfVec<x509_cert::attr::Attribute>,
     oid: ObjectIdentifier,
     id: SignedAttrId,
-) -> Result<Option<&'a SetOfVec<Any>>, AnchorError> {
+) -> Result<Option<&SetOfVec<Any>>, AnchorError> {
     let mut found = None;
     for attr in attrs.iter() {
         if attr.oid != oid {
@@ -371,10 +371,7 @@ fn unique_attr<'a>(
 }
 
 /// Exactly one value inside an attribute.
-fn single_value<'a>(
-    values: &'a SetOfVec<Any>,
-    id: SignedAttrId,
-) -> Result<&'a Any, AnchorError> {
+fn single_value(values: &SetOfVec<Any>, id: SignedAttrId) -> Result<&Any, AnchorError> {
     let mut iter = values.iter();
     match (iter.next(), iter.next()) {
         (Some(v), None) => Ok(v),
@@ -494,7 +491,7 @@ fn check_signer_eku(cert: &Certificate) -> Result<(), AnchorError> {
     if !critical {
         return Err(AnchorError::EkuNotCritical);
     }
-    if !eku.0.iter().any(|o| *o == ID_KP_TIME_STAMPING) {
+    if !eku.0.contains(&ID_KP_TIME_STAMPING) {
         return Err(AnchorError::EkuNotTimeStamping);
     }
     Ok(())
@@ -616,10 +613,11 @@ fn verify_ecdsa_p384(
 ) -> Result<(), AnchorError> {
     use p384::ecdsa::signature::hazmat::PrehashVerifier as _;
 
-    let verifying_key =
-        p384::ecdsa::VerifyingKey::from_sec1_bytes(key).map_err(|_| AnchorError::SpkiUnsupported {
+    let verifying_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(key).map_err(|_| {
+        AnchorError::SpkiUnsupported {
             oid: alg::ID_EC_PUBLIC_KEY,
-        })?;
+        }
+    })?;
     let signature =
         p384::ecdsa::Signature::from_der(sig).map_err(|_| AnchorError::SignatureInvalid)?;
     // `verify_prehash` takes the FULL digest and applies FIPS 186-5 §6.4

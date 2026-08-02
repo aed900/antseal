@@ -73,8 +73,8 @@
 use cms::content_info::ContentInfo;
 use der::asn1::{GeneralizedTime, Int, ObjectIdentifier, OctetString};
 use der::{
-    Any, Decode, DecodeValue, Encode, EncodeValue, ErrorKind, Header, Length, Reader, Sequence, Tag,
-    TagMode, TagNumber, Writer,
+    Any, Decode, DecodeValue, Encode, EncodeValue, ErrorKind, Header, Length, Reader, Sequence,
+    Tag, TagMode, TagNumber, Writer,
 };
 use x509_cert::ext::Extensions;
 use x509_cert::ext::pkix::name::GeneralName;
@@ -541,7 +541,8 @@ impl<'a> DecodeValue<'a> for TstInfo {
         };
 
         // `extensions [1] IMPLICIT Extensions`.
-        let extensions = reader.context_specific::<Extensions>(TAG_EXTENSIONS, TagMode::Implicit)?;
+        let extensions =
+            reader.context_specific::<Extensions>(TAG_EXTENSIONS, TagMode::Implicit)?;
 
         finish_nested(reader)?;
         Ok(Self {
@@ -702,7 +703,11 @@ fn int_as_u32(int: &Int) -> Option<u32> {
     if magnitude.len() > 4 {
         return None;
     }
-    Some(magnitude.iter().fold(0u32, |acc, &b| (acc << 8) | u32::from(b)))
+    Some(
+        magnitude
+            .iter()
+            .fold(0u32, |acc, &b| (acc << 8) | u32::from(b)),
+    )
 }
 
 /// DER INTEGER content octets → `i64`, sign-extended. `None` when wider than
@@ -713,11 +718,7 @@ fn int_as_i64(int: &Int) -> Option<i64> {
         return None;
     }
     let seed = if bytes[0] & 0x80 == 0 { 0i64 } else { -1i64 };
-    Some(
-        bytes
-            .iter()
-            .fold(seed, |acc, &b| (acc << 8) | i64::from(b)),
-    )
+    Some(bytes.iter().fold(seed, |acc, &b| (acc << 8) | i64::from(b)))
 }
 
 // ─── shared decode helpers ──────────────────────────────────────────────
@@ -867,7 +868,10 @@ mod tests {
         if let Some(flag) = ordering {
             body.extend_from_slice(&[0x01, 0x01, if flag { 0xff } else { 0x00 }]);
         }
-        let mut out = vec![0x30, u8::try_from(body.len()).expect("fixture body < 128 B")];
+        let mut out = vec![
+            0x30,
+            u8::try_from(body.len()).expect("fixture body < 128 B"),
+        ];
         out.extend_from_slice(&body);
         out
     }

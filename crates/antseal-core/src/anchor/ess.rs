@@ -269,7 +269,9 @@ pub fn check_signing_certificate(
     sid: SignerId<'_>,
 ) -> Result<(), AnchorError> {
     let value = single_value(version, attr_values)?;
-    let encoded = value.to_der().map_err(|e| der_error(DerSite::EssCertId, e))?;
+    let encoded = value
+        .to_der()
+        .map_err(|e| der_error(DerSite::EssCertId, e))?;
     match version {
         EssVersion::V1 => {
             let attr = SigningCertificate::from_der(&encoded)
@@ -325,10 +327,7 @@ impl EssVersion {
     }
 }
 
-fn single_value<'a>(
-    version: EssVersion,
-    values: &'a SetOfVec<Any>,
-) -> Result<&'a Any, AnchorError> {
+fn single_value(version: EssVersion, values: &SetOfVec<Any>) -> Result<&Any, AnchorError> {
     let mut iter = values.iter();
     match (iter.next(), iter.next()) {
         (Some(v), None) => Ok(v),
@@ -377,7 +376,8 @@ fn check_issuer_serial(
 /// `signer_certificate_is_found_in_every_real_token` measures that this holds
 /// on all nine live captures.
 pub(crate) fn name_der(name: &Name) -> Result<Vec<u8>, AnchorError> {
-    name.to_der().map_err(|e| der_error(DerSite::Certificate, e))
+    name.to_der()
+        .map_err(|e| der_error(DerSite::Certificate, e))
 }
 
 #[cfg(test)]
