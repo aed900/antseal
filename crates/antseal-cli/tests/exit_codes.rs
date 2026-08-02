@@ -32,7 +32,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 25] = [
+const TABLE: [(ErrorClass, u8, &str); 26] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -82,6 +82,11 @@ const TABLE: [(ErrorClass, u8, &str); 25] = [
     ),
     (ErrorClass::ImportAuthFailed, 33, "import-auth-failed"),
     (ErrorClass::ImportNewerVersion, 34, "import-newer-version"),
+    (
+        ErrorClass::RestoreVerificationFailed,
+        35,
+        "restore-verification-failed",
+    ),
 ];
 
 #[test]
@@ -351,6 +356,13 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             CliError::ImportNewerVersion {
                 found: 3,
                 supported: 1,
+            },
+        ),
+        (
+            "restore-verification-failed",
+            CliError::RestoreVerificationFailed {
+                failed_files: 1,
+                detail: "the canonical bytes of notes.txt".into(),
             },
         ),
     ]

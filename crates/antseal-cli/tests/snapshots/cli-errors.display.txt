@@ -74,3 +74,5 @@
   vault import authentication failed: wrong passphrase, or the export file has been modified or truncated
 [import-newer-version] class=import-newer-version code=34
   this export file was written by a newer antseal (export format v3; this build supports up to v1): upgrade antseal to import it
+[restore-verification-failed] class=restore-verification-failed code=35
+  restore could not verify 1 file(s) against the manifest (the canonical bytes of notes.txt); nothing was written for them — the sealed evidence and the bytes on the network disagree
