@@ -57,14 +57,28 @@ use crate::quote::{
     QuotePreimage, RewardsAddress, TxHash,
 };
 use crate::receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
-use crate::{Address, Blob, StorageBackend, StorageError};
+use crate::{Address, BalanceReport, Blob, EvmAddress20, StorageBackend, StorageError};
 
 /// Default sub-batch cap: upstream `MAX_TRANSFERS_PER_TRANSACTION = 256`
 /// (`evmlib-0.9.0/src/contract/payment_vault/mod.rs:11`). One non-zero
 /// transfer per blob (median-×3 rule) ⇒ 256 blobs per tx.
 pub const DEFAULT_MAX_TRANSFERS_PER_TX: usize = 256;
 
-/// The four [`StorageBackend`] operations, as call-log identifiers.
+/// A mock wallet address — obviously synthetic, deterministic, and never
+/// a real account (D89: the mock supplies U14's "both balances" row, so it
+/// needs an address to render).
+pub const MOCK_WALLET_ADDRESS: [u8; EvmAddress20::LEN] = [0xAB; EvmAddress20::LEN];
+
+/// Default canned ANT balance: 1 ANT in atto-ANT. Comfortably above any
+/// quote the mock's default base price produces, so a test that does not
+/// care about funding never trips the S8 preflight; a test that *does*
+/// sets its own via [`MockBackend::with_balances`].
+pub const DEFAULT_MOCK_ANT_ATTO: u128 = 1_000_000_000_000_000_000;
+
+/// Default canned ETH (gas) balance: 1 ETH in wei, for the same reason.
+pub const DEFAULT_MOCK_GAS_WEI: u128 = 1_000_000_000_000_000_000;
+
+/// The [`StorageBackend`] operations, as call-log identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     /// `quote_batch`.
@@ -75,6 +89,9 @@ pub enum Method {
     FinalizeBatch,
     /// `get_data`.
     GetData,
+    /// `balances` (D89: on the trait since U14's gate must read both
+    /// balances through the seam, never off a concrete backend).
+    Balances,
 }
 
 /// One armed, one-shot fault. Each fires the first time execution
@@ -119,8 +136,11 @@ pub struct CallRecord {
     pub args_digest: [u8; 32],
 }
 
-#[derive(Default)]
 struct Inner {
+    /// The canned [`BalanceReport`] `balances()` returns. Settable so a
+    /// test can drive U14's insufficient-ANT / insufficient-gas split
+    /// (D89 Decision 3) without a network.
+    balances: BalanceReport,
     store: BTreeMap<Address, Vec<u8>>,
     /// Total store *writes* ever performed (never decremented; skips do
     /// not count) — the idempotency counter.
@@ -131,6 +151,26 @@ struct Inner {
     tx_counter: u64,
     log: Vec<CallRecord>,
     faults: Vec<Fault>,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            balances: BalanceReport {
+                wallet: EvmAddress20::from_bytes(MOCK_WALLET_ADDRESS),
+                ant_atto: DEFAULT_MOCK_ANT_ATTO,
+                gas_wei: DEFAULT_MOCK_GAS_WEI,
+            },
+            store: BTreeMap::new(),
+            store_events: 0,
+            paid: BTreeMap::new(),
+            double_paid: Vec::new(),
+            quote_rounds: 0,
+            tx_counter: 0,
+            log: Vec::new(),
+            faults: Vec::new(),
+        }
+    }
 }
 
 /// The in-memory [`StorageBackend`] all storage-touching tests run on.
@@ -189,6 +229,26 @@ impl MockBackend {
     pub fn with_base_price(mut self, base_price_atto: u128) -> Self {
         self.base_price_atto = base_price_atto;
         self
+    }
+
+    /// Set the canned [`BalanceReport`] `balances()` returns (default:
+    /// [`MOCK_WALLET_ADDRESS`] holding [`DEFAULT_MOCK_ANT_ATTO`] /
+    /// [`DEFAULT_MOCK_GAS_WEI`]).
+    ///
+    /// This is the seam U14's insufficient-ANT vs insufficient-gas rows
+    /// drive: set a balance below the quote and the shared pure
+    /// [`crate::preflight`] produces the distinct typed shortfall, in the
+    /// default lane, with no network and no feature (D89 Decision 3).
+    #[must_use]
+    pub fn with_balances(self, report: BalanceReport) -> Self {
+        self.set_balances(report);
+        self
+    }
+
+    /// Replace the canned balances mid-test — e.g. to simulate a balance
+    /// that moved between consent and payment.
+    pub fn set_balances(&self, report: BalanceReport) {
+        self.lock().balances = report;
     }
 
     /// Arm a one-shot [`Fault`]. Multiple faults may be armed; each fires
@@ -567,6 +627,21 @@ impl StorageBackend for MockBackend {
             .get(&address)
             .cloned()
             .ok_or(StorageError::NotFound { address })
+    }
+
+    async fn balances(&self) -> Result<BalanceReport, StorageError> {
+        let mut inner = self.lock();
+        // Read-only and argument-free: the digest is over the empty
+        // argument list, so repeated reads log identical records.
+        let digest = mock_digest_tagged(b"log-balances", &[]);
+        inner.log.push(CallRecord {
+            method: Method::Balances,
+            args_digest: digest,
+        });
+        if let Some(err) = Self::network_fault(&mut inner, Method::Balances, "balances") {
+            return Err(err);
+        }
+        Ok(inner.balances)
     }
 }
 

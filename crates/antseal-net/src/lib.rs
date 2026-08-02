@@ -54,14 +54,27 @@
 //! chain id, payment contracts, RPC endpoint and bootstrap peers, as
 //! **pure data in the default feature set** (no ant-core), so U's config
 //! wiring never pays for the backend graph. The heavy half — conversion
-//! to upstream's `EvmNetwork`, the D44 wallet key operations
-//! (generate/import/address), and from S6 the real backend — lives in
-//! [`evm`] behind the non-default **`ant-backend`** feature:
+//! to upstream's `EvmNetwork`, `WalletKey::evm_wallet`, and from S6 the
+//! real backend — lives in [`evm`] behind the non-default
+//! **`ant-backend`** feature:
 //!
 //! ```text
 //! cargo test -p antseal-net                          # pure half only
 //! cargo test -p antseal-net --features ant-backend   # + the EVM stack
 //! ```
+//!
+//! **The wallet light half is NOT behind that feature** (D89, 2026-08-02):
+//! [`wallet`] owns secp256k1 keygen, the D44 import predicate, address
+//! derivation and EIP-55 rendering over a direct exact-pinned `k256`
+//! (`arithmetic` only) + `sha3`, and [`backend`] owns [`BalanceReport`],
+//! [`PreflightReport`] and the pure shortfall rule [`preflight`]. U11's
+//! `init` and U14's consent gate are therefore compiled, linted and
+//! asserted by the **required** default-feature CI lanes, which is the
+//! coverage property D89 Evidence 3 measured and bought; the nine packages
+//! it costs the default graph add **zero** to the feature graphs.
+//! `wallet.rs` is deliberately **not** on the S6 upstream-use allowlist,
+//! so the `dep-graph` lane itself enforces that the light half never names
+//! `ant_core::`/`ant_protocol::`.
 //!
 //! This crate is **not** WASM: it never enters `antseal-core`'s or the
 //! verifier page's dependency graph.
@@ -87,6 +100,11 @@ pub mod live;
 pub mod network;
 pub mod quote;
 pub mod receipt;
+// The wallet LIGHT half (D89): secp256k1 keygen, D44 import validation,
+// address derivation, EIP-55 — DEFAULT feature set, over `k256`
+// (arithmetic only) + `sha3`, naming no upstream crate. Deliberately kept
+// OFF the S6 containment allowlist so that stays machine-checked.
+pub mod wallet;
 
 // Test-support surface (S3): `MockBackend` + the std-only `block_on`
 // executor, exported across the crate boundary for `antseal_cli`'s
@@ -97,8 +115,8 @@ pub mod test_util;
 
 pub use address::Address;
 #[cfg(feature = "ant-backend")]
-pub use ant_backend::{AntCoreBackend, BalanceReport, CaptureHook, PreflightReport};
-pub use backend::StorageBackend;
+pub use ant_backend::{AntCoreBackend, CaptureHook};
+pub use backend::{BalanceReport, PreflightReport, StorageBackend, preflight};
 pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
 pub use error::StorageError;
 pub use live::manifest::{
@@ -120,3 +138,4 @@ pub use receipt::{
     BlobPaymentRecord, GasSummary, JournalReceipt, PaymentReceipt, RECEIPT_JOURNAL_VERSION,
     ReceiptFormatError, TxRecord, TxStatus,
 };
+pub use wallet::{WalletImportError, WalletKey, WalletOpsError, checksummed};

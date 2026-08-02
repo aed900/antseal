@@ -270,6 +270,128 @@ fn init_defaults_are_the_decided_ones() {
     }
 }
 
+/// **U38's red-then-green test.** The three defaulted `init` values must
+/// report whether they were *typed*, not merely what they are — D39
+/// Decision 1 ("a value already supplied by flag/fd is not asked again")
+/// and U11 Accept row 3 both turn on the distinction, and before U38 the
+/// parsed struct could not express it.
+///
+/// The shape is deliberately "same value, different provenance": a bare
+/// `init` and an `init --wallet generate` **agree** on `wallet` and
+/// **disagree** on `provided.wallet`. Asserting only the flagged side
+/// would pass against a `provided` hard-coded to `true`.
+#[test]
+fn defaulted_init_values_report_whether_they_were_supplied() {
+    let bare = parse(&["antseal", "init"]).expect("bare init");
+    let Command::Init(bare) = bare.command else {
+        panic!("expected init")
+    };
+    // Nothing typed ⇒ nothing counts as supplied, and the wizard asks.
+    assert_eq!(
+        (bare.provided.wallet, bare.provided.kdf, bare.provided.wrap),
+        (false, false, false)
+    );
+
+    // Each flag, typed with EXACTLY the value clap would have defaulted
+    // to: the values agree, the provenance does not.
+    for (flag, value) in [
+        ("--wallet", "generate"),
+        ("--kdf", "argon2id"),
+        ("--wrap", "none"),
+    ] {
+        let cli = parse(&["antseal", "init", flag, value]).expect("explicit default value parses");
+        let Command::Init(args) = cli.command else {
+            panic!("expected init")
+        };
+        assert_eq!(args.wallet, bare.wallet, "{flag}: value must be unchanged");
+        assert_eq!(
+            format!("{:?}", args.kdf),
+            format!("{:?}", bare.kdf),
+            "{flag}: value must be unchanged"
+        );
+        assert_eq!(
+            format!("{:?}", args.wrap),
+            format!("{:?}", bare.wrap),
+            "{flag}: value must be unchanged"
+        );
+        let supplied = match flag {
+            "--wallet" => (
+                args.provided.wallet,
+                !args.provided.kdf,
+                !args.provided.wrap,
+            ),
+            "--kdf" => (
+                args.provided.kdf,
+                !args.provided.wallet,
+                !args.provided.wrap,
+            ),
+            _ => (
+                args.provided.wrap,
+                !args.provided.wallet,
+                !args.provided.kdf,
+            ),
+        };
+        assert_eq!(
+            supplied,
+            (true, true, true),
+            "{flag}: exactly this one must read as supplied"
+        );
+    }
+
+    // A non-default value is supplied too (the obvious direction, kept so
+    // a regression that keys off "value != default" is caught as well).
+    let imported = parse(&[
+        "antseal",
+        "init",
+        "--wallet",
+        "import",
+        "--wallet-key-fd",
+        "4",
+    ])
+    .expect("import parses");
+    let Command::Init(imported) = imported.command else {
+        panic!("expected init")
+    };
+    assert!(imported.provided.wallet);
+    assert!(!imported.provided.kdf);
+
+    // Hand-constructed args (fixtures, tests) default to "ask", never
+    // "assume" — the safe direction.
+    assert_eq!(
+        antseal_cli::cli::InitProvided::default(),
+        antseal_cli::cli::InitProvided {
+            wallet: false,
+            kdf: false,
+            wrap: false,
+        }
+    );
+}
+
+/// U38 must not touch the frozen U1 surface: `#[arg(skip)]` fields are
+/// invisible to clap's builder, so no argument named `provided` exists and
+/// the committed help snapshot is unchanged. (The snapshot test above is
+/// the real check; this states the mechanism so a future reader knows a
+/// re-blessed snapshot here would be a defect signal, not a chore.)
+#[test]
+fn the_value_source_field_adds_no_argument_to_the_surface() {
+    let mut root = Cli::command();
+    let init = root
+        .get_subcommands_mut()
+        .find(|c| c.get_name() == "init")
+        .expect("init exists");
+    let names: Vec<&str> = init.get_arguments().map(|a| a.get_id().as_str()).collect();
+    assert!(
+        !names.contains(&"provided"),
+        "the U38 field must not become a flag: {names:?}"
+    );
+    assert_eq!(
+        names,
+        vec!["wallet", "wallet_key_fd", "kdf", "wrap"],
+        "init's argument set is the frozen D39 v1 set"
+    );
+    assert!(!render_surface().contains("provided"));
+}
+
 #[test]
 fn no_anchor_parses_but_is_hidden_from_help() {
     let cli = parse(&["antseal", "seal", "a.txt", "--no-anchor"]).expect("dev flag parses");
@@ -313,10 +435,14 @@ fn antseal_bin() -> Process {
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
-    // `init` (U11) is the exemplar stub: `list` and `restore` have real
-    // handlers since U19/U20.
+    // `seal` (U13) is the exemplar stub. The row has moved three times as
+    // handlers landed — `vault export|import` at U12, `list`/`restore` at
+    // U19/U20, `init` at U11 — and when U13 lands it moves to `status`.
+    // It must always point at a command that is *actually* still stubbed:
+    // an exemplar that quietly stopped exercising the stub path would
+    // pass for the wrong reason.
     let out = antseal_bin()
-        .arg("init")
+        .args(["seal", "a.txt"])
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");

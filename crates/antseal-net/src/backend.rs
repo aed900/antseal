@@ -1,7 +1,105 @@
 //! [`StorageBackend`] — the batch-first storage trait (S2), shaped to
-//! MVP-SPEC.md lines 63–66.
+//! MVP-SPEC.md lines 63–66 — plus the balance/preflight surface U14's
+//! consent gate renders.
+//!
+//! # Why the balance types live here (D89, 2026-08-02)
+//!
+//! [`BalanceReport`] and [`PreflightReport`] used to sit inside the
+//! `ant-backend`-gated adapter file. Neither names one upstream type —
+//! they are an [`EvmAddress20`](crate::network::EvmAddress20) and six
+//! `u128`s — so they were gated **only because of where they were
+//! written**, and moving them costs exactly zero packages.
+//!
+//! The real blocker D89 found is the one fixed here: `balances()` and
+//! `preflight()` were **inherent methods on the concrete
+//! `AntCoreBackend`**, so a consent gate written against them would hold a
+//! concrete backend — violating project rule 1 ("all network access goes
+//! through `StorageBackend`") and D34's injected-interface design, and
+//! leaving U14's "both balances" row untestable against `MockBackend`
+//! *even with the feature on*. [`StorageBackend::balances`] is therefore
+//! part of the seam, and the shortfall rule is the pure function
+//! [`preflight`] that every implementation shares.
 
+use crate::network::EvmAddress20;
 use crate::{Address, Blob, CostQuote, PaymentReceipt, StorageError};
+
+/// The session wallet's balances (task S8) — structured data for U14's
+/// consent render and `--json` (serde-serializable; no secret material:
+/// the wallet address is public chain data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BalanceReport {
+    /// The paying wallet's EVM address.
+    pub wallet: EvmAddress20,
+    /// ANT (payment-token ERC-20) balance, atto-ANT (saturating at
+    /// `u128::MAX`).
+    pub ant_atto: u128,
+    /// ETH (gas) balance, wei (saturating at `u128::MAX`).
+    pub gas_wei: u128,
+}
+
+/// A passed preflight's numbers (task S8) — what the consent screen
+/// renders beside the quote. Failure is never a report: it is the
+/// distinct [`StorageError::InsufficientAnt`] /
+/// [`StorageError::InsufficientGas`] error instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PreflightReport {
+    /// The complete quote's storage cost (every blob in the handed-in
+    /// set — S8's completeness guarantee), atto-ANT.
+    pub required_ant_atto: u128,
+    /// The wallet's ANT balance, atto-ANT.
+    pub available_ant_atto: u128,
+    /// The quote's gas estimate for the batch payment tx(s), wei.
+    pub required_gas_wei: u128,
+    /// The wallet's ETH balance, wei.
+    pub available_gas_wei: u128,
+}
+
+/// Payment preflight (task S8): compare the **complete** quote — storage
+/// ANT for every blob in the handed-in set plus the estimated gas for the
+/// batch payment tx(s) — against both balances.
+///
+/// Checked in a fixed, documented order: **ANT first** (the primary
+/// cost), then gas — so a doubly-underfunded wallet reports the ANT
+/// shortfall deterministically. `pay()` re-runs this internally before
+/// moving any money, so a preflight-passed seal can only fail on a
+/// balance that changed after consent (and then fails BEFORE any
+/// transaction).
+///
+/// **Arithmetic, not I/O** — which is exactly why it is a free function
+/// and deliberately *not* a trait method (D89 Decision 3): putting it on
+/// the seam would let an implementation disagree about which shortfall
+/// fires, and S8's guarantee is that `pay()`'s internal re-check and the
+/// consent gate consult **one** implementation.
+///
+/// # Errors
+///
+/// [`StorageError::InsufficientAnt`] / [`StorageError::InsufficientGas`]
+/// — distinct by type (the user remedies them differently: acquire ANT vs
+/// bridge ETH).
+pub fn preflight(
+    balances: &BalanceReport,
+    quote: &CostQuote,
+) -> Result<PreflightReport, StorageError> {
+    let report = PreflightReport {
+        required_ant_atto: quote.total_ant_atto,
+        available_ant_atto: balances.ant_atto,
+        required_gas_wei: quote.gas_estimate_wei,
+        available_gas_wei: balances.gas_wei,
+    };
+    if report.available_ant_atto < report.required_ant_atto {
+        return Err(StorageError::InsufficientAnt {
+            required_atto: report.required_ant_atto,
+            available_atto: report.available_ant_atto,
+        });
+    }
+    if report.available_gas_wei < report.required_gas_wei {
+        return Err(StorageError::InsufficientGas {
+            required_wei: report.required_gas_wei,
+            available_wei: report.available_gas_wei,
+        });
+    }
+    Ok(report)
+}
 
 /// The batch-first Autonomi storage boundary (MVP-SPEC.md lines 60–69).
 ///
@@ -129,6 +227,20 @@ pub trait StorageBackend {
     /// [`StorageError::NotFound`] (the network answered: no such chunk)
     /// distinctly from [`StorageError::Network`] (no answer).
     async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError>;
+
+    /// The paying wallet's ANT and ETH balances (task S8) — read-only,
+    /// no payment, no store, no journal.
+    ///
+    /// On the seam because it is **network I/O** (project rule 1), and
+    /// because U14's consent gate must render both balances beside the
+    /// quote in the default lane, against `MockBackend`, with no live
+    /// network (D89 Decision 3). Combine with [`preflight`] — the shared
+    /// pure shortfall rule — rather than reimplementing the comparison.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Network`] when either balance cannot be read.
+    async fn balances(&self) -> Result<BalanceReport, StorageError>;
 }
 
 #[cfg(test)]
@@ -181,6 +293,14 @@ mod tests {
         async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
             Err(StorageError::NotFound { address })
         }
+
+        async fn balances(&self) -> Result<BalanceReport, StorageError> {
+            Ok(BalanceReport {
+                wallet: EvmAddress20::from_bytes([0u8; EvmAddress20::LEN]),
+                ant_atto: 0,
+                gas_wei: 0,
+            })
+        }
     }
 
     /// A generic consumer compiles — the D34 consumption shape (the
@@ -204,5 +324,97 @@ mod tests {
         let missing = Address::from_bytes([5; 32]);
         let err = block_on(NullBackend.get_data(missing)).expect_err("null backend holds nothing");
         assert_eq!(err, StorageError::NotFound { address: missing });
+    }
+
+    fn quote_costing(ant_atto: u128, gas_wei: u128) -> CostQuote {
+        CostQuote {
+            blobs: Vec::new(),
+            total_ant_atto: ant_atto,
+            gas_estimate_wei: gas_wei,
+        }
+    }
+
+    fn wallet_with(ant_atto: u128, gas_wei: u128) -> BalanceReport {
+        BalanceReport {
+            wallet: EvmAddress20::from_bytes([7u8; EvmAddress20::LEN]),
+            ant_atto,
+            gas_wei,
+        }
+    }
+
+    /// The shortfall rule, in the DEFAULT lane and as a pure function
+    /// (D89 Decision 3) — U14 Accept row 4's insufficient-token vs
+    /// insufficient-gas split, with the S8 ANT-first order pinned.
+    #[test]
+    fn preflight_splits_the_two_shortfalls_ant_first() {
+        // Comfortably funded.
+        let report = preflight(&wallet_with(500, 500), &quote_costing(100, 100))
+            .expect("funded wallet passes");
+        assert_eq!(
+            report,
+            PreflightReport {
+                required_ant_atto: 100,
+                available_ant_atto: 500,
+                required_gas_wei: 100,
+                available_gas_wei: 500,
+            }
+        );
+
+        // Exactly-funded is funded: the comparison is `<`, not `<=`.
+        preflight(&wallet_with(100, 100), &quote_costing(100, 100)).expect("exact balance passes");
+
+        // ANT short only.
+        assert_eq!(
+            preflight(&wallet_with(99, 500), &quote_costing(100, 100)).expect_err("ANT short"),
+            StorageError::InsufficientAnt {
+                required_atto: 100,
+                available_atto: 99,
+            }
+        );
+
+        // Gas short only — a DIFFERENT error, because the remedy differs.
+        assert_eq!(
+            preflight(&wallet_with(500, 99), &quote_costing(100, 100)).expect_err("gas short"),
+            StorageError::InsufficientGas {
+                required_wei: 100,
+                available_wei: 99,
+            }
+        );
+
+        // Doubly short reports ANT — the documented deterministic order.
+        assert_eq!(
+            preflight(&wallet_with(0, 0), &quote_costing(100, 100)).expect_err("both short"),
+            StorageError::InsufficientAnt {
+                required_atto: 100,
+                available_atto: 0,
+            }
+        );
+
+        // A zero-cost quote (everything already stored) passes on an
+        // empty wallet: no payment is owed.
+        preflight(&wallet_with(0, 0), &quote_costing(0, 0)).expect("nothing to pay for");
+    }
+
+    /// Saturated balances still compare correctly (the adapter saturates
+    /// U256 into u128 — a saturated balance covers any representable
+    /// requirement).
+    #[test]
+    fn preflight_is_total_at_the_u128_boundary() {
+        preflight(
+            &wallet_with(u128::MAX, u128::MAX),
+            &quote_costing(u128::MAX, u128::MAX),
+        )
+        .expect("saturated balance covers a saturated requirement");
+        assert_eq!(
+            preflight(
+                &wallet_with(u128::MAX - 1, u128::MAX),
+                &quote_costing(u128::MAX, 0)
+            )
+            .expect_err("one atto short"),
+            StorageError::InsufficientAnt {
+                required_atto: u128::MAX,
+                available_atto: u128::MAX - 1,
+            }
+        );
     }
 }

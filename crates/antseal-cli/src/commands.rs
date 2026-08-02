@@ -87,6 +87,47 @@ fn open_layout() -> Result<VaultLayout, CliError> {
     Ok(layout)
 }
 
+/// `init` (U11; wizard, copy and vault construction in [`crate::init`]).
+///
+/// The handler is deliberately thin: it resolves the layout, holds the
+/// U5 single-writer lock across the whole creation, and renders. Every
+/// decision — the D39 order, the D40 KDF question, the D44 import
+/// classes, the D51 machine-mode rule — lives in [`crate::init::run_init`]
+/// so it is drivable in-process without a pty.
+pub(crate) fn init(globals: &GlobalArgs, args: &crate::cli::InitArgs) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = VaultLayout::resolve().map_err(|e| CliError::Usage {
+        message: e.to_string(),
+    })?;
+
+    // The lock lives beside the AEAD and needs the directory to exist;
+    // creating it is idempotent and leaves nothing behind if `init`
+    // refuses (an empty `~/.antseal/` is not a vault — the header is).
+    std::fs::create_dir_all(layout.root()).map_err(|source| CliError::Io {
+        context: format!("creating {}", layout.root().display()),
+        source,
+    })?;
+    let _lock =
+        VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile)).map_err(CliError::from)?;
+
+    let report = crate::init::run_init(
+        &layout,
+        args,
+        globals.passphrase_fd,
+        crate::machine::machine_mode_for(globals),
+        crate::init::init_network(globals),
+        &mut crate::init::TtyInitPrompt,
+        &mut OsEntropy,
+    )?;
+
+    for line in report.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome {
+        json: report.json(),
+    })
+}
+
 /// `list` (U19).
 ///
 /// Read-only, and deliberately **not** under the U5 single-writer lock:

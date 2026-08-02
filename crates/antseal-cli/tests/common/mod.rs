@@ -461,4 +461,8 @@ impl StorageBackend for RecordingBackend<'_> {
     async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
         self.inner.get_data(address).await
     }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+        self.inner.balances().await
+    }
 }

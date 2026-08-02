@@ -127,10 +127,10 @@ mod ant {
     use std::sync::Arc;
 
     use antseal_core::crypto::secrets::SecretBuf;
-    use antseal_net::evm::WalletKey;
+    use antseal_net::wallet::WalletKey;
     use antseal_net::{
-        Address, AntCoreBackend, Blob, CaptureHook, CostQuote, NetworkConfig, PaymentReceipt,
-        StorageBackend, StorageError,
+        Address, AntCoreBackend, BalanceReport, Blob, CaptureHook, CostQuote, NetworkConfig,
+        PaymentReceipt, StorageBackend, StorageError,
     };
 
     use crate::error::CliError;
@@ -322,6 +322,10 @@ mod ant {
 
             async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
                 self.inner.get_data(address).await
+            }
+
+            async fn balances(&self) -> Result<BalanceReport, StorageError> {
+                self.inner.balances().await
             }
         }
     }

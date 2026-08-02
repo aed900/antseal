@@ -161,7 +161,24 @@ pub fn obtain_passphrase(
 /// [`CliError::PassphraseUnavailable`] with reason
 /// `FdReadFailed`/`FdOverCap`/`FdEmpty`/`FdForbiddenByte` per D41.
 pub fn read_passphrase_fd(fd: u32) -> Result<SecretBuf, CliError> {
-    let fail = |reason| CliError::PassphraseUnavailable { reason };
+    read_secret_fd(fd).map_err(|reason| CliError::PassphraseUnavailable { reason })
+}
+
+/// The channel itself, one layer down: the frozen D41 byte semantics with
+/// the failure returned as a bare [`PassphraseFailure`] rather than
+/// wrapped in the passphrase error class.
+///
+/// Split out for U11's `--wallet-key-fd` (D39/D44): a wallet key is a
+/// **different secret on a different channel**, so it must reuse these
+/// exact bytes-and-newline rules while reporting its own error — reporting
+/// a passphrase failure would send the user to the wrong flag. The byte
+/// semantics are the shared part; the class is not.
+///
+/// # Errors
+///
+/// `FdReadFailed`/`FdOverCap`/`FdEmpty`/`FdForbiddenByte` per D41.
+pub fn read_secret_fd(fd: u32) -> Result<SecretBuf, PassphraseFailure> {
+    let fail = |reason| reason;
 
     // Pre-reserve the full cap so the growing read never reallocates —
     // a reallocation would strand an unwipeable partial copy.

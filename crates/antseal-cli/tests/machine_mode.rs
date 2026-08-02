@@ -126,6 +126,12 @@ fn expected_class(name: &str) -> (i32, &'static str) {
     match name {
         "vault export" | "list" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
+        // U11's handler refuses over the fixture vault, absolutely and
+        // before it would ask for anything (D39 Decision 4) — so the
+        // machine-mode abort it exhibits here is the usage class, not
+        // passphrase-unavailable. The refusal is first for a reason:
+        // overwriting a vault destroys every sealed work's keys.
+        "init" => (2, "usage"),
         // U20's handler refuses at the backend seam before it would ask
         // for a passphrase — a build with no network cannot restore, and
         // collecting a secret first would be rude as well as pointless.
@@ -311,8 +317,13 @@ fn render_fixture() -> String {
             // first time the message changed, and a fixture that documents
             // text no build emits is worse than none (U19's rule).
             "restore" => antseal_cli::backend::unavailable("restore"),
-            "init" | "seal" => CliError::NotImplemented {
-                command: if name == "init" { "init" } else { "seal" },
+            // U11's handler is complete. Its registered error exemplar is
+            // the D39 absolute refusal — the one a user actually hits —
+            // rendered by the real producer rather than hand-copied
+            // (U19's rule).
+            "init" => antseal_cli::init::existing_vault_refusal(Path::new("/home/user/.antseal")),
+            "seal" => CliError::NotImplemented {
+                command: "seal",
                 milestone: Milestone::M1,
             },
             "status" => CliError::NotImplemented {
@@ -338,6 +349,10 @@ fn render_fixture() -> String {
     // `list`'s is rendered by the real U19 renderer over a fixture
     // listing rather than hand-written, so the registered fixture cannot
     // drift from the shape the command actually emits.
+    out.push_str(&format!(
+        "[init] result\n{}\n",
+        success_envelope("init", "arbitrum-one", fixture_init_report().json())
+    ));
     out.push_str(&format!(
         "[list] result\n{}\n",
         success_envelope("list", "arbitrum-one", fixture_listing().json())
@@ -369,6 +384,25 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// A completed `init`, rendered by U11's own report type so the
+/// registered document cannot drift from what the command emits. The
+/// address is the secp256k1 generator's — a published public constant,
+/// unmistakably not a real wallet — and there is deliberately no key
+/// material in the shape at all.
+fn fixture_init_report() -> antseal_cli::init::InitReport {
+    use antseal_cli::init::InitReport;
+    use antseal_net::NetworkId;
+
+    InitReport {
+        address: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf".to_owned(),
+        network: NetworkId::ArbitrumOne,
+        vault_dir: PathBuf::from("/home/user/.antseal"),
+        wallet_source: "generate",
+        kdf: "argon2id",
+        asked: Vec::new(),
+    }
 }
 
 /// A two-row listing covering the shapes a consumer must handle: a
