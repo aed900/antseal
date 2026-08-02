@@ -29,7 +29,7 @@ seed_root="$repo/testdata/fuzz-seeds"
 # Every registered target. Adding one means editing fuzz/Cargo.toml, this
 # list, and fuzz/README.md's table — deliberately, because a target nothing
 # runs is worse than no target at all.
-TARGETS=(manifest_decode bundle_decode codec_round_trip verify_bundle)
+TARGETS=(manifest_decode bundle_decode codec_round_trip verify_bundle anchor_token)
 
 # Toolchain: the pin in fuzz/rust-toolchain.toml governs, because cargo runs
 # with `fuzz/` as its working directory. ANTSEAL_FUZZ_TOOLCHAIN overrides it

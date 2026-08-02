@@ -8,8 +8,21 @@ Registered targets:
 | `bundle_decode` | F17 | a `.sealproof` | `SealProof::decode` — all three strict layers |
 | `codec_round_trip` | F17 | either of the above | `codec_fuzz::round_trip` — decode ⇒ byte-identical re-encode |
 | `verify_bundle` | R10 | **entropy** | `verify::verify_bundle`, over structure-aware mutations of valid R6 bundles |
+| `anchor_token` | A5 (runs: A23) | a TSA artifact, with its `anchor_digest` taken from the first 32 bytes | `anchor::tsa::verify_token` — the whole RFC 3161/CMS/X.509 stage, alternating the bundle path (`expected_nonce = None`) and the capture path on one input bit |
 
-A23's `TimeStampResp` and `.ots` targets join at M2 (Q17). Adding a target
+A23's `.ots` target joins at M2 (Q17); the `TimeStampResp` half is
+`anchor_token`, landed with A5. Its seeds are the real ones:
+`testdata/anchors/A25-bootstrap/` holds nine live TSA responses plus five
+derived BER/reordering variants, and a mutation of a valid CMS structure
+reaches far deeper into the parser than any random buffer.
+
+**The invariant `anchor_token` exists for is the one a proptest cannot
+assert**: not "no panic" but "no **abort**". A stack overflow is not a panic,
+is not catchable by `catch_unwind`, and traps on `wasm32`; D60 §2.4 reached
+one with a recursive DER walker at depth 20 000 in 83 407 bytes. Depth is
+`der`'s own guard here, so what the target hunts is a path that *escapes* it
+— every re-parse of an inner field starts a fresh budget, and this stage has
+four. Adding a target
 means three edits — `Cargo.toml`, `scripts/fuzz.sh`'s `TARGETS` list, and
 this table — which is deliberate: a target nothing runs is worse than no
 target at all.

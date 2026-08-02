@@ -84,6 +84,16 @@ test = false
 doc = false
 bench = false
 
+# A5's anchor-stage target. Its seed corpus is `testdata/anchors/A25-bootstrap/`
+# — nine live TSA responses plus the derived BER variants — because a
+# mutation of a valid CMS structure reaches far deeper than a random buffer.
+[[bin]]
+name = "anchor_token"
+path = "fuzz_targets/anchor_token.rs"
+test = false
+doc = false
+bench = false
+
 # cargo-fuzz's own defaults; stated rather than inherited so a reader knows
 # the targets are built with debug assertions ON — a debug_assert firing is a
 # finding, not noise.

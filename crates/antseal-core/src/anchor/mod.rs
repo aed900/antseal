@@ -30,11 +30,14 @@
 //!   attribute types and the signer-certificate binding.
 //! - [`tsa`] (task **A8**) — CMS `SignedData` verification over a timestamp
 //!   token: signed attributes, `messageImprint`, nonce, ESSCertID, EKU.
+//! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
+//!   the crate so the ordinary suite compiles and exercises it.
 
 pub mod alg;
 pub mod caps;
 pub mod error;
 pub mod ess;
+pub mod fuzz_entry;
 pub mod model;
 pub mod rfc3161;
 pub mod tsa;
