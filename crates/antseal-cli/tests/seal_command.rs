@@ -767,6 +767,10 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     );
 }
 
+/// D49's scriptable-funding-gate row, **both** shortfalls: a dry run exits
+/// with the same distinct code the real seal would use, so `--dry-run`
+/// works as a preflight in a script that branches on which asset is short
+/// (acquire ANT vs bridge ETH are different remedies).
 #[test]
 fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
     let work = Work::new("dryshort");
@@ -774,27 +778,120 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
     let plan = work
         .plan(&["a.txt", "--no-anchor", "--dry-run"])
         .expect("plan validates");
-
-    let backend = MockBackend::new().with_balances(BalanceReport {
-        wallet: EvmAddress20::from_bytes(FIXTURE_WALLET),
-        ant_atto: 0,
-        gas_wei: u128::from(u64::MAX),
-    });
     let vault = IsolatedVault::create("seal-dryshort");
+
+    for (ant, gas, class, code) in [
+        (
+            0u128,
+            u128::from(u64::MAX),
+            ErrorClass::InsufficientAntToken,
+            20,
+        ),
+        (
+            u128::from(u64::MAX),
+            0u128,
+            ErrorClass::InsufficientEthGas,
+            21,
+        ),
+    ] {
+        let backend = MockBackend::new().with_balances(BalanceReport {
+            wallet: EvmAddress20::from_bytes(FIXTURE_WALLET),
+            ant_atto: ant,
+            gas_wei: gas,
+        });
+        let unlocked = vault.unlock();
+        let err = block_on(run_seal(
+            &backend,
+            &unlocked,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut ChaCha20Rng::from_seed([0xA1; 32]),
+            &mut ChaCha20Rng::from_seed([0xA2; 32]),
+        ))
+        .expect_err("a dry run is a scriptable funding gate (D49)");
+        assert_eq!(err.class(), class);
+        assert_eq!(err.exit_code(), code);
+        // The gate refused, and it refused *before* anything could move.
+        assert_eq!(backend.calls(Method::Pay), 0);
+        assert_eq!(backend.calls(Method::FinalizeBatch), 0);
+    }
+}
+
+/// U16 Accept row 4's first half: `--dry-run` combined with the flags that
+/// would otherwise change what happens — `--yes` (which consents in
+/// advance) and `--force-degraded` (which relaxes the anchor policy) —
+/// still performs **no** side effects.
+///
+/// `--yes` is the one that matters. It is the flag that makes a real seal
+/// pay without asking, so a dry run that honoured it would be a rehearsal
+/// that buys the thing it was rehearsing. The prompt here is `NeverAsked`
+/// and the mock's pay counter is the proof: neither the consent gate nor
+/// the payment path is reached at all.
+#[test]
+fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
+    let work = Work::new("drycombo");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&[
+            "a.txt",
+            "--no-anchor",
+            "--dry-run",
+            "--yes",
+            "--force-degraded",
+        ])
+        .expect("plan validates");
+    assert!(plan.yes, "--yes parsed");
+    assert!(plan.shaping.force_degraded, "--force-degraded parsed");
+
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-drycombo");
+    let before = vault.fingerprint();
     let unlocked = vault.unlock();
 
-    let err = block_on(run_seal(
+    let result = block_on(run_seal(
         &backend,
         &unlocked,
         &plan,
+        // A dry run must not reach the gate even with `--yes`: `--yes`
+        // answers a question that is never asked here.
         &mut NeverAsked,
-        &ctx(true),
-        &mut ChaCha20Rng::from_seed([0xA1; 32]),
-        &mut ChaCha20Rng::from_seed([0xA2; 32]),
+        &ctx(false),
+        &mut ChaCha20Rng::from_seed([0xD1; 32]),
+        &mut ChaCha20Rng::from_seed([0xD2; 32]),
     ))
-    .expect_err("a dry run is a scriptable funding gate (D49)");
-    assert_eq!(err.class(), ErrorClass::InsufficientAntToken);
-    assert_eq!(err.exit_code(), 20);
+    .expect("the dry run completes");
+
+    let SealCommandResult::DryRun(report) = &result else {
+        panic!("--dry-run returns DryRun even with --yes, got {result:?}");
+    };
+    // Accept row 3's contents, on the flag combination as well: files,
+    // byte totals, and the cost carrying D49's indicative label.
+    let rendered = result.render().join("\n");
+    assert!(
+        rendered.contains("Sealing 1 file(s), 29 byte(s)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("a.txt  (29 bytes)"), "{rendered}");
+    assert!(rendered.contains("Cost (indicative):"), "{rendered}");
+    assert!(report.dry_run);
+
+    assert_eq!(backend.calls(Method::QuoteBatch), 1);
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(backend.calls(Method::FinalizeBatch), 0);
+
+    // No work record was created — `--yes` did not turn the rehearsal into
+    // a seal, and the vault is byte-identical.
+    assert_eq!(
+        WorkStore::new(&unlocked).list_works().expect("list").len(),
+        0
+    );
+    drop(unlocked);
+    assert_eq!(
+        before,
+        vault.fingerprint(),
+        "--dry-run --yes --force-degraded must still leave the vault untouched (D49)"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────
