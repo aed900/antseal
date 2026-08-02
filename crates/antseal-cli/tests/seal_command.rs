@@ -26,6 +26,7 @@ use antseal_cli::seal_plan::{SealPlan, build_plan};
 use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
 use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
+use antseal_cli::vault::bookkeeping::{self, LOSS_WARNING, THEFT_WARNING};
 use antseal_cli::vault::store::{WorkState, WorkStore};
 use antseal_core::crypto::secrets::SealId;
 use antseal_net::test_util::{Method, MockBackend, block_on};
@@ -920,6 +921,97 @@ fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
         vault.fingerprint(),
         "--dry-run --yes --force-degraded must still leave the vault untouched (D49)"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U18: the first-seal export nag, and the double nag it carries
+// ─────────────────────────────────────────────────────────────────────
+
+/// U18 Accept row 1: a first seal in a vault with no recorded export
+/// nags; after `vault export` records one, later seals do not.
+///
+/// The nag is read from the U34 bookkeeping record rather than inferred,
+/// which is what makes the second half true at all — before that slot
+/// existed the only honest options were "nag forever" or "never nag".
+#[test]
+fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it() {
+    let work = Work::new("nag");
+    work.file("a.txt", b"content").file("b.txt", b"more");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-nag");
+    let unlocked = vault.unlock();
+
+    let first = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &first,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x71; 32]),
+        &mut ChaCha20Rng::from_seed([0x72; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(report.export_nag, "no export recorded yet");
+
+    // Both failure modes, in the words `init` already used (one author).
+    let rendered = report.render().join("\n");
+    assert!(rendered.contains("NO BACKUP YET"), "{rendered}");
+    assert!(rendered.contains("antseal vault export"), "{rendered}");
+    assert!(rendered.contains(LOSS_WARNING), "{rendered}");
+    assert!(rendered.contains(THEFT_WARNING), "{rendered}");
+    assert!(rendered.contains("LOSS"), "{rendered}");
+    assert!(rendered.contains("THEFT"), "{rendered}");
+    assert!(
+        rendered.contains("retroactively and permanently"),
+        "{rendered}"
+    );
+    // U31 positioning: a backup warning makes no legal claim.
+    let lower = rendered.to_lowercase();
+    assert!(!lower.contains("notary"), "{rendered}");
+    assert!(!lower.contains("priority"), "{rendered}");
+    // Machine consumers see it too (a scripted seal never reads stderr).
+    assert_eq!(report.json()["export_nag"], true);
+
+    // The nag is the same copy `init` closes with — asserted against the
+    // real producer, not a hand-copied string.
+    let init_copy = antseal_cli::init::standing_warnings().join("\n");
+    assert!(init_copy.contains(LOSS_WARNING));
+    assert!(init_copy.contains(THEFT_WARNING));
+
+    // Record an export, then seal again: silence.
+    bookkeeping::record_export(
+        &unlocked,
+        1_800_000_000,
+        &mut ChaCha20Rng::from_seed([0x73; 32]),
+    )
+    .expect("record the export");
+    let second = work
+        .plan(&["b.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &second,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x74; 32]),
+        &mut ChaCha20Rng::from_seed([0x75; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(!report.export_nag, "the backup is recorded; stop nagging");
+    let rendered = report.render().join("\n");
+    assert!(!rendered.contains("NO BACKUP YET"), "{rendered}");
+    assert!(!rendered.contains("LOSS"), "{rendered}");
+    assert_eq!(report.json()["export_nag"], false);
 }
 
 // ─────────────────────────────────────────────────────────────────────

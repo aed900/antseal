@@ -76,6 +76,12 @@ pub struct SealReport {
     pub unanchored: bool,
     /// The effective network's canonical spelling.
     pub network: String,
+    /// U18: this vault has never recorded a `vault export`, so the keys to
+    /// everything just sealed exist in exactly one place. Read from the
+    /// U34 bookkeeping record **after** the seal succeeded — a nag before
+    /// anything was sealed would be advice about a risk not yet taken, and
+    /// MVP-SPEC.md line 143 puts it after the first successful seal.
+    pub export_nag: bool,
 }
 
 impl SealReport {
@@ -106,6 +112,9 @@ impl SealReport {
                     .to_owned(),
             );
         }
+        if self.export_nag {
+            out.extend(crate::vault::bookkeeping::export_nag());
+        }
         out
     }
 
@@ -122,6 +131,10 @@ impl SealReport {
             "resumed": self.resumed,
             "unanchored": self.unanchored,
             "network": self.network,
+            // U18 Accept row 1: the nag reaches machine consumers too — a
+            // scripted seal that never sees stderr must still be able to
+            // notice that this vault has no backup.
+            "export_nag": self.export_nag,
         })
     }
 }
@@ -324,6 +337,10 @@ where
             resumed,
             unanchored: plan.shaping.no_anchor,
             network: plan.network.as_str().to_owned(),
+            // U18: read after the seal, and read rather than assumed — a
+            // vault restored from a backup carries its export record, so
+            // the nag correctly stays quiet on a machine that has one.
+            export_nag: !crate::vault::bookkeeping::load(vault)?.ever_exported(),
         })),
         // D49's truncation. The consent gate was never called (the
         // pipeline returns at the post-quote barrier), so the report is

@@ -278,19 +278,20 @@ pub fn funding_lines(network: NetworkId, address: &str) -> Vec<String> {
 
 /// The two standing warnings MVP-SPEC.md line 143 requires `init` to give
 /// once, plus the positioning limit in possession language.
+///
+/// The LOSS and THEFT sentences are
+/// [`crate::vault::bookkeeping`]'s constants, not literals: U18's
+/// first-seal export nag states the same two facts, and a user who read
+/// them here must recognise them there rather than parse a second
+/// phrasing of the same risk.
 #[must_use]
 pub fn standing_warnings() -> Vec<String> {
+    use crate::vault::bookkeeping::{LOSS_WARNING, THEFT_WARNING};
+
     vec![
         "Two things to understand before you seal anything:".to_owned(),
-        "  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore \
-         your sealed works again. The sealed data itself stays safely unreadable. Run \
-         `antseal vault export` and keep the backup somewhere else."
-            .to_owned(),
-        "  THEFT — whoever holds this vault (or an export) and the passphrase can decrypt \
-         every work you have ever sealed, retroactively and permanently. The ciphertexts are \
-         public and undeletable, and there is no key rotation. Treat the passphrase as a \
-         long-term, high-value key."
-            .to_owned(),
+        LOSS_WARNING.to_owned(),
+        THEFT_WARNING.to_owned(),
         String::new(),
         "What a seal proves: that the holder of this vault possessed the content by the \
          anchored time. Not authorship, and not exclusive possession — someone you shared \

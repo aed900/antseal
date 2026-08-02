@@ -426,6 +426,11 @@ fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
         resumed: false,
         unanchored: false,
         network: "arbitrum-one".to_owned(),
+        // U18: the registered exemplar shows the nag ON, because that is
+        // the shape a consumer has to notice — a first seal in a vault
+        // with no recorded backup. `false` would document the field
+        // without documenting why it exists.
+        export_nag: true,
     }
 }
 

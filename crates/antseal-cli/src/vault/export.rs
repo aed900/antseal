@@ -55,6 +55,13 @@
 //!        3: anchors (array of [slot: bstr, bytes: bstr], strictly
 //!           ascending, optional)
 //!      }
+//!   5: bookkeeping (bstr, optional) — the U34 vault-global bookkeeping
+//!      record's plaintext (U18's export-performed flag). **Optional on
+//!      read**: exports written before the slot existed simply omit it and
+//!      still import, which is the whole reason this extends format v1
+//!      rather than bumping it (pre-release, writer and reader move
+//!      together; post-release the same change would be a
+//!      `format_version` event — see EXPORT_FORMAT_VERSION)
 //! }
 //! ```
 //!
@@ -158,6 +165,10 @@ pub const MAX_EXPORT_FILE_BYTES: usize = 1024 * 1024 * 1024;
 /// Cap on the export header's CBOR body (a real body is ~60 bytes).
 const MAX_EXPORT_HEADER_BODY_BYTES: usize = 1024;
 
+/// Cap on the U34 bookkeeping record body inside the payload (a real
+/// body is under 30 bytes; defensive slack in the D10 house style).
+const MAX_BOOKKEEPING_PAYLOAD_BYTES: usize = 4096;
+
 /// Cap on the informational writer-version string in the payload.
 const MAX_WRITER_VERSION_BYTES: usize = 64;
 
@@ -204,6 +215,9 @@ pub(crate) struct ExportPayload {
     config: Option<Vec<u8>>,
     wallet: Option<WalletKeyHandle>,
     works: Vec<WorkPayload>,
+    /// The U34 bookkeeping record body. Not a `SecretBuf`: it holds a
+    /// count and a timestamp, no key material (see `vault::bookkeeping`).
+    bookkeeping: Option<Vec<u8>>,
 }
 
 /// Injected failure points for the kill/corruption tests (the fs.rs
@@ -302,7 +316,11 @@ fn encode_payload(payload: &ExportPayload) -> Result<SecretBuf, CliError> {
                     }
                     Ok(())
                 })
-            })
+            })?;
+            if let Some(bookkeeping) = &payload.bookkeeping {
+                m.entry(5, |e| e.bytes(bookkeeping))?;
+            }
+            Ok(())
         })
     })
     .map_err(err)?;
@@ -324,6 +342,7 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
     let mut config: Option<Vec<u8>> = None;
     let mut wallet: Option<WalletKeyHandle> = None;
     let mut works: Option<Vec<WorkPayload>> = None;
+    let mut bookkeeping: Option<Vec<u8>> = None;
 
     while let Some(key) = map.next_key(&mut d).map_err(codec)? {
         match key {
@@ -361,6 +380,13 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
                 }
                 works = Some(list);
             }
+            5 => {
+                let raw = d.bytes().map_err(codec)?;
+                if raw.len() > MAX_BOOKKEEPING_PAYLOAD_BYTES {
+                    return Err(bad("bookkeeping record over cap"));
+                }
+                bookkeeping = Some(raw.to_vec());
+            }
             _ => return Err(bad("unknown payload key (strict v1 schema)")),
         }
     }
@@ -372,6 +398,9 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
         config,
         wallet,
         works: works.ok_or_else(|| bad("works array missing"))?,
+        // Absent is valid: an export written before the U34 slot existed
+        // carries no key 5 and imports unchanged.
+        bookkeeping,
     };
     validate_payload(&payload)?;
     Ok(payload)
@@ -722,12 +751,21 @@ fn gather_payload(vault: &UnlockedVault) -> Result<ExportPayload, CliError> {
         });
     }
 
+    // U34/U18: the vault-global bookkeeping record travels, so a restored
+    // vault remembers that it HAS a backup. Absent (never exported, or a
+    // vault older than the slot) simply omits the key.
+    let bookkeeping = match super::bookkeeping::load(vault)? {
+        record if record == super::bookkeeping::Bookkeeping::default() => None,
+        record => Some(record.encode()?),
+    };
+
     Ok(ExportPayload {
         writer_version: env!("CARGO_PKG_VERSION").as_bytes().to_vec(),
         wrap_mode,
         config,
         wallet,
         works,
+        bookkeeping,
     })
 }
 
@@ -1010,6 +1048,27 @@ pub(crate) fn import_vault_impl<R: TryCryptoRng + ?Sized>(
         if let Some(wallet) = &payload.wallet {
             store_wallet_key(&new_vault, wallet, rng)?;
         }
+        // U34/U18. Two rules, and the second is the interesting one:
+        //
+        // 1. A carried record is decoded **before** it is written — a
+        //    malformed body must fail the import rather than install a
+        //    record no later read can parse.
+        // 2. An import always ends with at least one recorded export,
+        //    even when the payload carried none. Reaching this line means
+        //    an export file was just consumed, and that file *is* a
+        //    backup: a vault restored from one must not greet its owner
+        //    with "NO BACKUP YET" while they are holding the thing. The
+        //    count is the honest minimum and the timestamp stays absent,
+        //    because when that backup was taken is genuinely unknown to
+        //    an export that predates the slot.
+        let mut record = match &payload.bookkeeping {
+            Some(bytes) => super::bookkeeping::Bookkeeping::decode(bytes)?,
+            None => super::bookkeeping::Bookkeeping::default(),
+        };
+        if record.exports == 0 {
+            record.exports = 1;
+        }
+        super::bookkeeping::store(&new_vault, &record, rng)?;
 
         let store = WorkStore::new(&new_vault);
         let mut installed = 0usize;

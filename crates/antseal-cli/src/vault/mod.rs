@@ -34,6 +34,11 @@
 //!     │               marker; wrong passphrase / tampered header / corrupt
 //!     │               store all fail here at unlock
 //!     ├── wallet      the Arbitrum wallet record (own sub-key, U10)
+//!     ├── bookkeeping the vault-global bookkeeping record (U34): facts
+//!     │               about the vault, not about any work — today, whether
+//!     │               it has ever been exported (U18's nag reads it).
+//!     │               Absent is a valid state (every vault predating the
+//!     │               record, and every fresh one, has no such file)
 //!     └── works/      per-work records (U9), one directory per work named
 //!                     by the seal_id hex (random, content-free):
 //!                     ├── meta               `W`, seal_id, work_id, title,
@@ -92,6 +97,7 @@
 //! mutation — U5's kill-tests and the M1 pay/finalize journal integrity
 //! both stand on these two primitives.
 
+pub mod bookkeeping;
 pub mod cipher;
 pub mod export;
 pub mod fs;
