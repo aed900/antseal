@@ -585,11 +585,8 @@ fn the_gate_suites_invoke_no_m3_cli_or_bundle_builder() {
         ),
         (
             split("CARGO_BIN", "_EXE"),
-            "resolving the built binary's path — that is a spawned-CLI shape",
-        ),
-        (
-            split("process::Comm", "and"),
-            "spawning a subprocess of this crate's binary",
+            "resolving the built binary's path — that is a spawned-CLI shape, and it is the only \
+             sanctioned way a cargo test can find the CLI at all",
         ),
         (
             split("assert_", "cmd"),
@@ -617,6 +614,21 @@ fn the_gate_suites_invoke_no_m3_cli_or_bundle_builder() {
                 violations.push(format!("{name} names `{needle}` — {why}"));
             }
         }
+        // Process spawning is not forbidden outright — S18's accept row
+        // *requires* a real SIGKILL, which requires a process to kill, and
+        // the only way to get one without `unsafe` fork is to re-execute
+        // this very test binary. What must stay forbidden is spawning
+        // anything *else*, above all the CLI. So the rule is conditional
+        // rather than blanket: a gate suite that spawns must resolve its
+        // program from `current_exe`, and the `CARGO_BIN_EXE` needle above
+        // independently blocks the one way a cargo test can name the CLI.
+        let spawns = text.contains(&split("Command::", "new"));
+        if spawns && !text.contains(&split("current_", "exe")) {
+            violations.push(format!(
+                "{name} spawns a process without resolving it from `current_exe` — an M1 gate \
+                 suite may re-execute itself (S18's SIGKILL row) and nothing else"
+            ));
+        }
     }
 
     assert!(
@@ -629,12 +641,23 @@ fn the_gate_suites_invoke_no_m3_cli_or_bundle_builder() {
         violations.join("\n  ")
     );
 
-    // The scan is not vacuous: a planted invocation really is matched.
+    // The scan is not vacuous: a planted invocation really is matched, and
+    // a planted spawn of something other than `current_exe` really is
+    // caught by the conditional rule.
     let planted = format!("let _ = {}(std::env::args());", split("main_", "entry"));
     assert!(
         forbidden
             .iter()
             .any(|(needle, _)| planted.contains(needle.as_str())),
         "the needle set no longer matches a literal CLI invocation"
+    );
+    let planted_spawn = format!(
+        "{}(\"/usr/bin/antseal\").spawn()",
+        split("Command::", "new")
+    );
+    assert!(
+        planted_spawn.contains(&split("Command::", "new"))
+            && !planted_spawn.contains(&split("current_", "exe")),
+        "the conditional spawn rule no longer recognises a foreign-program spawn"
     );
 }

@@ -266,6 +266,28 @@ mod ant {
                 Ok(Self { inner })
             }
 
+            /// Forward S7's forced sub-batch cap to the inner backend.
+            ///
+            /// **Not a second door.** This consumes an existing
+            /// `SealBackend` and returns one, so it cannot bring a backend
+            /// into being — [`SealBackend::connect`] is still the only
+            /// expression that can, and it still installs the hook. The
+            /// module's guarantee is about the *hook*, and this cannot
+            /// touch it; the "no second constructor" sentence above stays
+            /// literally true.
+            ///
+            /// It exists because D37's multi-tx payment protocol is
+            /// otherwise unreachable on a devnet without a 257-blob work
+            /// (`MAX_TRANSFERS_PER_TRANSACTION = 256`). Upstream clamps
+            /// the value into `1..=256`, so this can only ever make
+            /// batches *smaller* — no caller can widen the protocol cap
+            /// through it. S18's case (1b) is the consumer.
+            #[must_use]
+            pub fn with_max_transfers_per_tx(mut self, cap: usize) -> Self {
+                self.inner = self.inner.with_max_transfers_per_tx(cap);
+                self
+            }
+
             /// The hook `connect` installs, exposed so a test can fire it
             /// without a network. Constructing one does **not** construct
             /// a backend — this is the adapter, not a second door.

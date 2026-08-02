@@ -144,11 +144,27 @@ pub fn gate() -> Option<(NetworkConfig, DevnetEnv, WalletKey)> {
 // printed by every test that uses it: reproducing a failure means re-using
 // the printed tag, not re-running and hoping.
 
-/// A per-process identifier mixed into every seed and fixture body.
+/// The environment variable a parent uses to hand its run tag to a child
+/// process (S18's SIGKILL scenarios).
+pub const RUN_TAG_ENV: &str = "ANTSEAL_RUN_TAG";
+
+/// A per-run identifier mixed into every seed and fixture body.
+///
+/// **Inherited when present.** S18 seals in a child process and resumes in
+/// the parent, and the two must derive the same `W`, the same nonces and
+/// the same fixture bytes or they are not working on the same seal at all.
+/// The child therefore takes the parent's tag from [`RUN_TAG_ENV`] rather
+/// than minting its own from its own pid.
 #[must_use]
 pub fn run_tag() -> &'static str {
     static TAG: OnceLock<String> = OnceLock::new();
     TAG.get_or_init(|| {
+        if let Some(inherited) = std::env::var_os(RUN_TAG_ENV) {
+            let inherited = inherited.to_string_lossy().into_owned();
+            if !inherited.is_empty() {
+                return inherited;
+            }
+        }
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
