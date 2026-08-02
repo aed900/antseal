@@ -13,10 +13,11 @@
 #
 # Lanes:
 #   dep-graph         one containment story: antseal-core's normal deps stay
-#                     I/O-free, self_encryption is nobody's direct dep, the
-#                     upstream call sites stay in the adapter, the devnet-era
-#                     graph stays out of the default build, alloy moves only
-#                     with evmlib (docs/dependency-policy.md §1)
+#                     I/O-free, self_encryption is nobody's direct dep, only
+#                     net/devnet-launcher DECLARE the payment stack and only
+#                     the adapter files USE it, the devnet-era graph stays out
+#                     of the default build, alloy moves only with evmlib
+#                     (docs/dependency-policy.md §1)
 #   cross-os          the cross-platform-sensitive suites (allowed-empty)
 #   golden-vectors    the golden-vector suite (must NOT be empty)
 #   tamper-matrix     the tamper harness, registry and Q8 completeness
@@ -120,6 +121,69 @@ lane_dep_graph() {
     return 1
   fi
   printf 'OK: no antseal crate declares self_encryption (D35 prohibition).\n'
+
+  # ── S23/S2: manifest-level exclusivity for the upstream payment stack ────
+  # S2's accept row is phrased at the DEPENDENCY-GRAPH level ("proves only
+  # antseal-net depends on ant-core"); S6's containment check below is at the
+  # SOURCE-TOKEN level (`ant_core::`/`ant_protocol::` code lines confined to
+  # the adapter allowlist). They are complementary, not redundant: a consumer
+  # writing a fully qualified `::ant_core::Client`, or aliasing the crate
+  # under another name, spells `ant_core::` nowhere and would pass the token
+  # check while holding a real edge. This is the missing manifest half, and
+  # it lives here because it is the same rule shape as the self_encryption
+  # scan directly above — same command, same JSON, same self-test-first
+  # discipline — and the whole containment story reads in one place.
+  #
+  # Owners: `antseal-net` (the one product adapter; MVP-SPEC.md lines 60-69
+  # make it the churn-isolation boundary) and `devnet-launcher` (never
+  # published, every edge behind its non-default `devnet` feature). Those are
+  # exactly the two crates the S6 file allowlist below is built around.
+  note "S23/S2: only antseal-net and devnet-launcher may DECLARE the upstream payment-stack edges"
+  local stack_deps='^(ant-core|ant-protocol|alloy|bytes)$'
+  local stack_owners='^(antseal-net|devnet-launcher) '
+  # `cargo metadata --no-deps` lists every DECLARED edge — normal, dev,
+  # build, target-gated, optional and RENAMED alike (a renamed entry carries
+  # the real crate in "name" and the local alias in "rename") — and needs no
+  # resolution, so a declaration is visible before any lock entry exists.
+  #
+  # Records split on the literal `{"name":"` that opens every package AND
+  # every dependency object; a PACKAGE record is the one that also carries an
+  # `"id"` (dependency entries have none), so the state machine is one flag
+  # and does not depend on cargo's field ORDER beyond that. Fidelity is not
+  # taken on trust: the self-test feeds the extractor a planted violation in
+  # cargo's own shape, and the anti-vacuity check below requires it to still
+  # find the edges we know exist.
+  local extract='BEGIN { RS = "{\"name\":\"" }
+    { n = $0; sub(/".*/, "", n)
+      if ($0 ~ /","id":"/) { pkg = n; next }
+      if (pkg != "" && n ~ deps) print pkg " " n }'
+  # Self-test FIRST: a plain forbidden edge, a RENAMED one (the sneak this
+  # rule exists for — S6's token check cannot see it), and an ALLOWED one
+  # that must NOT be reported, so both directions of the extractor are
+  # pinned rather than just its willingness to print something.
+  local planted_meta planted_pairs
+  planted_meta='{"packages":[{"name":"antseal-cli","version":"0.0.0","id":"path+file:///x/crates/antseal-cli#0.0.0","source":null,"dependencies":[{"name":"alloy","source":"registry","req":"=1.8.3","kind":null,"rename":null,"optional":false},{"name":"ant-core","source":"registry","req":"=0.5.0","kind":null,"rename":"upstream","optional":false},{"name":"thiserror","source":"registry","req":"2","kind":null,"rename":null,"optional":false}]},{"name":"antseal-net","version":"0.0.0","id":"path+file:///x/crates/antseal-net#0.0.0","source":null,"dependencies":[{"name":"bytes","source":"registry","req":"=1.12.1","kind":null,"rename":null,"optional":true}]}]}'
+  planted_pairs="$(printf '%s' "$planted_meta" | awk -v deps="$stack_deps" "$extract" | grep -vE "$stack_owners" | tr '\n' ';')"
+  if [ "$planted_pairs" != "antseal-cli alloy;antseal-cli ant-core;" ]; then
+    printf '::error::S23 self-test FAILED: the declared-edge extractor reported [%s] for a planted manifest carrying a plain edge, a RENAMED edge and one allowed edge — it should report exactly the first two. Fix it before trusting any green verdict\n' "$planted_pairs"
+    return 1
+  fi
+  local stack_edges stack_strays
+  stack_edges="$(printf '%s' "$declared" | awk -v deps="$stack_deps" "$extract")"
+  # Anti-vacuity, and S2's own existential half: "only antseal-net depends on
+  # ant-core" is also the claim that it DOES. If this disappears, the parser
+  # stopped matching and every verdict below is worthless.
+  if ! printf '%s\n' "$stack_edges" | grep -qxF 'antseal-net ant-core'; then
+    printf '::error::S23 scan found no `antseal-net ant-core` edge — S2 says that edge exists, so the metadata parse is broken, not the tree clean. Edges found:\n%s\n' "${stack_edges:-(none)}"
+    return 1
+  fi
+  stack_strays="$(printf '%s\n' "$stack_edges" | grep -vE "$stack_owners" | grep -v '^$' || true)"
+  if [ -n "$stack_strays" ]; then
+    printf '::error::S23/S2 violation: a crate outside {antseal-net, devnet-launcher} DECLARES an upstream payment-stack edge. antseal-net is the churn-isolation boundary (MVP-SPEC.md lines 60-69) and an ant-core bump must stay bounded to it (S20). `<crate> <dependency>`:\n%s\n' "$stack_strays"
+    grep -nE '^[[:space:]]*(ant-core|ant-protocol|alloy|bytes)[[:space:].]' crates/*/Cargo.toml 2>/dev/null || true
+    return 1
+  fi
+  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(printf '%s\n' "$stack_edges" | grep -c .)"
 
   note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
   # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
