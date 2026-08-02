@@ -31,9 +31,9 @@ use antseal_net::{JournalReceipt, PaymentReceipt};
 use rand_core::TryCryptoRng;
 
 use super::journal::{
-    BlobSlot, JournalError, PLAN_ENTRY, STATE_ENTRY, SealJournal, SealPlan, SealState, StagedBlob,
-    StagedBytesUnavailable, WorkIdentity, corrupt, decode_plan, decode_state, encode_plan,
-    encode_state,
+    BlobSlot, JournalError, PLAN_ENTRY, RecordedIdentity, STATE_ENTRY, SealJournal, SealPlan,
+    SealState, StagedBlob, StagedBytesUnavailable, WorkIdentity, corrupt, decode_plan,
+    decode_state, encode_plan, encode_state,
 };
 use crate::vault::store::{ConsentRecord, WorkRecord, WorkStore};
 
@@ -244,6 +244,18 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
 
     fn consent(&self, seal_id: &SealId) -> Result<Option<ConsentRecord>, JournalError> {
         Ok(self.store.load_meta(seal_id)?.consent)
+    }
+
+    fn recorded_identity(&self, seal_id: &SealId) -> Result<RecordedIdentity, JournalError> {
+        let record = self.store.load_meta(seal_id)?;
+        // `record` owns `W`; nothing below reads it, and it wipes on drop.
+        Ok(RecordedIdentity {
+            network: record.network.clone(),
+            unanchored: record.unanchored,
+            degraded: record.degraded,
+            work_id: record.work_id,
+            cost_atto: record.cost_atto,
+        })
     }
 
     fn record_outcome(

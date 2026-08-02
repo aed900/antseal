@@ -22,12 +22,19 @@
 //! `dyn` (both upstream traits are `async fn` traits and therefore not
 //! dyn-compatible — a deliberate trade recorded on each).
 
+pub mod consent;
+pub mod error;
 pub mod journal;
+pub mod resume;
 pub mod vault_journal;
 
+pub use consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
+pub use error::{Barrier, BarrierHook, NoBarriers, SealError};
 pub use journal::{
-    BlobSlot, JournalError, MANIFEST_BLOB_ENTRY, NONCE_LEN, PLAN_ENTRY, SEAL_JOURNAL_VERSION,
-    STATE_ENTRY, SealJournal, SealPlan, SealState, StagedBlob, StagedBytesUnavailable,
-    UNIT_ENTRY_BASE, WorkIdentity, check_staged_integrity, verify_all_staged,
+    BlobSlot, JournalError, MANIFEST_BLOB_ENTRY, NONCE_LEN, PLAN_ENTRY, RecordedIdentity,
+    SEAL_JOURNAL_VERSION, STATE_ENTRY, SealJournal, SealPlan, SealState, StagedBlob,
+    StagedBytesUnavailable, UNIT_ENTRY_BASE, WorkIdentity, check_staged_integrity,
+    verify_all_staged,
 };
+pub use resume::{Pipeline, SealOutcome, canonical_order};
 pub use vault_journal::VaultJournal;

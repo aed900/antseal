@@ -46,6 +46,12 @@ antseal-core = { path = "crates/antseal-core", version = "=0.0.0" }
 # antseal-core's identical edge) and, from M1 integration, `antseal-cli`'s
 # dev-dependency edge for pipeline tests (D34's forced sub-finding).
 antseal-net = { path = "crates/antseal-net", version = "=0.0.0" }
+# Same class. Declared here for the M1 edge D34 Decision 4 names: the seal
+# pipeline in `antseal-cli` consumes A1's `AnchorGate` contract (defined on
+# the A side, consumed by the pipeline — never the reverse). Dependency-
+# light by construction: antseal-anchor's own graph is antseal-core +
+# thiserror.
+antseal-anchor = { path = "crates/antseal-anchor", version = "=0.0.0" }
 
 # Autonomi client (exact-pin class: storage/payment surface, network
 # consensus). Re-verified at M0 start, 2026-07-27: 0.5.0 is the newest

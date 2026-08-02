@@ -463,6 +463,28 @@ impl SealPlan {
     }
 }
 
+/// The non-secret half of a work's recorded identity — what resume and the
+/// U-side renderers read.
+///
+/// **It carries no secret material, deliberately.** Resume needs the
+/// network, the anchor mode and the recorded outcome; it does not need
+/// `W`, because it never re-encrypts and never re-signs. Keeping `W` out of
+/// this type is what makes that a structural fact rather than a promise:
+/// the resume path has no key to misuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedIdentity {
+    /// Effective network, canonical CLI spelling.
+    pub network: String,
+    /// Sealed without anchors (the dev-only `--no-anchor` path).
+    pub unanchored: bool,
+    /// Loudly-recorded degraded anchor set.
+    pub degraded: bool,
+    /// `work_id`, once the manifest exists.
+    pub work_id: Option<[u8; 32]>,
+    /// Total storage cost paid, atto-ANT, once known.
+    pub cost_atto: Option<u128>,
+}
+
 /// Everything the journal records about a work when the seal starts —
 /// the D45 invocation identity plus the master secret the vault exists to
 /// hold.
@@ -748,6 +770,15 @@ pub trait SealJournal {
     ///
     /// Store-level failures.
     fn consent(&self, seal_id: &SealId) -> Result<Option<ConsentRecord>, JournalError>;
+
+    /// The work's recorded identity — network, anchor mode, and the
+    /// outcome fields once known. Carries **no secret material** (see
+    /// [`RecordedIdentity`]).
+    ///
+    /// # Errors
+    ///
+    /// [`JournalError::WorkNotFound`] / store-level failures.
+    fn recorded_identity(&self, seal_id: &SealId) -> Result<RecordedIdentity, JournalError>;
 
     /// Record the seal's outcome fields once known: `work_id` (spec line
     /// 75) and the total storage cost actually paid.

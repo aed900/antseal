@@ -19,8 +19,35 @@ path = "src/lib.rs"
 name = "antseal"
 path = "src/main.rs"
 
+# --- Feature policy (S12's recorded decision; the antseal-net precedent) ---
+#
+# `ant-backend` forwards to antseal-net's non-default feature of the same
+# name. It declares NO new dependency edge — only a feature of the existing
+# `antseal-net` edge — so S23's manifest-level allowlist
+# ({antseal-net, devnet-launcher} may declare ant-core/ant-protocol/alloy/
+# bytes) is untouched, and a default `cargo build/test --workspace`
+# compiles none of the ~600-package graph.
+#
+# Why a package feature and not a plain dev-dependency: D34 Decision 3 puts
+# S17's devnet harness in THIS package's integration tests, and cargo has
+# no way to enable a dev-dependency's feature conditionally — a
+# `features = ["ant-backend"]` dev-dep would drag the heavy graph into
+# every `cargo test -p antseal-cli`, destroying exactly the containment the
+# feature exists to protect. Consumers: S17's harness (`#![cfg(feature =
+# "ant-backend")]`, run as `cargo test -p antseal-cli --features
+# ant-backend`) and U13's `seal` wiring, the first production code here that
+# must name a concrete `AntCoreBackend`. The pipeline itself is generic over
+# `B: StorageBackend` and needs none of it.
+[features]
+default = []
+ant-backend = ["antseal-net/ant-backend"]
+
 [dependencies]
 antseal-core.workspace = true
+# D34 Decision 2/4: the pipeline runs A1's pre-pay anchor gate through the
+# `AnchorGate` trait defined in antseal-anchor. One direction only —
+# antseal-anchor never learns the pipeline exists.
+antseal-anchor.workspace = true
 # U4: the config file consumes S5's PURE network half (NetworkId /
 # NetworkConfig — chain ids and names; contract addresses stay net's
 # pinned constants, never duplicated into config). Default features only:
@@ -65,6 +92,19 @@ rpassword.workspace = true
 # Seeded deterministic CSPRNG for vault tests (house pattern; the
 # production OS source is injected by the binary layer only).
 rand_chacha.workspace = true
+# D34's forced sub-finding: a `#[cfg(test)]` mock is invisible across crate
+# boundaries, so `MockBackend` is exported from antseal-net behind the
+# non-default `test-util` feature and enabled on THIS dev-dependency edge.
+# The feature activates zero optional dependencies (it only compiles the
+# mock), so the pipeline's mock-driven tests stay in the fast default lane —
+# the `ant-backend` graph is a separate, opt-in feature above.
+antseal-net = { workspace = true, features = ["test-util"] }
+# Same pattern for the core side: the pipeline suites build real manifest
+# bodies from `manifest::fixtures` rather than hand-rolling wire bytes, and
+# `test_util`'s labelled NON-SECRET fixture material keeps project rule 6's
+# "no key-shaped literals in fixtures" convention. Pure constant data —
+# activates no optional dependency.
+antseal-core = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

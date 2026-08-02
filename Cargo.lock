@@ -960,6 +960,7 @@ dependencies = [
 name = "antseal-cli"
 version = "0.0.0"
 dependencies = [
+ "antseal-anchor",
  "antseal-core",
  "antseal-net",
  "argon2",
