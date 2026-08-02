@@ -12,7 +12,12 @@
 #   scripts/ci-lanes.sh --list          every lane this script owns
 #
 # Lanes:
-#   dep-graph         antseal-core's normal deps stay I/O-free
+#   dep-graph         one containment story: antseal-core's normal deps stay
+#                     I/O-free, self_encryption is nobody's direct dep, only
+#                     net/devnet-launcher DECLARE the payment stack and only
+#                     the adapter files USE it, the devnet-era graph stays out
+#                     of the default build, alloy moves only with evmlib
+#                     (docs/dependency-policy.md §1)
 #   cross-os          the cross-platform-sensitive suites (allowed-empty)
 #   golden-vectors    the golden-vector suite (must NOT be empty)
 #   tamper-matrix     the tamper harness, registry and Q8 completeness
@@ -117,6 +122,69 @@ lane_dep_graph() {
   fi
   printf 'OK: no antseal crate declares self_encryption (D35 prohibition).\n'
 
+  # ── S23/S2: manifest-level exclusivity for the upstream payment stack ────
+  # S2's accept row is phrased at the DEPENDENCY-GRAPH level ("proves only
+  # antseal-net depends on ant-core"); S6's containment check below is at the
+  # SOURCE-TOKEN level (`ant_core::`/`ant_protocol::` code lines confined to
+  # the adapter allowlist). They are complementary, not redundant: a consumer
+  # writing a fully qualified `::ant_core::Client`, or aliasing the crate
+  # under another name, spells `ant_core::` nowhere and would pass the token
+  # check while holding a real edge. This is the missing manifest half, and
+  # it lives here because it is the same rule shape as the self_encryption
+  # scan directly above — same command, same JSON, same self-test-first
+  # discipline — and the whole containment story reads in one place.
+  #
+  # Owners: `antseal-net` (the one product adapter; MVP-SPEC.md lines 60-69
+  # make it the churn-isolation boundary) and `devnet-launcher` (never
+  # published, every edge behind its non-default `devnet` feature). Those are
+  # exactly the two crates the S6 file allowlist below is built around.
+  note "S23/S2: only antseal-net and devnet-launcher may DECLARE the upstream payment-stack edges"
+  local stack_deps='^(ant-core|ant-protocol|alloy|bytes)$'
+  local stack_owners='^(antseal-net|devnet-launcher) '
+  # `cargo metadata --no-deps` lists every DECLARED edge — normal, dev,
+  # build, target-gated, optional and RENAMED alike (a renamed entry carries
+  # the real crate in "name" and the local alias in "rename") — and needs no
+  # resolution, so a declaration is visible before any lock entry exists.
+  #
+  # Records split on the literal `{"name":"` that opens every package AND
+  # every dependency object; a PACKAGE record is the one that also carries an
+  # `"id"` (dependency entries have none), so the state machine is one flag
+  # and does not depend on cargo's field ORDER beyond that. Fidelity is not
+  # taken on trust: the self-test feeds the extractor a planted violation in
+  # cargo's own shape, and the anti-vacuity check below requires it to still
+  # find the edges we know exist.
+  local extract='BEGIN { RS = "{\"name\":\"" }
+    { n = $0; sub(/".*/, "", n)
+      if ($0 ~ /","id":"/) { pkg = n; next }
+      if (pkg != "" && n ~ deps) print pkg " " n }'
+  # Self-test FIRST: a plain forbidden edge, a RENAMED one (the sneak this
+  # rule exists for — S6's token check cannot see it), and an ALLOWED one
+  # that must NOT be reported, so both directions of the extractor are
+  # pinned rather than just its willingness to print something.
+  local planted_meta planted_pairs
+  planted_meta='{"packages":[{"name":"antseal-cli","version":"0.0.0","id":"path+file:///x/crates/antseal-cli#0.0.0","source":null,"dependencies":[{"name":"alloy","source":"registry","req":"=1.8.3","kind":null,"rename":null,"optional":false},{"name":"ant-core","source":"registry","req":"=0.5.0","kind":null,"rename":"upstream","optional":false},{"name":"thiserror","source":"registry","req":"2","kind":null,"rename":null,"optional":false}]},{"name":"antseal-net","version":"0.0.0","id":"path+file:///x/crates/antseal-net#0.0.0","source":null,"dependencies":[{"name":"bytes","source":"registry","req":"=1.12.1","kind":null,"rename":null,"optional":true}]}]}'
+  planted_pairs="$(printf '%s' "$planted_meta" | awk -v deps="$stack_deps" "$extract" | grep -vE "$stack_owners" | tr '\n' ';')"
+  if [ "$planted_pairs" != "antseal-cli alloy;antseal-cli ant-core;" ]; then
+    printf '::error::S23 self-test FAILED: the declared-edge extractor reported [%s] for a planted manifest carrying a plain edge, a RENAMED edge and one allowed edge — it should report exactly the first two. Fix it before trusting any green verdict\n' "$planted_pairs"
+    return 1
+  fi
+  local stack_edges stack_strays
+  stack_edges="$(printf '%s' "$declared" | awk -v deps="$stack_deps" "$extract")"
+  # Anti-vacuity, and S2's own existential half: "only antseal-net depends on
+  # ant-core" is also the claim that it DOES. If this disappears, the parser
+  # stopped matching and every verdict below is worthless.
+  if ! printf '%s\n' "$stack_edges" | grep -qxF 'antseal-net ant-core'; then
+    printf '::error::S23 scan found no `antseal-net ant-core` edge — S2 says that edge exists, so the metadata parse is broken, not the tree clean. Edges found:\n%s\n' "${stack_edges:-(none)}"
+    return 1
+  fi
+  stack_strays="$(printf '%s\n' "$stack_edges" | grep -vE "$stack_owners" | grep -v '^$' || true)"
+  if [ -n "$stack_strays" ]; then
+    printf '::error::S23/S2 violation: a crate outside {antseal-net, devnet-launcher} DECLARES an upstream payment-stack edge. antseal-net is the churn-isolation boundary (MVP-SPEC.md lines 60-69) and an ant-core bump must stay bounded to it (S20). `<crate> <dependency>`:\n%s\n' "$stack_strays"
+    grep -nE '^[[:space:]]*(ant-core|ant-protocol|alloy|bytes)[[:space:].]' crates/*/Cargo.toml 2>/dev/null || true
+    return 1
+  fi
+  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(printf '%s\n' "$stack_edges" | grep -c .)"
+
   note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
   # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
   # storage-address function must be a pure function of its input):
@@ -209,6 +277,17 @@ crates/devnet-launcher/src/main.rs'
   # crate.
   if grep -q '^name = "self_encryption"$' Cargo.lock; then
     note "self_encryption is in the locked graph (transitive) — checking its immediate parents"
+    # Self-test FIRST for THIS detector too (P20 rule 2: P15 landed the
+    # check, this keeps its red direction tested). The declared-manifest
+    # half above has had a planted-fake self-test since P15; the
+    # resolved-parent half had none, so a typo in the ' (/' pattern would
+    # have made it silently unfalsifiable — the exact failure mode the
+    # counters at the top of this file exist to prevent.
+    local planted_parent='1antseal-net v0.0.0 (/home/x/crates/antseal-net)'
+    if ! printf '%s\n' "$planted_parent" | grep -qF ' (/'; then
+      printf '::error::P15/D35 resolved-parent self-test FAILED: the workspace-crate detector does not match a planted local-path parent — fix it before trusting any green verdict\n'
+      return 1
+    fi
     local inverse parents bad
     inverse="$(cargo tree -i self_encryption --workspace --all-features -e normal,build,dev --prefix depth --depth 1 --locked)" || return 1
     parents="$(printf '%s\n' "$inverse" | grep '^1' || true)"
@@ -221,6 +300,111 @@ crates/devnet-launcher/src/main.rs'
     printf 'OK: every parent of self_encryption is an upstream crate, none is ours.\n'
   else
     printf 'self_encryption is not in the locked graph at all (no ant-core consumer yet) — prohibition vacuously holds.\n'
+  fi
+
+  # ── P20 rule 1: the devnet era stays out of the default build ───────────
+  # P16 resolved ant-node into Cargo.lock (the M1 lockfile event, 128 → 744
+  # entries) and put every heavy edge behind a NON-DEFAULT feature:
+  # `devnet-launcher/devnet` and `antseal-net/ant-backend`. A lock entry is
+  # not a compile — locks cover all member features — so the property that
+  # actually matters is that a default `cargo build`/`cargo test --workspace`
+  # compiles none of it. That is convention until something asserts it, and
+  # a single non-optional edge added in review would flip ~355 packages into
+  # every contributor's default build without any lane noticing.
+  #
+  # The whole upstream stack is checked, not just ant-node: ant-core,
+  # ant-protocol, evmlib and alloy sit behind the same two feature gates by
+  # the same recorded decisions (workspace Cargo.toml pin comments; D33,
+  # D35, D52), so they are one boundary, and naming them individually makes
+  # the failure message say which edge broke it.
+  note "P20/D52: a default --workspace build/test must not reach the devnet-era graph"
+  local upstream_stack='^(ant-node|ant-core|ant-protocol|evmlib|alloy) v'
+  # Self-test FIRST, and against the REAL graph rather than a planted
+  # string: with the launcher's own feature ON, the same command and the
+  # same pattern MUST find ant-node. A detector that cannot see the thing it
+  # forbids is green for the wrong reason.
+  local devnet_tree default_tree offending
+  local treeerr rc
+  treeerr="$(mktemp)"
+  devnet_tree="$(cargo tree --workspace --features devnet-launcher/devnet -e normal,build,dev --prefix none --locked 2>"$treeerr")"
+  rc=$?
+  if [ "$rc" -ne 0 ] || ! printf '%s\n' "$devnet_tree" | grep -qE '^ant-node v'; then
+    # Diagnosable on purpose: a broken pattern and a cargo that failed to
+    # produce a tree are different faults with the same symptom (an empty
+    # match), and a lane whose red cannot be told apart from a flake gets
+    # ignored, which is worse than not having it.
+    printf '::error::P20 self-test FAILED (cargo exit %s, %s tree line(s)): with devnet-launcher/devnet enabled the tree does NOT show ant-node — the command or the pattern is wrong, so the green verdict below would be meaningless. cargo stderr:\n%s\n' \
+      "$rc" "$(printf '%s\n' "$devnet_tree" | grep -c .)" "$(cat "$treeerr")"
+    rm -f "$treeerr"
+    return 1
+  fi
+  rm -f "$treeerr"
+  default_tree="$(cargo tree --workspace -e normal,build,dev --prefix none --locked)" || return 1
+  offending="$(printf '%s\n' "$default_tree" | grep -E "$upstream_stack" || true)"
+  if [ -n "$offending" ]; then
+    printf '::error::P20 violation: the DEFAULT --workspace graph reaches the devnet-era upstream stack. Every such edge is feature-gated by decision (devnet-launcher/devnet, antseal-net/ant-backend); a default edge puts the ~355-package ant-node/EVM subtree into every contributor build and every CI lane:\n%s\n' "$offending"
+    return 1
+  fi
+  # Evidence, not decoration: the two package counts are the size of what
+  # the feature gate is holding back, and a collapse toward each other is
+  # visible in the log before it is a violation.
+  local default_n devnet_n
+  default_n="$(printf '%s\n' "$default_tree" | sed 's/ .*//' | sort -u | grep -c .)"
+  devnet_n="$(printf '%s\n' "$devnet_tree" | sed 's/ .*//' | sort -u | grep -c .)"
+  printf 'OK: default --workspace graph is %s packages and reaches none of ant-node/ant-core/ant-protocol/evmlib/alloy (with devnet-launcher/devnet: %s).\n' "$default_n" "$devnet_n"
+
+  # ── P20 rule 3: alloy moves only with evmlib ────────────────────────────
+  # D44 defines the accepted wallet/payment set as "what the pinned
+  # evmlib/alloy parse accepts", and S5/S6 validate against it. antseal-net
+  # holds a DIRECT alloy edge because evmlib re-exports no `Provider` trait
+  # (evmlib-0.9.0/src/utils.rs:184-200), so two independent things now name
+  # alloy — and independent drift between them would silently fork the
+  # accepted set with no test failing.
+  #
+  # Cargo.lock encodes exactly this property already: a dependency entry is
+  # version-QUALIFIED (`"alloy 1.7.0"`) if and only if the package resolves
+  # to more than one version. So `evmlib` listing a bare `"alloy"` is the
+  # lock's own statement that there is one alloy and both of us are on it.
+  # That is the check, plus the recorded pin literal, so the comment in
+  # Cargo.toml cannot drift from the resolution it claims.
+  note "P20/D44: alloy stays in lockstep with the evmlib the ant-core graph locks"
+  # Self-test FIRST: the qualified-entry detector must trip on a planted
+  # split, in the exact shape Cargo.lock emits for one.
+  local split_detector='^ "alloy [0-9]'
+  if ! printf ' "alloy 1.7.0",\n' | grep -qE "$split_detector"; then
+    printf '::error::P20 lockstep self-test FAILED: the split-version detector does not match a planted version-qualified alloy entry — fix it before trusting any green verdict\n'
+    return 1
+  fi
+  if grep -q '^name = "evmlib"$' Cargo.lock; then
+    local alloy_locked alloy_pinned evmlib_alloy family_split
+    alloy_locked="$(awk '/^name = "alloy"$/{f=1; next} f && /^version = /{gsub(/"/,"",$3); print $3; f=0}' Cargo.lock)"
+    if [ "$(printf '%s\n' "$alloy_locked" | grep -c .)" -ne 1 ]; then
+      printf '::error::P20 violation: Cargo.lock carries %s alloy versions — we and evmlib are no longer on one alloy:\n%s\n' "$(printf '%s\n' "$alloy_locked" | grep -c .)" "$alloy_locked"
+      return 1
+    fi
+    evmlib_alloy="$(awk '/^name = "evmlib"$/{f=1; next} f && /^\]$/{exit} f && /^ "alloy/{print}' Cargo.lock)"
+    if [ -z "$evmlib_alloy" ]; then
+      printf '::error::P20 violation: evmlib no longer depends on alloy at all — the lockstep partner this rule pins is gone; re-derive the rule before deleting it\n'
+      return 1
+    fi
+    if printf '%s\n' "$evmlib_alloy" | grep -qE "$split_detector"; then
+      printf '::error::P20 violation: evmlib depends on a version-QUALIFIED alloy (%s), which Cargo.lock emits only when alloy resolves to more than one version. D44 defines the accepted payment set as what the PINNED evmlib/alloy accept; two alloys means two accepted sets\n' "$evmlib_alloy"
+      return 1
+    fi
+    # The whole `alloy-*` family moves as one for the same reason.
+    family_split="$(awk '/^name = "alloy/{gsub(/"/,"",$3); n=$3; next} n != "" && /^version = /{gsub(/"/,"",$3); print n; n=""}' Cargo.lock | sort | uniq -d)"
+    if [ -n "$family_split" ]; then
+      printf '::error::P20 violation: an alloy family crate resolves to more than one version:\n%s\n' "$family_split"
+      return 1
+    fi
+    alloy_pinned="$(sed -nE 's/^alloy = \{ version = "=([^"]+)".*/\1/p' Cargo.toml)"
+    if [ "$alloy_pinned" != "$alloy_locked" ]; then
+      printf '::error::P20 violation: [workspace.dependencies] pins alloy "=%s" but the lock resolves %s. The pin comment claims it is the version evmlib resolves; make one of them true\n' "$alloy_pinned" "$alloy_locked"
+      return 1
+    fi
+    printf 'OK: one alloy (%s), pinned exactly, and evmlib depends on that same one.\n' "$alloy_locked"
+  else
+    printf 'evmlib is not in the locked graph at all — the lockstep rule has no partner yet and holds vacuously.\n'
   fi
 }
 

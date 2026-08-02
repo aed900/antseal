@@ -348,8 +348,10 @@ pub fn canonicalize(
 ///
 /// Byte-identical to `canonicalize(version, TextMode::Forced, raw_bytes)` by
 /// construction: both run the identical stage-1 decode into the identical
-/// stages 2–5 (`forced_total_form_matches_the_fallible_one` asserts it over
-/// arbitrary bytes).
+/// stages 2–5. Asserted over arbitrary bytes by the proptest
+/// `forced_mode_is_total_idempotent_and_canonical`, and over the KAT corpus —
+/// invalid-UTF-8 rows included — by
+/// `kat_forced_total_form_matches_the_fallible_one`.
 #[must_use]
 pub fn canonicalize_forced(version: UnicodeVersion, raw_bytes: &[u8]) -> CanonicalBytes {
     canonicalize_decoded(version, &String::from_utf8_lossy(raw_bytes))

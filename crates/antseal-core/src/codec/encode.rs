@@ -26,12 +26,106 @@
 
 use minicbor::encode::Encoder;
 
+use super::caps::{MAX_BUNDLE_BYTES, MAX_MANIFEST_BYTES};
+
+/// An artifact whose **encoded** size is capped (D10 §1 rows 1–2; task
+/// F53).
+///
+/// The other seventeen D10 caps bound something a constructor can see — a
+/// list length, a `bstr` length — so F41 could enforce them where the
+/// parts are assembled. These two bound the *serialization*, which exists
+/// only after `encode_*` returns, so they are the one class of cap that
+/// has to be checked here.
+///
+/// There are exactly two, and no third is coming: the manifest **body**
+/// deliberately has no constant of its own (it is a `bstr` inside the
+/// envelope, so `len(body) < len(envelope)` by construction), and every
+/// other capped byte field is an opaque artifact already gated at
+/// construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CappedArtifact {
+    /// The manifest envelope —
+    /// [`MAX_MANIFEST_BYTES`](super::caps::MAX_MANIFEST_BYTES).
+    ManifestEnvelope,
+    /// The `.sealproof` bundle —
+    /// [`MAX_BUNDLE_BYTES`](super::caps::MAX_BUNDLE_BYTES).
+    Bundle,
+}
+
+impl CappedArtifact {
+    /// Both artifacts, so a test can sweep them exhaustively.
+    pub const ALL: [Self; 2] = [Self::ManifestEnvelope, Self::Bundle];
+
+    /// The frozen cap — read from the same constant the decode path
+    /// compares its *input* against, so the two sides cannot drift.
+    #[must_use]
+    pub const fn cap(self) -> u64 {
+        match self {
+            Self::ManifestEnvelope => MAX_MANIFEST_BYTES,
+            Self::Bundle => MAX_BUNDLE_BYTES,
+        }
+    }
+
+    /// The **decode-side** code a verifier would report for an artifact
+    /// this size — the code the seal side must therefore refuse with.
+    ///
+    /// These two strings are not new (D30 §3's append ceremony is not
+    /// invoked and the universe stays at 194): they are
+    /// [`ManifestError::InputTooLarge`](crate::manifest::ManifestError::InputTooLarge)
+    /// and [`BundleError::InputTooLarge`](crate::bundle::BundleError::InputTooLarge),
+    /// which `super::caps`' stage-1 ordering table already names in prose.
+    /// `encode_refuses_an_envelope_one_byte_over_the_aggregate_cap` and
+    /// `encode_refuses_a_bundle_one_byte_over_the_aggregate_cap` assert each
+    /// string against the owning error's own `code()`, so the copy here
+    /// cannot drift from the original — the rule F42 recorded for the frozen
+    /// registry (*a fact may be stated twice only if something checks the two
+    /// copies*).
+    #[must_use]
+    pub const fn decode_code(self) -> &'static str {
+        match self {
+            Self::ManifestEnvelope => "manifest-too-large",
+            Self::Bundle => "bundle-too-large",
+        }
+    }
+
+    /// The gate itself: refuse an encoding the decode path would refuse.
+    ///
+    /// Checked on the finished bytes, which is the only place the quantity
+    /// exists. `encoded.len() as u64` widens **up** (lossless on 32- and
+    /// 64-bit) and the cap is never narrowed down to `usize`, the D10 §8
+    /// rule that keeps one artifact from being valid on one target and
+    /// invalid on the other.
+    pub(crate) fn gate(self, encoded: &[u8]) -> Result<(), EncodeError> {
+        let len = encoded.len() as u64;
+        let cap = self.cap();
+        if len > cap {
+            return Err(EncodeError::TooLarge {
+                artifact: self,
+                len,
+                cap,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::Display for CappedArtifact {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::ManifestEnvelope => "manifest envelope",
+            Self::Bundle => "bundle",
+        })
+    }
+}
+
 /// Failure of the canonical encode layer.
 ///
-/// These are caller-bug reports, not adversarial-input errors (encoding
-/// consumes only caller-built values): the decode layer's taxonomy lives
-/// in [`super::decode::DecodeError`]. Library discipline still applies —
-/// misuse surfaces as an `Err`, never a panic.
+/// Every variant is a **seal-side** report — encoding consumes only
+/// caller-built values, never adversarial input, whose taxonomy lives in
+/// [`super::decode::DecodeError`]. Three are caller bugs the layer
+/// detects; [`Self::TooLarge`] is the one that reports a real property of
+/// a real artifact. Library discipline applies to all four: misuse
+/// surfaces as an `Err`, never a panic.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EncodeError {
     /// The same map key was supplied twice. Map keys are registry
@@ -58,6 +152,50 @@ pub enum EncodeError {
     /// is an `Err`, not a panic path.
     #[error("the byte sink rejected a write")]
     Sink,
+
+    /// The finished encoding exceeds its D10 aggregate byte cap (F53).
+    ///
+    /// Unlike its three siblings this is reachable from schema-valid
+    /// parts: every *other* D10 cap bounds something a constructor can
+    /// see, and F41 made all six constructors enforce those — but a
+    /// manifest with a 17 MiB `title`, or a bundle whose individually
+    /// legal anchors sum past 256 MiB, is assembled entirely from
+    /// in-cap pieces. Without this check the seal side emits an artifact
+    /// **no v1 verifier, including antseal's own, will decode**: on a
+    /// pay-once network, permanently dead bytes.
+    ///
+    /// Reported with the decode path's own code (see
+    /// [`CappedArtifact::decode_code`]), so a sealer and a verifier name
+    /// the same defect the same way.
+    #[error("encoded {artifact} of {len} bytes exceeds the {cap}-byte limit")]
+    TooLarge {
+        /// Which artifact overflowed.
+        artifact: CappedArtifact,
+        /// The encoded length actually produced.
+        len: u64,
+        /// The frozen cap.
+        cap: u64,
+    },
+}
+
+impl EncodeError {
+    /// The stable error code, for the one variant that has one.
+    ///
+    /// `None` for the three caller-bug variants **on purpose**: they are
+    /// internal invariants, unreachable for every value this crate builds
+    /// (constant registry keys, one item per scope, an infallible `Vec`
+    /// sink), so no artifact can ever carry them and D30's frozen universe
+    /// deliberately does not name them. [`Self::TooLarge`] is the
+    /// encode-side half of a *decode-side* rejection and therefore reuses
+    /// that rejection's code rather than minting a second name for one
+    /// outcome (D30 §1).
+    #[must_use]
+    pub const fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::DuplicateMapKey { .. } | Self::NotExactlyOneItem { .. } | Self::Sink => None,
+            Self::TooLarge { artifact, .. } => Some(artifact.decode_code()),
+        }
+    }
 }
 
 /// Map a minicbor emit result into this layer's error type.
@@ -252,6 +390,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **F53.** The gate's table is the cap table, not a copy of it, and
+    /// the two artifacts are told apart by code. The *boundary* (at-cap
+    /// admitted, cap+1 refused) is proven end-to-end through the real
+    /// encoders in `manifest::envelope` and `bundle::schema`, which is
+    /// also where the two codes are bound to the decode-side variants
+    /// that own them; asserting it here would cost a 256 MiB slice for
+    /// nothing.
+    #[test]
+    fn the_capped_artifacts_read_their_caps_from_the_frozen_table() {
+        assert_eq!(
+            CappedArtifact::ManifestEnvelope.cap(),
+            super::super::caps::MAX_MANIFEST_BYTES
+        );
+        assert_eq!(
+            CappedArtifact::Bundle.cap(),
+            super::super::caps::MAX_BUNDLE_BYTES
+        );
+
+        let mut codes = std::collections::BTreeSet::new();
+        for artifact in CappedArtifact::ALL {
+            assert!(
+                codes.insert(artifact.decode_code()),
+                "{artifact} shares a code with its sibling"
+            );
+            // Under the cap the gate is silent; `ALL` is what makes this
+            // a sweep rather than two hand-written cases.
+            assert_eq!(artifact.gate(b"short"), Ok(()));
+        }
+        assert_eq!(codes.len(), 2);
+    }
+
+    /// The three caller-bug variants are deliberately outside the frozen
+    /// code universe (D30) and must stay that way: giving one a code would
+    /// promise third-party verifiers a string no artifact can ever produce.
+    #[test]
+    fn only_the_size_gate_carries_a_code() {
+        assert_eq!(EncodeError::DuplicateMapKey { key: 3 }.code(), None);
+        assert_eq!(EncodeError::NotExactlyOneItem { count: 0 }.code(), None);
+        assert_eq!(EncodeError::Sink.code(), None);
+        assert_eq!(
+            EncodeError::TooLarge {
+                artifact: CappedArtifact::Bundle,
+                len: 1,
+                cap: 0,
+            }
+            .code(),
+            Some("bundle-too-large")
+        );
+    }
 
     /// Encode a lone unsigned integer through the public API.
     fn enc_u64(v: u64) -> Vec<u8> {

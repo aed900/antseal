@@ -77,6 +77,58 @@ never pinned by us, at every ant-core bump (§4 checklist; S20's survey).
 The `blake3` row above is D35's replacement primitive and deliberately has
 no lockstep semantics of its own.
 
+**The devnet era's containment is asserted, not conventional (P20,
+2026-08-02).** P16's lockfile event resolved `ant-node` and the whole EVM
+stack into `Cargo.lock`, and a lock entry is not a compile — locks cover
+every member feature. `scripts/ci-lanes.sh dep-graph` therefore carries
+**one containment story in four rules**, all in that single lane so a
+reviewer sees them together:
+
+1. **The default `--workspace` graph reaches none of `ant-node`,
+   `ant-core`, `ant-protocol`, `evmlib`, `alloy`.** Every edge to them is
+   behind `devnet-launcher/devnet` or `antseal-net/ant-backend`, both
+   non-default by decision (D33, D35, D52). Measured at P20: 120 packages
+   by default, 475 with `devnet-launcher/devnet` — a single non-optional
+   edge added in review would move ~355 packages into every contributor's
+   build and every CI lane, and nothing else would notice.
+2. **`self_encryption` is a direct dependency of nothing of ours** — the
+   prohibition above, declared-manifest scan plus resolved-parent check,
+   both halves now with their own planted-fake self-test.
+3. **`alloy` moves only with the `evmlib` that ant-core's graph locks.**
+   D44 defines the accepted wallet/payment set as "what the pinned
+   evmlib/alloy parse accepts", and `antseal-net` holds a direct `alloy`
+   edge (evmlib re-exports no `Provider` trait), so two independent things
+   name `alloy` and independent drift would silently fork that set.
+   `Cargo.lock` already encodes the property: a dependency entry is
+   version-**qualified** (`"alloy 1.7.0"`) if and only if the package
+   resolves to more than one version, so `evmlib` listing a bare `"alloy"`
+   is the lock's own statement that there is one alloy and both of us are
+   on it. The lane checks that, the whole `alloy-*` family being
+   single-versioned, and that the recorded `=` pin literal equals what is
+   resolved.
+
+4. **Only `antseal-net` and `devnet-launcher` may *declare* `ant-core`,
+   `ant-protocol`, `alloy` or `bytes`** (S23, completing S2's accept row).
+   `antseal-net` is the churn-isolation boundary MVP-SPEC.md lines 60–69
+   describe, and S20's bump procedure relies on an ant-core move being
+   bounded to it. The check reads `cargo metadata --no-deps`, so it sees
+   normal, dev, build, target-gated, optional and **renamed** edges alike —
+   the level S2 is phrased at, and one the lane's source-token check
+   structurally cannot reach: a consumer writing a fully qualified
+   `::ant_core::Client`, or aliasing the crate, spells `ant_core::`
+   nowhere. Proven red by both a `bytes.workspace = true` edge (the house
+   declaration style, which a name-based grep of the manifest would miss)
+   and a `upstream = { package = "bytes" }` renamed edge, which no
+   name-based grep could find at all.
+
+Each rule runs its detector against a planted violation **before** the
+verdict, the pattern the `secret-guard` lane established; rule 1's
+self-test uses the real graph with the feature flipped on rather than a
+planted string, and rule 4's plants both a forbidden edge and an allowed
+one, so the extractor is pinned in both directions. Rules 2 and 4 also
+carry an anti-vacuity assertion — a scan that silently stops matching is
+green for the worst possible reason.
+
 **This list grows — it is a floor, not a ceiling.** G nominates the
 Unicode/NFC crate (with its exact Unicode data version) at M0, and C
 nominates the concrete AEAD/HKDF/SHA-2 crates at M0. Any new dependency

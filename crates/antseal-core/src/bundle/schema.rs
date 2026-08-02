@@ -38,11 +38,16 @@
 //! the walk already enforced them on the claimed counts — so decode
 //! precedence and every tamper row are untouched.
 //!
-//! **One residual, named rather than hidden:** `MAX_BUNDLE_BYTES` and
-//! `MAX_MANIFEST_BYTES` are properties of *encoded* artifacts, invisible
-//! to a constructor of parts. "Constructible" equals "decodable" up to
-//! aggregate encoded size, which the reveal-side builder must keep under
-//! the two byte caps at encode time; decode checks them first.
+//! **The two aggregate byte caps are enforced one layer later** (F53):
+//! `MAX_BUNDLE_BYTES` and `MAX_MANIFEST_BYTES` are properties of
+//! *encoded* artifacts, invisible to a constructor of parts, so
+//! [`encode_bundle`] and
+//! [`encode_envelope`](crate::manifest::encode_envelope) check them on
+//! the finished bytes with the decode path's own `bundle-too-large` /
+//! `manifest-too-large` codes. Per-part caps cannot substitute: 256 OTS
+//! anchors of 1 MiB are 256 legal artifacts that sum past the bundle
+//! cap. With that, "constructible **and encodable**" equals "decodable"
+//! with no residual.
 //!
 //! Several rules are stronger still — unrepresentable rather than checked:
 //!
@@ -87,7 +92,9 @@
 
 use crate::codec::caps::{MAX_BUNDLE_BYTES, clamped_capacity};
 use crate::codec::encode::MapEncoder;
-use crate::codec::{CanonicalDecoder, CanonicalEncoder, DecodeError, EncodeError, encode_item};
+use crate::codec::{
+    CanonicalDecoder, CanonicalEncoder, CappedArtifact, DecodeError, EncodeError, encode_item,
+};
 use crate::content::ggm::NodeAddress;
 use crate::crypto::material::{Key32, NodeHash32, Salt16, Seed32};
 use crate::format::{SUPPORTED_VERSIONS, V1, VersionDispatch};
@@ -2170,19 +2177,117 @@ fn encode_section<T>(
 /// change what any verdict is computed over, so a borrow is safe and lets a
 /// caller re-serialize a decoded bundle (which the round-trip test does).
 ///
+/// # The aggregate size gate (F53)
+///
+/// This is where `MAX_BUNDLE_BYTES` is enforced on the reveal side — the
+/// residual F41 named rather than hid. Every *part* of a bundle is capped
+/// at construction, but the caps are per-part: 256 OTS anchors of 1 MiB
+/// each are 256 individually legal artifacts that sum past the whole-bundle
+/// cap. The sum exists only once the bundle is serialized, so this is the
+/// first place it can be seen.
+///
+/// Re-encoding a *decoded* bundle can never trip it: that bundle's input
+/// already passed the identical check as the first statement of
+/// [`BundleV1::decode`], and this function reproduces those bytes.
+///
 /// # Errors
 ///
-/// [`EncodeError`] reports caller bugs the F2 layer detects (duplicate map
-/// key, a scope that did not emit exactly one item). None is reachable for a
-/// validated bundle — the keys are registry constants and every scope emits
-/// one item — so this is a totality `Err`, never a panic path.
+/// - [`EncodeError::TooLarge`] — the bundle exceeds
+///   [`MAX_BUNDLE_BYTES`](crate::codec::caps::MAX_BUNDLE_BYTES), reported
+///   with the decode path's own `bundle-too-large` code.
+/// - The three F2 caller-bug variants (duplicate map key, a scope that did
+///   not emit exactly one item, a rejecting sink); none is reachable for a
+///   validated bundle — the keys are registry constants and every scope
+///   emits one item — so those are totality `Err`s, never panic paths.
 pub fn encode_bundle(bundle: &BundleV1<'_>) -> Result<Vec<u8>, EncodeError> {
-    encode_item(|e| e.map(|m| bundle.encode_into(m)))
+    let encoded = encode_item(|e| e.map(|m| bundle.encode_into(m)))?;
+    CappedArtifact::Bundle.gate(&encoded)?;
+    Ok(encoded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **F53**: the encode-side aggregate size gate, at the boundary.
+    ///
+    /// The lever is the embedded manifest `bstr`, opaque at this layer
+    /// (D78) and uncapped here on purpose — the manifest's own cap belongs
+    /// to layer 2. Every section is empty and every part is legal; only the
+    /// serialization is over. The boundary is hit exactly: for a payload of
+    /// 2^16 bytes or more the `bstr` head is five bytes, so bundle length
+    /// is affine in payload length and one probe encode fixes the offset.
+    ///
+    /// One 256 MiB buffer serves both directions (a sub-slice for at-cap,
+    /// the whole for cap+1), which is what keeps this affordable; the F15
+    /// `bundle-oversized` fixture already allocates the same order.
+    ///
+    /// Red before the gate landed: the cap+1 bundle encoded fine at
+    /// 268 435 457 bytes. Planted-fault direction: delete the
+    /// `CappedArtifact::Bundle.gate` line and this goes red again, with
+    /// that message.
+    #[test]
+    fn encode_refuses_a_bundle_one_byte_over_the_aggregate_cap() {
+        use crate::codec::CappedArtifact;
+        use crate::codec::caps::MAX_BUNDLE_BYTES;
+
+        fn parts(manifest: &[u8]) -> BundleParts<'_> {
+            BundleParts {
+                manifest,
+                storage_record: StorageRecord::new(
+                    ContentAddress::from_bytes([0xA0; 32]),
+                    Nonce24::from_bytes([0xA1; 24]),
+                    Key32::from_bytes([0xA2; 32]),
+                ),
+                ots_anchors: Vec::new(),
+                tsa_anchors: Vec::new(),
+                receipt: None,
+                covered_reveals: Vec::new(),
+                noncovered_reveals: Vec::new(),
+                touched_files: Vec::new(),
+                full_reveals: Vec::new(),
+            }
+        }
+        fn encode_with(manifest: &[u8]) -> Result<Vec<u8>, EncodeError> {
+            encode_bundle(&BundleV1::new(parts(manifest)).expect("sections are empty"))
+        }
+
+        const PROBE: usize = 65_536;
+        let probe_len = encode_with(&vec![0xA5u8; PROBE])
+            .expect("the probe bundle is far under the cap")
+            .len() as u64;
+        let at_cap_manifest = PROBE as u64 + (MAX_BUNDLE_BYTES - probe_len);
+
+        let manifest = vec![0xA5u8; at_cap_manifest as usize + 1];
+        let at_cap = encode_with(&manifest[..at_cap_manifest as usize])
+            .expect("a bundle of exactly MAX_BUNDLE_BYTES is admitted");
+        assert_eq!(at_cap.len() as u64, MAX_BUNDLE_BYTES);
+        drop(at_cap);
+
+        let err = encode_with(&manifest).expect_err("one byte over the cap is refused");
+        assert_eq!(
+            err,
+            EncodeError::TooLarge {
+                artifact: CappedArtifact::Bundle,
+                len: MAX_BUNDLE_BYTES + 1,
+                cap: MAX_BUNDLE_BYTES,
+            }
+        );
+
+        // The code is the *decode* path's, taken from the decode path's own
+        // variant rather than spelled again — so the two can never drift
+        // and no code is minted (D30; the universe stays 194).
+        assert_eq!(
+            err.code(),
+            Some(
+                BundleError::InputTooLarge {
+                    len: MAX_BUNDLE_BYTES + 1,
+                    cap: MAX_BUNDLE_BYTES,
+                }
+                .code()
+            )
+        );
+    }
 
     fn seed(byte: u8) -> Seed32 {
         Seed32::from_bytes([byte; 32])

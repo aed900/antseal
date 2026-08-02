@@ -940,7 +940,55 @@ the schema and body module docs rather than papered over:
 `MAX_BUNDLE_BYTES` and `MAX_MANIFEST_BYTES` are properties of *encoded*
 artifacts, which no constructor of parts can see; enforcing them at
 encode/seal time belongs to the M1/M3 pipelines and is raised as a task
-proposal in F41's report, not silently claimed here.
+proposal in F41's report, not silently claimed here. **That task is F53,
+and it landed on 2026-08-02 — see the amendment below.**
+
+## Amendment from F53 (2026-08-02) — the named residual is closed
+
+**No cap value changes, no error code moves or mints (the universe stays
+194), no decode-path behaviour changes, no encoded byte moves** (the
+gate reads the finished buffer and returns it unaltered; the twelve
+golden vectors and the twenty-one pinned reports are byte-identical
+across this change).
+
+F41's residual was rows 1–2 of §1: unlike the other seventeen caps they
+bound a *serialization*, which does not exist until `encode_*` returns,
+so no constructor could see them. The consequence was concrete rather
+than theoretical — measured red before the fix, from schema-valid parts
+in both directions:
+
+| artifact | witness, every part legal | encoded before F53 | cap |
+|---|---|---|---|
+| manifest envelope | one file, one unit, a 16 MiB `title` (no count cap, §3) | 16 777 217 B, `Ok` | 16 777 216 |
+| `.sealproof` bundle | empty sections, an over-size embedded manifest `bstr` (opaque at layer 1, D78) | 268 435 457 B, `Ok` | 268 435 456 |
+
+Both are now refused at encode:
+`CappedArtifact::{ManifestEnvelope,Bundle}` (`codec/encode.rs`) reads
+rows 1–2 from the same constants the decode path compares its input
+against, and `encode_envelope`/`encode_bundle` gate their output on it.
+The refusal is `EncodeError::TooLarge`, whose `code()` returns the
+**decode path's own** `manifest-too-large` / `bundle-too-large` — bound
+in tests to `ManifestError::InputTooLarge::code()` and
+`BundleError::InputTooLarge::code()` rather than re-spelled, so the two
+sides cannot drift and D30 §3's append ceremony is not invoked. The
+three pre-existing `EncodeError` variants stay codeless on purpose: they
+are unreachable internal invariants, and promising a third-party
+verifier a string no artifact can carry would be worse than silence.
+
+Placement in the spec's DAG (line 90) is deliberate: the manifest
+refusal lands after signing but **before** `anchor_digest`, anchoring,
+payment and upload, so nothing is spent on bytes no verifier would
+accept. Re-encoding a *decoded* artifact can never trip either gate —
+its input already passed the identical check as the first statement of
+decode.
+
+Per-part caps could not have substituted for either row, which is why
+this is a separate mechanism and not a tighter constructor: 256 OTS
+anchors of 1 MiB each are 256 individually legal artifacts that sum past
+`MAX_BUNDLE_BYTES`, and `title` is uncapped by §3's own reasoning. With
+this, "constructible **and encodable**" equals "decodable" with no
+residual — the claim the schema, bundle, manifest and `new` module docs
+now make, each of which previously carried the residual clause.
 
 ## Amendment from R54 (2026-08-01) — the count-cap product is deliberately unbounded, and §5's cost column is made true
 

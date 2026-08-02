@@ -39,7 +39,7 @@
 //! 0/1 is an unknown key — permanently.
 
 use crate::codec::caps::MAX_MANIFEST_BYTES;
-use crate::codec::{CanonicalDecoder, DecodeError, EncodeError, encode_item};
+use crate::codec::{CanonicalDecoder, CappedArtifact, DecodeError, EncodeError, encode_item};
 
 use super::body::ManifestBodyV1;
 use super::error::ManifestError;
@@ -205,25 +205,119 @@ impl<'b> Manifest<'b> {
 /// `anchor_digest` — with the signed bytes and the embedded bytes
 /// necessarily identical.
 ///
+/// # The aggregate size gate (F53)
+///
+/// This is where `MAX_MANIFEST_BYTES` is enforced on the seal side. It
+/// cannot be enforced anywhere earlier: F41 gave every constructor the
+/// D10 *count* caps, but the byte cap is a property of the encoding, and
+/// the encoding exists only here. The body needs no separate gate — it is
+/// the `bstr` this function embeds, so `len(body) < len(envelope)` and an
+/// over-cap body cannot produce an in-cap envelope.
+///
+/// Position in the spec's DAG (line 90) matters: the refusal lands after
+/// signing but **before** `anchor_digest`, anchoring, payment and upload,
+/// so nothing is spent on bytes no verifier would accept.
+///
 /// # Errors
 ///
-/// [`EncodeError`] reports caller bugs the F2 layer detects; none is
-/// reachable here (two constant keys, one item per scope).
+/// - [`EncodeError::TooLarge`] — the envelope exceeds
+///   [`MAX_MANIFEST_BYTES`], reported with the decode path's own
+///   `manifest-too-large` code.
+/// - The three F2 caller-bug variants; none is reachable here (two
+///   constant keys, one item per scope).
 pub fn encode_envelope(body_bytes: &[u8], signatures: &SigAlgMap) -> Result<Vec<u8>, EncodeError> {
-    encode_item(|e| {
+    let encoded = encode_item(|e| {
         e.map(|m| {
             m.entry(key::envelope::BODY, |e| e.bytes(body_bytes))?;
             m.entry(key::envelope::SIGNATURES, |e| {
                 e.map(|sm| signatures.encode_into(sm))
             })
         })
-    })
+    })?;
+    CappedArtifact::ManifestEnvelope.gate(&encoded)?;
+    Ok(encoded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::fixtures;
+
+    /// **F53**: the encode-side aggregate size gate, at the boundary.
+    ///
+    /// The witness is a body whose only large field is `title`, which has
+    /// no count cap and needs none (D10 §3) — so every *part* is legal and
+    /// only the aggregate is not. That is the whole class F41 could not
+    /// reach from a constructor.
+    ///
+    /// The boundary is hit exactly rather than approximately: for a title
+    /// of 2^16 bytes or more the `tstr` head and the embedding `bstr` head
+    /// are both five bytes, so envelope length is affine in title length
+    /// and one probe encode fixes the offset. At-cap **encodes** and is
+    /// exactly `MAX_MANIFEST_BYTES` long; one byte more is refused.
+    ///
+    /// Red before the gate landed: the cap+1 envelope encoded fine at
+    /// 16 777 217 bytes. Planted-fault direction: delete the
+    /// `CappedArtifact::ManifestEnvelope.gate` line and this goes red
+    /// again, with that message.
+    #[test]
+    fn encode_refuses_an_envelope_one_byte_over_the_aggregate_cap() {
+        use super::super::body::{ManifestBodyV1, encode_body};
+        use crate::crypto::error::SigAlg;
+        use crate::manifest::ManifestError;
+
+        fn envelope_for_title(len: usize, signatures: &SigAlgMap) -> Result<Vec<u8>, EncodeError> {
+            let body = ManifestBodyV1::new(
+                "app".to_owned(),
+                fixtures::seal_id(),
+                "x".repeat(len),
+                0,
+                fixtures::hybrid_pubkeys(),
+                vec![SigAlg::Ed25519, SigAlg::MlDsa65],
+                vec![fixtures::binary_file(0)],
+            )
+            .expect("body is otherwise schema-valid");
+            let body_bytes = encode_body(body).expect("body encodes");
+            encode_envelope(&body_bytes, signatures)
+        }
+
+        let signatures = fixtures::hybrid_signatures();
+        const PROBE: usize = 65_536;
+        let probe_len = envelope_for_title(PROBE, &signatures)
+            .expect("the probe envelope is far under the cap")
+            .len() as u64;
+        let at_cap_title = PROBE as u64 + (MAX_MANIFEST_BYTES - probe_len);
+
+        let at_cap = envelope_for_title(at_cap_title as usize, &signatures)
+            .expect("an envelope of exactly MAX_MANIFEST_BYTES is admitted");
+        assert_eq!(at_cap.len() as u64, MAX_MANIFEST_BYTES);
+        drop(at_cap);
+
+        let err = envelope_for_title(at_cap_title as usize + 1, &signatures)
+            .expect_err("one byte over the cap is refused");
+        assert_eq!(
+            err,
+            EncodeError::TooLarge {
+                artifact: CappedArtifact::ManifestEnvelope,
+                len: MAX_MANIFEST_BYTES + 1,
+                cap: MAX_MANIFEST_BYTES,
+            }
+        );
+
+        // The code is the *decode* path's, taken from the decode path's own
+        // variant rather than spelled again — so the two can never drift
+        // and no code is minted (D30; the universe stays 194).
+        assert_eq!(
+            err.code(),
+            Some(
+                ManifestError::InputTooLarge {
+                    len: MAX_MANIFEST_BYTES + 1,
+                    cap: MAX_MANIFEST_BYTES,
+                }
+                .code()
+            )
+        );
+    }
 
     /// F6 accept: the decoded `body_bytes()` is the wire bstr contents,
     /// and re-encoding the envelope from those bytes reproduces the input

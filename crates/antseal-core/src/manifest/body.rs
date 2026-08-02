@@ -1094,7 +1094,7 @@ const _: fn() = || {
 impl ManifestBodyV1 {
     /// Assemble a body, running the whole-body validation **and** the D10
     /// count caps the decode path enforces — so a body the seal side can
-    /// construct is one every v1 decoder admits, with one named residual.
+    /// construct is one every v1 decoder admits.
     ///
     /// The decode path funnels through this function; the cap checks here
     /// can never fire there ([`Self::decode`] already enforced the same
@@ -1103,9 +1103,12 @@ impl ManifestBodyV1 {
     /// only (F41 — before that, `new` skipped the caps and could build a
     /// body whose encoding no v1 verifier accepts).
     ///
-    /// **Residual, on purpose:** `MAX_MANIFEST_BYTES` is a property of
-    /// the *encoded* envelope, invisible to a constructor. Staying under
-    /// it is the seal pipeline's obligation at encode time.
+    /// `MAX_MANIFEST_BYTES` is not checked here and cannot be: it is a
+    /// property of the *encoded* envelope, invisible to a constructor.
+    /// [`encode_envelope`](super::encode_envelope) enforces it on the
+    /// finished bytes, with this path's own `manifest-too-large` code
+    /// (F53) — so an over-cap body is still refused before anything is
+    /// anchored, paid for or uploaded, just one step later.
     ///
     /// # Errors
     ///
