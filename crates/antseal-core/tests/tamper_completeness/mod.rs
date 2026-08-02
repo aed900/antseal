@@ -167,10 +167,39 @@ const EXPECTED_M2_CASES: usize = 8;
 /// Pinned in **both** directions, the [`EXPECTED_M0_PENDING`] pattern: an
 /// unlisted null fails, and a listed case whose code has since been minted
 /// fails too.
-const EXPECTED_M2_UNMINTED: &[(&str, &str)] = &[(
-    "ber-where-der-required/ber-where-der-required",
-    "A5's strict-DER code, owed by D60 (D53 §8 row 8)",
-)];
+/// **Four entries, and three of them are one defect.** D53 §7 requires the A
+/// domain's prefix to be `anchor-`; D58 §10.4 requires `ots-` (plus a sibling
+/// `tsa-`) and mints 16 codes under it; both resolved 2026-08-02. Since §3 of
+/// the error-code contract makes a prefix permanent from the first code that
+/// binds to it, filling any of these cells would decide the namespace by
+/// accident — so they are held, by name, until **D91** rules. The row ids
+/// themselves are permanent handles and are NOT held: a prefix ruling renames
+/// no row.
+///
+/// The four **verdict** cells are deliberately absent from this list. Verdict
+/// states live in a namespace separate from error codes (contract §5, owned
+/// by A18/R17), so D91 does not reach them and they are filled — which is
+/// what keeps layer 3 comparing something while the codes are owed.
+const EXPECTED_M2_UNMINTED: &[(&str, &str)] = &[
+    (
+        "anchor-token-for-a-different-digest/ots-digest-mismatch",
+        "D91 — the check is named TWICE, differently: D56 §7 `anchor-ots-digest-mismatch` vs \
+         D58 §10.3 step 5 `ots-ops-do-not-commit-anchor-digest`",
+    ),
+    (
+        "anchor-token-for-a-different-digest/tsa-imprint-mismatch",
+        "D91 — A8 owns the check; the A-domain prefix is unresolved (D53 §7 `anchor-` vs D58 \
+         §10.4 `ots-`/`tsa-`)",
+    ),
+    (
+        "tsa-chain-expiry/expired-at-gentime",
+        "D91 — D53 rule C3 settles the RULE; only the spelling is owed",
+    ),
+    (
+        "ber-where-der-required/ber-where-der-required",
+        "A5's strict-DER code, owed by D60 (D53 §8 row 8)",
+    ),
+];
 
 /// Mutations deliberately recorded as non-rows (see the module docs).
 ///

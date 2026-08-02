@@ -462,8 +462,8 @@
             "task": "A21",
             "row_id": "anchor-ots-digest-mismatch",
             "outcome_kind": "error",
-            "expected": "anchor-ots-digest-mismatch",
-            "why": "D56 rule O2. Split from the TSA half at D53 section 8: line 168's clause is compound, and the two checks live in different stages on different artifact kinds (`.ots` stamped digest at A11; `TSTInfo.messageImprint` at A8), so they cannot share an outcome key."
+            "expected": null,
+            "why": "HELD FOR D91 — the code is named TWICE, differently, by two decisions resolved the same day: D56 section 7 gives `anchor-ots-digest-mismatch` and D58 section 10.3 step 5 gives `ots-ops-do-not-commit-anchor-digest` for the SAME equality on the SAME field, under two different candidate prefixes for the A domain (D53 section 7 `anchor-` vs D58 section 10.4 `ots-`). Contract section 3 makes a prefix permanent from the first code that binds it, so filling this cell would decide D91 by accident. The row and its id stand; only the code is owed. Split from the TSA half at D53 section 8: line 168's clause is compound, and the two checks live in different stages on different artifact kinds (`.ots` stamped digest at A11; `TSTInfo.messageImprint` at A8), so they cannot share an outcome key."
           }
         },
         {
@@ -473,8 +473,8 @@
             "task": "A21",
             "row_id": "anchor-tsa-imprint-mismatch",
             "outcome_kind": "error",
-            "expected": "anchor-tsa-imprint-mismatch",
-            "why": "D53 section 8 row 2. A8 owns the check and the code; D53 fixes that it fires at stage T2, before any chain rule, so a token for a different digest is never classified by its chain."
+            "expected": null,
+            "why": "HELD FOR D91 — A owns the check and the code, but not yet the PREFIX: D53 section 7 requires `anchor-`, D58 section 10.4 requires `ots-` with a sibling `tsa-`, and both decisions resolved 2026-08-02. D53 section 8 row 2. A8 owns the check and the code; D53 fixes that it fires at stage T2, before any chain rule, so a token for a different digest is never classified by its chain."
           }
         }
       ]
@@ -550,8 +550,8 @@
             "task": "A21",
             "row_id": "anchor-expired-at-gentime",
             "outcome_kind": "error",
-            "expected": "anchor-cert-not-valid-at-gentime",
-            "why": "D53 rule C3. One code covers both temporal directions (D85: a cause belongs in rendering, not the code set); this row exercises the expired direction and the not-yet-valid direction is D53's named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`. The row id keeps its name — row ids are permanent handles, and the row does exercise the expired direction."
+            "expected": null,
+            "why": "HELD FOR D91 — the RULE is settled and only the spelling is owed (D53 section 7 `anchor-` vs D58 section 10.4 `ots-`/`tsa-`). D53 rule C3. One code covers both temporal directions (D85: a cause belongs in rendering, not the code set); this row exercises the expired direction and the not-yet-valid direction is D53's named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`. The row id keeps its name — row ids are permanent handles, and the row does exercise the expired direction."
           }
         },
         {
