@@ -724,3 +724,95 @@ async fn devnet_s7_multi_sub_batch_sequential_txs_with_capture_hook() {
         );
     }
 }
+
+// ===========================================================================
+// S15 — the `--live` persistence primitive against the real network
+// ===========================================================================
+
+/// S15 accept row 1, on a live devnet: freshly sealed blobs report
+/// present-and-identical, a never-uploaded address reports not-found, and
+/// a corrupted expectation reports present-but-different — through the
+/// same `check_persistence` the mock tests drive (the primitive rides
+/// `StorageBackend` only, so this file exercises the *other* impl of the
+/// same trait, not other code).
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s15_live_persistence_identical_missing_and_different() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("backend connects to the live devnet");
+
+    // Seal three blobs for real (quote → pay → finalize).
+    let batch = test_blobs(&env, "s15-live", &[272, 4_096, 40_000]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    let receipt = backend.pay(&quote).await.expect("pay");
+    let addresses = backend
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize");
+
+    // ── present-and-identical, for every sealed blob ──────────────────
+    let expected: Vec<(antseal_net::Address, &[u8])> = addresses
+        .iter()
+        .copied()
+        .zip(batch.iter().map(antseal_net::Blob::as_bytes))
+        .collect();
+    let report = antseal_net::check_persistence(&backend, &expected).await;
+    assert!(
+        report.all_identical(),
+        "freshly sealed blobs are present and identical: {report:?}"
+    );
+    assert_eq!(report.summary().identical, 3);
+    assert_eq!(report.fetches, 3, "one get_data per distinct address");
+
+    // ── not-found: an address nothing was ever uploaded to ────────────
+    // Content-addressed, so an address no ciphertext hashes to cannot
+    // hold anything: the network answers negatively.
+    let never = antseal_net::Address::from_bytes([0xA5; 32]);
+    let report =
+        antseal_net::check_persistence(&backend, &[(never, b"never-sealed".as_slice())]).await;
+    assert_eq!(
+        report.blobs[0].outcome,
+        antseal_net::PersistenceOutcome::NotFound,
+        "a never-uploaded address is not-found, not a fetch error"
+    );
+
+    // ── present-but-different: a corrupted expectation ────────────────
+    let mut corrupted = batch[0].as_bytes().to_vec();
+    corrupted[0] ^= 0xFF;
+    let report =
+        antseal_net::check_persistence(&backend, &[(addresses[0], corrupted.as_slice())]).await;
+    assert_eq!(
+        report.blobs[0].outcome,
+        antseal_net::PersistenceOutcome::Different {
+            fetched_len: batch[0].len() as u64,
+            first_diff_offset: 0,
+        },
+        "the network's real bytes vs a corrupted expectation"
+    );
+    assert!(!report.all_identical());
+
+    // ── mixed report: rows survive each other ─────────────────────────
+    let mixed: Vec<(antseal_net::Address, &[u8])> = vec![
+        (addresses[0], batch[0].as_bytes()),
+        (never, b"never-sealed".as_slice()),
+        (addresses[1], batch[1].as_bytes()),
+        (addresses[2], corrupted.as_slice()),
+    ];
+    let report = antseal_net::check_persistence(&backend, &mixed).await;
+    let summary = report.summary();
+    assert_eq!(summary.total, 4);
+    assert_eq!(summary.identical, 2);
+    assert_eq!(summary.not_found, 1);
+    assert_eq!(summary.different, 1);
+    assert_eq!(summary.fetch_error, 0);
+    assert_eq!(
+        summary.identical + summary.different + summary.not_found + summary.fetch_error,
+        summary.total
+    );
+}

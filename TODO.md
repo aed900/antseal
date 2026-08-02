@@ -304,7 +304,7 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [ ] **S12** (L) Seal pipeline orchestration in exact normative order; ciphertext-only egress; fault-injection barriers — after S2,S4,S7,S8,S10 + G14/C/F
 - [ ] **S13** (S) `--no-anchor` zero-anchor path + pipeline-level arbitrum-one rejection — after S12 + A1/F13
 - [ ] **S14** (M) `restore` engine: fetch, decrypt, verify commitments, write originals (raw-mirror preferred) — after S5,S6
-- [ ] **S15** (S) `--live` persistence primitive: re-fetch + byte-compare, structured per-blob report — after S6 (R11 consumes)
+- [x] **S15** (S) `--live` persistence primitive: re-fetch + byte-compare, structured per-blob report — after S6 (R11 consumes) ✅ 2026-08-02 — `antseal_net::live::check_persistence` in the DEFAULT feature set (rides `StorageBackend` alone): four serde outcomes (identical / different+`first_diff_offset` / not-found / fetch-error), never fails as a whole, one `get_data` per DISTINCT address with input-order rows; 10 mock tests + a devnet row proving the same primitive over `AntCoreBackend`
 - [ ] **S16** (M) Mock-level pipeline invariant matrix (every barrier: ordering, idempotency, no-double-pay, abandon) — after S3,S10–S12
 - [ ] **S17** (L) M1 E2E on devnet via library APIs: multi-file --split seal, restore, UNANCHORED verify, --live — after S6,S12–S15 + P16 + R5
 - [ ] **S18** (L) M1 kill/resume matrix on devnet: pay/finalize kill, mid-upload kill, changed-source abandon, real SIGKILL — after S11,S16,S17

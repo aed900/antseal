@@ -81,6 +81,9 @@ pub mod error;
 // feature.
 #[cfg(feature = "ant-backend")]
 pub mod evm;
+// The `--live` persistence primitive (S15) — rides `StorageBackend` only,
+// so it is in the DEFAULT feature set and tests on `MockBackend`.
+pub mod live;
 pub mod network;
 pub mod quote;
 pub mod receipt;
@@ -98,6 +101,9 @@ pub use ant_backend::{AntCoreBackend, BalanceReport, CaptureHook, PreflightRepor
 pub use backend::StorageBackend;
 pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
 pub use error::StorageError;
+pub use live::{
+    BlobPersistence, PersistenceOutcome, PersistenceReport, PersistenceSummary, check_persistence,
+};
 pub use network::{
     DevnetEnv, DevnetEnvError, EvmAddress20, EvmAddressParseError, NetworkConfig,
     NetworkConfigError, NetworkId,
