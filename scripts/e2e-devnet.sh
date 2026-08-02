@@ -69,9 +69,9 @@ die()  { printf '\033[31m::error::e2e-devnet: %s\033[0m\n' "$*" >&2; exit 1; }
 suite_registry() {
   cat <<'EOF'
 live|S6-S8|antseal-net|ant-backend|devnet_backend|real-backend adapter suite against a live devnet: store/fetch round-trips, quote+pay, capture consistency
-pending|S17|antseal-cli|ant-backend|e2e_devnet|multi-file --split seal, restore, UNANCHORED library verify, --live re-fetch
-pending|S18|antseal-cli|ant-backend|e2e_kill_resume|kill between pay and finalize (no double payment, Anvil tx counting), kill mid-upload (byte-identical resume), (k_u,nonce)-reuse abort
-pending|S19|antseal-cli|ant-backend|e2e_restore|clean-tree restore from the vault export alone
+live|S17|antseal-cli|ant-backend|e2e_devnet|multi-file --split seal, restore, UNANCHORED library verify, --live re-fetch
+live|S18|antseal-cli|ant-backend|e2e_kill_resume|kill between pay and finalize (no double payment, Anvil tx counting), kill mid-upload (byte-identical resume), (k_u,nonce)-reuse abort
+live|S19|antseal-cli|ant-backend|e2e_restore|clean-tree restore from the vault export alone
 EOF
 }
 
@@ -307,15 +307,24 @@ self_test() {
   probe "a suite declared LIVE that does not exist" \
         's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/live|S6-S8|antseal-net|ant-backend|no_such_suite|/' \
         1 'declared LIVE but'
+  # Planted against the S6-S8 row, which is live and present and stays that
+  # way. The original planted it against S17's *pending* row — which stopped
+  # existing the moment S17 landed and the row moved to `live`, taking the
+  # probe's own sed with it (a fault that no longer applies is reported as a
+  # broken self-test, correctly, but the rule under test would have gone
+  # unchecked). Demoting an always-present row is the same "pending +
+  # PRESENT" shape and survives every future row flip.
   probe "a stale PENDING row whose suite has landed" \
-        's/^pending|S17|antseal-cli|ant-backend|e2e_devnet|/pending|S17|antseal-net|ant-backend|devnet_backend|/' \
+        's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|devnet_backend|/' \
         1 'Stale declaration'
   probe "an unknown row status" \
         's/^live|S6-S8|/liev|S6-S8|/' \
         1 "unknown status 'liev'"
-  # The verdict half: with every row pending, the gate must be neither red
-  # nor a quiet green — PENDING, saying so, and never the word PASS.
-  probe "every row pending -> PENDING, not PASS" \
+  # The verdict half: with a row pending, the gate must be neither red nor a
+  # quiet green — PENDING, saying so, and never the word PASS. (Phrased per
+  # row rather than "every row" since S17 landed: what matters is that ONE
+  # undeclared-absent suite is enough to withhold the verdict.)
+  probe "a pending row -> PENDING, not PASS" \
         's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|not_written_yet|/' \
         0 'DISCHARGES NO GATE'
   out="$(sed 's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|not_written_yet|/' \
