@@ -32,7 +32,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 25] = [
+const TABLE: [(ErrorClass, u8, &str); 26] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -82,6 +82,11 @@ const TABLE: [(ErrorClass, u8, &str); 25] = [
     ),
     (ErrorClass::ImportAuthFailed, 33, "import-auth-failed"),
     (ErrorClass::ImportNewerVersion, 34, "import-newer-version"),
+    (
+        ErrorClass::RestoreVerificationFailed,
+        35,
+        "restore-verification-failed",
+    ),
 ];
 
 #[test]
@@ -353,6 +358,13 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 supported: 1,
             },
         ),
+        (
+            "restore-verification-failed",
+            CliError::RestoreVerificationFailed {
+                failed_files: 1,
+                detail: "the canonical bytes of notes.txt".into(),
+            },
+        ),
     ]
 }
 
@@ -502,12 +514,14 @@ fn json_error_object_carries_class_code_and_message() {
 
 #[test]
 fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
+    // `status` is the exemplar stub (M2); `list` played this role until
+    // U19 gave it a real handler.
     let plain = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .arg("list")
+        .args(["status", "w1"])
         .output()
         .expect("spawn antseal");
     let json = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .args(["--json", "list"])
+        .args(["--json", "status", "w1"])
         .output()
         .expect("spawn antseal");
 
@@ -520,7 +534,7 @@ fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim_end_matches('\n')).expect("single JSON document");
     assert_eq!(doc["v"], serde_json::json!(1));
-    assert_eq!(doc["command"], serde_json::json!("list"));
+    assert_eq!(doc["command"], serde_json::json!("status"));
     assert_eq!(doc["ok"], serde_json::json!(false));
     assert_eq!(doc["error"]["class"], "not-implemented");
     assert_eq!(doc["error"]["exit_code"], serde_json::json!(3));

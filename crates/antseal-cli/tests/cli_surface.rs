@@ -313,8 +313,10 @@ fn antseal_bin() -> Process {
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
+    // `init` (U11) is the exemplar stub: `list` and `restore` have real
+    // handlers since U19/U20.
     let out = antseal_bin()
-        .arg("list")
+        .arg("init")
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");
@@ -340,13 +342,13 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
 #[test]
 fn stub_milestones_are_named_per_command() {
     // Rows shrink as real handlers land (U1's arrival map): `vault
-    // export|import` left this list at U12.
+    // export|import` left this list at U12, `list` and `restore` at
+    // U19/U20.
     for (args, milestone) in [
         (vec!["status", "w1"], "M2"),
         (vec!["show", "w1"], "M3"),
         (vec!["reveal", "w1", "--all"], "M3"),
         (vec!["verify", "b.sealproof"], "M3"),
-        (vec!["restore", "w1"], "M1"),
     ] {
         let out = antseal_bin().args(&args).output().expect("spawn antseal");
         assert_eq!(out.status.code(), Some(3), "{args:?}");
@@ -366,7 +368,7 @@ fn help_exits_zero_on_stdout_and_usage_error_exits_two_on_stderr() {
     assert!(out.stderr.is_empty(), "help writes nothing to stderr");
 
     let out = antseal_bin()
-        .args(["--network", "mainnet", "list"])
+        .args(["--network", "mainnet", "status", "w1"])
         .output()
         .expect("spawn antseal");
     assert_eq!(out.status.code(), Some(2), "usage errors exit 2");

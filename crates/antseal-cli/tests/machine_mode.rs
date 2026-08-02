@@ -119,12 +119,17 @@ fn fixture_vault(dir: &TestDir) -> PathBuf {
 
 /// What each command must do TODAY in machine mode with no channels
 /// supplied: the typed abort class (stub commands: not-implemented;
-/// export: passphrase-unavailable; import over the fixture vault: the
-/// refusal → consent-not-obtained). Extends as handlers land.
+/// export and `list`: passphrase-unavailable — they must unlock the
+/// fixture vault and machine mode never prompts; import over the fixture
+/// vault: the refusal → consent-not-obtained). Extends as handlers land.
 fn expected_class(name: &str) -> (i32, &'static str) {
     match name {
-        "vault export" => (11, "passphrase-unavailable"),
+        "vault export" | "list" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
+        // U20's handler refuses at the backend seam before it would ask
+        // for a passphrase — a build with no network cannot restore, and
+        // collecting a secret first would be rude as well as pointless.
+        "restore" => (23, "network-failure"),
         _ => (3, "not-implemented"),
     }
 }
@@ -295,13 +300,22 @@ fn render_fixture() -> String {
             "vault import" => CliError::ImportRefusedExistingVault {
                 vault_dir: PathBuf::from("/home/user/.antseal"),
             },
-            "init" | "seal" | "list" | "restore" => CliError::NotImplemented {
-                command: match name {
-                    "init" => "init",
-                    "seal" => "seal",
-                    "list" => "list",
-                    _ => "restore",
-                },
+            // A real handler that must unlock the vault: in machine mode
+            // without a channel, that is where it stops (U19).
+            "list" => CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::NoChannel,
+            },
+            // U20's handler is complete; the storage-backend construction
+            // seam it reaches is U36's, shared with `seal`.
+            "restore" => CliError::NetworkFailure {
+                detail: "`restore` needs a live Autonomi connection, and this build has no \
+                         storage backend compiled in (the `ant-backend` feature is off by \
+                         default). The command itself is complete — its network seam is wired \
+                         together with `seal` (U13/S17, tracked as U36)"
+                    .to_owned(),
+            },
+            "init" | "seal" => CliError::NotImplemented {
+                command: if name == "init" { "init" } else { "seal" },
                 milestone: Milestone::M1,
             },
             "status" => CliError::NotImplemented {
@@ -323,6 +337,18 @@ fn render_fixture() -> String {
         ));
     }
     // Success examples for the commands with real handlers today.
+    //
+    // `list`'s is rendered by the real U19 renderer over a fixture
+    // listing rather than hand-written, so the registered fixture cannot
+    // drift from the shape the command actually emits.
+    out.push_str(&format!(
+        "[list] result\n{}\n",
+        success_envelope("list", "arbitrum-one", fixture_listing().json())
+    ));
+    out.push_str(&format!(
+        "[restore] result\n{}\n",
+        success_envelope("restore", "arbitrum-one", fixture_restore().json())
+    ));
     out.push_str(&format!(
         "[vault export] result\n{}\n",
         success_envelope(
@@ -346,6 +372,112 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// A two-row listing covering the shapes a consumer must handle: a
+/// finished work with a cost, and an unfinished one carrying the D45
+/// resume hint, the D37 clock, and U25's reserved slot.
+fn fixture_listing() -> antseal_cli::listing::WorkListing {
+    use antseal_cli::listing::{ResumeClock, ResumeHint, WorkListing, WorkRow};
+    use antseal_cli::pipeline::journal::SealState;
+    use antseal_cli::vault::store::WorkState;
+    use antseal_core::crypto::secrets::SealId;
+
+    WorkListing {
+        works: vec![
+            WorkRow {
+                work_id: Some([0xA1; 32]),
+                seal_id: SealId::from_bytes([0xE1; 16]),
+                title: Some("thesis draft".to_owned()),
+                sealed_at_unix_secs: Some(1_798_762_000),
+                network: "arbitrum-one".to_owned(),
+                state: WorkState::Complete,
+                fine_state: Some(SealState::Complete),
+                unanchored: false,
+                degraded: false,
+                cost_atto: Some(4_200_000_000_000_000_000),
+                resume: None,
+                pending_anchors: None,
+            },
+            WorkRow {
+                work_id: Some([0xA4; 32]),
+                seal_id: SealId::from_bytes([0xE4; 16]),
+                title: None,
+                sealed_at_unix_secs: Some(1_798_761_800),
+                network: "devnet".to_owned(),
+                state: WorkState::IncompletePostPay,
+                fine_state: Some(SealState::Paid),
+                unanchored: true,
+                degraded: false,
+                cost_atto: Some(1_000_000_000_000_000_000),
+                resume: Some(ResumeHint {
+                    invocation: "antseal seal big.bin --no-anchor --network devnet".to_owned(),
+                    clock: ResumeClock::TimeBoxed,
+                }),
+                pending_anchors: None,
+            },
+        ],
+    }
+}
+
+/// A restore run covering the statuses a consumer must branch on: one
+/// written, one confirmed identical, one refused, one that never verified
+/// (D48 §3's rows, and U20's registered per-file status array).
+fn fixture_restore() -> antseal_cli::restore_out::RestoreOutput {
+    use antseal_cli::pipeline::{ByteSource, ManifestSource};
+    use antseal_cli::restore_out::{FileReport, FileStatus, RestoreOutput};
+
+    let dir = PathBuf::from(format!("antseal-restore-{}", "a1".repeat(32)));
+    RestoreOutput {
+        work_id: [0xA1; 32],
+        output_dir: dir.clone(),
+        manifest_source: ManifestSource::Network,
+        files: vec![
+            FileReport {
+                file_id: 0,
+                recorded_path: "notes.txt".to_owned(),
+                target: dir.join("notes.txt"),
+                status: FileStatus::Restored,
+                detail: None,
+                bytes: Some(27),
+                source: Some(ByteSource::RawMirror),
+            },
+            FileReport {
+                file_id: 1,
+                recorded_path: "data/blob.bin".to_owned(),
+                target: dir.join("data/blob.bin"),
+                status: FileStatus::AlreadyRestored,
+                detail: None,
+                bytes: Some(9),
+                source: Some(ByteSource::Raw),
+            },
+            FileReport {
+                file_id: 2,
+                recorded_path: "draft.txt".to_owned(),
+                target: dir.join("draft.txt"),
+                status: FileStatus::RefusedOverwrite,
+                detail: Some(
+                    "a different file already exists here and was left exactly as it was"
+                        .to_owned(),
+                ),
+                bytes: Some(31),
+                source: Some(ByteSource::Canonical),
+            },
+            FileReport {
+                file_id: 3,
+                recorded_path: "tampered.txt".to_owned(),
+                target: dir.join("tampered.txt"),
+                status: FileStatus::VerificationFailed,
+                detail: Some(
+                    "the canonical bytes of this file do not match the commitment the manifest \
+                     records"
+                        .to_owned(),
+                ),
+                bytes: None,
+                source: None,
+            },
+        ],
+    }
 }
 
 #[test]

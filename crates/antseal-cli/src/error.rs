@@ -38,12 +38,20 @@
 //! | 32   | `export-self-verify-failed` | D47: the written export failed its mandatory self-verify |
 //! | 33   | `import-auth-failed` | D47: wrong passphrase or tampered/truncated export file |
 //! | 34   | `import-newer-version` | D47: export written by a newer antseal |
-//! | 40–49 | *reserved* | verification-verdict classes, finalized in U30 (M3) — do not mint here |
+//! | 35   | `restore-verification-failed` | D48 §6: restore fetched bytes that did not open their manifest commitment; nothing written for those files |
+//! | 40–49 | *reserved* | **bundle**-verification verdict classes, finalized in U30 (M3) — do not mint here |
 //!
 //! Codes stay below 125 (126/127/128+n carry shell/signal meanings).
 //! When one run hits several per-file classes, the reported class follows
-//! D48 §6's fixed severity: verification-failed (40s, M3) >
-//! `refused-overwrite` > fetch/network.
+//! D48 §6's fixed severity: `restore-verification-failed` >
+//! `refused-overwrite` > fetch/network. That order is implemented as an
+//! explicit rank ([`crate::pipeline::restore::FailureKind`] and U20's
+//! severity fold), never as a comparison of numeric codes — which is why
+//! restore's verification class can live at 35 without disturbing the
+//! 40–49 band. U2's table originally predicted this class would be minted
+//! in the 40s by U30; U20 needs it at M1, and it is a *restore* outcome
+//! rather than a bundle verdict, so it sits beside the other restore
+//! classes (30, 31) and the reserved band stays intact for U30.
 //!
 //! # Secret hygiene (project rule 6; U21 discipline starts here)
 //!
@@ -239,11 +247,12 @@ pub enum ErrorClass {
     ExportSelfVerifyFailed,
     ImportAuthFailed,
     ImportNewerVersion,
+    RestoreVerificationFailed,
 }
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 25] = [
+    pub const ALL: [ErrorClass; 26] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -269,6 +278,7 @@ impl ErrorClass {
         ErrorClass::ImportAuthFailed,
         ErrorClass::ImportNewerVersion,
         ErrorClass::MalformedConfig,
+        ErrorClass::RestoreVerificationFailed,
     ];
 
     /// The documented exit code (the table in the module docs).
@@ -300,6 +310,7 @@ impl ErrorClass {
             ErrorClass::ExportSelfVerifyFailed => 32,
             ErrorClass::ImportAuthFailed => 33,
             ErrorClass::ImportNewerVersion => 34,
+            ErrorClass::RestoreVerificationFailed => 35,
         }
     }
 
@@ -333,6 +344,7 @@ impl ErrorClass {
             ErrorClass::ExportSelfVerifyFailed => "export-self-verify-failed",
             ErrorClass::ImportAuthFailed => "import-auth-failed",
             ErrorClass::ImportNewerVersion => "import-newer-version",
+            ErrorClass::RestoreVerificationFailed => "restore-verification-failed",
         }
     }
 }
@@ -537,6 +549,16 @@ pub enum CliError {
     #[error("malformed restore record: {detail} (the vault record cannot drive a safe restore)")]
     MalformedRestoreRecord { detail: String },
 
+    /// D48 §6's top-severity restore class: bytes arrived and did not
+    /// open their manifest commitment. Nothing was written for the
+    /// affected files (S14 returns no bytes for them at all).
+    #[error(
+        "restore could not verify {failed_files} file(s) against the manifest ({detail}); \
+         nothing was written for them — the sealed evidence and the bytes on the network \
+         disagree"
+    )]
+    RestoreVerificationFailed { failed_files: usize, detail: String },
+
     /// D47: the mandatory post-write self-verification failed — the file
     /// on disk is not a usable backup.
     #[error(
@@ -593,6 +615,7 @@ impl CliError {
             CliError::InvalidSealArgument { .. } => ErrorClass::InvalidSealArgument,
             CliError::RefusedOverwrite { .. } => ErrorClass::RefusedOverwrite,
             CliError::MalformedRestoreRecord { .. } => ErrorClass::MalformedRestoreRecord,
+            CliError::RestoreVerificationFailed { .. } => ErrorClass::RestoreVerificationFailed,
             CliError::ExportSelfVerifyFailed => ErrorClass::ExportSelfVerifyFailed,
             CliError::ImportAuthFailed => ErrorClass::ImportAuthFailed,
             CliError::ImportNewerVersion { .. } => ErrorClass::ImportNewerVersion,
@@ -656,6 +679,7 @@ mod tests {
             ErrorClass::ImportAuthFailed => 22,
             ErrorClass::ImportNewerVersion => 23,
             ErrorClass::MalformedConfig => 24,
+            ErrorClass::RestoreVerificationFailed => 25,
         }
     }
 

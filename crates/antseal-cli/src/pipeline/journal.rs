@@ -908,6 +908,31 @@ pub(super) fn open_envelope(bytes: &[u8]) -> Result<&[u8], JournalError> {
     Ok(body)
 }
 
+/// The fine [`SealState`] a work has on disk, read straight from U9's
+/// store — for readers that hold a [`WorkStore`] rather than a whole
+/// [`SealJournal`] (`list`, U19).
+///
+/// `None` means the journal state record is **absent**, which is a state
+/// and not a failure: a `vault import`ed complete work carries no journal
+/// entries at all (U12 applies D43 §3's cache exclusion to the whole
+/// journal area), so its only remaining tag is U9's coarse
+/// [`WorkState`] mirror. An absent record and an unreadable one are
+/// deliberately *not* conflated — a malformed record still errors.
+///
+/// # Errors
+///
+/// Store-level failures, and [`JournalError::Corrupt`] for a record that
+/// is present but unreadable.
+pub fn recorded_state(
+    store: &crate::vault::store::WorkStore<'_>,
+    seal_id: &SealId,
+) -> Result<Option<SealState>, JournalError> {
+    match store.get_journal_entry(seal_id, STATE_ENTRY)? {
+        Some(bytes) => decode_state(bytes.as_bytes()).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Encode the tiny state record (entry [`STATE_ENTRY`]).
 pub(super) fn encode_state(state: SealState) -> Result<Vec<u8>, JournalError> {
     let body = encode_item(|e| e.map(|m| m.entry(0, |e| e.u64(state.as_wire()))))

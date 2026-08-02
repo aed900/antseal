@@ -25,6 +25,7 @@
 pub mod consent;
 pub mod error;
 pub mod journal;
+pub mod restore;
 pub mod resume;
 pub mod seal;
 pub mod vault_journal;
@@ -36,6 +37,10 @@ pub use journal::{
     SEAL_JOURNAL_VERSION, STATE_ENTRY, SealJournal, SealPlan, SealState, StagedBlob,
     StagedBytesUnavailable, UNIT_ENTRY_BASE, WorkIdentity, check_staged_integrity,
     verify_all_staged,
+};
+pub use restore::{
+    BlobOrigin, ByteSource, FailedFile, FailureKind, FileError, FileOutcome, ManifestSource,
+    RestoreEngine, RestoreError, RestoreReport, VerifiedFile, hex32,
 };
 pub use resume::{Pipeline, SealOutcome, canonical_order};
 pub use seal::{
