@@ -213,3 +213,61 @@ outside the v1 bundle/manifest universe.
   reminder, not new machinery).
 - **v1.1 register (shared with D43):** everything-included export option;
   if taken, revisit streaming import.
+
+## Amendment (2026-08-02, S29): the payload's journal rule, restated at the entry-key level
+
+This record inherited D43 §3's exclusion as a whole-work property —
+"**Complete-work cache bytes are excluded** (D43 §3)" in the Payload
+bullet, and Consequences item 5's "lean exports make [S19's]
+no-staged-bytes restore proof automatic". D43's amendment of the same date
+corrects the underlying rule; the export format is where it is enforced,
+so it is restated here in the terms the format actually speaks.
+
+**Corrected payload rule.** The `journal` key of a work (payload map key
+1) carries **every** journal entry when the work's state is not
+`complete`, and for a `complete` work carries **only the entries below
+`UNIT_ENTRY_BASE`** — 0 `STATE_ENTRY`, 1 `PLAN_ENTRY`, 2
+`MANIFEST_BLOB_ENTRY`. The entries at 3 and above are the staged unit
+ciphertexts (the D43 cache) and are never exported. Import validates the
+same predicate and rejects a `complete` work carrying any entry
+`>= UNIT_ENTRY_BASE`.
+
+Without entry 2 an imported complete work has no address for its
+encrypted manifest and therefore cannot be restored on a content-addressed
+network at all (S29; D43's amendment carries the full diagnosis). That
+made this format lossy in the one direction a backup format may never be
+lossy: it round-tripped everything except the thing that makes a work
+recoverable, and only after the vault was gone.
+
+**No version bump.** `EXPORT_FORMAT_VERSION` stays 1. The schema is
+unchanged — same keys, same types, same ordering — and only the writer's
+*selection* of entries widens. Both directions of compatibility hold: a
+pre-amendment reader accepts nothing this writer emits that it would have
+rejected except a complete work's entries 0–2, which it rejects with the
+D43 validator message; and this reader accepts every pre-amendment file,
+since "no journal entries at all" still satisfies the new predicate
+vacuously. Old backups therefore import cleanly and stay unrestorable for
+their complete works — the data was never written, so no reader can
+recover it. That is the residual risk below.
+
+The three §Rejected-alternatives arguments are untouched: this is still a
+single authenticated CBOR payload, still not a verbatim directory copy
+(the rejection reasoning at Consequences "It cannot exclude the D43 cache
+without ceasing to be verbatim" now reads *staged unit blobs* for
+*cache*), and the memory-footprint note still holds — a complete work
+contributes record-scale bytes plus one manifest ciphertext, not content.
+
+Consequences item 5 is superseded: S19's drill gets its no-staged-bytes
+property from the unit exclusion, which is intact, and no longer gets a
+manifest-fetch from it. See D43's amendment for why that trade is the
+right one.
+
+## Residual risk added by the amendment
+
+- **Backups written before 2026-08-02 cannot restore their complete
+  works.** The locator was never in the file. They import without error —
+  correctly, since the format allows the entries to be absent — and fail
+  at restore with `ManifestUnavailable`. Nothing in the format can repair
+  this after the fact; the remedy is to re-export from a live vault, which
+  still holds the journal. No shipped release predates the fix, so the
+  exposure is limited to development-tree backups.

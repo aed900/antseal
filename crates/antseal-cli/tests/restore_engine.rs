@@ -15,13 +15,16 @@
 mod common;
 
 use antseal_cli::error::{CliError, ErrorClass};
-use antseal_cli::pipeline::journal::{MANIFEST_BLOB_ENTRY, PLAN_ENTRY, StagedBlob};
+use antseal_cli::pipeline::journal::{
+    MANIFEST_BLOB_ENTRY, PLAN_ENTRY, STATE_ENTRY, StagedBlob, UNIT_ENTRY_BASE,
+};
 use antseal_cli::pipeline::{
     ByteSource, FailureKind, FileError, FileOutcome, ManifestSource, NoBarriers, Pipeline,
     RestoreEngine, RestoreError, SealFile, SealRequest, SealResult, VerifiedFile,
 };
+use antseal_cli::vault::export::{export_vault, import_vault};
 use antseal_cli::vault::session::UnlockedVault;
-use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
+use antseal_cli::vault::store::{SealShapingFlags, WorkState, WorkStore};
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::manifest_aead::{decrypt_manifest, encrypt_manifest};
 use antseal_core::crypto::secrets::SealId;
@@ -35,7 +38,7 @@ use antseal_net::{Address, NetworkId, StorageBackend, StorageError};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-use common::{RecordingGate, ScriptedConsent, shared_vault};
+use common::{IsolatedVault, RecordingGate, ScriptedConsent, passphrase, rng, shared_vault};
 
 // ─────────────────────────────────────────────────────────────────────
 // Fixture content
@@ -442,11 +445,14 @@ fn the_manifest_is_fetched_and_decrypted_when_the_vault_copy_is_gone() {
 /// rather than guessing: an encrypted manifest cannot be found on a
 /// content-addressed network without its address.
 ///
-/// This is the shape a `vault import`ed **complete** work currently has —
-/// U12's export carries no journal entries for a complete work at all (the
-/// D43 §3 exclusion is written over the whole journal area, not just the
-/// staged-blob keys), so the locator does not survive the round trip. See
-/// the S14 entry's deviation note and discovered work **S29**.
+/// Both sources have to be removed by hand to reach this state. That was
+/// once the shape a `vault import`ed **complete** work arrived in, because
+/// U12's export applied D43 §3's cache exclusion to the whole journal
+/// area; **S29** scoped the exclusion to the staged *unit* blobs, so the
+/// import path no longer produces it (the round trip is proven directly
+/// by `an_imported_complete_work_restores_from_the_network` below). The
+/// engine's refusal is still exactly right when it genuinely happens, and
+/// is still asserted here.
 #[test]
 fn without_a_locator_the_manifest_is_reported_unavailable() {
     let mock = MockBackend::new();
@@ -467,6 +473,101 @@ fn without_a_locator_the_manifest_is_reported_unavailable() {
         ErrorClass::MalformedRestoreRecord,
         "D48's malformed-restore-record class"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// S29: the backup round trip
+// ─────────────────────────────────────────────────────────────────────
+
+/// **S29** — a `vault export` → wipe → `vault import` of a **complete**
+/// work restores, and still carries none of the D43 cache.
+///
+/// The two halves are asserted together on purpose, because they are the
+/// two opposite ways to get this rule wrong. Excluding the *whole*
+/// journal area (the defect S29 records) drops entry 2 and with it the
+/// encrypted manifest's `{address, nonce}` — and an encrypted manifest
+/// cannot be found on a content-addressed network without its address, so
+/// the work becomes permanently unrestorable from a backup. Excluding
+/// nothing puts content-scale ciphertext into a file users are nagged to
+/// keep (U18). The corrected rule — exclude the staged *unit* blobs
+/// (`>= UNIT_ENTRY_BASE`), keep the record-scale head — is what both
+/// assertions together pin.
+///
+/// After the import not one unit ciphertext exists locally, so every
+/// restored byte below came off the wire: this is D43 §3's "pure network
+/// path with zero test contrivance" and S19's clean-tree drill in
+/// miniature, with `MockBackend` standing in for Autonomi.
+#[test]
+fn an_imported_complete_work_restores_from_the_network() {
+    let mock = MockBackend::new();
+    let vault = IsolatedVault::create("s29-backup");
+    let seal_id = {
+        let unlocked = vault.unlock();
+        let seal_id = seal_fixture(&mock, &unlocked, 0x29);
+        assert_eq!(
+            WorkStore::new(&unlocked)
+                .load_meta(&seal_id)
+                .expect("meta")
+                .state,
+            WorkState::Complete,
+            "the export rule under test is the complete-work one"
+        );
+        seal_id
+    };
+
+    // Export, then destroy the vault outright — the clean-machine shape.
+    let backup = vault.root.join("backup.sealvault");
+    {
+        let unlocked = vault.unlock();
+        export_vault(&unlocked, &passphrase(), &backup, &mut rng()).expect("export");
+    }
+    std::fs::remove_dir_all(vault.layout.root()).expect("wipe vault");
+    import_vault(&backup, &vault.layout, || Ok(passphrase()), &mut rng()).expect("import");
+
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // The D43 cache is still excluded: the record-scale head survived,
+    // every staged unit blob did not.
+    let entries = store.list_journal_entries(&seal_id).expect("entries");
+    assert_eq!(
+        entries,
+        vec![STATE_ENTRY, PLAN_ENTRY, MANIFEST_BLOB_ENTRY],
+        "a complete work exports its record-scale head and nothing else"
+    );
+    assert!(
+        staged_blob(&store, &seal_id, UNIT_ENTRY_BASE).is_none(),
+        "no unit ciphertext may survive the round trip (D43 §3)"
+    );
+
+    // Restorable, and byte-identical — the S19 gate clause.
+    let report = restore(&mock, &unlocked, &seal_id).expect("the imported work restores");
+    assert_eq!(report.manifest_source, ManifestSource::VaultCopy);
+    assert_eq!(verified(&report, "notes.txt").bytes, CRLF_BOM_NFD);
+    assert_eq!(verified(&report, "data/blob.bin").bytes, BINARY);
+    assert_eq!(verified(&report, "split.txt").bytes, SPLIT_TEXT);
+    for file in report.verified() {
+        assert_eq!(
+            file.from_cache, 0,
+            "{} used a cached unit, so the export was not lean",
+            file.recorded_path
+        );
+        assert!(
+            file.from_network > 0,
+            "{} produced no unit from the network",
+            file.recorded_path
+        );
+    }
+
+    // And the locator itself round-tripped: drop the plaintext copy and
+    // the manifest is still found — by the `{address, nonce}` in entry 2,
+    // which is the record whose loss made S29 a gate blocker.
+    store
+        .delete_journal_entry(&seal_id, PLAN_ENTRY)
+        .expect("drop the vault copy");
+    let report = restore(&mock, &unlocked, &seal_id).expect("the locator survived too");
+    assert_eq!(report.manifest_source, ManifestSource::Network);
+    assert_eq!(verified(&report, "notes.txt").bytes, CRLF_BOM_NFD);
 }
 
 // ─────────────────────────────────────────────────────────────────────
