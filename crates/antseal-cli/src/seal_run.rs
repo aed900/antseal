@@ -261,7 +261,7 @@ where
         .map_err(|e| CliError::from(crate::pipeline::SealError::Storage(e)))?;
 
     let consent = SealConsent::new(
-        &plan.files,
+        plan,
         balances,
         resume_plan,
         plan.yes,

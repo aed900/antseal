@@ -55,7 +55,7 @@ use antseal_net::{BalanceReport, CostQuote, PreflightReport, preflight};
 
 use crate::error::{CliError, ConsentOutcome};
 use crate::pipeline::{ConsentDecision, ConsentHook, ConsentRequest};
-use crate::seal_plan::PlannedFile;
+use crate::seal_plan::SealPlan;
 use crate::vault::store::{ConsentChannel, ConsentRecord};
 
 /// The spec-normative permanence warning, verbatim from MVP-SPEC.md line
@@ -85,6 +85,12 @@ pub struct ConsentReport {
     /// The resume plan lines, when this invocation resumes a work: D45's
     /// **one merged render**, never two prompts.
     pub resume_plan: Vec<String>,
+    /// U15's seal-time warnings (title visibility, `--no-fine-tree`
+    /// permanence, fine-tree cost), from
+    /// [`crate::seal_warnings::warnings_for`]. Carried here rather than
+    /// printed by a second emitter so the rehearsal screen, the real
+    /// screen and the `--json` document cannot disagree about them.
+    pub warnings: Vec<String>,
     /// D37: the previous payment is stranded and granting authorizes an
     /// additional spend.
     pub proofs_expired: bool,
@@ -122,6 +128,13 @@ impl ConsentReport {
         for (path, size) in &self.files {
             out.push(format!("    {path}  ({size} bytes)"));
         }
+
+        // U15's three warning moments, above the quote (MVP-SPEC.md line
+        // 85 asks for the fine-tree estimate "before the quote", and the
+        // other two are permanent consequences a user must weigh before
+        // reading a price). One render, one author — see
+        // `crate::seal_warnings`.
+        out.extend(self.warnings.iter().cloned());
 
         let indicative = if self.dry_run { " (indicative)" } else { "" };
         out.push(format!(
@@ -204,6 +217,10 @@ impl ConsentReport {
             "resume": !self.resume_plan.is_empty(),
             "proofs_expired": self.proofs_expired,
             "permanence_warning": PERMANENCE_WARNING,
+            // U15's warnings as data: a script that gates on "did this
+            // seal disclose a title / lose reveal granularity?" reads
+            // this array rather than grepping the human copy.
+            "warnings": self.warnings,
         })
     }
 }
@@ -295,6 +312,8 @@ pub struct SealConsent<'a, P: ConsentPrompt> {
     total_input_bytes: u64,
     balances: BalanceReport,
     resume_plan: Vec<String>,
+    /// U15's warnings for this invocation, computed once from the plan.
+    warnings: Vec<String>,
     yes: bool,
     machine_mode: bool,
     /// Where human copy goes: `true` = stderr (under `--json`).
@@ -311,9 +330,15 @@ pub struct SealConsent<'a, P: ConsentPrompt> {
 
 impl<'a, P: ConsentPrompt> SealConsent<'a, P> {
     /// Assemble the gate from the invocation's own context.
+    ///
+    /// The whole [`SealPlan`] is taken rather than just its file list so
+    /// that the displayed files and U15's warnings have **one** source: a
+    /// gate handed a file list and a separately-computed warning set could
+    /// be given two that disagree, and the warning that goes missing that
+    /// way is the one about a permanent consequence.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        files: &[PlannedFile],
+        plan: &SealPlan,
         balances: BalanceReport,
         resume_plan: Vec<String>,
         yes: bool,
@@ -322,12 +347,16 @@ impl<'a, P: ConsentPrompt> SealConsent<'a, P> {
         now_unix_secs: u64,
         prompt: &'a mut P,
     ) -> Self {
-        let total_input_bytes = files.iter().fold(0u64, |acc, f| acc.saturating_add(f.size));
         Self {
-            files: files.iter().map(|f| (f.as_given.clone(), f.size)).collect(),
-            total_input_bytes,
+            files: plan
+                .files
+                .iter()
+                .map(|f| (f.as_given.clone(), f.size))
+                .collect(),
+            total_input_bytes: plan.total_bytes(),
             balances,
             resume_plan,
+            warnings: crate::seal_warnings::warnings_for(plan),
             yes,
             machine_mode,
             to_stderr,
@@ -364,6 +393,7 @@ impl<'a, P: ConsentPrompt> SealConsent<'a, P> {
             // A non-empty plan means D45 matched; nothing else can make
             // it non-empty.
             resume_plan: self.resume_plan.clone(),
+            warnings: self.warnings.clone(),
             proofs_expired: request.proofs_expired,
             dry_run: false,
         }
@@ -440,21 +470,36 @@ mod tests {
         }
     }
 
-    fn files() -> Vec<PlannedFile> {
-        vec![
-            PlannedFile {
-                as_given: "notes.txt".to_owned(),
-                absolute: "/w/notes.txt".to_owned(),
-                size: 11,
-                flags: antseal_core::content::FileFlags::new(),
+    /// Two small, untitled, fine-tree-bearing files: the plan that earns
+    /// **no** U15 warnings, so these snapshots keep asserting exactly the
+    /// U14 contents they were written for.
+    fn plan() -> SealPlan {
+        use crate::seal_plan::PlannedFile;
+        use crate::vault::store::SealShapingFlags;
+
+        SealPlan {
+            files: vec![
+                PlannedFile {
+                    as_given: "notes.txt".to_owned(),
+                    absolute: "/w/notes.txt".to_owned(),
+                    size: 11,
+                    flags: antseal_core::content::FileFlags::new(),
+                },
+                PlannedFile {
+                    as_given: "blob.bin".to_owned(),
+                    absolute: "/w/blob.bin".to_owned(),
+                    size: 40,
+                    flags: antseal_core::content::FileFlags::new(),
+                },
+            ],
+            shaping: SealShapingFlags {
+                no_anchor: true,
+                ..SealShapingFlags::default()
             },
-            PlannedFile {
-                as_given: "blob.bin".to_owned(),
-                absolute: "/w/blob.bin".to_owned(),
-                size: 40,
-                flags: antseal_core::content::FileFlags::new(),
-            },
-        ]
+            network: antseal_net::NetworkId::Devnet,
+            dry_run: false,
+            yes: false,
+        }
     }
 
     fn quote(ant: u128, gas: u128) -> CostQuote {
@@ -484,12 +529,99 @@ mod tests {
         }
     }
 
+    /// U15: the three warnings reach the pre-consent screen **through the
+    /// gate**, and they render above the price.
+    ///
+    /// The gate computes them from the plan in its constructor, so there
+    /// is no way to build a `SealConsent` for a titled or opted-out seal
+    /// that fails to carry them — which is the property, not the fact that
+    /// one particular call site remembered.
+    #[test]
+    fn the_gate_carries_u15s_warnings_and_renders_them_above_the_quote() {
+        use crate::seal_plan::PlannedFile;
+        use crate::seal_warnings::{FINE_TREE_ESTIMATE_THRESHOLD_BYTES, warnings_for};
+        use antseal_core::content::FileFlags;
+
+        let mut plan = plan();
+        plan.shaping.title = Some("Q3 layoffs".to_owned());
+        plan.shaping.no_fine_tree = vec!["*.bin".to_owned()];
+        plan.files[1].flags = FileFlags::new().with_no_fine_tree();
+        plan.files.push(PlannedFile {
+            as_given: "scan.tiff".to_owned(),
+            absolute: "/w/scan.tiff".to_owned(),
+            size: FINE_TREE_ESTIMATE_THRESHOLD_BYTES,
+            flags: FileFlags::new(),
+        });
+
+        let q = quote(4_200, 21_000);
+        let mut p = NeverAsked;
+        let gate = SealConsent::new(
+            &plan,
+            balances(9_000, 1_000_000),
+            Vec::new(),
+            true,
+            false,
+            false,
+            1_800_000_000,
+            &mut p,
+        );
+        let report = gate.report_for(&request(&q, None));
+
+        // One author: the gate's warnings ARE `warnings_for`'s output.
+        assert_eq!(report.warnings, warnings_for(&plan));
+        assert_eq!(report.warnings.len(), 3, "{:#?}", report.warnings);
+
+        let lines = report.render();
+        let index = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| l.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} missing from {lines:#?}"))
+        };
+        // Every warning is above the cost line and above the permanence
+        // sentence: the user weighs the permanent consequences before
+        // reading a price, and the fine-tree estimate arrives "before the
+        // quote" (MVP-SPEC.md line 85) in reading order.
+        let cost = index("Cost");
+        for needle in ["PLAINTEXT", "--no-fine-tree matched", "Note: building"] {
+            assert!(index(needle) < cost, "{needle} must precede the quote");
+        }
+        assert!(cost < index(PERMANENCE_WARNING));
+        // …and the machine document carries them as data.
+        assert_eq!(report.json()["warnings"].as_array().map(Vec::len), Some(3));
+    }
+
+    /// The complement, and the reason the snapshots above stayed valid: a
+    /// plain seal of small untitled files earns no warnings, so the gate
+    /// adds no lines at all.
+    #[test]
+    fn a_plain_seal_renders_no_u15_warnings() {
+        let q = quote(1, 1);
+        let mut p = NeverAsked;
+        let gate = SealConsent::new(
+            &plan(),
+            balances(9, 9),
+            Vec::new(),
+            true,
+            false,
+            false,
+            1,
+            &mut p,
+        );
+        let report = gate.report_for(&request(&q, None));
+        assert!(report.warnings.is_empty());
+        let text = report.render().join("\n");
+        assert!(!text.contains("PLAINTEXT"), "{text}");
+        assert!(!text.contains("--no-fine-tree"), "{text}");
+        assert!(!text.contains("Note: building"), "{text}");
+    }
+
     #[test]
     fn the_report_carries_the_spec_wording_the_file_list_the_totals_and_both_balances() {
         let q = quote(4_200, 21_000);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 1_000_000),
             Vec::new(),
             true,
@@ -528,7 +660,7 @@ mod tests {
     fn the_resume_render_shows_prior_totals_with_a_drift_flag_in_both_directions() {
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 1_000_000),
             vec!["  Resuming interrupted seal c1c1".to_owned()],
             true,
@@ -588,7 +720,7 @@ mod tests {
         let q = quote(10, 1);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 9_000),
             vec!["  Resuming interrupted seal beef".to_owned()],
             true,
@@ -621,7 +753,7 @@ mod tests {
         // ANT first (S8's fixed order), even when both are short.
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(1_000, 5),
             Vec::new(),
             true,
@@ -640,7 +772,7 @@ mod tests {
         // Gas alone.
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 5),
             Vec::new(),
             true,
@@ -661,7 +793,7 @@ mod tests {
         let q = quote(1, 1);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 9_000),
             Vec::new(),
             false,
@@ -684,7 +816,7 @@ mod tests {
         let q = quote(1, 1);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9_000, 9_000),
             Vec::new(),
             true,
@@ -715,7 +847,7 @@ mod tests {
 
         let mut p = Scripted(vec![false]);
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9, 9),
             Vec::new(),
             false,
@@ -731,7 +863,7 @@ mod tests {
 
         let mut p = Scripted(vec![true]);
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9, 9),
             Vec::new(),
             false,
@@ -754,7 +886,7 @@ mod tests {
         let q = quote(1, 1);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(9, 9),
             vec!["  Resuming".to_owned()],
             true,
@@ -776,7 +908,7 @@ mod tests {
         let q = quote(u128::from(u64::MAX) + 1, 21_000);
         let mut p = NeverAsked;
         let gate = SealConsent::new(
-            &files(),
+            &plan(),
             balances(u128::MAX, 1),
             Vec::new(),
             true,

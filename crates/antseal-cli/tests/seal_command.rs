@@ -22,6 +22,7 @@ use antseal_cli::error::ErrorClass;
 use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
+use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
 use antseal_cli::vault::store::{WorkState, WorkStore};
 use antseal_net::test_util::{Method, MockBackend, block_on};
 use antseal_net::{BalanceReport, network::EvmAddress20};
@@ -794,6 +795,106 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
     .expect_err("a dry run is a scriptable funding gate (D49)");
     assert_eq!(err.class(), ErrorClass::InsufficientAntToken);
     assert_eq!(err.exit_code(), 20);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U15: the three warning moments, in the pre-consent flow
+// ─────────────────────────────────────────────────────────────────────
+
+/// U15 + U16 Accept row 3's warnings clause, over the real command.
+///
+/// The mock-ordering claim is the point: the warnings appear on the screen
+/// the gate renders **before** it asks, and here the gate is never asked
+/// at all (dry run) and nothing is paid — so a user reading them has not
+/// yet spent anything and can still change the flags.
+#[test]
+fn the_seal_warnings_reach_the_pre_consent_screen_and_the_json_document() {
+    let work = Work::new("warnings");
+    // Exactly `FINE_TREE_ESTIMATE_THRESHOLD_BYTES` — the estimate line's
+    // trigger, and (deliberately) a quarter of the 4 MiB per-blob cap, so
+    // this is a real sealable single-unit binary file rather than a size
+    // the pipeline would refuse.
+    let big = vec![0u8; usize::try_from(FINE_TREE_ESTIMATE_THRESHOLD_BYTES).expect("fits")];
+    work.file("notes.txt", b"hello world\n")
+        .file("scan.tiff", &big)
+        // The opted-out file is small: what is being asserted about it is
+        // that it gets NO cost line, which its size cannot influence.
+        .file("blob.bin", &[0x7Fu8; 64]);
+
+    let plan = work
+        .plan(&[
+            "notes.txt",
+            "scan.tiff",
+            "blob.bin",
+            "--title",
+            "Q3 layoffs",
+            "--no-fine-tree",
+            "*.bin",
+            "--no-anchor",
+            "--dry-run",
+        ])
+        .expect("plan validates");
+
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-warnings");
+    let unlocked = vault.unlock();
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x51; 32]),
+        &mut ChaCha20Rng::from_seed([0x52; 32]),
+    ))
+    .expect("the rehearsal completes");
+
+    let rendered = result.render().join("\n");
+    // 1. Title visibility — the title is in the plaintext manifest every
+    //    bundle carries (MVP-SPEC.md line 34).
+    assert!(rendered.contains("PLAINTEXT"), "{rendered}");
+    assert!(rendered.contains("\"Q3 layoffs\""), "{rendered}");
+    // 2. `--no-fine-tree` permanence, naming the matched file.
+    assert!(
+        rendered.contains("--no-fine-tree matched 1 file(s)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("blob.bin"), "{rendered}");
+    assert!(rendered.contains("PERMANENTLY"), "{rendered}");
+    // 3. The fine-tree cost estimate — for the large file that HAS a fine
+    //    tree, and not for the one the pattern opted out of.
+    assert!(
+        rendered.contains("Note: building the byte-range (fine) tree for scan.tiff"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("fine) tree for blob.bin"),
+        "an opted-out file has no fine tree, so it has no fine-tree cost: {rendered}"
+    );
+    assert!(rendered.contains("SHA-256 compressions"), "{rendered}");
+    // …and small files stay quiet.
+    assert!(!rendered.contains("fine) tree for notes.txt"), "{rendered}");
+
+    // Ordering: all three land above the price (the pre-consent flow).
+    let cost_at = rendered.find("Cost (indicative):").expect("cost line");
+    for needle in ["PLAINTEXT", "--no-fine-tree matched", "Note: building"] {
+        assert!(
+            rendered.find(needle).expect(needle) < cost_at,
+            "{needle} must precede the quote"
+        );
+    }
+
+    // The machine document carries them as data, so a script can gate on
+    // "did this seal disclose a title / lose reveal granularity?".
+    let warnings = result.json()["warnings"]
+        .as_array()
+        .expect("the dry-run document carries a warnings array")
+        .clone();
+    assert_eq!(warnings.len(), 3, "{warnings:#?}");
+
+    // Nothing moved: the warnings are advice given before the decision.
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(backend.calls(Method::FinalizeBatch), 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────
