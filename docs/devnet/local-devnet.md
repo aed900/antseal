@@ -143,7 +143,13 @@ child (dropping the embedded `Testnet` kills Anvil). `local-down` SIGTERMs
 the pid; the launcher shuts nodes down, the node stack removes `data/`
 (`cleanup_data_dir`), the launcher removes `manifest.json`/`env`/
 `launcher.pid`, and the script removes `launcher.log` — after a clean down,
-**`.devnet/` is empty**, and the script FAILS loudly if it is not. An
+**`.devnet/` holds nothing the launcher created**, and the script FAILS
+loudly if it does. One narrow exemption: P17's `.devnet/sepolia-env` is
+written by `scripts/devnet/sepolia-preflight`, is not launcher-produced, and
+does not expire with a devnet (it records Arbitrum Sepolia's chain and
+contract addresses, which are the same before, during and after any run), so
+it is not evidence about the launcher's cleanup. Everything else still is —
+a real leftover alongside it still fails the check. An
 unclean stop (timeout → SIGKILL) keeps everything for diagnosis;
 `local-reset` is the scorched-earth recovery. Consequence for harnesses
 (S17): treat the export as run-scoped, re-`source` after every up.

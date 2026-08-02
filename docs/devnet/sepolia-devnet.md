@@ -71,6 +71,13 @@ second copy of that logic could only drift from the first. One devnet per
 checkout still holds across modes — `sepolia-up` refuses to boot while a
 local devnet is running, and vice versa.
 
+`.devnet/sepolia-env` outlives any devnet by design — the chain and contract
+addresses it records are the same before, during and after a run — so
+`local-down`'s no-residue check exempts exactly that one filename and
+nothing else (a real leftover beside it still fails the check).
+`local-reset` does remove it, correctly: the preflight regenerates it in
+seconds.
+
 Exit codes worth knowing: preflight `0` = chain and contracts good, `3` =
 chain good but **the wallet is not funded**, `1` = do not proceed.
 `sepolia-up` adds `4` = blocked on P22.
