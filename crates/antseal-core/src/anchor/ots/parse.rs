@@ -34,6 +34,20 @@
 //! A `.ots` reaching the paper bound would itself be tens of megabytes. This
 //! is why D58 §10.3 rule 5 can say `parse_ots` needs no total-size cap of its
 //! own: work is bounded by the limits, not by the caller's diligence.
+//!
+//! # CPU, bounded by the same two constants
+//!
+//! D58 states the memory argument and not this one, so it is written out
+//! here. The only unbounded-work primitive in the executor is SHA-256, and
+//! **total hashing is at most `MAX_OTS_OPS × MAX_OTS_VALUE_BYTES` = 128 MiB**
+//! — the op cap bounds how many times it can run and the value cap bounds
+//! what it can run over. That ceiling is reachable only in principle: raising
+//! the running value costs operand bytes in the input one for one, and a
+//! `sha256` collapses it back to 32, so an attacker who wants many large
+//! hashes must either pay for them in input length or fan them out under one
+//! fork, where the width cap applies. It matters that the bound exists at
+//! all, because this parser runs in a browser tab on bytes a counterparty
+//! supplied.
 
 use super::error::{OtsError, PayloadDefect};
 use super::exec::{self, OpKind};

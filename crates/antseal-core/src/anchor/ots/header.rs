@@ -62,6 +62,14 @@ const MERKLE_ROOT_OFFSET: usize = 36;
 /// Offset of the `nTime` field: the merkle root ends at 68.
 const NTIME_OFFSET: usize = MERKLE_ROOT_OFFSET + 32;
 
+// Both readers below index a fixed-size array at offsets derived from these
+// constants. The indices are in range for the values above, and these
+// assertions make that a **compile-time** fact rather than a comment: if
+// anyone edits an offset, the build fails instead of a verifier panicking on
+// an adversary's header.
+const _: () = assert!(MERKLE_ROOT_OFFSET + 32 <= HEADER_LEN);
+const _: () = assert!(NTIME_OFFSET + 4 <= HEADER_LEN);
+
 /// The merkle root a block header commits to, in internal byte order.
 #[must_use]
 pub const fn merkle_root_of(header: &[u8; HEADER_LEN]) -> [u8; 32] {
