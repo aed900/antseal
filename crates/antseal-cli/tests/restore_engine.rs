@@ -713,6 +713,10 @@ impl StorageBackend for Substituting<'_> {
         }
         self.inner.get_data(address).await
     }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+        self.inner.balances().await
+    }
 }
 
 /// The staged (D43 cache) record at one journal entry key.

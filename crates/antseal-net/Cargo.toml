@@ -48,14 +48,19 @@ test-util = []
 # ant-core itself anyway. If S6 later needs a surface ant-core does not
 # re-export (e.g. `http_provider` per D33), adding `ant-protocol` then is a
 # deliberate pin event, not this feature's concern.
+#
+# [D89, 2026-08-02] The wallet LIGHT half is no longer part of this feature:
+# `src/wallet.rs` (keygen, D44 import validation, address derivation, EIP-55)
+# is ungated, over the direct `k256`/`sha3` edges below. `evm.rs` keeps only
+# what genuinely needs upstream — `to_evm_network`, the `Wallet`/`EvmNetwork`
+# re-exports, `WalletKey::evm_wallet`, and the lane-δ agreement test that is
+# now the drift guard between two implementations of one predicate.
 ant-backend = [
     "dep:ant-core",
     "dep:ant-protocol",
     "dep:alloy",
     "dep:bytes",
-    "dep:getrandom03",
     "dep:url",
-    "dep:zeroize",
 ]
 
 [dependencies]
@@ -68,6 +73,25 @@ thiserror.workspace = true
 # workspace pin (=1.0.229), no codec here: the byte format is U9's, the
 # deterministic envelope (`JournalReceipt`, version tag) is this crate's.
 serde.workspace = true
+# --- wallet light half (D89): DEFAULT graph, no upstream ------------------
+# secp256k1 scalar validation + public-key derivation. `arithmetic` only —
+# the `ecdsa` feature is deliberately off (workspace entry has the argument
+# and the traced acceptance chain). This is the D44 acceptance gate itself,
+# called directly rather than through alloy's two indirections.
+k256.workspace = true
+# Keccak-256: address = last 20 bytes of keccak(uncompressed pubkey[1..]),
+# and the EIP-55 checksum nibble mask. Known-answer-pinned, not lockstep.
+sha3.workspace = true
+# OS CSPRNG for keygen. The project's own exact-pinned 0.4.3 generation (NOT
+# the `getrandom03` alias the ant-core graph matches): in the default graph
+# it is already a normal dependency of `antseal-cli`, so this adds nothing
+# and keeps one fewer getrandom generation in the product graph (D89 §2).
+getrandom.workspace = true
+# Wipes the raw 32-byte keygen draw after hex encoding (SecretBuf covers
+# every owned buffer; this covers the one stack array). Non-optional since
+# D89 moved keygen into the default graph — zeroize is already in that graph
+# via antseal-core, so the edge costs nothing.
+zeroize.workspace = true
 # --- `ant-backend` half (all optional; see the feature comment) ---
 ant-core = { workspace = true, optional = true }
 # Direct protocol edge for the surfaces ant-core does not re-export
@@ -81,15 +105,9 @@ ant-protocol = { workspace = true, optional = true }
 alloy = { workspace = true, optional = true }
 # `Bytes` values for `prepare_chunk_payment`/`DataChunk` — workspace entry.
 bytes = { workspace = true, optional = true }
-# OS-CSPRNG for wallet keygen (S5/U11); rationale on the workspace entry.
-getrandom03 = { workspace = true, optional = true }
 # For the CustomNetwork struct literal (devnet mapping); rationale on the
 # workspace entry.
 url = { workspace = true, optional = true }
-# Wipes the raw 32-byte keygen draw after hex encoding (the exact-pinned
-# workspace zeroize; SecretBuf covers every owned buffer, this covers the
-# one stack array).
-zeroize = { workspace = true, optional = true }
 
 # The self-dev-dep that switches `test-util` on for this crate's own test
 # targets (unit + integration) while leaving the default/normal graph

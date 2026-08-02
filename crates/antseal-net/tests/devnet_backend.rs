@@ -32,7 +32,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use antseal_net::ant_backend::AntCoreBackend;
-use antseal_net::evm::WalletKey;
+use antseal_net::wallet::WalletKey;
 use antseal_net::{
     Blob, BlobCost, DevnetEnv, NetworkConfig, PaymentReceipt, StorageBackend, StorageError,
 };

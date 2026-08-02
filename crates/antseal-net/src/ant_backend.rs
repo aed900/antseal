@@ -91,13 +91,15 @@ use ant_protocol::evm::contract::payment_vault::handler::PaymentVaultHandler;
 use ant_protocol::evm::{Amount, U256};
 use bytes::Bytes;
 
-use crate::evm::{WalletKey, to_evm_network};
+use crate::backend::{BalanceReport, PreflightReport};
+use crate::evm::to_evm_network;
 use crate::network::{NetworkConfig, NetworkId};
 use crate::quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,
     QuotePreimage, RewardsAddress, TxHash,
 };
 use crate::receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
+use crate::wallet::WalletKey;
 use crate::{Address, Blob, MAX_CHUNK_SIZE, StorageBackend, StorageError};
 
 /// Upstream wallet type, via the sanctioned re-export chain.
@@ -145,37 +147,6 @@ const PER_TRANSFER_GAS: u64 = 220_000;
 /// mechanism could return upstream at any release. Evidence:
 /// `crates/antseal-net/tests/storage_constants.rs` module docs.
 const PROOF_VALIDITY_WINDOW_SECS: u64 = 24 * 60 * 60;
-
-/// The session wallet's balances (task S8) — structured data for U14's
-/// consent render and `--json` (serde-serializable; no secret material:
-/// the wallet address is public chain data).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalanceReport {
-    /// The paying wallet's EVM address.
-    pub wallet: crate::network::EvmAddress20,
-    /// ANT (payment-token ERC-20) balance, atto-ANT (saturating at
-    /// `u128::MAX`).
-    pub ant_atto: u128,
-    /// ETH (gas) balance, wei (saturating at `u128::MAX`).
-    pub gas_wei: u128,
-}
-
-/// A passed preflight's numbers (task S8) — what the consent screen
-/// renders beside the quote. Failure is never a report: it is the
-/// distinct [`StorageError::InsufficientAnt`] /
-/// [`StorageError::InsufficientGas`] error instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PreflightReport {
-    /// The complete quote's storage cost (every blob in the handed-in
-    /// set — S8's completeness guarantee), atto-ANT.
-    pub required_ant_atto: u128,
-    /// The wallet's ANT balance, atto-ANT.
-    pub available_ant_atto: u128,
-    /// The quote's gas estimate for the batch payment tx(s), wei.
-    pub required_gas_wei: u128,
-    /// The wallet's ETH balance, wei.
-    pub available_gas_wei: u128,
-}
 
 /// Per-sub-batch journal capture hook (D37 Decision 2 / S7 timing
 /// contract): invoked with the **cumulative** receipt-so-far after each
@@ -377,34 +348,14 @@ impl AntCoreBackend {
         Ok(filled)
     }
 
-    /// ANT (ERC-20 `balanceOf`) and ETH (`eth_getBalance`) balances of
-    /// the configured session wallet (task S8) — read-only, over the
-    /// re-exported [`Wallet`]'s balance surface
-    /// (`evmlib-0.9.0/src/wallet.rs:88-95`).
+    /// Payment preflight (task S8) over this session's live balances.
     ///
-    /// # Errors
-    ///
-    /// [`StorageError::Network`] when either query cannot be answered.
-    pub async fn balances(&self) -> Result<BalanceReport, StorageError> {
-        let (ant_atto, gas_wei) = self.raw_balances().await?;
-        Ok(BalanceReport {
-            wallet: crate::network::EvmAddress20::from_bytes(self.wallet.address().0.0),
-            ant_atto,
-            gas_wei,
-        })
-    }
-
-    /// Payment preflight (task S8): compare the **complete** quote —
-    /// storage ANT for every blob in the handed-in set plus the
-    /// estimated gas for the batch payment tx(s) — against both
-    /// balances.
-    ///
-    /// Checked in a fixed, documented order: **ANT first** (the primary
-    /// cost), then gas — so a doubly-underfunded wallet reports the ANT
-    /// shortfall deterministically. `pay()` re-runs this internally
-    /// before moving any money, so a preflight-passed seal can only fail
-    /// on a balance that changed after consent (and then fails BEFORE
-    /// any transaction).
+    /// The **rule** itself — the ANT-first order and the two distinct
+    /// shortfalls — is the pure [`crate::backend::preflight`] in the
+    /// default graph (D89 Decision 3); this method is the I/O half that
+    /// feeds it. Keeping one implementation is what makes `pay()`'s
+    /// internal re-check (S8's guarantee) and U14's consent render agree
+    /// by construction rather than by review.
     ///
     /// # Errors
     ///
@@ -413,26 +364,7 @@ impl AntCoreBackend {
     /// remedies them differently: acquire ANT vs bridge ETH);
     /// [`StorageError::Network`] when balances cannot be read.
     pub async fn preflight(&self, quote: &CostQuote) -> Result<PreflightReport, StorageError> {
-        let (available_ant_atto, available_gas_wei) = self.raw_balances().await?;
-        let report = PreflightReport {
-            required_ant_atto: quote.total_ant_atto,
-            available_ant_atto,
-            required_gas_wei: quote.gas_estimate_wei,
-            available_gas_wei,
-        };
-        if report.available_ant_atto < report.required_ant_atto {
-            return Err(StorageError::InsufficientAnt {
-                required_atto: report.required_ant_atto,
-                available_atto: report.available_ant_atto,
-            });
-        }
-        if report.available_gas_wei < report.required_gas_wei {
-            return Err(StorageError::InsufficientGas {
-                required_wei: report.required_gas_wei,
-                available_wei: report.available_gas_wei,
-            });
-        }
-        Ok(report)
+        crate::backend::preflight(&self.balances().await?, quote)
     }
 
     // -- internal ----------------------------------------------------------
@@ -1054,6 +986,22 @@ impl StorageBackend for AntCoreBackend {
             });
         }
         Ok(chunk.content.to_vec())
+    }
+
+    /// ANT (ERC-20 `balanceOf`) and ETH (`eth_getBalance`) balances of
+    /// the configured session wallet (task S8) — read-only, over the
+    /// re-exported [`Wallet`]'s balance surface
+    /// (`evmlib-0.9.0/src/wallet.rs:88-95`).
+    ///
+    /// On the trait since D89: U14's consent gate takes a
+    /// [`StorageBackend`], never this concrete type.
+    async fn balances(&self) -> Result<BalanceReport, StorageError> {
+        let (ant_atto, gas_wei) = self.raw_balances().await?;
+        Ok(BalanceReport {
+            wallet: crate::network::EvmAddress20::from_bytes(self.wallet.address().0.0),
+            ant_atto,
+            gas_wei,
+        })
     }
 }
 

@@ -406,6 +406,73 @@ crates/devnet-launcher/src/main.rs'
   else
     printf 'evmlib is not in the locked graph at all — the lockstep rule has no partner yet and holds vacuously.\n'
   fi
+
+  # ── P20/D89 rule 5: one k256, and it is alloy-signer-local's ────────────
+  # D89 (2026-08-02) moved the wallet light half into the DEFAULT graph over
+  # a DIRECT exact-pinned `k256`, on one argument: D44's acceptance predicate
+  # bottoms out in exactly `k256::SecretKey::from_slice`
+  # (alloy-signer-local-1.8.3/src/private_key.rs:224-230 -> :52-54 ->
+  # ecdsa-0.16.9/src/signing.rs:99-103), so calling that function ourselves
+  # is the SAME predicate rather than a second implementation of it.
+  #
+  # That argument holds only while there is exactly ONE k256 and it is the
+  # one `alloy-signer-local` resolves. Two k256 versions would fork the
+  # accepted wallet-key set with nothing failing — the identical failure mode
+  # rule 3 guards for alloy, so this is the identical mechanism: Cargo.lock
+  # version-QUALIFIES a dependency entry (`"k256 0.14.0"`) if and only if the
+  # package resolves to more than one version, so a BARE `"k256"` entry under
+  # alloy-signer-local is the lock's own statement that there is one k256 and
+  # both of us are on it.
+  #
+  # ADDITIVE: this rule relaxes, removes and re-scopes nothing above it.
+  note "P20/D89: one k256, exact-pinned, and it is the one alloy-signer-local resolves"
+  # Self-test FIRST (house pattern), in BOTH directions: the detector must
+  # trip on a planted version-qualified entry in the exact shape Cargo.lock
+  # emits, and must NOT trip on the bare entry that is the green case — a
+  # detector that matches everything is as useless as one that matches
+  # nothing.
+  local k256_split_detector='^ "k256 [0-9]'
+  if ! printf ' "k256 0.14.0",\n' | grep -qE "$k256_split_detector"; then
+    printf '::error::D89 rule-5 self-test FAILED: the split-version detector does not match a planted version-qualified k256 entry — fix it before trusting any green verdict\n'
+    return 1
+  fi
+  if printf ' "k256",\n' | grep -qE "$k256_split_detector"; then
+    printf '::error::D89 rule-5 self-test FAILED: the split-version detector ALSO matches a bare k256 entry, so it can never be green for the right reason — fix it before trusting any verdict\n'
+    return 1
+  fi
+  if grep -q '^name = "k256"$' Cargo.lock; then
+    local k256_locked k256_pinned signer_k256
+    k256_locked="$(awk '/^name = "k256"$/{f=1; next} f && /^version = /{gsub(/"/,"",$3); print $3; f=0}' Cargo.lock)"
+    if [ "$(printf '%s\n' "$k256_locked" | grep -c .)" -ne 1 ]; then
+      printf '::error::D89 violation: Cargo.lock carries %s k256 versions — the wallet light half and the pinned payment stack are no longer on one secp256k1, so D44 acceptance is forked:\n%s\n' "$(printf '%s\n' "$k256_locked" | grep -c .)" "$k256_locked"
+      return 1
+    fi
+    k256_pinned="$(sed -nE 's/^k256 = \{ version = "=([^"]+)".*/\1/p' Cargo.toml)"
+    if [ -z "$k256_pinned" ]; then
+      printf '::error::D89 violation: [workspace.dependencies] carries no exact `k256 = { version = "=x.y.z" ... }` pin, but k256 is in the lock. D89 requires the light half ride an EXACT pin in lockstep with alloy/evmlib\n'
+      return 1
+    fi
+    if [ "$k256_pinned" != "$k256_locked" ]; then
+      printf '::error::D89 violation: [workspace.dependencies] pins k256 "=%s" but the lock resolves %s. The pin comment claims it is the version the alloy/evmlib graph resolves; make one of them true\n' "$k256_pinned" "$k256_locked"
+      return 1
+    fi
+    if grep -q '^name = "alloy-signer-local"$' Cargo.lock; then
+      signer_k256="$(awk '/^name = "alloy-signer-local"$/{f=1; next} f && /^\]$/{exit} f && /^ "k256/{print}' Cargo.lock)"
+      if [ -z "$signer_k256" ]; then
+        printf '::error::D89 violation: alloy-signer-local no longer depends on k256 at all — D44 acceptance is defined as what the PINNED stack accepts, and the function this rule pins us to has moved. Re-derive the rule (and D89 Evidence 4) before deleting it\n'
+        return 1
+      fi
+      if printf '%s\n' "$signer_k256" | grep -qE "$k256_split_detector"; then
+        printf '::error::D89 violation: alloy-signer-local depends on a version-QUALIFIED k256 (%s), which Cargo.lock emits only when k256 resolves to more than one version. Our light half would then validate wallet keys against a DIFFERENT secp256k1 than the payment path accepts\n' "$signer_k256"
+        return 1
+      fi
+      printf 'OK: one k256 (%s), pinned exactly, and alloy-signer-local depends on that same one.\n' "$k256_locked"
+    else
+      printf 'OK: one k256 (%s), pinned exactly; alloy-signer-local is not in the lock, so the lockstep half holds vacuously.\n' "$k256_locked"
+    fi
+  else
+    printf 'k256 is not in the locked graph at all — the wallet light half has no secp256k1 edge yet and this rule holds vacuously.\n'
+  fi
 }
 
 lane_cross_os() {

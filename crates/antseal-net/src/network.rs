@@ -10,9 +10,10 @@
 //! no evmlib, no network I/O. It compiles in the default feature set so
 //! U4/U11's `--network` wiring and consent rendering can consume it
 //! without the ~600-package backend graph. The conversion into upstream's
-//! `EvmNetwork` and every wallet operation live behind the non-default
-//! **`ant-backend`** feature ([`crate::evm`]); S6's adapter extends the
-//! same feature.
+//! `EvmNetwork` lives behind the non-default **`ant-backend`** feature
+//! ([`crate::evm`]); S6's adapter extends the same feature. The wallet
+//! operations do **not**: since D89 they are [`crate::wallet`], in this
+//! same default set, over `k256` + `sha3`.
 //!
 //! # Where each value comes from (citation-pinned)
 //!
@@ -99,9 +100,10 @@ pub const ARBITRUM_SEPOLIA_RPC_URL: &str = "https://sepolia-rollup.arbitrum.io/r
 /// different universes and must never convert into each other.
 ///
 /// Rendering is `0x` + lowercase hex (valid everywhere addresses are
-/// accepted). EIP-55 checksummed rendering needs keccak and therefore
-/// lives behind `ant-backend` ([`crate::evm::checksummed`]) — U11 shows
-/// that form to users where available.
+/// accepted). EIP-55 checksummed rendering — the mixed-case form users
+/// see — is [`crate::wallet::checksummed`], in the **default** feature set
+/// since D89 (it needs Keccak-256, which the wallet light half already
+/// brings); U11 shows that form.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EvmAddress20([u8; Self::LEN]);
 
@@ -629,7 +631,7 @@ impl DevnetEnv {
     }
 
     /// The funded dev wallet key (key-shaped material — zeroizing buffer;
-    /// feed it to `crate::evm::WalletKey::import` under `ant-backend`).
+    /// feed it to `crate::wallet::WalletKey::import`).
     #[must_use]
     pub const fn wallet_private_key(&self) -> &SecretBuf {
         &self.wallet_private_key

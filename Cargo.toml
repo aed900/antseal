@@ -101,6 +101,39 @@ alloy = { version = "=1.8.3", default-features = false, features = ["network", "
 # review.
 bytes = "=1.12.1"
 
+# EXACT-PIN CLASS (D89, 2026-08-02 — the ONE payment-stack pair that is NOT
+# behind `ant-backend`). These two are what lets `antseal-net`'s **default**
+# graph own the wallet light half — secp256k1 keygen/import validation,
+# address derivation, EIP-55 rendering — so U11's `init` and U14's consent
+# gate are compiled, linted and asserted by the required default-feature CI
+# lanes instead of by a feature no required context builds (D89 Evidence 3).
+#
+# `k256`: **`arithmetic` only, deliberately NOT `ecdsa`.** D44 defines the
+# accepted import set as what the pinned evmlib/alloy parse accepts, and that
+# parse bottoms out in exactly `k256::SecretKey::from_slice` on exactly this
+# version (traced in vendored source: alloy-signer-local-1.8.3/src/
+# private_key.rs:224-230 -> :52-54 -> ecdsa-0.16.9/src/signing.rs:99-103), so
+# calling it directly is the same predicate, not a second one. Dropping
+# `ecdsa` removes `ecdsa`+`rfc6979` and, more importantly, keeps
+# `signature 2.2.0`/`hmac 0.12.1` out of the graph beside the project's
+# `signature 3`/`hmac 0.13`. `precomputed-tables` is off (default): one
+# scalar multiplication per `init` is slower, and turning it on would add
+# `once_cell` — recorded so the choice is visible, not so it is revisited.
+# **LOCKSTEP: with alloy/evmlib, NOT with the project's crypto stack.** This
+# pin follows whatever k256 the ant-core graph locks and moves only inside an
+# ant-core bump review (policy §4); `dep-graph` rule 5 makes a fork red.
+k256 = { version = "=0.13.4", default-features = false, features = ["arithmetic"] }
+# Keccak-256 for EVM address derivation and EIP-55 checksum rendering. **No
+# lockstep with anything**: Keccak-256 is a fixed function and the committed
+# known-answer vectors (scalar-1 -> 0x7E5F...Bdf; the three checksummed
+# contract constants) are the determinism authority — the `blake3` row's
+# reasoning exactly. `default-features = false` drops `alloc` and `oid`; the
+# whole closure (digest 0.11, keccak 0.2, hybrid-array, typenum, cfg-if,
+# block-buffer 0.12, crypto-common 0.2) is already in the default normal
+# graph, because sha3 0.11 sits on the same RustCrypto 0.11 generation the
+# project already pins for `sha2`/`ml-dsa`.
+sha3 = { version = "=0.11.0", default-features = false }
+
 # EXACT-PIN CLASS (network-consensus-affecting; policy §1 row at P16): the
 # in-process devnet node stack that ant-core's `devnet` feature activates
 # (`devnet = ["dep:ant-node"]`). ant-core 0.5.0's own requirement is caret

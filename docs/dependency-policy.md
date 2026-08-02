@@ -22,6 +22,8 @@ lands):
 | `ant-protocol` — **pinned `=2.3.0` 2026-08-01 (S6)**: the wire-protocol crate ant-core itself depends on, taken as a direct edge because the S6 adapter needs surfaces ant-core does not re-export — `QuoteHash`/`TxHash`/`Amount`, `payment::deserialize_single_node_proof` (the S7 capture-consistency parse of the receipt's `proof_bytes`), `evm::contract::payment_vault` (per-sub-batch `payForQuotes` calldata + `MAX_TRANSFERS_PER_TRANSACTION = 256`, the D37 cap), `CLOSE_GROUP_MAJORITY`. Its own header names it "the single version-pin point" and prohibits a downstream evmlib dep (lib.rs:75-92) — honored: no evmlib line exists. =2.3.0 is exactly what ant-core 0.5.0 resolves in Cargo.lock (2.3.1 exists and is deliberately not taken). **Lockstep: moves ONLY inside an ant-core bump review (§4), never alone.** Consumed by antseal-net behind the non-default `ant-backend` feature | storage/payment wire surface; the receipt's `proof_bytes` encoding (tag + rmp) is this crate's format | S6 — landed |
 | `alloy` — **pinned `=1.8.3` 2026-08-01 (S6; D33 Decision 4)**: the EVM `Provider` trait + Ethereum tx/receipt types for the external-signer flow `pay()` drives itself — each ≤256-transfer sub-batch tx submitted and its receipt awaited in-band (the D33 block-number capture source). evmlib exposes its concrete provider (`Wallet::to_provider()`) but re-exports no trait, so the trait import is unavoidably direct. =1.8.3 is what evmlib 0.9.0's caret `1.0.32` resolves in Cargo.lock; the declared features are a strict subset of evmlib's activation set, so the line adds zero packages/features to the resolved graph. **Lockstep: moves only with an evmlib move inside an ant-core bump review (§4)** | payment-tx submission + receipt capture (tx hashes/block numbers journaled into the permanent vault record) | S6 (D33) — landed |
 | `bytes` — **pinned `=1.12.1` 2026-08-01 (S6)**: `prepare_chunk_payment` consumes and `DataChunk.content` carries `bytes::Bytes`; the adapter must construct the type. Exact-pinned to the version the ant-core graph already locks (zero packages added); moves only within an ant-core bump review (§4). Not format-affecting by itself — pinned for lockstep hygiene with the storage surface it feeds | storage-payload container type of the pinned upstream API | S6 — landed |
+| `k256` — **pinned `=0.13.4` 2026-08-02 (U37; decision [D89](decisions/D89-wallet-primitives-below-the-gate.md))**, `default-features = false`, `features = ["arithmetic"]` — **NOT `ecdsa`**. The secp256k1 half of the wallet **light half** (`crates/antseal-net/src/wallet.rs`), which D89 moved into the **default** graph so `init`/consent are compiled and asserted by required CI rather than by a feature no required context builds. It is not a second acceptance implementation: D44 defines the accepted key set as what the pinned evmlib/alloy parse accepts, and that parse bottoms out in exactly `k256::SecretKey::from_slice` (traced in vendored source: `alloy-signer-local-1.8.3/src/private_key.rs:224-230` → `:52-54` → `ecdsa-0.16.9/src/signing.rs:99-103`), on exactly the version `Cargo.lock` already pins. Dropping `ecdsa` costs nothing and keeps `signature 2.2.0`/`hmac 0.12.1` out of the graph beside the project's `signature 3`/`hmac 0.13`; `precomputed-tables` stays off (one slower scalar multiplication per `init`; enabling it would add `once_cell`). **Lockstep: with alloy/evmlib, NOT with the project's crypto stack** — this pin's partner is the payment stack, so it follows whatever k256 the ant-core graph locks and moves only inside an ant-core bump review (§4). Enforced by `dep-graph` **rule 5** (one k256; the `=` pin literal equals it; `alloy-signer-local`'s lock entry stays bare) | wallet-key acceptance predicate (D44) + address derivation — a key accepted here must be a key the payment path accepts | U37 (D89) — landed |
+| `sha3` — **pinned `=0.11.0` 2026-08-02 (U37; decision [D89](decisions/D89-wallet-primitives-below-the-gate.md))**, `default-features = false` (drops `alloc` and `oid`). Keccak-256 for EVM address derivation (`keccak256(uncompressed pubkey[1..])`, last 20 bytes) and EIP-55 checksum rendering. **No lockstep with anything** — the `blake3` row's reasoning exactly: Keccak-256 is a fixed function, and the committed known-answer vectors are the determinism authority, not the crate version. Guards: the scalar-1 ⇒ `0x7E5F…Bdf` generator address and the three checksummed contract constants (`network.rs:65,70,80`) in the **default** lane, plus the feature-path assertion that our renderer equals alloy's own `Display` (`evm.rs`). Adds one package to the normal graph and **zero names**: sha3 0.11 sits on the same RustCrypto 0.11 generation the project already pins for `sha2`/`ml-dsa`, so its whole closure is already there | address bytes shown to users and written into the vault; EIP-55 rendering | U37 (D89) — landed |
 | `minicbor` (pinned `=2.3.0`, decision D7) | every hashed/signed byte flows through it | P10 (joint with F) — landed |
 | `ed25519-dalek` — **pinned `=3.0.0` 2026-07-27 ([D13](decisions/D13-ed25519-dalek-pin.md); C11 probe)**: verify_strict semantics probe-proven identical to 2.2.0 (byte-identical keys/sigs), chosen for the unified signature-3/sha2-0.11/getrandom-0.4 stack shared with `ml-dsa`; ZIP-215 pubkey-parse gap closed by C12's pre-validation layer | signature format + strict-verification semantics | P11 (C sign-off) — landed (declaration-only until C12) |
 | `ml-dsa` — **pinned `=0.1.1` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md); C11 probe)**: primary ML-DSA-65; pre-1.0, unaudited; all three 2026 advisories patched in 0.1.1 (only CVE-2026-22705 has a RUSTSEC ID — P13 must watch GHSA/osv.dev, not RUSTSEC alone); wasm32 probe passed with executed native↔wasm bit-match | PQC signature format | P12 — landed (declaration-only until C13) |
@@ -91,6 +93,20 @@ reviewer sees them together:
    by default, 475 with `devnet-launcher/devnet` — a single non-optional
    edge added in review would move ~355 packages into every contributor's
    build and every CI lane, and nothing else would notice.
+   **Amended 2026-08-02 (D89): the default figure is now 129**; 475 with
+   `devnet-launcher/devnet` and 447 with `antseal-net/ant-backend`, both
+   **unchanged**. The nine are `base16ct`, `const-oid`, `crypto-bigint`,
+   `der`, `elliptic-curve`, `ff`, `group`, `k256`, `sec1` — the enumerated,
+   already-locked closure of the `k256`/`sha3` rows above, spent on a
+   measured *coverage* property (D89 Evidence 3: without them, four of
+   U11's six Accept rows would be compiled by no gate that runs). Note what
+   the rule actually asserts and what it does not: **the verdict is a scan
+   for those five names**, and the package count is computed *after* it and
+   printed as evidence, so this amendment changes a recorded number and no
+   assertion. The 355-package cliff the rule exists to guard is untouched.
+   This record also sets the bar for the next request: nine packages bought
+   an argued, measured, enumerated coverage property, and that does not
+   license a tenth without the same three things.
 2. **`self_encryption` is a direct dependency of nothing of ours** — the
    prohibition above, declared-manifest scan plus resolved-parent check,
    both halves now with their own planted-fake self-test.
@@ -120,12 +136,29 @@ reviewer sees them together:
    declaration style, which a name-based grep of the manifest would miss)
    and a `upstream = { package = "bytes" }` renamed edge, which no
    name-based grep could find at all.
+5. **`k256` is single-versioned, exact-pinned, and it is the one
+   `alloy-signer-local` resolves** (added 2026-08-02, D89 Decision 4 —
+   rule 3's mechanism, applied to the second thing that now names a curve
+   implementation). D89 put the wallet light half in the default graph on
+   the argument that D44's acceptance predicate *is*
+   `k256::SecretKey::from_slice`; that argument survives only while one
+   k256 exists. A fork would silently split the accepted wallet-key set
+   with nothing failing — so the lane reads the same lock encoding rule 3
+   does (a bare dependency entry ⇔ one resolved version), plus the `=` pin
+   literal, and its self-test asserts the detector in **both** directions.
+   Failure mode by design: a red lane during an ant-core bump review, which
+   is the moment it should be noticed. (S20's bump procedure gains the
+   matching line: when a bump moves `alloy`/`evmlib`, check whether it
+   moves `k256`, and move our pin with it — never alone.)
+
 
 Each rule runs its detector against a planted violation **before** the
 verdict, the pattern the `secret-guard` lane established; rule 1's
 self-test uses the real graph with the feature flipped on rather than a
 planted string, and rule 4's plants both a forbidden edge and an allowed
-one, so the extractor is pinned in both directions. Rules 2 and 4 also
+one, so the extractor is pinned in both directions — as does rule 5's,
+which asserts its split detector matches a planted version-qualified entry
+**and** does not match the bare entry that is the green case. Rules 2 and 4 also
 carry an anti-vacuity assertion — a scan that silently stops matching is
 green for the worst possible reason.
 
@@ -194,6 +227,13 @@ fallout, with this checklist completed in the PR description:
       version its graph locks re-recorded — recorded, never pinned: no
       antseal crate may depend on it directly (D35 prohibition, P15; the
       old move-only-in-lockstep clause is retired)
+- [ ] For `ant-core` bumps that move `alloy`/`evmlib`: **check whether they
+      move `k256`, and move our `=` pin with it — never alone** (D89; the
+      wallet light half's acceptance predicate is that k256's
+      `SecretKey::from_slice`, so a fork splits the accepted wallet-key
+      set). `dep-graph` rule 5 makes forgetting this a red lane rather
+      than a silent fork, which is the point: it fires inside the bump
+      review, where the decision belongs
 - [ ] For toolchain bumps: [toolchain.md](toolchain.md) procedure —
       `rust-toolchain.toml`, `rust-version`, `clippy.toml` move together in
       one commit
