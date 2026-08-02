@@ -194,9 +194,10 @@ fn seal_over_backend(
 
     use antseal_net::NetworkConfig;
 
-    use crate::backend::{SealBackend, runtime, wallet_key};
+    use crate::backend::{ReceiptSink, SealBackend, runtime, wallet_key};
     use crate::seal_consent::TtyConsentPrompt;
-    use crate::seal_run::{SealContext, SealReceipts, run_seal};
+    use crate::seal_run::{SealContext, run_seal};
+    use crate::seal_session::SealSession;
     use crate::vault::wallet::load_wallet_key;
 
     let ui = Ui { json: globals.json };
@@ -217,8 +218,15 @@ fn seal_over_backend(
     })?;
 
     let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
-    let vault = unlock_vault(&layout, &passphrase)?;
-    let handle = load_wallet_key(&vault)?.ok_or_else(|| CliError::Usage {
+    // S36: the vault is unlocked straight into a `SealSession`, which is
+    // what pairs it with D37's durable receipt sink. `seal` is a paying
+    // command, and a paying command that built a bare journal would put the
+    // tree back where it was before S31 — the capture hook fires, nothing
+    // durable happens, and a crash between sub-batch txs buys the landed
+    // sub-batches a second time. The session is taken by value, so this is
+    // still the one `UnlockedVault` and the one `VaultKey` in the process.
+    let session = SealSession::open(unlock_vault(&layout, &passphrase)?);
+    let handle = load_wallet_key(session.vault())?.ok_or_else(|| CliError::Usage {
         message: "this vault holds no wallet key, so it cannot pay for a seal — it was \
                   created by an older build, or the wallet record was removed. Restore from a \
                   `antseal vault export` backup"
@@ -232,13 +240,17 @@ fn seal_over_backend(
         now_unix_secs: now_unix_secs(),
         app_version: format!("antseal/{}", env!("CARGO_PKG_VERSION")),
     };
-    let receipts = SealReceipts::new();
     let rt = runtime()?;
     let result = rt.block_on(async {
-        let backend = SealBackend::connect(&config, &key, Arc::clone(&receipts) as Arc<_>).await?;
+        // The same object on both sides: the backend fires it from inside
+        // `pay`, and the pipeline arms it with the drawn `seal_id` through
+        // the session's journal. `seal_session.rs`'s scan is what keeps a
+        // future edit from minting a second one here.
+        let backend =
+            SealBackend::connect(&config, &key, session.receipts() as Arc<dyn ReceiptSink>).await?;
         run_seal(
             &backend,
-            &vault,
+            &session,
             plan,
             &mut TtyConsentPrompt,
             &ctx,

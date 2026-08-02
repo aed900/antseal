@@ -37,6 +37,7 @@ pub mod seal_consent;
 pub mod seal_plan;
 pub mod seal_resume;
 pub mod seal_run;
+pub mod seal_session;
 pub mod seal_warnings;
 pub mod vault;
 

@@ -15,12 +15,25 @@
 //!
 //! ```text
 //! plan validation (seal_plan; D46 + the flag guards)   ← already done
-//!   → open the vault
+//!   → open the vault                                   (as a SealSession)
 //!   → D45 resume detection (seal_resume)
 //!   → read the bytes                                   (fresh path only)
 //!   → assemble the injected interfaces and run the pipeline
 //!   → render the outcome
 //! ```
+//!
+//! # The journal is the session's, never a fresh one (S36)
+//!
+//! [`run_seal`] takes a [`SealSession`] rather than an
+//! [`UnlockedVault`](crate::vault::session::UnlockedVault), and every journal
+//! it builds comes from [`SealSession::journal`] — which cannot omit D37's
+//! durable receipt sink. That is what makes this a *paying* command's
+//! orchestration rather than a generic one: `seal` is the only production
+//! caller that can move money, and the sink it fires from inside `pay` is
+//! the same object the pipeline arms with the drawn `seal_id`. Before S36
+//! this module built its own bare journal and its own in-memory sink, so
+//! D37 Decision 2's guarantee was implemented, tested, and not attached to
+//! anything a user runs.
 //!
 //! # Generic over the backend, on purpose
 //!
@@ -48,11 +61,11 @@ use antseal_net::StorageBackend;
 use rand_core::TryCryptoRng;
 
 use crate::error::CliError;
-use crate::pipeline::{NoBarriers, Pipeline, SealFile, SealRequest, SealResult, VaultJournal};
+use crate::pipeline::{NoBarriers, Pipeline, SealFile, SealRequest, SealResult};
 use crate::seal_consent::{ConsentPrompt, ConsentReport, SealConsent};
 use crate::seal_plan::SealPlan;
 use crate::seal_resume::{ResumeDecision, detect, resume_plan_lines};
-use crate::vault::session::UnlockedVault;
+use crate::seal_session::SealSession;
 use crate::vault::store::WorkStore;
 use antseal_anchor::NoAnchorGate;
 
@@ -213,6 +226,11 @@ impl SealCommandResult {
 
 /// Drive one `seal` invocation over an already-validated plan.
 ///
+/// `session` carries the unlocked vault **and** D37's durable receipt sink
+/// (S36): hand [`SealSession::receipts`] to the backend's constructor and
+/// this function does the rest, so the sink the backend fires and the sink
+/// the pipeline arms are one object by construction.
+///
 /// `journal_rng` encrypts vault records; `seal_rng` supplies `W`, the
 /// `seal_id` and every AEAD nonce. Two separate sources, injected rather
 /// than reached for, so a suite can replay either half deterministically —
@@ -226,7 +244,7 @@ impl SealCommandResult {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_seal<B, P, RJ, RS>(
     backend: &B,
-    vault: &UnlockedVault,
+    session: &SealSession,
     plan: &SealPlan,
     prompt: &mut P,
     ctx: &SealContext,
@@ -239,7 +257,7 @@ where
     RJ: TryCryptoRng + ?Sized,
     RS: TryCryptoRng + ?Sized,
 {
-    let store = WorkStore::new(vault);
+    let store = WorkStore::new(session.vault());
 
     // ── D45, before consent and before a single byte is read ──
     let decision = detect(&store, plan.network, &plan.absolute_paths(), &plan.shaping)?;
@@ -284,7 +302,10 @@ where
         prompt,
     );
 
-    let journal = VaultJournal::new(store, journal_rng);
+    // S36: the journal comes from the session, so it carries D37's durable
+    // sink and there is no builder step here that could be omitted. The
+    // `store` above is the read side (D45's scan); this is the write side.
+    let journal = session.journal(journal_rng);
     let pipeline = Pipeline::new(backend, &NoAnchorGate, &journal, &consent, &NoBarriers);
 
     let (result, resumed) = match decision {
@@ -340,7 +361,7 @@ where
             // U18: read after the seal, and read rather than assumed — a
             // vault restored from a backup carries its export record, so
             // the nag correctly stays quiet on a machine that has one.
-            export_nag: !crate::vault::bookkeeping::load(vault)?.ever_exported(),
+            export_nag: !crate::vault::bookkeeping::load(session.vault())?.ever_exported(),
         })),
         // D49's truncation. The consent gate was never called (the
         // pipeline returns at the post-quote barrier), so the report is
@@ -412,82 +433,21 @@ fn read_all(plan: &SealPlan) -> Result<Vec<Vec<u8>>, CliError> {
         .collect()
 }
 
-/// D37's per-sub-batch receipt sink for the live `seal` path.
-///
-/// # Why this is in memory, stated rather than implied
-///
-/// [`SealBackend::connect`](crate::backend::SealBackend::connect) requires
-/// a sink by signature — S27's obligation made structural, so no command
-/// can forget one. What it cannot supply is a *journal-backed* sink: the
-/// backend is constructed **before** the pipeline draws the `seal_id`, and
-/// a receipt cannot be written to a work record whose key does not exist
-/// yet. The durable write for the receipt that matters is the pipeline's
-/// own `put_receipt`, immediately after `pay` returns and strictly before
-/// `finalize_batch` (S12/S16 assert that ordering), and this sink is the
-/// in-invocation witness beside it — the same shape S17/S18's devnet gate
-/// runs green against a live network.
-///
-/// The residual window is narrow and named: a payment split across more
-/// than one transaction (>256 blobs, `MAX_TRANSFERS_PER_TRANSACTION`) that
-/// crashes between sub-batches loses the partial receipt, and resume then
-/// re-pays. Closing it needs the pipeline to register the drawn `seal_id`
-/// with the sink, which is a change inside `pipeline/` — recorded as
-/// **U39** rather than taken here.
-#[cfg(feature = "ant-backend")]
-pub struct SealReceipts {
-    latest: std::sync::Mutex<Option<antseal_net::PaymentReceipt>>,
-    fired: std::sync::atomic::AtomicUsize,
-}
-
-#[cfg(feature = "ant-backend")]
-impl SealReceipts {
-    /// A fresh sink.
-    #[must_use]
-    pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self {
-            latest: std::sync::Mutex::new(None),
-            fired: std::sync::atomic::AtomicUsize::new(0),
-        })
-    }
-
-    /// How many sub-batch receipts arrived.
-    #[must_use]
-    pub fn fired(&self) -> usize {
-        self.fired.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// The cumulative receipt-so-far, if any arrived.
-    #[must_use]
-    pub fn latest(&self) -> Option<antseal_net::PaymentReceipt> {
-        match self.latest.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
-    }
-}
-
-#[cfg(feature = "ant-backend")]
-impl crate::backend::ReceiptSink for SealReceipts {
-    fn capture(&self, receipt: &antseal_net::PaymentReceipt) {
-        // Runs inside `pay()`, between two transactions, on the far side
-        // of money having moved: it must not panic (the trait says so),
-        // hence the poison recovery rather than an unwrap.
-        let n = self.fired.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        match self.latest.lock() {
-            Ok(mut guard) => *guard = Some(receipt.clone()),
-            Err(poisoned) => *poisoned.into_inner() = Some(receipt.clone()),
-        }
-        if n > 1 {
-            // The U39 window, made visible when it is actually entered
-            // rather than only documented.
-            tracing::warn!(
-                sub_batch = n,
-                "this payment spans more than one transaction; a crash between sub-batches \
-                 would lose the partial receipt and cost a second payment on resume (U39)"
-            );
-        }
-    }
-}
+// `SealReceipts` used to live here: an in-memory sink handed to
+// `SealBackend::connect` because the backend is built before the pipeline
+// draws the `seal_id`, so nothing could be written to a work record whose
+// key did not exist yet. S36 deleted it rather than kept it. The `seal_id`
+// problem was never the backend's — S31's `VaultReceiptSink` is armed by
+// the pipeline through `SealJournal::arm_receipts` at the one moment the
+// id exists, immediately before every `pay`. So the type's whole reason to
+// exist was a window that has been closed, and leaving it would have left
+// a second, non-durable sink nameable on the paying path (the bypass
+// `seal_session.rs`'s scan now refuses).
+//
+// Its doc comment also cited **U39** for the residual multi-tx window. That
+// is the wrong id — U39 is the missing `--features ant-backend` CI lane;
+// the sink obligation is U40 (recorded from the command side) and S36
+// (from the sink's). Both are discharged by the session wiring above.
 
 fn hex_seal(seal_id: &SealId) -> String {
     use std::fmt::Write as _;
