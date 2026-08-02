@@ -52,6 +52,29 @@ run ci-lanes   scripts/ci-lanes.sh --self-test
 # in its local dual).
 run traceability scripts/ci-lanes.sh traceability
 
+# Q15/D52 — the devnet E2E gate, in two halves that are deliberately not the
+# same thing:
+#
+#   * its SELF-TEST runs on every gate. It needs no devnet, takes seconds,
+#     and covers the two pieces of `e2e-devnet.sh` that can silently stop
+#     meaning anything: the suite-registry rules (a renamed suite must fail,
+#     a landed-but-still-declared-pending suite must fail, an all-pending run
+#     must say PENDING and never PASS) and the redaction filter that keeps
+#     wallet-key-shaped material out of uploaded artifacts.
+#   * the GATE ITSELF is opt-in here, because it boots a 14-node devnet and
+#     runs for tens of minutes where this gate runs in minutes (D52 option C
+#     keeps it a named, separately-invoked gate). It is NOT optional as
+#     policy: for storage-touching changes it is mandatory before merge —
+#     CONTRIBUTING, "Devnet E2E gate (D52)", defines what storage-touching
+#     means and what evidence to record.
+run e2e-selftest scripts/e2e-devnet.sh --self-test
+if [ "${ANTSEAL_GATE_E2E:-0}" = "1" ]; then
+  run e2e-devnet scripts/e2e-devnet.sh
+else
+  printf '  %-16s SKIP  (storage-touching change? ANTSEAL_GATE_E2E=1 %s — CONTRIBUTING "Devnet E2E gate")\n' \
+    e2e-devnet "$0"
+fi
+
 # F14 — the independent cross-check (decision D31; contract:
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
 # it shares no code with the crate it checks.
