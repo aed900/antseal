@@ -122,6 +122,51 @@ The owning task (remaining: Q7/Q9 — Q4, P13 and Q5 claimed theirs):
 4. adds any genuinely new check as a **new** job instead of folding it into
    an existing lane.
 
+### Gate feature policy (S22)
+
+`scripts/local-gate.sh` no longer runs `--all-features`. Since P16 landed
+`devnet-launcher/devnet` and S5 landed `antseal-net/ant-backend`, that flag
+pulled the whole upstream stack — **475 packages against the default 120**,
+the two numbers `./scripts/ci-lanes.sh dep-graph` prints on every run — into
+a gate that has to stay minutes long on a 2-core host, for every change
+including a docs-only one. That is the cost the containment design exists to
+avoid, paid back in the one place it was supposed to be avoided.
+
+The heavy paths are **moved, not dropped**:
+
+| Tier | What | When | Cost |
+| --- | --- | --- | --- |
+| 1 | `--workspace` with every **light** feature (`GATE_LIGHT_FEATURES` in `local-gate.sh`) | always | minutes |
+| 2 | each **heavy** feature path per package: `antseal-net --features ant-backend`, `antseal-cli --features ant-backend`, `devnet-launcher --features devnet` (clippy + tests) | when a storage-touching path changed — the same list as the devnet E2E gate below | tens of minutes |
+| 3 | the devnet E2E gate (`scripts/e2e-devnet.sh`) | same trigger | tens of minutes + a booted devnet |
+
+Tier 2 is decided from the diff against `main`, not from memory:
+`scripts/gate-features.sh --needs-heavy`. Force it with
+`ANTSEAL_GATE_HEAVY=1` (or off with `=0`) and change the base with
+`ANTSEAL_GATE_BASE`. If it cannot decide (no such ref), it says so and the
+gate prints a visible SKIP — never a quiet pass.
+
+**Adding a feature to any crate is a gate change.** `gate-features.sh
+--check-partition` runs on every gate and fails unless every feature declared
+by every workspace member is compiled by some tier: put it in
+`GATE_LIGHT_FEATURES` (tier 1) or in `HEAVY_FEATURES` + `HEAVY_LANES` (tier
+2). It also fails on a stale gate entry and on a `HEAVY` entry whose feature
+no longer exists. That guard is the whole safety argument for dropping
+`--all-features`, so it self-tests four planted faults first, every run.
+
+Two things this policy deliberately does **not** rely on:
+
+- **`--all-features` as a proof.** It compiles the *union* of features, which
+  is not the same as compiling each configuration: workspace feature
+  unification can hide a package that does not build with only its own
+  feature on — the shape a consumer actually gets. Tier 2 is both cheaper
+  when it runs and a stricter statement.
+- **`dep-graph` as a substitute for tier 2.** P20's containment rules read
+  `cargo tree`/`cargo metadata`: they prove the heavy graph stays *out of the
+  default build*, and they never compile a line of feature-gated code. Keep
+  them (they cost seconds); they cannot see a feature-gated path that stopped
+  building.
+
 ### Devnet E2E gate (D52)
 
 The M1 storage E2E does **not** run as a per-PR CI job. Decision
