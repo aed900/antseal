@@ -306,14 +306,11 @@ fn render_fixture() -> String {
                 reason: PassphraseFailure::NoChannel,
             },
             // U20's handler is complete; the storage-backend construction
-            // seam it reaches is U36's, shared with `seal`.
-            "restore" => CliError::NetworkFailure {
-                detail: "`restore` needs a live Autonomi connection, and this build has no \
-                         storage backend compiled in (the `ant-backend` feature is off by \
-                         default). The command itself is complete — its network seam is wired \
-                         together with `seal` (U13/S17, tracked as U36)"
-                    .to_owned(),
-            },
+            // seam it reaches is U36's, shared with `seal`. Rendered by
+            // the real producer — a hand-copied string here went stale the
+            // first time the message changed, and a fixture that documents
+            // text no build emits is worse than none (U19's rule).
+            "restore" => antseal_cli::backend::unavailable("restore"),
             "init" | "seal" => CliError::NotImplemented {
                 command: if name == "init" { "init" } else { "seal" },
                 milestone: Milestone::M1,

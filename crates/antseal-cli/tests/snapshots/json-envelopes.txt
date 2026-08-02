@@ -9,7 +9,7 @@
 [status] error
 {"command":"status","error":{"class":"not-implemented","exit_code":3,"message":"`antseal status` is not implemented until M2: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
 [restore] error
-{"command":"restore","error":{"class":"network-failure","exit_code":23,"message":"network failure: `restore` needs a live Autonomi connection, and this build has no storage backend compiled in (the `ant-backend` feature is off by default). The command itself is complete — its network seam is wired together with `seal` (U13/S17, tracked as U36)"},"network":"arbitrum-one","ok":false,"v":1}
+{"command":"restore","error":{"class":"network-failure","exit_code":23,"message":"network failure: `restore` needs a live Autonomi connection, and this build has no storage backend compiled in (the `ant-backend` feature is off by default). The command itself is complete — rebuild with `--features ant-backend` to reach the network"},"network":"arbitrum-one","ok":false,"v":1}
 [reveal] error
 {"command":"reveal","error":{"class":"not-implemented","exit_code":3,"message":"`antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
 [verify] error

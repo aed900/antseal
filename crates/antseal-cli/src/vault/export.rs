@@ -45,9 +45,12 @@
 //!      work := map {
 //!        0: meta (bstr) — the U9 versioned meta-record plaintext
 //!        1: journal (array of [entry: uint, bytes: bstr], strictly
-//!           ascending, optional) — PRESENT only for works whose state is
-//!           not `complete`: the D43 journal/cache split, enforced on
-//!           write AND rejected on read if violated
+//!           ascending, optional) — every entry for a work whose state is
+//!           not `complete`; for a `complete` work only the record-scale
+//!           entries below `UNIT_ENTRY_BASE` (state, plan, encrypted-
+//!           manifest record). The D43 journal/cache split as amended by
+//!           S29: the cache is the staged *unit* blobs, enforced on write
+//!           AND rejected on read if violated
 //!        2: receipt (bstr, optional)
 //!        3: anchors (array of [slot: bstr, bytes: bstr], strictly
 //!           ascending, optional)
@@ -130,6 +133,7 @@ use super::store::{
 use super::wallet::{WALLET_KEY_LEN, WalletKeyHandle, load_wallet_key, store_wallet_key};
 use crate::config::MAX_CONFIG_BYTES;
 use crate::error::CliError;
+use crate::pipeline::journal::UNIT_ENTRY_BASE;
 
 /// The Q2-reserved export magic — exact bytes, frozen forever
 /// (testdata/README.md §secret-material: the guard greps for this
@@ -146,8 +150,9 @@ pub const EXPORT_FILE_EXTENSION: &str = "sealvault";
 
 /// Hard cap on an import file read (defensive, D10 discipline: the file
 /// is adversary-suppliable). Sized far above any v1 vault: the payload is
-/// record-scale plus journal bytes of *incomplete* works only (the D43
-/// cache is excluded), and a single staged blob is one chunk.
+/// record-scale plus the staged unit blobs of *incomplete* works only
+/// (the D43 cache is excluded — a complete work contributes only its
+/// record-scale entries 0–2), and a single staged blob is one chunk.
 pub const MAX_EXPORT_FILE_BYTES: usize = 1024 * 1024 * 1024;
 
 /// Cap on the export header's CBOR body (a real body is ~60 bytes).
@@ -474,10 +479,16 @@ fn validate_payload(payload: &ExportPayload) -> Result<(), CliError> {
         {
             return Err(bad("works are not strictly ascending by seal id"));
         }
-        // D43, read side: cache bytes have no business in an export.
-        if record.state == WorkState::Complete && !work.journal.is_empty() {
+        // D43, read side (as amended 2026-08-02 by S29): the cache is
+        // the *staged unit blobs*, and those have no business in an
+        // export. A complete work's record-scale entries 0–2 do, and
+        // entry 2 is the only surviving locator for its encrypted
+        // manifest.
+        if record.state == WorkState::Complete
+            && work.journal.iter().any(|(key, _)| *key >= UNIT_ENTRY_BASE)
+        {
             return Err(bad(
-                "a complete work carries journal bytes (the D43 cache is never exported)",
+                "a complete work carries staged unit blobs (the D43 cache is never exported)",
             ));
         }
         if !strictly_ascending(work.journal.iter().map(|(k, _)| *k)) {
@@ -668,25 +679,31 @@ fn gather_payload(vault: &UnlockedVault) -> Result<ExportPayload, CliError> {
     let mut works = Vec::new();
     for seal_id in store.list_works().map_err(CliError::from)? {
         let record = store.load_meta(&seal_id).map_err(CliError::from)?;
-        // D43: journal-state bytes (work not complete) are resume-
-        // critical and always exported; cache-state bytes (complete) are
-        // refetchable and never exported.
-        let journal = if record.state == WorkState::Complete {
-            Vec::new()
-        } else {
-            let mut entries = Vec::new();
-            for entry in store
-                .list_journal_entries(&seal_id)
-                .map_err(CliError::from)?
-            {
-                let bytes = store
-                    .get_journal_entry(&seal_id, entry)
-                    .map_err(CliError::from)?
-                    .ok_or_else(|| internal("journal entry vanished during export"))?;
-                entries.push((entry, bytes));
+        // D43 (as amended 2026-08-02 by S29): journal-state bytes (work
+        // not complete) are resume-critical and always exported. For a
+        // complete work the exclusion is scoped to the *staged unit
+        // blobs* — entries `>= UNIT_ENTRY_BASE`, the content-scale bytes
+        // D43 §3's size reasoning is actually about. Entries 0–2 (state,
+        // plan, encrypted-manifest record) are record-scale metadata and
+        // are always exported: without entry 2's `{address, nonce}` an
+        // encrypted manifest is unlocatable on a content-addressed
+        // network, so dropping it made an imported complete work
+        // impossible to restore at all.
+        let complete = record.state == WorkState::Complete;
+        let mut journal = Vec::new();
+        for entry in store
+            .list_journal_entries(&seal_id)
+            .map_err(CliError::from)?
+        {
+            if complete && entry >= UNIT_ENTRY_BASE {
+                continue;
             }
-            entries
-        };
+            let bytes = store
+                .get_journal_entry(&seal_id, entry)
+                .map_err(CliError::from)?
+                .ok_or_else(|| internal("journal entry vanished during export"))?;
+            journal.push((entry, bytes));
+        }
         let receipt = store.get_receipt(&seal_id).map_err(CliError::from)?;
         let mut anchors = Vec::new();
         for slot in store.list_anchors(&seal_id).map_err(CliError::from)? {

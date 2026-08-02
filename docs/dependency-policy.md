@@ -139,6 +139,25 @@ Dependencies outside the class (e.g. `thiserror`, `clap`, `tracing`) may use
 caret requirements, but their *resolved* versions are still frozen by the
 committed `Cargo.lock` (§3).
 
+**`tokio` stays outside the class, deliberately — recorded 2026-08-02
+(U36).** U36 gave `antseal-cli` an async runtime edge (`optional = true`,
+activated only by the non-default `ant-backend` feature) so
+`crate::backend` can drive `ant-core`'s reactor-parked futures; that is a
+new *product* edge and so is recorded here rather than left in a manifest
+comment. It is **not** an exact pin, and the reasoning is the same one the
+workspace entry has carried since P16: nothing tokio produces is hashed,
+signed, stored or paid for — it schedules, it does not encode — so it fails
+§1's own membership test; and the property actually worth protecting is
+"one tokio in the tree, the same version the `ant-core`/`ant-node` graph
+resolves", which a competing `=x.y.z` requirement on this edge is precisely
+what would break. Caret plus the committed lockfile is the stronger
+guarantee here, not the weaker one. What the new edge must keep true is a
+*containment* claim, not a pin: `dep-graph` rule 1 measures the default
+`--workspace` graph, and every tokio edge in the tree (devnet-launcher's
+`devnet`, antseal-net's dev-only, antseal-cli's `ant-backend`) is gated
+such that the default graph resolves none. A future edge that is *not*
+feature-gated is the event that needs review, not a version bump.
+
 ## 2. Single declaration point
 
 ALL version requirements live in **`[workspace.dependencies]`** in the root

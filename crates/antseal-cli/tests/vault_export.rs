@@ -22,6 +22,7 @@ use std::process::{Command as Process, Stdio};
 
 use antseal_cli::cli::Cli;
 use antseal_cli::error::{CliError, ErrorClass};
+use antseal_cli::pipeline::journal::UNIT_ENTRY_BASE;
 use antseal_cli::vault::export::{export_vault, import_vault};
 use antseal_cli::vault::kdf::KdfSelection;
 use antseal_cli::vault::layout::{BesideFile, VaultLayout};
@@ -132,6 +133,11 @@ fn assert_records_equal(a: &WorkRecord, b: &WorkRecord) {
 /// Build the reference vault: the U9 5-state fixture set with journal
 /// entries (cache-sized on the complete works), receipts, anchors, a
 /// wallet, and a config file. Returns the fixture records.
+/// Record-scale filler for one journal entry, distinct per work+entry.
+fn journal_body(entry: u64, record: &WorkRecord) -> Vec<u8> {
+    format!("journal-{entry}-of-{:02x}", record.seal_id.as_bytes()[1]).into_bytes()
+}
+
 fn populate(vault: &UnlockedVault) -> Vec<WorkRecord> {
     let mut r = rng();
     let fixtures = vec![
@@ -147,17 +153,17 @@ fn populate(vault: &UnlockedVault) -> Vec<WorkRecord> {
     for record in &fixtures {
         store.create_work(record, &mut r).expect("create work");
         let complete = record.state == WorkState::Complete;
-        // Journal entries for every work; content-scale for complete
-        // works (the D43 cache whose exclusion the size assertion pins).
-        for entry in [0u64, 7] {
-            let body = if complete {
+        // Journal entries spanning both halves of the S10 namespace: the
+        // record-scale head (0 state, 1 plan, 2 encrypted-manifest
+        // record) and one staged unit blob at 7. On a complete work the
+        // unit blob is content-scale — that is the D43 cache whose
+        // exclusion the size assertion pins (S29: the head is *not* the
+        // cache and must survive, or the work cannot be restored).
+        for entry in [0u64, 1, 2, 7] {
+            let body = if complete && entry >= UNIT_ENTRY_BASE {
                 vec![record.seal_id.as_bytes()[1]; CACHE_BLOB_LEN]
             } else {
-                format!(
-                    "staged-unit-{entry}-of-{:02x}",
-                    record.seal_id.as_bytes()[1]
-                )
-                .into_bytes()
+                journal_body(entry, record)
             };
             store
                 .put_journal_entry(&record.seal_id, entry, &body, &mut r)
@@ -241,15 +247,28 @@ fn round_trip_preserves_the_full_logical_state() {
         assert_records_equal(record, &loaded);
         let complete = record.state == WorkState::Complete;
         if complete {
-            // Cache-state entries are absent, and their absence is a
-            // plain `None`, never an error (D43).
+            // D43 as amended by S29: the staged unit blob (7) is absent
+            // and its absence is a plain `None`, never an error — while
+            // the record-scale head (0,1,2) survives byte-identically,
+            // because entry 2 is the imported work's only locator for
+            // its encrypted manifest.
             assert_eq!(
                 store.list_journal_entries(&record.seal_id).expect("list"),
-                Vec::<u64>::new()
+                vec![0, 1, 2]
             );
+            for entry in [0u64, 1, 2] {
+                assert_eq!(
+                    store
+                        .get_journal_entry(&record.seal_id, entry)
+                        .expect("get")
+                        .expect("present")
+                        .as_bytes(),
+                    journal_body(entry, record)
+                );
+            }
             assert!(
                 store
-                    .get_journal_entry(&record.seal_id, 0)
+                    .get_journal_entry(&record.seal_id, 7)
                     .expect("absence is not an error")
                     .is_none()
             );
@@ -267,23 +286,20 @@ fn round_trip_preserves_the_full_logical_state() {
                 b"ots fixture bytes"
             );
         } else {
-            // Journal-state entries: byte-identical (resumability).
+            // Journal-state entries: every one, byte-identical — the
+            // staged unit blob at 7 included (resumability).
             assert_eq!(
                 store.list_journal_entries(&record.seal_id).expect("list"),
-                vec![0, 7]
+                vec![0, 1, 2, 7]
             );
-            for entry in [0u64, 7] {
+            for entry in [0u64, 1, 2, 7] {
                 assert_eq!(
                     store
                         .get_journal_entry(&record.seal_id, entry)
                         .expect("get")
                         .expect("present")
                         .as_bytes(),
-                    format!(
-                        "staged-unit-{entry}-of-{:02x}",
-                        record.seal_id.as_bytes()[1]
-                    )
-                    .as_bytes()
+                    journal_body(entry, record)
                 );
             }
         }

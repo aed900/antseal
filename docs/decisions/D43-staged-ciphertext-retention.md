@@ -200,3 +200,75 @@ implied model. Nothing here is v1 wire format; nothing freezes at Q14.
   tasks/S.md:38).
 - **Q (M4):** disk-growth note in the vault docs (what the vault stores,
   why it is content-sized, and that backups are not).
+
+## Amendment (2026-08-02, S29): §3 excluded the manifest locator, and an imported complete work could not be restored at all
+
+§3 named the export exclusion as a property of the **work** — state =
+`complete` ⇒ the journal is cache ⇒ nothing exported — and U12
+implemented it exactly that way (`export.rs`: `state == Complete ⇒
+journal = []`, with the import validator rejecting a complete work that
+carried *any* journal bytes). That is one category too coarse. The S10
+journal's entry-key namespace has two halves, and only the second one is
+what this record's size reasoning is about:
+
+| entries | content | scale |
+| --- | --- | --- |
+| 0 `STATE_ENTRY`, 1 `PLAN_ENTRY`, 2 `MANIFEST_BLOB_ENTRY` | fine state tag; seal plan + plaintext manifest; the encrypted manifest's `{address, nonce}` (+ its own ciphertext) | record (KBs) |
+| ≥ 3 `UNIT_ENTRY_BASE` | one staged unit ciphertext each, raw mirrors included | content (≈ 1–2× sealed content) |
+
+§3's own justification is entirely about the second row — "record scale
+(KBs)" versus "content scale" — so the exclusion was over-broad by
+accident rather than by decision. The tell is in §3's parenthetical
+itself, which lists "+ encrypted manifest" as part of the cache: the
+encrypted **manifest** is record-scale metadata, and its journal record is
+the only thing that says *where on Autonomi the manifest is*.
+
+**The consequence, found by S14 (lane ε) and recorded as S29.** Dropping
+entry 2 dropped that address, which is not derivable from `W`, `seal_id`
+or `work_id` — an encrypted manifest is unfindable on a content-addressed
+network without it. Dropping entry 1 dropped the plaintext copy in the
+same stroke. S14 implements both manifest sources and is proven on each;
+after a `vault import` **neither had a source**, so a restored-from-backup
+complete work stopped on `ManifestUnavailable` and S19's clean-tree drill
+— the M1 gate clause — could not pass. M3's `reveal`-after-import (R16
+needs the manifest too) had the identical hole. Note the shape of the
+failure: it was silent at export time and irreversible by the time it
+mattered, since the backup is what exists after the vault is gone.
+
+**Corrected rule.** *The cache is the staged unit blobs, not the journal
+area.* On `vault export` a complete work carries its record-scale journal
+head — entries 0 (`STATE_ENTRY`), 1 (`PLAN_ENTRY`) and 2
+(`MANIFEST_BLOB_ENTRY`) — and drops every entry from 3 (`UNIT_ENTRY_BASE`)
+upward. Incomplete works are unchanged: every entry is exported, as §2's
+table already required. `vault import` enforces the same line from the
+other side, rejecting a complete work that carries any entry
+`>= UNIT_ENTRY_BASE`. §2's table row "in `vault export`" should be read as
+**journal: always; cache (= staged unit blobs): excluded**.
+
+Entry 2 is exported whole, ciphertext included, rather than reduced to the
+`{address, nonce}` pair it is needed for: a `StagedBlob` record's address
+is BLAKE3 of its own ciphertext (S4), so a stripped record fails the
+integrity recompute every consumer performs, and splitting it would be a
+new record type rather than a scoping fix. The cost is bounded and stays
+inside §3's own budget — the manifest ciphertext scales with the *unit
+count*, not with content, and remains KBs where the excluded unit blobs
+are megabytes.
+
+**One §3 claim narrows, and it should be said plainly.** §3 credited the
+lean export with making "S19's restore-from-backup E2E exercise the pure
+network path with zero test contrivance". That remains true of every
+**unit** — the bulk, and the part the disk-loss drill exists to prove —
+but it is no longer true of the manifest, which an imported work now finds
+in its vault copy first (`ManifestSource::VaultCopy`). This is the right
+trade: a drill that proves the network path by making restore *impossible*
+proved nothing. The locator path is exercised directly instead, by
+deleting the plaintext copy from an imported work and restoring again —
+`an_imported_complete_work_restores_from_the_network`
+(`crates/antseal-cli/tests/restore_engine.rs`), which asserts both halves
+at once: every unit came from the network (`from_cache == 0`) and the
+journal head is exactly `[0, 1, 2]`.
+
+Since **S29** the rule lives in one place per side —
+`gather_payload` and `validate_payload` in
+`crates/antseal-cli/src/vault/export.rs`, both keyed on `UNIT_ENTRY_BASE`
+rather than on a state tag. D47 carries the matching amendment.

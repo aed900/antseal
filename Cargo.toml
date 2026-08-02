@@ -114,13 +114,18 @@ bytes = "=1.12.1"
 # ant-core bump review (dependency-policy §4).
 ant-node = "=0.15.0"
 
-# Async runtime for the devnet-launcher binary ONLY (outside the exact-pin
-# class; the resolved version is frozen by Cargo.lock §3 and is the same
-# tokio the ant-core/ant-node graph resolves — one tokio in the tree). No
-# default features here; the launcher enables rt-multi-thread/signal/time on
-# its own edge. Product crates: antseal-core stays tokio-free (dep-graph
-# lane guards it); whether antseal-net's S6 adapter takes a tokio edge is
-# S6's own recorded decision, not implied by this line.
+# Async runtime (outside the exact-pin class; the resolved version is frozen
+# by Cargo.lock §3 and is the same tokio the ant-core/ant-node graph
+# resolves — one tokio in the tree). No default features here; each edge
+# enables what it needs on its own line. The edges, each its own recorded
+# decision rather than implied by this one: devnet-launcher's binary
+# (rt-multi-thread/signal/time, behind its `devnet` feature); antseal-net's
+# DEV-only edge (S6 recorded that the adapter library takes none — its
+# futures run on the caller's runtime); and, since U36, antseal-cli's
+# optional edge behind `ant-backend`, which is that caller. antseal-core
+# stays tokio-free unconditionally (dep-graph lane guards it). Every
+# product edge is feature-gated non-default, so the default `--workspace`
+# graph resolves no tokio at all.
 tokio = { version = "1", default-features = false }
 
 # EXACT-PIN CLASS (consensus-affecting): BLAKE3-256 is the v1 storage-address
