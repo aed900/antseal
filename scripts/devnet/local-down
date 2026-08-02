@@ -59,10 +59,20 @@ done
 # Clean exit: the launcher removed manifest/env/pidfile, the node stack
 # removed data/. The log is the last artifact standing — remove it so the
 # post-down listing is EMPTY, which is what "no residue" means here.
+#
+# ONE file is exempt, and the exemption is narrow on purpose: P17's
+# `sepolia-env` is written by `scripts/devnet/sepolia-preflight`, is NOT
+# produced by the launcher, and does not expire with a devnet — it records
+# the chain and contract addresses of Arbitrum Sepolia, which are the same
+# before, during and after any run. The no-residue contract is a statement
+# about the LAUNCHER's cleanup (tasks/P.md P16 accept), so a file the
+# launcher never created cannot be evidence about it. `local-reset` still
+# removes it, correctly: preflight regenerates it in seconds.
 rm -f "$devdir/launcher.log"
 note "devnet stopped after ${waited}s; residue check of $devdir:"
-if [ -d "$devdir" ] && [ -n "$(ls -A "$devdir" 2>/dev/null)" ]; then
+residue="$(ls -A "$devdir" 2>/dev/null | grep -vxF 'sepolia-env' || true)"
+if [ -d "$devdir" ] && [ -n "$residue" ]; then
   ls -la "$devdir"
   die "unexpected residue above — the launcher's cleanup missed something; local-reset clears it, but this is a bug worth reporting"
 fi
-note "no residue: .devnet/ is empty"
+note "no residue: .devnet/ holds nothing the launcher created"

@@ -23,11 +23,37 @@ run() {
   fi
 }
 
+# S22 — TIER 1 of the gate feature policy: every LIGHT feature, i.e. every
+# feature any workspace crate declares that is not on `gate-features.sh`'s
+# HEAVY list. This line replaced `--all-features`, which since P16 landed
+# `devnet-launcher/devnet` and S5 landed `antseal-net/ant-backend` dragged
+# the whole upstream stack — 475 packages against the default 120, measured
+# by `ci-lanes.sh dep-graph` — into a gate that has to stay minutes long on a
+# 2-core host, for every change including a docs-only one.
+#
+# The heavy paths are not dropped, they are MOVED: tier 2 below compiles and
+# tests them per package when a storage-touching path changed, and tier 3 is
+# the devnet E2E gate. The two lists cannot drift apart —
+# `gate-features.sh --check-partition` fails unless this literal equals the
+# computed LIGHT union AND every declared feature is classified by some tier,
+# which is what stops a newly added feature from being compiled by nothing.
+GATE_LIGHT_FEATURES='antseal-core/test-util,antseal-core/test-vectors,antseal-net/test-util'
+
 echo "gate: $(git rev-parse --short HEAD) — $(git log -1 --format=%s | cut -c1-60)"
 run fmt    cargo fmt --all -- --check
-run clippy cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-run test   cargo test --workspace --all-features --locked
+run clippy cargo clippy --workspace --all-targets --features "$GATE_LIGHT_FEATURES" --locked -- -D warnings
+run test   cargo test --workspace --features "$GATE_LIGHT_FEATURES" --locked
 run wasm32 cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+
+# S22 — the policy's own guard (seconds): every declared feature is on
+# exactly one tier, the HEAVY list still names features that exist, and the
+# line above is exactly the computed LIGHT union. Self-test first, every run
+# (the format-freeze pattern two blocks down): four planted faults — a new
+# feature no tier compiles, a HEAVY entry whose feature is gone, a stale gate
+# entry, and the gate line deleted outright — must each go red before the
+# green verdict means anything.
+run features scripts/gate-features.sh --self-test
+run features scripts/gate-features.sh --check-partition
 
 # Q50 — the wire-registry freeze digest. Not folded into `test` because its
 # first layer is coreutils `sha256sum -c`, which shares no code with the crate
@@ -51,6 +77,47 @@ run ci-lanes   scripts/ci-lanes.sh --self-test
 # line: a lane that never runs locally is not evidence either (Q43's rule,
 # in its local dual).
 run traceability scripts/ci-lanes.sh traceability
+
+# S22 — TIER 2: the heavy feature paths, per package. Required, but only for
+# the changes that can break them — the same storage-touching path list the
+# D52 devnet E2E gate uses, because the two gates guard the same surface.
+# `--needs-heavy` decides from the diff against `main` (override with
+# ANTSEAL_GATE_BASE) rather than from the developer's memory; exit 2 means it
+# could not decide, which is a visible SKIP with the reason, never a silent
+# pass. ANTSEAL_GATE_HEAVY=1/0 forces it on or off.
+heavy_why="$(scripts/gate-features.sh --needs-heavy 2>&1)"; heavy_rc=$?
+case "${ANTSEAL_GATE_HEAVY:-auto}" in
+  1) heavy_rc=0; heavy_why="forced by ANTSEAL_GATE_HEAVY=1" ;;
+  0) heavy_rc=1; heavy_why="suppressed by ANTSEAL_GATE_HEAVY=0" ;;
+esac
+case "$heavy_rc" in
+  0) run heavy-features scripts/gate-features.sh --heavy ;;
+  1) printf '  %-16s n/a   (%s)\n' heavy-features "$heavy_why" ;;
+  *) printf '  %-16s SKIP  (%s)\n' heavy-features "$heavy_why" ;;
+esac
+
+# Q15/D52 — the devnet E2E gate, in two halves that are deliberately not the
+# same thing:
+#
+#   * its SELF-TEST runs on every gate. It needs no devnet, takes seconds,
+#     and covers the two pieces of `e2e-devnet.sh` that can silently stop
+#     meaning anything: the suite-registry rules (a renamed suite must fail,
+#     a landed-but-still-declared-pending suite must fail, an all-pending run
+#     must say PENDING and never PASS) and the redaction filter that keeps
+#     wallet-key-shaped material out of uploaded artifacts.
+#   * the GATE ITSELF is opt-in here, because it boots a 14-node devnet and
+#     runs for tens of minutes where this gate runs in minutes (D52 option C
+#     keeps it a named, separately-invoked gate). It is NOT optional as
+#     policy: for storage-touching changes it is mandatory before merge —
+#     CONTRIBUTING, "Devnet E2E gate (D52)", defines what storage-touching
+#     means and what evidence to record.
+run e2e-selftest scripts/e2e-devnet.sh --self-test
+if [ "${ANTSEAL_GATE_E2E:-0}" = "1" ]; then
+  run e2e-devnet scripts/e2e-devnet.sh
+else
+  printf '  %-16s SKIP  (storage-touching change? ANTSEAL_GATE_E2E=1 %s — CONTRIBUTING "Devnet E2E gate")\n' \
+    e2e-devnet "$0"
+fi
 
 # F14 — the independent cross-check (decision D31; contract:
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that

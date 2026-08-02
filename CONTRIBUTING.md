@@ -122,6 +122,108 @@ The owning task (remaining: Q7/Q9 — Q4, P13 and Q5 claimed theirs):
 4. adds any genuinely new check as a **new** job instead of folding it into
    an existing lane.
 
+### Gate feature policy (S22)
+
+`scripts/local-gate.sh` no longer runs `--all-features`. Since P16 landed
+`devnet-launcher/devnet` and S5 landed `antseal-net/ant-backend`, that flag
+pulled the whole upstream stack — **475 packages against the default 120**,
+the two numbers `./scripts/ci-lanes.sh dep-graph` prints on every run — into
+a gate that has to stay minutes long on a 2-core host, for every change
+including a docs-only one. That is the cost the containment design exists to
+avoid, paid back in the one place it was supposed to be avoided.
+
+The heavy paths are **moved, not dropped**:
+
+| Tier | What | When | Cost |
+| --- | --- | --- | --- |
+| 1 | `--workspace` with every **light** feature (`GATE_LIGHT_FEATURES` in `local-gate.sh`) | always | minutes |
+| 2 | each **heavy** feature path per package: `antseal-net --features ant-backend`, `antseal-cli --features ant-backend`, `devnet-launcher --features devnet` (clippy + tests) | when a storage-touching path changed — the same list as the devnet E2E gate below | tens of minutes |
+| 3 | the devnet E2E gate (`scripts/e2e-devnet.sh`) | same trigger | tens of minutes + a booted devnet |
+
+Tier 2 is decided from the diff against `main`, not from memory:
+`scripts/gate-features.sh --needs-heavy`. Force it with
+`ANTSEAL_GATE_HEAVY=1` (or off with `=0`) and change the base with
+`ANTSEAL_GATE_BASE`. If it cannot decide (no such ref), it says so and the
+gate prints a visible SKIP — never a quiet pass.
+
+**Adding a feature to any crate is a gate change.** `gate-features.sh
+--check-partition` runs on every gate and fails unless every feature declared
+by every workspace member is compiled by some tier: put it in
+`GATE_LIGHT_FEATURES` (tier 1) or in `HEAVY_FEATURES` + `HEAVY_LANES` (tier
+2). It also fails on a stale gate entry and on a `HEAVY` entry whose feature
+no longer exists. That guard is the whole safety argument for dropping
+`--all-features`, so it self-tests four planted faults first, every run.
+
+Two things this policy deliberately does **not** rely on:
+
+- **`--all-features` as a proof.** It compiles the *union* of features, which
+  is not the same as compiling each configuration: workspace feature
+  unification can hide a package that does not build with only its own
+  feature on — the shape a consumer actually gets. Tier 2 is both cheaper
+  when it runs and a stricter statement.
+- **`dep-graph` as a substitute for tier 2.** P20's containment rules read
+  `cargo tree`/`cargo metadata`: they prove the heavy graph stays *out of the
+  default build*, and they never compile a line of feature-gated code. Keep
+  them (they cost seconds); they cannot see a feature-gated path that stopped
+  building.
+
+### Devnet E2E gate (D52)
+
+The M1 storage E2E does **not** run as a per-PR CI job. Decision
+[D52](docs/decisions/D52-devnet-e2e-venue.md) puts it in two places:
+
+| Venue | What | Enforcement |
+| --- | --- | --- |
+| `./scripts/e2e-devnet.sh` | **Required local gate** before merging a storage-touching change. Boots the P16 devnet ([docs/devnet/local-devnet.md](docs/devnet/local-devnet.md)), runs the registered suites, captures node + Anvil logs (redacted) and writes a dated evidence line under `target/e2e-devnet/`. | Convention + recorded evidence, on the Q14 format-freeze model |
+| `devnet-e2e-cron` | **Scheduled, non-required** hosted job (weekly + `workflow_dispatch`), reduced node count, same script bytes. | Never a PR status context; the required-context set stays at 19 |
+
+**A change is storage-touching — and the gate is mandatory — when it touches
+any of:**
+
+- `crates/antseal-net/**` (the adapter, EVM half, quote/receipt/live paths);
+- `crates/antseal-cli/src/pipeline/**` (seal, journal, resume, consent) or
+  `crates/antseal-cli/src/vault/wallet.rs`;
+- `crates/devnet-launcher/**`, `scripts/devnet/**`, or
+  `scripts/e2e-devnet.sh` itself (a change to the gate is a change the gate
+  must survive);
+- any pin move in the upstream payment stack — `ant-core`, `ant-protocol`,
+  `alloy`, `evmlib` (dependency-policy §4 already lists "devnet E2E for
+  ant-core" in the bump checklist).
+
+Run it, and record the evidence line it prints in the PR/wave record:
+
+```bash
+./scripts/e2e-devnet.sh                 # default 14 nodes, boots and tears down
+./scripts/e2e-devnet.sh --nodes 5       # smoke preset on a loaded host
+./scripts/e2e-devnet.sh --plan          # what would run; no devnet, no cargo
+ANTSEAL_GATE_E2E=1 ./scripts/local-gate.sh   # the whole gate, E2E included
+```
+
+`scripts/local-gate.sh` always runs the gate's **self-test** (seconds, no
+devnet) and prints a SKIP line for the gate itself; the SKIP is the reminder,
+not permission.
+
+**PENDING is not a pass.** S17/S18/S19 are not written yet, so those rows are
+declared `pending` in the script's suite registry and the verdict line says
+`PENDING … DISCHARGES NO GATE`. The declaration is checked in both
+directions: a suite that exists while its row still says pending is a hard
+failure ("move the row to `live` in the commit that lands the suite"), and so
+is a row that says `live` for a suite that has vanished. When the last row
+goes live, switch the gate to `--require-suites` so PENDING can never come
+back quietly.
+
+**Triage of the scheduled leg** (D52 residual risk 2): a red scheduled run
+gets a tracking note in the next wave's bookkeeping; **two consecutive reds
+block storage-wave starts** until diagnosed.
+
+**Promote-to-required trigger** (D52 Decision 3 / Adversarial test 4): a plan
+upgrade (Pro) or the Q65-gated public flip makes required contexts real;
+then, after **≥ 20 clean scheduled runs with warm runtime ≤ 15 min**, the
+scheduled lane may be added to the branch-protection payload
+([docs/ci-verification.md](docs/ci-verification.md), Maintainer runbook).
+Not before — and no self-hosted runner unless a second, non-dev machine
+materialises, and then only for the scheduled slot.
+
 ## PR checklist
 
 - [ ] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
@@ -139,6 +241,9 @@ The owning task (remaining: Q7/Q9 — Q4, P13 and Q5 claimed theirs):
       adds a vector or touches a verification path must show this lane
       green**; a byte difference is a format-correctness incident, not a
       flake ([crates/wasm-bitmatch/README.md](crates/wasm-bitmatch/README.md))
+- [ ] **Storage-touching change?** (the path list under "Devnet E2E gate")
+      Then `./scripts/e2e-devnet.sh` green locally and its evidence line
+      recorded. `PENDING` is not a pass
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
 - [ ] `cargo deny --locked check advisories bans sources` green with the

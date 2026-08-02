@@ -1,0 +1,119 @@
+# antseal scheduled devnet E2E (Q15; decision D52).
+#
+# WHY A SEPARATE, SCHEDULED WORKFLOW — and never a PR status context:
+# D52 chose a **required LOCAL gate** (`scripts/e2e-devnet.sh`, mandatory
+# before merging storage-touching changes) plus **this** non-required
+# scheduled leg. A per-PR devnet job was rejected on four recorded grounds:
+# branch protection 403s on this plan, so a 20th *required* context is
+# unenforceable (docs/ci-verification.md, "Branch protection is BLOCKED BY
+# PLAN"); the hosted runner is the same 2-core class as the dev machine, so
+# it adds no headroom; the devnet target dir would fight the 10 GiB per-repo
+# cache cap with all 19 existing lanes; and S18's SIGKILL/timing matrix is
+# flake-prone on shared runners, where a non-required red trains people to
+# ignore red. What this leg is FOR is the other half of Q43's evidence rule
+# — "a lane that has never run on the remote is not evidence" — plus an
+# upstream-drift tripwire between pushes.
+#
+# GitHub runs `schedule:` triggers against the DEFAULT BRANCH only, so this
+# file is inert until it lands on main (docs/ci-verification.md tracks the
+# remote-run status). `workflow_dispatch` is how the FIRST measured runs
+# happen: D52 lands this lane conditionally — if the measured runtime does
+# not fit the minutes budget, the lane is deleted and the measurement is
+# recorded instead (D52 §Decision 2, the D→C degradation).
+#
+# Job name `devnet-e2e-scheduled` is NOT a PR status context and never
+# becomes one; the required-context set stays at 19 (Q56).
+#
+# TRIAGE (D52 residual risk 2, verbatim in intent): a red scheduled run gets
+# a tracking note in the next wave's bookkeeping; **two consecutive reds
+# block storage-wave starts** until diagnosed.
+#
+# PROMOTE TO REQUIRED — the recorded trigger: a plan upgrade (Pro) or the
+# Q65-gated public flip makes required contexts real; then, after **>=20
+# clean scheduled runs with warm runtime <=15 min**, this lane may be
+# promoted to a required context by adding it to the branch-protection
+# payload (docs/ci-verification.md, "Maintainer runbook"). Not before.
+name: devnet-e2e-cron
+
+on:
+  schedule:
+    # WEEKLY, Wednesdays 05:37 UTC — off the top-of-hour load spikes GitHub
+    # documents, offset from fuzz-nightly (daily 03:41) and advisory-cron
+    # (Mondays 06:17) so no two heavy jobs queue together.
+    #
+    # Weekly rather than D52's estimated daily, deliberately: see the cache
+    # note on the job below. Without a shared cargo cache every run is a
+    # cold build of the ~736-package devnet graph, so the affordable cadence
+    # is weekly until the first dispatches measure the real cost. Cadence is
+    # a one-line change once the measurement exists.
+    - cron: "37 5 * * 3"
+  workflow_dispatch:
+    inputs:
+      nodes:
+        description: "Devnet node count (5..=25; 5 = smoke preset, the reduced count D52 specifies for the hosted runner)"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  devnet-e2e-scheduled:
+    # NOT a PR status context and never becomes one.
+    name: devnet-e2e-scheduled
+    runs-on: ubuntu-latest
+    # Generous by design: a cold release build of the devnet graph plus the
+    # suites. A slow runner must be reported as slow, not as a hang — and
+    # this number is one of the things the first runs measure.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+
+      # NO `Swatinem/rust-cache` here, deliberately — this is the one lane
+      # in the repo that omits it. D52 evidence E3: the devnet target dir
+      # (est. 4-8 GiB) would compete inside GitHub's 10 GiB per-repo cache
+      # budget with the caches of all 19 required lanes plus the fuzz corpus
+      # round-trip, and eviction thrash would slow every lane to speed this
+      # one. A non-required weekly job does not get to tax the required
+      # ones. Revisit only if the plan's cache budget changes.
+
+      # anvil is host tooling the launcher spawns via PATH (evmlib / alloy
+      # node-bindings); the local host installs it with foundryup
+      # (docs/devnet/local-devnet.md, Host requirements). Third-party action
+      # edge accepted on the same footing as Swatinem/rust-cache@v2 and
+      # pinned to a major tag. `version: stable` rather than a literal we
+      # cannot verify from here: D52 residual risk 5 is venue drift, and the
+      # mitigation is that `scripts/e2e-devnet.sh` prints the actual
+      # `anvil --version` into its evidence line in BOTH venues, so a
+      # divergence from the host's 1.5.1-stable is recorded, not ambient.
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      # The same script bytes the local gate runs (the ci-lanes.sh rule).
+      # With S17-S19 unwritten it runs the S6-S8 real-backend suite and
+      # reports PENDING for the rest — never a silent pass; the registry
+      # rules that make that true are self-tested in scripts/local-gate.sh.
+      - name: Devnet E2E (D52 scheduled leg — same script as the local gate)
+        env:
+          ANTSEAL_DEVNET_NODES: ${{ github.event.inputs.nodes || '5' }}
+        run: ./scripts/e2e-devnet.sh
+
+      # `always()`, not `failure()`: on failure this is the node + Anvil log
+      # capture Q15's Accept requires (redacted at capture — the export's
+      # wallet key never enters an artifact), and on success it is the
+      # runtime measurement D52's conditional-landing rule is waiting for.
+      - name: Upload evidence, node and Anvil logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-e2e-evidence
+          path: target/e2e-devnet/
+          if-no-files-found: ignore

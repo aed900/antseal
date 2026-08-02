@@ -8,16 +8,31 @@ here comes from), docs/upstream/P16-lockfile-event.md (the dependency
 review that admitted this graph).
 
 **There is no public Autonomi 2.0 testnet today.** This local devnet and the
-Arbitrum-Sepolia devnet (P17) are the only development networks; nothing
-here can be outsourced to a faucet or a hosted endpoint. (Spec: MVP-SPEC.md
-"Network decision".)
+[Arbitrum-Sepolia devnet](sepolia-devnet.md) (P17) are the only development
+networks; nothing here can be outsourced to a faucet or a hosted endpoint.
+(Spec: MVP-SPEC.md "Network decision".) The two differ in exactly one place
+that matters to a developer: here the funded wallet is a public Anvil
+constant and funding is a non-event, there it is real key material that a
+human has to obtain by asking another human (D38).
 
 **D52 venue statement.** The devnet E2E runs as a **required local gate**
-(`scripts/e2e-devnet.sh`, Q15) before merging storage-touching changes, plus
-a scheduled non-required GitHub job at reduced node count if its measured
-runtime fits the minutes budget. There is deliberately NO per-PR devnet CI
-job and NO self-hosted runner — the reasoning and revisit triggers are in
-docs/decisions/D52-devnet-e2e-venue.md.
+(`scripts/e2e-devnet.sh`, Q15 — landed 2026-08-02) before merging
+storage-touching changes, plus a scheduled non-required GitHub job at reduced
+node count (`.github/workflows/devnet-e2e-cron.yml`, weekly + manual dispatch)
+whose first runs measure whether it fits the minutes budget. There is
+deliberately NO per-PR devnet CI job and NO self-hosted runner — the
+reasoning, the triage convention and the promote-to-required trigger are in
+docs/decisions/D52-devnet-e2e-venue.md, restated for maintainers in
+CONTRIBUTING ("Devnet E2E gate") and docs/ci-verification.md.
+
+The gate boots the devnet through the `local-up`/`local-down` scripts below
+(attaching instead, without tearing down, if one is already running), then
+runs every suite in its registry — `./scripts/e2e-devnet.sh --list-suites`.
+Today that is S6-S8's `devnet_backend` suite; S17/S18/S19 are declared
+**pending**, so the verdict is `PENDING` and the run discharges no gate for
+those cases. Node/Anvil logs and the manifest are captured under
+`target/e2e-devnet/<run>/` with wallet-key-shaped material redacted, because
+the scheduled lane uploads that directory as a workflow artifact.
 
 ## Host requirements
 
@@ -128,7 +143,13 @@ child (dropping the embedded `Testnet` kills Anvil). `local-down` SIGTERMs
 the pid; the launcher shuts nodes down, the node stack removes `data/`
 (`cleanup_data_dir`), the launcher removes `manifest.json`/`env`/
 `launcher.pid`, and the script removes `launcher.log` — after a clean down,
-**`.devnet/` is empty**, and the script FAILS loudly if it is not. An
+**`.devnet/` holds nothing the launcher created**, and the script FAILS
+loudly if it does. One narrow exemption: P17's `.devnet/sepolia-env` is
+written by `scripts/devnet/sepolia-preflight`, is not launcher-produced, and
+does not expire with a devnet (it records Arbitrum Sepolia's chain and
+contract addresses, which are the same before, during and after any run), so
+it is not evidence about the launcher's cleanup. Everything else still is —
+a real leftover alongside it still fails the check. An
 unclean stop (timeout → SIGKILL) keeps everything for diagnosis;
 `local-reset` is the scorched-earth recovery. Consequence for harnesses
 (S17): treat the export as run-scoped, re-`source` after every up.

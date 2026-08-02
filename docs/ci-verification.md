@@ -1248,3 +1248,51 @@ EOF
 Precondition unchanged from step 5: every listed context must have passed on
 `main` at least once first. A required context that has never run blocks the
 next push, including the maintainer's own.
+
+## The devnet E2E is deliberately NOT in that payload (Q15, D52 — 2026-08-02)
+
+`devnet-e2e-cron` / job `devnet-e2e-scheduled`
+(`.github/workflows/devnet-e2e-cron.yml`) is a **scheduled, non-required**
+lane on the `fuzz-nightly` / `advisory-cron` pattern: `schedule:` +
+`workflow_dispatch`, no `pull_request` trigger, therefore **not a status
+context**. The generated context list above is unchanged at **19 from 17
+jobs** — the regeneration command reads `ci.yml` only, and this workflow is
+a separate file for exactly that reason.
+
+That is a decision, not an oversight. [D52](decisions/D52-devnet-e2e-venue.md)
+records why a per-PR devnet job was rejected — starting from the section
+directly above: on this plan a 20th *required* context could not be required
+any more than the existing 19 can, so the CI job's only claimed advantage over
+a required local gate does not exist here. The gate itself is
+`scripts/e2e-devnet.sh`, mandatory before merging storage-touching changes
+(CONTRIBUTING, "Devnet E2E gate"), and the scheduled lane runs the same script
+bytes so the remote half of Q43's evidence rule is still discharged.
+
+**Promote-to-required trigger — the one a future maintainer needs from this
+page.** Two preconditions, both required:
+
+1. **The plan allows it**: GitHub Pro (option 1 above), or the repository goes
+   public — which triggers **Q65 first**, never after.
+2. **The evidence exists**: **≥ 20 clean scheduled runs** with **warm runtime
+   ≤ 15 min**, per D52 Adversarial-test 4. The runtime is not a guess to be
+   re-litigated: every run of `scripts/e2e-devnet.sh` prints
+   `e2e-devnet: <verdict> … secs=<n> …` and writes it to
+   `target/e2e-devnet/<run>/evidence.txt`, which the workflow uploads as the
+   `devnet-e2e-evidence` artifact.
+
+Then, and only then, add `{"context":"devnet-e2e-scheduled"}` to the payload
+above — after moving the job onto a `pull_request` trigger, since a lane that
+only ever runs on a schedule can never satisfy a per-PR required check (the
+"has passed on `main` at least once" precondition is necessary but not
+sufficient here). Two related knobs, recorded so the promotion is one
+reviewed change rather than an archaeology exercise: the lane deliberately
+carries **no `Swatinem/rust-cache`** (D52 E3 — the devnet target dir would
+evict the 19 required lanes' caches inside the 10 GiB per-repo cap), and it
+runs **weekly** rather than daily until the first `workflow_dispatch` runs
+measure the cold-build cost. If the measurement says the cost does not fit
+the minutes budget, the correct action is to **delete this lane and record
+the measurement** (D52's D→C degradation), not to quietly let it run red.
+
+**Triage while it is non-required** (D52 residual risk 2): a red scheduled run
+gets a tracking note in the next wave's bookkeeping; **two consecutive reds
+block storage-wave starts** until diagnosed.

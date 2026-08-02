@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# P17 — Arbitrum-Sepolia devnet UP (chain 421614). Mirrors P16's local-up.
+#
+#   scripts/devnet/sepolia-up [--nodes N] [--address 0x…]
+#
+# ############################################################################
+# ##  Arbitrum Sepolia, chain id 421614 — NOT Ethereum Sepolia (11155111).  ##
+# ############################################################################
+#
+# Local in-process nodes that verify payments against **the real deployed
+# Arbitrum Sepolia contracts** (upstream's `start-devnet-sepolia` shape:
+# ant-core-0.5.0/examples/start-devnet-sepolia.rs). Unlike the local Anvil
+# devnet there is no Anvil, no per-run deploy, and **no embedded wallet** —
+# "the user must connect their own funded Sepolia wallet" (ibid. :9-11).
+#
+# DOWN is `scripts/devnet/local-down`, and RESET is `scripts/devnet/
+# local-reset`, deliberately not duplicated here: the devnet is one launcher
+# process with one pidfile under `.devnet/` in either mode, so a second copy
+# of that logic could only ever drift from the first.
+#
+# ── STATUS: BLOCKED ON THE LAUNCHER (P22) ─────────────────────────────────
+#
+# Everything below the capability probe is ready and unexercised, because
+# `devnet-launcher` has no Sepolia mode yet: it hardcodes the Anvil path
+# (`assert_anvil_on_path`, `DevnetConfig` built with `evm_network` left
+# `None`, and `ANTSEAL_DEVNET_CHAIN_ID` written as the literal `31337`).
+# Upstream supports the mode already — `DevnetConfig.evm_network:
+# Option<EvmNetwork>` with `EvmNetwork::ArbitrumSepoliaTest`, ant-node
+# 0.15.0 src/devnet.rs:164-167 — so this is a small, bounded launcher
+# change, tracked as **P22**. Until it lands, this script runs the preflight
+# (which is real, and does its whole job) and then stops with a named
+# blocker rather than pretending.
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo" || exit 1
+
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m::error::sepolia-up: %s\033[0m\n' "$*" >&2; exit 1; }
+
+devdir="$repo/.devnet"
+pidfile="$devdir/launcher.pid"
+manifest="$devdir/manifest.json"
+logfile="$devdir/launcher.log"
+
+nodes="${ANTSEAL_DEVNET_NODES:-14}"
+address=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --nodes)   shift; nodes="${1:-}";   [ -n "$nodes" ] || die "--nodes needs a value" ;;
+    --address) shift; address="${1:-}"; [ -n "$address" ] || die "--address needs a value" ;;
+    *) die "unknown argument: $1 (usage: sepolia-up [--nodes N] [--address 0x…])" ;;
+  esac
+  shift
+done
+
+# 1. Preflight: the chain really is 421614 and the two canonical contracts
+#    are there. Exit 3 means "chain fine, wallet not funded", which is a
+#    warning for `up` (nodes need no funds — only the paying client does)
+#    and a hard stop for any paid operation.
+note "preflight (read-only)"
+if [ -n "$address" ]; then
+  scripts/devnet/sepolia-preflight --address "$address"
+else
+  scripts/devnet/sepolia-preflight
+fi
+case $? in
+  0) ;;
+  3) printf '\033[33m::warning::sepolia-up: the wallet is not funded — nodes will boot, but no paid operation can succeed. docs/devnet/sepolia-devnet.md, "Funding runbook".\033[0m\n' >&2 ;;
+  *) die "preflight failed (above) — refusing to boot against an unverified chain" ;;
+esac
+
+# 2. One devnet per checkout, in either mode (same pidfile, same node ports).
+if [ -f "$pidfile" ]; then
+  oldpid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [ -n "$oldpid" ] && [ -d "/proc/$oldpid" ]; then
+    die "a devnet is already running (pid $oldpid). Run scripts/devnet/local-down first (it is the down for both modes)."
+  fi
+fi
+
+# 3. Capability probe — the P22 handshake.
+#
+# Deliberately a source grep and not a `--help` run: learning the answer from
+# the binary costs the ~13-minute release build of the 736-package devnet
+# graph first, to discover something already knowable. When P22 lands the
+# flag, this passes and the launcher's own argument parser becomes the
+# authority; this probe is then a formality and can be deleted with it.
+if ! grep -q 'arbitrum-sepolia' "$repo/crates/devnet-launcher/src/devnet.rs" 2>/dev/null; then
+  printf '\033[31m::error::sepolia-up: BLOCKED ON P22 — devnet-launcher has no Sepolia mode.\033[0m\n' >&2
+  cat >&2 <<'BLOCKED'
+    The environment is verified and exported (.devnet/sepolia-env); what is
+    missing is the launcher flag that boots nodes against chain 421614
+    instead of a fresh Anvil.
+
+    What P22 has to change, all inside crates/devnet-launcher/src/devnet.rs:
+      * accept `--network arbitrum-sepolia` (default stays `local`);
+      * in that mode set `DevnetConfig.evm_network =
+        Some(EvmNetwork::ArbitrumSepoliaTest)` (ant-node 0.15.0
+        src/devnet.rs:164-167; upstream's example does exactly this) and
+        SKIP `assert_anvil_on_path` — there is no Anvil in Sepolia mode;
+      * write `ANTSEAL_DEVNET_CHAIN_ID='421614'` instead of the hardcoded
+        `31337`, and omit `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` entirely —
+        the Sepolia devnet embeds no wallet, by upstream's design and ours.
+      * `DevnetEnv` (crates/antseal-net/src/network.rs) requires all ten
+        keys, so the omitted wallet key needs an optional-wallet variant or
+        the process-environment recipe in docs/devnet/sepolia-devnet.md.
+
+    Everything else in this script is written and waiting.
+BLOCKED
+  exit 4
+fi
+
+# 4. Boot. Same shape as local-up: build release with the devnet feature,
+#    background the launcher, poll for the manifest (which appears only
+#    after stabilization, so its existence IS the ready signal).
+note "building devnet-launcher (release, --features devnet)"
+cargo build --release -p devnet-launcher --features devnet --locked \
+  || die "release build failed"
+
+mkdir -p "$devdir"
+rm -f "$manifest" "$devdir/env"
+note "starting the Sepolia devnet: $nodes nodes against chain 421614 (log: $logfile)"
+nohup "$repo/target/release/devnet-launcher" \
+  --network arbitrum-sepolia --nodes "$nodes" --dir "$devdir" \
+  > "$logfile" 2>&1 &
+launcher=$!
+
+alive() {
+  local state
+  state="$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" || return 1
+  [ -n "$state" ] && [ "$state" != "Z" ]
+}
+timeout="${ANTSEAL_DEVNET_UP_TIMEOUT:-300}"
+waited=0
+while [ ! -f "$manifest" ]; do
+  if ! alive "$launcher"; then
+    printf '\n'; tail -25 "$logfile" >&2
+    die "launcher (pid $launcher) died before the devnet became ready — log tail above, full log: $logfile"
+  fi
+  if [ "$waited" -ge "$timeout" ]; then
+    kill -TERM "$launcher" 2>/dev/null
+    printf '\n'; tail -25 "$logfile" >&2
+    die "devnet not ready after ${timeout}s — SIGTERM sent; log tail above. Try fewer nodes: sepolia-up --nodes 10 (or 5)."
+  fi
+  sleep 2; waited=$((waited + 2))
+done
+
+note "Sepolia devnet READY after ~${waited}s"
+note "environment: $devdir/env (launcher) + $devdir/sepolia-env (chain half)"
+note "the wallet key is NEVER in either file — supply it through the process"
+note "environment; docs/devnet/sepolia-devnet.md, 'Environment surface'"
+note "stop it: scripts/devnet/local-down"
