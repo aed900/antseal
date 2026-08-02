@@ -129,6 +129,13 @@ antseal-net = { workspace = true, features = ["test-util"] }
 # "no key-shaped literals in fixtures" convention. Pure constant data —
 # activates no optional dependency.
 antseal-core = { workspace = true, features = ["test-util"] }
+# And the same pattern for the anchor side (D90 Decision 1): A24's stub HTTP
+# servers live behind `antseal-anchor/test-util` so the M2 suites here can
+# drive calendar/TSA/esplora/RPC exchanges against `127.0.0.1:0` — Q16's
+# no-real-endpoints policy satisfied by construction. The feature activates
+# no optional dependency (it only compiles the module), and dev-dependency
+# features do not reach `cargo build`, so the shipped binary is unchanged.
+antseal-anchor = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

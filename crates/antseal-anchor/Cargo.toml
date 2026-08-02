@@ -4,9 +4,30 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 
+# --- Feature policy (D90 Decision 1) ---
+#
+# There is deliberately NO feature gating the HTTP client. `antseal-anchor`
+# is defined as the network crate ("network side only", MVP-SPEC.md lines
+# 52-53), and required CI is default-features-only (`cargo clippy
+# --all-targets --locked` and `cargo test --workspace --locked`, neither
+# passing `--features`), so a gated network half would leave every Accept
+# row of A3/A10/A13/A16/A17 — all of them local-stub unit tests — compiled
+# by nothing. That is D89's coverage cliff, and D90 §4.2 refused it with
+# the measurement.
+[features]
+default = []
+# A24's stub servers, exported for other crates' tests the way antseal-net
+# exports MockBackend (antseal-cli/Cargo.toml dev-deps). Activates no
+# optional dependency: it only compiles the module.
+test-util = []
+
 [dependencies]
 antseal-core.workspace = true
 thiserror.workspace = true
+# The anchor HTTP substrate (A3/P29; decision D90). This is the ONLY
+# manifest in the workspace that may name `ureq` — the rationale, the
+# graph measurements and the advisory sweep live on the workspace entry.
+ureq.workspace = true
 
 [lints]
 workspace = true

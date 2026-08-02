@@ -54,6 +54,11 @@ tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 # Pinned online endpoints for `verify --online` (two independent,
 # must-agree sources per evidence class). Reserved slot: validated now,
 # consumed when online verification lands (M3).
+# These MUST be https. Unlike a timestamp token, an esplora or RPC reply
+# carries no signature of its own — it is believed only because two
+# independent endpoints agree — so the transport is its only integrity
+# control, and one plain-http endpoint would let a single on-path attacker
+# supply both halves of a "must agree" pair.
 [verify]
 bitcoin_endpoints = ["https://a.example", "https://b.example"]
 arbitrum_endpoints = ["https://c.example", "https://d.example"]
@@ -76,3 +81,18 @@ per-line error, never a misparse:
 
 URLs in `rpc_url`, `tsa_urls`, `bitcoin_endpoints`, and
 `arbitrum_endpoints` must start with `http://` or `https://`.
+
+`bitcoin_endpoints` and `arbitrum_endpoints` must additionally be
+**`https://`**, and the file is refused at load if one is not — naming the
+endpoint, before any network call. The only exemption is a loopback **IP
+literal** (`127.0.0.0/8` or `::1`), which exists so the project's own
+stub-server tests can run; the *name* `localhost` is not exempt, and neither
+is a hostname that merely contains a literal (`127.0.0.1.evil.example`).
+
+`tsa_urls` is deliberately not subject to that rule. An RFC 3161 timestamp
+token is signed by the authority and bound to a nonce we chose, so plain
+HTTP cannot let anyone forge, replay or substitute one — and one of the two
+default authorities, `timestamp.digicert.com`, offers no HTTPS at all. What
+plain HTTP does cost there is privacy: a passive observer learns that this
+machine timestamped a particular 32-byte digest. If that matters to you,
+drop DigiCert from the list; nothing else changes.
