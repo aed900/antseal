@@ -26,6 +26,8 @@
 #   ci-shell          self-test, then Q43's own guard over every workflow
 #   secret-guard      self-test, then the vault-export/wallet-key scan
 #   audit-deny        cargo-deny advisories/bans/sources
+#   fuzz-budget       self-test, then the scheduled fuzz lane's monthly
+#                     minute cost against its named ceiling (D61)
 #
 # Exit: 0 pass · 1 failure. Every lane is runnable locally; the ones that
 # need a pinned external tool say which and how (audit-deny).
@@ -52,7 +54,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -185,7 +187,66 @@ lane_dep_graph() {
   fi
   printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(printf '%s\n' "$stack_edges" | grep -c .)"
 
-  note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
+  # ── S4/Q74: what this rule proves, and what it cannot ───────────────────
+  #
+  # SCOPE, stated because the wording this replaces overclaimed. The
+  # headline was "antseal-core's NORMAL dependency graph must be I/O-free
+  # and RNG-free" — two unbounded properties — over a nine-name deny-list
+  # that establishes neither in general. D58 measured the gap: the
+  # `opentimestamps 0.2.0` codec declares `env_logger` NON-OPTIONALLY, which
+  # drags an environment-variable reader, a stderr writer, `is-terminal`,
+  # `libc` and a regex engine into the crate that MVP-SPEC.md lines 47-53
+  # require to be I/O-free and that ships as the verifier page's WASM — and
+  # every one of those five passes all nine names. A lane whose stated job
+  # is "this graph is I/O-free" would have gone green on it.
+  #
+  # WIDENING THE LIST IS NOT THE FIX, and that is measured rather than
+  # assumed: the same crates pass an extended name list too, because the
+  # property is not decidable from a dependency graph. A crate name carries
+  # no capability, any crate can open a file or read an environment variable
+  # without depending on anything, and the set of crates that do is not
+  # enumerable. A deny-list can only ever say "not these"; the claim above
+  # says "none at all".
+  #
+  # So the CLAIM IS NARROWED to what a graph actually decides:
+  #
+  #     antseal-core's NORMAL dependency graph is EXACTLY the reviewed set
+  #     below. Nothing enters it without an edit here.
+  #
+  # A GREEN VERDICT IS NOT A PURITY PROOF, and no other task may cite it as
+  # one. It says the set has not changed since a human last read it — which
+  # is exactly the property that would have caught `env_logger`: not because
+  # the name was on a forbidden list, but because it was on no list at all.
+  # The purity argument is made ONCE PER ENTRY, by the reviewer who admits
+  # it; this rule's whole job is to force that review to happen and to make
+  # skipping it a red lane rather than a silent merge.
+  #
+  # SCOPE, precisely, because each dimension has bitten somewhere before:
+  #   * `-e normal` — build- and dev-dependencies are excluded. They run on
+  #     the builder's machine and are not in the shipped artifact.
+  #   * DEFAULT features. `--all-features` adds 22 packages (proptest,
+  #     tempfile, rand, getrandom, libc, rustix …) under `test-util` /
+  #     `test-vectors`, which are test-only and never reach the verifier.
+  #     S22's gate-features partition is what stops a feature going
+  #     uncompiled; this rule is about what SHIPS.
+  #   * `--target all`, so the verdict does not depend on whose machine ran
+  #     it. It is a superset of every host's graph — it can over-report and
+  #     never under-report — which is why `libc` (via `cpufeatures`, non-x86
+  #     only) and `fiat-crypto` (curve25519-dalek's 32-bit backend) are in
+  #     the set at all: neither is in the x86_64 or the wasm32 graph.
+  #   * `-p antseal-core`, NOT the workspace. Edges added to antseal-net or
+  #     antseal-anchor — A3's `ureq`, for instance — cannot reach this set,
+  #     because those crates sit ABOVE core. Nothing here counts workspace
+  #     packages, so a lane that grows the default `--workspace` graph does
+  #     not touch this rule (P20 rule 1 below prints those counts as
+  #     evidence and deliberately asserts nothing about them).
+  #
+  # ── layer 1: the DECIDED prohibitions ───────────────────────────────────
+  # Names that no reviewer may admit to the set below without first
+  # overturning the decision that banned them. Kept as a separate, earlier
+  # check because it gives the right DIAGNOSIS: "you added tokio" is a more
+  # useful failure than "you added an unreviewed package".
+  #
   # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
   # storage-address function must be a pure function of its input):
   # `getrandom`/`rand`/`rand_chacha` are banned from the normal graph.
@@ -194,16 +255,172 @@ lane_dep_graph() {
   # structurally cannot reach an OS RNG; the `^rand ` entry's trailing
   # space keeps it unmatched. blake3 is consumed with default-features off
   # precisely so none of these enter (workspace Cargo.toml pin comment).
+  note "antseal-core's NORMAL graph: none of the DECIDED-prohibited crates"
   local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
-  tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)" || return 1
+  # Self-test FIRST, in BOTH directions — the D89 rule-5 pattern, and the
+  # thing this rule went without from S4 until Q74. It was the ONLY rule in
+  # this lane with no planted fault (its siblings self-test above and
+  # below), which is very likely why its hole survived two waves: nobody had
+  # ever watched it bite. The negative direction is load-bearing, not
+  # decoration: the `^rand ` trailing space is the only thing keeping
+  # `rand_core` — a real member of the set below — out of the ban.
+  if ! printf 'tokio v1.49.0\n' | grep -qE "$forbidden"; then
+    printf '::error::dep-graph prohibition self-test FAILED: the detector does not match a planted `tokio` tree line — fix it before trusting any green verdict\n'
+    return 1
+  fi
+  if printf 'rand_core v0.9.3\n' | grep -qE "$forbidden"; then
+    printf '::error::dep-graph prohibition self-test FAILED: the detector ALSO matches `rand_core`, which C5/C9 require in the graph. The `^rand ` entry has lost its trailing space, so this rule can never be green for the right reason\n'
+    return 1
+  fi
+  tree="$(cargo tree -p antseal-core -e normal --target all --prefix none --locked)" || return 1
   printf '%s\n' "$tree"
   offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
   if [ -n "$offenders" ]; then
-    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network/RNG crates:\n'
+    printf '\n::error::antseal-core normal dependency graph contains a DECIDED-prohibited async/network/RNG crate. These are not merely unreviewed — each is banned by a recorded decision, so admitting one to the reviewed set below is not enough:\n'
     printf '%s\n' "$offenders"
     return 1
   fi
-  printf 'OK: no forbidden I/O/async/network/RNG crate in the normal graph.\n'
+  printf 'OK: no decided-prohibited crate in the normal graph.\n'
+
+  # ── layer 2: the graph is EXACTLY the reviewed set (Q74) ────────────────
+  # The claim the scope note above narrows to. Set EQUALITY, both
+  # directions: an unreviewed arrival is a violation, and a stale entry is
+  # one too — an allow-list carrying names that are no longer there stops
+  # describing the graph, which is how allow-lists quietly stop meaning
+  # anything (check-ci-shell.py applies the same rule to ALLOWED_INLINE).
+  #
+  # Measured 2026-08-02: 57 names under `--target all`, of which 55 on
+  # x86_64-unknown-linux-gnu. Every entry is `cargo tree`-verified as
+  # reachable; the annotations name the parent for the ones a reader would
+  # otherwise have to look up.
+  note "antseal-core's NORMAL graph is EXACTLY the reviewed set (Q74)"
+  local core_reviewed='antseal-core          # the crate itself, as cargo tree roots it
+
+  # --- BLAKE3 content addressing (default-features off; D32) ---
+  blake3
+  arrayref
+  arrayvec
+  constant_time_eq
+  cfg-if
+  cpufeatures
+  libc                # <- cpufeatures, non-x86 targets only; absent on x86_64 and wasm32
+
+  # --- RustCrypto traits and plumbing ---
+  aead
+  block-buffer
+  cipher
+  crypto-common
+  ctutils             # <- digest, hybrid-array, ml-dsa, module-lattice, universal-hash
+  cmov                # <- ctutils; constant-time conditional move
+  digest
+  hybrid-array
+  inout
+  signature
+  subtle
+  typenum
+  universal-hash
+  zeroize
+
+  # --- hashes and XOFs ---
+  sha2
+  keccak              # SHA-3/SHAKE permutation
+  shake               # <- ml-dsa
+  sponge-cursor       # <- shake
+
+  # --- AEAD (XChaCha20-Poly1305) ---
+  chacha20
+  chacha20poly1305
+  poly1305
+
+  # --- key derivation ---
+  hkdf
+  hmac
+
+  # --- Ed25519 ---
+  curve25519-dalek
+  curve25519-dalek-derive
+  ed25519
+  ed25519-dalek
+  fiat-crypto         # <- curve25519-dalek, 32-bit backend; absent on x86_64 and wasm32
+
+  # --- ML-DSA-65 ---
+  ml-dsa
+  module-lattice      # <- ml-dsa
+  num-traits          # <- module-lattice
+
+  # --- CBOR ---
+  minicbor
+
+  # --- serde and the vector/report JSON surface ---
+  serde
+  serde_core
+  serde_derive
+  serde_json
+  itoa                # <- serde_json
+  memchr              # <- serde_json
+  zmij                # <- serde_json, float formatting
+
+  # --- Unicode normalization (NFC; G-domain canonicalization) ---
+  unicode-normalization
+  tinyvec
+  tinyvec_macros
+
+  # --- proc-macro support for the derives above ---
+  proc-macro2
+  quote
+  syn
+  unicode-ident
+
+  # --- errors ---
+  thiserror
+  thiserror-impl
+
+  # --- the injected-CSPRNG TRAIT only (C5/C9); never an OS RNG ---
+  rand_core'
+  # Comments and blank lines are stripped before use. A blank line reaching
+  # a pattern list would match EVERY name and turn the check vacuous, which
+  # is why this normalisation is not optional.
+  strip_reviewed() { sed 's/#.*//' | tr -d '[:blank:]' | grep -v '^$' | sort -u; }
+  names_of() { sed 's/ .*//' | grep -v '^$' | sort -u; }
+  # Self-test FIRST, in BOTH directions: over a planted tree, the extractor
+  # must report the intruder and must NOT report names that are on the list.
+  # A set check that reports everything is as useless as one that reports
+  # nothing, and only the second direction can tell them apart.
+  local planted_tree planted_unknown
+  planted_tree='antseal-core v0.0.0 (/x/crates/antseal-core)
+sha2 v0.11.0
+env_logger v0.10.2'
+  planted_unknown="$(printf '%s\n' "$planted_tree" | names_of \
+    | comm -23 - <(printf '%s\n' "$core_reviewed" | strip_reviewed) | tr '\n' ' ')"
+  if [ "$planted_unknown" != "env_logger " ]; then
+    printf '::error::dep-graph reviewed-set self-test FAILED: over a planted tree of {antseal-core, sha2, env_logger} the check reported [%s] — it must report exactly `env_logger`. Fix it before trusting any green verdict\n' "$planted_unknown"
+    return 1
+  fi
+  local core_names core_unknown core_stale
+  core_names="$(printf '%s\n' "$tree" | names_of)"
+  # Anti-vacuity: an empty or unparsed tree yields an empty "unknown" set
+  # and would pass. The root is always in its own tree, so its absence means
+  # the parse broke rather than the graph being clean.
+  if ! printf '%s\n' "$core_names" | grep -qxF 'antseal-core'; then
+    printf '::error::dep-graph: the parsed package set does not contain `antseal-core` itself, so `cargo tree` failed or its output shape changed — every verdict here would be vacuous. Parsed %s name(s)\n' \
+      "$(printf '%s\n' "$core_names" | grep -c .)"
+    return 1
+  fi
+  core_unknown="$(comm -23 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
+  if [ -n "$core_unknown" ]; then
+    printf '::error::Q74 violation: package(s) entered antseal-core NORMAL dependency graph without review. This graph ships as the verifier page WASM and MVP-SPEC.md lines 47-53 require it to do no I/O; that property is argued per entry by a human, not detected by this lane. Read what each of these pulls in, then add it above IN THE SAME COMMIT:\n'
+    printf '%s\n' "$core_unknown" | sed 's/^/  + /'
+    printf 'Provenance: cargo tree -p antseal-core -e normal --target all --locked -i <name>\n'
+    return 1
+  fi
+  core_stale="$(comm -13 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
+  if [ -n "$core_stale" ]; then
+    printf '::error::Q74: the reviewed set names package(s) that are no longer in the graph. A list carrying names that are not there has stopped describing the graph, which is how an allow-list quietly stops meaning anything — delete them:\n'
+    printf '%s\n' "$core_stale" | sed 's/^/  - /'
+    return 1
+  fi
+  printf 'OK: antseal-core normal graph is exactly the %s reviewed package(s). NOTE: this is a "nothing entered unreviewed" proof, NOT an I/O-freedom proof — see the scope note in this function.\n' \
+    "$(printf '%s\n' "$core_names" | grep -c .)"
 
   # ── S6: ant-core adapter containment ────────────────────────────────────
   # Two rules from the S6 accept rows:
@@ -641,6 +858,242 @@ lane_secret_guard() {
   printf 'OK: no vault-export/wallet-key signatures in the tree.\n'
 }
 
+# ── Q81/D61: the scheduled fuzz lane's monthly minute bill ─────────────────
+#
+# WHY A SCRIPT AND NOT A SENTENCE. Every prior instance of this failure mode
+# in the project was a number recorded in prose that then drifted. This one
+# has money attached: `fuzz-nightly.yml` shipped at daily x 4 targets x 900 s
+# on 2026-07-28 and ran five times, unobserved, at a LOWER BOUND of
+# 1 824 min/month — 91 % of the entire 2 000-minute GitHub Free allowance.
+# Exhausting that allowance does not degrade this lane; GitHub blocks EVERY
+# workflow in the repository, including the 19 required contexts. Q17's two
+# incoming targets would have taken it to 137 % with nothing going red.
+#
+# THE KNOB IS `seconds`. Cadence is NOT a knob: it protects the corpus, which
+# GitHub evicts after 7 days without access, and accumulation is the only
+# reason this lane exists rather than `fuzz-smoke` (D61 E2). Hence the
+# separate cadence-floor arm below — without it the budget could be satisfied
+# by going monthly, silently destroying the thing being paid for.
+#
+# The ceiling is RAISE-ONLY BY DECISION, never by an implementer needing a
+# build to go green.
+FUZZ_BUDGET_CEILING_MINUTES=700
+# 35 % of the 2 000-minute allowance — the named share this lane is
+# permitted, chosen (D61 residual risk 4) against the known competing draws:
+# 19 required contexts including a 10x-billed macOS lane on every push, a
+# weekly cold-build devnet lane, and a weekly advisory lane.
+FUZZ_BUDGET_ALLOWANCE_MINUTES=2000
+# Checkout + rustup + rust-cache + instrumented build + selftest + corpus
+# report, per run.
+#
+# MEASURED at 2026-08-02 over the five 900 s runs that had already happened
+# (`gh api …/workflows/fuzz-nightly.yml/runs`, run_started_at -> updated_at):
+# 61.6, 61.6, 61.7, 61.7 and 62.8 minutes against 60 minutes of fuzzing —
+# i.e. ~1.9 min of real overhead, because both caches hit. 15 is therefore
+# ~8x the measured value and is KEPT ON PURPOSE: over-estimating the bill is
+# the safe direction for a guard whose failure mode is "every workflow in the
+# repository stops". Lowering it loosens the guard and is a decision, not an
+# implementer's call. (D61's revisit trigger anticipated the opposite
+# finding — an overhead far ABOVE 15 — and that is not what the runs say.)
+FUZZ_BUDGET_PER_RUN_OVERHEAD_MINUTES=15
+# The corpus cache is evicted after 7 days without access (D61 E2); 5 leaves
+# margin for a delayed or skipped run. Measured 2026-08-02: GitHub started
+# these runs at ~06:15Z against a 03:41Z cron, so scheduled instants slip by
+# hours under load — another reason not to sit on the 7-day boundary.
+FUZZ_BUDGET_MAX_GAP_DAYS=5
+
+# Day-of-week numbers a cron selects, sorted, one per line. 0 and 7 are both
+# Sunday; normalised to 0. Prints `ERR …` and returns 1 on anything it cannot
+# parse — refusing to guess, because a cron this misreads is a bill this
+# under-reports.
+cron_days() {
+  local cron="$1" f=() item lo hi d out=""
+  read -r -a f <<<"$cron"
+  if [ "${#f[@]}" -ne 5 ]; then
+    printf 'ERR expected five cron fields, got %s in `%s`\n' "${#f[@]}" "$cron"; return 1
+  fi
+  # With BOTH day-of-month and day-of-week restricted, cron ORs them and the
+  # day-of-week model below is simply wrong. Refuse rather than mis-bill.
+  if [ "${f[2]}" != '*' ] || [ "${f[3]}" != '*' ]; then
+    printf 'ERR day-of-month and month must both be `*` (cron ORs DOM with DOW when both are restricted, and this model reads DOW alone): `%s`\n' "$cron"; return 1
+  fi
+  if [ "${f[4]}" = '*' ]; then
+    out=$'0\n1\n2\n3\n4\n5\n6'
+  else
+    local IFS=','
+    for item in ${f[4]}; do
+      case "$item" in
+        [0-7])       lo="$item"; hi="$item" ;;
+        [0-7]-[0-7]) lo="${item%-*}"; hi="${item#*-}" ;;
+        *) printf 'ERR unsupported day-of-week item `%s` (this reader takes digits, comma lists and ranges — a step or a name is a change worth being explicit about)\n' "$item"; return 1 ;;
+      esac
+      if [ "$lo" -gt "$hi" ]; then printf 'ERR reversed range `%s`\n' "$item"; return 1; fi
+      for (( d=lo; d<=hi; d++ )); do out+="$(( d % 7 ))"$'\n'; done
+    done
+  fi
+  printf '%s\n' "$out" | grep -v '^$' | sort -un
+}
+
+# Runs per month x100. GitHub fires a weekly cron 52 times a year, so
+# `52 x ndays / 12` — rounded, not truncated, which is what makes `1,4`
+# report 8.67 rather than 8.66. Deliberately NOT 365/12: this is a
+# day-of-WEEK schedule.
+cron_runs_per_month_x100() {
+  local days; days="$(cron_days "$1")" || { printf '%s\n' "$days"; return 1; }
+  local n; n="$(printf '%s\n' "$days" | grep -c .)"
+  printf '%s\n' "$(( (5200 * n + 6) / 12 ))"
+}
+
+# Longest gap in days between consecutive runs, including the week wrap.
+cron_max_gap_days() {
+  local days d=() n i gap max=0
+  days="$(cron_days "$1")" || { printf '%s\n' "$days"; return 1; }
+  mapfile -t d <<<"$days"
+  n=${#d[@]}
+  for (( i=0; i<n; i++ )); do
+    if [ $(( i + 1 )) -lt "$n" ]; then gap=$(( d[i+1] - d[i] )); else gap=$(( d[0] + 7 - d[i] )); fi
+    [ "$gap" -gt "$max" ] && max="$gap"
+  done
+  printf '%s\n' "$max"
+}
+
+# Monthly minutes x100 for <targets> <seconds/target> <runs-per-month-x100>.
+# scripts/fuzz.sh runs targets SEQUENTIALLY (cmd_time_budget loops and passes
+# -max_total_time per target), so the per-run fuzzing cost is the product.
+fuzz_budget_minutes_x100() {
+  printf '%s\n' "$(( $1 * $2 * $3 / 60 + FUZZ_BUDGET_PER_RUN_OVERHEAD_MINUTES * $3 ))"
+}
+
+fmt_x100() { printf '%s.%02d' "$(( $1 / 100 ))" "$(( $1 % 100 ))"; }
+
+lane_fuzz_budget() {
+  local fail=0
+
+  # ── Self-test FIRST, every run (the house pattern) ──────────────────────
+  # A budget checker that has never been observed failing is the exact defect
+  # this project keeps finding.
+  note "fuzz-budget self-test: the arithmetic, the cron reader, and both directions of the verdict"
+  # `cron` is declared here rather than at its first `for` loop below: a loop
+  # variable that has not been declared `local` first assigns to the GLOBAL
+  # scope, and a lane leaking a global into a script that runs nine of them
+  # is the kind of thing that is harmless until it is not.
+  local got want cron
+  # (1) cron reader. Getting the day-of-week field wrong would make the guard
+  #     read a DAILY lane as weekly and pass it — the single most damaging way
+  #     this checker could be wrong.
+  for want in "41 3 * * 1,4|867|4" "41 3 * * *|3033|1" "41 3 * * 1|433|7" "41 3 * * 1-5|2167|3"; do
+    local cron="${want%%|*}" rest="${want#*|}"
+    got="$(cron_runs_per_month_x100 "$cron")/$(cron_max_gap_days "$cron")"
+    if [ "$got" != "${rest%|*}/${rest#*|}" ]; then
+      printf '::error::fuzz-budget self-test FAILED: cron `%s` read as %s, expected %s/%s\n' \
+        "$cron" "$got" "${rest%|*}" "${rest#*|}"
+      fail=1
+    fi
+  done
+  # (2) the cron reader REFUSES what it cannot model, rather than guessing.
+  for cron in "41 3 * *" "41 3 1 * 1,4" "41 3 * * MON" "41 3 * * */2"; do
+    if cron_days "$cron" >/dev/null 2>&1; then
+      printf '::error::fuzz-budget self-test FAILED: `%s` was accepted; an unparseable cron must be refused, not guessed at\n' "$cron"
+      fail=1
+    fi
+  done
+  # (3) RED direction, on a planted seven-target array at the committed
+  #     seconds and cadence: 7 x 600 s twice weekly is 736.95 min > 700.
+  got="$(fuzz_budget_minutes_x100 7 600 867)"
+  if [ "$got" -le $(( FUZZ_BUDGET_CEILING_MINUTES * 100 )) ]; then
+    printf '::error::fuzz-budget self-test FAILED: a planted SEVEN-target array computes %s min, which does NOT exceed the %s ceiling — the checker cannot fail, so its green means nothing\n' \
+      "$(fmt_x100 "$got")" "$FUZZ_BUDGET_CEILING_MINUTES"
+    fail=1
+  fi
+  # (4) GREEN direction: six targets (i.e. after Q17/A23) must still fit, or
+  #     the ceiling is refusing the configuration D61 §3 costed.
+  got="$(fuzz_budget_minutes_x100 6 600 867)"
+  if [ "$got" -gt $(( FUZZ_BUDGET_CEILING_MINUTES * 100 )) ]; then
+    printf '::error::fuzz-budget self-test FAILED: six targets at 600 s twice weekly computes %s min and does not fit the %s ceiling — D61 §3 costed that arrangement at ~650. One of the constants is wrong\n' \
+      "$(fmt_x100 "$got")" "$FUZZ_BUDGET_CEILING_MINUTES"
+    fail=1
+  fi
+  # (5) RED-BEFORE-GREEN, the arm that proves this guard is wired to reality
+  #     rather than fitted to the numbers that follow it: the configuration
+  #     this lane SHIPPED WITH — 4 x 900 s DAILY — must be refused. It is
+  #     also a permanent tripwire against restoring the daily cadence.
+  got="$(fuzz_budget_minutes_x100 4 900 3033)"
+  if [ "$got" -le $(( FUZZ_BUDGET_CEILING_MINUTES * 100 )) ]; then
+    printf '::error::fuzz-budget self-test FAILED: the pre-D61 committed configuration (4 targets x 900 s DAILY) computes %s min and passes the ceiling. That configuration spent 91%% of the whole allowance; a guard that admits it is measuring the wrong thing\n' \
+      "$(fmt_x100 "$got")"
+    fail=1
+  fi
+  [ "$fail" -eq 0 ] || return 1
+  printf 'self-test OK: cron reader exact on 4 crons and refuses 4 malformed ones; 7 targets RED (%s), 6 targets GREEN (%s), the shipped 4x900-daily RED (%s)\n' \
+    "$(fmt_x100 "$(fuzz_budget_minutes_x100 7 600 867)")" \
+    "$(fmt_x100 "$(fuzz_budget_minutes_x100 6 600 867)")" \
+    "$(fmt_x100 "$(fuzz_budget_minutes_x100 4 900 3033)")"
+
+  # ── The live arm: read the committed sources only ───────────────────────
+  note "fuzz-budget: the committed scheduled configuration against the ${FUZZ_BUDGET_CEILING_MINUTES}-minute ceiling"
+  local wf="$repo/.github/workflows/fuzz-nightly.yml"
+  [ -f "$wf" ] || die "fuzz-budget: $wf is missing — this lane's whole subject is gone; delete the lane deliberately or restore the workflow"
+  # Target count from scripts/fuzz.sh's own TARGETS array, via its `targets`
+  # subcommand — reading the array rather than re-parsing the file, so the
+  # guard and the runner can never disagree about what runs.
+  local targets seconds_default seconds_schedule n
+  targets="$(bash "$repo/scripts/fuzz.sh" targets | grep -c .)"
+  # Anti-vacuity, on every parse below: a failed parse yields an empty value
+  # that arithmetic reads as ZERO, and a zero-cost lane always passes. Each
+  # is checked for exactly one numeric result.
+  if ! [ "$targets" -ge 1 ] 2>/dev/null; then
+    printf '::error::fuzz-budget: scripts/fuzz.sh targets produced %s target(s) — the parse failed, and a zero-target bill passes any ceiling\n' "$targets"
+    return 1
+  fi
+  cron="$(sed -nE 's/^[[:space:]]*-[[:space:]]*cron:[[:space:]]*"([^"]+)".*/\1/p' "$wf")"
+  n="$(printf '%s\n' "$cron" | grep -c .)"
+  if [ "$n" -ne 1 ]; then
+    printf '::error::fuzz-budget: found %s `cron:` line(s) in fuzz-nightly.yml, expected exactly 1. A second schedule multiplies the bill and this reader would price only one\n' "$n"
+    return 1
+  fi
+  # The workflow_dispatch default, and the literal a SCHEDULED run actually
+  # uses. `schedule:` supplies no inputs, so the `|| 'NNN'` fallback in the
+  # run step is what spends the money; requiring the two to agree is what
+  # stops this guard pricing a number the scheduled run never sees.
+  seconds_default="$(awk '/^[[:space:]]*seconds:[[:space:]]*$/{f=1} f && /default:/{gsub(/[^0-9]/,"",$2); print $2; exit}' "$wf")"
+  seconds_schedule="$(sed -nE "s/.*fuzz\.sh long .*\|\|[[:space:]]*'([0-9]+)'.*/\1/p" "$wf")"
+  for got in "$seconds_default" "$seconds_schedule"; do
+    if ! [ "${got:-0}" -ge 1 ] 2>/dev/null; then
+      printf '::error::fuzz-budget: could not read a seconds-per-target literal from fuzz-nightly.yml (dispatch default=%s, schedule fallback=%s). An unparsed budget reads as zero and passes\n' \
+        "${seconds_default:-<none>}" "${seconds_schedule:-<none>}"
+      return 1
+    fi
+  done
+  if [ "$seconds_default" != "$seconds_schedule" ]; then
+    printf '::error::fuzz-budget: the workflow_dispatch default (%s s) and the scheduled fallback (%s s) disagree. A scheduled run supplies no inputs, so it spends the SECOND number while a reader of the first believes the first — make them equal\n' \
+      "$seconds_default" "$seconds_schedule"
+    return 1
+  fi
+  local rpm100 gap minutes100
+  rpm100="$(cron_runs_per_month_x100 "$cron")" || { printf '::error::fuzz-budget: %s\n' "$rpm100"; return 1; }
+  gap="$(cron_max_gap_days "$cron")" || { printf '::error::fuzz-budget: %s\n' "$gap"; return 1; }
+  minutes100="$(fuzz_budget_minutes_x100 "$targets" "$seconds_default" "$rpm100")"
+  printf 'cron `%s` -> %s run(s)/month, max gap %s day(s)\n' "$cron" "$(fmt_x100 "$rpm100")" "$gap"
+  printf '%s target(s) x %s s = %s min fuzzing/run, + %s min overhead/run\n' \
+    "$targets" "$seconds_default" "$(( targets * seconds_default / 60 ))" "$FUZZ_BUDGET_PER_RUN_OVERHEAD_MINUTES"
+  printf 'monthly cost: %s min = %s%% of the %s-minute allowance (ceiling %s min = %s%%)\n' \
+    "$(fmt_x100 "$minutes100")" \
+    "$(( minutes100 / FUZZ_BUDGET_ALLOWANCE_MINUTES ))" "$FUZZ_BUDGET_ALLOWANCE_MINUTES" \
+    "$FUZZ_BUDGET_CEILING_MINUTES" "$(( FUZZ_BUDGET_CEILING_MINUTES * 100 / FUZZ_BUDGET_ALLOWANCE_MINUTES ))"
+  if [ "$minutes100" -gt $(( FUZZ_BUDGET_CEILING_MINUTES * 100 )) ]; then
+    printf '::error::D61 violation: the scheduled fuzz lane would cost %s min/month against a %s-minute ceiling. THE KNOB IS `seconds`, not the cadence — cadence protects the corpus GitHub evicts after 7 days (D61 E2). Lower `seconds` in fuzz-nightly.yml (BOTH literals) in this same commit. The ceiling is raise-only by decision: exhausting the %s-minute allowance blocks EVERY workflow in the repository, not just this one\n' \
+      "$(fmt_x100 "$minutes100")" "$FUZZ_BUDGET_CEILING_MINUTES" "$FUZZ_BUDGET_ALLOWANCE_MINUTES"
+    return 1
+  fi
+  if [ "$gap" -gt "$FUZZ_BUDGET_MAX_GAP_DAYS" ]; then
+    printf '::error::D61 violation: the cron leaves %s days between runs, over the %s-day cadence floor. GitHub deletes a cache not accessed for 7 days, and corpus ACCUMULATION is the only thing distinguishing this lane from fuzz-smoke — a schedule that meets the budget by running less often has destroyed what it is paying for\n' \
+      "$gap" "$FUZZ_BUDGET_MAX_GAP_DAYS"
+    return 1
+  fi
+  printf 'OK: %s min/month, within the %s-minute ceiling, and the cadence keeps the corpus cache warm.\n' \
+    "$(fmt_x100 "$minutes100")" "$FUZZ_BUDGET_CEILING_MINUTES"
+}
+
 lane_audit_deny() {
   command -v cargo-deny >/dev/null 2>&1 || die "cargo-deny is not installed. Pinned version (docs/dependency-policy.md §5):
     cargo install cargo-deny --version 0.19.8 --locked"
@@ -712,5 +1165,6 @@ case "${1:-}" in
   ci-shell)         lane_ci_shell ;;
   secret-guard)     lane_secret_guard ;;
   audit-deny)       lane_audit_deny ;;
+  fuzz-budget)      lane_fuzz_budget ;;
   *) die "usage: scripts/ci-lanes.sh <$(printf '%s' "$LANES" | tr ' ' '|')> | --list | --self-test" ;;
 esac

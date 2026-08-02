@@ -4,7 +4,14 @@
 #   scripts/fuzz.sh lint                     fmt + clippy the fuzz crate (stable)
 #   scripts/fuzz.sh build [target...]        build the instrumented binaries
 #   scripts/fuzz.sh smoke [seconds]          per-PR budget per target (default 90 s)
-#   scripts/fuzz.sh long  [seconds]          nightly budget per target (default 900 s)
+#   scripts/fuzz.sh long  [seconds]          interactive long budget (default 900 s)
+#                                            NOTE: the SCHEDULED lane passes
+#                                            600 explicitly (D61 §3). The two
+#                                            are deliberately different and
+#                                            `ci-lanes.sh fuzz-budget` reads
+#                                            the workflow's, which is the one
+#                                            that spends money.
+#   scripts/fuzz.sh classify-failure         D61 §7: crash vs infrastructure red
 #   scripts/fuzz.sh runs  <n> [target...]    a fixed ITERATION count (deterministic)
 #   scripts/fuzz.sh selftest [target...]     prove a crash becomes an artifact
 #   scripts/fuzz.sh cmin  [target...]        coverage-minimize the working corpus
@@ -205,6 +212,48 @@ cmd_repro() {
   ( cd "$fuzz_dir" && cargo "${toolchain_arg[@]}" fuzz run "$1" "$2" )
 }
 
+# D61 §7 — which KIND of red a scheduled run just had.
+#
+# The two are different findings and must not share a policy:
+#
+#   CRASH          fuzz/artifacts/ is non-empty, i.e. a reproducer was
+#                  written. Release-blocking on the FIRST occurrence, no
+#                  grace and no two-red rule — docs/testing/fuzzing.md §4's
+#                  opening sentence is already normative ("A crash is
+#                  release-blocking. No exceptions") and a crash is a
+#                  finding, not flake. Triaged under D61 §8 before the next
+#                  wave starts.
+#   INFRASTRUCTURE no reproducer: build failure, toolchain rot, cargo-fuzz
+#                  pin drift, cache or runner failure. D52's convention
+#                  exactly — tracking note in the next wave's bookkeeping,
+#                  two consecutive block wave starts until diagnosed.
+#
+# Importing D52's convention WHOLE would give a real crash a free night,
+# which is the refinement D61 exists to make. Neither kind is ever a merge
+# gate: `fuzz-long` is not a PR status context and never becomes one.
+#
+# Lives here rather than in the workflow because Q43's check-ci-shell.py
+# refuses a `run:` block carrying logic — correctly: this is exactly the
+# class of YAML-only shell that nobody executes before a push.
+#
+# Always exits 0. It is a CLASSIFIER, not a verdict: the step runs under
+# `if: failure()` and the run is already red, so exiting non-zero would only
+# obscure the original failure.
+cmd_classify_failure() {
+  if [ -n "$(find "$fuzz_dir/artifacts" -type f -print -quit 2>/dev/null)" ]; then
+    printf '::error::CRASH — reproducer written. Release-blocking on the FIRST occurrence (D61 §7, docs/testing/fuzzing.md §4). Triage: D61 §8.\n'
+    find "$fuzz_dir/artifacts" -type f | sed 's|^|  |'
+    # If this fires on the scheduled lane it may be the tripwire leaking
+    # rather than a finding — ANTSEAL_FUZZ_SELFTEST is unset in the
+    # workflow, and a tripwire artifact would mean the self-test step
+    # escaped its own scope, which is itself the finding (D61 §8 step 2).
+    printf '::notice::Before triaging, confirm this is not the selftest tripwire (fuzz/src/lib.rs::selftest_tripwire says so in its panic message).\n'
+  else
+    printf '::warning::INFRASTRUCTURE RED — no reproducer. Tracking note; two consecutive block wave starts (D61 §7).\n'
+  fi
+  return 0
+}
+
 # The monthly-minimization input (docs/testing/fuzzing.md §3). Reports only:
 # it never rewrites the committed tree. Lived inline in fuzz-nightly.yml
 # until Q43 — CI shell that no local run ever executed.
@@ -229,7 +278,15 @@ case "${1:-}" in
   repro)    shift; cmd_repro "$@" ;;
   targets)  printf '%s\n' "${TARGETS[@]}" ;;
   corpus-report) shift; cmd_corpus_report "$@" ;;
+  classify-failure) shift; cmd_classify_failure "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+    # The header comment block, however long it is: every line after the
+    # shebang up to the first non-comment line. The fixed `2,30p` window this
+    # replaces ran FIVE lines into the code (it printed `set -uo pipefail`,
+    # `repo=…`, `fuzz_dir=…` and half the TARGETS comment) and drifted
+    # further with every header edit — a help text that leaks its own
+    # implementation is small, but it is the same class as a lane whose
+    # prose and code disagree.
+    awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}" ;;
   *) die "unknown subcommand '$1' (try --help)" ;;
 esac

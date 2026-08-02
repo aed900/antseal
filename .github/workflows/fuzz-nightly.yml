@@ -24,16 +24,30 @@ name: fuzz-nightly
 
 on:
   schedule:
-    # 03:41 UTC daily — off the top-of-hour load spikes GitHub's docs warn
-    # about, and offset from advisory-cron's Monday 06:17 so a busy Monday
-    # does not queue both.
-    - cron: "41 3 * * *"
+    # TWICE WEEKLY, Mondays and Thursdays 03:41 UTC. Daily does not fit the
+    # budget (D61 Correction 2: 4 x 900 s daily is >= 1 824 min/month, 91 %
+    # of the 2 000-minute GitHub Free allowance, and exhausting it blocks
+    # EVERY workflow, not just this one). Weekly does not work either: the
+    # corpus cache is evicted after 7 days without access, and accumulation
+    # is this lane's whole purpose (D61 E2). Mon/Thu leaves 3-4 days of
+    # margin against that 7-day rule. Offset from advisory-cron (Mon 06:17)
+    # and devnet-e2e-cron (Wed 05:37) so no two heavy jobs queue together.
+    #
+    # The lane name stays `fuzz-nightly` and the job stays `fuzz-long`
+    # deliberately (D61 §2): renaming them breaks every cross-reference in
+    # docs/testing/fuzzing.md, docs/ci-verification.md and ci.yml's header
+    # for a cosmetic gain. The identifier is a name, not a claim.
+    #
+    # `scripts/ci-lanes.sh fuzz-budget` reads THIS LINE and the `seconds`
+    # default below and fails if the pair exceeds the named ceiling, so the
+    # cadence cannot be quietly restored.
+    - cron: "41 3 * * 1,4"
   workflow_dispatch:
     inputs:
       seconds:
         description: "Seconds per target"
         required: false
-        default: "900"
+        default: "600"
 
 permissions:
   contents: read
@@ -46,8 +60,11 @@ jobs:
     # NOT a PR status context and never becomes one.
     name: fuzz-long
     runs-on: ubuntu-latest
-    # Four targets x 900 s plus an instrumented build; the cap is generous so
-    # a slow runner is not reported as a hang.
+    # Four targets x 600 s plus an instrumented build; the cap is generous so
+    # a slow runner is not reported as a hang. MEASURED (D61 §1, the five
+    # 900 s runs of 2026-07-29..08-02): 61.6-62.8 min wall clock against 60
+    # min of fuzzing, i.e. ~1.9 min of build and cache overhead per run, so
+    # at 600 s this has real headroom instead of being the binding constraint.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +93,18 @@ jobs:
       # `restore-keys` makes each run start from the most recent cache, and
       # the run-numbered `key` writes a fresh one — GitHub's caches are
       # immutable, so a fixed key would freeze the corpus on day one.
+      #
+      # Sizing (D61 E1, measured 2026-08-02): the working corpus is
+      # 921 files / 5.1 MB across four targets, so even seven live cache
+      # generations are ~36 MB against GitHub's 10 GB per-repo cap. The
+      # rust-cache entry (fuzz/target, 564 MB class) is the real consumer.
+      # RETENTION: GitHub deletes cache entries not accessed for 7 days, so
+      # this lane's cadence may never be lengthened past ~5 days without
+      # losing the accumulation this cache exists for (D61 E2, Decision 2).
+      # `ci-lanes.sh fuzz-budget` enforces that 5-day ceiling on the cron
+      # itself, independently of the minutes arithmetic — otherwise the
+      # budget could be met by going monthly and silently destroying the
+      # corpus.
       - name: Restore the working fuzz corpus
         uses: actions/cache@v4
         with:
@@ -88,8 +117,13 @@ jobs:
         run: ./scripts/fuzz.sh build
       - name: Self-test — an injected panic MUST crash the target and leave an artifact
         run: ./scripts/fuzz.sh selftest
+      # The `|| '600'` fallback is what a SCHEDULED run uses — `schedule:`
+      # supplies no inputs — so it, not the `workflow_dispatch` default
+      # above, is the literal that spends money. `fuzz-budget` reads BOTH and
+      # fails if they disagree, so the guard can never be reading a number
+      # the scheduled run does not use.
       - name: Long run
-        run: ./scripts/fuzz.sh long "${{ github.event.inputs.seconds || '900' }}"
+        run: ./scripts/fuzz.sh long "${{ github.event.inputs.seconds || '600' }}"
 
       # Minimization is a REVIEWED cadence step (docs/testing/fuzzing.md §3),
       # so this only reports what cmin would drop; it never rewrites the
@@ -97,6 +131,23 @@ jobs:
       - name: Report corpus size (input to the monthly minimization review)
         if: always()
         run: ./scripts/fuzz.sh corpus-report
+
+      # D61 §7 — the two kinds of red are NOT the same finding, and importing
+      # devnet-e2e-cron's two-consecutive-reds convention whole would give a
+      # real crash a free night. A CRASH (a reproducer was written) is
+      # release-blocking on the FIRST occurrence, no grace; an
+      # INFRASTRUCTURE red (no reproducer — build failure, toolchain rot,
+      # pin drift, runner failure) takes D52's convention exactly. The two
+      # are distinguishable without judgement, so the classification is
+      # asserted rather than left to whoever reads the log.
+      #
+      # It is a script call, not inline shell: Q43's check-ci-shell.py
+      # refuses a `run:` block that carries logic, and it is right to —
+      # `scripts/fuzz.sh classify-failure` is runnable before a push, which
+      # is the whole point.
+      - name: Classify the failure (D61 §7)
+        if: failure()
+        run: ./scripts/fuzz.sh classify-failure
 
       - name: Upload crash artifacts
         if: failure()
