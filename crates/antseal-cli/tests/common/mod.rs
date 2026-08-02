@@ -18,6 +18,12 @@
 
 #![allow(dead_code)] // each suite uses a different subset
 
+/// The M1 devnet gate's shared half (S17/S18/S19): environment gating,
+/// serialization, the D37 receipt sink and the Anvil JSON-RPC probe.
+/// Feature-gated because it names the `ant-backend` construction seam.
+#[cfg(feature = "ant-backend")]
+pub mod devnet;
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;

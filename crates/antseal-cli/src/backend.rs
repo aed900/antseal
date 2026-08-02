@@ -56,13 +56,22 @@
 
 use crate::error::CliError;
 
-// The flat path commands will use: `backend::SealBackend`, not
-// `backend::ant::sealed::SealBackend`. Unused in the lib target until the
-// first consumer lands — see the note above `mod ant` for why that allow
-// and this one are the same temporary statement.
+// The flat path consumers use: `backend::SealBackend`, not
+// `backend::ant::sealed::SealBackend`.
+//
+// **`pub`, not `pub(crate)` (S17).** `mod ant` stays private and `sealed`
+// stays private inside it — the construction guarantee below is a property
+// of *field* visibility and is untouched by this. What re-exporting widens
+// is only reachability, and it has to widen: D34 puts the M1 E2E in
+// `tests/`, i.e. an external crate, and the seam is precisely what those
+// suites must drive (S17 asserts the hook is installed on the real path;
+// S18 depends on it for the no-double-pay row). A `pub(crate)` seam would
+// have forced the harness to build its own backend — which is the one
+// thing this module exists to make impossible. Widening is sanctioned by
+// the crate-root stability note: this library's API serves the binary and
+// the workspace's own harnesses.
 #[cfg(feature = "ant-backend")]
-#[allow(unused_imports)]
-pub(crate) use ant::{ReadOnly, ReceiptSink, SealBackend, runtime, wallet_key};
+pub use ant::{ReadOnly, ReceiptSink, SealBackend, runtime, wallet_key};
 
 /// The refusal a command gets when it needs the network and this build
 /// cannot reach it.
@@ -90,25 +99,30 @@ pub fn unavailable(command: &str) -> CliError {
          compiled in (the `ant-backend` feature is off by default). The command itself is \
          complete — rebuild with `--features ant-backend` to reach the network"
     );
+    // S17 update: the seam is no longer merely built — `tests/e2e_devnet.rs`
+    // drives it against a live devnet, so "resolving the endpoint lands with
+    // the devnet harness" stopped being true the moment that suite went
+    // green. What is actually missing for a *command* is its own wiring
+    // (U13 for `seal`), and that is what the refusal must name; pointing a
+    // user at a task that has already shipped sends them looking for a fix
+    // that is already in their build.
     #[cfg(feature = "ant-backend")]
     let detail = format!(
-        "`{command}` has a storage backend compiled in but is not yet connected to it: U36 built \
-         the construction seam (`backend::SealBackend`), and resolving this network's endpoint \
-         and bootstrap peers into it lands with the devnet harness (S17)"
+        "`{command}` has a storage backend compiled in but this command is not yet wired to it: \
+         U36 built the construction seam (`backend::SealBackend`) and the M1 devnet harness \
+         drives it end to end, but connecting it to this command's argument handling lands with \
+         U13"
     );
     CliError::NetworkFailure { detail }
 }
 
-// U36 built the seam and its tests; its *production* callers land next —
-// `seal` (U13) and the devnet harness (S17), which are what turn
-// `connect`/`runtime`/`wallet_key`/`ReadOnly` into called code. Until
-// then the lib target sees them as unreachable, which is true and not
-// interesting. The allow is scoped to this module and comes off in the
-// commit that wires the first command; nothing here is untested in the
-// meantime — see `mod tests` below, and the ungated source scan that
-// keeps the seam the only door.
+// U36 built the seam and its tests; the devnet harness (S17/S18/S19) is
+// the first consumer that actually calls `connect`/`runtime`/`ReadOnly`
+// against a network, which is why the `dead_code` allow this module
+// carried until now is gone: the items are publicly re-exported above and
+// driven by `tests/e2e_devnet.rs`. `seal`'s command wiring (U13) is still
+// to come and is tracked there, not here.
 #[cfg(feature = "ant-backend")]
-#[allow(dead_code)]
 mod ant {
     use std::sync::Arc;
 
@@ -135,7 +149,7 @@ mod ant {
     ///
     /// Implementations must not panic: they run inside `pay()`, between
     /// two transactions, on the far side of money having moved.
-    pub(crate) trait ReceiptSink: Send + Sync + 'static {
+    pub trait ReceiptSink: Send + Sync + 'static {
         /// Durably record the receipt-so-far.
         fn capture(&self, receipt: &PaymentReceipt);
     }
@@ -148,7 +162,7 @@ mod ant {
     /// logged as one rather than silently dropped. It exists so those
     /// commands still go through the one constructor: "this path does not
     /// pay" is then a statement in the code, not an omission.
-    pub(crate) struct ReadOnly;
+    pub struct ReadOnly;
 
     impl ReceiptSink for ReadOnly {
         fn capture(&self, _receipt: &PaymentReceipt) {
@@ -170,7 +184,7 @@ mod ant {
     /// [`CliError::NetworkFailure`] if the runtime cannot be created —
     /// reported in the network class because that is what it costs the
     /// caller: no bytes can move.
-    pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
+    pub fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -191,7 +205,7 @@ mod ant {
     /// [`CliError::Usage`] when the stored bytes are not a valid secp256k1
     /// scalar. The message names the condition and **never** any part of
     /// the key material (project rule 6).
-    pub(crate) fn wallet_key(handle: &WalletKeyHandle) -> Result<WalletKey, CliError> {
+    pub fn wallet_key(handle: &WalletKeyHandle) -> Result<WalletKey, CliError> {
         let mut hex = String::with_capacity(WALLET_KEY_LEN * 2);
         for byte in handle.secret_bytes() {
             use std::fmt::Write as _;
@@ -206,7 +220,7 @@ mod ant {
         })
     }
 
-    pub(crate) use sealed::SealBackend;
+    pub use sealed::SealBackend;
 
     /// The private module is the enforcement: `SealBackend`'s field is
     /// visible only in here, and the only function in here that builds
@@ -222,7 +236,7 @@ mod ant {
         ///
         /// Not merely by convention: see the module docs. The type is the
         /// proof, so no test, review step or comment has to carry it.
-        pub(crate) struct SealBackend {
+        pub struct SealBackend {
             inner: AntCoreBackend,
         }
 
@@ -238,7 +252,7 @@ mod ant {
             /// [`CliError::NetworkFailure`] for connect, transport and
             /// chain-id failures (S6 maps upstream's; the chain-id guard
             /// is what catches a wrong-network RPC before any payment).
-            pub(crate) async fn connect(
+            pub async fn connect(
                 config: &NetworkConfig,
                 wallet_key: &WalletKey,
                 receipts: Arc<dyn ReceiptSink>,
@@ -255,7 +269,7 @@ mod ant {
             /// The hook `connect` installs, exposed so a test can fire it
             /// without a network. Constructing one does **not** construct
             /// a backend — this is the adapter, not a second door.
-            pub(crate) fn hook_for(receipts: Arc<dyn ReceiptSink>) -> CaptureHook {
+            pub fn hook_for(receipts: Arc<dyn ReceiptSink>) -> CaptureHook {
                 hook(receipts)
             }
         }

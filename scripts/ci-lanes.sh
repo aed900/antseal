@@ -486,7 +486,21 @@ lane_ci_shell() {
 lane_secret_guard() {
   scan() {
     local root="$1" hits=""
-    ex() { grep -rlaE --exclude-dir=.git --exclude-dir=target \
+    # `.devnet` is excluded for the same reason `target` is: it is
+    # gitignored run output, and this lane's subject is what can be
+    # COMMITTED. Found by the S17 gate run — `scripts/e2e-devnet.sh` boots a
+    # devnet, `local-up` writes the funded Anvil key to `.devnet/env`
+    # exactly where the runbook says it belongs, and pattern (5) then fired
+    # on it. That made the two REQUIRED local lanes mutually exclusive: any
+    # developer following CONTRIBUTING's devnet-gate instruction got a red
+    # secret-guard for doing precisely the right thing, and the only way to
+    # green it was to tear the devnet down — which is how a real hit would
+    # have been explained away too.
+    #
+    # The exclusion cannot become a hole: `assert_gitignored` below fails
+    # the lane if `.devnet/` ever stops being ignored, so "not scanned"
+    # stays welded to "not committable".
+    ex() { grep -rlaE --exclude-dir=.git --exclude-dir=target --exclude-dir=.devnet \
              --exclude='ci-lanes.sh' --exclude='*.md' -e "$1" "$root" || true; }
     # (1) PEM private-key blocks (wallet/signing keys, any flavor).
     hits+="$(ex '[-]{5}BEGIN[ A-Z0-9]*PRIVATE KEY[-]{5}')"$'\n'
@@ -543,6 +557,15 @@ lane_secret_guard() {
     return 1
   fi
   printf 'self-test OK: all %s planted fakes detected in the temp dir\n' "$planted"
+  # The exclusion above is only safe while `.devnet/` is genuinely
+  # unstageable. Check that, rather than trusting it.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    if ! git check-ignore -q .devnet/env 2>/dev/null; then
+      printf '::error::secret-guard: .devnet/ is NOT gitignored, but this lane skips scanning it. Restore the .gitignore rule (the devnet export carries the funded wallet key) or drop the --exclude-dir=.devnet above.\n'
+      return 1
+    fi
+    printf 'OK: .devnet/ is gitignored, so excluding it from the scan removes nothing committable.\n'
+  fi
   # The real scan.
   if ! scan .; then
     printf '::error::secret-guard: vault-export/wallet-key file signature(s) found (paths above). No real secret material may ever be committed (project rule 6; testdata/README.md).\n'
