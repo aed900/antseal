@@ -3,19 +3,19 @@
 **Source of truth for scope**: `MVP-SPEC.md` (Revision 2, 2026-07-27 — frozen; `SPEC-REVIEW.md` already folded in). When this list and the spec disagree, the spec wins; flag the conflict, don't silently diverge.
 **Source of truth for status**: this file. Full per-task detail (Do / Accept / Notes / spec line refs) lives in `tasks/{P,F,C,G,S,A,R,U,Q}.md` — one file per domain, task IDs are stable and permanent.
 
-Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **325 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **88 decisions D1–D88** of which **66 are resolved**, 6 milestone gates. Counts below are current, not original.
+Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **339 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **88 decisions D1–D88** of which **66 are resolved**, 6 milestone gates. Counts below are current, not original.
 
 | Domain | Prefix | Scope | Tasks |
 |---|---|---|---|
-| Setup & toolchain | P | naming, repo, workspace, pins, CI skeleton, devnets | 20 |
+| Setup & toolchain | P | naming, repo, workspace, pins, CI skeleton, devnets | 21 |
 | Formats | F | deterministic CBOR, manifest/bundle codecs, parser hardening | 49 |
 | Crypto primitives | C | HKDF, AEAD, salted commitments, hybrid signatures | 29 |
 | Content model | G | canonicalization, units, raw mirror, GGM fine tree | 29 |
-| Storage | S | StorageBackend, payments, journal/resume, restore | 20 |
+| Storage | S | StorageBackend, payments, journal/resume, restore | 29 |
 | Anchors | A | OTS, RFC 3161, receipt classification, verdict states | 29 |
-| Reveal & verify | R | bundle build, verification pipeline, verifier web page | 51 |
-| CLI & vault | U | command surface, vault, config, UX | 35 |
-| Quality & release | Q | test infra, CI, threat model, docs, release | 62 |
+| Reveal & verify | R | bundle build, verification pipeline, verifier web page | 52 |
+| CLI & vault | U | command surface, vault, config, UX | 37 |
+| Quality & release | Q | test infra, CI, threat model, docs, release | 64 |
 
 ---
 
