@@ -25,9 +25,10 @@
 //! rustdoc for why `&mut self` was not an option.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use antseal_core::crypto::secrets::{MasterSecret, SealId};
-use antseal_net::{JournalReceipt, PaymentReceipt};
+use antseal_net::PaymentReceipt;
 use rand_core::TryCryptoRng;
 
 use super::journal::{
@@ -35,6 +36,7 @@ use super::journal::{
     SealState, StagedBlob, StagedBytesUnavailable, WorkIdentity, corrupt, decode_plan,
     decode_state, encode_plan, encode_state,
 };
+use super::receipt_sink::{VaultReceiptSink, decode_receipt, encode_receipt};
 use crate::vault::store::{ConsentRecord, WorkRecord, WorkStore};
 
 /// The production seal journal over an unlocked vault's record store.
@@ -44,6 +46,7 @@ use crate::vault::store::{ConsentRecord, WorkRecord, WorkStore};
 pub struct VaultJournal<'v, R: TryCryptoRng + ?Sized> {
     store: WorkStore<'v>,
     rng: RefCell<&'v mut R>,
+    receipts: Option<Arc<VaultReceiptSink>>,
 }
 
 impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
@@ -52,7 +55,26 @@ impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
         Self {
             store,
             rng: RefCell::new(rng),
+            receipts: None,
         }
+    }
+
+    /// Attach D37's durable per-sub-batch receipt sink (S31).
+    ///
+    /// Hand the **same** `Arc` to `backend::SealBackend::connect`: the
+    /// backend fires it from inside `pay`, and this journal is what tells
+    /// it which work to write to ([`SealJournal::arm_receipts`]).
+    ///
+    /// Without this the journal behaves exactly as it did before S31 —
+    /// correct for every non-paying command, and the reason `restore`,
+    /// `verify --live` and `status --upgrade` need no sink at all. The
+    /// *paying* path must attach one or D37 Decision 2's guarantee is
+    /// unimplemented again; making that structural belongs to U13's `seal`
+    /// wiring (recorded as **S36**).
+    #[must_use]
+    pub fn with_receipt_sink(mut self, receipts: Arc<VaultReceiptSink>) -> Self {
+        self.receipts = Some(receipts);
+        self
     }
 
     /// The underlying record store (restore and the U-side renderers read
@@ -219,23 +241,26 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
     }
 
     fn put_receipt(&self, seal_id: &SealId, receipt: &PaymentReceipt) -> Result<(), JournalError> {
-        let envelope = JournalReceipt::seal(receipt.clone());
-        let bytes = serde_json::to_vec(&envelope).map_err(|_| JournalError::Encode)?;
+        // The same encoder the durable sink uses, deliberately: two
+        // hand-rolled encodings of one record is how the two writers would
+        // drift into disagreeing about what a journaled receipt is.
+        let bytes = encode_receipt(receipt)?;
         let mut rng = self.rng.borrow_mut();
         self.store.put_receipt(seal_id, &bytes, &mut **rng)?;
         Ok(())
+    }
+
+    fn arm_receipts(&self, seal_id: &SealId, prior: Option<&PaymentReceipt>) {
+        if let Some(receipts) = &self.receipts {
+            receipts.arm(seal_id, prior);
+        }
     }
 
     fn receipt(&self, seal_id: &SealId) -> Result<Option<PaymentReceipt>, JournalError> {
         let Some(plaintext) = self.store.get_receipt(seal_id)? else {
             return Ok(None);
         };
-        let envelope: JournalReceipt = serde_json::from_slice(plaintext.as_bytes())
-            .map_err(|_| corrupt("journaled receipt is malformed"))?;
-        let receipt = envelope
-            .open()
-            .map_err(|_| corrupt("journaled receipt carries an unsupported version"))?;
-        Ok(Some(receipt))
+        Ok(Some(decode_receipt(plaintext.as_bytes())?))
     }
 
     fn put_consent(&self, seal_id: &SealId, consent: ConsentRecord) -> Result<(), JournalError> {

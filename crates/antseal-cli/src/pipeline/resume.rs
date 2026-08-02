@@ -47,13 +47,16 @@
 use antseal_anchor::{AnchorGate, AnchorSubmissionOutcome};
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::manifest::{Manifest, anchor_digest, work_id};
-use antseal_net::{Address, Blob, CostQuote, PaymentReceipt, StorageBackend, StorageError};
+use antseal_net::{
+    Address, Blob, BlobCost, CostQuote, PaymentReceipt, StorageBackend, StorageError,
+};
 
 use super::consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
 use super::error::{Barrier, BarrierHook, SealError};
 use super::journal::{
     BlobSlot, SealJournal, SealPlan, SealState, StagedBytesUnavailable, check_staged_integrity,
 };
+use super::receipt_sink::merge_receipts;
 
 /// What a completed seal produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,16 +176,76 @@ where
             let quote = self.backend.quote_batch(&blobs).await?;
             self.barriers.at(Barrier::PostQuote)?;
             let receipt = self
-                .consent_anchor_pay(seal_id, &quote, anchor, identity.unanchored, false)
+                .consent_anchor_pay(seal_id, &quote, anchor, identity.unanchored, false, None)
                 .await?;
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
-        } else if !state.is_post_pay() {
-            // The repair: a durable receipt on a pre-pay tag. Advancing it
-            // is what lets `finalize` run at all (`Anchored → Finalizing`
-            // is not a legal edge, and widening the machine to allow it
-            // would erase the distinction the repair exists to record).
-            self.journal.set_state(seal_id, SealState::Paid)?;
+        } else {
+            if !state.is_post_pay() {
+                // The repair: a durable receipt on a pre-pay tag. Advancing
+                // it is what lets `finalize` run at all (`Anchored →
+                // Finalizing` is not a legal edge, and widening the machine
+                // to allow it would erase the distinction the repair exists
+                // to record).
+                self.journal.set_state(seal_id, SealState::Paid)?;
+            }
+            // **The unpaid remainder** (D37 Decision 5, extended by S31).
+            // D37's sink journals each sub-batch receipt from inside `pay`,
+            // so a crash between sub-batch txs leaves a receipt that covers
+            // *some* blobs. Those must never be re-paid — and the rest must
+            // still be paid, or the seal cannot finish: `finalize_batch`
+            // refuses a receipt with no record for an unstored blob.
+            //
+            // The already-paid quote hashes cannot be recovered by
+            // re-deriving them: a fresh quote round mints fresh hashes. The
+            // durable receipt is the only thing that can say what was
+            // already bought, which is the whole reason it has to be
+            // durable.
+            if let Some(partial) = journaled_receipt {
+                let candidates = uncovered_blobs(&blobs, &partial)?;
+                if !candidates.is_empty() {
+                    let quote = self.backend.quote_batch(&candidates).await?;
+                    self.barriers.at(Barrier::PostQuote)?;
+                    // **"No record" is not the same as "must be bought."**
+                    // A blob the network already holds is quoted
+                    // [`BlobCost::AlreadyStored`], is never paid for, and
+                    // therefore never acquires a payment record — and
+                    // `finalize_batch` skips it on exactly that evidence
+                    // (`chunk_exists` first, record required only for the
+                    // rest). So the quote, not the receipt, is what decides
+                    // whether there is anything left to buy. Paying anyway
+                    // would ask the user to consent to a zero spend, and
+                    // asserting a record must appear for every candidate
+                    // would be asserting something upstream will never do.
+                    let anything_to_buy = quote
+                        .blobs
+                        .iter()
+                        .any(|line| matches!(line.cost, BlobCost::Priced { .. }));
+                    if anything_to_buy {
+                        let already_bought = partial.blobs.len();
+                        // Consent is over the remainder quote and nothing
+                        // else, so what the user authorizes is exactly what
+                        // is about to be spent (D36's unconditional
+                        // re-consent).
+                        let merged = self
+                            .consent_anchor_pay(
+                                seal_id,
+                                &quote,
+                                None,
+                                identity.unanchored,
+                                false,
+                                Some(partial),
+                            )
+                            .await?;
+                        paid_atto = quote.total_ant_atto;
+                        paid_here = true;
+                        debug_assert!(
+                            merged.blobs.len() > already_bought,
+                            "the merge lost records the network was already paid for"
+                        );
+                    }
+                }
+            }
         }
         let state = self.journal.state(seal_id)?;
 
@@ -200,8 +263,10 @@ where
             Err(SealError::Storage(StorageError::ProofsExpired)) => {
                 let quote = self.backend.quote_batch(&blobs).await?;
                 self.barriers.at(Barrier::PostQuote)?;
+                // `prior: None` — see `consent_anchor_pay`: the expired
+                // records are what is being replaced, not extended.
                 let fresh = self
-                    .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true)
+                    .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true, None)
                     .await?;
                 paid_atto = paid_atto.saturating_add(fresh.storage_cost_atto);
                 paid_here = true;
@@ -291,6 +356,13 @@ where
     /// `anchor` is `Some(digest)` when the anchor step still has to run
     /// (a fresh seal, or a resume killed before it) and `None` when the
     /// work is already anchored — anchors are never re-submitted.
+    ///
+    /// `prior` carries payment records that are **already durable and
+    /// still usable** — the partial receipt a crash between sub-batch txs
+    /// left behind (D37 Decision 5, as extended by S31). When it is
+    /// present, `quote` covers only the *unpaid remainder* and what gets
+    /// journaled is the merge; journaling the fresh receipt alone would
+    /// erase records the network was already paid for.
     pub(super) async fn consent_anchor_pay(
         &self,
         seal_id: &SealId,
@@ -298,6 +370,7 @@ where
         anchor: Option<[u8; 32]>,
         unanchored: bool,
         proofs_expired: bool,
+        prior: Option<PaymentReceipt>,
     ) -> Result<PaymentReceipt, SealError> {
         let request = ConsentRequest {
             seal_id: *seal_id,
@@ -332,7 +405,27 @@ where
             self.barriers.at(Barrier::PostAnchor)?;
         }
 
+        // D37 Decision 7 (S31): name the work the durable sink is about to
+        // write receipts for. Every path that can pay funnels through here,
+        // so the sink's target is structural rather than remembered — and
+        // the arm has to land *before* `pay`, because the first sub-batch
+        // capture fires from inside it.
+        self.journal.arm_receipts(seal_id, prior.as_ref());
+
         let receipt = self.backend.pay(quote).await?;
+        // Only the LAST sub-batch's receipt is still unwritten when `pay`
+        // returns cleanly — every earlier one was journaled from inside
+        // `pay` by the sink. This write supersedes them with the complete
+        // receipt (`put_receipt` is idempotent and last-write-wins), and
+        // merges in whatever a previous invocation already paid for.
+        let receipt = match prior {
+            // Merging is only ever right when the prior records are still
+            // *usable*. On the proofs-expired path they are exactly what is
+            // being replaced, so that caller passes `None` — merging there
+            // would leave `finalize_batch` matching a stale record first.
+            Some(prior) => merge_receipts(prior, receipt),
+            None => receipt,
+        };
         // The one window where money has moved and nothing records it.
         // With `NoBarriers` this call is the empty statement it looks like.
         self.barriers.at(Barrier::PostPayPreReceiptJournal)?;
@@ -390,6 +483,65 @@ where
     }
 }
 
+/// The staged blobs a receipt holds **no payment record** for — the
+/// *candidates* a resume may still have to buy (D37 Decision 5, extended by
+/// S31).
+///
+/// Candidates, not purchases: a blob the network already holds is quoted
+/// `AlreadyStored`, never paid for and therefore never given a record, so
+/// the caller re-quotes this set and lets the quote decide.
+///
+/// Membership is by S4 storage address, which is the same key
+/// `finalize_batch` looks a record up by, so "uncovered here" and "refused
+/// there" are the same predicate rather than two that agree by habit.
+///
+/// # The granularity caveat, stated because it is invisible otherwise
+///
+/// This predicate is per **blob**; payment is per **transfer**. Upstream
+/// builds a blob's record only once *every* transfer of that blob has a tx
+/// hash (`finalize_ready_blobs`), so a blob whose transfers were split
+/// across the crash has no record and lands in the remainder — and its
+/// already-paid transfer would be bought again under a fresh quote hash.
+///
+/// That is unreachable on the pinned stack, and not by luck: single-node
+/// payment sorts the quotes by price, pays the median 3× and zeroes every
+/// other amount, so a blob has **exactly one** non-zero transfer (D37
+/// evidence row 3; S18 measured 5 transfers for 5 blobs). One transfer
+/// cannot straddle a sub-batch boundary. If a future upstream ever gives a
+/// blob two paying quotes, this needs transfer-level accounting, and the
+/// S20 bump review is where that must be caught — the symptom would be a
+/// silent overpayment, not a failure.
+///
+/// # Errors
+///
+/// [`SealError::Journal`] if a staged blob is over the D32 cap — which
+/// [`Blob::new`] already refuses, so reaching it means the journal handed
+/// out bytes it should not have. Surfaced rather than unwrapped (library
+/// code returns errors).
+fn uncovered_blobs(blobs: &[Blob], receipt: &PaymentReceipt) -> Result<Vec<Blob>, SealError> {
+    let paid: std::collections::BTreeSet<Address> =
+        receipt.blobs.iter().map(|record| record.address).collect();
+    let mut remainder = Vec::new();
+    for blob in blobs {
+        if !paid.contains(&blob_address(blob)?) {
+            remainder.push(blob.clone());
+        }
+    }
+    Ok(remainder)
+}
+
+/// S4's storage address of a blob's ciphertext (D32's rule, the same one
+/// the adapter and the manifest use).
+fn blob_address(blob: &Blob) -> Result<Address, SealError> {
+    antseal_core::storage::compute_storage_address(blob.as_bytes())
+        .map(Address::from)
+        .map_err(|_| {
+            SealError::Journal(super::journal::corrupt(
+                "a staged blob exceeds the chunk cap, which staging refuses",
+            ))
+        })
+}
+
 /// Classify a journal read failure for the staged-bytes gate: only the
 /// classes that mean "these bytes cannot be trusted to re-upload" abandon;
 /// a newer-schema record or a store failure is not one of them.
@@ -410,4 +562,607 @@ pub fn canonical_order(unit_count: u64, has_manifest: bool) -> Vec<BlobSlot> {
         slots.push(BlobSlot::EncryptedManifest);
     }
     slots
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use antseal_anchor::{AnchorGate, AnchorGateError, AnchorSubmissionOutcome};
+    use antseal_core::content::{FileFlags, SplitMode};
+    use antseal_core::crypto::secrets::SecretBuf;
+    use antseal_core::crypto::sig_policy::SigPolicy;
+    use antseal_net::test_util::{Fault, MockBackend};
+    use antseal_net::{BlobCost, BlobQuote, GasSummary, NetworkId, StorageError, TxRecord};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::{Pipeline, SealError, merge_receipts, uncovered_blobs};
+    use crate::pipeline::consent::{ConsentDecision, ConsentHook, ConsentRequest};
+    use crate::pipeline::error::NoBarriers;
+    use crate::pipeline::journal::{SealJournal, SealState};
+    use crate::pipeline::receipt_sink::VaultReceiptSink;
+    use crate::pipeline::seal::{SealFile, SealRequest};
+    use crate::pipeline::vault_journal::VaultJournal;
+    use crate::vault::kdf::KdfSelection;
+    use crate::vault::layout::VaultLayout;
+    use crate::vault::session::{UnlockedVault, create_vault, unlock_vault};
+    use crate::vault::store::{ConsentChannel, SealShapingFlags, WorkStore};
+    use antseal_net::{Address, Blob, CostQuote, PaymentReceipt, StorageBackend};
+
+    // ── the smallest doubles that let a real pipeline run ──────────────
+
+    struct YesGate;
+    impl AnchorGate for YesGate {
+        async fn run(&self, _digest: [u8; 32]) -> Result<AnchorSubmissionOutcome, AnchorGateError> {
+            Ok(AnchorSubmissionOutcome::Empty)
+        }
+    }
+
+    #[derive(Default)]
+    struct YesConsent {
+        calls: std::cell::Cell<usize>,
+        last_total: std::cell::Cell<u128>,
+    }
+    impl ConsentHook for YesConsent {
+        fn confirm(
+            &self,
+            request: &ConsentRequest<'_>,
+        ) -> Result<ConsentDecision, crate::error::CliError> {
+            self.calls.set(self.calls.get() + 1);
+            self.last_total.set(request.quote.total_ant_atto);
+            Ok(ConsentDecision::Granted {
+                channel: ConsentChannel::YesFlag,
+                at_unix_secs: 1_800_000_000,
+            })
+        }
+    }
+
+    /// A backend that emulates **exactly** what D37's hook + sink do when a
+    /// crash lands between sub-batch txs: the first `landed` blobs are
+    /// really paid for through the inner mock, the receipt covering them is
+    /// really written to the vault by the real [`VaultReceiptSink`], and
+    /// then `pay` fails.
+    ///
+    /// The mock's own `Fault::AfterSubBatches` cannot serve here on its
+    /// own: it fires *instead of* paying, and it has no capture hook, so
+    /// it can produce the error but not the durable partial receipt that
+    /// is the thing under test.
+    struct CrashesBetweenSubBatches<'m> {
+        inner: &'m MockBackend,
+        sink: Arc<VaultReceiptSink>,
+        landed: usize,
+        armed: std::cell::Cell<bool>,
+    }
+
+    impl StorageBackend for CrashesBetweenSubBatches<'_> {
+        async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+            self.inner.quote_batch(blobs).await
+        }
+
+        async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+            if !self.armed.replace(false) {
+                return self.inner.pay(quote).await;
+            }
+            // Only the first `landed` blobs' sub-batches went through.
+            let lines: Vec<BlobQuote> = quote.blobs.iter().take(self.landed).cloned().collect();
+            let total: u128 = lines
+                .iter()
+                .map(|line| match &line.cost {
+                    BlobCost::AlreadyStored => 0,
+                    BlobCost::Priced { payments, .. } => {
+                        payments.iter().map(|p| p.amount_atto).sum()
+                    }
+                })
+                .sum();
+            let partial = self
+                .inner
+                .pay(&CostQuote {
+                    blobs: lines,
+                    total_ant_atto: total,
+                    gas_estimate_wei: 0,
+                })
+                .await?;
+            // The hook, doing its one job: the receipt-so-far is on disk
+            // before anything else happens.
+            self.sink.capture(&partial);
+            Err(StorageError::StrandedPayment {
+                landed_tx_count: partial.txs.len(),
+                reason: "test: killed between sub-batch txs".into(),
+            })
+        }
+
+        async fn finalize_batch(
+            &self,
+            receipt: &PaymentReceipt,
+            blobs: &[Blob],
+        ) -> Result<Vec<Address>, StorageError> {
+            self.inner.finalize_batch(receipt, blobs).await
+        }
+
+        async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+            self.inner.get_data(address).await
+        }
+    }
+
+    // ── fixtures ──────────────────────────────────────────────────────
+
+    /// NON-SECRET test passphrase.
+    fn passphrase() -> SecretBuf {
+        SecretBuf::new(b"resume-remainder-test-passphrase".to_vec())
+    }
+
+    struct Vault {
+        dir: std::path::PathBuf,
+        vault: Arc<UnlockedVault>,
+    }
+
+    impl Vault {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "antseal-s31-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos())
+            ));
+            std::fs::create_dir_all(&dir).expect("mk dir");
+            let layout = VaultLayout::at(dir.join("vault"));
+            create_vault(
+                &layout,
+                &passphrase(),
+                KdfSelection::Argon2id,
+                &mut crate::rng::OsEntropy,
+            )
+            .expect("create vault");
+            let vault = Arc::new(unlock_vault(&layout, &passphrase()).expect("unlock"));
+            Self { dir, vault }
+        }
+    }
+
+    impl Drop for Vault {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Three blank-line-split paragraphs plus a binary file: enough units
+    /// that a crash after the first two leaves a real remainder.
+    const TEXT: &[u8] = b"alpha paragraph\n\nbeta paragraph\n\ngamma paragraph\n";
+    const BINARY: &[u8] = &[0x00, 0xFF, 0x10, 0x20, 0x30, 0x40];
+
+    fn request<'a>(files: &'a [SealFile<'a>]) -> SealRequest<'a> {
+        SealRequest {
+            files,
+            title: "S31 remainder".to_owned(),
+            claimed_time_unix_secs: 1_800_000_000,
+            app_version: "antseal-test/1".to_owned(),
+            network: NetworkId::Devnet,
+            no_anchor: true,
+            degraded: false,
+            dry_run: false,
+            sig_policy: SigPolicy::hybrid(),
+            shaping: SealShapingFlags::default(),
+        }
+    }
+
+    fn files() -> Vec<SealFile<'static>> {
+        vec![
+            SealFile {
+                path_as_given: "work.txt",
+                path_absolute: "/w/work.txt",
+                bytes: TEXT,
+                flags: FileFlags::new().with_split(SplitMode::BlankLines),
+            },
+            SealFile {
+                path_as_given: "work.bin",
+                path_absolute: "/w/work.bin",
+                bytes: BINARY,
+                flags: FileFlags::new(),
+            },
+        ]
+    }
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        antseal_net::test_util::block_on(future)
+    }
+
+    // ── the rows ──────────────────────────────────────────────────────
+
+    /// **The S31 property, at mock speed** (the cheap mirror of S18's
+    /// devnet row): a crash between sub-batch txs leaves a durable partial
+    /// receipt, and the resume buys **only the blobs that receipt does not
+    /// cover** — never re-paying the ones it does.
+    ///
+    /// The counter that settles it is the mock's cumulative quote→tx paid
+    /// map. One non-zero transfer per blob, so a correct run ends with
+    /// exactly `blob_count` entries; a resume that re-paid the covered
+    /// blobs would end with `blob_count + landed`.
+    #[test]
+    fn a_crash_between_sub_batches_resumes_by_paying_only_the_remainder() {
+        const LANDED: usize = 2;
+
+        let fx = Vault::new("remainder");
+        let mock = MockBackend::new().with_max_transfers_per_tx(1);
+        let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+        let gate = YesGate;
+        let consent = YesConsent::default();
+        let mut rng = ChaCha20Rng::from_seed([31u8; 32]);
+        let journal = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+            .with_receipt_sink(Arc::clone(&sink));
+
+        let crashing = CrashesBetweenSubBatches {
+            inner: &mock,
+            sink: Arc::clone(&sink),
+            landed: LANDED,
+            armed: std::cell::Cell::new(true),
+        };
+
+        let files = files();
+        let seal_id = {
+            let pipeline = Pipeline::new(&crashing, &gate, &journal, &consent, &NoBarriers);
+            let err =
+                block_on(pipeline.seal(&request(&files), &mut ChaCha20Rng::from_seed([32u8; 32])))
+                    .expect_err("the crash aborts the seal");
+            assert!(
+                matches!(
+                    err,
+                    SealError::Storage(StorageError::StrandedPayment { .. })
+                ),
+                "expected the stranded-payment class, got {err:?}"
+            );
+            WorkStore::new(fx.vault.as_ref())
+                .list_works()
+                .expect("enumerate")[0]
+        };
+
+        // What the sink made durable, mid-`pay`.
+        let partial = journal
+            .receipt(&seal_id)
+            .expect("journal read")
+            .expect("the sink journaled the receipt-so-far from inside pay");
+        assert_eq!(partial.blobs.len(), LANDED);
+        assert_eq!(sink.writes(), 1);
+        assert_eq!(sink.fault(), None);
+        assert_eq!(
+            journal.state(&seal_id).expect("state"),
+            SealState::Anchored,
+            "the crash left a pre-pay tag with a durable receipt on it"
+        );
+        assert_eq!(
+            mock.paid_map().len(),
+            LANDED,
+            "only the landed sub-batches moved money"
+        );
+
+        // The resume, over a healthy backend.
+        let outcome = {
+            let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+            block_on(pipeline.resume(&seal_id)).expect("the crashed work resumes")
+        };
+
+        let merged = journal
+            .receipt(&seal_id)
+            .expect("journal read")
+            .expect("journaled");
+        let staged: Vec<Blob> = {
+            let plan = journal.plan(&seal_id).expect("read").expect("plan");
+            super::canonical_order(plan.unit_count, true)
+                .into_iter()
+                .map(|slot| {
+                    Blob::new(journal.staged(&seal_id, slot).expect("staged").ciphertext)
+                        .expect("blob")
+                })
+                .collect()
+        };
+
+        assert!(
+            uncovered_blobs(&staged, &merged)
+                .expect("addresses")
+                .is_empty(),
+            "the merged receipt must cover every staged blob or finalize could not have run"
+        );
+        assert_eq!(
+            mock.paid_map().len(),
+            staged.len(),
+            "exactly one paying quote per blob across the crash — a re-pay of the covered blobs \
+             would add {LANDED} more"
+        );
+        assert_eq!(
+            mock.payment_tx_count() as usize,
+            staged.len(),
+            "one sub-batch tx per blob at cap 1, across both invocations"
+        );
+        assert!(
+            mock.double_paid().is_empty(),
+            "a quote hash was paid twice: {:?}",
+            mock.double_paid()
+        );
+        assert_eq!(
+            merged.txs.len(),
+            staged.len(),
+            "the merged receipt carries every sub-batch tx, not just the resume's"
+        );
+        assert!(
+            outcome.paid_here,
+            "the resume did move money — the remainder"
+        );
+        assert_eq!(journal.state(&seal_id).expect("state"), SealState::Complete);
+        assert_eq!(mock.stored_count(), staged.len(), "every blob is stored");
+
+        // The consent the user actually saw on the resume covered the
+        // remainder alone — exactly what was about to be spent.
+        assert_eq!(consent.calls.get(), 2, "one consent per payment");
+        assert_eq!(
+            consent.last_total.get(),
+            merged.storage_cost_atto - partial.storage_cost_atto,
+            "the resume's consent quoted the remainder, not the whole work"
+        );
+    }
+
+    /// **The second crash.** A remainder payment is itself a multi-tx
+    /// payment, so its sub-batch captures go through the same sink — and a
+    /// capture writes the receipt-so-far *of the current `pay`*, which
+    /// covers only this round's blobs. Written bare it would **overwrite**
+    /// the durable partial the first crash left, and a third invocation
+    /// would buy those blobs again: the exact hazard S31 closed, one
+    /// invocation deeper.
+    ///
+    /// So the pipeline arms the sink with the prior it must preserve, and
+    /// every capture writes the merge. The counter is the same one: one
+    /// paying quote per blob, however many crashes it took.
+    #[test]
+    fn a_crash_during_the_remainder_keeps_what_the_first_crash_paid_for() {
+        const LANDED_FIRST: usize = 2;
+        const LANDED_SECOND: usize = 1;
+
+        let fx = Vault::new("double");
+        let mock = MockBackend::new().with_max_transfers_per_tx(1);
+        let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+        let gate = YesGate;
+        let consent = YesConsent::default();
+        let mut rng = ChaCha20Rng::from_seed([35u8; 32]);
+        let journal = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+            .with_receipt_sink(Arc::clone(&sink));
+
+        let files = files();
+        let crash = |landed: usize| CrashesBetweenSubBatches {
+            inner: &mock,
+            sink: Arc::clone(&sink),
+            landed,
+            armed: std::cell::Cell::new(true),
+        };
+
+        // Crash one: two sub-batches land, then `pay` dies.
+        let first = crash(LANDED_FIRST);
+        block_on(
+            Pipeline::new(&first, &gate, &journal, &consent, &NoBarriers)
+                .seal(&request(&files), &mut ChaCha20Rng::from_seed([36u8; 32])),
+        )
+        .expect_err("the first crash aborts the seal");
+        let seal_id = WorkStore::new(fx.vault.as_ref())
+            .list_works()
+            .expect("enumerate")[0];
+        assert_eq!(
+            journal
+                .receipt(&seal_id)
+                .expect("read")
+                .expect("durable")
+                .blobs
+                .len(),
+            LANDED_FIRST
+        );
+
+        // Crash two: the remainder pay lands one more sub-batch, then dies.
+        let second = crash(LANDED_SECOND);
+        block_on(Pipeline::new(&second, &gate, &journal, &consent, &NoBarriers).resume(&seal_id))
+            .expect_err("the second crash aborts the resume");
+
+        let after_two = journal
+            .receipt(&seal_id)
+            .expect("read")
+            .expect("still durable");
+        assert_eq!(
+            after_two.blobs.len(),
+            LANDED_FIRST + LANDED_SECOND,
+            "the remainder's capture overwrote the first crash's records instead of extending \
+             them — everything the first payment bought is now stranded"
+        );
+        assert_eq!(
+            after_two.txs.len(),
+            LANDED_FIRST + LANDED_SECOND,
+            "the merged receipt must carry both rounds' transactions"
+        );
+
+        // The third invocation finishes it, buying only what is still owed.
+        block_on(Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers).resume(&seal_id))
+            .expect("the twice-crashed work resumes");
+
+        let staged_count = journal
+            .plan(&seal_id)
+            .expect("read")
+            .expect("plan")
+            .unit_count as usize
+            + 1;
+        assert_eq!(
+            mock.paid_map().len(),
+            staged_count,
+            "exactly one paying quote per blob across TWO crashes"
+        );
+        assert_eq!(journal.state(&seal_id).expect("state"), SealState::Complete);
+        assert_eq!(mock.stored_count(), staged_count);
+        assert_eq!(sink.fault(), None);
+    }
+
+    /// The pre-S31 behaviour, kept as the red direction: **without** a
+    /// durable sink the same crash leaves no receipt at all, so the resume
+    /// re-quotes and pays for the whole work — the already-paid sub-batches
+    /// a second time.
+    ///
+    /// This is what makes the row above a result rather than a tautology.
+    #[test]
+    fn without_a_durable_sink_the_same_crash_re_pays_the_landed_sub_batches() {
+        const LANDED: usize = 2;
+
+        let fx = Vault::new("nosink");
+        let mock = MockBackend::new().with_max_transfers_per_tx(1);
+        let gate = YesGate;
+        let consent = YesConsent::default();
+        let mut rng = ChaCha20Rng::from_seed([33u8; 32]);
+        // No `.with_receipt_sink(..)` — the tree as it stood before S31.
+        let journal = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng);
+
+        let files = files();
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+        mock.arm_fault(Fault::AfterSubBatches(LANDED));
+        block_on(pipeline.seal(&request(&files), &mut ChaCha20Rng::from_seed([34u8; 32])))
+            .expect_err("the crash aborts the seal");
+        let seal_id = WorkStore::new(fx.vault.as_ref())
+            .list_works()
+            .expect("enumerate")[0];
+
+        assert!(
+            journal.receipt(&seal_id).expect("read").is_none(),
+            "no sink, no durable receipt — this is the hazard S31 closed"
+        );
+        let paid_before = mock.paid_map().len();
+        assert_eq!(
+            paid_before, LANDED,
+            "money moved for the landed sub-batches"
+        );
+
+        block_on(Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers).resume(&seal_id))
+            .expect("the resume completes — by paying again");
+
+        let staged_count = {
+            let plan = journal.plan(&seal_id).expect("read").expect("plan");
+            plan.unit_count as usize + 1
+        };
+        assert_eq!(
+            mock.paid_map().len(),
+            paid_before + staged_count,
+            "the sinkless resume paid for the WHOLE work again — the {LANDED} already-paid \
+             sub-batches included. That is the cost D37 Decision 2 promised was impossible and \
+             S31 made so."
+        );
+    }
+
+    /// `uncovered_blobs` keys on the S4 address, which is the same key
+    /// `finalize_batch` resolves a record by — so "uncovered" and
+    /// "refused there" cannot drift apart.
+    #[test]
+    fn uncovered_is_by_storage_address_not_by_position() {
+        let blobs: Vec<Blob> = [b"one".as_slice(), b"two".as_slice(), b"three".as_slice()]
+            .into_iter()
+            .map(|b| Blob::new(b.to_vec()).expect("blob"))
+            .collect();
+        let covered = |blob: &Blob| super::blob_address(blob).expect("address");
+
+        // A receipt covering the LAST blob only, in no particular order.
+        let receipt = PaymentReceipt {
+            blobs: vec![antseal_net::BlobPaymentRecord {
+                address: covered(&blobs[2]),
+                payments: Vec::new(),
+                peer_quotes: Vec::new(),
+                commitment_sidecars: Vec::new(),
+                proof_bytes: Vec::new(),
+            }],
+            tx_map: std::collections::BTreeMap::new(),
+            txs: Vec::new(),
+            storage_cost_atto: 0,
+            gas: GasSummary { gas_cost_wei: 0 },
+        };
+        let remainder = uncovered_blobs(&blobs, &receipt).expect("addresses");
+        assert_eq!(remainder.len(), 2);
+        assert_eq!(remainder[0].as_bytes(), b"one");
+        assert_eq!(remainder[1].as_bytes(), b"two");
+
+        // An empty receipt covers nothing; a receipt over all of them
+        // covers everything.
+        assert_eq!(
+            uncovered_blobs(&blobs, &receipt_over(&blobs))
+                .expect("addresses")
+                .len(),
+            0
+        );
+    }
+
+    fn receipt_over(blobs: &[Blob]) -> PaymentReceipt {
+        PaymentReceipt {
+            blobs: blobs
+                .iter()
+                .map(|blob| antseal_net::BlobPaymentRecord {
+                    address: super::blob_address(blob).expect("address"),
+                    payments: Vec::new(),
+                    peer_quotes: Vec::new(),
+                    commitment_sidecars: Vec::new(),
+                    proof_bytes: Vec::new(),
+                })
+                .collect(),
+            tx_map: std::collections::BTreeMap::new(),
+            txs: Vec::new(),
+            storage_cost_atto: 0,
+            gas: GasSummary { gas_cost_wei: 0 },
+        }
+    }
+
+    /// The merge keeps the prior records **first** and adds, never
+    /// replaces: `finalize_batch` resolves a blob by the first matching
+    /// address, and the durable prior is the half whose proofs the network
+    /// was already paid for.
+    #[test]
+    fn merging_keeps_prior_records_first_and_sums_the_cost() {
+        let tx = |n: u8| antseal_net::TxHash::from_bytes([n; 32]);
+        let qh = |n: u8| antseal_net::QuoteHash::from_bytes([n; 32]);
+        let record = |addr: u8| antseal_net::BlobPaymentRecord {
+            address: Address::from([addr; 32]),
+            payments: Vec::new(),
+            peer_quotes: Vec::new(),
+            commitment_sidecars: Vec::new(),
+            proof_bytes: vec![addr],
+        };
+        let prior = PaymentReceipt {
+            blobs: vec![record(1)],
+            tx_map: [(qh(1), tx(1))].into_iter().collect(),
+            txs: vec![TxRecord {
+                tx_hash: tx(1),
+                block_number: Some(7),
+                status: antseal_net::TxStatus::Confirmed,
+                quote_hashes: vec![qh(1)],
+            }],
+            storage_cost_atto: 100,
+            gas: GasSummary { gas_cost_wei: 5 },
+        };
+        let fresh = PaymentReceipt {
+            blobs: vec![record(2)],
+            tx_map: [(qh(2), tx(2))].into_iter().collect(),
+            txs: vec![TxRecord {
+                tx_hash: tx(2),
+                block_number: Some(8),
+                status: antseal_net::TxStatus::Confirmed,
+                quote_hashes: vec![qh(2)],
+            }],
+            storage_cost_atto: 40,
+            gas: GasSummary { gas_cost_wei: 3 },
+        };
+
+        let merged = merge_receipts(prior, fresh);
+        assert_eq!(
+            merged
+                .blobs
+                .iter()
+                .map(|b| b.proof_bytes[0])
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "prior first"
+        );
+        assert_eq!(merged.tx_map.len(), 2);
+        assert_eq!(merged.txs.len(), 2);
+        assert_eq!(merged.storage_cost_atto, 140, "the seal's total cost");
+        assert_eq!(merged.gas.gas_cost_wei, 8);
+        assert!(
+            merged.covers_all_paid_quotes(),
+            "the merged map must satisfy finalize's gap rule"
+        );
+    }
 }

@@ -399,9 +399,33 @@ re-paid; a fresh quote round mints fresh quote hashes, which is precisely
 why the durable prior — not a re-derivation — is the only thing that can
 identify what was already bought.
 
+**The merge is not only the final write.** A remainder payment is itself a
+multi-tx payment, so its own sub-batch captures go through the same sink —
+and a capture carries the receipt-so-far *of the current `pay`*, covering
+only this round. Written bare, the first capture of a remainder would
+**overwrite** the durable partial the previous crash left, and a second
+crash would strand everything the first payment bought: the same hazard,
+one invocation deeper. So the sink is armed with the prior it must preserve
+and every capture writes `merge(prior, so-far)` — idempotent, because
+`prior` is fixed and disjoint from anything this round can produce.
+
 The proofs-expired re-payment path (Decision 6, as corrected) deliberately
-does **not** merge: there the prior proofs are the thing being replaced, and
-merging would leave `finalize_batch` matching a stale record first.
+does **not** merge — at the captures or at the end: there the prior proofs
+are the thing being replaced, and merging would leave `finalize_batch`
+matching a stale record first.
+
+**A granularity caveat, recorded because it is invisible from the code
+alone.** "Covered" is a per-**blob** predicate; payment is per-**transfer**.
+Upstream emits a blob's record only once every transfer of that blob has a
+tx hash, so a blob whose transfers straddled the crash has no record, lands
+in the remainder, and its already-paid transfer would be bought again under
+a fresh quote hash. This is unreachable on the pinned stack and not by
+luck — evidence row 3: single-node payment pays the price-sorted median 3×
+and zeroes every other amount, so a blob has exactly one non-zero transfer,
+and one transfer cannot straddle a boundary. It is listed here because the
+symptom of an upstream change would be a **silent overpayment**, not a
+failure, which makes it an S20 bump-review item rather than something a test
+will find.
 
 ### What is now true, and what remains false
 

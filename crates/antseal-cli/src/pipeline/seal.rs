@@ -389,7 +389,14 @@ where
         // ── consent → anchor gate → pay → journal → finalize ──
         let digest = anchor_digest(&manifest_bytes).into_bytes();
         let receipt = self
-            .consent_anchor_pay(&seal_id, &quote, Some(digest), request.no_anchor, false)
+            .consent_anchor_pay(
+                &seal_id,
+                &quote,
+                Some(digest),
+                request.no_anchor,
+                false,
+                None,
+            )
             .await?;
         let addresses = self.finalize(&seal_id, &receipt, &blobs).await?;
         let plan = SealPlan {
