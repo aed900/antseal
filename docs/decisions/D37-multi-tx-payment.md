@@ -282,3 +282,152 @@ at the S20 review.
   checks age before moving tokens" — which is *reinforced* here. Only its
   secondary clause ("storers enforce ~24 h `QUOTE_MAX_AGE_SECS`") inherits
   this correction; a dated pointer is appended to that record.
+
+---
+
+## Amendment — 2026-08-02 (S31, lane m1-s31): Decision 2's per-sub-batch
+## durability is now implemented, and Decision 5 is extended to the
+## unpaid remainder
+
+**What this record claimed without an implementation.** Decision 2 states
+that `pay()` journals each sub-batch's record *before submitting the next*,
+so "a crash mid-sequence can therefore lose at most the one tx currently
+inside the pay→journal atomicity window". U36 built the seam that makes the
+timing expressible — `SealBackend::connect` takes a `ReceiptSink` and
+installs the hook itself — but until this amendment **no sink in the tree
+wrote anything durable**. The three implementations were `ReadOnly` (logs an
+error and drops the receipt), a counting double, and S18's in-memory
+`CapturedReceipts`; the only durable write was the pipeline's own
+`put_receipt`, which runs *after* `pay` returns. A crash between sub-batch
+txs therefore lost every receipt so far and the resume re-paid every
+already-paid sub-batch — the F41 class (a recorded guarantee the code did
+not implement), recorded as S31 by S18 when its accept row 2 turned out to
+be untestable.
+
+### The decisive fact: where the hook fires, and who can run when it does
+
+S31 offered (a) a sink owning its own store session behind a `Mutex`,
+(b) a channel-backed sink drained by the pipeline between sub-batches, or
+(c) narrowing the claim. **(b) is refuted, and the refutation is not about
+where the hook fires.**
+
+The hook fires in exactly the right place. `ant_backend.rs`'s sub-batch loop
+runs `send_transaction` → `get_receipt` → `tx_map` update →
+`finalize_ready_blobs` → `emit_capture` at the **end** of iteration `N`
+(`:906-920`), and iteration `N+1` submits at `:816`. So the capture for
+sub-batch `N` is delivered strictly after `N` lands and strictly before
+`N+1` is submitted, exactly as Decision 2 requires.
+
+What (b) gets wrong is *who is able to do anything about it*. `CaptureHook`
+is `Arc<dyn Fn(&PaymentReceipt) + Send + Sync>` — **synchronous**, called
+inline from `pay`'s own body, while the pipeline's future is suspended at
+`self.backend.pay(quote).await` **in the same task**. A channel `send`
+returns as soon as the value is queued, and the pipeline cannot dequeue it,
+because the pipeline is the caller currently blocked inside the call that
+fired the hook. To drain, the pipeline must run concurrently — and under
+`select!` the drain branch is polled only when `pay` yields, whose next
+yield point is *inside* `send_transaction` for tx `N+1`. **The write would
+land after the next submission, not before it.** (b) narrows the window
+probabilistically and never closes it.
+
+The only way to make (b) close it is to have the hook **block** until a
+drainer acknowledges the write. The drainer cannot be the same task
+(guaranteed deadlock: the blocked hook is what the poll is inside), so it
+must be another thread holding the journal behind a lock — which is
+**option (a) plus a scoped thread and two channels**, with one extra failure
+mode (a hook that hangs forever after money has moved). (a) strictly
+dominates.
+
+A fourth option the register did not name was weighed and rejected:
+**(d) split `pay` into per-sub-batch calls the pipeline drives**, which
+would put the write unambiguously on the pipeline's side with no `'static`
+problem at all. It fails on containment: `MAX_TRANSFERS_PER_TRANSACTION`,
+the transfer-vs-blob arithmetic and the sub-batch cursor would leave the one
+adapter file (project rule 1), and S2's batch-first trait would change shape
+— for a guarantee (a) already delivers without touching either.
+
+### Decision 7 (new) — the durable sink
+
+`pay()`'s per-sub-batch journal write is performed by
+`antseal_cli::pipeline::VaultReceiptSink`: a `Send + Sync + 'static` sink
+owning `Arc<UnlockedVault>` and, behind one `Mutex`, its own `WorkStore`
+session plus an OS CSPRNG. `capture()` performs U9's atomic + fsync'd
+`put_receipt` **inline**, so the hook returns only once the receipt-so-far
+is on disk — and only then does the loop submit the next sub-batch. This is
+Decision 2's ordering with no race in it.
+
+Three properties the shape had to preserve, each checked rather than
+assumed:
+
+- **Secret lifetime (U6/U9).** The sink holds `Arc<UnlockedVault>`, not a
+  copy of the vault key. `UnlockedVault` stays `!Clone`; there is still
+  exactly one `VaultKey` in the process and it still zeroizes on the single
+  drop — the change is stack ownership → one heap cell. The new obligation
+  is that the `Arc` must not outlive the command, which is asserted
+  (`Arc::strong_count` back to 1 once the backend and journal are dropped).
+- **U5's single-writer lock.** The sink **never acquires** it. U5 refuses a
+  same-process double-acquire by design (two open file descriptions), so a
+  sink that tried would deadlock the command against itself. The command's
+  existing hold covers the sink's writes, and sink-vs-pipeline concurrency
+  is structurally impossible for the same reason (b) fails: the pipeline is
+  suspended inside `pay` whenever a capture runs.
+- **S10 keeps journal ownership.** The sink writes *the receipt record only*
+  and nothing else — no state transitions, no plan, no staging. Which work
+  it writes to is supplied by the pipeline through
+  `SealJournal::arm_receipts`, a provided no-op that `VaultJournal`
+  overrides, called immediately before `pay` on **every** path that can pay.
+
+### Decision 5, extended: the resume pays only the unpaid remainder
+
+Decision 3 already ruled that a post-error resume "treats mapped quotes as
+paid and pays only the unpaid remainder" — but only for the native
+fallback. The durable sink makes the same situation reachable on the
+**primary** flow, and Decision 5 as written did not cover it: it assumed the
+journaled receipt covers every blob. A partial receipt does not, and
+`finalize_batch` correctly refuses one (`"no payment record for unstored
+blob"` — it does *not* re-pay, so the pre-amendment failure was a hard stop,
+not a second payment, once a partial receipt existed at all).
+
+So Decision 5 gains: when the journaled receipt covers only some staged
+blobs, the resume re-quotes **the uncovered blobs alone**, runs the D36
+consent gate over that remainder quote, pays it, and journals the **merge**
+of the durable prior and the fresh receipt — never the fresh receipt alone,
+which would erase the records the sink paid for. The merged receipt is what
+`finalize_batch` then consumes, so every blob is paid for exactly once
+across the crash. The already-paid quote hashes are *not* re-quoted and *not*
+re-paid; a fresh quote round mints fresh quote hashes, which is precisely
+why the durable prior — not a re-derivation — is the only thing that can
+identify what was already bought.
+
+The proofs-expired re-payment path (Decision 6, as corrected) deliberately
+does **not** merge: there the prior proofs are the thing being replaced, and
+merging would leave `finalize_batch` matching a stale record first.
+
+### What is now true, and what remains false
+
+**True.** A `SIGKILL` between sub-batch txs of a multi-tx payment loses no
+receipt: every landed sub-batch is on disk before the next is submitted, and
+the resume pays only the remainder. Proven live on a 14-node devnet in both
+directions — with the durable sink the kill+resume costs exactly one tx per
+sub-batch, and with the same kill against a non-durable sink it re-pays
+(S18's new rows).
+
+**Still false / still owed.**
+
+1. **The sink must be attached by the caller.** `VaultJournal::with_receipt_sink`
+   can be forgotten, and a journal without one behaves exactly as it did
+   before this amendment. The *arming* is structural (the pipeline arms on
+   every paying path); the *attaching* is not. This is the residual S27
+   class one level up, and it belongs to U13's `seal` command wiring, which
+   does not exist yet — recorded as **S36**. Until it lands, only the M1
+   devnet harness constructs the production pairing.
+2. **A sink write that fails is recorded, not surfaced.** `capture()` must
+   not panic (money has moved; it runs between two transactions), so an I/O
+   or cipher failure is stored in the sink's fault slot and logged. The
+   pipeline does not yet turn that into a user-visible error on the
+   `pay`-errored path, where it is the one case that matters — recorded as
+   **S37**.
+3. **Nothing here changes what the sink does for non-paying commands.**
+   `ReadOnly` remains correct for `restore`/`verify --live`/`status
+   --upgrade`: those paths do not pay, and a receipt arriving there is a bug
+   that should be loud.
