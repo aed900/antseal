@@ -16,6 +16,7 @@
 //! must succeed fully offline, and the WASM build must bit-match native
 //! verification.
 
+pub mod anchor;
 pub mod bundle;
 pub mod canon;
 pub mod codec;
