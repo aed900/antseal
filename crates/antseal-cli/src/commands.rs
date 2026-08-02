@@ -326,6 +326,11 @@ pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<
         None => PathBuf::from(default_export_name(now_unix_secs())),
     };
     let summary = export_vault(&vault, &passphrase, &out_path, &mut OsEntropy)?;
+    // U18/U34: record the export **after** the file is written and
+    // self-verified, never before — the flag that stops the nag must mean
+    // "a backup exists", and a bookkeeping write that ran first would
+    // silence the nag for an export that then failed.
+    crate::vault::bookkeeping::record_export(&vault, now_unix_secs(), &mut OsEntropy)?;
 
     ui.line(&format!(
         "Exported {} work record(s) to {} ({} bytes; self-verified by a full re-read \

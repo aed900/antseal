@@ -150,4 +150,12 @@ impl VaultLayout {
     pub fn wallet_record_path(&self) -> PathBuf {
         self.store_root().join("wallet")
     }
+
+    /// The vault-global bookkeeping record slot (`store/bookkeeping`,
+    /// U34): facts about the vault itself rather than about any work.
+    /// Beside `check` and `wallet`, the store's three singletons.
+    #[must_use]
+    pub fn bookkeeping_record_path(&self) -> PathBuf {
+        self.store_root().join("bookkeeping")
+    }
 }

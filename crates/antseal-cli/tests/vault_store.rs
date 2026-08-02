@@ -280,14 +280,62 @@ fn tamper_body_missing_and_extra_keys() {
         VaultHeader::decode(&craft(1, &short)),
         Err(HeaderError::Schema { .. })
     ));
-    // Three entries.
-    let long = craft_body(&[
+    // Three entries — valid *arity* since U8 added the optional
+    // `2: keyfile_path`, so the refusals move to the field's own rules
+    // rather than to the arity check. Each is still a refusal.
+    //
+    // (a) key 2 present but not a byte string: a codec error.
+    let wrong_type = craft_body(&[
         (0, BodyValue::Bytes(&KDF_PLACEHOLDER)),
         (1, BodyValue::Uint(0)),
         (2, BodyValue::Uint(0)),
     ]);
     assert!(matches!(
-        VaultHeader::decode(&craft(1, &long)),
+        VaultHeader::decode(&craft(1, &wrong_type)),
+        Err(HeaderError::Codec { .. })
+    ));
+    // (b) a well-formed path on a wrap mode that has no keyfile — the
+    //     cross-field rule, and the reason `decode` runs the constructor
+    //     instead of a second copy of it (constructible ≡ decodable).
+    let path_without_wrap = craft_body(&[
+        (0, BodyValue::Bytes(&KDF_PLACEHOLDER)),
+        (1, BodyValue::Uint(0)),
+        (2, BodyValue::Bytes(b"/media/usb/k")),
+    ]);
+    assert!(matches!(
+        VaultHeader::decode(&craft(1, &path_without_wrap)),
+        Err(HeaderError::KeyfilePath { .. })
+    ));
+    // (c) an empty path on the keyfile mode: also the field's rule.
+    let empty_path = craft_body(&[
+        (0, BodyValue::Bytes(&KDF_PLACEHOLDER)),
+        (1, BodyValue::Uint(1)),
+        (2, BodyValue::Bytes(b"")),
+    ]);
+    assert!(matches!(
+        VaultHeader::decode(&craft(1, &empty_path)),
+        Err(HeaderError::KeyfilePath { .. })
+    ));
+    // (d) three entries whose third key is not 2: still the arity/shape
+    //     class, because the schema names which keys may appear.
+    let wrong_third = craft_body(&[
+        (0, BodyValue::Bytes(&KDF_PLACEHOLDER)),
+        (1, BodyValue::Uint(0)),
+        (3, BodyValue::Uint(0)),
+    ]);
+    assert!(matches!(
+        VaultHeader::decode(&craft(1, &wrong_third)),
+        Err(HeaderError::Schema { .. })
+    ));
+    // (e) four entries: over the schema's arity in every mode.
+    let four = craft_body(&[
+        (0, BodyValue::Bytes(&KDF_PLACEHOLDER)),
+        (1, BodyValue::Uint(1)),
+        (2, BodyValue::Bytes(b"/k")),
+        (3, BodyValue::Uint(0)),
+    ]);
+    assert!(matches!(
+        VaultHeader::decode(&craft(1, &four)),
         Err(HeaderError::Schema { .. })
     ));
     // Right arity, wrong keys.

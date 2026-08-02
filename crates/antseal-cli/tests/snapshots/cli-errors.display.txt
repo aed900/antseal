@@ -50,6 +50,10 @@
   insufficient ANT for this seal: the quote needs 1500000000000000000 atto-ANT but the wallet holds 20000000000000000; fund the wallet with ANT and re-run (nothing was paid or uploaded)
 [insufficient-eth-gas] class=insufficient-eth-gas code=21
   insufficient ETH for gas: the payment transaction needs about 90000000000000 wei but the wallet holds 1000000000; fund the wallet with ETH for gas and re-run (nothing was paid or uploaded)
+[vault-keyfile-missing] class=vault-keyfile-missing code=18
+  the vault's keyfile could not be read from /media/usb/antseal-keyfile.bin (No such file or directory (os error 2)). This vault was created with a keyfile wrap (D50 mode 1), so the keyfile is required alongside the passphrase at every unlock. Point at it with ANTSEAL_KEYFILE=<path> if it has moved; without it the vault cannot be opened by anyone, including you
+[vault-wrap-mode-unsupported] class=vault-wrap-mode-unsupported code=19
+  this vault uses wrap mode 2 (os-keystore, reserved (D50)), which this build does not implement. The mode is a registered id, not corruption: the vault is intact and a build that implements it will open it. Nothing was changed
 [anchor-gate-abort] class=anchor-gate-abort code=22
   no RFC 3161 timestamp token could be obtained, so the seal aborts before anything is paid or uploaded (the anchor gate); re-run when a TSA is reachable, or pass --force-degraded to proceed with a loudly recorded degraded anchor set
 [network-failure] class=network-failure code=23
@@ -57,11 +61,11 @@
 [resume-source-changed] class=resume-safety-abort code=24
   resume safety abort: a source file changed since the interrupted seal: resume never re-encrypts (re-using a journaled nonce on new plaintext would break the encryption), so this seal is abandoned; re-run `antseal seal` to start a fresh one
 [resume-staged-bytes-missing] class=resume-safety-abort code=24
-  resume safety abort: the staged ciphertext bytes of the interrupted seal are missing from the vault: resume never re-encrypts, so this seal is abandoned; re-run `antseal seal` to start a fresh one (any payment already made is forfeited — the deliberate safety-over-cost choice)
+  resume safety abort: the staged ciphertext bytes of the interrupted seal are missing from the vault: resume never re-encrypts, so this seal is abandoned; re-run `antseal seal` to start a fresh one, which draws a NEW seal_id and freshly generated nonces and therefore produces a different work-id (any payment already made is forfeited — the deliberate safety-over-cost choice: a reused (k_u, nonce) pair would destroy the confidentiality of everything encrypted under it)
 [resume-overlap-not-exact] class=resume-overlap-not-exact code=25
-  these inputs overlap an incomplete seal without matching it exactly (2 of 3 paths match incomplete work a1b2c3): re-run with exactly the original path list to resume it, with a disjoint path list to start a fresh seal, or abandon it first (D45)
+  these inputs overlap an incomplete seal without matching it exactly (2 of 3 paths match incomplete work a1b2c3): re-run with exactly the original path list to resume it, or with a disjoint path list to start a fresh seal — `antseal list` shows the incomplete seal and the exact command that finishes it (D45)
 [resume-flag-mismatch] class=resume-flag-mismatch code=26
-  these inputs match an incomplete seal but the seal-shaping flags differ (incomplete work a1b2c3 was started without --split): re-run with the original flags to resume, or abandon the incomplete seal first (D45)
+  these inputs match an incomplete seal but the seal-shaping flags differ (incomplete work a1b2c3 was started without --split): re-run with the original flags to resume and finish it. This build has no way to discard a staged work, so finishing it — or sealing a copy under a different path — are the two ways forward; `antseal list` shows it (D45)
 [invalid-seal-argument-one] class=invalid-seal-argument code=27
   invalid seal argument: ./src is a directory (seal takes files only)
 [invalid-seal-argument-many] class=invalid-seal-argument code=27

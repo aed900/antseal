@@ -19,15 +19,45 @@ use std::path::{Path, PathBuf};
 
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
+use antseal_cli::listing::WorkListing;
+use antseal_cli::pipeline::{SealJournal, VaultJournal};
 use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
+use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
+use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
+use antseal_cli::vault::bookkeeping::{self, LOSS_WARNING, THEFT_WARNING};
 use antseal_cli::vault::store::{WorkState, WorkStore};
+use antseal_core::crypto::secrets::SealId;
 use antseal_net::test_util::{Method, MockBackend, block_on};
 use antseal_net::{BalanceReport, network::EvmAddress20};
 use common::IsolatedVault;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+/// A NON-SECRET, structurally complete fixture receipt (one sub-batch
+/// tx): the money-moved evidence the abandon guard reads. Every value is
+/// an obviously synthetic byte pattern.
+fn fixture_receipt() -> antseal_net::PaymentReceipt {
+    use antseal_net::{GasSummary, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus};
+
+    let quote = QuoteHash::from_bytes([0xB1; 32]);
+    let tx = TxHash::from_bytes([0xB2; 32]);
+    PaymentReceipt {
+        blobs: Vec::new(),
+        tx_map: [(quote, tx)].into_iter().collect(),
+        txs: vec![TxRecord {
+            tx_hash: tx,
+            block_number: Some(42),
+            status: TxStatus::Confirmed,
+            quote_hashes: vec![quote],
+        }],
+        storage_cost_atto: 4_200,
+        gas: GasSummary {
+            gas_cost_wei: 21_000,
+        },
+    }
+}
 
 /// NON-SECRET fixture wallet address: a repeated byte pattern.
 const FIXTURE_WALLET: [u8; 20] = [0x5A; 20];
@@ -766,6 +796,10 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     );
 }
 
+/// D49's scriptable-funding-gate row, **both** shortfalls: a dry run exits
+/// with the same distinct code the real seal would use, so `--dry-run`
+/// works as a preflight in a script that branches on which asset is short
+/// (acquire ANT vs bridge ETH are different remedies).
 #[test]
 fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
     let work = Work::new("dryshort");
@@ -773,27 +807,541 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
     let plan = work
         .plan(&["a.txt", "--no-anchor", "--dry-run"])
         .expect("plan validates");
-
-    let backend = MockBackend::new().with_balances(BalanceReport {
-        wallet: EvmAddress20::from_bytes(FIXTURE_WALLET),
-        ant_atto: 0,
-        gas_wei: u128::from(u64::MAX),
-    });
     let vault = IsolatedVault::create("seal-dryshort");
+
+    for (ant, gas, class, code) in [
+        (
+            0u128,
+            u128::from(u64::MAX),
+            ErrorClass::InsufficientAntToken,
+            20,
+        ),
+        (
+            u128::from(u64::MAX),
+            0u128,
+            ErrorClass::InsufficientEthGas,
+            21,
+        ),
+    ] {
+        let backend = MockBackend::new().with_balances(BalanceReport {
+            wallet: EvmAddress20::from_bytes(FIXTURE_WALLET),
+            ant_atto: ant,
+            gas_wei: gas,
+        });
+        let unlocked = vault.unlock();
+        let err = block_on(run_seal(
+            &backend,
+            &unlocked,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut ChaCha20Rng::from_seed([0xA1; 32]),
+            &mut ChaCha20Rng::from_seed([0xA2; 32]),
+        ))
+        .expect_err("a dry run is a scriptable funding gate (D49)");
+        assert_eq!(err.class(), class);
+        assert_eq!(err.exit_code(), code);
+        // The gate refused, and it refused *before* anything could move.
+        assert_eq!(backend.calls(Method::Pay), 0);
+        assert_eq!(backend.calls(Method::FinalizeBatch), 0);
+    }
+}
+
+/// U16 Accept row 4's first half: `--dry-run` combined with the flags that
+/// would otherwise change what happens — `--yes` (which consents in
+/// advance) and `--force-degraded` (which relaxes the anchor policy) —
+/// still performs **no** side effects.
+///
+/// `--yes` is the one that matters. It is the flag that makes a real seal
+/// pay without asking, so a dry run that honoured it would be a rehearsal
+/// that buys the thing it was rehearsing. The prompt here is `NeverAsked`
+/// and the mock's pay counter is the proof: neither the consent gate nor
+/// the payment path is reached at all.
+#[test]
+fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
+    let work = Work::new("drycombo");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&[
+            "a.txt",
+            "--no-anchor",
+            "--dry-run",
+            "--yes",
+            "--force-degraded",
+        ])
+        .expect("plan validates");
+    assert!(plan.yes, "--yes parsed");
+    assert!(plan.shaping.force_degraded, "--force-degraded parsed");
+
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-drycombo");
+    let before = vault.fingerprint();
     let unlocked = vault.unlock();
 
-    let err = block_on(run_seal(
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        // A dry run must not reach the gate even with `--yes`: `--yes`
+        // answers a question that is never asked here.
+        &mut NeverAsked,
+        &ctx(false),
+        &mut ChaCha20Rng::from_seed([0xD1; 32]),
+        &mut ChaCha20Rng::from_seed([0xD2; 32]),
+    ))
+    .expect("the dry run completes");
+
+    let SealCommandResult::DryRun(report) = &result else {
+        panic!("--dry-run returns DryRun even with --yes, got {result:?}");
+    };
+    // Accept row 3's contents, on the flag combination as well: files,
+    // byte totals, and the cost carrying D49's indicative label.
+    let rendered = result.render().join("\n");
+    assert!(
+        rendered.contains("Sealing 1 file(s), 29 byte(s)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("a.txt  (29 bytes)"), "{rendered}");
+    assert!(rendered.contains("Cost (indicative):"), "{rendered}");
+    assert!(report.dry_run);
+
+    assert_eq!(backend.calls(Method::QuoteBatch), 1);
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(backend.calls(Method::FinalizeBatch), 0);
+
+    // No work record was created — `--yes` did not turn the rehearsal into
+    // a seal, and the vault is byte-identical.
+    assert_eq!(
+        WorkStore::new(&unlocked).list_works().expect("list").len(),
+        0
+    );
+    drop(unlocked);
+    assert_eq!(
+        before,
+        vault.fingerprint(),
+        "--dry-run --yes --force-degraded must still leave the vault untouched (D49)"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U18: the first-seal export nag, and the double nag it carries
+// ─────────────────────────────────────────────────────────────────────
+
+/// U18 Accept row 1: a first seal in a vault with no recorded export
+/// nags; after `vault export` records one, later seals do not.
+///
+/// The nag is read from the U34 bookkeeping record rather than inferred,
+/// which is what makes the second half true at all — before that slot
+/// existed the only honest options were "nag forever" or "never nag".
+#[test]
+fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it() {
+    let work = Work::new("nag");
+    work.file("a.txt", b"content").file("b.txt", b"more");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-nag");
+    let unlocked = vault.unlock();
+
+    let first = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &first,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x71; 32]),
+        &mut ChaCha20Rng::from_seed([0x72; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(report.export_nag, "no export recorded yet");
+
+    // Both failure modes, in the words `init` already used (one author).
+    let rendered = report.render().join("\n");
+    assert!(rendered.contains("NO BACKUP YET"), "{rendered}");
+    assert!(rendered.contains("antseal vault export"), "{rendered}");
+    assert!(rendered.contains(LOSS_WARNING), "{rendered}");
+    assert!(rendered.contains(THEFT_WARNING), "{rendered}");
+    assert!(rendered.contains("LOSS"), "{rendered}");
+    assert!(rendered.contains("THEFT"), "{rendered}");
+    assert!(
+        rendered.contains("retroactively and permanently"),
+        "{rendered}"
+    );
+    // U31 positioning: a backup warning makes no legal claim.
+    let lower = rendered.to_lowercase();
+    assert!(!lower.contains("notary"), "{rendered}");
+    assert!(!lower.contains("priority"), "{rendered}");
+    // Machine consumers see it too (a scripted seal never reads stderr).
+    assert_eq!(report.json()["export_nag"], true);
+
+    // The nag is the same copy `init` closes with — asserted against the
+    // real producer, not a hand-copied string.
+    let init_copy = antseal_cli::init::standing_warnings().join("\n");
+    assert!(init_copy.contains(LOSS_WARNING));
+    assert!(init_copy.contains(THEFT_WARNING));
+
+    // Record an export, then seal again: silence.
+    bookkeeping::record_export(
+        &unlocked,
+        1_800_000_000,
+        &mut ChaCha20Rng::from_seed([0x73; 32]),
+    )
+    .expect("record the export");
+    let second = work
+        .plan(&["b.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &second,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x74; 32]),
+        &mut ChaCha20Rng::from_seed([0x75; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(!report.export_nag, "the backup is recorded; stop nagging");
+    let rendered = report.render().join("\n");
+    assert!(!rendered.contains("NO BACKUP YET"), "{rendered}");
+    assert!(!rendered.contains("LOSS"), "{rendered}");
+    assert_eq!(report.json()["export_nag"], false);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U17: user-initiated abandonment, and the loud safety aborts
+// ─────────────────────────────────────────────────────────────────────
+
+/// Leave one declined (pre-pay, staged) work behind and hand back its
+/// vault. The decline is D36 rule 3's "incomplete, never abandoned"
+/// outcome — the exact state a user-initiated abandon has to act on.
+fn vault_with_a_declined_work(tag: &str) -> (IsolatedVault, Work, SealId) {
+    let work = Work::new(tag);
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create(tag);
+    let unlocked = vault.unlock();
+    block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        &mut SaysNo,
+        &ctx(false),
+        &mut ChaCha20Rng::from_seed([0x61; 32]),
+        &mut ChaCha20Rng::from_seed([0x62; 32]),
+    ))
+    .expect_err("declined");
+    let seal_id = WorkStore::new(&unlocked).list_works().expect("list")[0];
+    drop(unlocked);
+    (vault, work, seal_id)
+}
+
+/// U17 Accept row 3's second half: declining leaves the work resumable
+/// (asserted above), while the **explicit** abandonment marks it
+/// abandoned — two different outcomes from two different acts, which is
+/// exactly why abandonment may never be a side effect of a decline.
+#[test]
+fn the_explicit_abandonment_marks_the_work_and_it_stops_being_a_resume_candidate() {
+    let (vault, work, seal_id) = vault_with_a_declined_work("abandon");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // Before: D45 matches it, so the re-run with different flags is the
+    // trap this action exists to open.
+    let trapped = work
+        .plan(&["a.txt", "--no-anchor", "--split", "blank-lines"])
+        .expect("plan validates");
+    let err = detect(
+        &store,
+        antseal_net::NetworkId::Devnet,
+        &trapped.absolute_paths(),
+        &trapped.shaping,
+    )
+    .expect_err("D45 refuses an inexact re-run");
+    assert_eq!(err.class(), ErrorClass::ResumeFlagMismatch);
+
+    let report = {
+        let mut rng = ChaCha20Rng::from_seed([0x63; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        abandon_pre_pay(&store, &journal, &seal_id).expect("a pre-pay work is abandonable")
+    };
+    assert!(!report.already);
+    assert_eq!(report.seal_id, seal_id);
+    let rendered = report.render().join("\n");
+    assert!(
+        rendered.contains("Abandoned the interrupted seal"),
+        "{rendered}"
+    );
+    // The copy states what a fresh seal will and will not reuse.
+    assert!(rendered.contains("new seal_id"), "{rendered}");
+    assert!(rendered.contains("freshly drawn nonces"), "{rendered}");
+
+    // U17 Accept row 5: marked in the record store…
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::Abandoned
+    );
+    // …and shown by `list` as abandoned.
+    let listing = WorkListing::gather(&store).expect("listing");
+    let text = listing.render().join("\n");
+    assert!(text.contains("abandoned"), "{text}");
+    assert_eq!(listing.json()["counts"]["abandoned"], 1);
+
+    // After: the trap is open — the same invocation now runs fresh,
+    // because an abandoned work is never a resume candidate (D45 §2).
+    let decision = detect(
+        &store,
+        antseal_net::NetworkId::Devnet,
+        &trapped.absolute_paths(),
+        &trapped.shaping,
+    )
+    .expect("the abandoned work no longer matches anything");
+    assert!(matches!(decision, ResumeDecision::Fresh { .. }));
+
+    // Idempotent: a script that re-runs the abandon must not fail.
+    let again = {
+        let mut rng = ChaCha20Rng::from_seed([0x64; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        abandon_pre_pay(&store, &journal, &seal_id).expect("already abandoned is an outcome")
+    };
+    assert!(again.already);
+    assert!(again.render().join("\n").contains("already abandoned"));
+}
+
+/// The rule that matters most: **a paid work is never abandoned on
+/// request**, and the authority is the journaled receipt rather than the
+/// state tag (S16 found a real double-payment defect that came from
+/// trusting the tag).
+#[test]
+fn a_paid_work_is_refused_and_the_receipt_is_the_authority_not_the_tag() {
+    let (vault, _work, seal_id) = vault_with_a_declined_work("abandon-paid");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // Journal a receipt while the COARSE tag still reads pre-pay — the
+    // exact D37 window S16 exposed. The tag says "safe to discard"; the
+    // receipt says money moved. The receipt must win.
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePrePay
+    );
+    {
+        let mut rng = ChaCha20Rng::from_seed([0x65; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        journal
+            .put_receipt(&seal_id, &fixture_receipt())
+            .expect("journal a receipt");
+    }
+
+    let mut rng = ChaCha20Rng::from_seed([0x66; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let err = abandon_pre_pay(&store, &journal, &seal_id)
+        .expect_err("a paid work is never abandoned on request");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    let rendered = err.to_string();
+    assert!(rendered.contains("already been paid for"), "{rendered}");
+    assert!(rendered.contains("forfeit that payment"), "{rendered}");
+    // It offers the real way forward: finish it, at no further cost.
+    assert!(
+        rendered.contains("no further payment is needed"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("antseal seal a.txt"), "{rendered}");
+
+    // Nothing was written: the work is still exactly where it was.
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePrePay
+    );
+}
+
+/// A finished work has nothing to abandon: its ciphertexts are permanent,
+/// and discarding the record would destroy only the keys that read them.
+#[test]
+fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
+    let work = Work::new("abandon-complete");
+    work.file("a.txt", b"content");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("abandon-complete");
+    let unlocked = vault.unlock();
+    let result = block_on(run_seal(
         &backend,
         &unlocked,
         &plan,
         &mut NeverAsked,
         &ctx(true),
-        &mut ChaCha20Rng::from_seed([0xA1; 32]),
-        &mut ChaCha20Rng::from_seed([0xA2; 32]),
+        &mut ChaCha20Rng::from_seed([0x67; 32]),
+        &mut ChaCha20Rng::from_seed([0x68; 32]),
     ))
-    .expect_err("a dry run is a scriptable funding gate (D49)");
-    assert_eq!(err.class(), ErrorClass::InsufficientAntToken);
-    assert_eq!(err.exit_code(), 20);
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+
+    let store = WorkStore::new(&unlocked);
+    let mut rng = ChaCha20Rng::from_seed([0x69; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let err = abandon_pre_pay(&store, &journal, &report.seal_id).expect_err("complete is terminal");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    assert!(err.to_string().contains("is complete"), "{err}");
+    assert_eq!(
+        store.load_meta(&report.seal_id).expect("meta").state,
+        WorkState::Complete
+    );
+}
+
+/// U17's loud safety aborts: one exit code, two messages that cannot be
+/// mistaken for each other, each stating the rule it is enforcing.
+///
+/// The `SourceChanged` arm is deliberately asserted at the *type* level
+/// rather than by driving a scenario: S11 made it unreachable by
+/// construction (resume never opens a source file), which is a stronger
+/// guarantee than the abort U17 asked for — see the variant's own docs
+/// and U42.
+#[test]
+fn the_two_resume_safety_aborts_are_distinct_and_say_what_they_protect() {
+    use antseal_cli::error::{CliError, ResumeSafetyReason};
+
+    let changed = CliError::ResumeSafetyAbort {
+        reason: ResumeSafetyReason::SourceChanged,
+    };
+    let missing = CliError::ResumeSafetyAbort {
+        reason: ResumeSafetyReason::StagedBytesMissing,
+    };
+
+    // One class, one exit code (U2's table), two messages.
+    assert_eq!(changed.class(), ErrorClass::ResumeSafetyAbort);
+    assert_eq!(missing.class(), ErrorClass::ResumeSafetyAbort);
+    assert_eq!(changed.exit_code(), 24);
+    assert_eq!(missing.exit_code(), 24);
+    assert_ne!(changed.to_string(), missing.to_string());
+
+    // Changed source: names the forbidden operation and why.
+    let text = changed.to_string();
+    assert!(text.contains("never re-encrypts"), "{text}");
+    assert!(text.contains("journaled nonce"), "{text}");
+
+    // Missing staged bytes: forfeiture stated as a deliberate choice, and
+    // the fresh seal's new seal_id + fresh nonces named (U17's copy).
+    let text = missing.to_string();
+    assert!(text.contains("abandoned"), "{text}");
+    assert!(text.contains("forfeited"), "{text}");
+    assert!(text.contains("safety-over-cost"), "{text}");
+    assert!(text.contains("NEW seal_id"), "{text}");
+    assert!(text.contains("freshly generated nonces"), "{text}");
+    assert!(text.contains("(k_u, nonce)"), "{text}");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U15: the three warning moments, in the pre-consent flow
+// ─────────────────────────────────────────────────────────────────────
+
+/// U15 + U16 Accept row 3's warnings clause, over the real command.
+///
+/// The mock-ordering claim is the point: the warnings appear on the screen
+/// the gate renders **before** it asks, and here the gate is never asked
+/// at all (dry run) and nothing is paid — so a user reading them has not
+/// yet spent anything and can still change the flags.
+#[test]
+fn the_seal_warnings_reach_the_pre_consent_screen_and_the_json_document() {
+    let work = Work::new("warnings");
+    // Exactly `FINE_TREE_ESTIMATE_THRESHOLD_BYTES` — the estimate line's
+    // trigger, and (deliberately) a quarter of the 4 MiB per-blob cap, so
+    // this is a real sealable single-unit binary file rather than a size
+    // the pipeline would refuse.
+    let big = vec![0u8; usize::try_from(FINE_TREE_ESTIMATE_THRESHOLD_BYTES).expect("fits")];
+    work.file("notes.txt", b"hello world\n")
+        .file("scan.tiff", &big)
+        // The opted-out file is small: what is being asserted about it is
+        // that it gets NO cost line, which its size cannot influence.
+        .file("blob.bin", &[0x7Fu8; 64]);
+
+    let plan = work
+        .plan(&[
+            "notes.txt",
+            "scan.tiff",
+            "blob.bin",
+            "--title",
+            "Q3 layoffs",
+            "--no-fine-tree",
+            "*.bin",
+            "--no-anchor",
+            "--dry-run",
+        ])
+        .expect("plan validates");
+
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("seal-warnings");
+    let unlocked = vault.unlock();
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x51; 32]),
+        &mut ChaCha20Rng::from_seed([0x52; 32]),
+    ))
+    .expect("the rehearsal completes");
+
+    let rendered = result.render().join("\n");
+    // 1. Title visibility — the title is in the plaintext manifest every
+    //    bundle carries (MVP-SPEC.md line 34).
+    assert!(rendered.contains("PLAINTEXT"), "{rendered}");
+    assert!(rendered.contains("\"Q3 layoffs\""), "{rendered}");
+    // 2. `--no-fine-tree` permanence, naming the matched file.
+    assert!(
+        rendered.contains("--no-fine-tree matched 1 file(s)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("blob.bin"), "{rendered}");
+    assert!(rendered.contains("PERMANENTLY"), "{rendered}");
+    // 3. The fine-tree cost estimate — for the large file that HAS a fine
+    //    tree, and not for the one the pattern opted out of.
+    assert!(
+        rendered.contains("Note: building the byte-range (fine) tree for scan.tiff"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("fine) tree for blob.bin"),
+        "an opted-out file has no fine tree, so it has no fine-tree cost: {rendered}"
+    );
+    assert!(rendered.contains("SHA-256 compressions"), "{rendered}");
+    // …and small files stay quiet.
+    assert!(!rendered.contains("fine) tree for notes.txt"), "{rendered}");
+
+    // Ordering: all three land above the price (the pre-consent flow).
+    let cost_at = rendered.find("Cost (indicative):").expect("cost line");
+    for needle in ["PLAINTEXT", "--no-fine-tree matched", "Note: building"] {
+        assert!(
+            rendered.find(needle).expect(needle) < cost_at,
+            "{needle} must precede the quote"
+        );
+    }
+
+    // The machine document carries them as data, so a script can gate on
+    // "did this seal disclose a title / lose reveal granularity?".
+    let warnings = result.json()["warnings"]
+        .as_array()
+        .expect("the dry-run document carries a warnings array")
+        .clone();
+    assert_eq!(warnings.len(), 3, "{warnings:#?}");
+
+    // Nothing moved: the warnings are advice given before the decision.
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(backend.calls(Method::FinalizeBatch), 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────

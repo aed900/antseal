@@ -74,7 +74,8 @@ pub const MIN_RECORD_BLOB_LEN: usize = RECORD_NONCE_LEN + RECORD_TAG_LEN;
 /// Record-class ids (the wire values inside the AAD identity array).
 /// Registry — growing it is a deliberate event, ids are never reused:
 /// `0` key-check (U6) · `1` wallet (reserved, U10) · `2` work meta (U9) ·
-/// `3` journal entry (U9) · `4` receipt (U9) · `5` anchor artifact (U9).
+/// `3` journal entry (U9) · `4` receipt (U9) · `5` anchor artifact (U9) ·
+/// `6` vault bookkeeping (U34).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 enum RecordClass {
@@ -84,6 +85,7 @@ enum RecordClass {
     JournalEntry = 3,
     Receipt = 4,
     Anchor = 5,
+    Bookkeeping = 6,
 }
 
 /// The identity every record AEAD binds (D42 rider 2). One variant per
@@ -121,6 +123,12 @@ pub enum RecordIdentity<'a> {
         /// The slot name (validated by the store layer).
         slot: &'a str,
     },
+    /// The vault-global bookkeeping record (`store/bookkeeping`, U34):
+    /// one per vault, holding facts *about the vault* rather than about
+    /// any work — today, whether it has ever been exported (U18's nag
+    /// reads it). Like [`RecordIdentity::KeyCheck`] it is a singleton, so
+    /// its identity array carries the class id and nothing else.
+    Bookkeeping,
 }
 
 impl RecordIdentity<'_> {
@@ -162,6 +170,9 @@ impl RecordIdentity<'_> {
                     a.item(|e| e.bytes(slot.as_bytes()))
                 })
             }),
+            RecordIdentity::Bookkeeping => {
+                encode_item(|e| e.array(|a| a.item(|e| e.u64(RecordClass::Bookkeeping as u64))))
+            }
         };
         bytes.map_err(|_| CipherError::AadEncode)
     }

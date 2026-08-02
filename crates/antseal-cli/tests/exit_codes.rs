@@ -32,7 +32,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 26] = [
+const TABLE: [(ErrorClass, u8, &str); 28] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -53,6 +53,12 @@ const TABLE: [(ErrorClass, u8, &str); 26] = [
     (ErrorClass::VaultLockHeld, 15, "vault-lock-held"),
     (ErrorClass::VaultNewerVersion, 16, "vault-newer-version"),
     (ErrorClass::MalformedConfig, 17, "malformed-config"),
+    (ErrorClass::VaultKeyfileMissing, 18, "vault-keyfile-missing"),
+    (
+        ErrorClass::VaultWrapModeUnsupported,
+        19,
+        "vault-wrap-mode-unsupported",
+    ),
     (
         ErrorClass::InsufficientAntToken,
         20,
@@ -293,6 +299,20 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             CliError::InsufficientEthGas {
                 required_wei: 90_000_000_000_000,
                 available_wei: 1_000_000_000,
+            },
+        ),
+        (
+            "vault-keyfile-missing",
+            CliError::VaultKeyfileMissing {
+                path: PathBuf::from("/media/usb/antseal-keyfile.bin"),
+                detail: "No such file or directory (os error 2)".into(),
+            },
+        ),
+        (
+            "vault-wrap-mode-unsupported",
+            CliError::VaultWrapModeUnsupported {
+                mode: 2,
+                name: "os-keystore, reserved (D50)",
             },
         ),
         ("anchor-gate-abort", CliError::AnchorGateAbort),

@@ -604,12 +604,17 @@ fn no_reinit_override_flag_parses() {
     }
 }
 
-/// The wrap slot exists in the D50 registry but U8's engine does not:
-/// `--wrap keyfile` is a distinct, honest refusal, taken **before** any
-/// passphrase is collected, and never a vault whose header claims a wrap
-/// it does not have.
+/// **U8 landed the keyfile engine**, so `--wrap keyfile` is honoured
+/// rather than refused. What still has to be settled before a passphrase
+/// is collected is *where* the keyfile goes: the canonical surface has no
+/// `--keyfile` flag, so machine mode needs `ANTSEAL_KEYFILE` and says so.
+///
+/// The position is the property this test pins, exactly as it did when
+/// the refusal was "not implemented": with no passphrase channel and
+/// machine mode ON, a late refusal would surface as
+/// passphrase-unavailable instead.
 #[test]
-fn an_unimplemented_wrap_mode_refuses_before_anything_is_created() {
+fn a_keyfile_wrap_without_a_path_channel_refuses_before_anything_is_created() {
     let dir = TestDir::new("wrap");
     let layout = VaultLayout::at(dir.vault_root());
     let err = run_init(
@@ -624,17 +629,17 @@ fn an_unimplemented_wrap_mode_refuses_before_anything_is_created() {
                 wrap: true,
             },
         ),
-        // Deliberately no passphrase channel and machine mode ON: if the
-        // refusal were late, this would fail as passphrase-unavailable
-        // instead, which is exactly the ordering bug the test pins.
         None,
         true,
         NetworkId::Devnet,
         &mut Scripted::silent(),
         &mut rng(),
     )
-    .expect_err("keyfile wrap is not implemented");
-    assert_eq!(err.class(), ErrorClass::NotImplemented);
+    .expect_err("no path channel in machine mode");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    let rendered = err.to_string();
+    assert!(rendered.contains("ANTSEAL_KEYFILE"), "{rendered}");
+    assert!(rendered.contains("never a secret"), "{rendered}");
     assert!(!layout.beside_path(BesideFile::Header).exists());
 }
 

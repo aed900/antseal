@@ -27,17 +27,46 @@
 //! by the unlock the export performs before it becomes the backup's only
 //! key.
 //!
+//! # A keyfile-wrapped vault is refused, not exported (U8, overturned)
+//!
+//! U8's entry expected this format to "carry the keyfile factor
+//! unchanged". Implementing it exposed why it cannot, and the evidence is
+//! four lines above: the export's own AEAD key is
+//! `KDF(passphrase, fresh salt)` — **the passphrase alone**, as this
+//! module's own format block says ("the passphrase … becomes the backup's
+//! only key").
+//!
+//! So writing a v1 export of a two-factor vault would silently convert
+//! two factors into one. The backup would become the weakest link — steal
+//! the file, attack the passphrase, and the keyfile that was supposed to
+//! stand between an attacker and every sealed work never enters the
+//! problem. That is exactly the silent downgrade U12 refused to perform
+//! on the import side, arriving from the other direction.
+//!
+//! Making the *export* two-factor is the right fix and is a **D47 format
+//! event** (its header would need a wrap mode and the same combine),
+//! which is a recorded decision rather than an implementation detail —
+//! the reasoning D50 used to keep the OS keystore out of M1 applies
+//! unchanged. Until that lands:
+//!
+//! - `vault export` **refuses** a vault whose header wrap mode is not 0,
+//!   naming the reason and the workaround;
+//! - `vault import` **refuses** a payload whose wrap mode is not 0,
+//!   because installing it as mode 0 would drop the factor and installing
+//!   it as mode 1 would need a keyfile the payload does not contain.
+//!
+//! Mode-0 vaults — every vault this build creates by default — export and
+//! import byte-for-byte as before.
+//!
 //! # Payload (plaintext under the AEAD; versioned by `format_version`)
 //!
 //! ```text
 //! payload := map {
 //!   0: writer_version (bstr ≤ 64 — informational ONLY, never acted on
 //!      at import; recorded because D47 names "format/app versions")
-//!   1: wrap_mode (uint, D50 registry — carried as-is so a keyfile-
-//!      wrapped vault exports its factor; until U8 lands only mode 0 can
-//!      exist, and import REFUSES a non-zero mode rather than silently
-//!      installing a weaker vault — U8 re-maps that refusal to its
-//!      distinct error)
+//!   1: wrap_mode (uint, D50 registry). **A wrapped vault is refused, in
+//!      both directions, and U8's expected "carry the factor unchanged"
+//!      is deliberately overturned — see the section below.**
 //!   2: config (bstr, optional) — raw `config.toml` bytes (D47: config
 //!      sits beside the vault AEAD on disk but belongs inside the backup)
 //!   3: wallet (bstr, exactly 32, optional) — the U10 wallet secret
@@ -55,6 +84,13 @@
 //!        3: anchors (array of [slot: bstr, bytes: bstr], strictly
 //!           ascending, optional)
 //!      }
+//!   5: bookkeeping (bstr, optional) — the U34 vault-global bookkeeping
+//!      record's plaintext (U18's export-performed flag). **Optional on
+//!      read**: exports written before the slot existed simply omit it and
+//!      still import, which is the whole reason this extends format v1
+//!      rather than bumping it (pre-release, writer and reader move
+//!      together; post-release the same change would be a
+//!      `format_version` event — see EXPORT_FORMAT_VERSION)
 //! }
 //! ```
 //!
@@ -158,6 +194,10 @@ pub const MAX_EXPORT_FILE_BYTES: usize = 1024 * 1024 * 1024;
 /// Cap on the export header's CBOR body (a real body is ~60 bytes).
 const MAX_EXPORT_HEADER_BODY_BYTES: usize = 1024;
 
+/// Cap on the U34 bookkeeping record body inside the payload (a real
+/// body is under 30 bytes; defensive slack in the D10 house style).
+const MAX_BOOKKEEPING_PAYLOAD_BYTES: usize = 4096;
+
 /// Cap on the informational writer-version string in the payload.
 const MAX_WRITER_VERSION_BYTES: usize = 64;
 
@@ -204,6 +244,9 @@ pub(crate) struct ExportPayload {
     config: Option<Vec<u8>>,
     wallet: Option<WalletKeyHandle>,
     works: Vec<WorkPayload>,
+    /// The U34 bookkeeping record body. Not a `SecretBuf`: it holds a
+    /// count and a timestamp, no key material (see `vault::bookkeeping`).
+    bookkeeping: Option<Vec<u8>>,
 }
 
 /// Injected failure points for the kill/corruption tests (the fs.rs
@@ -302,7 +345,11 @@ fn encode_payload(payload: &ExportPayload) -> Result<SecretBuf, CliError> {
                     }
                     Ok(())
                 })
-            })
+            })?;
+            if let Some(bookkeeping) = &payload.bookkeeping {
+                m.entry(5, |e| e.bytes(bookkeeping))?;
+            }
+            Ok(())
         })
     })
     .map_err(err)?;
@@ -324,6 +371,7 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
     let mut config: Option<Vec<u8>> = None;
     let mut wallet: Option<WalletKeyHandle> = None;
     let mut works: Option<Vec<WorkPayload>> = None;
+    let mut bookkeeping: Option<Vec<u8>> = None;
 
     while let Some(key) = map.next_key(&mut d).map_err(codec)? {
         match key {
@@ -361,6 +409,13 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
                 }
                 works = Some(list);
             }
+            5 => {
+                let raw = d.bytes().map_err(codec)?;
+                if raw.len() > MAX_BOOKKEEPING_PAYLOAD_BYTES {
+                    return Err(bad("bookkeeping record over cap"));
+                }
+                bookkeeping = Some(raw.to_vec());
+            }
             _ => return Err(bad("unknown payload key (strict v1 schema)")),
         }
     }
@@ -372,6 +427,9 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
         config,
         wallet,
         works: works.ok_or_else(|| bad("works array missing"))?,
+        // Absent is valid: an export written before the U34 slot existed
+        // carries no key 5 and imports unchanged.
+        bookkeeping,
     };
     validate_payload(&payload)?;
     Ok(payload)
@@ -460,15 +518,21 @@ fn validate_payload(payload: &ExportPayload) -> Result<(), CliError> {
     let bad = |detail: &str| internal(&format!("export payload invalid: {detail}"));
 
     if payload.wrap_mode != WRAP_MODE_NONE {
-        // Carried as-is per D47, but nothing can WRITE a non-zero mode
-        // until U8 lands its keyfile path — and silently installing a
-        // mode-0 vault for a wrapped export would drop the second factor.
-        // U8 re-maps this refusal to its distinct error.
-        return Err(internal(&format!(
-            "export carries wrap mode {} — importing wrapped vaults arrives with U8 \
-             (refusing rather than silently dropping the wrap factor)",
-            payload.wrap_mode
-        )));
+        // The module docs' overturned-U8 section: a v1 export is keyed by
+        // the passphrase alone, so it cannot carry a second factor.
+        // Installing this as mode 0 would silently drop the wrap;
+        // installing it as mode 1 would need a keyfile the payload does
+        // not contain. Neither is acceptable, so neither happens.
+        return Err(CliError::Usage {
+            message: format!(
+                "this backup was written from a vault with wrap mode {} (a keyfile or \
+                 keystore factor), and the v1 export format cannot carry a second factor — \
+                 its own encryption is keyed by the passphrase alone. Importing it would \
+                 either drop the factor silently or need a keyfile this file does not \
+                 contain, so antseal refuses instead. Nothing was written",
+                payload.wrap_mode
+            ),
+        });
     }
 
     let mut previous: Option<SealId> = None;
@@ -670,6 +734,27 @@ fn gather_payload(vault: &UnlockedVault) -> Result<ExportPayload, CliError> {
         }
     };
 
+    // Refuse before a single record is read (the module docs' overturned-
+    // U8 section): a v1 export of a wrapped vault would be a
+    // passphrase-only backup of a two-factor vault, and a backup that is
+    // weaker than the thing it backs up is worse than no backup, because
+    // the user believes they are covered.
+    let header_wrap = VaultHeader::decode(vault.header_bytes())
+        .map_err(CliError::from)?
+        .wrap_mode();
+    if header_wrap != WRAP_MODE_NONE {
+        return Err(CliError::Usage {
+            message: format!(
+                "this vault uses wrap mode {header_wrap} (a keyfile or keystore factor), and \
+                 the v1 export format cannot carry a second factor — the backup file is \
+                 encrypted under the passphrase alone, so writing one would quietly turn \
+                 your two-factor vault into a one-factor backup. Back up the vault \
+                 directory and the keyfile separately by hand until the export format \
+                 carries the wrap (nothing was written)"
+            ),
+        });
+    }
+
     let wrap_mode = VaultHeader::decode(vault.header_bytes())
         .map_err(CliError::from)?
         .wrap_mode();
@@ -722,12 +807,21 @@ fn gather_payload(vault: &UnlockedVault) -> Result<ExportPayload, CliError> {
         });
     }
 
+    // U34/U18: the vault-global bookkeeping record travels, so a restored
+    // vault remembers that it HAS a backup. Absent (never exported, or a
+    // vault older than the slot) simply omits the key.
+    let bookkeeping = match super::bookkeeping::load(vault)? {
+        record if record == super::bookkeeping::Bookkeeping::default() => None,
+        record => Some(record.encode()?),
+    };
+
     Ok(ExportPayload {
         writer_version: env!("CARGO_PKG_VERSION").as_bytes().to_vec(),
         wrap_mode,
         config,
         wallet,
         works,
+        bookkeeping,
     })
 }
 
@@ -1010,6 +1104,27 @@ pub(crate) fn import_vault_impl<R: TryCryptoRng + ?Sized>(
         if let Some(wallet) = &payload.wallet {
             store_wallet_key(&new_vault, wallet, rng)?;
         }
+        // U34/U18. Two rules, and the second is the interesting one:
+        //
+        // 1. A carried record is decoded **before** it is written — a
+        //    malformed body must fail the import rather than install a
+        //    record no later read can parse.
+        // 2. An import always ends with at least one recorded export,
+        //    even when the payload carried none. Reaching this line means
+        //    an export file was just consumed, and that file *is* a
+        //    backup: a vault restored from one must not greet its owner
+        //    with "NO BACKUP YET" while they are holding the thing. The
+        //    count is the honest minimum and the timestamp stays absent,
+        //    because when that backup was taken is genuinely unknown to
+        //    an export that predates the slot.
+        let mut record = match &payload.bookkeeping {
+            Some(bytes) => super::bookkeeping::Bookkeeping::decode(bytes)?,
+            None => super::bookkeeping::Bookkeeping::default(),
+        };
+        if record.exports == 0 {
+            record.exports = 1;
+        }
+        super::bookkeeping::store(&new_vault, &record, rng)?;
 
         let store = WorkStore::new(&new_vault);
         let mut installed = 0usize;

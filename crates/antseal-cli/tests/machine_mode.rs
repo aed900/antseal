@@ -370,6 +370,20 @@ fn render_fixture() -> String {
         "[seal] result\n{}\n",
         success_envelope("seal", "arbitrum-one", fixture_seal_report().json())
     ));
+    // U16's two `--dry-run` documents. Both are rendered by
+    // `SealCommandResult::json` — the real producer — and both are
+    // registered because a consumer has to branch on them: the truncated
+    // rehearsal carries a quote, and the D45 §5 rehearsal over a resumable
+    // work deliberately carries none (`quoted: false`). Headers keep the
+    // `[seal]` key so the shape test's command-field check still applies.
+    out.push_str(&format!(
+        "[seal] result (--dry-run)\n{}\n",
+        success_envelope("seal", "arbitrum-one", fixture_dry_run().json())
+    ));
+    out.push_str(&format!(
+        "[seal] result (--dry-run over a resumable work)\n{}\n",
+        success_envelope("seal", "arbitrum-one", fixture_dry_run_resume().json())
+    ));
     out.push_str(&format!(
         "[restore] result\n{}\n",
         success_envelope("restore", "arbitrum-one", fixture_restore().json())
@@ -412,7 +426,139 @@ fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
         resumed: false,
         unanchored: false,
         network: "arbitrum-one".to_owned(),
+        // U18: the registered exemplar shows the nag ON, because that is
+        // the shape a consumer has to notice — a first seal in a vault
+        // with no recorded backup. `false` would document the field
+        // without documenting why it exists.
+        export_nag: true,
     }
+}
+
+/// D49's truncated rehearsal, built by the **real** U14 gate over a
+/// fixture plan and rendered by U16's own result type — so the registered
+/// document cannot drift from what the command emits (three prior lanes
+/// found hand-copied strings had already gone stale).
+///
+/// The plan deliberately earns all three U15 warnings — a title, a
+/// `--no-fine-tree` match, and a file over
+/// `FINE_TREE_ESTIMATE_THRESHOLD_BYTES` — because the `warnings` array is
+/// the field a consumer branches on, and a fixture that only ever showed
+/// it empty would document nothing about its shape.
+///
+/// The balances are larger than the quote on purpose: a shortfall exits
+/// before any document is produced, so the funded case is the only one
+/// this envelope can exhibit.
+///
+/// NON-SECRET: the wallet is a repeated byte pattern, unmistakably not a
+/// real account.
+fn fixture_dry_run() -> antseal_cli::seal_run::SealCommandResult {
+    use antseal_cli::pipeline::ConsentRequest;
+    use antseal_cli::seal_consent::{ConsentPrompt, SealConsent};
+    use antseal_cli::seal_plan::{PlannedFile, SealPlan};
+    use antseal_cli::seal_run::SealCommandResult;
+    use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
+    use antseal_cli::vault::store::SealShapingFlags;
+    use antseal_core::content::FileFlags;
+    use antseal_core::crypto::secrets::SealId;
+    use antseal_net::network::EvmAddress20;
+    use antseal_net::{BalanceReport, CostQuote};
+
+    struct NeverAsked;
+    impl ConsentPrompt for NeverAsked {
+        fn ask(&mut self) -> Result<bool, antseal_cli::error::CliError> {
+            panic!("a fixture render must never prompt");
+        }
+    }
+
+    let plan = SealPlan {
+        files: vec![
+            PlannedFile {
+                as_given: "notes.txt".to_owned(),
+                absolute: "/home/user/work/notes.txt".to_owned(),
+                size: 27,
+                flags: FileFlags::new(),
+            },
+            PlannedFile {
+                as_given: "data/blob.bin".to_owned(),
+                absolute: "/home/user/work/data/blob.bin".to_owned(),
+                size: FINE_TREE_ESTIMATE_THRESHOLD_BYTES,
+                flags: FileFlags::new().with_no_fine_tree(),
+            },
+            PlannedFile {
+                as_given: "scan.tiff".to_owned(),
+                absolute: "/home/user/work/scan.tiff".to_owned(),
+                size: FINE_TREE_ESTIMATE_THRESHOLD_BYTES,
+                flags: FileFlags::new(),
+            },
+        ],
+        shaping: SealShapingFlags {
+            title: Some("thesis draft".to_owned()),
+            no_fine_tree: vec!["*.bin".to_owned()],
+            no_anchor: true,
+            ..SealShapingFlags::default()
+        },
+        network: antseal_net::NetworkId::ArbitrumOne,
+        dry_run: true,
+        yes: false,
+    };
+    let quote = CostQuote {
+        blobs: Vec::new(),
+        total_ant_atto: 4_200_000_000_000_000_000,
+        gas_estimate_wei: 21_000_000_000_000,
+    };
+    let mut prompt = NeverAsked;
+    let gate = SealConsent::new(
+        &plan,
+        BalanceReport {
+            wallet: EvmAddress20::from_bytes([0x5A; 20]),
+            ant_atto: 9_000_000_000_000_000_000,
+            gas_wei: 1_000_000_000_000_000,
+        },
+        Vec::new(),
+        false,
+        true,
+        true,
+        1_798_762_000,
+        &mut prompt,
+    );
+    let mut report = gate.report_for(&ConsentRequest {
+        seal_id: SealId::from_bytes([0xE1; 16]),
+        quote: &quote,
+        blob_count: 5,
+        prior: None,
+        resume: false,
+        proofs_expired: false,
+    });
+    report.dry_run = true;
+    SealCommandResult::DryRun(Box::new(report))
+}
+
+/// D45 §5's rehearsal over a resumable work: the plan and nothing else.
+/// Registered separately because it is a **different shape** — no quote,
+/// no balances, `quoted: false` — and a consumer that assumed the
+/// document above would break on it.
+fn fixture_dry_run_resume() -> antseal_cli::seal_run::SealCommandResult {
+    use antseal_cli::pipeline::journal::SealState;
+    use antseal_cli::seal_resume::{ResumeCandidate, resume_plan_lines};
+    use antseal_cli::seal_run::SealCommandResult;
+    use antseal_cli::vault::store::{SealShapingFlags, WorkState};
+    use antseal_core::crypto::secrets::SealId;
+
+    // Built through the real `resume_plan_lines` renderer rather than a
+    // hand-written array: three prior lanes found hand-copied strings had
+    // drifted from what the command emits.
+    SealCommandResult::ResumePlan(resume_plan_lines(&ResumeCandidate {
+        seal_id: SealId::from_bytes([0xE4; 16]),
+        absolute_paths: vec!["/home/user/work/big.bin".to_owned()],
+        as_given_paths: vec!["big.bin".to_owned()],
+        shaping: SealShapingFlags {
+            no_anchor: true,
+            ..SealShapingFlags::default()
+        },
+        network: "arbitrum-one".to_owned(),
+        state: WorkState::IncompletePostPay,
+        journal_state: Some(SealState::Paid),
+    }))
 }
 
 /// A completed `init`, rendered by U11's own report type so the
@@ -430,6 +576,10 @@ fn fixture_init_report() -> antseal_cli::init::InitReport {
         vault_dir: PathBuf::from("/home/user/.antseal"),
         wallet_source: "generate",
         kdf: "argon2id",
+        // U8: the registered exemplar shows the wrap DECLINED (D50's
+        // default), because that is what the overwhelming majority of
+        // documents look like; the keyfile shape is one nullable string.
+        keyfile: None,
         asked: Vec::new(),
     }
 }
