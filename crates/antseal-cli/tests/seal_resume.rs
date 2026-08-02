@@ -594,7 +594,17 @@ fn an_anchor_gate_refusal_aborts_a_resume_before_any_payment() {
 
     assert_eq!(gate.calls(), 1);
     assert_eq!(mock.payment_tx_count(), 0, "no EVM tx");
-    assert_eq!(mock.call_log().len(), 0, "no backend call at all");
+    // The quote precedes the gate (consent is rendered against it, and
+    // consent precedes anchoring) — so a quote call is expected. What must
+    // not have happened is anything irreversible.
+    assert_eq!(
+        mock.call_log().iter().map(|c| c.method).collect::<Vec<_>>(),
+        vec![Method::QuoteBatch],
+        "the read-only quote, and nothing else"
+    );
+    assert_eq!(mock.calls(Method::Pay), 0);
+    assert_eq!(mock.calls(Method::FinalizeBatch), 0);
+    assert_eq!(mock.stored_count(), 0);
     with_journal(|journal| {
         assert_eq!(journal.state(&seal_id).expect("state"), SealState::Staged);
     });
