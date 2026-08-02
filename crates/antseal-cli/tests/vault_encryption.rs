@@ -601,12 +601,19 @@ fn garbled_kdf_block_fails_as_vault_auth() {
     assert_eq!(err.class(), ErrorClass::VaultAuthFailure);
 }
 
-/// A wrap-mode flip on a valid vault: v1 refuses non-zero modes before
-/// the KDF (U8 lands the keyfile path and re-maps this to its dedicated
-/// D50 error) — and the flip can never be a silent open either way,
-/// because the wrap byte sits inside the AAD-bound header (the pure-AAD
-/// direction is proven at the cipher layer, where the KDF inputs are held
-/// fixed while the header bytes change).
+/// A wrap-mode flip on a valid vault, **re-mapped by U8 exactly as this
+/// test predicted it would be**.
+///
+/// Flipping a mode-0 vault's header to mode 1 now makes the unlock look
+/// for a keyfile — and there is no path recorded (the flip only edited a
+/// byte) and none supplied, so it stops at
+/// `vault-keyfile-missing` (18) rather than the old bug-class `internal`.
+/// The property the test was written for is unchanged and is the only one
+/// that matters: **never a silent open, and never a misleading
+/// bad-passphrase message**. The pure-AAD direction is proven at the
+/// cipher layer, where the KDF inputs are held fixed while the header
+/// bytes change; `tests/vault_keyfile.rs` proves the 1 → 0 direction,
+/// which reaches the AEAD and fails authentication.
 #[test]
 fn wrap_mode_flip_is_refused() {
     let vault = shared_vault();
@@ -619,9 +626,12 @@ fn wrap_mode_flip_is_refused() {
     let (_dir, tampered) = clone_vault(&vault.layout, "wrap");
     install_block(&tampered, block, WRAP_MODE_KEYFILE);
     let err = unlock_vault(&tampered, &passphrase()).expect_err("wrap flip");
-    // Not implemented until U8: an Internal (bug-or-forgery) class today,
-    // never a silent open and never a misleading bad-passphrase message.
-    assert_eq!(err.class(), ErrorClass::Internal);
+    assert_eq!(err.class(), ErrorClass::VaultKeyfileMissing);
+    assert_ne!(
+        err.class(),
+        ErrorClass::VaultAuthFailure,
+        "a flipped mode byte must not be reported as a wrong passphrase"
+    );
 }
 
 /// Missing and corrupt check records both collapse into vault-auth

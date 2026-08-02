@@ -103,6 +103,7 @@ pub mod export;
 pub mod fs;
 pub mod header;
 pub mod kdf;
+pub mod keyfile;
 pub mod layout;
 pub mod lock;
 pub mod session;

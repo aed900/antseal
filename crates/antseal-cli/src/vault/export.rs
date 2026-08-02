@@ -27,17 +27,46 @@
 //! by the unlock the export performs before it becomes the backup's only
 //! key.
 //!
+//! # A keyfile-wrapped vault is refused, not exported (U8, overturned)
+//!
+//! U8's entry expected this format to "carry the keyfile factor
+//! unchanged". Implementing it exposed why it cannot, and the evidence is
+//! four lines above: the export's own AEAD key is
+//! `KDF(passphrase, fresh salt)` — **the passphrase alone**, as this
+//! module's own format block says ("the passphrase … becomes the backup's
+//! only key").
+//!
+//! So writing a v1 export of a two-factor vault would silently convert
+//! two factors into one. The backup would become the weakest link — steal
+//! the file, attack the passphrase, and the keyfile that was supposed to
+//! stand between an attacker and every sealed work never enters the
+//! problem. That is exactly the silent downgrade U12 refused to perform
+//! on the import side, arriving from the other direction.
+//!
+//! Making the *export* two-factor is the right fix and is a **D47 format
+//! event** (its header would need a wrap mode and the same combine),
+//! which is a recorded decision rather than an implementation detail —
+//! the reasoning D50 used to keep the OS keystore out of M1 applies
+//! unchanged. Until that lands:
+//!
+//! - `vault export` **refuses** a vault whose header wrap mode is not 0,
+//!   naming the reason and the workaround;
+//! - `vault import` **refuses** a payload whose wrap mode is not 0,
+//!   because installing it as mode 0 would drop the factor and installing
+//!   it as mode 1 would need a keyfile the payload does not contain.
+//!
+//! Mode-0 vaults — every vault this build creates by default — export and
+//! import byte-for-byte as before.
+//!
 //! # Payload (plaintext under the AEAD; versioned by `format_version`)
 //!
 //! ```text
 //! payload := map {
 //!   0: writer_version (bstr ≤ 64 — informational ONLY, never acted on
 //!      at import; recorded because D47 names "format/app versions")
-//!   1: wrap_mode (uint, D50 registry — carried as-is so a keyfile-
-//!      wrapped vault exports its factor; until U8 lands only mode 0 can
-//!      exist, and import REFUSES a non-zero mode rather than silently
-//!      installing a weaker vault — U8 re-maps that refusal to its
-//!      distinct error)
+//!   1: wrap_mode (uint, D50 registry). **A wrapped vault is refused, in
+//!      both directions, and U8's expected "carry the factor unchanged"
+//!      is deliberately overturned — see the section below.**
 //!   2: config (bstr, optional) — raw `config.toml` bytes (D47: config
 //!      sits beside the vault AEAD on disk but belongs inside the backup)
 //!   3: wallet (bstr, exactly 32, optional) — the U10 wallet secret
@@ -489,15 +518,21 @@ fn validate_payload(payload: &ExportPayload) -> Result<(), CliError> {
     let bad = |detail: &str| internal(&format!("export payload invalid: {detail}"));
 
     if payload.wrap_mode != WRAP_MODE_NONE {
-        // Carried as-is per D47, but nothing can WRITE a non-zero mode
-        // until U8 lands its keyfile path — and silently installing a
-        // mode-0 vault for a wrapped export would drop the second factor.
-        // U8 re-maps this refusal to its distinct error.
-        return Err(internal(&format!(
-            "export carries wrap mode {} — importing wrapped vaults arrives with U8 \
-             (refusing rather than silently dropping the wrap factor)",
-            payload.wrap_mode
-        )));
+        // The module docs' overturned-U8 section: a v1 export is keyed by
+        // the passphrase alone, so it cannot carry a second factor.
+        // Installing this as mode 0 would silently drop the wrap;
+        // installing it as mode 1 would need a keyfile the payload does
+        // not contain. Neither is acceptable, so neither happens.
+        return Err(CliError::Usage {
+            message: format!(
+                "this backup was written from a vault with wrap mode {} (a keyfile or \
+                 keystore factor), and the v1 export format cannot carry a second factor — \
+                 its own encryption is keyed by the passphrase alone. Importing it would \
+                 either drop the factor silently or need a keyfile this file does not \
+                 contain, so antseal refuses instead. Nothing was written",
+                payload.wrap_mode
+            ),
+        });
     }
 
     let mut previous: Option<SealId> = None;
@@ -698,6 +733,27 @@ fn gather_payload(vault: &UnlockedVault) -> Result<ExportPayload, CliError> {
             });
         }
     };
+
+    // Refuse before a single record is read (the module docs' overturned-
+    // U8 section): a v1 export of a wrapped vault would be a
+    // passphrase-only backup of a two-factor vault, and a backup that is
+    // weaker than the thing it backs up is worse than no backup, because
+    // the user believes they are covered.
+    let header_wrap = VaultHeader::decode(vault.header_bytes())
+        .map_err(CliError::from)?
+        .wrap_mode();
+    if header_wrap != WRAP_MODE_NONE {
+        return Err(CliError::Usage {
+            message: format!(
+                "this vault uses wrap mode {header_wrap} (a keyfile or keystore factor), and \
+                 the v1 export format cannot carry a second factor — the backup file is \
+                 encrypted under the passphrase alone, so writing one would quietly turn \
+                 your two-factor vault into a one-factor backup. Back up the vault \
+                 directory and the keyfile separately by hand until the export format \
+                 carries the wrap (nothing was written)"
+            ),
+        });
+    }
 
     let wrap_mode = VaultHeader::decode(vault.header_bytes())
         .map_err(CliError::from)?

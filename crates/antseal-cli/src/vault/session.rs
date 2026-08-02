@@ -20,8 +20,10 @@
 //!
 //! 1. read the header file (bounded read: `MAX_HEADER_BYTES + 1`),
 //!    decode it (U5's parser — newer-version and cap errors are distinct);
-//! 2. refuse non-zero wrap modes (U8 lands the keyfile path and the D50
-//!    mode-2 distinct error; nothing can have written them yet);
+//! 2. dispatch on the D50 wrap mode: 0 unwrapped, 1 combine the keyfile
+//!    factor (U8), 2 the distinct "wrap mode not supported" refusal —
+//!    never the generic auth failure, because the mode is a registered id
+//!    and the vault is intact;
 //! 3. decode the KDF block — the D40 §3 caps run here, **before** any
 //!    allocation, so a hostile header is rejected cheaply;
 //! 4. derive the vault key — same typed low-RAM error as create;
@@ -42,8 +44,11 @@ use rand_core::TryCryptoRng;
 
 use super::cipher::{RecordIdentity, open_record, seal_record};
 use super::fs::atomic_write;
-use super::header::{MAX_HEADER_BYTES, VaultHeader, WRAP_MODE_NONE};
+use super::header::{
+    MAX_HEADER_BYTES, VaultHeader, WRAP_MODE_KEYFILE, WRAP_MODE_OS_KEYSTORE_RESERVED,
+};
 use super::kdf::{KdfFailPoint, KdfParams, KdfSelection, VaultKey};
+use super::keyfile::{self, WrapChoice};
 use super::layout::VaultLayout;
 use crate::error::CliError;
 
@@ -175,13 +180,43 @@ pub fn create_vault<R: TryCryptoRng + ?Sized>(
     selection: KdfSelection,
     rng: &mut R,
 ) -> Result<UnlockedVault, CliError> {
-    create_vault_impl(layout, passphrase, selection, rng, KdfFailPoint::None)
+    create_vault_impl(
+        layout,
+        passphrase,
+        selection,
+        &WrapChoice::None,
+        rng,
+        KdfFailPoint::None,
+    )
+}
+
+/// Create a vault with an explicit D50 wrap choice (U8).
+///
+/// [`create_vault`] is this with [`WrapChoice::None`] — kept as the
+/// mode-0 name so no existing caller has to say "no wrap" to mean the
+/// default, and so U6's whole suite keeps exercising the unwrapped path
+/// byte for byte.
+///
+/// # Errors
+///
+/// As [`create_vault`], plus [`CliError::Usage`] when the keyfile path
+/// already exists (never overwritten — it might be another vault's only
+/// second factor) and [`CliError::Io`] for a failed keyfile write.
+pub fn create_vault_with_wrap<R: TryCryptoRng + ?Sized>(
+    layout: &VaultLayout,
+    passphrase: &SecretBuf,
+    selection: KdfSelection,
+    wrap: &WrapChoice,
+    rng: &mut R,
+) -> Result<UnlockedVault, CliError> {
+    create_vault_impl(layout, passphrase, selection, wrap, rng, KdfFailPoint::None)
 }
 
 pub(crate) fn create_vault_impl<R: TryCryptoRng + ?Sized>(
     layout: &VaultLayout,
     passphrase: &SecretBuf,
     selection: KdfSelection,
+    wrap: &WrapChoice,
     rng: &mut R,
     fail: KdfFailPoint,
 ) -> Result<UnlockedVault, CliError> {
@@ -203,12 +238,36 @@ pub(crate) fn create_vault_impl<R: TryCryptoRng + ?Sized>(
 
     let params = KdfParams::generate(selection, rng).map_err(CliError::from)?;
     let kdf_block = params.encode().map_err(CliError::from)?;
-    let header = VaultHeader::new(kdf_block, WRAP_MODE_NONE).map_err(CliError::from)?;
+    let recorded_path = match wrap {
+        WrapChoice::None => None,
+        WrapChoice::Keyfile {
+            path,
+            record_path: true,
+        } => Some(path.to_string_lossy().into_owned()),
+        WrapChoice::Keyfile {
+            record_path: false, ..
+        } => None,
+    };
+    let header = VaultHeader::new_with_keyfile_path(kdf_block, wrap.mode(), recorded_path)
+        .map_err(CliError::from)?;
     let header_bytes = header.encode().map_err(CliError::from)?;
 
     let key = params
         .derive_key_impl(passphrase, fail)
         .map_err(CliError::from)?;
+
+    // The keyfile is generated AFTER the KDF (the expensive, failable
+    // step) and BEFORE the header is written: the header's presence is
+    // the "vault exists" marker, so a failure here — a bad path, a
+    // read-only medium, a file already there — leaves no vault at all
+    // rather than one whose second factor was never created.
+    let key = match wrap {
+        WrapChoice::None => key,
+        WrapChoice::Keyfile { path, .. } => {
+            let secret = keyfile::generate(path, rng)?;
+            keyfile::combine(&key, &secret)?
+        }
+    };
 
     let vault = UnlockedVault {
         layout: layout.clone(),
@@ -241,12 +300,33 @@ pub fn unlock_vault(
     layout: &VaultLayout,
     passphrase: &SecretBuf,
 ) -> Result<UnlockedVault, CliError> {
-    unlock_vault_impl(layout, passphrase, KdfFailPoint::None)
+    unlock_vault_impl(layout, passphrase, None, KdfFailPoint::None)
+}
+
+/// Unlock, supplying the keyfile path explicitly (U8).
+///
+/// The canonical CLI surface carries no `--keyfile` flag, so production
+/// unlocks pass `None` and the path comes from `ANTSEAL_KEYFILE` or the
+/// header recording ([`super::keyfile::locate`]). This entry exists for
+/// in-process callers and for tests, which must not race on a process-
+/// global environment variable.
+///
+/// # Errors
+///
+/// As [`unlock_vault`], plus [`CliError::VaultKeyfileMissing`] and
+/// [`CliError::VaultWrapModeUnsupported`].
+pub fn unlock_vault_with_keyfile(
+    layout: &VaultLayout,
+    passphrase: &SecretBuf,
+    keyfile_path: Option<&Path>,
+) -> Result<UnlockedVault, CliError> {
+    unlock_vault_impl(layout, passphrase, keyfile_path, KdfFailPoint::None)
 }
 
 pub(crate) fn unlock_vault_impl(
     layout: &VaultLayout,
     passphrase: &SecretBuf,
+    explicit_keyfile: Option<&Path>,
     fail: KdfFailPoint,
 ) -> Result<UnlockedVault, CliError> {
     let header_path = layout.beside_path(super::layout::BesideFile::Header);
@@ -269,24 +349,45 @@ pub(crate) fn unlock_vault_impl(
     };
     let header = VaultHeader::decode(&header_bytes).map_err(CliError::from)?;
 
-    // U8 lands the keyfile wrap and D50's distinct mode-2 refusal; until
-    // it does, nothing can have written a non-zero mode, so hitting one is
-    // a bug-or-forgery class, not a vault state. U8 re-maps this to its
-    // dedicated error.
-    if header.wrap_mode() != WRAP_MODE_NONE {
-        return Err(CliError::Internal {
-            detail: format!(
-                "vault wrap mode {} is not supported until U8 lands (only mode 0 exists yet)",
-                header.wrap_mode()
-            ),
+    // D50's registry, dispatched before any expensive work. Mode 2 is a
+    // registered id with no M1 implementation: its refusal is distinct,
+    // says the vault is intact, and is emphatically NOT the generic auth
+    // failure — that collapse exists to hide which secret-dependent step
+    // failed, and nothing secret is involved in reading a mode byte.
+    if header.wrap_mode() == WRAP_MODE_OS_KEYSTORE_RESERVED {
+        return Err(CliError::VaultWrapModeUnsupported {
+            mode: header.wrap_mode(),
+            name: "os-keystore, reserved (D50)",
         });
     }
+
+    // The keyfile is located BEFORE the KDF runs: an unplugged USB stick
+    // should not cost a second of Argon2id first, and the answer does not
+    // depend on the passphrase.
+    let wrap_factor = if header.wrap_mode() == WRAP_MODE_KEYFILE {
+        let path = keyfile::locate(explicit_keyfile, header.keyfile_path().map(Path::new))
+            .ok_or_else(|| CliError::VaultKeyfileMissing {
+                path: std::path::PathBuf::from("<no path known>"),
+                detail: format!(
+                    "this vault records no keyfile path, so one must be supplied — set \
+                     {}=<path>",
+                    super::keyfile::KEYFILE_ENV
+                ),
+            })?;
+        Some(keyfile::read_from(&path)?)
+    } else {
+        None
+    };
 
     // D40 §3: caps inside this decode run before any KDF allocation.
     let params = KdfParams::decode(header.kdf_block()).map_err(CliError::from)?;
     let key = params
         .derive_key_impl(passphrase, fail)
         .map_err(CliError::from)?;
+    let key = match &wrap_factor {
+        Some(secret) => keyfile::combine(&key, secret)?,
+        None => key,
+    };
 
     let vault = UnlockedVault {
         layout: layout.clone(),
@@ -386,6 +487,7 @@ mod tests {
             &layout,
             &passphrase(),
             KdfSelection::Argon2id,
+            &WrapChoice::None,
             &mut rng,
             KdfFailPoint::AllocFails,
         )
@@ -421,7 +523,7 @@ mod tests {
         let layout = VaultLayout::at(dir.0.join("vault"));
         let mut rng = ChaCha20Rng::from_seed(TEST_RNG_SEED);
         create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng).expect("create");
-        let err = unlock_vault_impl(&layout, &passphrase(), KdfFailPoint::AllocFails)
+        let err = unlock_vault_impl(&layout, &passphrase(), None, KdfFailPoint::AllocFails)
             .expect_err("simulated allocation failure");
         assert_eq!(err.class(), ErrorClass::VaultKdfMemory);
         assert_eq!(err.exit_code(), 13);

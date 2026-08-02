@@ -6,9 +6,25 @@
 //! ```text
 //! file := MAGIC                        ("ANTSEAL VAULT HEADER", 20 bytes)
 //!       ‖ canonical CBOR array(2):     [ format_version: uint, body: bstr ]
-//! body (v1) := canonical CBOR map:     { 0: kdf_block (bstr, ≤ 512 B),
-//!                                        1: wrap_mode  (uint, D50 registry) }
+//! body (v1) := canonical CBOR map:     { 0: kdf_block    (bstr, ≤ 512 B),
+//!                                        1: wrap_mode     (uint, D50 registry),
+//!                                        2: keyfile_path  (bstr, OPTIONAL —
+//!                                           present only for wrap mode 1) }
 //! ```
+//!
+//! Key 2 is a **pre-release extension of v1**, not a version bump: nothing
+//! has shipped, writer and reader move together, and a body carrying it is
+//! produced only by a keyfile vault — which an older build could not open
+//! in any case. (Post-release the identical change is a
+//! [`VAULT_FORMAT_VERSION`] event. Same rule `vault/export.rs` records for
+//! its payload.)
+//!
+//! Recording the path is optional even for mode 1, and what it costs is
+//! stated in `vault/keyfile.rs`: it tells anyone who reaches the vault
+//! directory *where* the second factor lives, and it buys a wrap that does
+//! not have to be re-declared on every invocation. Because the header is
+//! AAD for every record, a tampered path is an authentication failure for
+//! the whole vault rather than a silent redirect at an attacker's file.
 //!
 //! The **envelope** (magic + `[version, body]`) is frozen forever: future
 //! versions redefine only the body, so any build can always read the
@@ -55,6 +71,9 @@ pub const MAX_HEADER_BYTES: usize = 4096;
 /// algorithm id + parameters + 16-B salt; D40).
 pub const MAX_KDF_BLOCK_BYTES: usize = 512;
 
+/// Parse cap on the optional recorded keyfile path.
+pub const MAX_KEYFILE_PATH_BYTES: usize = 1024;
+
 /// D50 wrap-mode registry: no extra wrap (passphrase-only vault).
 pub const WRAP_MODE_NONE: u8 = 0;
 /// D50 wrap-mode registry: high-entropy keyfile wrap for `W`.
@@ -92,6 +111,12 @@ pub enum HeaderError {
     /// KDF block exceeds [`MAX_KDF_BLOCK_BYTES`].
     #[error("vault header KDF block is {len} bytes, over the {MAX_KDF_BLOCK_BYTES}-byte cap")]
     KdfBlockTooLarge { len: usize },
+
+    /// The recorded keyfile path is over [`MAX_KEYFILE_PATH_BYTES`], not
+    /// UTF-8, or present on a header whose wrap mode is not the keyfile
+    /// mode (constructible ≡ decodable — the F41 rule).
+    #[error("vault header keyfile path is invalid: {detail}")]
+    KeyfilePath { detail: &'static str },
 
     /// Wrap-mode id outside the D50 registry.
     #[error(
@@ -152,6 +177,7 @@ impl From<HeaderError> for CliError {
 pub struct VaultHeader {
     kdf_block: Vec<u8>,
     wrap_mode: u8,
+    keyfile_path: Option<String>,
 }
 
 impl VaultHeader {
@@ -162,6 +188,22 @@ impl VaultHeader {
     /// [`HeaderError::KdfBlockTooLarge`] / [`HeaderError::WrapModeUnknown`]
     /// under exactly the decode-side caps.
     pub fn new(kdf_block: Vec<u8>, wrap_mode: u8) -> Result<Self, HeaderError> {
+        Self::new_with_keyfile_path(kdf_block, wrap_mode, None)
+    }
+
+    /// Build a v1 header that also records where the keyfile lives (U8).
+    ///
+    /// # Errors
+    ///
+    /// The [`Self::new`] caps, plus [`HeaderError::KeyfilePath`] when a
+    /// path is given for a non-keyfile wrap mode or is over cap —
+    /// constructible ≡ decodable, so no constructor can mint a header the
+    /// parser would reject.
+    pub fn new_with_keyfile_path(
+        kdf_block: Vec<u8>,
+        wrap_mode: u8,
+        keyfile_path: Option<String>,
+    ) -> Result<Self, HeaderError> {
         if kdf_block.len() > MAX_KDF_BLOCK_BYTES {
             return Err(HeaderError::KdfBlockTooLarge {
                 len: kdf_block.len(),
@@ -172,10 +214,29 @@ impl VaultHeader {
                 found: u64::from(wrap_mode),
             });
         }
+        if let Some(path) = &keyfile_path {
+            if wrap_mode != WRAP_MODE_KEYFILE {
+                return Err(HeaderError::KeyfilePath {
+                    detail: "a keyfile path may only accompany wrap mode 1",
+                });
+            }
+            if path.is_empty() || path.len() > MAX_KEYFILE_PATH_BYTES {
+                return Err(HeaderError::KeyfilePath {
+                    detail: "empty or over the recorded-path cap",
+                });
+            }
+        }
         Ok(VaultHeader {
             kdf_block,
             wrap_mode,
+            keyfile_path,
         })
+    }
+
+    /// The recorded keyfile path, if this vault recorded one (U8).
+    #[must_use]
+    pub fn keyfile_path(&self) -> Option<&str> {
+        self.keyfile_path.as_deref()
     }
 
     /// The opaque KDF block (schema owned by U6/D40).
@@ -200,7 +261,11 @@ impl VaultHeader {
         let body = encode_item(|e| {
             e.map(|m| {
                 m.entry(0, |e| e.bytes(&self.kdf_block))?;
-                m.entry(1, |e| e.u64(u64::from(self.wrap_mode)))
+                m.entry(1, |e| e.u64(u64::from(self.wrap_mode)))?;
+                if let Some(path) = &self.keyfile_path {
+                    m.entry(2, |e| e.bytes(path.as_bytes()))?;
+                }
+                Ok(())
             })
         })?;
         let envelope = encode_item(|e| {
@@ -251,11 +316,15 @@ impl VaultHeader {
         // its own canonical pass — the embedded-bstr house rule).
         let mut b = CanonicalDecoder::new(body);
         let mut map = b.map()?;
-        if map.remaining() != 2 {
+        // 2 entries, or 3 when the optional keyfile path (key 2) is
+        // recorded — the pre-release v1 extension in the module docs.
+        if !matches!(map.remaining(), 2 | 3) {
             return Err(HeaderError::Schema {
-                detail: "v1 body must be a 2-entry map {0: kdf_block, 1: wrap_mode}",
+                detail: "v1 body must be {0: kdf_block, 1: wrap_mode} with an optional \
+                         2: keyfile_path",
             });
         }
+        let has_keyfile_path = map.remaining() == 3;
         if map.next_key(&mut b)? != Some(0) {
             return Err(HeaderError::Schema {
                 detail: "v1 body key 0 (kdf_block) missing",
@@ -276,14 +345,34 @@ impl VaultHeader {
         if wrap_mode > u64::from(MAX_REGISTERED_WRAP_MODE) {
             return Err(HeaderError::WrapModeUnknown { found: wrap_mode });
         }
+        // Bounded by MAX_REGISTERED_WRAP_MODE (≤ 2) just above.
+        let wrap_mode = u8::try_from(wrap_mode).map_err(|_| HeaderError::Schema {
+            detail: "wrap_mode exceeds u8 (unreachable: registry-capped)",
+        })?;
+
+        let keyfile_path = if has_keyfile_path {
+            if map.next_key(&mut b)? != Some(2) {
+                return Err(HeaderError::Schema {
+                    detail: "v1 body's third entry must be key 2 (keyfile_path)",
+                });
+            }
+            let raw = b.bytes()?;
+            if raw.len() > MAX_KEYFILE_PATH_BYTES {
+                return Err(HeaderError::KeyfilePath {
+                    detail: "over the recorded-path cap",
+                });
+            }
+            let path = std::str::from_utf8(raw).map_err(|_| HeaderError::KeyfilePath {
+                detail: "not valid UTF-8 (v1 records paths as UTF-8 text)",
+            })?;
+            Some(path.to_owned())
+        } else {
+            None
+        };
         b.finish()?;
 
-        Ok(VaultHeader {
-            kdf_block: kdf_block.to_vec(),
-            // Bounded by MAX_REGISTERED_WRAP_MODE (≤ 2) just above.
-            wrap_mode: u8::try_from(wrap_mode).map_err(|_| HeaderError::Schema {
-                detail: "wrap_mode exceeds u8 (unreachable: registry-capped)",
-            })?,
-        })
+        // Decodable ≡ constructible: run the constructor's own
+        // cross-field rule rather than a second copy of it.
+        VaultHeader::new_with_keyfile_path(kdf_block.to_vec(), wrap_mode, keyfile_path)
     }
 }

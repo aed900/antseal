@@ -25,6 +25,8 @@
 //! | 15   | `vault-lock-held` | U5: another antseal process holds the single-writer lock |
 //! | 16   | `vault-newer-version` | U5: vault header written by a newer antseal |
 //! | 17   | `malformed-config` | U4: `config.toml` present but unreadable — never silently ignored (missing = defaults) |
+//! | 18   | `vault-keyfile-missing` | U8/D50 mode 1: the keyfile factor is absent, unreadable or the wrong size — NEVER the generic auth failure |
+//! | 19   | `vault-wrap-mode-unsupported` | D50: the header names a registered wrap mode this build does not implement (mode 2, os-keystore) |
 //! | 20   | `insufficient-ant-token` | distinct from gas by spec (core flow 1) |
 //! | 21   | `insufficient-eth-gas` | distinct from token by spec (core flow 1) |
 //! | 22   | `anchor-gate-abort` | zero TSA tokens and no `--force-degraded`; aborts pre-payment |
@@ -261,6 +263,8 @@ pub enum ErrorClass {
     VaultLockHeld,
     VaultNewerVersion,
     MalformedConfig,
+    VaultKeyfileMissing,
+    VaultWrapModeUnsupported,
     InsufficientAntToken,
     InsufficientEthGas,
     AnchorGateAbort,
@@ -279,7 +283,7 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 26] = [
+    pub const ALL: [ErrorClass; 28] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -305,6 +309,8 @@ impl ErrorClass {
         ErrorClass::ImportAuthFailed,
         ErrorClass::ImportNewerVersion,
         ErrorClass::MalformedConfig,
+        ErrorClass::VaultKeyfileMissing,
+        ErrorClass::VaultWrapModeUnsupported,
         ErrorClass::RestoreVerificationFailed,
     ];
 
@@ -324,6 +330,8 @@ impl ErrorClass {
             ErrorClass::VaultLockHeld => 15,
             ErrorClass::VaultNewerVersion => 16,
             ErrorClass::MalformedConfig => 17,
+            ErrorClass::VaultKeyfileMissing => 18,
+            ErrorClass::VaultWrapModeUnsupported => 19,
             ErrorClass::InsufficientAntToken => 20,
             ErrorClass::InsufficientEthGas => 21,
             ErrorClass::AnchorGateAbort => 22,
@@ -358,6 +366,8 @@ impl ErrorClass {
             ErrorClass::VaultLockHeld => "vault-lock-held",
             ErrorClass::VaultNewerVersion => "vault-newer-version",
             ErrorClass::MalformedConfig => "malformed-config",
+            ErrorClass::VaultKeyfileMissing => "vault-keyfile-missing",
+            ErrorClass::VaultWrapModeUnsupported => "vault-wrap-mode-unsupported",
             ErrorClass::InsufficientAntToken => "insufficient-ant-token",
             ErrorClass::InsufficientEthGas => "insufficient-eth-gas",
             ErrorClass::AnchorGateAbort => "anchor-gate-abort",
@@ -558,6 +568,45 @@ pub enum CliError {
     #[error("resume safety abort: {}", .reason.describe())]
     ResumeSafetyAbort { reason: ResumeSafetyReason },
 
+    /// U8/D50 mode 1: the keyfile factor could not be obtained.
+    ///
+    /// **Never collapsed into [`Self::VaultAuthFailure`]**, which is U6's
+    /// deliberate one-code collapse of "wrong passphrase / tampered
+    /// header / corrupt store". That collapse exists because
+    /// distinguishing those three would leak which secret-dependent step
+    /// failed. A missing keyfile leaks nothing: the header already says
+    /// mode 1, so an attacker holding the vault knows a keyfile is
+    /// required. Telling a user whose USB stick is unplugged that their
+    /// passphrase is wrong would send them to re-type, re-derive and
+    /// eventually re-create — which destroys the vault.
+    ///
+    /// `detail` names the failure class only (absent, unreadable, wrong
+    /// size) and never a byte of the file.
+    #[error(
+        "the vault's keyfile could not be read from {} ({detail}). This vault was created with a keyfile wrap (D50 mode 1), so the keyfile is required alongside the passphrase at every unlock. Point at it with ANTSEAL_KEYFILE=<path> if it has moved; without it the vault cannot be opened by anyone, including you",
+        .path.display()
+    )]
+    VaultKeyfileMissing {
+        /// Where the keyfile was looked for (a path the user supplied or
+        /// the vault recorded — never secret).
+        path: PathBuf,
+        /// The failure class, never file content.
+        detail: String,
+    },
+
+    /// D50: the header names a registered wrap mode this build does not
+    /// implement — today only mode 2 (OS keystore), which is reserved so
+    /// that a later implementation is purely additive.
+    #[error(
+        "this vault uses wrap mode {mode} ({name}), which this build does not implement. The mode is a registered id, not corruption: the vault is intact and a build that implements it will open it. Nothing was changed"
+    )]
+    VaultWrapModeUnsupported {
+        /// The D50 registry id found in the header.
+        mode: u8,
+        /// Its registry name, so the message is readable without the spec.
+        name: &'static str,
+    },
+
     /// D45 §2: the invocation's inputs overlap an incomplete work without
     /// matching it exactly — refuse loudly rather than guess.
     ///
@@ -669,6 +718,8 @@ impl CliError {
             CliError::VaultLockHeld { .. } => ErrorClass::VaultLockHeld,
             CliError::VaultNewerVersion { .. } => ErrorClass::VaultNewerVersion,
             CliError::MalformedConfig { .. } => ErrorClass::MalformedConfig,
+            CliError::VaultKeyfileMissing { .. } => ErrorClass::VaultKeyfileMissing,
+            CliError::VaultWrapModeUnsupported { .. } => ErrorClass::VaultWrapModeUnsupported,
             CliError::InsufficientAntToken { .. } => ErrorClass::InsufficientAntToken,
             CliError::InsufficientEthGas { .. } => ErrorClass::InsufficientEthGas,
             CliError::AnchorGateAbort => ErrorClass::AnchorGateAbort,
@@ -743,7 +794,9 @@ mod tests {
             ErrorClass::ImportAuthFailed => 22,
             ErrorClass::ImportNewerVersion => 23,
             ErrorClass::MalformedConfig => 24,
-            ErrorClass::RestoreVerificationFailed => 25,
+            ErrorClass::VaultKeyfileMissing => 25,
+            ErrorClass::VaultWrapModeUnsupported => 26,
+            ErrorClass::RestoreVerificationFailed => 27,
         }
     }
 

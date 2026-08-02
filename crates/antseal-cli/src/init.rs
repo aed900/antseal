@@ -57,11 +57,12 @@ use antseal_net::{NetworkId, WalletImportError, WalletKey, checksummed};
 use rand_core::TryCryptoRng;
 
 use crate::cli::{GlobalArgs, InitArgs, KdfChoice, WalletSource, WrapChoice};
-use crate::error::{CliError, Milestone, PassphraseFailure};
+use crate::error::{CliError, PassphraseFailure};
 use crate::passphrase::{PassphrasePurpose, obtain_passphrase, read_secret_fd};
 use crate::vault::kdf::KdfSelection;
+use crate::vault::keyfile::{KEYFILE_ENV, WrapChoice as VaultWrap, placement_guidance};
 use crate::vault::layout::{BesideFile, VaultLayout};
-use crate::vault::session::create_vault;
+use crate::vault::session::create_vault_with_wrap;
 use crate::vault::wallet::{WalletKeyHandle, store_wallet_key};
 
 /// One wizard question, in D39's order. The enum exists so the order is a
@@ -111,6 +112,23 @@ pub trait InitPrompt {
 
     /// Read one no-echo secret line (the `import` paste).
     fn read_secret_line(&mut self, prompt: &str) -> Result<SecretBuf, CliError>;
+
+    /// Ask a free-text **path** (U8's keyfile location). Not a secret, so
+    /// it echoes.
+    ///
+    /// Given a default implementation that refuses, deliberately: every
+    /// prompt double written before U8 keeps compiling, and one that is
+    /// asked for a path it was never scripted for fails loudly instead of
+    /// inventing an answer.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Usage`] from the default implementation.
+    fn ask_path(&mut self, question: &str, _default: &str) -> Result<String, CliError> {
+        Err(CliError::Usage {
+            message: format!("this prompt channel cannot answer a path question: {question}"),
+        })
+    }
 }
 
 /// The production prompt: questions on **stderr** (D51's stream
@@ -161,6 +179,26 @@ impl InitPrompt for TtyInitPrompt {
             })?;
         Ok(SecretBuf::new(line.into_bytes()))
     }
+
+    fn ask_path(&mut self, question: &str, default: &str) -> Result<String, CliError> {
+        // No retry loop, unlike `ask_choice`: any non-empty line is a
+        // valid answer here (a path this process has no business
+        // validating — the medium may not be mounted yet), so there is
+        // nothing to re-ask. An empty line takes the default.
+        eprint!("{question}\n  path (default: {default}): ");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line).is_err() {
+            return Err(CliError::Usage {
+                message: format!("could not read an answer for: {question}"),
+            });
+        }
+        let answer = line.trim();
+        if answer.is_empty() {
+            return Ok(default.to_owned());
+        }
+        Ok(answer.to_owned())
+    }
 }
 
 /// What a completed `init` produced — the `--json` document's source and
@@ -179,6 +217,9 @@ pub struct InitReport {
     pub wallet_source: &'static str,
     /// The KDF the vault header records.
     pub kdf: &'static str,
+    /// Where the U8 keyfile was written, when a keyfile wrap was chosen.
+    /// A path the user themself supplied — never key material.
+    pub keyfile: Option<PathBuf>,
     /// The wizard questions this invocation actually asked, in order
     /// (empty when everything was flag-supplied — D39's "fully-flagged
     /// non-TTY init completes with zero prompts").
@@ -197,6 +238,9 @@ impl InitReport {
             "vault_dir": self.vault_dir.display().to_string(),
             "wallet_source": self.wallet_source,
             "kdf": self.kdf,
+            // The path only — the 32 keyfile bytes never leave the file
+            // they were written to (project rule 6).
+            "keyfile": self.keyfile.as_ref().map(|p| p.display().to_string()),
         })
     }
 
@@ -212,6 +256,10 @@ impl InitReport {
             format!("Payment wallet address: {}", self.address),
             String::new(),
         ];
+        if let Some(path) = &self.keyfile {
+            out.extend(placement_guidance(path));
+            out.push(String::new());
+        }
         out.extend(funding_lines(self.network, &self.address));
         out.push(String::new());
         out.extend(standing_warnings());
@@ -332,8 +380,22 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     }
 
     // ── 2. Answers we cannot honour, refused before any secret ──
-    if args.provided.wrap && args.wrap != WrapChoice::None {
-        return Err(unimplemented_wrap());
+    //
+    // U8 landed the keyfile engine, so `--wrap keyfile` is now honoured
+    // rather than refused. What still has to be settled here, before a
+    // passphrase is collected, is *where* the keyfile goes: the canonical
+    // surface carries no `--keyfile` flag (U1's frozen set), so in machine
+    // mode the path must arrive through the declared channel, and finding
+    // that out after typing a passphrase is the rudeness U36 named.
+    if args.wrap == WrapChoice::Keyfile && machine && keyfile_path_from_env().is_none() {
+        return Err(CliError::Usage {
+            message: format!(
+                "`--wrap keyfile` needs a path for the generated keyfile, and the canonical \
+                 command surface has no `--keyfile` flag to carry one. In machine mode set \
+                 {KEYFILE_ENV}=<path> (a path, never a secret — the same rule ANTSEAL_DIR \
+                 follows); interactively, `init` asks. Nothing was created"
+            ),
+        });
     }
 
     let mut asked: Vec<WizardStep> = Vec::new();
@@ -376,26 +438,43 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
         args.wrap
     } else {
         asked.push(WizardStep::Wrap);
-        // Only `none` is offered while U8's keyfile engine is unwritten:
-        // offering a choice the vault cannot honour would be a lie in the
-        // one place a user is deciding how their key is protected. The
-        // flag still parses and still refuses, loudly, above.
         match prompt
             .ask_choice(
-                "Extra wrap for the master secret? (keyfile wrap arrives with U8; only `none` \
-                 is available in this build)",
-                &["none"],
+                "Extra wrap for the master secret? A keyfile is a second factor: it is \
+                 required alongside the passphrase at every unlock, and losing it loses the \
+                 vault exactly as losing the passphrase does",
+                &["none", "keyfile"],
                 "none",
             )?
             .as_str()
         {
-            "none" => WrapChoice::None,
-            _ => return Err(unimplemented_wrap()),
+            "keyfile" => WrapChoice::Keyfile,
+            _ => WrapChoice::None,
         }
     };
-    if wrap != WrapChoice::None {
-        return Err(unimplemented_wrap());
-    }
+
+    // D50's default is declined, so the path question is asked only when
+    // the answer was yes.
+    let wrap = match wrap {
+        WrapChoice::None => VaultWrap::None,
+        WrapChoice::Keyfile => {
+            let path = match keyfile_path_from_env() {
+                Some(path) => path,
+                None => PathBuf::from(prompt.ask_path(
+                    "Where should the keyfile be written? Put it on different media from the \
+                     vault — a USB stick, a second machine — or it protects against nothing",
+                    &default_keyfile_path(layout),
+                )?),
+            };
+            VaultWrap::Keyfile {
+                path,
+                // Recorded, so the wrap does not have to be re-declared on
+                // every invocation. What that discloses is stated in
+                // `vault/keyfile.rs`; ANTSEAL_KEYFILE overrides it.
+                record_path: true,
+            }
+        }
+    };
 
     let kdf = if args.provided.kdf || machine {
         args.kdf
@@ -453,7 +532,7 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
         KdfChoice::Argon2id => KdfSelection::Argon2id,
         KdfChoice::Scrypt => KdfSelection::Scrypt,
     };
-    let vault = create_vault(layout, &passphrase, selection, rng)?;
+    let vault = create_vault_with_wrap(layout, &passphrase, selection, &wrap, rng)?;
     store_wallet_key(&vault, &handle, rng)?;
 
     let config_path = layout.beside_path(BesideFile::Config);
@@ -477,6 +556,10 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
         kdf: match kdf {
             KdfChoice::Argon2id => "argon2id",
             KdfChoice::Scrypt => "scrypt",
+        },
+        keyfile: match &wrap {
+            VaultWrap::Keyfile { path, .. } => Some(path.clone()),
+            VaultWrap::None => None,
         },
         asked,
     })
@@ -512,14 +595,30 @@ pub fn existing_vault_refusal(root: &std::path::Path) -> CliError {
     }
 }
 
-/// D50's registry has the slot; U8 has the engine, and it has not landed.
-/// A distinct, honest refusal beats a vault whose header claims a wrap it
-/// does not have.
-fn unimplemented_wrap() -> CliError {
-    CliError::NotImplemented {
-        command: "init --wrap keyfile",
-        milestone: Milestone::M1,
-    }
+/// The keyfile path from the environment, if set (a path, never a
+/// secret — `ANTSEAL_DIR`'s rule, and outside D41's rejection of
+/// env-carried *secrets*).
+fn keyfile_path_from_env() -> Option<PathBuf> {
+    std::env::var_os(KEYFILE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The default the wizard offers for a keyfile path: **beside the vault's
+/// parent, never inside the vault directory**.
+///
+/// A keyfile in `~/.antseal/` would be a second factor stored with the
+/// thing it protects, which is no second factor at all. The default is
+/// deliberately a place the user is likely to move it *from* rather than
+/// a place that looks safe.
+fn default_keyfile_path(layout: &VaultLayout) -> String {
+    layout
+        .root()
+        .parent()
+        .unwrap_or_else(|| layout.root())
+        .join("antseal-keyfile.bin")
+        .display()
+        .to_string()
 }
 
 /// D44's rejection classes, given `init`'s own voice. The mnemonic case

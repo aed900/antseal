@@ -576,6 +576,10 @@ fn fixture_init_report() -> antseal_cli::init::InitReport {
         vault_dir: PathBuf::from("/home/user/.antseal"),
         wallet_source: "generate",
         kdf: "argon2id",
+        // U8: the registered exemplar shows the wrap DECLINED (D50's
+        // default), because that is what the overwhelming majority of
+        // documents look like; the keyfile shape is one nullable string.
+        keyfile: None,
         asked: Vec::new(),
     }
 }
