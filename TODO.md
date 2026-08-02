@@ -370,7 +370,7 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 
 ## M2 — Anchors (35 tasks)
 
-Gate: anchor golden vectors + wasm32 bit-parity green (A22 — spec's explicit M2 exit criteria); all 7 anchor tamper rows implemented + registered (A21/Q18); real-endpoint smoke incl. two-day OTS pending→upgraded cycle complete (A25); minimum-anchor gate live in `seal` with abort-before-payment proven (U22/A20); `status --upgrade` + opportunistic hook + `list` nags working (U23–U25); DER/`.ots` fuzz targets in CI (A23/Q17).
+Gate: anchor golden vectors + wasm32 bit-parity green (A22 — spec's explicit M2 exit criteria); **all 8** anchor tamper rows implemented + registered (A21/Q18) — *corrected 2026-08-02 by D53: this said 7; spec line 168's M2 half is six semicolon clauses, two of them compound, expanding to eight cases, and the project had reached "seven" by two different routes (`MATRIX.json` splits the expiry clause, `tasks/A.md` A21 splits the digest clause), so the two sevens were never the same seven*; real-endpoint smoke incl. two-day OTS pending→upgraded cycle complete (A25); minimum-anchor gate live in `seal` with abort-before-payment proven (U22/A20); `status --upgrade` + opportunistic hook + `list` nags working (U23–U25); DER/`.ots` fuzz targets in CI (A23/Q17).
 
 ### Pins (P)
 - [ ] **P18** (S) Pin `opentimestamps = "=0.2.0"` scoped codec-only; wasm32 viability check — after P7,P14

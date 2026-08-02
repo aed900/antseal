@@ -1,0 +1,69 @@
+# D60 TSA bootstrap capture log — the A25 TSA half
+
+Captured by the D60 planning lane (decision: `docs/decisions/D60-der-cms-x509-pins.md`)
+under the network permission the maintainer granted for M2 on 2026-08-02.
+Public cryptographic material only (RFC 3161 requests + responses over a
+published fixture digest). No secret material. Independent of, and does not
+disturb, the OTS `*.timestamp` files or the `freetsa-D59-*` pair.
+
+    stamped digest = 083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df
+                     ( = testdata/vectors/v1/manifest/manifest.json anchor_digest )
+    request form   = openssl ts -query -digest <above> -sha256 -cert
+                     (v1, SHA-256 messageImprint, 64-bit nonce, certReq = TRUE)
+    tool           = OpenSSL 3.0.20 / curl 7.88.1
+    header         = Content-Type: application/timestamp-query
+
+## CLOCK WARNING (measured, load-bearing)
+
+This host's clock ran **129 s slow** at capture time, measured against the
+`Date` header of three unrelated hosts within one second of each other:
+
+    https://freetsa.org/                            offset +129 s
+    https://crates.io/                              offset +128 s
+    https://blockstream.info/api/blocks/tip/height  offset +129 s   (2026-08-02T20:02Z remote)
+
+Every `utc=` value below is this host's clock. The `genTime` values inside
+the tokens come from the TSAs and are ~129 s AHEAD of them. An implementer
+writing the obvious `gen_time <= fetch_date` sanity check would reject every
+token in this directory. Do not write that check against a local clock.
+
+## Captures
+
+    utc_start = 2026-08-02T19:20:11Z   (local clock; true time ~19:22:20Z)
+
+| file | endpoint | http | bytes | utc (local clock) |
+| --- | --- | --- | --- | --- |
+| D60-tsa-freetsa-{req.tsq,resp.tsr}    | https://freetsa.org/tsr                        | 200 | 69 / 4643 | 2026-08-02T19:20:19Z |
+| D60-tsa-digicert-{req.tsq,resp.tsr}   | http://timestamp.digicert.com                  | 200 | 69 / 6007 | 2026-08-02T19:20:26Z |
+| D60-tsa-dfn-{req.tsq,resp.tsr}        | http://zeitstempel.dfn.de                      | 200 | 70 / 6671 | 2026-08-02T19:33:59Z |
+| D60-tsa-sectigo-{req.tsq,resp.tsr}    | http://timestamp.sectigo.com                   | 200 | 70 / 6637 | 2026-08-02T19:34:03Z |
+| D60-tsa-swisssign-{req.tsq,resp.tsr}  | http://tsa.swisssign.net                       | 200 | 69 / 6858 | 2026-08-02T19:34:06Z |
+| D60-tsa-apple-{req.tsq,resp.tsr}      | http://timestamp.apple.com/ts01                | 200 | 69 / 4306 | 2026-08-02T19:34:10Z |
+| D60-tsa-globalsign-{req.tsq,resp.tsr} | http://timestamp.globalsign.com/tsa/r6advanced1| 200 | 69 / 7660 | 2026-08-02T19:34:13Z |
+| D60-tsa-certum-{req.tsq,resp.tsr}     | http://time.certum.pl                          | 200 | 69 / 6164 | 2026-08-02T19:34:17Z |
+| D60-tsa-entrust-{req.tsq,resp.tsr}    | http://timestamp.entrust.net/TSS/RFC3161sha2TS | 200 | 69 / 6636 | 2026-08-02T19:34:20Z |
+
+All nine returned `PKIStatus: granted` and echoed the request nonce exactly.
+No TSA refused the request; no rate limit was hit; one request per endpoint,
+spaced >= 3 s (Sectigo's ~15 s spacing caveat and SwissSign's ~10/day quota
+were not approached).
+
+**`timestamp.entrust.net` is served by Sectigo.** Its token carries the same
+signer certificate (issuer `CN=Sectigo Public Time Stamping CA R41`, serial
+`0xE74EF255B0504FFADBA6DFF7FC8BA315`) as `timestamp.sectigo.com`. The two are
+one TSA behind two names — they are **not** two independent anchors.
+
+## Derived tamper fixtures (generated locally from the captures above)
+
+| file | derived from | mutation |
+| --- | --- | --- |
+| D60-ber-indefinite-freetsa.tsr      | D60-tsa-freetsa-resp.tsr  | outer 3 nesting levels re-encoded with BER indefinite lengths + EOC |
+| D60-ber-indefinite-digicert.tsr     | D60-tsa-digicert-resp.tsr | same |
+| D60-ber-nonminimal-len-freetsa.tsr  | D60-tsa-freetsa-resp.tsr  | outer SEQUENCE length re-encoded as a non-minimal 4-octet long form (`30 84 00 00 12 1f`) |
+| D60-ber-nonminimal-len-digicert.tsr | D60-tsa-digicert-resp.tsr | same |
+| D60-ber-unsorted-setof-freetsa.tsr  | D60-tsa-freetsa-resp.tsr  | the four `signedAttrs` reversed in place (same length, non-DER SET OF order) |
+
+The two indefinite-length fixtures are **valid BER** — `openssl ts -reply`
+parses them and `der 0.8.1`'s `Decode::from_ber` accepts the FreeTSA one.
+That is what makes them a real BER-where-DER-required case rather than
+garbage: a parser that rejects them must be rejecting them *for being BER*.

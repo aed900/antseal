@@ -253,8 +253,16 @@ that stand between a user and an adversary's `.sealproof`.
 
 | lane | trigger | budget | required |
 | --- | --- | --- | --- |
-| `fuzz-smoke` (`.github/workflows/ci.yml`) | every PR + push to main | self-test, then 90 s per target | yes — branch-protection context |
+| `fuzz-smoke` (`.github/workflows/ci.yml`) | every PR + push to main | self-test, then 90 s per target | intended-required — see the note below |
 | `fuzz-nightly` (`.github/workflows/fuzz-nightly.yml`) | scheduled + manual | 900 s per target, corpus persisted | no (not a PR context) |
+
+**Corrected 2026-08-02 (D61).** The "required" column said `fuzz-smoke` was
+a *branch-protection context*. **No context is enforced on this repository**
+— branch protection 403s on a private repo on GitHub Free (D52 §E1, verified
+twice; `docs/ci-verification.md`), so `fuzz-smoke` is required by convention
+and by the local gate, not by any enforcement GitHub is applying. It is in
+the 19-context payload that would be applied *if* protection ever becomes
+available. Stating it as enforced overstates what stops a red lane merging.
 
 `fuzz-smoke` runs `scripts/fuzz.sh selftest` **before** it fuzzes, every
 run: the tripwire (§6) makes each target crash on its first input, and the
@@ -278,11 +286,23 @@ re-proven on every CI run and by any contributor in one command.
 It exists only in the fuzz crate. Nothing in `antseal-core` reads an
 environment variable, and nothing that ships can panic on demand.
 
-## 7. Long-run venue (open decision D61)
+## 7. Long-run venue (decision D61 — RESOLVED 2026-08-02)
 
-Whether long-running fuzzing eventually lives in scheduled CI or in
-**OSS-Fuzz** is decision D61, **due M3 — deliberately not resolved here.**
-Nothing in this setup forecloses either:
+**Resolved: scheduled CI (`fuzz-nightly.yml`), twice weekly, with a named
+minutes ceiling — see `docs/decisions/D61-fuzz-venue.md`.** Two corrections
+to what this section said before that ruling:
+
+- it called D61 **"due M3 — deliberately not resolved here"**. D61 is and
+  was **due M2** (`TODO.md`, Due-M2 register block), which made it a
+  milestone blocker, not a deferral;
+- it said OSS-Fuzz is "gated on the same publication decisions as the
+  release lane". Public is **necessary but not sufficient**: OSS-Fuzz's
+  stated criterion is a significant user base or criticality to global IT
+  infrastructure, so flipping the repo public (Q65) does **not** make
+  antseal eligible. D61 rules OSS-Fuzz not applicable on that ground.
+
+The portability properties below are still true and still worth keeping —
+they are what would make a venue change cheap, and they cost nothing:
 
 - targets are ordinary `libfuzzer-sys` binaries with no antseal-specific
   driver, which is exactly what an OSS-Fuzz `build.sh` expects to compile;

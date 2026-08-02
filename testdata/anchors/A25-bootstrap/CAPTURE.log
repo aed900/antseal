@@ -1,0 +1,15 @@
+# A25 bootstrap capture log
+utc_start=2026-08-02T19:16:18Z
+digest_A=083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df bytes=32
+submit digest=A calendar=alice url=https://alice.btc.calendar.opentimestamps.org http=200 bytes=207 sha256=cfaac0da1ba1a1dc1a0b45a86c769b09203afff985eb40a0b0f601c6b6fc576a utc=2026-08-02T19:16:19Z
+submit digest=A calendar=bob url=https://bob.btc.calendar.opentimestamps.org http=200 bytes=170 sha256=e4317f7f8f8b6bc68cdf2ef596d857af47b9d033a24708e3ec41d95110b232da utc=2026-08-02T19:16:21Z
+curl: (6) Could not resolve host: finney.btc.calendar.opentimestamps.org
+submit digest=A calendar=finney url=https://finney.btc.calendar.opentimestamps.org http=000 bytes=0 sha256= utc=2026-08-02T19:16:21Z
+submit digest=A calendar=catallaxy url=https://btc.calendar.catallaxy.com http=200 bytes=220 sha256=b21c9f853b148e8c60a1acec972ca517d3a23b1c4661dd15fc9a00e967b6699b utc=2026-08-02T19:16:22Z
+digest_B=3448b9f22d6d4de5b68e0c1ba28d56e8466aa5a01892835411f7c467b52e5e9c bytes=32
+submit digest=B calendar=alice url=https://alice.btc.calendar.opentimestamps.org http=200 bytes=207 sha256=22327cf17581c3126423da78685cd2c73ffbcd62a805b7fb542513a213991db8 utc=2026-08-02T19:16:23Z
+submit digest=B calendar=bob url=https://bob.btc.calendar.opentimestamps.org http=200 bytes=170 sha256=7f7ec22c73498b75190cc8fc90992fa9bea0b412237c126c9fa3eb9287e882bd utc=2026-08-02T19:16:25Z
+curl: (6) Could not resolve host: finney.btc.calendar.opentimestamps.org
+submit digest=B calendar=finney url=https://finney.btc.calendar.opentimestamps.org http=000 bytes=0 sha256= utc=2026-08-02T19:16:25Z
+submit digest=B calendar=catallaxy url=https://btc.calendar.catallaxy.com http=200 bytes=185 sha256=1c5c67c94b40fb65d0e4e8058be75a672656ddf0c261b734c187cc590f48430e utc=2026-08-02T19:16:26Z
+utc_end=2026-08-02T19:16:26Z

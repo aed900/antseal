@@ -157,8 +157,13 @@ ant-node = "=0.15.0"
 # futures run on the caller's runtime); and, since U36, antseal-cli's
 # optional edge behind `ant-backend`, which is that caller. antseal-core
 # stays tokio-free unconditionally (dep-graph lane guards it). Every
-# product edge is feature-gated non-default, so the default `--workspace`
-# graph resolves no tokio at all.
+# product edge is feature-gated non-default.
+# CORRECTED 2026-08-02 (D90): this previously concluded "so the default
+# `--workspace` graph resolves no tokio at all" — FALSE as the `dep-graph`
+# lane actually measures. `cargo tree -i tokio --workspace -e normal,build,dev`
+# returns `antseal-net v0.0.0` on a DEV edge. The claim holds only for
+# `-e normal` (100 packages). The distinction matters because the lane's
+# edge set is what decides whether a future dev-only dependency is caught.
 tokio = { version = "1", default-features = false }
 
 # EXACT-PIN CLASS (consensus-affecting): BLAKE3-256 is the v1 storage-address
@@ -434,7 +439,11 @@ getrandom03 = { package = "getrandom", version = "0.3" }
 # URL type for constructing evmlib's `CustomNetwork` (S5's devnet →
 # EvmNetwork mapping, behind `ant-backend`). `CustomNetwork.rpc_url_http`
 # is `reqwest::Url`, which IS `url::Url` re-exported
-# (reqwest-0.12.28/src/lib.rs:280), so this must resolve to the same `url`
+# (reqwest-0.12.28/src/lib.rs:280). NOTE (D90, 2026-08-02): the lock carries
+# TWO reqwest generations — 0.12.28 via ant-core and 0.13.4 via
+# alloy/ant-node/saorsa-transport. The single-`url` claim below still holds
+# (both resolve 2.5.8); it is the reqwest count that is not one.
+# So this must resolve to the same `url`
 # the evmlib graph uses — the lock resolves exactly one (2.5.8), and any
 # future skew is a COMPILE error in the struct literal, never silent
 # drift. Chosen over calling `CustomNetwork::new`, whose parse `expect`s
