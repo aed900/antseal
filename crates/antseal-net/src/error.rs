@@ -95,12 +95,26 @@ pub enum StorageError {
         /// Diagnostic detail.
         reason: String,
     },
-    /// The journaled proofs have outlived the node-side validity window
-    /// (`QUOTE_MAX_AGE_SECS`, ~24 h — node policy, pinned by S9):
-    /// storers reject them even though the receipt is intact (D37
-    /// Decision 6). Completing the seal now requires **re-consented
+    /// A storer rejected the journaled proofs on payment grounds, and
+    /// they are older than antseal's conservative ~24 h proof-age window
+    /// (D37 Decision 6). Completing the seal now requires **re-consented
     /// re-payment** — surfaced distinctly so it can never happen
     /// silently (S11 owns the re-consent flow).
+    ///
+    /// **Attribution, corrected by S9 (2026-08-02):** this window is
+    /// antseal's own client-side policy, **not** a rule the pinned
+    /// ant-node enforces. `QUOTE_MAX_AGE_SECS` — which D37 recorded as
+    /// node-side proof validity, following ant-core's own doc comments —
+    /// does not exist in ant-node 0.15.0, and the single-node payment
+    /// path (`verify_payment_inner` -> `verify_evm_payment`,
+    /// `ant-node-0.15.0/src/payment/verifier.rs:801,945`) applies no
+    /// timestamp gate at all. The only proof-age enforcement in the
+    /// pinned stack is `MERKLE_PAYMENT_EXPIRATION` (7 days,
+    /// `evmlib-0.9.0/src/merkle_payments/merkle_tree.rs:24`), on the
+    /// merkle path D37 excludes. The variant stays, and the window stays
+    /// conservative: the mechanism may return upstream at any release,
+    /// and being early costs one re-pay of a cheap chunk. Evidence:
+    /// `crates/antseal-net/tests/storage_constants.rs` module docs.
     #[error(
         "payment proofs expired: the node-side proof-validity window (~24 h) has passed and \
          storers reject the journaled proofs; completing this seal requires a re-consented \

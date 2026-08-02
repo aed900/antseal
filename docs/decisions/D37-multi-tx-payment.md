@@ -206,3 +206,79 @@ record, not a hash list.**
    re-contacts the quoting path; if upstream ever makes quote *collection*
    itself stateful or paid, the resume story must be re-decided (S20 bump
    gate).
+
+---
+
+## Correction — 2026-08-02 (S9, wave-2 lane θ): the proof-validity window is
+## client-side policy, not a node rule
+
+**What this record got wrong.** The summary above, Decision 6, evidence row
+14 and residual risk 1 all state that a journaled receipt is PUT-usable only
+within a **node-side** proof-validity window named `QUOTE_MAX_AGE_SECS`
+(~24 h), described as "upstream node policy, not ours to freeze". S9 was
+tasked with pinning that constant against the pinned source. **It does not
+exist, and neither does the enforcement.**
+
+**Evidence** (all from the pinned versions this workspace resolves):
+
+| claim as recorded | pinned reality |
+|---|---|
+| `QUOTE_MAX_AGE_SECS` in `ant-node/src/payment/verifier.rs` | **0 occurrences** anywhere in `ant-node-0.15.0` |
+| `QUOTE_FUTURE_SKEW_TOLERANCE_SECS = 300`, same file | **0 occurrences** |
+| a storer-side `validate_quote_timestamps` call | **0 occurrences** |
+| "storers reject the proof after 24 h" | the single-node verification path applies **no timestamp gate at any step** |
+
+The path antseal actually uses — D37 Decision 2 excludes merkle mode — is
+`verify_payment_inner` → `ProofType::SingleNode` → `verify_evm_payment`
+(`ant-node-0.15.0/src/payment/verifier.rs:801`, `:835`, `:945`). Its steps,
+documented at `verifier.rs:938-944` and confirmed against the body, are:
+`validate_quote_structure`; `validate_quote_arithmetic`; median-candidate
+selection; per candidate — content binding, peer binding, ML-DSA-65
+signature, local K-closeness, and `completedPayments(quoteHash) ≥ 3×` the
+median price; the receiver-side price floor; the ADR-0004 cross-check. No
+timestamp is read. The one staleness gate the file mentions was deliberately
+**retired** (`verifier.rs:966-971`: the price-binding check "RETIRES the
+percentage-based own-quote price-staleness gate").
+
+**Where the 24 h actually comes from.** Row 14 quoted
+`ant-core-0.5.0/src/data/client/cached_single.rs:48-58` faithfully — but that
+is ant-core describing its **own on-disk proof cache**, whose expiry is
+`CACHED_PROOF_MAX_AGE_SECS = 24 * 60 * 60` (`batch.rs:1051-1058`). Its doc
+comment claims to "mirror `QUOTE_MAX_AGE_SECS` in `ant-node`"; against the
+pinned node, that reference is stale. And antseal does not use that cache at
+all: it journals its own `proof_bytes` (Decision 4) and stores through
+`chunk_put_with_proof`, so even the client-side expiry never fires on our
+path.
+
+**The only proof-age enforcement that exists in the pinned stack** is
+`MERKLE_PAYMENT_EXPIRATION = 7 * 24 * 60 * 60` (7 days),
+`evmlib-0.9.0/src/merkle_payments/merkle_tree.rs:24`, enforced at `:464` — on
+the **merkle** path, which Decision 2 excludes. It is now pinned as the
+watchpoint in `crates/antseal-net/tests/storage_constants.rs`, so a bump that
+changes it, or that moves age enforcement onto the single-node path, surfaces
+at the S20 review.
+
+**What changes, and what does not.**
+
+- **Nothing in the design changes.** `StorageError::ProofsExpired` stays;
+  the ~24 h classifier window (`PROOF_VALIDITY_WINDOW_SECS`) stays; the
+  re-consent-before-re-payment rule (supplied by D36) stays; "resume
+  promptly" stays in the user docs. The window is used **only** to classify
+  a storer's payment-class rejection, never to gate anything pre-emptively,
+  so a conservative guess costs at most one re-pay of a cheap chunk — and
+  the mechanism can return upstream in any weekly release.
+- **The attribution changes.** It is antseal's own client-side policy, not a
+  network rule, and it must not be described as one. Corrected at source in
+  `crates/antseal-net/src/{error,receipt,backend,ant_backend}.rs`.
+- **Residual risk 1 is re-framed**: the risk is no longer "an upstream
+  constant we cannot see may drift" but its inverse — **there is currently
+  no node-side expiry at all**, so a resume long after payment may simply
+  succeed, and antseal must never *depend* on the window existing in either
+  direction. S20's bump gate re-runs S9's constants suite; S16's mock-clock
+  test continues to exercise the expired-window branch, which remains
+  reachable by a storer rejecting on payment grounds for any reason.
+- **D36 is unaffected in its conclusion.** Its "always re-quote" ruling rests
+  primarily on "a journaled quote is never paid: nothing in the pay path
+  checks age before moving tokens" — which is *reinforced* here. Only its
+  secondary clause ("storers enforce ~24 h `QUOTE_MAX_AGE_SECS`") inherits
+  this correction; a dated pointer is appended to that record.

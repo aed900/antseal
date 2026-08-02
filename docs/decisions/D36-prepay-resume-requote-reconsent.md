@@ -280,3 +280,16 @@ a fuzzy edge ("a 9.9% increase paid silently").
    a failed pay under the same in-invocation consent, and how that
    interacts with S12's fault barriers and D37's per-sub-batch
    journaling. Owner S6/S12; only if evidence demands.
+
+---
+
+**[Correction pointer — 2026-08-02, S9]** Evidence row 3 and the summary's
+secondary clause state that "storers enforce ~24 h `QUOTE_MAX_AGE_SECS`".
+That constant does not exist in the pinned ant-node 0.15.0 and the
+single-node payment path applies no timestamp gate; the ~24 h figure is
+ant-core's client-side proof-cache policy. Full evidence and consequences:
+the dated correction at the end of `D37-multi-tx-payment.md`. **This
+record's conclusion is unaffected** — "always re-quote, consent per
+invocation" rests on the load-bearing clause "a journaled quote is never
+paid: nothing in the pay path checks age before moving tokens", which the
+S9 investigation reinforces rather than weakens.

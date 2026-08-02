@@ -37,8 +37,10 @@ use crate::{Address, Blob, CostQuote, PaymentReceipt, StorageError};
 /// chunks. `finalize_batch` is **idempotent over already-stored
 /// addresses, resumable, and issues no new payment** — calling it twice
 /// with the same receipt stores nothing twice and returns the same
-/// address vector. Post-pay resume is time-boxed by the node-side proof
-/// validity window (~24 h, [`StorageError::ProofsExpired`]).
+/// address vector. Post-pay resume is time-boxed by antseal's own
+/// conservative ~24 h proof-age window ([`StorageError::ProofsExpired`])
+/// — a **client-side** policy, not a pinned-node rule (S9's correction,
+/// 2026-08-02; see that variant's docs).
 ///
 /// Ordering across the four operations is the pipeline's normative order
 /// (S12): `quote_batch` over the **full** blob set → consent → anchor

@@ -126,14 +126,24 @@ const PER_TX_BASE_GAS: u64 = 300_000;
 /// Per non-zero transfer marginal gas (vault record + token transfer).
 const PER_TRANSFER_GAS: u64 = 220_000;
 
-/// Client-side mirror of the node-side proof-validity window
-/// (`QUOTE_MAX_AGE_SECS`, ~24 h — D37 Decision 6). Used ONLY to classify a
-/// storer's payment-class PUT rejection as [`StorageError::ProofsExpired`]
-/// vs a generic finalize failure; never to gate anything pre-emptively.
-/// Value mirrors upstream's own client-side mirror
+/// antseal's own conservative proof-age window (~24 h, D37 Decision 6).
+/// Used ONLY to classify a storer's payment-class PUT rejection as
+/// [`StorageError::ProofsExpired`] vs a generic finalize failure; never to
+/// gate anything pre-emptively — which is exactly why the S9 correction
+/// below costs nothing.
+///
+/// Value mirrors ant-core's client-side cache policy
 /// (`CACHED_PROOF_MAX_AGE_SECS = 24 * 60 * 60`,
-/// `ant-core-0.5.0/src/data/client/batch.rs:1051-1058`); S9 pins the
-/// observed node behavior.
+/// `ant-core-0.5.0/src/data/client/batch.rs:1051-1058`).
+///
+/// **[S9, 2026-08-02]** That upstream constant's doc claims to mirror
+/// `QUOTE_MAX_AGE_SECS` "in `ant-node/src/payment/verifier.rs`". No such
+/// constant exists in the pinned ant-node 0.15.0, and the single-node
+/// payment path applies no timestamp gate — so this is a **self-imposed**
+/// client policy, not a mirror of anything the network enforces. It stays:
+/// classification-only use makes a wrong guess cost one re-pay, and the
+/// mechanism could return upstream at any release. Evidence:
+/// `crates/antseal-net/tests/storage_constants.rs` module docs.
 const PROOF_VALIDITY_WINDOW_SECS: u64 = 24 * 60 * 60;
 
 /// The session wallet's balances (task S8) — structured data for U14's
