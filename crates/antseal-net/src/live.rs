@@ -46,6 +46,12 @@
 //! (R11/R21); the M1 devnet E2E calls it directly through library APIs.
 //! Implemented **once, here** — R11 does not fetch again.
 
+// R11 — the verify-side wrapper over this primitive: labelled,
+// manifest-shaped, verdict-summarized. It builds this module's input
+// list and interprets its output; it never fetches (S15 note:
+// "implement once here, consume there").
+pub mod manifest;
+
 use std::collections::BTreeMap;
 
 use crate::{Address, StorageBackend, StorageError};
