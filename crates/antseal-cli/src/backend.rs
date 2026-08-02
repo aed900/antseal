@@ -227,9 +227,17 @@ mod ant {
     /// one is `connect`. Nothing outside — not even the rest of this
     /// module — can write `SealBackend { .. }`.
     mod sealed {
+        // `BalanceReport` joined this list with U13. D89/U37 added
+        // `balances()` to the `StorageBackend` trait and the delegating
+        // impl below, but not to this `use` — and because every item in
+        // this module is behind the non-default `ant-backend` feature, a
+        // default `cargo check --workspace` never compiled the mistake.
+        // U13 is the first work to build the feature since, and found it
+        // red at `fa2ecff`. (Cross-lane touch: this file is the S31
+        // lane's; the change is one identifier and no behaviour.)
         use super::{
-            Address, AntCoreBackend, Arc, Blob, CaptureHook, CliError, CostQuote, NetworkConfig,
-            PaymentReceipt, ReceiptSink, StorageBackend, StorageError, WalletKey,
+            Address, AntCoreBackend, Arc, BalanceReport, Blob, CaptureHook, CliError, CostQuote,
+            NetworkConfig, PaymentReceipt, ReceiptSink, StorageBackend, StorageError, WalletKey,
         };
 
         /// A connected Autonomi backend that **has** its D37 capture hook.

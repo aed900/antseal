@@ -4,6 +4,8 @@
   usage error: --wallet import requires --wallet-key-fd in machine mode
 [not-implemented-m2] class=not-implemented code=3
   `antseal status` is not implemented until M2: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
+[anchor-stage-unavailable] class=not-implemented code=3
+  anchoring arrives in M2: this build cannot obtain the OpenTimestamps and RFC 3161 attestations a seal is supposed to carry, and it will not silently sell you an unanchored seal instead. For development seals without anchors, pass --no-anchor on --network devnet or arbitrum-sepolia (nothing was quoted, anchored, paid, or uploaded)
 [not-implemented-m3] class=not-implemented code=3
   `antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
 [io-error] class=io-error code=4

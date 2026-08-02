@@ -33,6 +33,10 @@ pub mod pipeline;
 pub mod restore_out;
 pub mod rng;
 mod run;
+pub mod seal_consent;
+pub mod seal_plan;
+pub mod seal_resume;
+pub mod seal_run;
 pub mod vault;
 
 use std::process::ExitCode;

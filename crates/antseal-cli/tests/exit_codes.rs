@@ -154,6 +154,11 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 milestone: Milestone::M2,
             },
         ),
+        // U13's M1 gate: the anchor STAGE is what is missing, not the
+        // command — same class and code as a stub, deliberately
+        // different words (a user told `seal` is unimplemented goes
+        // looking for a milestone that already arrived).
+        ("anchor-stage-unavailable", CliError::AnchorStageUnavailable),
         (
             "not-implemented-m3",
             CliError::NotImplemented {
