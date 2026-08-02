@@ -294,7 +294,15 @@
   - fixture vault with complete, incomplete-pre-pay, incomplete-post-receipt, abandoned, and `--no-anchor` works renders all states distinctly (snapshot); the post-receipt row carries the time-boxed-resume nag, the pre-pay row the re-quote note
   - resume hint reproduces the recorded invocation identity (paths + flags) verbatim
   - per-work cost matches the value journaled at seal; `--json` fixture registered
-- Notes: Milestone inference — journal section (M1) requires `list` to show incomplete works.
+- Notes: Milestone inference — journal section (M1) requires `list` to show incomplete works. — **[2026-08-02 EXECUTED (wave-3 lane ε)]** Landed as `antseal_cli::listing` (`WorkListing`, `WorkRow`, `ResumeHint`/`ResumeClock`, `ListingCounts`, `seal_invocation`) plus the `list` handler in `commands.rs`. Execution notes:
+  1. **"Seal date" is the D36 consent timestamp**, not the manifest's `claimed_time` — deviation, and deliberate. `claimed_time` lives in the journaled manifest, which a `vault import` does not carry for a complete work (the S29 gap); the consent time rides in the always-exported meta record, is set in the same invocation, and is the moment the user actually agreed to make the seal permanent. A work killed before consent has no date, which is honest — nothing was sealed.
+  2. **Both state tags are read, and the fine one is optional.** The entry says fine-in-journal-0 / coarse-in-U9; what it could not know is that an imported complete work has *no journal entries at all*, so requiring the fine tag would make `list` fail on exactly the machine a user reaches for it. `pipeline::journal::recorded_state` encapsulates "absent is a state, not a failure" (a *malformed* record still errors). Asserted by a test that deletes entry 0.
+  3. **No vault lock.** U5's lock is single-writer; making a read-only listing wait on a running seal would turn the diagnostic command into the hanging one. Cost: a listing taken mid-seal shows that work mid-transition, which is what it is.
+  4. **Order** is newest-first by date, undated last, seal id as the total tie-break — deterministic for snapshots and scripts.
+  5. **`--json` amounts are decimal strings.** atto-ANT is 18 decimals; real values exceed the 2^53 most consumers survive. Same exactness-over-convenience call the house already made for EVM addresses.
+  6. **A corrupt record is not softened into a row** — `list` reports the damaged vault rather than rendering a partial picture that looks complete (and `list_works` already fails wholesale on an alien entry, so partial tolerance would have been inconsistent anyway).
+  7. `--network` appears in the resume hint only when the work's network is not the built-in default: it *is* part of D45's identity, and the config file could resolve it differently on the next run.
+  8. Four sibling suites had used `list` as their "a stub command" exemplar (`cli_surface`, `exit_codes`, `config_file`, `machine_mode`'s abort table); each now points at a still-stubbed command, and `list`'s registered fixture is rendered by the real renderer so it cannot drift from what the command emits.
 
 ### U20 — Implement `restore <work-id> [-o dir]` CLI wiring
 - Milestone: M1

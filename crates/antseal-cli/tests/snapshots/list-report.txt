@@ -1,0 +1,22 @@
+a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1  complete
+  thesis draft   2027-01-01 00:06:40 UTC   arbitrum-one
+  cost: 4200000000000000000 atto-ANT
+a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2  complete UNANCHORED
+  dev smoke   2027-01-01 00:05:00 UTC   devnet
+  cost: 7 atto-ANT
+a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4  incomplete
+  paid but unfinished   2027-01-01 00:03:20 UTC   arbitrum-one
+  cost: 1000000000000000000 atto-ANT
+  state: paid
+  RESUME PROMPTLY: this seal is paid for, and the payment proofs stay usable for uploading only about a day — after that, finishing it costs a second payment
+  resume with: antseal seal big.bin --title 'paid but unfinished'
+a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5  abandoned
+  gave up   2027-01-01 00:01:40 UTC   arbitrum-one
+  cost: 5 atto-ANT
+(no work id yet; seal e1030303030303030303030303030303)  incomplete
+  (untitled)   not yet sealed   arbitrum-one
+  cost: not recorded (nothing paid)
+  state: staged
+  nothing was paid; the recorded quote is stale by design — resuming re-quotes at current prices and asks for consent again
+  resume with: antseal seal half-done.txt
+5 work(s): 2 complete, 2 incomplete, 1 abandoned (1 UNANCHORED).

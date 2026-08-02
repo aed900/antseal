@@ -29,6 +29,7 @@ use crate::vault::export::{EXPORT_FILE_EXTENSION, export_vault, import_vault};
 use crate::vault::layout::{BesideFile, VaultLayout};
 use crate::vault::lock::VaultLock;
 use crate::vault::session::unlock_vault;
+use crate::vault::store::WorkStore;
 
 /// A successfully-handled command: the machine-result document (printed
 /// on stdout under `--json`; U3's envelope wraps it).
@@ -69,10 +70,9 @@ fn collect_passphrase(
     obtain_passphrase(purpose, globals.passphrase_fd)
 }
 
-/// `vault export [FILE]` (U12; format and engine in
-/// [`crate::vault::export`]).
-pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<Outcome, CliError> {
-    let ui = Ui { json: globals.json };
+/// Resolve the vault layout, refusing early (and readably) when no vault
+/// exists yet — the same shape every vault-reading command needs.
+fn open_layout() -> Result<VaultLayout, CliError> {
     let layout = VaultLayout::resolve().map_err(|e| CliError::Usage {
         message: e.to_string(),
     })?;
@@ -84,6 +84,37 @@ pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<
             ),
         });
     }
+    Ok(layout)
+}
+
+/// `list` (U19).
+///
+/// Read-only, and deliberately **not** under the U5 single-writer lock:
+/// that lock exists to serialize writers, and making `list` wait on a
+/// running seal would turn the one command you reach for when something
+/// looks wrong into the one command that hangs. The cost is that a listing
+/// taken during a seal may show that work mid-transition — which is
+/// exactly what it is.
+pub(crate) fn list(globals: &GlobalArgs) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_vault(&layout, &passphrase)?;
+
+    let listing = crate::listing::WorkListing::gather(&WorkStore::new(&vault))?;
+    for line in listing.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome {
+        json: listing.json(),
+    })
+}
+
+/// `vault export [FILE]` (U12; format and engine in
+/// [`crate::vault::export`]).
+pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
 
     // The single-writer lock for the whole snapshot: export reads many
     // record files and must not interleave with a concurrent writer.
@@ -184,7 +215,7 @@ fn default_export_name(unix_secs: u64) -> String {
 /// algorithm; std has no calendar and a chrono-class dependency for one
 /// filename is not warranted). Valid for the whole unix era.
 #[allow(clippy::many_single_char_names)]
-fn civil_utc(unix_secs: u64) -> (i64, u32, u32, u32, u32, u32) {
+pub(crate) fn civil_utc(unix_secs: u64) -> (i64, u32, u32, u32, u32, u32) {
     let days = (unix_secs / 86_400) as i64;
     let rem = unix_secs % 86_400;
     let (h, mi, s) = (

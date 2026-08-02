@@ -3,7 +3,7 @@
 [seal] error
 {"command":"seal","error":{"class":"not-implemented","exit_code":3,"message":"`antseal seal` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
 [list] error
-{"command":"list","error":{"class":"not-implemented","exit_code":3,"message":"`antseal list` is not implemented until M1: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
+{"command":"list","error":{"class":"passphrase-unavailable","exit_code":11,"message":"passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' \"$PASS\" | antseal … --passphrase-fd 0`"},"network":"arbitrum-one","ok":false,"v":1}
 [show] error
 {"command":"show","error":{"class":"not-implemented","exit_code":3,"message":"`antseal show` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone"},"network":"arbitrum-one","ok":false,"v":1}
 [status] error
@@ -18,6 +18,8 @@
 {"command":"vault export","error":{"class":"passphrase-unavailable","exit_code":11,"message":"passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' \"$PASS\" | antseal … --passphrase-fd 0`"},"network":"arbitrum-one","ok":false,"v":1}
 [vault import] error
 {"command":"vault import","error":{"class":"consent-not-obtained","exit_code":10,"message":"refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)"},"network":"arbitrum-one","ok":false,"v":1}
+[list] result
+{"command":"list","network":"arbitrum-one","ok":true,"result":{"counts":{"abandoned":0,"complete":1,"incomplete":1,"total":2,"unanchored":1},"works":[{"cost_atto":"4200000000000000000","degraded":false,"detail_state":"complete","network":"arbitrum-one","pending_anchors":null,"resume":null,"seal_id":"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","sealed_at":1798762000,"state":"complete","title":"thesis draft","unanchored":false,"work_id":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"},{"cost_atto":"1000000000000000000","degraded":false,"detail_state":"paid","network":"devnet","pending_anchors":null,"resume":{"clock":"time-boxed","invocation":"antseal seal big.bin --no-anchor --network devnet","note":"RESUME PROMPTLY: this seal is paid for, and the payment proofs stay usable for uploading only about a day — after that, finishing it costs a second payment"},"seal_id":"e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4","sealed_at":1798761800,"state":"incomplete","title":null,"unanchored":true,"work_id":"a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4"}]},"v":1}
 [vault export] result
 {"command":"vault export","network":"arbitrum-one","ok":true,"result":{"bytes":4096,"file":"/home/user/antseal-vault-export-20260801-160000.sealvault","self_verified":true,"works":5},"v":1}
 [vault import] result

@@ -119,11 +119,12 @@ fn fixture_vault(dir: &TestDir) -> PathBuf {
 
 /// What each command must do TODAY in machine mode with no channels
 /// supplied: the typed abort class (stub commands: not-implemented;
-/// export: passphrase-unavailable; import over the fixture vault: the
-/// refusal → consent-not-obtained). Extends as handlers land.
+/// export and `list`: passphrase-unavailable — they must unlock the
+/// fixture vault and machine mode never prompts; import over the fixture
+/// vault: the refusal → consent-not-obtained). Extends as handlers land.
 fn expected_class(name: &str) -> (i32, &'static str) {
     match name {
-        "vault export" => (11, "passphrase-unavailable"),
+        "vault export" | "list" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
         _ => (3, "not-implemented"),
     }
@@ -295,11 +296,15 @@ fn render_fixture() -> String {
             "vault import" => CliError::ImportRefusedExistingVault {
                 vault_dir: PathBuf::from("/home/user/.antseal"),
             },
-            "init" | "seal" | "list" | "restore" => CliError::NotImplemented {
+            // Real handlers that must unlock the vault: in machine mode
+            // without a channel, that is where they stop (U19, U20).
+            "list" => CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::NoChannel,
+            },
+            "init" | "seal" | "restore" => CliError::NotImplemented {
                 command: match name {
                     "init" => "init",
                     "seal" => "seal",
-                    "list" => "list",
                     _ => "restore",
                 },
                 milestone: Milestone::M1,
@@ -323,6 +328,14 @@ fn render_fixture() -> String {
         ));
     }
     // Success examples for the commands with real handlers today.
+    //
+    // `list`'s is rendered by the real U19 renderer over a fixture
+    // listing rather than hand-written, so the registered fixture cannot
+    // drift from the shape the command actually emits.
+    out.push_str(&format!(
+        "[list] result\n{}\n",
+        success_envelope("list", "arbitrum-one", fixture_listing().json())
+    ));
     out.push_str(&format!(
         "[vault export] result\n{}\n",
         success_envelope(
@@ -346,6 +359,52 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// A two-row listing covering the shapes a consumer must handle: a
+/// finished work with a cost, and an unfinished one carrying the D45
+/// resume hint, the D37 clock, and U25's reserved slot.
+fn fixture_listing() -> antseal_cli::listing::WorkListing {
+    use antseal_cli::listing::{ResumeClock, ResumeHint, WorkListing, WorkRow};
+    use antseal_cli::pipeline::journal::SealState;
+    use antseal_cli::vault::store::WorkState;
+    use antseal_core::crypto::secrets::SealId;
+
+    WorkListing {
+        works: vec![
+            WorkRow {
+                work_id: Some([0xA1; 32]),
+                seal_id: SealId::from_bytes([0xE1; 16]),
+                title: Some("thesis draft".to_owned()),
+                sealed_at_unix_secs: Some(1_798_762_000),
+                network: "arbitrum-one".to_owned(),
+                state: WorkState::Complete,
+                fine_state: Some(SealState::Complete),
+                unanchored: false,
+                degraded: false,
+                cost_atto: Some(4_200_000_000_000_000_000),
+                resume: None,
+                pending_anchors: None,
+            },
+            WorkRow {
+                work_id: Some([0xA4; 32]),
+                seal_id: SealId::from_bytes([0xE4; 16]),
+                title: None,
+                sealed_at_unix_secs: Some(1_798_761_800),
+                network: "devnet".to_owned(),
+                state: WorkState::IncompletePostPay,
+                fine_state: Some(SealState::Paid),
+                unanchored: true,
+                degraded: false,
+                cost_atto: Some(1_000_000_000_000_000_000),
+                resume: Some(ResumeHint {
+                    invocation: "antseal seal big.bin --no-anchor --network devnet".to_owned(),
+                    clock: ResumeClock::TimeBoxed,
+                }),
+                pending_anchors: None,
+            },
+        ],
+    }
 }
 
 #[test]

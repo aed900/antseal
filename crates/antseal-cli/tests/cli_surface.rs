@@ -313,8 +313,10 @@ fn antseal_bin() -> Process {
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
+    // `init` (U11) is the exemplar stub: `list` and `restore` have real
+    // handlers since U19/U20.
     let out = antseal_bin()
-        .arg("list")
+        .arg("init")
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");

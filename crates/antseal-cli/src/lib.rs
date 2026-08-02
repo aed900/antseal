@@ -24,6 +24,7 @@ pub mod cli;
 mod commands;
 pub mod config;
 pub mod error;
+pub mod listing;
 pub mod machine;
 pub mod passphrase;
 pub mod pipeline;

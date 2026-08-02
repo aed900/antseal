@@ -514,12 +514,14 @@ fn json_error_object_carries_class_code_and_message() {
 
 #[test]
 fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
+    // `status` is the exemplar stub (M2); `list` played this role until
+    // U19 gave it a real handler.
     let plain = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .arg("list")
+        .args(["status", "w1"])
         .output()
         .expect("spawn antseal");
     let json = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .args(["--json", "list"])
+        .args(["--json", "status", "w1"])
         .output()
         .expect("spawn antseal");
 
@@ -532,7 +534,7 @@ fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim_end_matches('\n')).expect("single JSON document");
     assert_eq!(doc["v"], serde_json::json!(1));
-    assert_eq!(doc["command"], serde_json::json!("list"));
+    assert_eq!(doc["command"], serde_json::json!("status"));
     assert_eq!(doc["ok"], serde_json::json!(false));
     assert_eq!(doc["error"]["class"], "not-implemented");
     assert_eq!(doc["error"]["exit_code"], serde_json::json!(3));
