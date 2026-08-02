@@ -615,3 +615,31 @@
 - A: TSA submission client with per-TSA results and configurable list; OTS calendar submit + pending `.ots` production; bounded-time opportunistic upgrade API; per-anchor verdict-state machine consumed by `status`/`list` nags
 - R: bundle builder with selection rules (raw-mirror inclusion rule, `--include-receipt`) and disclosure-preview computation; full offline/online/live verification APIs with verdict taxonomy wording and machine-readable verdict data; canonical verifier page URL constant printed by `reveal`
 - Q: docs (vault loss/theft, funding, wallet hygiene, positioning limits, compelled disclosure); M1 devnet kill-test E2E harness and M4 clean-machine/disk-loss drills that drive U11/U12/U13/U20; CI wiring for snapshot, schema-freeze, hygiene, and copy-lint checks; threat-model doc consuming U's degraded/UNANCHORED behaviors
+
+### U44 — Land the M2 anchor/verify config slots (OTS calendars; per-network verify RPCs)
+- Milestone: M2
+- Size: S
+- Deps: U4, U26; A13 (calendar list consumer), A17 (RPC pair consumer); D54, D55
+- Spec: Vault (line 143), Anchoring (lines 108–110), Verifier page online mode (line 137)
+- Do: Two additive changes and one correction to the U4 config surface, in `crates/antseal-cli/src/config.rs` and `docs/config.md`. (1) **New key `[anchors] ots_calendars`** — the slot does not exist today (`grep -n "calendar\|ots_" crates/antseal-cli/src/config.rs docs/config.md` is empty), so D54's "user-overridable calendar list" has nowhere to live. Add it beside `tsa_urls`, in the same section, with the same `expect_url_array` validation, so no second convention is invented. An override replaces the defaults wholesale, exactly as U26 gives `tsa_urls`. (2) **Reshape the verify RPC slot**: the landed `[verify] arbitrum_endpoints` is a single flat list and **cannot express A17's Accept requirement of per-network endpoint sets** (arbitrum-one vs arbitrum-sepolia; disabled on devnet). Replace it with `[verify.<network>] rpc_endpoints`, parsed through the existing path-array matcher and `NetworkId::from_str`, with `devnet` a hard error (there is no overlay to configure). `[verify] bitcoin_endpoints` is unchanged — Bitcoin has one network. (3) A verify-RPC override MUST supply exactly two entries: one endpoint cannot satisfy "results must agree" (spec line 137) and a silent single-endpoint overlay is the failure this rule exists to prevent.
+- Accept:
+  - `[anchors] ots_calendars` with two entries reaches A13's mock as exactly those; absent config uses `DEFAULT_OTS_CALENDARS`; a malformed URL is the existing `malformed-config` exit 17 before any pipeline work.
+  - `[verify.arbitrum-one] rpc_endpoints` and `[verify.arbitrum-sepolia] rpc_endpoints` resolve to distinct pairs; `[verify.devnet]` is a hard error naming the reason; an unknown network name reuses the existing `[networks.<id>]` error wording.
+  - A one-entry or three-entry verify-RPC override is a config error at load, not a silent overlay.
+  - The **removed** flat `[verify] arbitrum_endpoints` key produces the existing unknown-key **warning**, not exit 17 — so an early adopter's config degrades rather than breaking. Asserted by test, because this property is the whole reason the removal is safe.
+  - `initial_config_text` (U11's init writer) and the D42/D47 export-round-trip test both cover the new shape.
+- Notes: The U4 execution note (2026-08-01, item 4) records `[verify] arbitrum_endpoints` as landed "with a validated shape"; the shape is wrong for its only named consumer. Amend that note rather than leaving it to contradict this task. Discovered by D54/D55.
+
+### U46 — Persist the TSA request nonce in the anchor capture record, and mark it public-by-construction
+- Milestone: M2
+- Size: S
+- Deps: U9 (the record store), U22 (the anchor stage that writes it), A2 (the struct), A10 (the producer); D59, D47
+- Spec: Vault (MVP-SPEC.md lines 141–145), Anchoring (line 109), Core user flows 2 (line 35)
+- Discovered by: **D59 (2026-08-02, M2 planning round)**
+- Do: Carry A2's `request_nonce: [u8; 8]` through U9's `anchors/<slot>` payload for every TSA capture, successful or failed, and expose it in `status` detail and the `--json` anchor object. Three riders from D59 §3 are normative and must appear as doc comments at the field and at the U9 write site: (a) the nonce is **not secret material** under project rule 6 — it is echoed into the signed `TSTInfo` and therefore ships inside every bundle carrying that token, so it must not be wrapped in a zeroizing type, redacted from `--json`, or excluded from a bug report; (b) it MUST NOT be derived from `W`, from any HKDF label, or from any vault secret — a deterministic nonce would publish a PRF output under the vault master secret inside every bundle, once per anchor, forever; (c) it needs **no `secret-guard` exclusion** (no magic literal is introduced). Add the `status` re-check path: for a stored TSA anchor, re-run A8 with `expected_nonce = Some(stored)` and surface agreement as a vault-integrity detail, never as part of the evidentiary verdict (D59 residual risk 1).
+- Accept:
+  - `capture_records_the_nonce_and_status_can_recheck_it`: round-trips a capture record through U9's store and re-runs the `Some(nonce)` comparison over the stored token; fails if the field is dropped, truncated, or stored in the DER encoding where the raw draw was expected (or the reverse).
+  - A failed capture (nonce mismatch) still records the nonce and the endpoint in the outcome list, and the degradation report names the endpoint.
+  - `vault export` → `import` round-trips the field (D47 payload; no export format-version change — the nonce rides inside the anchor record the export already carries).
+  - `--json` fixture for `status` includes the nonce; the possession-language/copy audit (U31) confirms no wording implies the nonce check is part of the proof.
+- Notes: D59 Evidence 5 establishes the marginal disclosure of persisting this is **zero** — `anchor_digest`, the endpoint URL and the fetch date already in the same record dominate it, and in the ordinary case the value is already inside the shipped token. No D47 amendment is required.

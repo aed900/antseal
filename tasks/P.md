@@ -297,3 +297,113 @@
 - R: consumes the registered verifier domain (P3) for the M3 canonical URL + page deploy; consumes P14's pinned wasm-pack/wasm-bindgen versions and P6's toolchain pin for the reproducible build + published hash; decides the wasm-bindgen surface location with P.
 - U: wires `--network arbitrum-one|arbitrum-sepolia|devnet` to the P16/P17 environment surfaces; reuses the funding runbooks in `init`'s printed funding instructions.
 - Q: extends the P8 CI skeleton (fuzz lanes + nightly pin, golden-vector retention forever, native↔WASM bit-match lanes on the P14 harness, release CI, binary signing); owns the M4 license decision that completes P13's deny.toml licenses section; owns M4 docs (wallet funding, vault loss/theft) that build on P16/P17 runbooks.
+
+### P23 — Govern the two pre-release pins and the one mandatory advisory ignore
+- Milestone: M2
+- Size: S
+- Deps: D60 (which chooses them); P7 (the pin class); P13/D19 (`deny.toml`, the advisory lane)
+- Spec: Risks — dependency churn (MVP-SPEC.md line 181); docs/dependency-policy.md §1/§4/§5
+- Discovered by: **D60** (2026-08-02).
+- Problem: D60 puts two pre-release versions into the exact-pin class — `cms =0.3.0-pre.2` and `rsa =0.10.0-rc.18` — and both are load-bearing for `antseal-core`'s anchor verification. The project has the precedent (`argon2 =0.6.0-rc.8`, `blake2 =0.11.0-rc.6`) but not the watch: a pre-release can be **yanked** without a successor, and `cargo deny`'s `yanked` check is on by default, so the first symptom would be a red advisory lane on an unrelated PR. Separately, `rsa` at **any** version carries RUSTSEC-2023-0071 (`introduced: 0.0.0-0`, no fixed version), and `cargo deny check advisories` was **verified red** against the D60 set with the project's own pinned tool: `advisories FAILED … rsa v0.10.0-rc.18 … Solution: No safe upgrade is available!`. The ignore entry is therefore not a nicety; without it every PR and every weekly cron is red from the moment A5 lands.
+- Do: land the `[advisories].ignore` entry verbatim from D60 §7.5 — it carries the applicability argument (`antseal-core` performs RSA **public-key verification only** and holds no RSA private key, so the private-key timing channel has nothing to leak), the reason the advisory has no fixed version, the revisit condition, and a `Review by 2027-02-01` date, all per `deny.toml`'s own IGNORE DISCIPLINE. Add **no** entry for `GHSA-9c48-w39g-hm26` (`fixed: 0.9.10`; `0.10.0-rc.18` is outside it, so `cargo-deny` does not report it and an ignore would be dead config — the shape the header already rejects). Then record both pre-release pins in `docs/dependency-policy.md` with their stabilisation trigger: `cms 0.3.0` and `rsa 0.10.0` final are **reviewed bumps**, taken deliberately with the D60 measurement re-run (package delta, duplicate scan, wasm32 check, the nine real-token fixtures), never drive-by.
+- Accept:
+  - `cargo deny check advisories bans sources` is green on the tree that contains the D60 pins, and the ignore's `reason` string names the applicability argument rather than pointing at a document.
+  - Removing the ignore turns the lane red with RUSTSEC-2023-0071 (the red direction, run once and recorded).
+  - The dependency-policy entry names both pre-release pins, their stable successors, and the exact re-measurement a bump must repeat.
+  - A deliberate check that the two rc versions are not yanked at landing time, with the date recorded — so a later yank is a change rather than a discovery.
+- Notes: the applicability argument is the load-bearing part and it must not be paraphrased into "we think it's fine". It is falsifiable: it holds exactly as long as no antseal code path performs an RSA private-key operation, which is structurally true (authorship signatures are Ed25519 + ML-DSA-65, MVP-SPEC.md line 97) and which A30's containment rules keep true.
+
+### P24 — D60's "zero new duplicate pairs" is false at the workspace level
+- Milestone: M2
+- Size: S
+- Deps: D60 (landed pins)
+- Do: D60 §1.6 reports *"**zero** new duplicate-version pairs"* and *"**No
+  second copy of** `sha2`, `digest`, `signature`, `der`, `spki`, `const-oid`
+  or `pkcs8`"*. Both are true of `antseal-core`'s **own** graph and **false**
+  of the workspace, because D60 measured on scratch probe crates that contain
+  no `antseal-net`. Measured on the real tree at the pin commit:
+  `cargo tree -d -e normal` goes from **2** name-pairs (`rand_core`, `syn` —
+  both pre-existing) to **10**. The eight new ones are `base16ct`,
+  `const-oid`, `crypto-bigint`, `der`, `elliptic-curve`, `ff`, `group`,
+  `sec1`. Cause, traced: `antseal-net`'s D89 `k256 =0.13.4` sits on the
+  RustCrypto 0.13 / der-0.7 generation and nothing opposed it until `p384
+  =0.14.0` put the 0.14 generation beside it —
+  `der v0.7.10 <- sec1 v0.7.3 <- elliptic-curve v0.13.8 <- k256 v0.13.4 <- antseal-net`.
+  Nothing goes red (`deny.toml` sets `multiple-versions = "warn"`, P13's
+  recorded choice; D89's rule 5 guards `k256` itself, not its closure) and no
+  antseal type crosses the two generations. Amend D60 §1.6 with a dated note,
+  and decide whether the pair is worth a `deny.toml` skip entry or a
+  standing note beside the existing `syn` record.
+- Accept:
+  - D60 carries a dated amendment with the measured workspace numbers.
+  - `deny.toml`'s duplicate-version comment lists the k256-vs-p384 generation
+    split alongside the three pairs it already names, or records why not.
+- Notes: The claim matters because it is the sentence D60 uses to justify
+  taking two **pre-release** pins over their stable lines. The justification
+  still holds — the stable lines are disqualified on other, stronger grounds
+  (`rsa 0.9.10` fails the `dep_graph` forbidden-name regex outright) — but the
+  headline number is not the number.
+
+### P25 — Record the rejected-dependency register, opening with `opentimestamps`
+- Milestone: M2
+- Size: S
+- Deps: P7 (the pin policy this extends), P18 (retired by D58), D58
+- Spec: Dependency policy (docs/dependency-policy.md §1/§5); Anchoring — crate reality (MVP-SPEC.md line 108)
+- Do: Add a **rejected nominees** section to `docs/dependency-policy.md`: one row per crate that was evaluated for the workspace and not adopted, carrying crate + version evaluated, date, the one-sentence reason, and a link to the deciding record. Open it with `opentimestamps =0.2.0` → `docs/decisions/D58-opentimestamps-viability.md`. The row must state that the crate **compiles fine on the pinned toolchain and on wasm32**, because that is the check a re-nominator will run first and pass; without that sentence the register invites exactly the re-nomination it exists to prevent. State the readmission condition in the same row (D58 §14's first trigger), so the register records a door rather than a wall.
+- Accept:
+  - Section exists with the `opentimestamps` row; the row names the four defect classes by their D58 section numbers, not by paraphrase.
+  - `scripts/check-traceability.py` (or the doc-link check it already performs) resolves the D58 link; a broken link fails.
+  - A grep-level review item: `opentimestamps` appears in no manifest and in no `[workspace.dependencies]` entry — the same shape as the `self_encryption` prohibition, without the CI lane (the crate is not dangerous, only rejected).
+- Notes: Discovered by D58 (2026-08-02). P18's whole deliverable was the pin D58 declines to land, so P18 is retired rather than amended; this task is where its Accept rows come to rest. The re-nomination risk is concrete: MVP-SPEC.md line 108 currently *instructs* a reader to reuse the crate as the wire-format layer, and D58 §12.4 corrects that sentence — but a corrected spec line and a dependency register are looked up by different people at different times.
+
+### P26 — A30's `from_ber` ban needs one carve-out, and it is the one D60 requires
+- Milestone: M2
+- Size: XS
+- Deps: A5 (landed), A30
+- Do: `cms 0.3.0-pre.2` forces `der`'s `ber` feature on for the whole graph,
+  making `Decode::from_ber` reachable from antseal source. A30 bans the token
+  at lane level, correctly. But D60 §7.4 **requires** one use of it:
+  `der_pin_rejects_indefinite_length` must assert that the BER fixture is
+  accepted by `from_ber`, because without that leg the test cannot distinguish
+  "rejected for being BER" from "rejected for being garbage" — and a merely
+  corrupt fixture would satisfy the rejection assertion forever while proving
+  nothing. A30's detector must allow exactly
+  `crates/antseal-core/tests/der_pin_eval.rs` and nothing else, with the
+  allowance written as a named exception rather than a path-glob that widens
+  by accident.
+- Accept:
+  - A30's lane greps `from_ber` across the workspace and passes with the one
+    committed occurrence present.
+  - A **self-test** in A30's own house pattern: a planted `from_ber` in a
+    second file makes the lane red.
+- Notes: One line of source, and the lane it belongs to has not landed yet —
+  recording it now is what stops A30 landing a rule that immediately fails on
+  committed code.
+
+### P29 — Land the `ureq` pin and its dependency-policy row
+- Milestone: M2
+- Size: S
+- Deps: P7 (pin governance); D90; lands **with or before** A3
+- Spec: Architecture (lines 52–53), Anchoring (lines 108–109)
+- Discovered by: **D90** (2026-08-02). A3's `Deps` line names "P: workspace scaffold + HTTP-client crate pin" and **no such P task exists** — P18 is the (D58-superseded) opentimestamps codec pin and excludes networking explicitly. This is that task, with the crate chosen by D90 rather than left open.
+- Do: Add `ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }` to `[workspace.dependencies]` with D90 Decision 1's comment verbatim, and consume it from `crates/antseal-anchor/Cargo.toml` alone. Add the `docs/dependency-policy.md` §1 row: exact-pinned in the `rpassword` class (no format byte flows through it, but it is the sole path by which adversary-controlled bytes enter the process before any parser of ours sees them, and three of its behaviours are load-bearing contracts a minor bump could move silently); **no lockstep with anything**; the bump procedure must state which `webpki-roots` the bump moves to, since that snapshot is a TLS trust input arriving transitively and frozen only by §3. Amend the rule-1 paragraph at `docs/dependency-policy.md:87-96` with the dated measurement "129 → 144 (D90, 2026-08-02); 475 → 479 with `devnet-launcher/devnet`". Correct the false sentence in `Cargo.toml`'s tokio entry (~line 160): "the default `--workspace` graph resolves no tokio at all" is true of `-e normal` (100 packages) but **false** of `-e normal,build,dev`, which is what the `dep-graph` lane measures and where `antseal-net`'s dev edge puts tokio.
+- Accept:
+  - `cargo tree --workspace -e normal,build,dev --prefix none --locked` counts **144**; with `antseal-net/ant-backend` **451**; with `devnet-launcher/devnet` **479**. A different number is a resolution that must be explained before the pin lands.
+  - Exactly four names are new to `Cargo.lock`: `ureq`, `ureq-proto`, `utf8-zero`, `webpki-roots`. Any fifth is a finding.
+  - `cargo deny check advisories bans sources` passes; `bans` reports `getrandom` at three versions as a **warning**, not a failure.
+  - No workspace crate other than `antseal-anchor` names `ureq` (grep + `cargo metadata --no-deps`).
+  - `cargo tree -i rustls --workspace --locked` shows one `rustls` version, `0.23.43` — the pin adds no TLS generation to a graph that already carries two.
+- Notes: Deliberately not folded into A3: the pin is governance with its own Accept numbers, and P7's discipline is that a pin is a reviewed event with its own evidence, not a side effect of the first task that wants the crate.
+
+### P30 — Make the transitively-acquired `webpki-roots` TLS trust snapshot a reviewed value
+- Milestone: M2
+- Size: S
+- Deps: P29 (the ureq pin); D90 residual risk 2
+- Spec: Anchoring (line 109), Risks — hostile bundles / upstream churn (lines 182, 187)
+- Discovered by: **P29 implementation** (2026-08-02). D90 records the risk ("`webpki-roots` is a trust input that arrives transitively … a `cargo update` moves it without any lane commenting") and leaves the mitigation procedural — a sentence in the bump row. Measured while landing the pin: `ureq =3.3.0` declares a **caret** requirement, this workspace resolved **`webpki-roots 1.0.9`**, and the local registry cache alone already holds 1.0.4 through 1.0.9 — so the version genuinely floats, and the only thing holding it is `Cargo.lock` plus a human remembering to mention it. Every TLS acceptance decision for A16's and A17's endpoints — the two whose replies are unsigned and whose *only* integrity control is the transport — is made against that snapshot.
+- Do: Make the resolved version a value a lane states rather than one a reviewer must notice. Cheapest sufficient form: extend `scripts/ci-lanes.sh dep-graph` to print and assert the resolved `webpki-roots` version against a committed literal, with the two-direction self-test the lane's other rules carry (must match the current version; must fail on a planted different one). Consider, and record the decision either way, whether the stronger form D90 declined to pre-commit — a direct exact-pinned `webpki-roots` declaration in `[workspace.dependencies]` — is now warranted; if it is not, say why in the same commit so the next reader does not re-open it.
+- Accept:
+  - A `cargo update` that moves `webpki-roots` turns the lane red naming the old and new versions (proven by planting the change, not by argument).
+  - The dependency-policy `ureq` row's "state which webpki-roots the bump moves to" sentence points at the asserted literal, so the procedural rule and the mechanical one cannot drift apart.
+  - A stale-snapshot failure is still diagnosable: the assertion must not be confusable with A25's liveness signal (a root rotation the snapshot predates surfaces as `AnchorHttpError::Tls`, which is a different thing and already named).
+- Notes: The failure mode this guards is silent and one-directional — a snapshot that has moved is not detectable from any test output, because every endpoint we contact today chains to roots that are in both versions. It becomes visible only when it is already a liveness incident.

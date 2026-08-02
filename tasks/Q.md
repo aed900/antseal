@@ -1023,3 +1023,236 @@ question).**
 - U: CLI copy conforming to Q20 (permanence consent, title-visibility and `--no-fine-tree` warnings, vault-export and pending-anchor nags), canonical verifier URL printed by `reveal`, `init` funding instructions matching Q23, release default `--network arbitrum-one` for Q34, `vault export`/`import` used by the Q32 drill
 - **[2026-07-28] DISCHARGED, wave 7** — the conversions landed before the freeze rather than after it, which was the point: F4 moved ~30 sections of the registry in this same wave, so every line-number citation into it would have rotted at once, silently. All six sites across D76 and D77 became section references (§0, §7.12, §7.14 key 1). Enforcement is the second half of `scripts/check-traceability.py --decisions`: any `registry-v1.md:<n>` or `registry-v1.json:<n>` under `crates/`, `docs/format/` or `docs/testing/` fails the lane, naming the file and telling the author to cite the section. Self-tested by planting one. **Deliberately NOT done**: the second Accept bullet — verifying that each `MVP-SPEC.md line <n>` citation still lands on matching content — is a different and larger mechanism (the spec is *not* frozen and carries 100+ such citations from the now-frozen registry). That is **F44**'s, registered by lane E for exactly this, and it is a real residual, not a closed one.
 
+### Q73 — Register the `anchor-` codes A5/A8 minted beyond the ten already ruled
+- Milestone: M2
+- Size: S
+- Deps: D91, A38/Q77, A5 + A8 (landed)
+- Do: D60 §7.3 mints eight codes and D53/D59 add two more, but A8's Accept row
+  requires distinct errors for outcomes **no decision enumerated** — a
+  stripped content-type attribute, a message-digest mismatch, an ESSCertID
+  naming a different certificate, a missing or non-critical EKU, a token
+  signature that does not verify. A rejection class with no code of its own
+  cannot be a tamper row, so A5/A8 minted **25 further codes**, all under
+  `anchor-` per D91 §6.1, all pairwise distinct, all disjoint from the 216 in
+  `testdata/error-codes/v1/CODES.txt` (machine-checked in
+  `anchor::error::tests::codes_are_disjoint_from_the_committed_universe`).
+  They are **not yet in the committed universe**: `anchor::error::all_code_exemplars`
+  is deliberately not wired into `error_universe::by_enumerator`, because D91
+  §8.2 makes that A38's move together with the roster assertion going 8 -> 9.
+  Land the registration: A38 wires the enumerator, the snapshot gains the
+  rows, and this task reviews the **names** while renaming is still free —
+  error-contract §3 makes a code permanent from the first binding, and there
+  is no binding yet.
+- Accept:
+  - `testdata/error-codes/v1/CODES.txt` contains every `anchor-` code.
+  - `the_universe_is_exactly_the_eight_enumerators` reads nine.
+  - A review pass over the 25 minted names against D91 §7.3's convention, with
+    any rename applied **before** a tamper row or golden vector binds one.
+- Notes: The judgement call worth reviewing explicitly: the two
+  response-envelope codes carry a `tsa` segment (`anchor-tsa-status-not-granted`,
+  `anchor-tsa-token-absent`) although D91 §7.3's letter would drop it, since
+  there is no OTS analogue to be ambiguous with. They follow the
+  `anchor-tsa-nonce-mismatch` precedent, which carries `tsa` for the same
+  non-reason. Either is defensible; pick one deliberately.
+
+### Q74 — Close the `core-dep-graph` I/O-purity hole: the forbidden list is nine names, not a property
+- Milestone: M2
+- Size: S
+- Deps: P15, P20 (the lane and its three rules); D58 §2(b)
+- Spec: Architecture — `antseal-core` is WASM-safe, no I/O (MVP-SPEC.md lines 47–53); CLI/page must not diverge (line 73)
+- Do: `scripts/ci-lanes.sh`'s `lane_dep_graph` announces *"antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"* and enforces it with `forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) '`. That is nine names, and the property is larger than the names: a measured nominee (D58 §2) would have added `env_logger`, `is-terminal`, `libc`, `regex` and `termcolor` to the core graph — an environment-variable reader, a terminal detector, a libc binding and a regex engine — and the lane would have gone **green**. Extend the rule so the check matches its own sentence. Two mechanisms, and the task must choose deliberately rather than adding names reflexively: (a) extend the deny-list with the logger/terminal/libc/process-environment class; (b) invert it to an **allow-list** — `antseal-core`'s normal graph is 56 packages and every one is deliberate, so an unrecognised *addition* fails and must be justified in the same PR. (b) is the shape that scales, catches the crate nobody predicted, and is the reason this task exists; (a) is the fallback if (b) proves too noisy against proc-macro tiers. Whichever is chosen, keep the lane's existing self-test-first discipline: the detector must trip on a planted entry before any green verdict is trusted.
+- Accept:
+  - The lane fails on a graph containing `env_logger` (or the chosen mechanism's equivalent), demonstrated by a scratch run with the edge planted — **red direction executed, not asserted**.
+  - Anti-vacuity: the lane still passes on today's graph, and the recorded package count is asserted so a silent graph change surfaces (the P20 rule-1 pattern).
+  - If (b): the allow-list is generated from today's graph, committed, and an *addition* fails naming the package while a *removal* passes (additions-only, inverted — the `error_universe.rs` shape).
+  - The lane's announcement string and its enforcement agree; a reviewer reading only the `note` line is not misled about what was checked.
+- Notes: Discovered by D58 (2026-08-02) while measuring a nominee's closure — the finding is independent of that nominee and of D58's ruling. This is the same defect shape Q52 found in the error-code contract: three enforcement layers whose stated claim was broader than any of them could check, and the codes that were safe were safe incidentally. Here the crates that are absent are absent because nobody has yet proposed one, not because the lane would stop it.
+
+### Q75 — `MATRIX.json` row `anchor-ber-not-der` is now satisfiable
+- Milestone: M2
+- Size: XS
+- Deps: A5 (landed); the beta lane owns `MATRIX.json`
+- Do: `testdata/tamper/MATRIX.json`'s `ber-where-der-required` case carries
+  `"expected": null` with the pending note *"M2; strict-DER limits and their
+  fuzz targets are A/Q17."* A5 has landed the code and the fixtures: set
+  `"expected": "anchor-der-not-strict"` and drop the pending block. The
+  evidence is `crates/antseal-core/tests/der_pin_eval.rs::der_pin_rejects_indefinite_length`
+  and `::der_pin_rejects_nonminimal_length`, over the four committed BER
+  fixtures in `testdata/anchors/A25-bootstrap/`, two of which are proven to be
+  **valid BER** by `from_ber` accepting them.
+- Accept:
+  - The row's `expected` is `anchor-der-not-strict` and its `pending` block is
+    gone.
+  - The tamper-completeness meta-test counts it as satisfied rather than
+    deferred.
+- Notes: Hand-off, not an edit from this lane — `MATRIX.json` is being changed
+  concurrently by the beta lane (Q76) and two lanes writing the same JSON is
+  how a merge conflict eats a row.
+
+---
+
+## `TODO.md` checkbox lines
+
+```markdown
+- [ ] **A33** — Rule what a critical unrecognised `TSTInfo` extension means (M2, S) — A5 parses the field and ignores criticality; no live TSA sends one, and `no_live_tsa_sends_tst_info_extensions` is the measurement that goes red when one does
+- [ ] **A36** — Registry §7.9 key 1 names two ASN.1 types with one slash ("DER TimeStampResp/token"); A5 accepts both by structural dispatch — ratify or narrow, and narrowing is a format decision under line 123 (M2, S)
+- [ ] **A37** — Record the `digestAlgorithm`/`signatureAlgorithm` consistency **non-rule** (M2, S) — D60 §3.2.6 forbids taking another decision from `digestAlgorithm`; an unexplained absence invites the "obvious" hardening
+- [ ] **P24** — D60 §1.6's "zero new duplicate pairs" is false at the workspace level: 2 -> 10 pairs, 8 new, from `antseal-net`'s D89 `k256 =0.13.4` (RustCrypto 0.13) meeting `p384 =0.14.0` — amend D60, decide the `deny.toml` note (M2, S)
+- [ ] **P26** — A30's `from_ber` ban needs exactly one carve-out, `tests/der_pin_eval.rs`, which D60 §7.4 requires as the anti-vacuity leg — with a planted-fault self-test (M2, XS)
+- [ ] **Q73** — Register the 25 `anchor-` codes A5/A8 minted beyond the ruled ten: A38 wires the enumerator (8 -> 9), CODES.txt gains the rows, and the names get their one free review before §3 makes them permanent (M2, S)
+- [ ] **Q75** — `MATRIX.json` row `anchor-ber-not-der`: set `expected` to `anchor-der-not-strict` and drop the pending block; A5's code and four committed BER fixtures have landed (M2, XS) — hand-off to the beta lane
+```
+
+### Q76 — Pre-fill the M2 anchor pending rows and split the compound digest-mismatch family
+- Milestone: M2
+- Size: S
+- Deps: Q8 (the completeness checker); **before A21** — the whole point is to run the distinctness rule ahead of implementation
+- Discovered by: **D53 §8** (2026-08-02), while counting the rows the M2 gate calls "all 7".
+- Problem: two defects in `testdata/tamper/MATRIX.json`'s M2 half. (1) **The count is wrong, in both directions.** MVP-SPEC.md line 168's M2 enumeration is **six** semicolon-separated clauses, two of them explicitly compound (*"`.ots`/TSA token for a different digest"*, *"expired-at-genTime vs expired-after-genTime chain cases"*), so it expands to **eight** cases. `MATRIX.json` splits the expiry clause and keeps the digest clause whole (7 row ids); `tasks/A.md` A21's Do splits the digest clause and keeps the expiry clause whole (7 numbered items describing 8 tests); `TODO.md` says *"all 7 anchor tamper rows"* without saying which seven. **They are two different sevens.** (2) **Four pending rows carry `"expected": null`**, so §4b layer 3 — which exists to refuse a pending row whose outcome key is already claimed *"while it is still cheap to fix"* — cannot do its job on precisely the rows D53/D56 show are at risk of colliding on `verdict:invalid`.
+- Spec: Verification — tamper matrix M2 rows (MVP-SPEC.md line 168); `docs/testing/error-code-contract.md` §4b layer 3, §5
+- Do: Apply the verbatim edits in **D53 §8**: split the `anchor-token-for-a-different-digest` family into the two cases `ots-digest-mismatch` (row `anchor-ots-digest-mismatch`) and `tsa-imprint-mismatch` (row `anchor-tsa-imprint-mismatch`) — the family's `spec_quote` is unchanged, so `spec_source.note`'s literal-substring check still passes — and fill the four null `expected` slots with `anchor-cert-not-valid-at-gentime` (D53 C3), `valid-at-stamping-cert-since-expired` (D53 C2), `anchor-ots-digest-mismatch` (D56 O2) and `anchor-tsa-imprint-mismatch`. Then re-run the combined distinctness sweep with all eight M2 rows pending and assert it is green. Correct the "7" in `TODO.md`'s M2 gate line and in `tasks/A.md` A21's numbering to eight.
+- Accept:
+  - `MATRIX.json` holds **eight** M2 anchor cases, each with a non-null `expected`, and the checker is green.
+  - A planted ninth pending row re-claiming `verdict:invalid` (already held by `anchor-forged-header`) goes red naming both rows — proving layer 3 is live on the M2 half, which it demonstrably was not while `expected` was null.
+  - The family `spec_quote` strings still pass the literal-substring check against MVP-SPEC.md line 168's M2 marker.
+  - No implemented row's expected outcome is edited (contract §6: *"never edit an existing row's expected code"*) — this task touches `pending` entries only.
+- Notes: Q18 still registers the rows when A21 implements them; this is the *ahead-of-implementation* half, and it is separated precisely because Q18's deps place it after A21, which is too late for layer 3 to be worth anything.
+
+### Q77 — Make §2's namespace rules machine-enforced (prefix conformance + cross-namespace disjointness)
+- Milestone: M2 — **must land in the same wave**, since it is the only thing that would catch the next D58
+- Size: S
+- Deps: Q52 (the frozen universe and `by_enumerator`), U2 (the class table), **D91** (which specifies the mechanism), A38 (which adds the ninth enumerator)
+- Discovered by: **Q80** (2026-08-02) for the disjointness half; **merged with D91 §8's prefix sweep by D91 §10**, deliberately as one mechanism rather than two sweeps — the F23/F24 sibling failure applied at the moment it would otherwise repeat.
+- Problem: **§2's headline rule — *"a domain never mints a code under another domain's prefix"* — is enforced by NOTHING.** A foreign-prefix code is pairwise distinct, correctly kebab-shaped and new, so all three distinctness layers pass it; `census()` sorts it into the `"(unprefixed)"` bucket and *prints* it; and Q52's snapshot has additions-only semantics, so it is simply absorbed. That is not hypothetical: it is how **D58 came to specify sixteen codes under a namespace nobody had registered, with a fully green suite**. Second, smaller leg: the project has two stable kebab namespaces — codes (194, frozen by `CODES.txt`) and U2's `ErrorClass` names (28, frozen by the module table and `tests/exit_codes.rs`) — each checked within itself, the pair checked by nothing. Q80 measured zero intersection **by hand** and reserved `anchor-gate-abort`; D91 §5 makes that reservation load-bearing.
+- Do: exactly D91 §8.1–§8.3. `ENUMERATOR_PREFIXES` pairing each `by_enumerator()` entry with its §2 prefix (`verify::error` deliberately permissive, since §2's wrapper rule makes R's list a superset); `REGISTERED_PREFIXES` **replacing** `census`'s private `PREFIXES` literal (`error_universe.rs:192-199`) so census and gate cannot drift; and a test parsing §2's table's first column (backticked cells only) so the const **is** the doc. Second leg in `crates/antseal-cli/tests/` — the only place that can see both `CliError` and the committed `CODES.txt`.
+- Accept:
+  - `every_code_carries_the_prefix_registered_to_its_domain` goes red on `ots-bad-magic` from the anchor enumerator, naming the `(enumerator, code)` pair.
+  - **The enumerator lookup is TOTAL: an enumerator with no table row FAILS, never skips.** D91 is emphatic — a `filter_map` there would silently exempt the entire A family, i.e. go green over exactly the domain the ruling exists to constrain.
+  - Test-of-the-test over a synthetic roster: `[("anchor::error::all_code_exemplars", {"ots-bad-magic"})]` must be returned.
+  - `section_2_prefix_table_matches_registered_prefixes` asserts set equality **plus** `len() >= 7`, so a parse finding nothing cannot pass.
+  - `the_universe_is_exactly_the_eight_enumerators` moves 8 → 9 with A38.
+  - `error_codes_and_exit_class_names_are_disjoint` asserts both sets non-empty and the class set at its pinned size — it cannot pass vacuously, and it stays in the CLI target rather than being weakened to a hardcoded list in `error_universe.rs`.
+- Notes: blocks nothing (A5 and A11 may proceed on D91's ruling). Native-only, like the rest of `error_universe.rs` (P14: wasm32 has no filesystem).
+
+### Q78 — Price the whole Actions allowance, not just the fuzz lane
+- Milestone: M2 (before any new scheduled or matrix lane)
+- Size: M
+- Deps: Q81 (the method and the cron reader), D61
+- Discovered by: **Q81** (2026-08-02). D61 residual risk 4 states the gap and this is it as work: the 700-minute ceiling is *"a judgement, not a measurement … chosen against the known competing draws without knowing their totals"*.
+- Problem: `ci-lanes.sh fuzz-budget` prices **one** lane against 35 % of the allowance. Nothing prices the other 65 %, and the other draws are the larger ones: `cross-os-macos` bills at **10×** and `cross-os-windows` at **2×** on *every push*, `devnet-e2e-cron` takes a weekly **cold** build of a ~736-package graph with no `rust-cache` by deliberate choice (D52 E3), `advisory-cron` runs weekly, and 19 required contexts run per PR. Exhausting the 2 000-minute GitHub Free allowance blocks **every** workflow in the repository, so the quantity that actually matters is the total — and it is the one quantity nobody has. Q81 measured the fuzz lane at ~1 877 min/month *before* its re-cadence, i.e. one lane alone was 94 %, which is evidence that the total is not comfortably inside the allowance and has never been checked.
+- Do: two halves, in this order. (1) **Read the counter**: `gh api /users/aed900/settings/billing/actions` gives `total_minutes_used` / `included_minutes` and needs the `user` OAuth scope, which the current token lacks; obtaining it is account-bearing and needs the maintainer. This is the half of D61 §1 still owed. (2) **Extend the guard**: generalise `fuzz-budget`'s arithmetic to every workflow — per-runner multipliers (1×/2×/10×), scheduled crons via the existing `cron_days` reader, per-push lanes via a stated pushes-per-month assumption — and price the *sum* against a named whole-repo ceiling. Reconcile (2) against (1); a derived total that disagrees with GitHub's own counter by more than a stated margin is itself the finding.
+- Accept:
+  - The lane prints a per-workflow breakdown and a total, with the runner multiplier shown for each.
+  - It goes red when the total exceeds the named ceiling, proven by planting a lane (e.g. restoring `fuzz-nightly` to daily) and watching it bite.
+  - The 700-minute fuzz ceiling is either confirmed against the measured total or moved by decision, with the arithmetic recorded.
+  - `docs/ci-verification.md` carries the billing read, dated, or records why it could not be taken.
+- Notes: the runner multipliers are GitHub's published billing rates, not a project constant — cite them at the point of use. **Do not** let this quietly raise the fuzz ceiling: D61 makes it raise-only by decision.
+
+### Q79 — Read the scheduled lanes, as a bookkeeping step
+- Milestone: M2 (process; no code dependency)
+- Size: S
+- Deps: none
+- Discovered by: **Q81** (2026-08-02), and named as a candidate by D61's own discovered-work list ("Q-domain, general").
+- Problem: three lanes now run on a schedule and **nobody reads any of them**. `fuzz-nightly` ran five times between 2026-07-29 and 08-02 and Q81 was the first time a single run had been looked at — five green runs, ~309 minutes, invisible. `advisory-cron` and `devnet-e2e-cron` have the identical shape. This is `docs/ci-verification.md`'s own governing rule one level out: not *"a lane that has never run on the remote is not evidence"*, but **a lane that ran and was never read is not evidence either**. Both scheduled lanes carry triage conventions ("two consecutive reds block wave starts") that are unexecutable if nobody looks, and D61 §7 adds a *first-occurrence* release block for a fuzz crash — which is a promise about a signal that reaches no one.
+- Do: add one bookkeeping step to the wave-close procedure: for each scheduled workflow, `gh run list --workflow <file> --limit 10` (read-only), record conclusion + duration in `docs/ci-verification.md` under a dated line, and act on the triage convention. Decide whether it is a documented step in CONTRIBUTING's wave-close list or a script (`scripts/ci-lanes.sh scheduled-report`) — a script is better only if it can run unauthenticated for the parts that do not need `gh`, otherwise it fails on every contributor machine and becomes noise.
+- Accept:
+  - Each of the three scheduled workflows has a dated read recorded at least once per wave.
+  - A red run cannot reach a second wave unrecorded: the step names the convention that applies (D61 §7 for fuzz — crash vs infrastructure; D52's two-consecutive rule for the others).
+  - The procedure is written where a wave-close reader will hit it, not only in a decision record.
+- Notes: this is process, deliberately — D61 recorded it as a candidate rather than mandating it for that reason. The machine-backstop version is Q71's shape (evidence lines checked by `check-traceability.py`) and is a bigger piece of work; do not start there.
+
+---
+
+## Checkbox lines (for `TODO.md`)
+
+- [ ] **Q77** (S) **(M2)** Make §2's namespace rules machine-enforced — the headline rule *"a domain never mints a code under another domain's prefix"* is enforced by **nothing**: a foreign-prefix code is distinct, correctly shaped and new, so every distinctness layer passes it and `census` absorbs it into the `(unprefixed)` bucket, **which is how D58 specified sixteen codes under an unregistered namespace with a green suite**. D91 §8.1–§8.3: per-enumerator prefix table with a **total** lookup (a `filter_map` would exempt exactly the A family), `REGISTERED_PREFIXES` replacing `census`'s private literal, a test asserting the const equals §2's table, and Q80's code/`ErrorClass` disjointness as the second leg — after Q52,U2,D91,A38; **same wave** · discovered by Q80 2026-08-02, merged by D91 §10
+- [ ] **Q78** (M) **(M2)** Price the whole Actions allowance, not just the fuzz lane — `fuzz-budget` guards 35 % of 2 000 minutes and nothing guards the other 65 %, where the big draws are (`cross-os-macos` bills **10×** on every push, `devnet-e2e-cron` is a weekly cold build of ~736 packages by design, 19 required contexts per PR). One lane alone measured 94 % before Q81 re-cadenced it. Read GitHub's own counter (needs the `user` scope — the half of D61 §1 still owed) and extend Q81's arithmetic to every workflow with runner multipliers — after Q81 · discovered by Q81 2026-08-02
+- [ ] **Q79** (S) **(M2)** Read the scheduled lanes as a wave-close step — `fuzz-nightly` ran **five** times unobserved (Q81 was the first read; all green, ~309 min), and `advisory-cron` and `devnet-e2e-cron` have the same shape. Their triage conventions ("two consecutive reds block wave starts"; D61 §7's first-occurrence crash block) are unexecutable if nobody looks. `docs/ci-verification.md`'s own rule one level out: a lane that ran and was never read is not evidence either — no deps · discovered by Q81 2026-08-02
+
+---
+
+## Hand-off: D61 §9's re-read trigger on Q65 (orchestrator must apply — `tasks/Q.md` is out of this lane's scope)
+
+The brief asked this lane to arm D61's re-read trigger; D61 §9 puts the
+mechanism in **Q65's Accept list**, and `tasks/*.md` is orchestrator-owned.
+Exact line to add to Q65's Accept:
+
+> - **D61 is re-read in this same wave** when this resolves to *public*, and
+>   the re-read records which of D61 §9's two conditions hold: **(a)** the
+>   repository is public — which alone reopens only the *budget* half, since
+>   standard GitHub-hosted runners are free on public repositories; **(b)**
+>   use by parties other than the maintainer, sufficient to argue OSS-Fuzz's
+>   own *"significant user base and/or critical to the global IT
+>   infrastructure"* criterion. **(a) alone does not reopen the OSS-Fuzz
+>   arm.** Until both hold, OSS-Fuzz is *not applicable* rather than
+>   *pending*, and no wave may carry D61 as open on that account.
+
+### Q80 — Register the A-domain error-code prefix, and file `anchor-tsa-nonce-mismatch` as owner-backed
+- Milestone: M2
+- Size: S
+- Deps: Q7 (the contract), A8/A10 (the first codes), A21/Q18 (the six anchor rows that need the prefix); D59
+- Spec: Tamper matrix — every mutation fails with a distinct error (MVP-SPEC.md line 168)
+- Discovered by: **D59 (2026-08-02, M2 planning round)**. `docs/testing/error-code-contract.md` declares itself *"Normative for every component domain (F/C/G/S/A/R)"* and then its §2 prefix table lists only `cbor-`, `manifest-`, `bundle-`, `crypto-`, `content-` and unprefixed R. **A and S have no registered prefix**, and A21/Q18's six M2 anchor families all need one.
+- Do: Add the `anchor-` row to §2's table with A as owner and "anchor artifact parsing, token/chain verification, capture-path outcomes" as the surface; decide and record whether S needs one at all (S's failures are CLI-surfaced through U2's exit codes today, which may be the correct answer — record it either way, so the omission stops looking like an oversight). Register `anchor-tsa-nonce-mismatch` and record it explicitly as **owner-backed, not row-backed**: it can carry no tamper row because a tamper row mutates a *bundle* and no bundle path ever supplies an expected nonce, so the comparison is unreachable from one. Its named owner is A10. Re-run the Q7 cross-domain distinctness sweep over the combined set.
+- Accept:
+  - §2's table covers every domain its own header claims to bind, or records why one is deliberately absent.
+  - `anchor-tsa-nonce-mismatch` appears in the registry with `owner: A10` and no tamper row, and the Q7 sweep does **not** report it as unclaimed — a build that omits the owner annotation must make the sweep red (test-of-the-test).
+  - Distinctness holds across the full combined M0+M2 set; no A code borrows another family's prefix.
+- Notes: Purely a taxonomy task — no code path changes. It must land before A21, whose six rows would otherwise mint codes under an unregistered prefix.
+
+### Q81 — Re-cadence and budget the scheduled fuzz lane, and add the machine check that keeps it inside its share
+- Milestone: M2
+- Size: M
+- Deps: Q9 (the lane), Q17 (the two targets that force the arithmetic), Q43 (the run-on-the-remote rule); D61, D52
+- Spec: Milestones M0 (MVP-SPEC.md line 153), Verification (line 169), Risks — hostile bundles (line 187)
+- Discovered by: **D61 (2026-08-02, M2 planning round)**. The lane's committed configuration — `cron: "41 3 * * *"` × 4 targets × 900 s — is a strict lower bound of **1 824 minutes/month, 91 % of the 2 000-minute GitHub Free allowance**, and Q17's two targets take it to **≥ 2 736 min/month, 137 %**. Exhausting the allowance blocks *every* workflow, not just this one. The lane has been live on the remote default branch since 2026-07-28 (commit 5302829) and **not one of its ~5 runs has ever been observed or recorded**.
+- Do: In order. (1) **Measure first**: read the five existing runs' wall clock and the account's Actions usage (`gh api /repos/aed900/antseal/actions/workflows/fuzz-nightly.yml/runs`; `gh api /users/aed900/settings/billing/actions`), record both in a dated `docs/ci-verification.md` section, and triage any red found under D61 §7 **before** changing the cadence. (2) Change the cron to `"41 3 * * 1,4"` (twice weekly, Mon + Thu 03:41 UTC) — daily does not fit the budget, weekly sits exactly on GitHub's 7-day cache-eviction boundary and would destroy the corpus accumulation the lane exists for. Workflow name and job id stay `fuzz-nightly` / `fuzz-long`. (3) Change `inputs.seconds` default and the run step to `600`; leave `scripts/fuzz.sh`'s own `long` default at 900. (4) Record the measured corpus sizing and the 7-day retention rule in the cache step's comment. (5) Add `scripts/ci-lanes.sh fuzz-budget` — computes `targets × seconds × runs_per_month ÷ 60 + PER_RUN_OVERHEAD_MINUTES × runs_per_month` from the committed sources (the `TARGETS` array, the workflow's `inputs.seconds` default, the cron day-of-week field) and fails above `FUZZ_BUDGET_CEILING_MINUTES = 700`; wire it into `scripts/local-gate.sh` and a `ci.yml` job. (6) Add D61 §7's failure-classification step so a crash red (artifact present) and an infrastructure red (artifact absent) are distinguishable without judgement.
+- Accept:
+  - The `fuzz-budget` self-test arm plants a 7-name `TARGETS` array, asserts **red**, then asserts green on the committed sources — a checker never observed failing is the defect this project keeps finding.
+  - The live arm is demonstrated red **before** the cadence change (at HEAD the checker computes ≈ 2 275 min against a 700 ceiling) and green after, and that ordering is recorded in the commit message. **The guard and the cadence change land in one commit** — otherwise the first of them turns `local-gate` and `ci` red — so the red half is produced on a scratch tree or by reverting the two lines locally.
+  - The cron-parse arm computes **8.67** runs/month for `"41 3 * * 1,4"` and **30.33** for `"41 3 * * *"` (the script's `52 × ndays ÷ 12` convention); a build that ignores the day-of-week field fails, which is the most damaging way this checker could be wrong.
+  - The cadence-floor arm fails if the maximum gap between runs exceeds **5 days**, so the budget can never be satisfied by lengthening the cadence into the cache-eviction window.
+  - The measurement of step 1 is recorded in `docs/ci-verification.md` with its dates, and any red among the five runs has a triage line.
+  - Required-context set unchanged at 19 (+1 only if `fuzz-budget` lands as a `ci.yml` job); `fuzz-long` is still never a PR context.
+- Notes: D61 §5 is the point of this task — Q17 adds two names to `TARGETS`, and without the guard that silently multiplies the bill by 1.5 with nothing noticing until every lane stops. The knob for staying inside the ceiling is always `seconds`; cadence is not a knob, because cadence protects the corpus.
+
+### Q82 — Correct the fuzzing doc's venue and required-context claims, and arm D61's re-evaluation on Q65
+- Milestone: M2
+- Size: S
+- Deps: Q9, Q65; D61, D52
+- Spec: Verification (MVP-SPEC.md line 169)
+- Discovered by: **D61 (2026-08-02, M2 planning round)**
+- Do: Three documentation corrections and one Accept-line addition. (1) `docs/testing/fuzzing.md` §7 says D61 is *"due M3 — deliberately not resolved here"* — TODO.md:573 lists it among M2's nine gating decisions; replace the section body with D61's ruling and a pointer. (2) The same section says *"OSS-Fuzz requires a public repository and an upstream-facing contact, so it is gated on the same publication decisions as the release lane"* — public status is **necessary and not sufficient**: OSS-Fuzz's criterion is *"an open-source project must have a significant user base and/or be critical to the global IT infrastructure"*, which Q65 does not grant and no decision in this project grants. Its four portability observations are correct and stay. (3) `docs/testing/fuzzing.md` §5's table marks `fuzz-smoke` *"yes — branch-protection context"*; **no context is required on this repository** (403 on both the classic API and rulesets, `docs/ci-verification.md` "Branch protection is BLOCKED BY PLAN", D52 E1) — the cell reads `mount point — required once the plan allows it (D52 E1)`. (4) Add one Accept line to **Q65**: when it resolves to "public", D61 is re-read in the same wave, and the re-read records which of D61 §9's two conditions hold.
+- Accept:
+  - No document states D61 as open, deferred, or due M3.
+  - No document states that any CI context is currently required.
+  - Q65's Accept carries the D61 re-read line, so the trigger has a named owner rather than being a hope.
+  - `scripts/ci-lanes.sh traceability --decisions` resolves every new citation.
+- Notes: Correction (2) is the one that matters operationally: a deferral written as "OSS-Fuzz becomes eligible if and when Q65 flips the repo public" would fire a re-evaluation on an event that does not make it eligible, and would leave a wave believing D61 had reopened when nothing had changed.
+
+### Q83 — Interim `core-dep-graph` guard: name the adopted HTTP client, and give the rule its missing self-test
+- Milestone: M2
+- Size: S
+- Deps: D90; **adjacent to Q74** (see Notes); lands with or before A3
+- Spec: Architecture (lines 47–53); A3 Accept row 2
+- Discovered by: **D90** (2026-08-02) §5. Two findings, one edit. (1) The lane's forbidden-crate scan (`scripts/ci-lanes.sh:197`) does not name `ureq`, so under D90 the workspace acquires an HTTP client the lane cannot see. (2) **It is the only rule in `lane_dep_graph` with no self-test** — P15/D35 (:100), S23 (:154), S6 (:239), P20 rule 1 (:325), rule 3 (:376) and D89 rule 5 (:424) all plant a violation first — so a dropped `^`, a lost alternation bar or a missing trailing space would make it green forever, the exact failure mode those self-tests exist to prevent.
+- Do: Extend the pattern at `scripts/ci-lanes.sh:197` with `ureq|ureq-proto|attohttpc|isahc|curl|rustls|native-tls|openssl|webpki-roots|httparse|http` (D90 Decision 5 gives the line verbatim). Insert the two-direction self-test immediately after it: the pattern MUST match a planted `ureq v3.3.0` line in the shape `cargo tree --prefix none` emits, and MUST NOT match `rand_core v0.10.1` — the pinned pure-trait crate the rule deliberately permits, kept out only by the `^rand ` entry's trailing space. Add the **scope comment** D90 Decision 5 supplies, stating in the file that this is a denylist whose green verdict means "none of the named offenders is present", not "the graph is pure" — measured: `libc`, `regex`, `env_logger`, `is-terminal` and `termcolor` pass both the old rule and this extension.
+- Accept:
+  - Red direction proven for both self-tests: mutate the pattern so it stops matching `ureq`, and separately so it matches `rand_core`; the lane must fail with the respective message each time.
+  - `dep-graph` stays green on the real tree with the extended pattern (verified 2026-08-02: no offender in `antseal-core`'s normal graph).
+  - Planting `ureq` in `crates/antseal-core/Cargo.toml` turns the lane red naming it — the check is proven to catch the crate D90 actually adopts, not merely to exist.
+  - The scope comment is present and names Q74 as the owner of the structural fix, so the next reader is not misled by a rule that reads like a guarantee.
+- Notes: **Adjacent to Q74, not a duplicate of it and not blocking on it.** Q74 owns replacing the denylist with a positive allowlist of `antseal-core`'s permitted normal-graph names, which is what would actually discharge A3's Accept row 2. This task is the interim regression guard for the one crate D90 adds plus the missing self-test; if Q74 lands first, the eleven added names are subsumed by its allowlist and this task reduces to the self-test alone. Until Q74 lands, A3 Accept row 2 is **review-enforced**, and D90 §5.3 says so rather than pretending otherwise.
+
+### Q84 — Assert the runtime-flavour invariant the anchor substrate depends on, and make the file that carries it tier-2 visible
+- Milestone: M2
+- Size: S
+- Deps: D90; U36 (the runtime seam); after A3
+- Spec: Architecture (lines 52–53); Core user flows (line 34)
+- Discovered by: **D90** (2026-08-02) §3.3. D90 makes `antseal-anchor`'s clients blocking, which is what lets A15/U24's hook run in a build with no tokio compiled in. Blocking inside `rt.block_on` is safe **only because** `crates/antseal-cli/src/backend.rs:206` builds `new_multi_thread`: ant-core's spawned tasks progress on worker threads while the main thread sits on a socket. On a `new_current_thread` runtime they would starve, and the symptom would be a seal that hangs or times out far from the cause. The invariant is currently unwritten and unasserted, and a one-word edit would remove it silently.
+- Do: Add a test `anchor_blocking_calls_require_a_multi_thread_runtime` beside `runtime()` (feature-gated with the rest of `backend::ant`) asserting `tokio::runtime::Handle::current().runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread` from inside `runtime()?.block_on(...)`. Cross-reference D90 §3.3 in `runtime()`'s doc comment and in `antseal-anchor`'s crate docs, on both sides of the coupling. Add `crates/antseal-cli/src/backend.rs` to `HEAVY_TRIGGER_PATHS` in `scripts/gate-features.sh:88-95`: the file is the sole home of the runtime and the `SealBackend` seam, and today a change to it is classified **light** and compiled by no tier that runs — the same coverage gap D89 Evidence 3 recorded, in the one file whose feature-gated content this decision now depends on.
+- Accept:
+  - Changing `new_multi_thread` to `new_current_thread` makes the test fail (red direction executed and recorded — the test must be shown to be capable of failing, not merely to pass).
+  - `scripts/gate-features.sh` classifies a change touching only `crates/antseal-cli/src/backend.rs` as **heavy**; proven with the script's own dry-run path, and the pre-change classification (**light**) recorded alongside so the fix is a measurement rather than a claim.
+  - The doc comments on both sides name each other and D90 §3.3, so neither can be edited in ignorance of the other.
+- Notes: Small, and deliberately so — the cost of the invariant being implicit is a hang with no local cause, which is the most expensive class of bug this substrate can produce. The trigger-path half is the more valuable half: it is what makes the test *run* when the file changes.

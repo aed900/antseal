@@ -682,3 +682,18 @@
 - U: clap surfaces for `reveal`/`verify` (flags `--all/--units/-o/--include-receipt/--yes/--online/--live`), confirmation-prompt + `--yes` utility, vault read APIs (manifest, `W`/derivation handle, staged ciphertexts, receipts, anchor artifacts, paths, addresses), canonical-URL printing in `reveal` output, `show` consuming R15's preview function, global `--json` plumbing.
 - Q: CI infra — wasm32 build + test execution from day one, snapshot-test tooling, playwright job + static server, cargo-fuzz jobs, indefinite per-version vector retention; page release signing (minisign/cosign) + publication channel; docs carrying the canonical URL; host/domain decision partnership.
 - P: workspace scaffolding for `verifier-web/` and the wasm-bindgen crate; exact toolchain pins (rustc, wasm-pack, wasm-bindgen) required for the reproducible build; product-name/domain reservation feeding the canonical URL.
+
+### R61 — Render the suppressed-anomaly list, and pin the CLI/page wording asymmetry it creates
+- Milestone: M3
+- Size: S
+- Deps: R18 (the wording table); A39 (the datum); R17 (aggregation)
+- Discovered by: **D53 §6 / D56 §4** (2026-08-02).
+- Problem: two coupled gaps. (1) A39's suppressed-anomaly list has no wording, so the information best-evidence-wins removes from the anchor state has nowhere to surface. (2) R18's premise — *"the one authoritative wording table in `antseal-core` (shared verbatim by CLI and page — renderers receive final strings, never compose their own)"* — assumes both renderers see the same data. They do not: the CLI holds `AnchorVerdicts`, while R22 hands the **page** only the report's canonical bytes, and report v1 is frozen with no field for anomalies (`AnchorResult` has five fields; D29/R32, Q14). So there is exactly one class of datum the CLI can render and the page cannot, and R18's snapshot set would silently encode that asymmetry as "wording we happened not to write".
+- Spec: Verifier web page — advisory overlay distinct from the offline verdict (MVP-SPEC.md line 137); Verification M3 (lines 156, 174)
+- Do: Add the anomaly wording to R18's table — one line per suppressed refutation, framed as *advisory* and explicitly subordinate to the anchor's state ("this anchor is `proven`; one certificate path in it did not verify") so it can never read as a demotion. State the CLI/page asymmetry in the wording table's own header as a **declared** divergence with the report-version reason, and pin it with a test rather than leaving it as an omission.
+- Accept:
+  - Every `AnchorAnomaly` code has a rendering; an exhaustive-enumeration test fails when a new code lacks one (the R18 pattern).
+  - A snapshot test pins the CLI rendering of a `proven`-with-suppressed-anomaly anchor, and a second asserts the **page** binding for the identical bundle contains none of that wording — so the asymmetry is asserted, not assumed.
+  - The advisory lines never appear in the headline, and never change the state string (test over a fixture with anomalies on a headline-eligible anchor).
+  - Positioning review: no "forged", no "notary", no unqualified accusation — the artifact may be an honest bundle a relay appended to.
+- Notes: the fix that removes the asymmetry is a `report_version: 2` field, which is a deliberate format event (see `report.rs`'s `REPORT_VERSION` doc for the coupled-edit list). Do not take it as a side effect of this task.

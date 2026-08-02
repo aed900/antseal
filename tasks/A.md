@@ -377,3 +377,493 @@
 - U: seal-pipeline ordering (anchor submission + ≥1-TSA gate strictly before `pay`); flags `--force-degraded`, `--no-anchor` (with arbitrum-one rejection), `status --upgrade`, `--online`, TSA-list and endpoint-override config; vault persistence of anchor records (`.ots`, tokens, nonces, fetch dates, calendar URLs); the every-CLI-invocation opportunistic-upgrade hook; `status`/`list` rendering incl. pending-anchor nags; degradation-report display.
 - R: all verdict wording, rendering, headline selection, >48 h divergence display, UNANCHORED banner, "supporting evidence — no independently proven time" receipt copy, claimed-time subordination; `--online` advisory-overlay UX for CLI and page (page-side online evidence fed into core's `OnlineEvidence` inputs); M3 endpoint-disagreement UX case built on A16's typed disagreement outcome.
 - Q: fuzz CI lanes consuming A23's targets; TSA-alternates caveat doc table (zeitstempel.dfn.de terms, Sectigo spacing, SwissSign quota); threat-model anchor sections (forged-header/wholesale-forged-bundle closure via online gating, calendar death, TSA churn/expiry, wallet linkability); forever-retention of anchor golden vectors in CI; manual/nightly smoke lane for A25; release checklist referencing A26's root-store process.
+
+### A30 — Contain the D60 pin set: `from_ber`, SHA-1, and the recursive-walker ban
+- Milestone: M2
+- Size: S
+- Deps: D60 (the pins); A5 (the first code that consumes them); Q1 (`scripts/ci-lanes.sh`)
+- Spec: Architecture (MVP-SPEC.md lines 47–53, 106), Anchoring (line 109), Risks — hostile bundles (line 187)
+- Discovered by: **D60** (2026-08-02). Three containment properties the decision depends on, none of which any existing lane asserts. Precedent and shape: the `dep_graph` lane's existing self_encryption and payment-stack rules — same command, same self-test-first discipline, same file.
+- Problem: D60 measured three facts that are true today and silently reversible tomorrow. (1) `cms =0.3.0-pre.2` requires `der` with its **`ber`** feature, and cargo unifies it, so `Decode::from_ber` and `EncodingRules::Ber` are reachable from every antseal source file. D60 §2 proves this does not weaken `from_der` — but nothing stops a future implementer *calling* `from_ber` on a TSA token, which would accept exactly the artifacts A5's BER row exists to reject. (2) `sha1 =0.11.0` is now in `antseal-core`'s WASM-safe graph. It is admissible only because its single caller is the ESSCertID v1 `certHash` binding (D60 §3.4); a second caller — a signature digest, a `messageImprint` algorithm, a cert-link digest — turns a documented selector into a real cryptographic dependency on a broken hash, and would pass review because the crate is already there. (3) D60 §2.4 measured a hand-written recursive DER walk overflowing the stack and **aborting** (`fatal runtime error: stack overflow`, exit 134) at ~20 000 nesting levels — uncatchable by `catch_unwind`, a trap on wasm32, and a direct violation of A5's "never panics". `der`'s own `MAX_DEPTH = 64` guard does not cover code antseal writes.
+- Do: add three rules to `lane_dep_graph` in `scripts/ci-lanes.sh`, each **self-tested first** against a planted violation before its verdict is trusted, exactly as the self_encryption and S23 rules already are. (a) The tokens `from_ber` and `EncodingRules::Ber` appear on **no code line** in any workspace crate (comment-leading lines are citations, per the existing S6 convention). (b) `sha1::` / `Sha1` appear on code lines only in the one module that implements the ESSCertID binding — a single-file allowlist, in the shape of S6's adapter allowlist. (c) The seven D60 pins (`der`, `const-oid`, `x509-cert`, `cms`, `p384`, `rsa`, `sha1`) are DECLARED by `antseal-core` and by no other crate, read from `cargo metadata --no-deps` so a feature-gated or renamed edge cannot hide — the S23 extractor is already written and takes the dependency-name regex as a parameter. Add the recursive-walker ban as a **test**, not a grep (a grep for recursion is not writable): `anchor_core_has_no_recursive_der_walker` reproduces D60's nesting generator at 200 000 levels and asserts the anchor stage returns a typed error rather than dying, which is the property that actually matters.
+- Accept:
+  - Each of (a), (b), (c) fails red against a planted violation, and the plant is in the shape `cargo metadata`/the source scanner really emits — the self-test runs on every invocation, before the real verdict.
+  - Rule (b) proves both directions: the real ESSCertID module is NOT reported, and a `Sha1::digest` planted in a second module IS.
+  - Rule (c) carries the S23 anti-vacuity check: the scan must still find `antseal-core der`, or the parse is broken rather than the tree clean.
+  - `anchor_core_has_no_recursive_der_walker` passes with a 200 000-deep input and is demonstrated red against a deliberately recursive prototype (the red direction is the whole point; the D60 probe is committed evidence it can happen).
+  - Lane runtime stays inside the existing `dep-graph` budget (no new cargo build).
+- Notes: rule (a) is cheap to state and would be expensive to discover late — an accidental `from_ber` produces a *passing* verification of a BER token, i.e. a silent weakening with no failing test anywhere. If a future `cms` release drops the `ber` requirement, rule (a) becomes vacuous rather than wrong; the D60 `der_pin_rejects_indefinite_length` test is what keeps the real property witnessed.
+
+### A31 — Two TSA endpoints that are one TSA count as one anchor
+- Milestone: M2
+- Size: S
+- Deps: A10 (the capture client), A20 (the minimum-anchor gate), A26/Q26 (the alternates table)
+- Spec: Anchoring (MVP-SPEC.md line 109), Context decision 3 (line 19), Milestones M2 (line 155), Risks (line 189)
+- Discovered by: **D60** (2026-08-02), while surveying nine live TSAs for the P-256 question.
+- Problem: `http://timestamp.entrust.net/TSS/RFC3161sha2TS` returned a token whose signer certificate is **byte-identical** to `http://timestamp.sectigo.com`'s — same issuer (`CN=Sectigo Public Time Stamping CA R41`), same serial (`0xE74EF255B0504FFADBA6DFF7FC8BA315`), same 1766-byte certificate. Entrust's timestamping service is served by Sectigo. Both fixtures are committed (`testdata/anchors/A25-bootstrap/D60-tsa-{entrust,sectigo}-resp.tsr`). Two consequences, in ascending severity. The mild one: A26/Q26's alternates table would list them as two independent choices, which is misleading documentation. The real one: a user who configures both and believes they hold two independent anchors holds one — a single TSA key compromise, a single CA revocation, a single outage takes out both. A20's gate only requires ≥1 verified token so nothing is currently *unsafe*, but the degradation report and the `list`/`status` rendering would overstate the evidence, and the spec's own framing is that anchors are independent (line 109's multi-TSA default exists for exactly that reason).
+- Do: define TSA independence as an observable, not as a URL: two captured tokens are from the **same TSA** iff their signer certificates have the same `(issuer, serialNumber)` pair. Have A10's capture record carry that pair (it already parses the certificate), and have A20's degradation report and the `evaluate_seal_gate` outcome count **distinct** TSAs rather than distinct endpoints — the gate threshold stays "≥1 verified token", so this changes reporting and any future ≥2 policy, not today's abort rule. Add the fact and its measurement to the A26/Q26 alternates table so the documented caveat for Entrust is "served by Sectigo — not an independent second anchor".
+- Accept:
+  - A test over the two committed fixtures asserts they resolve to one TSA identity, and over the FreeTSA/DigiCert pair asserts they resolve to two.
+  - A degradation report for a seal that captured both Sectigo and Entrust states "1 distinct TSA" and names the collapse; a report for FreeTSA + DigiCert states 2.
+  - The alternates table carries the caveat with its measurement date.
+  - No change to A20's gate threshold (asserted: the decision table's outcomes are unchanged by this task).
+- Notes: the discovery generalises — TSA resale and white-labelling are ordinary in this market, so the check is worth having independently of this one instance. It deliberately keys on the signer certificate rather than on the CA, so two genuinely different TSAs under one root still count as two.
+
+### A32 — A token's `genTime` is never invalid because a local clock says so
+- Milestone: M2
+- Size: S
+- Deps: A10 (the capture client, which stamps `fetch_date`), A9/A18 (which take `verify_at` as a parameter)
+- Spec: Anchoring (MVP-SPEC.md lines 108–109), Verifier web page (lines 128–130), Core user flows (line 38)
+- Discovered by: **D60** (2026-08-02), from the capture host itself.
+- Problem: the machine that captured every fixture in `testdata/anchors/A25-bootstrap/D60-*` had a clock running **129 s slow**, measured against three unrelated hosts' HTTP `Date` headers within one second of each other (freetsa.org +129 s, crates.io +128 s, blockstream.info +129 s) and consistent with the 128 s gap between the local POST time and FreeTSA's `genTime`. An implementer writing the obvious sanity check — "a timestamp cannot be from the future, so reject if `gen_time > fetch_date`" — would reject **every token in that directory**, and would reject real tokens on any user machine whose clock is behind by more than the TSA's response latency, which is a common and entirely benign condition. `antseal-core` cannot make this mistake by construction (it reads no clock; `verify_at` is a parameter — A9, A18), so the exposure is entirely in `antseal-anchor`'s capture path, which is the one component that both reads a local clock and holds a token.
+- Do: state the rule where the code is — no capture-path or anchor-stage check may treat a token as invalid, unverifiable or suspect on the basis of a comparison between its `genTime` and a locally-read clock. `fetch_date` is recorded as **provenance metadata**, never as a validity input. If a future skew warning is wanted it is advisory-only, one-directional (large *positive* skew, i.e. a `genTime` far in the future), with a tolerance no smaller than a few minutes, and it never changes an anchor state. Add the regression test and the reason to the module's doc comment, citing the 129 s measurement so the next reader meets the evidence rather than a rule.
+- Accept:
+  - A test feeds a real committed token together with a `fetch_date` **earlier** than its `genTime` and asserts a complete, successful capture record with no warning-bearing state change.
+  - A grep-level or test-level check proves no comparison between a `genTime` and a system-clock reading gates any outcome in `antseal-anchor`.
+  - `antseal-core`'s clock-freedom is re-asserted (it already is, by the `core-dep-graph` lane and by `verify_at` being a parameter) so the rule is visibly scoped to the network side.
+- Notes: this is the cheapest possible task and the most likely to be dismissed as obvious. It exists because the failure it prevents is invisible in CI — CI machines have good clocks — and appears only on a user's machine, as an anchor that mysteriously will not verify. The committed fixtures are themselves the permanent regression corpus: they cannot be made to satisfy a naive check without re-capturing them on a synchronised host.
+
+### A33 — Rule what a critical unrecognised `TSTInfo` extension means
+- Milestone: M2
+- Size: S
+- Deps: A5 (landed)
+- Spec: Anchoring (line 109)
+- Do: RFC 3161 §2.4.2 gives `TSTInfo` an `extensions [1] IMPLICIT Extensions
+  OPTIONAL` field. A5 parses it for well-formedness and then **ignores it,
+  criticality included** — which means a token carrying a *critical* extension
+  antseal does not understand is currently accepted. No decision in the
+  register rules on this, and inventing a rule against zero fixtures is
+  precisely the defect D60 §4 refuses, so A5 recorded the measurement instead:
+  `crates/antseal-core/tests/anchor_real_tokens.rs::no_live_tsa_sends_tst_info_extensions`
+  asserts that **none of the nine live TSAs sends any**, and goes red the day
+  one starts. Decide the rule (reject on unrecognised-and-critical, per the
+  X.509 convention; or accept and record why) and either way keep the
+  measurement test, since it is what makes the question observable.
+- Accept:
+  - A dated decision entry, or a recorded non-rule in `tasks/A.md` with its
+    reason.
+  - If reject-on-critical is chosen: a distinct `anchor-` code, a synthetic
+    fixture, and a tamper row.
+  - `no_live_tsa_sends_tst_info_extensions` still present and still asserting
+    the corpus is empty of them.
+- Notes: The same question exists for `TSTInfo.tsa`, which A5 also parses and
+  never reads — RFC 3161 makes it informational and the signer certificate is
+  what identifies the TSA, so that half is probably a one-line non-rule.
+
+### A34 — Implement the `.ots` encoder with deterministic branch ordering
+- Milestone: M2
+- Size: S
+- Deps: A11 (the codec, its limits and its error set); A13 (the sole consumer); D58 §7.3
+- Spec: Anchoring (line 108), Reveal bundle (line 114), Milestones M2 (line 155)
+- Do: In `antseal-core`, at `crates/antseal-core/src/anchor/ots/encode.rs`, implement the writer half of the in-house codec D58 rules in: emit the 65-byte container header (31-byte magic, version varuint `1`, digest-type `0x08`, 32-byte `anchor_digest`) followed by the timestamp body, with `0xff` preceding every branch except the last. **Branch order is imposed by this task, not by the format**: sort branches by their serialized op-stream bytes, lexicographically, so two seals of the same digest against the same calendar set produce byte-identical files. Encoding is the inverse of A11's parse for every artifact A11 accepts, and the encoder MUST NOT be used to re-emit a *received* file — D58 §4 shows a parse/re-serialize cycle can change attestation length fields, so A13 stores the bytes it assembled, and the encoder exists for assembly, not for normalization. The encoder is subject to the same limits as the parser: it refuses to emit an artifact that A11 would reject, so a merge bug surfaces as a typed error at write time rather than as an unparseable stored anchor.
+- Accept:
+  - Round-trip on the A25 merged fixture is **byte-identical** in both directions (`parse(encode(parse(bytes))) == parse(bytes)` and `encode(parse(bytes)) == bytes`).
+  - Branch order is deterministic: encoding the same three calendar responses supplied in all 6 permutations yields one identical file. Fails if the sort is dropped.
+  - Encoding an artifact that violates any D58 §9.1 limit returns that limit's error rather than writing bytes; test per limit.
+  - `wasm32-unknown-unknown` build passes; native/wasm encode outputs bit-match.
+- Notes: Discovered by D58 (2026-08-02). The `opentimestamps` crate supplied `DetachedTimestampFile::to_writer`, so no task ever owned encoding; D58 removes the crate and the gap becomes visible. D58 §3.4 also records why the rejected crate's writer could not have been used even if the crate were adopted — its serializer panics (index-out-of-bounds and subtraction overflow) on exactly the hand-built trees a merge produces.
+
+### A35 — Cross-implementation `.ots` differential conformance harness
+- Milestone: M2
+- Size: M
+- Deps: A11, A34, A25 (the recorded corpus); A23 (shares the corpus, not the mechanism)
+- Spec: Verification — every mutation fails with a distinct error (line 168); Format stability (line 123); Verifier web page (line 131)
+- Do: Build a differential harness that compares `antseal-core`'s `.ots` verdict against the reference implementation's over a corpus, and fails when they disagree in a way that is not an explicitly recorded, justified divergence. Corpus: A25's recorded real artifacts, every D58 §11 adversarial input, every §9.3 `cap + 1` witness, and the A23 fuzzer's saved crashers. Reference side runs **offline from committed recordings** — Q16 forbids real anchor endpoints in CI, and this harness must add no network dependency; capture the reference tool's per-input output once, by hand, into `testdata/anchors/conformance/`, and compare against the recording. Divergences are not automatically failures: maintain a committed allow-file of *intended* divergences, each with a one-line reason (D58 names two — antseal renders unimplemented-op subtrees `unverifiable` where the reference errors, and antseal accepts non-minimal varuints the reference also accepts but the crate mishandled). An unlisted divergence fails.
+- Accept:
+  - The harness runs in the existing test lane with no network access and no new CI context.
+  - **Red direction proven, not assumed**: reintroduce D58 §4's defect (ignore the declared attestation payload length instead of sub-slicing) and the harness must go red naming the 90-byte input — a unit test cannot catch this class, because a unit test asserts what *we* think the bytes mean.
+  - The allow-file is non-empty, every entry carries a reason, and an entry whose divergence no longer occurs fails as stale (an allow-file that can only grow is the same defect as a test that cannot fail).
+  - Every corpus input is exercised; a corpus file present on disk but unread fails the run.
+- Notes: Discovered by D58 (2026-08-02). Rationale is D58 §4: `opentimestamps` 0.2.0 and `python-opentimestamps` report **different attestation sets from an identical 90-byte input**, and neither implementation's own tests could see it, because agreement between implementations is not a property either one can assert alone. The in-house codec inherits that exposure the moment it exists.
+
+### A36 — `docs/format/registry-v1.md` §7.9 key 1 names two ASN.1 types with one slash
+- Milestone: M2
+- Size: S
+- Deps: A5 (landed)
+- Spec: Format registry §7.9
+- Do: The TSA anchor's `token` field is described as *"var — DER
+  TimeStampResp/token, opaque"*. Those are two **different** ASN.1 types —
+  `TimeStampResp ::= SEQUENCE { PKIStatusInfo, TimeStampToken OPTIONAL }` and
+  `TimeStampToken` = a CMS `ContentInfo` — and the registry rules neither out.
+  A capture client naturally stores what the TSA sent; other tooling commonly
+  stores the bare token (what `openssl ts -reply -token_out` writes). A5
+  therefore accepts **both**, dispatching **structurally** on the first inner
+  tag (OID ⇒ `ContentInfo`, SEQUENCE ⇒ `TimeStampResp`) rather than by
+  try-then-fall-back, which would report whichever error came second and make
+  every malformed artifact look like the wrong shape. When the artifact is a
+  response, its `PKIStatus` is enforced. Ratify that as the rule and say so in
+  the registry, or narrow it to one shape and say which — but the current
+  phrasing cannot be implemented twice the same way, and the field is frozen
+  v1 surface.
+- Accept:
+  - §7.9's key-1 row states which shape(s) a v1 bundle may carry.
+  - `both_registered_artifact_shapes_are_accepted` still passes, or is
+    replaced by a test of whichever narrower rule is chosen.
+- Notes: Narrowing is a **format decision**, not an implementation detail:
+  a bundle already in the field carrying the other shape would stop verifying,
+  which MVP-SPEC.md line 123 forbids. Ratifying "both" is the cheap answer and
+  is what A5 implements today.
+
+### A37 — Record the `digestAlgorithm` / `signatureAlgorithm` consistency **non-rule**
+- Milestone: M2
+- Size: S
+- Deps: A8 (landed)
+- Spec: Anchoring (line 109); D60 §3.2.6
+- Do: When `SignerInfo.signatureAlgorithm` is an explicit
+  `shaNNNWithRSAEncryption` or `ecdsa-with-SHAnnn`, it names a digest, and so
+  does `SignerInfo.digestAlgorithm`. RFC 5754 expects them to agree. **A8 does
+  not check that they do**, deliberately: D60 §3.2.6 says `digestAlgorithm`
+  "is self-checking in both of its uses (a flipped value breaks the
+  message-digest length comparison and the signature simultaneously) — but A8
+  must take no other decision from it", and a consistency rule is another
+  decision. A8 uses the signature OID's digest for the signature and
+  `digestAlgorithm` for the message-digest attribute; both are covered by the
+  signature. Write the non-rule down where an implementer will meet it, with
+  the self-checking argument, or overturn it — but it must not stay an
+  unexplained absence, because "add the obvious consistency check" is exactly
+  the kind of hardening that passes review.
+- Accept:
+  - The non-rule (or the rule) is stated in `tasks/A.md` A8 with its reason.
+  - If a rule is added: its own `anchor-` code and a synthetic fixture, plus a
+    re-run of the nine-TSA suite to prove no real TSA is inconsistent.
+- Notes: Measured today across the nine captures: every explicit-digest
+  signature algorithm agrees with its `digestAlgorithm`. So the rule would
+  cost nothing — which is an argument for it, and also the reason it can be
+  added later at no compatibility cost.
+
+### A38 — Register the `anchor-` error-code prefix and the A-domain code inventory
+- Milestone: M2
+- Size: S
+- Deps: Q7 (the contract + harness); blocks A5 and A11 (the first tasks that mint an `anchor-` code)
+- Discovered by: **D53/D56** (2026-08-02). `docs/testing/error-code-contract.md` §2's prefix table has rows for `cbor-`/`manifest-`/`bundle-` (F), `crypto-` (C), `content-` (G) and *(unprefixed)* (R). **It has no row for the A domain**, while §5 of the same document already anticipates M2 anchor rows and A5/A8/A9/A11/A12 each promise distinct error codes. Measured 2026-08-02: `testdata/error-codes/v1/CODES.txt` holds **194** codes and **zero** carry an `anchor-` prefix.
+- Problem: §2 forbids the workaround — *"A domain never mints a code under another domain's prefix"* — so A cannot borrow `bundle-`, and the first `anchor-` code would land in a namespace the contract does not describe. Separately, §4b layer 4 (reverse coverage) works by walking a **per-domain exemplar enumerator** (F's `DecodeError`, R's `VerifyError`); with no A-domain enumerator, every `anchor-` code is unowned by construction and the layer cannot see it.
+- Spec: Verification — tamper matrix (MVP-SPEC.md line 168); contract `docs/testing/error-code-contract.md` §2, §4a, §4b, §5
+- Do: Add the §2 row verbatim — `| `anchor-` | A | anchor-artifact verification: strict DER/CMS, X.509 path validation, `.ots` op execution, embedded-header and online-header checks (A5–A18) |`. Add an A-domain exemplar enumerator over the anchor error enum on the pattern of `test_util::tamper_coverage`'s `CoverageDomain`, so §4b layer 4 sweeps `anchor-` codes, and wire the anchor error family into `crates/antseal-core/src/error_universe.rs` so §4a's additions-only snapshot covers it. Record in §7 (Status) the date and the code count at registration.
+- Accept:
+  - `docs/testing/error-code-contract.md` §2 names the A domain; a planted `bundle-`-prefixed anchor code fails a test that names the prefix rule.
+  - Every `anchor-` code an anchor error family can emit is claimed by a tamper row, by a named row in an integration target, or by an entry naming the task that owes it (§4b layer 4) — planted-fault tested by adding an unowned variant.
+  - `testdata/error-codes/v1/CODES.txt` contains the `anchor-` codes; removing or renaming one goes red naming it under its frozen name (§4a's three rows, planted-fault tested).
+  - `antseal-core` still compiles for `wasm32-unknown-unknown`.
+- Notes: pure infrastructure — it mints no code of its own. Landing it *after* A5 would mean re-homing codes that are already frozen by §4a's snapshot, which is why it is deps-before rather than deps-after.
+
+### A39 — Emit the per-anchor suppressed-anomaly list that best-evidence-wins would otherwise discard
+- Milestone: M2
+- Size: S
+- Deps: A18 (the state machine that produces it); A2 (the type it lands in)
+- Discovered by: **D53 §3 / D56 §4** (2026-08-02), as the stated price of both decisions' precedence rule.
+- Problem: both decisions rule **best-evidence-wins** — D53's C1/C2 beat C3–C5 (a junk intermediate never demotes a valid chain), D56's O3–O5 beat O6–O8 (a forged branch never demotes a confirmed or pending one) — because the `.sealproof` bundle is **unsigned** and refutation-wins would hand any relay a downgrade-to-`invalid` primitive. The cost is that a refuted certificate path or a forged Bitcoin branch, sitting beside a good one, becomes invisible in the anchor state. Nothing false is asserted and nothing becomes headline-eligible, but the evidence is silently dropped, which is the shape this project records rather than leaves unstated.
+- Spec: Anchoring (MVP-SPEC.md lines 106–110); Verifier web page — advisory overlay distinct from the offline verdict (line 137)
+- Do: Add a wording-free `suppressed: Vec<AnchorAnomaly>` to A18's per-anchor result inside `AnchorVerdicts` — each entry naming the stable code the suppressed refutation *would* have produced (`anchor-chain-signature-invalid`, `anchor-ots-online-header-mismatch`, …) plus the path or branch index it came from. **It must not enter `VerificationReport`**: `AnchorResult` has exactly five fields and report v1 is frozen (D29/R32; Q14), so R12 projects `AnchorVerdicts` into `Vec<AnchorResult>` and drops this list — the same boundary D86 drew for the decode layer. Assert the boundary with a test rather than a comment.
+- Accept:
+  - A TSA artifact with one valid path and one broken-signature path renders `proven` **and** carries exactly one suppressed entry naming `anchor-chain-signature-invalid`.
+  - A merged `.ots` with one pending branch and one forged Bitcoin branch renders `pending` **and** carries one suppressed entry.
+  - An artifact with nothing suppressed carries an **empty** list, not an absent field (so "no anomalies" and "not computed" are never confused).
+  - A test asserts no serialized `VerificationReport` byte changes when the list is non-empty — run against the 21 pinned strings in `testdata/vectors/v1/report/verification-reports.json`, which must remain byte-identical.
+  - `antseal-core` still compiles for `wasm32-unknown-unknown`.
+- Notes: R61 renders it CLI-side. The verifier **page** cannot show it until a `report_version` bump — recorded as a residual risk in D53 §6, not worked around here.
+
+### A40 — Evaluate anchor independence from verified identities, never from array length
+- Milestone: M2
+- Size: S
+- Deps: A18 (verified identities exist only after it); consumed by A20 (the minimum-anchor gate) and R17 (M3 aggregation)
+- Discovered by: **D53** (2026-08-02) while reading `docs/format/registry-v1.md` §8 for anchor list-ordering rules.
+- Problem: §8 decides that **duplicate anchor artifacts are legal v1, deliberately** — *"a sealer wanting two 'independent' TSA anchors from one TSA simply requests two tokens — different bytes, same TSA, passes any byte-distinctness check"* — and discharges the resulting obligation by naming it: *"**anchor independence must be evaluated from verified identities, never from array length** — an obligation on A18/R17"*. That obligation is carried by **no task text**: A18's Do/Accept never mention independence, A20's minimum-anchor policy counts *"≥1 TSA token passed full core verification"* with no distinctness rule at all, and R17's divergence flag compares times across anchors that may all be one TSA. The registry is frozen prose asserting a guarantee nothing implements. §8 also records this is the **irreversible** direction — permissive now cannot be tightened after the freeze — so the check has to live in the verdict layer or nowhere.
+- Spec: Anchoring — minimum-anchor policy (MVP-SPEC.md lines 19, 34, 149); Verifier web page — divergence flag (line 137); `docs/format/registry-v1.md` §8
+- Do: Define anchor **identity** in `antseal-core`: for a TSA anchor, the verified signer identity established by the validated path (`AnchorResult::source`'s verified arm — never a bundle-recorded string, per D8 §1); for an OTS anchor, the set of calendar URLs its attestations name. Expose, from `AnchorVerdicts`, the count of **distinct verified identities** among headline-eligible anchors, and have A20's gate and R17's divergence rule read that rather than `anchors.len()`. State what identity means for the states that carry only a *claimed* identity (`internally-consistent-only`, `invalid`): they contribute **zero** identities, because a claimed identity is not verified.
+- Accept:
+  - Two `proven` TSA anchors from the same TSA count as **one** distinct identity (test); two from different TSAs count as two.
+  - A bundle carrying a byte-identical duplicate `.ots` counts one identity, and still decodes and verifies (§8's legality is not walked back).
+  - `internally-consistent-only` and `invalid` anchors contribute zero identities even when their claimed source strings differ.
+  - No code path derives independence from `ots_anchors.len()` or `tsa_anchors.len()` (grep-level review item, plus a test over a duplicate-bearing fixture).
+- Notes: this task does **not** change the minimum-anchor gate's threshold — that is A20/D-A's, and MVP-SPEC.md line 137's *"the minimum-anchor policy guarantees ≥1 TSA token"* is unaffected by counting identities instead of artifacts when the count is 1.
+
+### A41 — Reconcile the two A-domain error-code prefixes before any anchor code is minted
+- Milestone: M2
+- Size: S
+- Deps: none (**blocks A38, and through it A5 and A11**); reads
+  `docs/decisions/D53-chain-invalid-at-gentime.md` §7,
+  `docs/decisions/D56-ots-internally-consistent-trigger.md` §7,
+  `docs/decisions/D58-opentimestamps-viability.md` §10.4,
+  `docs/testing/error-code-contract.md` §2/§3
+- Spec: Tamper matrix (MVP-SPEC.md line 168), Milestones M2 (line 155)
+- Do: Two decisions resolved on 2026-08-02 mint A-domain error codes under
+  **different prefixes**, and one check gets **two different codes**. Rule on
+  both, then hand the result to A38 (which registers the prefix row) before A5
+  or A11 mints a code — after that, `docs/testing/error-code-contract.md` §3
+  makes every code permanent and `testdata/error-codes/v1/CODES.txt` is
+  additions-only, so the wrong choice cannot be withdrawn, only accumulated.
+  (a) **Prefix.** D53 §7 mints `anchor-cert-not-valid-at-gentime`,
+  `anchor-chain-constraint-violation`, `anchor-chain-signature-invalid` and
+  requires a single `anchor-` row whose scope it writes verbatim, explicitly
+  covering *"`.ots` op execution"*; D56 §7 mints four `anchor-ots-*` codes on
+  the same row. D58 §10.4 instead mints **sixteen `ots-*` codes** under a new
+  `ots-` prefix and states *"A5 will want a sibling `tsa-`"*. One prefix or
+  three — §2's *"a domain never mints a code under another domain's prefix"*
+  makes the choice load-bearing for every later row, and §4b layer 4's
+  reverse-coverage enumerator is written per family.
+  (b) **The duplicated check.** D56 rule **O2** (*"artifact.stamped_digest !=
+  anchor_digest"*) and D58 §10.3 step **5** (*"`start_digest ==
+  anchor_digest`"*) are the same equality on the same field, and they carry
+  `anchor-ots-digest-mismatch` and `ots-ops-do-not-commit-anchor-digest`
+  respectively. D53 §8 binds tamper row 1 (`row_id`
+  `anchor-ots-digest-mismatch`) to `ErrorCode("anchor-ots-digest-mismatch")`,
+  so Q76's `MATRIX.json` edit **and** A11's implementation cannot both be
+  right as written. Pick one code; correct the losing document at source; if
+  the row id and the code diverge, say so in the row's `why`, because row ids
+  are permanent handles and this one already reads like the code.
+- Accept:
+  - A single ruling covering (a) and (b), recorded as a decision-document
+    amendment or a new short decision, naming which text in D53 §7 / D56 §7 /
+    D58 §10.4 / §10.3 is superseded and quoting the replacement.
+  - `docs/testing/error-code-contract.md` §2 gains exactly the row(s) the
+    ruling authorises — no more, and none before it.
+  - The 20 codes the three documents currently mint are pairwise distinct
+    after the ruling, and none collides with the 194 in
+    `testdata/error-codes/v1/CODES.txt` (measured, not assumed).
+  - **Q76 runs after this, not before**: the `MATRIX.json` `expected` cell for
+    `anchor-ots-digest-mismatch` is one of the two codes in dispute.
+- Notes: Found at A2. A2 mints no code and therefore validates no prefix in
+  `AnchorDiagnostic` — deliberately, and recorded in that type's doc comment:
+  a constructor that checked for `anchor-` would have silently decided this.
+
+`TODO.md` row:
+
+```
+- [ ] A41 — Reconcile the two A-domain error-code prefixes (D53/D56 `anchor-` vs D58 `ots-`/`tsa-`) and the two codes minted for the one digest-commitment check, before A38 registers a row or A5/A11 mints a code (M2, S)
+```
+
+---
+
+### A42 — Implement the OTS upgrade-URI allowlist and per-response cap
+- Milestone: M2
+- Size: S
+- Deps: A3 (HTTP substrate + the response-cap parameter D54 §9.1 adds), A13; D54
+- Spec: Anchoring (line 108), Core user flows 2 (line 35), Risks — hostile input (line 187)
+- Do: In `antseal-anchor`, implement the pinned upgrade-URI allowlist D54 rules: a pending attestation's URI may be contacted by A14/A15 only if, after lowercase normalization, its scheme is `https`, its path is empty, it carries no port/query/fragment, and its host ends with one of `OTS_UPGRADE_HOST_SUFFIXES` (`.calendar.opentimestamps.org`, `.calendar.eternitywall.com`, `.calendar.catallaxy.com`) **on a dot boundary** — or is exactly a user-configured calendar's host, or a subdomain of one. The allowlist is APPEND-ONLY: removing a suffix strands every already-stored `.ots` naming it, and the constant carries that as a doc-comment invariant. Also land `MAX_OTS_CALENDAR_RESPONSE_BYTES = 65_536` and pass it as the OTS request's `receive_cap_bytes` through **D90's** substrate — *not* `MAX_OTS_BYTES`, which D90 currently names and which is the merged-artifact cap, 4 766× the largest of 18 measured real responses (D54 §8b; F4 makes limits raise-only, so the measured value is the only reversible choice). The substrate must surface an over-cap response as D90's `OversizeBody` variant, **never by truncating** (upstream's own client truncates at 10 000 B and then fails deserialization — `python-opentimestamps/opentimestamps/calendar.py:70-72`). Add the F4 registry row to `docs/format/anchor-artifact-limits.md`.
+- Accept:
+  - Table-driven test over: each of the four real pending URIs recorded in D54 §1 (accepted); a bare suffix with no dot boundary, e.g. `https://calendar.catallaxy.com` (refused); an uppercase host (accepted — normalized); `http://` scheme (refused); a URI carrying a path, port, query or fragment (refused); `https://attacker.example` (refused).
+  - A user-configured calendar widens the allowlist to that host and its subdomains only: `https://cal.example.com` does not admit `https://other.example.org` nor `https://cal.example.com.evil.net`.
+  - An over-cap calendar response produces the size error variant, not a parse error — asserted on the variant, so a truncating implementation fails.
+  - The F4 row records value, the fixture measured against, the margin and `lowered: never`; the margin figure is re-derived once A25 measures a real **upgrade** response (D54 §6.1).
+- Notes: This closes an SSRF/deanonymization surface that the U24 hook makes reachable on *every* CLI invocation, from a vault artifact an attacker with disk access can edit. Discovered by D54.
+
+### A43 — Cross-certificate and self-signed-in-token chain fixtures
+- Milestone: M2
+- Size: M
+- Deps: A6, A8, A9; A24 (test-CA infrastructure); D57
+- Spec: Anchoring (line 109), Verifier web page (lines 129, 133), Verification — tamper matrix (line 168)
+- Do: Commit the five real TSA tokens captured for D57 (`testdata/anchors/A25-bootstrap/roots-*-token.tsr`) as chain-validation fixtures and build the suite that locks D57's rulings P1/P2/P3 into A9. P1: path building stops at the **first** certificate whose issuer DN matches a pinned root's subject DN and whose signature verifies under that root's SPKI; trailing certificates are ignored, never anchors, and their presence is not an error. P2: a token-supplied self-signed certificate is never a trust anchor even when byte-equal to a pinned root. P3: `certificates` is an ASN.1 SET and carries no ordering guarantee. Extend A24's test CA to emit a cross-certificate so the negative direction is reachable synthetically as well as from real tokens.
+- Accept:
+  - The real DigiCert token reaches `proven` **with its cross-certificate present** and again **with it removed** — an implementation that walks the supplied chain to its end fails the first and passes the second, so both directions are required.
+  - The real Sectigo token reaches `proven` with its cross-certificate present (second hierarchy — one TSA passing could be luck).
+  - The real FreeTSA, DFN and SwissSign tokens reach `proven` **while carrying their own self-signed root inside the token** (P2's positive twin), while an A24 token whose root is withheld from the injected store but present in the token renders `internally-consistent-only` (P2's negative). The same A24 fixture reaches `proven` when its root is injected, so neither direction can pass vacuously.
+  - Every certificate SET is re-encoded in every permutation and each permutation yields the identical verdict (P3).
+  - Rows execute in both native and wasm32 suites; no secret material in fixtures.
+- Notes: None of these defects is reachable with A24's test CA alone — a single-hierarchy CA never cross-signs and never ships its own root in a token. Discovered by D57 §2/§3, which measured 2-of-5 chains terminating at a cross-certificate and 3 distinct certificate orders across 5 real tokens.
+
+### A44 — Default-endpoint and pinned-root rot watch (scheduled, non-gating)
+- Milestone: M2 (runs `continuous` thereafter)
+- Size: S
+- Deps: A6, A13, A17, A26; Q16 (the non-gating manual/scheduled lane)
+- Spec: Anchoring (lines 108–109), Format stability (line 123), Risks (line 182)
+- Do: Stand up one scheduled, **non-required** lane that detects rot in everything this project pins to a third party. (1) OTS calendars: per entry in `DEFAULT_OTS_CALENDARS`, resolve DNS and `GET <url>/`, asserting HTTP 200 and the literal marker `OpenTimestamps Calendar Server` in the body; record each calendar's reported pending-commitment count as a trend. Submit nothing — this is a liveness read, not an anchor operation (Q16). (2) Arbitrum RPCs: per entry in the D55 pairs, call **`eth_getTransactionReceipt` against a committed historical transaction** and `eth_chainId`, and read `Access-Control-Allow-Origin` off the **POST** response. A liveness probe with a cheaper method is explicitly forbidden — D55 §2 measured an endpoint that answers `eth_blockNumber` in 0.75 s and rejects `eth_getTransactionReceipt` outright. (3) Pinned roots: assert no root in `TsaRootStore::pinned()` is within 365 days of its `notAfter`. Two consecutive reds for one endpoint opens an issue; the fix is a reviewed constant change (calendars and RPCs) or a reviewed append (roots, per A26).
+- Accept:
+  - Lane runs on the fuzz-nightly schedule, is not a required context, and a red run never blocks a merge.
+  - Red direction proven at landing: a planted dead hostname, a planted `eth_blockNumber`-only stub, and a planted root expiring in 100 days each turn the lane red, with a message naming which of the three checks failed.
+  - The root-expiry check takes `now` as a **parameter** in `antseal-core` (never a system clock — A9's WASM-determinism rule) and is driven with the real clock only from this lane.
+  - The lane's report distinguishes "endpoint down" from "endpoint up but wrong method policy" — the two need different fixes.
+- Notes: The three decisions this serves have different permanence. The calendar and RPC lists are `antseal-anchor` constants and changing one is **not** a format event (D54 §5). The root store is compiled into `antseal-core`, is versioned and append-only, and changing it is an A26 event. Discovered by D54/D55/D57.
+
+### A45 — Re-point A11's F1/F2 demonstration at the wired anchor stage
+- Milestone: M2
+- Size: **S**
+- Deps: A18, R12, A11
+- Spec: Anchoring (line 108); `docs/format/anchor-artifact-limits.md` F1–F3
+- Do: `crates/antseal-core/tests/anchor_ots_blast_radius.rs` demonstrates F1
+  end to end today — a bundle whose sole `.ots` is over-limit still decodes as
+  a bundle, decodes as a `.sealproof`, verifies its manifest and content, keeps
+  both TSA anchors, and yields a `VerificationReport` **equal to the
+  control's**. What it *cannot* reach is the half of F2 that names a per-anchor
+  **verdict**, because R12 has not replaced the M0 stub that renders every
+  anchor `absent`: `an_over_limit_artifact_maps_to_invalid_and_carries_no_time`
+  therefore composes `parse_ots`'s error with `AnchorVerdict::invalid` by hand
+  instead of reading the pipeline's answer. When A18/R12 land, re-point it, and
+  strengthen the control comparison from *"the reports are equal"* to *"the
+  reports differ in exactly the one anchor slot"* — which is the assertion that
+  actually distinguishes F2 from F1.
+- Accept:
+  - The over-limit bundle's report differs from the control's **only** in the
+    OTS anchor's slot, and that slot is `invalid` with the artifact's own code.
+  - The module docs' "What this test can and cannot reach today" section is
+    deleted rather than edited, because the limitation is gone.
+- Notes: The test is written to make this cheap — the hostile artifacts and the
+  byte-level splice both stay.
+
+### A46 — Prove the request nonce is verdict-inert on the bundle path, and pin the DER sign-byte case
+- Milestone: M2
+- Size: S
+- Deps: A8 (the comparison it tests), A4 (the encoder it vectors), A2; D59
+- Spec: Anchoring RFC 3161 (MVP-SPEC.md line 109), Reveal bundle contents (line 114), sealer-as-adversary (line 121)
+- Discovered by: **D59 (2026-08-02, M2 planning round)**. A8's Accept list has a row for "wrong nonce on the capture path" and **no row for the `None` arm**, so nothing in the task set witnesses D59's central ruling — that with `expected_nonce = None` the `TSTInfo` nonce is parsed and then ignored, and its presence or absence may not move any verdict. An implementer could make presence meaningful and every listed Accept row would still pass.
+- Do: Add `crates/antseal-core/tests/anchor_tsa_nonce.rs` with the three D59 §7 rows. (1) `nonce_presence_does_not_move_the_verdict`: two tokens over the same `anchor_digest` and the same chain, one whose `TSTInfo` carries a nonce and one that does not, verified with `expected_nonce = None`, must yield the identical `AnchorState` **and byte-identical report v1 output** for their `AnchorResult`. (2) `expected_nonce_some_requires_presence_and_equality`: the capture arm — matching nonce verifies; a different nonce and an **absent** nonce both yield `anchor-tsa-nonce-mismatch`. (3) `nonce_is_compared_as_bytes_not_as_a_bignum`: a token whose nonce INTEGER carries 1 024 content octets is rejected by A5's strict-DER/limit path with no allocation proportional to a decoded integer, asserted on the `parser_caps_alloc.rs` counting allocator. Separately, in `crates/antseal-core/tests/anchor_der_vectors.rs`, add golden vector `vector_tsa_request_nonce_high_bit`: `build_timestamp_req` over a fixed digest and the fixed nonce `0x8000000000000000` must emit the canonical DER INTEGER with the `0x00` sign prefix (9 content octets), byte-exact — A4's existing fixed-nonce vector uses a value whose high bit is clear and never exercises this.
+- Accept:
+  - Row (1) is non-vacuous, demonstrated: it goes **red** against a build whose `None` arm rejects a nonce-free token, and green after.
+  - Row (2) covers absence and inequality as the **same** code (D59 §1) — a build that treats absence as "nothing to compare" fails.
+  - The high-bit vector fails against an encoder that writes the 8 drawn bytes without the sign prefix.
+  - `antseal-core` still compiles for `wasm32-unknown-unknown`; the rows execute in both native and wasm32 suites.
+  - No new cap constant is introduced (D59 §1: the field is bounded by the already-frozen `MAX_TSA_TOKEN_BYTES`).
+- Notes: This task exists because "sign off" was the register's instruction for D59 and a sign-off would have left the inertness claim untested. The three states-of-affairs it forbids are all reachable from A8's Do text as written.
+
+### A47 — Re-home D56's endpoint-differential test: it cannot exist where D56 puts it
+- Milestone: M2
+- Size: S
+- Deps: A16 (the typed outcomes), A2 (`OnlineEvidence`); consumed by A18's
+  reachability suite
+- Spec: Verifier web page (MVP-SPEC.md line 137), Core user flows (line 38)
+- Do: `docs/decisions/D56-ots-internally-consistent-trigger.md` §9 lists
+  `unreachable_and_disagreeing_endpoints_are_indistinguishable_to_core` with
+  the claim *"§3's API constraint"* and the failure mode *"any core-side type
+  able to tell them apart; the test constructs both `antseal-anchor` outcomes
+  and asserts they produce the identical core input"*, under the section
+  heading *"Location: `crates/antseal-core/src/anchor/ots.rs` (unit) and
+  `crates/antseal-core/tests/anchor_ots_states.rs` (integration)"*. **That
+  location is impossible for this one row.** The two outcomes are A16's typed
+  results, which live in `antseal-anchor`, and `antseal-core` must never take
+  a dependency on it (A3's Accept: *"`antseal-core` has no HTTP/network
+  dependency"*, enforced by the `core-dep-graph` lane) — so the test cannot
+  construct its own inputs. Move the row to `antseal-anchor`'s suite, where
+  the projection `A16 outcome -> Option<OnlineBlockResult>` actually lives,
+  and assert there that the unavailable outcome and the disagreement outcome
+  both project to `None` for the queried height. The remaining nine rows of
+  D56 §9's table are unaffected and stay in core.
+- Accept:
+  - The test exists in `antseal-anchor`, constructs both A16 outcomes, and
+    asserts an identical `OnlineEvidence` results — including that neither
+    inserts an entry at the queried height.
+  - Its red direction is demonstrated: a projection that maps disagreement to
+    an inserted entry (any entry) fails it.
+  - D56 §9's location line is corrected at source to say which row lives
+    where, so A18's implementer does not look for it in core and conclude the
+    obligation is discharged by a weaker in-core test.
+  - `antseal-core` still has no `antseal-anchor` dependency
+    (`core-dep-graph`).
+- Notes: Found at A2, which wrote the in-core half it *can* write
+  (`absence_of_evidence_is_the_only_shape_a_failed_probe_can_take`) and
+  deliberately did **not** name it after D56's row — a weaker test under the
+  mandated name would have discharged the obligation on paper. A2's
+  `BlockEvidence` is the type-level half of the same separation A17's Accept
+  demands ("this result cannot enter the anchor state machine as an anchor"):
+  the anchor rules take `&BlockEvidence`, which cannot name the receipt arm.
+  **A18 must take `&BlockEvidence`, not `&OnlineEvidence`, in its per-anchor
+  rules** or that property is lost silently.
+
+`TODO.md` row:
+
+```
+- [ ] A47 — Re-home D56 §9's `unreachable_and_disagreeing_endpoints_are_indistinguishable_to_core` to `antseal-anchor` (it constructs A16 outcomes, which `antseal-core` may not depend on) and correct D56's location line (M2, S)
+```
+
+### A48 — Re-measure the bootstrapped F4 rows and pin A12's byte order for real
+- Milestone: M2
+- Size: **S**
+- Deps: A25 (the two-day OTS pending → upgraded cycle, not before 2026-08-04)
+- Spec: Anchoring (line 108); `docs/decisions/D58` §9.5, §13.1; `tasks/A.md` A12 `Do`
+- Do: Two things the M2 wave could not do because no real upgraded `.ots` of
+  this project's own existed. **(a)** Four F4 registry rows —
+  `MAX_OTS_OPS`, `MAX_OTS_DEPTH`, `MAX_OTS_OPERAND_BYTES`,
+  `MAX_OTS_VALUE_BYTES`, plus the binding half of `MAX_OTS_ATTESTATIONS` — are
+  measured against `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots`,
+  the `LARGE_TEST` constant of the *rejected* crate (a genuine mainnet proof
+  over blocks 449397/449399), with that provenance stated in the cell and in
+  `.../upgraded/PROVENANCE.md`. Re-measure them against the real fixture with
+  `anchor::ots::parse_ots_measured` — which exists so this is a call rather
+  than a second parser — and append. The values do not change (F4 forbids
+  lowering, every margin is ≥ 15×); the **provenance cell** must stop citing a
+  third-party crate's test constant. **(b)** A12's `Do` asks for the
+  merkle-root byte order to be *"pinned empirically by a real upgraded
+  fixture"*. It is not: what A12 ships is the structural read at bytes 36..68
+  with **no** reversal, guarded by a mutation test
+  (`a_byte_reversed_merkle_root_does_not_match`). The empirical pin needs a
+  **fetched mainnet header** compared against the ops-derived root — do it here,
+  with the fetch recorded in `CAPTURE.log` like every other A25 capture.
+- Accept:
+  - The four `measured against` cells name an A25 fixture and no crate.
+  - A committed test compares an ops-derived root against a **fetched** block
+    header's bytes 36..68 and goes red under a reversal.
+  - `rust-opentimestamps-LARGE_TEST.ots` is either deleted or demoted in
+    `PROVENANCE.md` to "kept as a second, independent upgraded shape".
+- Notes: Keep the bootstrap fixture at least until the real one parses, so the
+  suite is never without an upgraded `.ots`.
+
+### A49 — Enforce the transport requirement on unsigned online evidence (esplora + Arbitrum RPC)
+- Milestone: M2
+- Size: S
+- Deps: A3 (the substrate and its `TlsPolicy`); consumed by A16, A17; U: endpoint-override config (U4)
+- Spec: Core user flows (line 38), Verifier web page (line 137), Milestones M2 (line 155)
+- Discovered by: **D90** (2026-08-02) §6.6. The must-agree primitive's whole security property is that two *independent* endpoints agree. D90 measured three separate ways that independence can be lost silently, none of which any task owned: a plain-`http://` endpoint (one on-path attacker forges both halves); a followed redirect (both endpoints land on one origin and genuinely agree); and an ambient `HTTP_PROXY` (ureq's `Config::default()` reads it — both halves traverse one intermediary). The asymmetry that makes this A-work rather than hygiene: RFC 3161 tokens are **signed and nonce-bound**, so transport buys them nothing and plain HTTP is safe (and unavoidable — `timestamp.digicert.com` has no port 443, measured 2026-08-02T19:35:51Z); esplora and `eth_getTransactionReceipt` replies are **unsigned**, so transport is their only integrity control.
+- Do: Implement `TlsPolicy::RequiredExceptLoopback` in `antseal-anchor`'s `http::endpoint` module and require it on every A16 and A17 endpoint, including user-supplied overrides from U4's config: the URL scheme MUST be `https` unless the host is an IP literal in `127.0.0.0/8` or `::1`. **IP literals only — not the name `localhost`**, which is a name however conventionally it resolves; A24's stubs bind `127.0.0.1:0`, so the carve-out costs the test path nothing and widens nothing in production, where every endpoint is a public host. Reject at config-validation time with `AnchorHttpError::TlsRequired`, so a bad override fails before any seal or verify work. Record, in the same place, that A10/A13/A14 use `TlsPolicy::Optional` and why (D90 §6.6) — the two policies must not be reachable by accident from the wrong call site.
+- Accept:
+  - `http://` for a public host under `RequiredExceptLoopback` is `TlsRequired`; the same URL under `Optional` is accepted (both directions, so the policy is proven to *do* something).
+  - `http://127.0.0.1:9/` and `http://[::1]:9/` pass; `http://localhost:9/` and `http://127.0.0.1.evil.example/` are `TlsRequired` (the carve-out cannot be widened by a hostname that merely contains a loopback literal).
+  - A16's stub-server suites run unchanged against `http://127.0.0.1:<port>` — the rule is proven compatible with Q16's no-real-network policy rather than asserted to be.
+  - A U4 config carrying an `http://` esplora override is rejected at load, naming the endpoint, before any network call.
+  - Grep-level review item: no A16/A17 call site constructs a `TlsPolicy::Optional` client.
+- Notes: This is one task, not three, because the three failure modes share one property and one test surface. The redirect half is already closed by the substrate (`max_redirects(0)` + D90's own 3xx classification) and the proxy half by `.proxy(None)`; this task owns the scheme half and the assertion that all three hold together for A16/A17.
+
+### A50 — Validate the `[anchors] tsa_urls` slot through the substrate's endpoint parser
+- Milestone: M2
+- Size: S
+- Deps: A3 (the `Endpoint` parser); U4 (the config slot); consumed by A10/U26
+- Spec: Anchoring RFC 3161 (line 109), Core user flows (line 34)
+- Discovered by: **A3/A49 implementation** (2026-08-02). A49 routed the two `[verify]` slots through `antseal_anchor::Endpoint::parse` at config load, so a bad must-agree endpoint fails before any work. The `[anchors] tsa_urls` slot beside it is still validated only by `http_url_shape` (`crates/antseal-cli/src/config.rs`), a `starts_with("http://")`/`starts_with("https://")` length check — so `http://` alone (no host), `https://user:pw@tsa.example/` (credentials in a pinned endpoint, and on the plain-HTTP path they travel in cleartext), and `http://tsa.example:notaport/` all load clean and fail later, at TSA submit time, inside the pre-pay gate. Deliberately **not** folded into A49: A49's rule is about *transport* on unsigned evidence, this is about *shape*, and widening the refusal set of a slot U26 already documents is a change that deserves its own row rather than riding in on a security task.
+- Do: In `crates/antseal-cli/src/config.rs`, validate each `tsa_urls` entry with `antseal_anchor::Endpoint::parse(url, TlsPolicy::Optional)` — `Optional`, never `RequiredExceptLoopback`: `timestamp.digicert.com` has no port 443 at all (measured 2026-08-02) and RFC 3161 tokens carry their own integrity, so requiring TLS here would break a default TSA (D90 §6.6). Keep the failure shape the `[verify]` slots now use: the line number, the key, and the offending URL, at load.
+- Accept:
+  - `tsa_urls = ["http://timestamp.digicert.com"]` still loads — the plain-HTTP TSA path is proven *not* to have been broken, in the same test.
+  - Each of `"http://"`, `"https://user:pw@tsa.example/"`, `"ftp://tsa.example/"` is refused at load naming the URL and the reason.
+  - The refusal happens in `parse`, before any network call and before the anchor gate runs (assert on `parse`, not on a command).
+- Notes: This narrows what an existing `config.toml` may contain. The slot has no consumer before M2's anchor stage, so nothing in the tree relies on the looser set; a user config carrying one of the newly-refused shapes would begin failing every command, which is the intended loudness (`docs/config.md` should gain the sentence).
+
+### A51 — One tested endpoint fan-out, so A10/A13/A16/A17 cannot each re-derive independence
+- Milestone: M2
+- Size: S
+- Deps: A3; consumed by A10, A13, A14, A16, A17
+- Spec: Anchoring (line 109), Verifier web page (line 137), Core user flows (line 38)
+- Discovered by: **A3 implementation** (2026-08-02). D90 §3.2 makes endpoint independence a property of `std::thread::scope` and proves it works (1.503 s wall for a 1.5 s-slow + fast pair), but it rules on no *shape* for it — so four separate tasks will each write their own fan-out, and A10's "one TSA's failure never aborts **or delays** the others", A13's per-calendar independence, A16's pair and A17's pair each get an independent chance to be a sequential `for` loop that passes every functional test it has. A3's `endpoints_run_concurrently_not_sequentially` proves the substrate *permits* concurrency; nothing makes a consumer use it. This is the "recorded guarantee nothing implements" shape, pre-empted: the guarantee is currently recorded four times and implemented zero times.
+- Do: Add `http::fan_out<T>(client: &HttpClient, requests: &[HttpRequest<'_>], f: impl Fn(...) -> T + Sync) -> Vec<Result<T, AnchorHttpError>>` (or the smallest signature that serves all four call sites) over `std::thread::scope`, preserving input order in the output and never letting one endpoint's failure or stall affect another's. It performs **no** cross-endpoint comparison: D90 §6.9(a) rules that agreement is defined per source by the consumer over an *extracted* value, never over response bytes, and this helper must not become the place someone adds a byte comparator.
+- Accept:
+  - A slow endpoint (1.5 s) beside a fast one: total wall < 2.4 s **and** the fast endpoint's own elapsed < 900 ms — the second assertion being the non-vacuous half, since a sequential implementation that happens to query the fast one first passes a wall-clock check alone.
+  - One endpoint returning a typed error leaves the others' results intact and in position.
+  - Results are returned in request order regardless of completion order (a `HashMap`-shaped or completion-ordered result would silently pair A16's two endpoints wrongly).
+  - Grep-level review item once A10/A13/A16/A17 land: no consumer iterates endpoints with a bare `for` loop.
+- Notes: Deliberately not built speculatively inside A3 — it is minted here so the first consumer (A10) builds it once with these tests rather than four consumers building it four times. If A10 lands first it may absorb this row.
+
+### A52 — Register the `anchor-ots-*` family
+- Milestone: M2
+- Size: **S**
+- Deps: A38/Q80 (the `anchor-` §2 row), A11
+- Spec: `docs/testing/error-code-contract.md` §2, §4a; D91 §7.1, §8
+- Do: A11 mints **fifteen** `anchor-ots-*` codes and raises D56's
+  `anchor-ots-digest-mismatch`, and **none of them is registered anywhere**:
+  `docs/testing/error-code-contract.md` §2 has no `anchor-` row in the epsilon
+  worktree, `error_universe::by_enumerator()` has no A-domain enumerator, and
+  `testdata/error-codes/v1/CODES.txt` still holds 194 with zero `anchor-`
+  entries. `anchor::ots::error::all_code_exemplars()` is already written to the
+  same shape as its six siblings so the wiring is one entry. Add it, move
+  `the_universe_is_exactly_the_eight_enumerators` 8 → 9 (D91 §8.2 — an
+  enumerator with no `ENUMERATOR_PREFIXES` row must be a **failure, not a
+  skip**, or the check goes green over exactly the domain D91 exists to
+  constrain), and append the codes by §4a's additions-only path.
+- Accept:
+  - `CODES.txt` gains the fifteen; nothing is removed or renamed.
+  - The roster assertion names the ninth enumerator.
+  - `ots-ops-do-not-commit-anchor-digest` appears nowhere (D91 §6.2).
+- Notes: D91 §12's residual risk — *"A5 or A11 landing a code before Q77 —
+  acceptable once, not twice"* — is now **spent**: A11 has landed fifteen.
+
+---
+
+## Returned unused
+
+**A51**, **Q79** — no work found that needed them.
+
+> **Renumbered from A50, 2026-08-02 (orchestrator).** A50 and A51 were issued to two lanes by an allocation error of mine; the gamma lane merged first, so it keeps them and this later arrival is renumbered. IDs are permanent and cross-referenced — the protocol is to renumber the later arrival, never to reuse a number.

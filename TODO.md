@@ -3,19 +3,19 @@
 **Source of truth for scope**: `MVP-SPEC.md` (Revision 2, 2026-07-27 — frozen; `SPEC-REVIEW.md` already folded in). When this list and the spec disagree, the spec wins; flag the conflict, don't silently diverge.
 **Source of truth for status**: this file. Full per-task detail (Do / Accept / Notes / spec line refs) lives in `tasks/{P,F,C,G,S,A,R,U,Q}.md` — one file per domain, task IDs are stable and permanent.
 
-Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **350 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **89 decisions D1–D89** of which **67 are resolved**, 6 milestone gates. Counts below are current, not original.
+Generated 2026-07-27 by a 9-agent decomposition of the spec + 2-agent adversarial coverage/consistency verification, then grown by the waves that execute it: **394 tasks** today (219 at generation; discovered work takes the next free ID in its domain and is never renumbered), **91 decisions D1–D91** of which **78 are resolved**, 6 milestone gates. Counts below are current, not original.
 
 | Domain | Prefix | Scope | Tasks |
 |---|---|---|---|
-| Setup & toolchain | P | naming, repo, workspace, pins, CI skeleton, devnets | 21 |
+| Setup & toolchain | P | naming, repo, workspace, pins, CI skeleton, devnets | 27 |
 | Formats | F | deterministic CBOR, manifest/bundle codecs, parser hardening | 49 |
 | Crypto primitives | C | HKDF, AEAD, salted commitments, hybrid signatures | 29 |
 | Content model | G | canonicalization, units, raw mirror, GGM fine tree | 29 |
 | Storage | S | StorageBackend, payments, journal/resume, restore | 34 |
-| Anchors | A | OTS, RFC 3161, receipt classification, verdict states | 29 |
-| Reveal & verify | R | bundle build, verification pipeline, verifier web page | 53 |
-| CLI & vault | U | command surface, vault, config, UX | 42 |
-| Quality & release | Q | test infra, CI, threat model, docs, release | 64 |
+| Anchors | A | OTS, RFC 3161, receipt classification, verdict states | 52 |
+| Reveal & verify | R | bundle build, verification pipeline, verifier web page | 54 |
+| CLI & vault | U | command surface, vault, config, UX | 44 |
+| Quality & release | Q | test infra, CI, threat model, docs, release | 76 |
 
 ---
 
@@ -69,7 +69,7 @@ Gate: name decided + propagation checklist owned; crates.io names reserved; veri
 - [x] **P7** (S) Dependency pin-governance policy + lockfile discipline (`--locked` CI; bump = deliberate event) — after P5 ✅ 2026-07-27
 - [ ] **P8** (M) CI skeleton: fmt/clippy/test + wasm32 build lane + core dep-graph assertion — after P4,P5,P6 ⏳ WIP — workflow committed; scope granted + pushed 2026-07-27 (maintainer device flow); **first remote run GREEN — all 14 contexts** (run 30309407509; recorded in docs/ci-verification.md) — remaining: wasm-guard red-lane probe (maintainer deferred; procedure in the runbook)
 
-## M0 — Core formats & crypto (188 tasks) — ends at the **format-v1 freeze**
+## M0 — Core formats & crypto (191 tasks) — ends at the **format-v1 freeze**
 
 Gate = **Q14 checklist**: Definitions frozen (CBOR profile+pin, domain tags, id encodings, HKDF info encoding, Unicode version, signature context string); all M0 golden vectors committed + frozen (incl. empty-anchor + unbalanced n=6); independent cross-check (Q11) clean; M0 tamper registry (Q8) fully implemented; HKDF pairwise-distinctness test green; WASM bit-match green; ML-DSA probe decision recorded; Security-assumptions sign-off; traceability M0 rows filled; annotated `format-v1-freeze` tag.
 
@@ -368,13 +368,18 @@ Gate: scripted devnet E2E green (S17); kill/resume matrix green incl. real SIGKI
 - [x] **Q15** (M) Devnet E2E execution strategy (CI job vs scripted local gate; log capture) — after Q1 + S17 ✅ 2026-08-02 — **the D52 venue landed, not the suite**: `scripts/e2e-devnet.sh` (required local gate + the scheduled lane's entry point, one script both venues) and `devnet-e2e-cron` (`schedule:` + `workflow_dispatch`, **never a PR context** — payload stays 19), wired into `local-gate.sh` (self-test always, gate opt-in via `ANTSEAL_GATE_E2E=1`), with the storage-touching path list, triage convention and promote-to-required trigger in CONTRIBUTING + `docs/ci-verification.md`. S17/S18/S19 do not exist yet, so they are **declared `pending`** in the script's suite registry: a missing suite is a loud `PENDING … DISCHARGES NO GATE` (never PASS, never red), a suite that lands while its row still says pending is a **hard failure**, and a `live` row whose suite vanished is a hard failure — all self-tested, no devnet needed. Today the gate really runs S6-S8's `devnet_backend` suite against a booted devnet; log/manifest capture is redacted because the scheduled lane uploads it. **Accept row 1 ("runs S's full M1 suite green") stays open until S17-S19 land**, at which point their commits move the registry rows and switch on `--require-suites`. Deviations: weekly not daily (this lane must not take `Swatinem/rust-cache` — D52 E3 — so every run is cold), no measurement claimed (D52 §4's deliberate inversion), no full boot executed in this lane. Discovered: **Q71**
 - [ ] **Q71** (S) **(M1)** Make a skipped devnet E2E gate visible instead of merely forbidden — the gate is required by convention and nothing can enforce it (branch protection 403s, D52 E1); its evidence line is written to gitignored `target/e2e-devnet/` and **no check anywhere asserts a storage-touching commit carries one**, so a skipped gate is indistinguishable from a passed one after the fact (the Q66 shape, one level up from lanes to gates). Paste the gate line into the wave record and check it, the way Q14's gate lines already are — after Q15,S17 · discovered by Q15 2026-08-02
 
-## M2 — Anchors (35 tasks)
+## M2 — Anchors (79 tasks)
 
 Gate: anchor golden vectors + wasm32 bit-parity green (A22 — spec's explicit M2 exit criteria); **all 8** anchor tamper rows implemented + registered (A21/Q18) — *corrected 2026-08-02 by D53: this said 7; spec line 168's M2 half is six semicolon clauses, two of them compound, expanding to eight cases, and the project had reached "seven" by two different routes (`MATRIX.json` splits the expiry clause, `tasks/A.md` A21 splits the digest clause), so the two sevens were never the same seven*; real-endpoint smoke incl. two-day OTS pending→upgraded cycle complete (A25); minimum-anchor gate live in `seal` with abort-before-payment proven (U22/A20); `status --upgrade` + opportunistic hook + `list` nags working (U23–U25); DER/`.ots` fuzz targets in CI (A23/Q17).
 
 ### Pins (P)
 - ~~**P18** (S) Pin `opentimestamps = "=0.2.0"` scoped codec-only; wasm32 viability check — after P7,P14~~ — **RETIRED 2026-08-02 by D58**: the task's entire deliverable was a pin the decision declines to make. The crate is adopted in no form (not pinned, not wrapped, not vendored) after four executed memory-safety and correctness failures; `antseal-core` implements the `.ots` codec in-house at +0 packages. The wasm32-viability half was answered on the way (it compiles; that is not the same as being usable). A11 absorbs the codec work
-
+- [ ] **P23** (S) Govern the two pre-release pins (`cms =0.3.0-pre.2`, `rsa =0.10.0-rc.18`) and land the one mandatory `deny.toml` ignore — `cargo deny check advisories` is verified RED on `rsa`/RUSTSEC-2023-0071 without it, at every `rsa` version — after P7,P13 + D60 · discovered by D60 2026-08-02
+- [ ] **P24** — D60 §1.6's "zero new duplicate pairs" is false at the workspace level: 2 -> 10 pairs, 8 new, from `antseal-net`'s D89 `k256 =0.13.4` (RustCrypto 0.13) meeting `p384 =0.14.0` — amend D60, decide the `deny.toml` note (M2, S)
+- [ ] **P25** (S) Rejected-dependency register in `docs/dependency-policy.md`; opens with `opentimestamps =0.2.0` (D58) — after P7,P18
+- [ ] **P26** — A30's `from_ber` ban needs exactly one carve-out, `tests/der_pin_eval.rs`, which D60 §7.4 requires as the anti-vacuity leg — with a planted-fault self-test (M2, XS)
+- [ ] **P29** (S) Land the `ureq = "=3.3.0"` pin (rustls, no default features) + dependency-policy §1 row + the 129 → 144 rule-1 amendment; correct the false "no tokio in the default graph" sentence — after P7, with/before A3 · discovered by D90 2026-08-02
+- [ ] **P30** (S) Make the transitively-acquired `webpki-roots` TLS trust snapshot a lane-asserted value, not a remembered sentence: ureq's caret resolved 1.0.9 and the version genuinely floats, while it is the entire trust basis for A16/A17's unsigned-reply endpoints — after P29 · discovered by the P29 lane 2026-08-02
 ### Anchors (A)
 - [ ] **A2** (M) Anchor artifact + verdict data model (7 states, eligibility flags, OnlineEvidence inputs) — after A1
 - [ ] **A3** (S) `antseal-anchor` crate scaffold + HTTP substrate (timeouts, retries, typed errors)
@@ -401,21 +406,56 @@ Gate: anchor golden vectors + wasm32 bit-parity green (A22 — spec's explicit M
 - [ ] **A24** (M) Mock TSA / mock calendar / stub esplora+RPC servers for CI (no real endpoints in CI) — after A3,A6
 - [ ] **A25** (M) Real-endpoint smoke runs + record canonical fixtures (two-day OTS cycle; FreeTSA P-384 + DigiCert proven) — after A10,A13,A14,A16,A17
 - [ ] **A26** (S) TSA root-store versioning + update process (append-only; release checklist hook) — after A6,A7 → continuous
-
+- [ ] **A30** (S) Contain the D60 pin set: no `from_ber` anywhere, `sha1` confined to the ESSCertID binding, the seven pins declared only by `antseal-core`, and no recursive DER walker (a hand-written one stack-overflows to `abort` at ~20k levels — measured) — after A5,Q1 · discovered by D60 2026-08-02
+- [ ] **A31** (S) Two TSA endpoints that serve the same signer certificate count as ONE anchor — `timestamp.entrust.net` is served by Sectigo (identical issuer+serial, both fixtures committed), so the alternates table and the degradation report currently overstate independence — after A10,A20,A26 · discovered by D60 2026-08-02
+- [ ] **A32** (S) No capture-path or anchor-stage check may invalidate a token by comparing its `genTime` to a local clock — the capture host's clock was 129 s slow, so the obvious `gen_time <= fetch_date` check rejects every committed fixture — after A10 · discovered by D60 2026-08-02
+- [ ] **A33** — Rule what a critical unrecognised `TSTInfo` extension means (M2, S) — A5 parses the field and ignores criticality; no live TSA sends one, and `no_live_tsa_sends_tst_info_extensions` is the measurement that goes red when one does
+- [ ] **A34** (S) `.ots` encoder with deterministic branch ordering (D58 §7.3) — after A11,A13
+- [ ] **A35** (M) Cross-implementation `.ots` differential conformance harness (offline recordings; D58 §4) — after A11,A34,A25
+- [ ] **A36** — Registry §7.9 key 1 names two ASN.1 types with one slash ("DER TimeStampResp/token"); A5 accepts both by structural dispatch — ratify or narrow, and narrowing is a format decision under line 123 (M2, S)
+- [ ] **A37** — Record the `digestAlgorithm`/`signatureAlgorithm` consistency **non-rule** (M2, S) — D60 §3.2.6 forbids taking another decision from `digestAlgorithm`; an unexplained absence invites the "obvious" hardening
+- [ ] **A38** (S) Register the `anchor-` error-code prefix + A-domain code inventory and reverse coverage — before A5,A11 (D53/D56)
+- [ ] **A39** (S) Per-anchor suppressed-anomaly list (best-evidence-wins loses nothing silently); never enters the frozen report — after A2,A18 (D53/D56)
+- [ ] **A40** (S) Anchor independence from verified identities, never array length (registry §8's orphaned obligation) — after A18, consumed by A20,R17 (D53)
+- [ ] **A41** Reconcile the two A-domain error-code prefixes (D53/D56 `anchor-` vs D58 `ots-`/`tsa-`) and the two codes minted for the one digest-commitment check, before A38 registers a row or A5/A11 mints a code (M2, S)
+- [ ] **A42** (S) OTS upgrade-URI allowlist (3 pinned suffixes, dot-boundary, append-only) + `MAX_OTS_CALENDAR_RESPONSE_BYTES` = 65 536 with its F4 row — after A3,A13 (D54)
+- [ ] **A43** (M) Cross-certificate + self-signed-in-token chain fixtures locking D57's P1/P2/P3 into A9 (5 real tokens; 2 of 5 chains end at a cross-cert) — after A6,A8,A9,A24 (D57)
+- [ ] **A44** (S) Rot watch: calendar liveness, RPC pairs probed with the PRODUCTION method + POST CORS, pinned-root 365-day expiry — scheduled, non-gating — after A6,A13,A17,A26 (D54/D55/D57)
+- [ ] **A45** (S) Point `over_limit_ots_fails_only_its_own_anchor`'s verdict half at A18's wired anchor stage — today it exercises A11's `parse_ots` + A2's constructors because R12 is still the M0 `absent` stub — after A18,R12
+- [ ] **A46** (S) Prove the request nonce is verdict-inert on the bundle path (`None`-arm differential) + DER sign-byte golden vector — after A8,A4 (D59)
+- [ ] **A47** Re-home D56 §9's `unreachable_and_disagreeing_endpoints_are_indistinguishable_to_core` to `antseal-anchor` (it constructs A16 outcomes, which `antseal-core` may not depend on) and correct D56's location line (M2, S)
+- [ ] **A48** (S) Re-measure D58 §9.5's four bootstrapped F4 rows against the real upgraded `.ots` and retire `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots`, including A12's empirical merkle-root byte-order pin against a fetched mainnet header — after A25
+- [ ] **A49** (S) Transport requirement on unsigned online evidence: esplora + Arbitrum RPC endpoints must be https (loopback IP literals exempt); rejected at config load — after A3 · discovered by D90 2026-08-02
+- [ ] **A50** (S) Validate `[anchors] tsa_urls` through the substrate's `Endpoint` parser at config load (TlsPolicy::Optional — the plain-HTTP DigiCert path must keep working); today only a `starts_with` shape check guards it — after A3 · discovered by the A3/A49 lane 2026-08-02
+- [ ] **A51** (S) One tested `std::thread::scope` endpoint fan-out in `antseal-anchor`, so A10/A13/A16/A17 do not each re-derive "never delays the others" and one of them get it wrong; no cross-endpoint comparison in it (D90 §6.9(a)) — after A3, with/before A10 · discovered by the A3 lane 2026-08-02
+- [ ] **A52** (S) Register the fifteen `anchor-ots-*` codes — they exist in code and in no registry (`CODES.txt` still 194); D91 §12's "acceptable once, not twice" is now spent — after A11,Q80 · discovered by A11 lane 2026-08-02, renumbered from A50 (double-issued)
 ### Verify integration (R)
 - [ ] **R12** (S) Wire the anchor stage into `verify_bundle` (replaces M0 stub; receipt → supporting-evidence slot) — after R5 + A18
-
+- [ ] **R61** (S) Render the A39 anomaly list + pin the CLI/page wording asymmetry report v1 creates — after R18,A39 (D53/D56)
 ### CLI (U)
 - [ ] **U22** (M) Wire anchor stage into seal: ≥1-TSA-or-abort before pay, --force-degraded, degraded reporting — after U13 + A20
 - [ ] **U23** (M) `status <work-id> [--upgrade]` — after U3,U9 + A15,A18
 - [ ] **U24** (M) Opportunistic OTS upgrade hook on EVERY CLI invocation (never delays/fails host command; no prompt) — after U1,U5,U9,U23 + A15
 - [ ] **U25** (S) `list` pending-anchor nags (only-strong-anchor-pending rule) — after U19,U23
 - [ ] **U26** (S) TSA-list override from config into the anchor stage — after U4,U22
-
+- [ ] **U44** (S) M2 config slots: new `[anchors] ots_calendars`; `[verify] arbitrum_endpoints` reshaped to per-network `[verify.<network>] rpc_endpoints` (the flat slot cannot hold A17's pairs) — after U4,U26 (D54/D55)
+- [ ] **U46** (S) Persist the TSA request nonce in the anchor capture record; public-by-construction, never derived from `W`; `status` re-check — after U9,U22,A10 (D59)
 ### CI (Q)
 - [ ] **Q16** (M) Anchor CI lanes (mock-only; no-real-network policy) + real-smoke runbook — after Q1,Q13 + A24
 - [ ] **Q17** (S) Fuzz lanes extended with DER + `.ots` targets — after Q9 + A23
 - [ ] **Q18** (S) M2 anchor rows registered in the tamper-matrix tracker; combined distinctness re-run — after Q7,Q8 + A21
+- [ ] **Q73** — Register the 25 `anchor-` codes A5/A8 minted beyond the ruled ten: A38 wires the enumerator (8 -> 9), CODES.txt gains the rows, and the names get their one free review before §3 makes them permanent (M2, S)
+- [ ] **Q74** (S) `core-dep-graph` I/O-purity: the forbidden list is nine names, not a property (D58 §2(b)) — after P15,P20
+- [ ] **Q75** — `MATRIX.json` row `anchor-ber-not-der`: set `expected` to `anchor-der-not-strict` and drop the pending block; A5's code and four committed BER fixtures have landed (M2, XS) — hand-off to the beta lane
+- [ ] **Q76** (S) Pre-fill the M2 anchor pending rows + split the compound digest family; matrix is 8 rows, not 7 — after Q8, before A21 (D53)
+- [ ] **Q77** (S) **(M2)** Make §2's namespace rules machine-enforced — the headline rule *"a domain never mints a code under another domain's prefix"* is enforced by **nothing**: a foreign-prefix code is distinct, correctly shaped and new, so every distinctness layer passes it and `census` absorbs it into the `(unprefixed)` bucket, **which is how D58 specified sixteen codes under an unregistered namespace with a green suite**. D91 §8.1–§8.3: per-enumerator prefix table with a **total** lookup (a `filter_map` would exempt exactly the A family), `REGISTERED_PREFIXES` replacing `census`'s private literal, a test asserting the const equals §2's table, and Q80's code/`ErrorClass` disjointness as the second leg — after Q52,U2,D91,A38; **same wave** · discovered by Q80 2026-08-02, merged by D91 §10
+- [ ] **Q78** (M) **(M2)** Price the whole Actions allowance, not just the fuzz lane — `fuzz-budget` guards 35 % of 2 000 minutes and nothing guards the other 65 %, where the big draws are (`cross-os-macos` bills **10×** on every push, `devnet-e2e-cron` is a weekly cold build of ~736 packages by design, 19 required contexts per PR). One lane alone measured 94 % before Q81 re-cadenced it. Read GitHub's own counter (needs the `user` scope — the half of D61 §1 still owed) and extend Q81's arithmetic to every workflow with runner multipliers — after Q81 · discovered by Q81 2026-08-02
+- [ ] **Q79** (S) **(M2)** Read the scheduled lanes as a wave-close step — `fuzz-nightly` ran **five** times unobserved (Q81 was the first read; all green, ~309 min), and `advisory-cron` and `devnet-e2e-cron` have the same shape. Their triage conventions ("two consecutive reds block wave starts"; D61 §7's first-occurrence crash block) are unexecutable if nobody looks. `docs/ci-verification.md`'s own rule one level out: a lane that ran and was never read is not evidence either — no deps · discovered by Q81 2026-08-02
+- [ ] **Q80** (S) Register the `anchor-` error-code prefix (contract §2 omits A and S); `anchor-tsa-nonce-mismatch` as owner-backed, not row-backed — before A21 (D59)
+- [ ] **Q81** (M) Re-cadence the scheduled fuzz lane (twice weekly × 600 s) + `fuzz-budget` machine check with a 700 min/month ceiling; measure the 5 unobserved runs first — before Q17 (D61)
+- [ ] **Q82** (S) Fix `docs/testing/fuzzing.md` §5/§7 (D61 is M2 not M3; public ≠ OSS-Fuzz-eligible; no context is required); arm D61's re-read on Q65 (D61)
+- [ ] **Q83** (S) Interim `core-dep-graph` guard: name the adopted HTTP client in the forbidden-crate scan + add the two-direction self-test the rule never had + the scope comment saying a green verdict is not a purity proof — adjacent to Q74, with/before A3 · discovered by D90 2026-08-02
+- [ ] **Q84** (S) Assert the multi-thread-runtime invariant the blocking anchor substrate depends on, and add `crates/antseal-cli/src/backend.rs` to the tier-2 trigger paths (today a change there is classified light and compiled by no tier that runs) — after A3 · discovered by D90 2026-08-02
 
 ## M3 — Reveal + verifier (21 tasks)
 
@@ -448,7 +488,7 @@ Gate: R27 suite green — reveal subset verified offline via CLI AND page (playw
 - [ ] **Q19** (M) Playwright page-verification CI lane (offline-enforced; artifacts on failure) — after Q1 + R23,R25
 - [ ] **Q20** (M) Positioning-copy style guide + repo-wide lint (with U31) — after R18 + U31
 
-## M4 — Hardening & release (17 tasks)
+## M4 — Hardening & release (25 tasks)
 
 Gate = **Q34 evidence bundle**: Sepolia-mode E2E green; exactly ONE mainnet smoke seal verified end-to-end from a clean machine using only the released signature-checked binary + hosted page; disk-loss restore drill passed; release published with mainnet default; traceability matrix 100 % green.
 
