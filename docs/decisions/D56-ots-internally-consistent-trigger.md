@@ -325,6 +325,15 @@ O9.  otherwise                                         ->  AnchorState::Internal
                                                            verified_time_unix = None
 ```
 
+> **Clarified 2026-08-02 by [D91](D91-anchor-error-code-namespace.md) §6.4.**
+> O2 names an outcome, not a second check. D58 §10.2 makes `anchor_digest` a
+> required parameter of `parse_ots`, so the comparison happens at §10.3 step 5
+> inside the parser — deliberately, since a post-parse check would let a
+> wrong-digest `.ots` amplify work — and `OtsArtifact` therefore has no
+> `stamped_digest` field to read. O1 always claims this input; its code for it
+> is `anchor-ots-digest-mismatch`, which is what O2 says. Do **not** add a
+> `stamped_digest` field to make O2 literally executable.
+
 **On O8's name and breadth.** The registry makes the D79 upgrade group
 **singular** — keys 2–4 of one artifact
 (`docs/format/registry-v1.md` §7.8) — so an `.ots` carrying Bitcoin

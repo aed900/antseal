@@ -962,6 +962,30 @@ Rules that are not limits and must be implemented as written:
 
 ### 10.4 Error codes
 
+> **Amended 2026-08-02 by [D91](D91-anchor-error-code-namespace.md).** This
+> section originally opened *"New domain prefix **`ots-`**, owner **A**,
+> appended to `docs/testing/error-code-contract.md` §2's table. It borrows no
+> other family's prefix; A5 will want a sibling `tsa-` on the same grounds."*
+> **`ots-` is not registered and never will be. The A domain has one prefix,
+> `anchor-`.** The sibling this section predicted was decided the same day and
+> went the other way: **D60 §7.2** — A5's own decision — opens *"New
+> error-code prefix **`anchor-`**, owner **A**"* and mints eight codes under
+> it, as do D53 §7, D56 §7 and D59 §5. The sixteen codes listed below are
+> therefore read as `anchor-ots-*` throughout: fifteen take the prefix
+> mechanically (D91 §7.1's map), and the seventh,
+> `ots-ops-do-not-commit-anchor-digest`, is **not minted at all** — the
+> digest-commitment check is D56 §7's `anchor-ots-digest-mismatch`, which
+> §10.3 step 5 raises and to which D53 §8 already binds M2 tamper row 1.
+> Every other clause of §10.4 stands, and so does the whole of §§9–11: the
+> seven limits, their derivations and F4 rows, the frozen check order, the
+> iterative-parser requirement and the named tests are untouched by the
+> renaming. One further correction §10.2 needs, from D91 §6.4: `OtsArtifact`
+> has no `stamped_digest` field, and this is correct — the comparison belongs
+> in the parser for §10.3's work-amplifier reason — so **D56 rule O2 names an
+> outcome rather than adding a second check**, and D58 §11's
+> `ots_stamping_a_different_digest_is_rejected` and D56 §9's
+> `a_wrong_digest_ots_is_invalid_regardless_of_its_attestations` are one test.
+
 New domain prefix **`ots-`**, owner **A**, appended to
 `docs/testing/error-code-contract.md` §2's table. It borrows no other
 family's prefix; A5 will want a sibling `tsa-` on the same grounds.
