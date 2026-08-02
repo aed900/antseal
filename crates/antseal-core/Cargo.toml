@@ -94,6 +94,19 @@ proptest = { workspace = true, optional = true }
 # Both are pure Rust and build for wasm32, so they stay unconditional.
 hmac.workspace = true
 rand_chacha.workspace = true
+# The RFC 3161 stack again, as DEV edges. An integration test under `tests/`
+# is a separate crate and cannot see this crate's normal dependencies, and
+# A5/A8's suites must build adversarial artifacts out of real ones — a
+# nine-certificate bag, a 20 KiB certificate, a flipped `certHash` — which
+# means decoding, mutating and re-encoding real CMS. Building those by hand
+# at the byte level would make the fixtures unreadable and their derivation
+# unauditable. These add ZERO packages: every one is already in the normal
+# graph, and the same exact workspace pins apply.
+cms.workspace = true
+const-oid.workspace = true
+der.workspace = true
+sha1.workspace = true
+x509-cert.workspace = true
 
 # The self-dependency is the standard feature-for-tests pattern: cargo
 # feature unification turns the named feature on for every test target of

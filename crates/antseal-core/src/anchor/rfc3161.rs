@@ -39,16 +39,28 @@
 //!    which accepts an explicitly encoded default value. X.690 §11.5 forbids
 //!    encoding one. `TSTInfo.ordering DEFAULT FALSE` is checked here and
 //!    `ESSCertIDv2.hashAlgorithm DEFAULT id-sha256` in [`super::ess`].
-//! 3. **Trailing content inside a nested construction is not rejected.**
-//!    `Reader::finish` — the only caller of `ErrorKind::TrailingData` on the
-//!    happy path — runs at the top level of `from_der` only;
-//!    `read_nested`/`resume_nested` restore the outer position without
-//!    checking that the inner reader was drained
-//!    (`der-0.8.1/src/reader/position.rs:93-97`). Every hand-written
-//!    `decode_value` here ends by asserting the reader is drained, and
-//!    `tests/der_pin_eval.rs::der_derived_sequences_and_trailing_content`
-//!    measures what the *derived* types do so the gap is a recorded
-//!    measurement rather than an assumption.
+//! 3. **A nested construction's length boundary is not enforced across a
+//!    `decode_value` return.** `read_nested` calls `resume_nested`, which
+//!    restores the outer input *length* and never checks that the inner
+//!    reader was drained (`der-0.8.1/src/reader/position.rs:93-97`) — nor
+//!    does it restore the *position*. So bytes a nested decoder leaves
+//!    unread are re-offered to the **outer** decoder.
+//!
+//!    That is NOT "trailing junk is silently accepted": the top-level
+//!    `finish()` still requires every byte to be consumed exactly once, so
+//!    appended junk is caught. The reachable defect is narrower and quieter
+//!    — an *outer* OPTIONAL field of a compatible tag can consume the junk,
+//!    the byte count balances, and a field is then read from **inside
+//!    another field's length**. A `TimeStampResp` whose `timeStampToken` is
+//!    smuggled inside the `PKIStatusInfo`'s length is exactly that, and a
+//!    second implementation reading the same bytes sees no token at all.
+//!    Every hand-written `decode_value` here therefore ends by asserting the
+//!    reader is drained, and
+//!    `tests/der_pin_eval.rs::a_token_smuggled_inside_the_status_field_is_rejected`
+//!    is the case that makes the assertion load-bearing rather than
+//!    decorative — it carries the honest shape as its anti-vacuity leg,
+//!    because the naive "append a NULL" fixture is rejected either way and
+//!    proves nothing.
 //!
 //! # No recursive walker
 //!
@@ -216,6 +228,77 @@ impl TimeStampResp {
         self.time_stamp_token
             .as_ref()
             .ok_or(AnchorError::TokenAbsent)
+    }
+}
+
+/// Read the CMS `ContentInfo` out of a stored or captured timestamp
+/// artifact, accepting **both** shapes the format registry allows.
+///
+/// `docs/format/registry-v1.md` §7.9 key 1 describes the field as
+/// *"var — DER TimeStampResp/token, opaque"*, which names two different
+/// ASN.1 types with one slash and rules neither out. A capture client
+/// naturally stores what the TSA sent (a `TimeStampResp`); other tooling
+/// commonly stores the bare token (a `ContentInfo`, what `openssl ts -reply
+/// -token_out` writes). Rejecting either would reject real bundles, so both
+/// are read, and the choice is made **structurally** rather than by
+/// try-then-fall-back — a fallback would report whichever error came second
+/// and make every malformed artifact look like the wrong shape:
+///
+/// - `TimeStampResp ::= SEQUENCE { PKIStatusInfo, … }` — first inner element
+///   is a SEQUENCE.
+/// - `ContentInfo ::= SEQUENCE { contentType OBJECT IDENTIFIER, … }` — first
+///   inner element is an OID.
+///
+/// The two are disjoint on one tag byte. When the artifact is a
+/// `TimeStampResp`, its status is enforced here: only `granted` and
+/// `grantedWithMods` carry a usable token.
+///
+/// # Errors
+///
+/// [`AnchorError::Der`] for an encoding fault,
+/// [`AnchorError::StatusNotGranted`] / [`AnchorError::TokenAbsent`] for a
+/// response that carries no token.
+pub fn token_content_info(artifact: &[u8]) -> Result<ContentInfo, AnchorError> {
+    let shape = artifact_shape(artifact)?;
+    match shape {
+        ArtifactShape::Response => {
+            let resp = TimeStampResp::parse(artifact)?;
+            resp.granted_token().cloned()
+        }
+        ArtifactShape::Token => {
+            ContentInfo::from_der(artifact).map_err(|e| der_error(DerSite::Response, e))
+        }
+    }
+}
+
+/// Which of the two shapes [`token_content_info`] accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtifactShape {
+    /// An RFC 3161 `TimeStampResp`.
+    Response,
+    /// A bare `TimeStampToken`, i.e. a CMS `ContentInfo`.
+    Token,
+}
+
+/// Decide the shape from the first inner tag, without consuming the artifact.
+fn artifact_shape(artifact: &[u8]) -> Result<ArtifactShape, AnchorError> {
+    let mut reader =
+        der::SliceReader::new(artifact).map_err(|e| der_error(DerSite::Response, e))?;
+    let header = Header::decode(&mut reader).map_err(|e| der_error(DerSite::Response, e))?;
+    if header.tag() != Tag::Sequence {
+        return Err(AnchorError::Der {
+            site: DerSite::Response,
+            fault: super::error::DerFault::Malformed,
+        });
+    }
+    let inner = Tag::peek(&reader).map_err(|e| der_error(DerSite::Response, e))?;
+    match inner {
+        Tag::ObjectIdentifier => Ok(ArtifactShape::Token),
+        Tag::Sequence => Ok(ArtifactShape::Response),
+        _ => Err(AnchorError::Der {
+            site: DerSite::Response,
+            fault: super::error::DerFault::Malformed,
+        }),
     }
 }
 
