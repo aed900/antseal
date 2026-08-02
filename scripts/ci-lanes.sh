@@ -185,7 +185,66 @@ lane_dep_graph() {
   fi
   printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(printf '%s\n' "$stack_edges" | grep -c .)"
 
-  note "antseal-core's NORMAL dependency graph must be I/O-free and RNG-free"
+  # ── S4/Q74: what this rule proves, and what it cannot ───────────────────
+  #
+  # SCOPE, stated because the wording this replaces overclaimed. The
+  # headline was "antseal-core's NORMAL dependency graph must be I/O-free
+  # and RNG-free" — two unbounded properties — over a nine-name deny-list
+  # that establishes neither in general. D58 measured the gap: the
+  # `opentimestamps 0.2.0` codec declares `env_logger` NON-OPTIONALLY, which
+  # drags an environment-variable reader, a stderr writer, `is-terminal`,
+  # `libc` and a regex engine into the crate that MVP-SPEC.md lines 47-53
+  # require to be I/O-free and that ships as the verifier page's WASM — and
+  # every one of those five passes all nine names. A lane whose stated job
+  # is "this graph is I/O-free" would have gone green on it.
+  #
+  # WIDENING THE LIST IS NOT THE FIX, and that is measured rather than
+  # assumed: the same crates pass an extended name list too, because the
+  # property is not decidable from a dependency graph. A crate name carries
+  # no capability, any crate can open a file or read an environment variable
+  # without depending on anything, and the set of crates that do is not
+  # enumerable. A deny-list can only ever say "not these"; the claim above
+  # says "none at all".
+  #
+  # So the CLAIM IS NARROWED to what a graph actually decides:
+  #
+  #     antseal-core's NORMAL dependency graph is EXACTLY the reviewed set
+  #     below. Nothing enters it without an edit here.
+  #
+  # A GREEN VERDICT IS NOT A PURITY PROOF, and no other task may cite it as
+  # one. It says the set has not changed since a human last read it — which
+  # is exactly the property that would have caught `env_logger`: not because
+  # the name was on a forbidden list, but because it was on no list at all.
+  # The purity argument is made ONCE PER ENTRY, by the reviewer who admits
+  # it; this rule's whole job is to force that review to happen and to make
+  # skipping it a red lane rather than a silent merge.
+  #
+  # SCOPE, precisely, because each dimension has bitten somewhere before:
+  #   * `-e normal` — build- and dev-dependencies are excluded. They run on
+  #     the builder's machine and are not in the shipped artifact.
+  #   * DEFAULT features. `--all-features` adds 22 packages (proptest,
+  #     tempfile, rand, getrandom, libc, rustix …) under `test-util` /
+  #     `test-vectors`, which are test-only and never reach the verifier.
+  #     S22's gate-features partition is what stops a feature going
+  #     uncompiled; this rule is about what SHIPS.
+  #   * `--target all`, so the verdict does not depend on whose machine ran
+  #     it. It is a superset of every host's graph — it can over-report and
+  #     never under-report — which is why `libc` (via `cpufeatures`, non-x86
+  #     only) and `fiat-crypto` (curve25519-dalek's 32-bit backend) are in
+  #     the set at all: neither is in the x86_64 or the wasm32 graph.
+  #   * `-p antseal-core`, NOT the workspace. Edges added to antseal-net or
+  #     antseal-anchor — A3's `ureq`, for instance — cannot reach this set,
+  #     because those crates sit ABOVE core. Nothing here counts workspace
+  #     packages, so a lane that grows the default `--workspace` graph does
+  #     not touch this rule (P20 rule 1 below prints those counts as
+  #     evidence and deliberately asserts nothing about them).
+  #
+  # ── layer 1: the DECIDED prohibitions ───────────────────────────────────
+  # Names that no reviewer may admit to the set below without first
+  # overturning the decision that banned them. Kept as a separate, earlier
+  # check because it gives the right DIAGNOSIS: "you added tokio" is a more
+  # useful failure than "you added an unreviewed package".
+  #
   # RNG half added at S4 ("no I/O, tokio, or RNG reachable" — the
   # storage-address function must be a pure function of its input):
   # `getrandom`/`rand`/`rand_chacha` are banned from the normal graph.
@@ -194,16 +253,172 @@ lane_dep_graph() {
   # structurally cannot reach an OS RNG; the `^rand ` entry's trailing
   # space keeps it unmatched. blake3 is consumed with default-features off
   # precisely so none of these enter (workspace Cargo.toml pin comment).
+  note "antseal-core's NORMAL graph: none of the DECIDED-prohibited crates"
   local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
-  tree="$(cargo tree -p antseal-core -e normal --prefix none --locked)" || return 1
+  # Self-test FIRST, in BOTH directions — the D89 rule-5 pattern, and the
+  # thing this rule went without from S4 until Q74. It was the ONLY rule in
+  # this lane with no planted fault (its siblings self-test above and
+  # below), which is very likely why its hole survived two waves: nobody had
+  # ever watched it bite. The negative direction is load-bearing, not
+  # decoration: the `^rand ` trailing space is the only thing keeping
+  # `rand_core` — a real member of the set below — out of the ban.
+  if ! printf 'tokio v1.49.0\n' | grep -qE "$forbidden"; then
+    printf '::error::dep-graph prohibition self-test FAILED: the detector does not match a planted `tokio` tree line — fix it before trusting any green verdict\n'
+    return 1
+  fi
+  if printf 'rand_core v0.9.3\n' | grep -qE "$forbidden"; then
+    printf '::error::dep-graph prohibition self-test FAILED: the detector ALSO matches `rand_core`, which C5/C9 require in the graph. The `^rand ` entry has lost its trailing space, so this rule can never be green for the right reason\n'
+    return 1
+  fi
+  tree="$(cargo tree -p antseal-core -e normal --target all --prefix none --locked)" || return 1
   printf '%s\n' "$tree"
   offenders="$(printf '%s\n' "$tree" | grep -E "$forbidden" || true)"
   if [ -n "$offenders" ]; then
-    printf '\n::error::antseal-core normal dependency graph contains forbidden I/O/async/network/RNG crates:\n'
+    printf '\n::error::antseal-core normal dependency graph contains a DECIDED-prohibited async/network/RNG crate. These are not merely unreviewed — each is banned by a recorded decision, so admitting one to the reviewed set below is not enough:\n'
     printf '%s\n' "$offenders"
     return 1
   fi
-  printf 'OK: no forbidden I/O/async/network/RNG crate in the normal graph.\n'
+  printf 'OK: no decided-prohibited crate in the normal graph.\n'
+
+  # ── layer 2: the graph is EXACTLY the reviewed set (Q74) ────────────────
+  # The claim the scope note above narrows to. Set EQUALITY, both
+  # directions: an unreviewed arrival is a violation, and a stale entry is
+  # one too — an allow-list carrying names that are no longer there stops
+  # describing the graph, which is how allow-lists quietly stop meaning
+  # anything (check-ci-shell.py applies the same rule to ALLOWED_INLINE).
+  #
+  # Measured 2026-08-02: 57 names under `--target all`, of which 55 on
+  # x86_64-unknown-linux-gnu. Every entry is `cargo tree`-verified as
+  # reachable; the annotations name the parent for the ones a reader would
+  # otherwise have to look up.
+  note "antseal-core's NORMAL graph is EXACTLY the reviewed set (Q74)"
+  local core_reviewed='antseal-core          # the crate itself, as cargo tree roots it
+
+  # --- BLAKE3 content addressing (default-features off; D32) ---
+  blake3
+  arrayref
+  arrayvec
+  constant_time_eq
+  cfg-if
+  cpufeatures
+  libc                # <- cpufeatures, non-x86 targets only; absent on x86_64 and wasm32
+
+  # --- RustCrypto traits and plumbing ---
+  aead
+  block-buffer
+  cipher
+  crypto-common
+  ctutils             # <- digest, hybrid-array, ml-dsa, module-lattice, universal-hash
+  cmov                # <- ctutils; constant-time conditional move
+  digest
+  hybrid-array
+  inout
+  signature
+  subtle
+  typenum
+  universal-hash
+  zeroize
+
+  # --- hashes and XOFs ---
+  sha2
+  keccak              # SHA-3/SHAKE permutation
+  shake               # <- ml-dsa
+  sponge-cursor       # <- shake
+
+  # --- AEAD (XChaCha20-Poly1305) ---
+  chacha20
+  chacha20poly1305
+  poly1305
+
+  # --- key derivation ---
+  hkdf
+  hmac
+
+  # --- Ed25519 ---
+  curve25519-dalek
+  curve25519-dalek-derive
+  ed25519
+  ed25519-dalek
+  fiat-crypto         # <- curve25519-dalek, 32-bit backend; absent on x86_64 and wasm32
+
+  # --- ML-DSA-65 ---
+  ml-dsa
+  module-lattice      # <- ml-dsa
+  num-traits          # <- module-lattice
+
+  # --- CBOR ---
+  minicbor
+
+  # --- serde and the vector/report JSON surface ---
+  serde
+  serde_core
+  serde_derive
+  serde_json
+  itoa                # <- serde_json
+  memchr              # <- serde_json
+  zmij                # <- serde_json, float formatting
+
+  # --- Unicode normalization (NFC; G-domain canonicalization) ---
+  unicode-normalization
+  tinyvec
+  tinyvec_macros
+
+  # --- proc-macro support for the derives above ---
+  proc-macro2
+  quote
+  syn
+  unicode-ident
+
+  # --- errors ---
+  thiserror
+  thiserror-impl
+
+  # --- the injected-CSPRNG TRAIT only (C5/C9); never an OS RNG ---
+  rand_core'
+  # Comments and blank lines are stripped before use. A blank line reaching
+  # a pattern list would match EVERY name and turn the check vacuous, which
+  # is why this normalisation is not optional.
+  strip_reviewed() { sed 's/#.*//' | tr -d '[:blank:]' | grep -v '^$' | sort -u; }
+  names_of() { sed 's/ .*//' | grep -v '^$' | sort -u; }
+  # Self-test FIRST, in BOTH directions: over a planted tree, the extractor
+  # must report the intruder and must NOT report names that are on the list.
+  # A set check that reports everything is as useless as one that reports
+  # nothing, and only the second direction can tell them apart.
+  local planted_tree planted_unknown
+  planted_tree='antseal-core v0.0.0 (/x/crates/antseal-core)
+sha2 v0.11.0
+env_logger v0.10.2'
+  planted_unknown="$(printf '%s\n' "$planted_tree" | names_of \
+    | comm -23 - <(printf '%s\n' "$core_reviewed" | strip_reviewed) | tr '\n' ' ')"
+  if [ "$planted_unknown" != "env_logger " ]; then
+    printf '::error::dep-graph reviewed-set self-test FAILED: over a planted tree of {antseal-core, sha2, env_logger} the check reported [%s] — it must report exactly `env_logger`. Fix it before trusting any green verdict\n' "$planted_unknown"
+    return 1
+  fi
+  local core_names core_unknown core_stale
+  core_names="$(printf '%s\n' "$tree" | names_of)"
+  # Anti-vacuity: an empty or unparsed tree yields an empty "unknown" set
+  # and would pass. The root is always in its own tree, so its absence means
+  # the parse broke rather than the graph being clean.
+  if ! printf '%s\n' "$core_names" | grep -qxF 'antseal-core'; then
+    printf '::error::dep-graph: the parsed package set does not contain `antseal-core` itself, so `cargo tree` failed or its output shape changed — every verdict here would be vacuous. Parsed %s name(s)\n' \
+      "$(printf '%s\n' "$core_names" | grep -c .)"
+    return 1
+  fi
+  core_unknown="$(comm -23 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
+  if [ -n "$core_unknown" ]; then
+    printf '::error::Q74 violation: package(s) entered antseal-core NORMAL dependency graph without review. This graph ships as the verifier page WASM and MVP-SPEC.md lines 47-53 require it to do no I/O; that property is argued per entry by a human, not detected by this lane. Read what each of these pulls in, then add it above IN THE SAME COMMIT:\n'
+    printf '%s\n' "$core_unknown" | sed 's/^/  + /'
+    printf 'Provenance: cargo tree -p antseal-core -e normal --target all --locked -i <name>\n'
+    return 1
+  fi
+  core_stale="$(comm -13 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
+  if [ -n "$core_stale" ]; then
+    printf '::error::Q74: the reviewed set names package(s) that are no longer in the graph. A list carrying names that are not there has stopped describing the graph, which is how an allow-list quietly stops meaning anything — delete them:\n'
+    printf '%s\n' "$core_stale" | sed 's/^/  - /'
+    return 1
+  fi
+  printf 'OK: antseal-core normal graph is exactly the %s reviewed package(s). NOTE: this is a "nothing entered unreviewed" proof, NOT an I/O-freedom proof — see the scope note in this function.\n' \
+    "$(printf '%s\n' "$core_names" | grep -c .)"
 
   # ── S6: ant-core adapter containment ────────────────────────────────────
   # Two rules from the S6 accept rows:
