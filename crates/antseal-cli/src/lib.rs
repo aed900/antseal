@@ -26,6 +26,7 @@ pub mod config;
 pub mod error;
 pub mod machine;
 pub mod passphrase;
+pub mod pipeline;
 pub mod rng;
 mod run;
 pub mod vault;
