@@ -15,12 +15,12 @@
 # promote-to-required trigger and the revisit triggers.
 #
 # Usage:
-#   scripts/e2e-devnet.sh [--nodes N] [--keep-devnet] [--require-suites]
+#   scripts/e2e-devnet.sh [--nodes N] [--keep-devnet] [--allow-pending]
 #   scripts/e2e-devnet.sh --plan          registry + plan only; no devnet, no cargo
 #   scripts/e2e-devnet.sh --list-suites   the registry, one row per line
 #   scripts/e2e-devnet.sh --self-test     prove the registry rules can go red
 #
-# Exit: 0 = PASS or PENDING · 1 = FAIL (or PENDING under --require-suites).
+# Exit: 0 = PASS · 1 = FAIL, and PENDING is a FAIL unless --allow-pending.
 #
 # ── Why a suite REGISTRY, and why "pending" is a declaration ──────────────
 #
@@ -42,9 +42,22 @@
 #                                 the silent-stop this gate exists to catch)
 #   declared live    + present -> it runs
 #
-# Which is also why `--require-suites` exists: once every row is live, that
-# flag turns any future PENDING back into a failure, so the pending state
-# cannot become permanent by inattention.
+# Which is why the latch exists — and, since S32, why it is ARMED BY
+# DEFAULT: a PENDING verdict is a failure, so the pending state cannot
+# become permanent by inattention.
+#
+# S17/S18/S19 landing made the registry fully live, and a registry with no
+# pending rows is exactly when flipping this default costs nothing: the
+# committed gate still reads PASS, and the only behaviour that changed is
+# the one nobody should be relying on. `--allow-pending` is the opt-out for
+# the one legitimate case — declaring a new suite row in the commit BEFORE
+# the suite is written, which is what the declaration is for. It is a flag
+# you type on purpose, which is the whole difference from a default.
+#
+# `--require-suites` is still accepted and still means "armed", so the
+# CONTRIBUTING invocation and any existing CI line keep working; it is now
+# a no-op restatement of the default rather than the thing that switches it
+# on.
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -116,7 +129,7 @@ build_plan() {
         fi ;;
       pending)
         if [ -f "$path" ]; then
-          PLAN_ERRORS+="row $task is declared PENDING but crates/$pkg/tests/$target.rs EXISTS. Stale declaration: the suite landed — move the row to \`live\` in the commit that landed it (that commit is also where --require-suites gets switched on)."$'\n'
+          PLAN_ERRORS+="row $task is declared PENDING but crates/$pkg/tests/$target.rs EXISTS. Stale declaration: the suite landed — move the row to \`live\` in the commit that landed it."$'\n'
         else
           PLAN_PENDING+="$task "
           PLAN_RUN+=""
@@ -154,7 +167,9 @@ EOF
 nodes="${ANTSEAL_DEVNET_NODES:-14}"
 keep_devnet=0
 plan_only=0
-require_suites=0
+# S32: ARMED by default. See the latch paragraph in the header — a PENDING
+# verdict fails unless the caller opts out with --allow-pending.
+require_suites=1
 
 run_gate() {
   build_plan
@@ -269,7 +284,9 @@ verdict() {
   [ -d "$evdir" ] && printf '%s\n' "$line" > "$evdir/evidence.txt"
   case "$state" in
     PASS)    printf '\033[32me2e-devnet: PASS — the D52 gate is discharged for this commit.\033[0m\n' ;;
-    PENDING) printf '\033[33m::warning::e2e-devnet: PENDING — %s not written yet. This run DISCHARGES NO GATE for those cases; it is not a pass.\033[0m\n' "$pending_list" ;;
+    PENDING) printf '\033[33m::warning::e2e-devnet: PENDING — %s not written yet. This run DISCHARGES NO GATE for those cases; it is not a pass.\033[0m\n' "$pending_list"
+             [ "$require_suites" -eq 1 ] && printf '\033[31m::error::e2e-devnet: and the latch is armed, so this run FAILS. Write the suite, or pass --allow-pending to declare a row ahead of it (S32).\033[0m\n' >&2
+             ;;
     FAIL)    printf '\033[31m::error::e2e-devnet: FAIL — see the logs above and %s\033[0m\n' "$evdir" >&2 ;;
   esac
   return "$rc"
@@ -288,14 +305,17 @@ self_test() {
   local copy="$repo/scripts/.e2e-devnet-selftest.sh" out fail=0
   trap 'rm -f "$copy"' RETURN
 
-  probe() { # <label> <sed-expr> <want-rc> <want-substring>
+  # `extra` is S32's addition: probing a latch that is ON by default needs a
+  # probe that can turn it off, or the tolerant direction is unreachable.
+  probe() { # <label> <sed-expr> <want-rc> <want-substring> [extra-args…]
     local label="$1" expr="$2" want_rc="$3" want="$4" rc
+    shift 4
     sed "$expr" "$repo/scripts/e2e-devnet.sh" > "$copy"
     if cmp -s "$copy" "$repo/scripts/e2e-devnet.sh"; then
       printf '::error:: planted fault %s did not apply — the registry no longer has the shape this self-test patches\n' "$label"
       fail=1; return
     fi
-    out="$(bash "$copy" --plan 2>&1)"; rc=$?
+    out="$(bash "$copy" --plan "$@" 2>&1)"; rc=$?
     if [ "$rc" -ne "$want_rc" ] || ! printf '%s' "$out" | grep -qF "$want"; then
       printf '::error:: %s -> exit %s (wanted %s) and the output did not contain %s:\n%s\n' \
         "$label" "$rc" "$want_rc" "$want" "$(printf '%s' "$out" | tail -6)"
@@ -326,15 +346,28 @@ self_test() {
   # undeclared-absent suite is enough to withhold the verdict.)
   probe "a pending row -> PENDING, not PASS" \
         's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|not_written_yet|/' \
-        0 'DISCHARGES NO GATE'
+        0 'DISCHARGES NO GATE' --allow-pending
   out="$(sed 's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|not_written_yet|/' \
-        "$repo/scripts/e2e-devnet.sh" > "$copy"; bash "$copy" --plan 2>&1)"
+        "$repo/scripts/e2e-devnet.sh" > "$copy"; bash "$copy" --plan --allow-pending 2>&1)"
   if printf '%s' "$out" | grep -q 'PASS'; then
     printf '::error:: an all-pending run printed PASS — a gate that passes with nothing to run is the Q66 class\n'
     fail=1
   fi
-  # And the same shape under --require-suites must be a hard failure, which
-  # is the latch that stops PENDING from becoming permanent.
+  # S32's latch, probed from BOTH sides of the default it now has.
+  #
+  # The armed direction is the one that matters and it is now the DEFAULT,
+  # so it is probed with no flag at all: a probe that only ever passed
+  # --require-suites would keep passing if someone reverted the default,
+  # which is precisely the regression this latch exists to prevent.
+  bash "$copy" --plan >/dev/null 2>&1
+  if [ $? -ne 1 ]; then
+    printf '::error:: a PENDING row did not fail BY DEFAULT — the anti-rot latch is disarmed, so a pending row can become permanent by inattention (S32)\n'
+    fail=1
+  else
+    printf '  planted fault: %-42s -> %s\n' "PENDING by default (no flag)" "exit 1"
+  fi
+  # …and the explicit spelling still means the same thing, so CONTRIBUTING's
+  # invocation and any existing CI line do not silently change meaning.
   bash "$copy" --plan --require-suites >/dev/null 2>&1
   if [ $? -ne 1 ]; then
     printf '::error:: --require-suites did not turn PENDING into a failure — the anti-rot latch is not wired\n'
@@ -377,7 +410,9 @@ while [ "$#" -gt 0 ]; do
     --nodes) shift; nodes="${1:-}"; [ -n "$nodes" ] || die "--nodes needs a value" ;;
     --keep-devnet)    keep_devnet=1 ;;
     --plan)           plan_only=1 ;;
+    # Kept for callers that spell the default out loud (CONTRIBUTING, CI).
     --require-suites) require_suites=1 ;;
+    --allow-pending)  require_suites=0 ;;
     --list-suites)    suite_registry; exit 0 ;;
     --self-test)      self_test; exit $? ;;
     -h|--help)        sed -n '1,30p' "$repo/scripts/e2e-devnet.sh"; exit 0 ;;

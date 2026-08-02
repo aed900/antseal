@@ -203,14 +203,23 @@ ANTSEAL_GATE_E2E=1 ./scripts/local-gate.sh   # the whole gate, E2E included
 devnet) and prints a SKIP line for the gate itself; the SKIP is the reminder,
 not permission.
 
-**PENDING is not a pass.** S17/S18/S19 are not written yet, so those rows are
-declared `pending` in the script's suite registry and the verdict line says
-`PENDING … DISCHARGES NO GATE`. The declaration is checked in both
-directions: a suite that exists while its row still says pending is a hard
-failure ("move the row to `live` in the commit that lands the suite"), and so
-is a row that says `live` for a suite that has vanished. When the last row
-goes live, switch the gate to `--require-suites` so PENDING can never come
-back quietly.
+**PENDING is not a pass — and since S32 it is a failure.** Every registry row
+is live (S17/S18/S19 landed 2026-08-02), so the latch is **armed by default**:
+a `PENDING` verdict exits 1. The declaration is still checked in both
+directions — a suite that exists while its row says pending is a hard failure
+("move the row to `live` in the commit that lands the suite"), and so is a row
+that says `live` for a suite that has vanished.
+
+Declaring a row *before* writing its suite is still the right thing to do, and
+`--allow-pending` is how you do it:
+
+```bash
+./scripts/e2e-devnet.sh --allow-pending  # a row is declared, its suite is not written yet
+```
+
+That flag is typed on purpose, which is the whole difference from a default.
+`--require-suites` still works and still means "armed"; it is now a no-op
+restatement of the default rather than the thing that switches it on.
 
 **Triage of the scheduled leg** (D52 residual risk 2): a red scheduled run
 gets a tracking note in the next wave's bookkeeping; **two consecutive reds
