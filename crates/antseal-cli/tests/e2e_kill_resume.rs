@@ -49,13 +49,15 @@
 mod common;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use antseal_cli::backend::{SealBackend, runtime};
+use antseal_cli::backend::{ReceiptSink, SealBackend, runtime};
 use antseal_cli::pipeline::{
     Barrier, BarrierHook, BlobSlot, NoBarriers, Pipeline, RestoreEngine, SealError, SealFile,
     SealJournal, SealRequest, SealResult, SealState, StagedBytesUnavailable, UNIT_ENTRY_BASE,
-    VaultJournal, hex32,
+    VaultJournal, VaultReceiptSink, hex32,
 };
 use antseal_cli::vault::kdf::KdfSelection;
 use antseal_cli::vault::layout::VaultLayout;
@@ -64,7 +66,7 @@ use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::crypto::sig_policy::SigPolicy;
-use antseal_net::{BlobCost, NetworkId, StorageBackend};
+use antseal_net::{BlobCost, NetworkId, PaymentReceipt, StorageBackend};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -90,6 +92,22 @@ const SCENARIO_STALL_PRE_FINALIZE: &str = "stall-pre-finalize";
 /// Signal at the same point but keep going, so the parent's kill lands
 /// *inside* `finalize_batch` — case (2).
 const SCENARIO_KILL_MID_UPLOAD: &str = "kill-mid-upload";
+/// Stall **inside `pay`**, in the hook, after [`KILL_AFTER_SUB_BATCHES`]
+/// sub-batch txs have landed *and been journaled durably* — case (1c),
+/// with S31's `VaultReceiptSink` installed.
+const SCENARIO_STALL_MID_PAY_DURABLE: &str = "stall-mid-pay-durable";
+/// The same stall with a non-durable (in-memory) sink — the red direction:
+/// the tree as it stood before S31.
+const SCENARIO_STALL_MID_PAY_LOSSY: &str = "stall-mid-pay-lossy";
+
+/// How many sub-batch txs land before the child is killed. At
+/// [`FORCED_CAP`] = 1 this is a blob count, and the work has five priced
+/// blobs, so three sub-batches remain unpaid at the kill.
+const KILL_AFTER_SUB_BATCHES: usize = 2;
+/// One non-zero transfer per sub-batch tx: every priced blob becomes its
+/// own EVM transaction, which is what makes D37's multi-tx protocol
+/// reachable without a 257-blob work.
+const FORCED_CAP: usize = 1;
 
 // ─────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -257,6 +275,46 @@ impl BarrierHook for MarkAt {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// The mid-`pay` kill point (case 1c)
+// ─────────────────────────────────────────────────────────────────────
+
+/// A [`ReceiptSink`] that delegates, then **stops the world inside `pay`**
+/// once `after` captures have been delivered.
+///
+/// This is the only place a kill *between sub-batch txs* can be taken
+/// from: `pay` is one `await` from the pipeline's side, and D37's capture
+/// hook is its only seam. Because the stall happens strictly **after** the
+/// delegate has returned, the inner sink has already done whatever it does
+/// — for [`VaultReceiptSink`] that means the receipt-so-far is on disk, and
+/// for `CapturedReceipts` it means it is only in this doomed process's
+/// memory. That difference is the whole experiment.
+///
+/// Blocking here parks a tokio worker thread forever, which is fine and
+/// intended: the parent is about to `SIGKILL` the process.
+struct StallInPayAfter {
+    inner: Arc<dyn ReceiptSink>,
+    after: usize,
+    seen: AtomicUsize,
+    marker: PathBuf,
+}
+
+impl ReceiptSink for StallInPayAfter {
+    fn capture(&self, receipt: &PaymentReceipt) {
+        self.inner.capture(receipt);
+        let seen = self.seen.fetch_add(1, Ordering::SeqCst) + 1;
+        if seen == self.after {
+            std::fs::write(&self.marker, format!("{seen}")).expect("write the kill marker");
+            // Nothing below may run: the next statement in upstream's loop
+            // is the submission of sub-batch `seen + 1`, and letting it
+            // happen would test a different scenario.
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Child driver
 // ─────────────────────────────────────────────────────────────────────
 
@@ -328,19 +386,73 @@ fn child_seals_until_its_kill_point() {
 
     let sources = Sources::original();
     let files = sources.files();
-    let unlocked = unlock_at(&root);
+    // A `'static` sink needs a vault handle that outlives the borrow, so
+    // the child unlocks into an `Arc`. One instance, one `VaultKey`, one
+    // zeroize — `UnlockedVault` is still never cloned (D37 amendment).
+    let unlocked = Arc::new(unlock_at(&root));
     let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s18-child-journal"));
-    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
-    let sink = CapturedReceipts::new();
+    let durable = VaultReceiptSink::new(Arc::clone(&unlocked));
+    let observed = CapturedReceipts::new();
+
+    // The **only** difference between the two mid-`pay` scenarios: which
+    // sink the backend fires, and therefore whether the receipt-so-far is
+    // on disk or only in this doomed process's memory. `LOSSY` is the tree
+    // exactly as it stood before S31, so it does not attach the durable
+    // sink to its journal either.
+    let mid_pay_is_durable = scenario == SCENARIO_STALL_MID_PAY_DURABLE;
+    let journal = {
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+        if mid_pay_is_durable {
+            journal.with_receipt_sink(Arc::clone(&durable))
+        } else {
+            journal
+        }
+    };
     let gate_double = RecordingGate::new();
     let consent = ScriptedConsent::always_yes();
 
+    // **One seed per scenario.** The seal rng derives `W`, the `seal_id` and
+    // every nonce, so two children sharing a seed produce byte-identical
+    // ciphertexts at identical addresses — and the second one finds the
+    // whole work `AlreadyStored`, pays nothing, and tests a different
+    // scenario than the one it is named after. (Found by S31: the mid-`pay`
+    // children never reached their kill point because there were no
+    // sub-batches to kill between. `case2` had been silently sharing
+    // `case1`'s addresses the same way.)
+    let seal_seed = run_seed(&format!("s18-child-seal-{scenario}"));
+
     let rt = runtime().expect("runtime");
     let result = rt.block_on(async {
-        let backend = SealBackend::connect(&config, &key, sink.clone())
+        let sink: Arc<dyn ReceiptSink> = match scenario.as_str() {
+            SCENARIO_STALL_MID_PAY_DURABLE | SCENARIO_STALL_MID_PAY_LOSSY => {
+                let inner: Arc<dyn ReceiptSink> = if mid_pay_is_durable {
+                    Arc::<VaultReceiptSink>::clone(&durable)
+                } else {
+                    observed.clone()
+                };
+                Arc::new(StallInPayAfter {
+                    inner,
+                    after: KILL_AFTER_SUB_BATCHES,
+                    seen: AtomicUsize::new(0),
+                    marker: marker.clone(),
+                })
+            }
+            _ => observed.clone(),
+        };
+        let backend = SealBackend::connect(&config, &key, sink)
             .await
             .expect("child connects");
         match scenario.as_str() {
+            SCENARIO_STALL_MID_PAY_DURABLE | SCENARIO_STALL_MID_PAY_LOSSY => {
+                // No barrier at all: the kill point is inside `pay`, which
+                // the pipeline cannot subdivide — the sink is the seam.
+                let backend = backend.with_max_transfers_per_tx(FORCED_CAP);
+                let pipeline =
+                    Pipeline::new(&backend, &gate_double, &journal, &consent, &NoBarriers);
+                pipeline
+                    .seal(&request(&files), &mut ChaCha20Rng::from_seed(seal_seed))
+                    .await
+            }
             SCENARIO_STALL_PRE_FINALIZE => {
                 let barriers = StallAt {
                     barrier: Barrier::PostReceiptJournalPreFinalize,
@@ -348,10 +460,7 @@ fn child_seals_until_its_kill_point() {
                 };
                 let pipeline = Pipeline::new(&backend, &gate_double, &journal, &consent, &barriers);
                 pipeline
-                    .seal(
-                        &request(&files),
-                        &mut ChaCha20Rng::from_seed(run_seed("s18-child-seal")),
-                    )
+                    .seal(&request(&files), &mut ChaCha20Rng::from_seed(seal_seed))
                     .await
             }
             SCENARIO_KILL_MID_UPLOAD => {
@@ -361,10 +470,7 @@ fn child_seals_until_its_kill_point() {
                 };
                 let pipeline = Pipeline::new(&backend, &gate_double, &journal, &consent, &barriers);
                 pipeline
-                    .seal(
-                        &request(&files),
-                        &mut ChaCha20Rng::from_seed(run_seed("s18-child-seal")),
-                    )
+                    .seal(&request(&files), &mut ChaCha20Rng::from_seed(seal_seed))
                     .await
             }
             other => panic!("unknown child scenario {other}"),
@@ -595,16 +701,12 @@ fn case1_a_real_sigkill_between_pay_and_finalize_never_pays_twice() {
 /// `MAX_TRANSFERS_PER_TRANSACTION` is 256, so the natural shape would need
 /// a 257-blob work.
 ///
-/// **The kill half of this row is NOT here, and cannot be — see S31.** A
-/// kill *between* sub-batch txs is only observable from inside `pay`, and
-/// the only in-`pay` seam is D37's capture hook. For the resume to then
-/// avoid re-paying, that hook's sink must have written the receipt-so-far
-/// **durably** — and no journal-backed `ReceiptSink` exists anywhere in the
-/// tree today (`ReadOnly` and test doubles are the only implementations;
-/// the pipeline journals the receipt itself, after `pay` returns). So a
-/// kill between sub-batches currently loses every receipt so far and the
-/// resume re-pays — which is precisely the hazard S16 measured and S27
-/// recorded, still open on the production side.
+/// The **kill half** of this row lives below in case (1c), which S31
+/// unblocked by landing a journal-backed `ReceiptSink`. This row stays as
+/// the no-kill baseline: it is what proves the protocol itself (one tx per
+/// sub-batch, one hook capture per sub-batch, a complete map) independently
+/// of any crash, so a failure in 1c can be attributed to the crash handling
+/// rather than to the payment loop.
 #[test]
 fn case1b_a_multi_sub_batch_payment_is_one_tx_per_sub_batch() {
     let _guard = serial();
@@ -627,10 +729,6 @@ fn case1b_a_multi_sub_batch_payment_is_one_tx_per_sub_batch() {
     let wallet = key.address().to_string();
     let token = env.payment_token().to_string();
     let before = ant_balance(env.rpc_url(), &token, &wallet).expect("balance before");
-
-    // One transfer per sub-batch: every priced blob becomes its own tx, so
-    // the work's blob count is the sub-batch count.
-    const FORCED_CAP: usize = 1;
 
     let rt = runtime().expect("runtime");
     let started = Instant::now();
@@ -723,6 +821,346 @@ fn case1b_a_multi_sub_batch_payment_is_one_tx_per_sub_batch() {
         sink.fired(),
         receipt.tx_map.len(),
         elapsed.as_secs_f64()
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Case (1c) — S31: a real SIGKILL BETWEEN sub-batch txs
+// ─────────────────────────────────────────────────────────────────────
+//
+// This is the half of S18 accept row 2 that S18 itself could not write.
+// A kill between sub-batch txs is observable only from inside `pay`, whose
+// one seam is D37's capture hook — and until S31 no sink wrote anything
+// durable, so the resume lost every landed receipt and re-paid. Both
+// directions are here, because the green row alone would not say whether
+// the sink was doing any work: `case1c_durable` is the fix, and
+// `case1c_lossy` is the same `SIGKILL` against the tree as it stood
+// before it.
+
+/// Everything the parent needs to know about a mid-`pay` child run.
+struct MidPayCrash {
+    seal_id: SealId,
+    state_at_crash: SealState,
+    receipt_at_crash: Option<PaymentReceipt>,
+    child_pid: u32,
+    killed_after: Duration,
+}
+
+/// Spawn a mid-`pay` child, wait for it to reach the point where
+/// [`KILL_AFTER_SUB_BATCHES`] sub-batch txs have landed, `SIGKILL` it, and
+/// read what it left behind.
+fn crash_between_sub_batches(scenario: &str, root: &Path) -> MidPayCrash {
+    let marker = root.join("landed.sub-batches");
+    let mut child = spawn_child(scenario, root, &marker);
+    await_marker(&mut child, &marker, "the mid-pay kill point");
+    let child_pid = child.id();
+    let killed_after = sigkill(&mut child);
+
+    // The U5 lock is flock-backed: the kernel released it when the child
+    // died, so the parent can take the vault straight away.
+    let unlocked = unlock_at(root);
+    let seal_id = only_work(&WorkStore::new(&unlocked));
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s31-crash-read"));
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+    MidPayCrash {
+        seal_id,
+        state_at_crash: journal.state(&seal_id).expect("state survived the crash"),
+        receipt_at_crash: journal.receipt(&seal_id).expect("journal read"),
+        child_pid,
+        killed_after,
+    }
+}
+
+/// Non-zero payment lines across a receipt's blob records — the **transfer**
+/// count, which at [`FORCED_CAP`] = 1 is also the sub-batch-tx count.
+///
+/// Counting blobs instead would be wrong the first time a blob carried two
+/// paying quotes (S18 case 1b's recorded lesson), so the arithmetic keys on
+/// what upstream actually chunks.
+fn transfers_in(receipt: &PaymentReceipt) -> usize {
+    receipt
+        .blobs
+        .iter()
+        .flat_map(|record| record.payments.iter())
+        .filter(|line| line.amount_atto > 0)
+        .count()
+}
+
+/// **S18 accept row 2, the kill half — unblocked by S31.**
+///
+/// A real `SIGKILL` lands *between* sub-batch transactions of a multi-tx
+/// payment: two have confirmed on Anvil and been journaled by D37's sink,
+/// and the third has not been submitted. The resume must then buy **only
+/// the three sub-batches nobody paid for** — so across the crash the chain
+/// shows exactly one transaction per sub-batch, the quote→tx map is
+/// complete, and the wallet's ANT delta equals the seal's cost once.
+///
+/// Nothing here is read from a receipt the process under test wrote and
+/// then believed: the tx set is confirmed against Anvil and the money is
+/// counted as a balance delta.
+#[test]
+fn case1c_a_sigkill_between_sub_batch_txs_pays_each_sub_batch_once() {
+    let _guard = serial();
+    let Some((config, env, key)) = gate() else {
+        return;
+    };
+
+    let root = vault_root("case1c-durable");
+    create_at(&root);
+
+    let wallet = key.address().to_string();
+    let token = env.payment_token().to_string();
+    let before = ant_balance(env.rpc_url(), &token, &wallet).expect("balance before");
+
+    let started = Instant::now();
+    let crash = crash_between_sub_batches(SCENARIO_STALL_MID_PAY_DURABLE, &root);
+
+    // What the durable sink made true before the process died.
+    let partial = crash
+        .receipt_at_crash
+        .clone()
+        .expect("the sink journaled the receipt-so-far from INSIDE pay — this is S31's guarantee");
+    assert_eq!(
+        partial.txs.len(),
+        KILL_AFTER_SUB_BATCHES,
+        "the crash must land after exactly {KILL_AFTER_SUB_BATCHES} sub-batch txs"
+    );
+    assert_eq!(
+        transfers_in(&partial),
+        KILL_AFTER_SUB_BATCHES,
+        "the partial receipt's proofs cover exactly the sub-batches that landed"
+    );
+    assert_eq!(
+        crash.state_at_crash,
+        SealState::Anchored,
+        "the kill is inside `pay`, so the work is still tagged pre-pay — which is precisely why \
+         the journaled RECEIPT, not the tag, has to be what says money moved"
+    );
+    let paid_before_crash = ant_balance(env.rpc_url(), &token, &wallet).expect("balance mid");
+    assert_eq!(
+        before - paid_before_crash,
+        partial.storage_cost_atto,
+        "the chain and the journaled partial receipt must agree about what the dead process spent"
+    );
+
+    // The resume, in the full production pairing: one `Arc<UnlockedVault>`,
+    // one durable sink, handed BOTH to the backend and to the journal.
+    let unlocked = Arc::new(unlock_at(&root));
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s31-case1c-journal"));
+    let durable = VaultReceiptSink::new(Arc::clone(&unlocked));
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng)
+        .with_receipt_sink(Arc::clone(&durable));
+    let gate_double = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+
+    let rt = runtime().expect("runtime");
+    let outcome = rt.block_on(async {
+        let backend =
+            SealBackend::connect(&config, &key, Arc::clone(&durable) as Arc<dyn ReceiptSink>)
+                .await
+                .expect("connect")
+                .with_max_transfers_per_tx(FORCED_CAP);
+        let pipeline = Pipeline::new(&backend, &gate_double, &journal, &consent, &NoBarriers);
+        pipeline
+            .resume(&crash.seal_id)
+            .await
+            .expect("the work crashed mid-payment resumes")
+    });
+    let elapsed = started.elapsed();
+
+    let merged = journal
+        .receipt(&crash.seal_id)
+        .expect("journal read")
+        .expect("journaled");
+    let transfers = transfers_in(&merged);
+
+    // (a) Exactly one tx per sub-batch, across the crash.
+    assert!(
+        transfers > KILL_AFTER_SUB_BATCHES,
+        "the crash consumed the whole payment ({transfers} transfers) — there was no remainder \
+         to prove anything with"
+    );
+    assert_eq!(
+        merged.txs.len(),
+        transfers.div_ceil(FORCED_CAP),
+        "one sub-batch tx per transfer, no more and no fewer, across kill+resume"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for tx in &merged.txs {
+        assert!(
+            seen.insert(tx.tx_hash),
+            "a sub-batch tx hash repeats — a sub-batch was paid twice"
+        );
+        assert!(
+            tx_succeeded(env.rpc_url(), &hex32_0x(tx.tx_hash.as_bytes())).expect("receipt lookup"),
+            "a receipted sub-batch tx is not on the chain"
+        );
+    }
+    // The dead process's transactions survived into the merged receipt —
+    // a resume that had quietly re-paid would carry only its own.
+    for tx in &partial.txs {
+        assert!(
+            seen.contains(&tx.tx_hash),
+            "the merged receipt dropped a tx the crashed process had already paid for"
+        );
+    }
+
+    // (b) The quote→tx map is complete.
+    assert_eq!(
+        merged.tx_map.len(),
+        transfers,
+        "the quote→tx map must cover every paying quote of both invocations"
+    );
+
+    // (c) The money: the delta equals the seal's cost exactly once, and the
+    //     resume bought only the remainder.
+    let after = ant_balance(env.rpc_url(), &token, &wallet).expect("balance after");
+    let spent = before.checked_sub(after).expect("balance did not decrease");
+    assert_eq!(
+        spent, merged.storage_cost_atto,
+        "the on-chain ANT delta across SIGKILL+resume must equal the merged receipt exactly once \
+         — anything more means a sub-batch was bought twice"
+    );
+    assert_eq!(
+        outcome.paid_atto,
+        merged.storage_cost_atto - partial.storage_cost_atto,
+        "the resume paid for the remainder and nothing else"
+    );
+    assert_eq!(
+        consent.calls(),
+        1,
+        "one consent, over the remainder quote the user was actually charged for"
+    );
+    assert_eq!(
+        consent.last().expect("consent").quote.blobs.len(),
+        merged.blobs.len() - partial.blobs.len(),
+        "the consent gate showed the remainder, not the whole work"
+    );
+    assert_eq!(durable.fault(), None, "the sink recorded no fault");
+    assert_eq!(
+        journal.state(&crash.seal_id).expect("state"),
+        SealState::Complete
+    );
+
+    // Named arguments throughout: this line IS the row's evidence, and a
+    // positional shift would misreport it while every assertion above still
+    // passed (it did, on the first live run).
+    eprintln!(
+        "S18 case1c OK: child pid {pid} SIGKILLed INSIDE pay after \
+         {KILL_AFTER_SUB_BATCHES}/{transfers} sub-batch txs (state {state:?}, partial receipt \
+         durable = {partial_cost} atto-ANT), reaped in {reaped:.0}ms; resumed paying only the \
+         {remaining} remaining sub-batches. Total {txs} txs on Anvil = one per sub-batch, \
+         tx_map {map} entries, {spent} atto-ANT spent ONCE, {secs:.1}s",
+        pid = crash.child_pid,
+        state = crash.state_at_crash,
+        partial_cost = partial.storage_cost_atto,
+        reaped = crash.killed_after.as_secs_f64() * 1000.0,
+        remaining = transfers - KILL_AFTER_SUB_BATCHES,
+        txs = merged.txs.len(),
+        map = merged.tx_map.len(),
+        secs = elapsed.as_secs_f64()
+    );
+}
+
+/// **The red direction, on the same devnet with the same `SIGKILL`.**
+///
+/// Identical scenario, one thing changed: the backend's sink is in-memory
+/// (`CapturedReceipts`) instead of `VaultReceiptSink`, and the journal has
+/// no sink attached — i.e. the tree exactly as it stood before S31. The
+/// landed sub-batches' receipt dies with the process, the resume finds no
+/// receipt, re-quotes, re-consents and buys the **whole** work again.
+///
+/// So the chain shows more ANT gone than the completed seal's receipt
+/// accounts for. Without this row the green one above would only show that
+/// a resume can finish, not that the sink is what made it cheap.
+#[test]
+fn case1c_without_a_durable_sink_the_same_kill_re_pays_the_landed_sub_batches() {
+    let _guard = serial();
+    let Some((config, env, key)) = gate() else {
+        return;
+    };
+
+    let root = vault_root("case1c-lossy");
+    create_at(&root);
+
+    let wallet = key.address().to_string();
+    let token = env.payment_token().to_string();
+    let before = ant_balance(env.rpc_url(), &token, &wallet).expect("balance before");
+
+    let started = Instant::now();
+    let crash = crash_between_sub_batches(SCENARIO_STALL_MID_PAY_LOSSY, &root);
+
+    assert!(
+        crash.receipt_at_crash.is_none(),
+        "an in-memory sink left a durable receipt — the scenarios are not actually different"
+    );
+    assert_eq!(crash.state_at_crash, SealState::Anchored);
+    let stranded = before - ant_balance(env.rpc_url(), &token, &wallet).expect("balance mid");
+    assert!(
+        stranded > 0,
+        "the child died without paying for anything — nothing was stranded, so nothing can be \
+         re-paid and this row proves nothing"
+    );
+
+    // Resume with no sink anywhere, as the pre-S31 tree would.
+    let unlocked = unlock_at(&root);
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s31-case1c-lossy-journal"));
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+    let sink = CapturedReceipts::new();
+    let gate_double = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+
+    let rt = runtime().expect("runtime");
+    rt.block_on(async {
+        let backend = SealBackend::connect(&config, &key, sink.clone())
+            .await
+            .expect("connect")
+            .with_max_transfers_per_tx(FORCED_CAP);
+        let pipeline = Pipeline::new(&backend, &gate_double, &journal, &consent, &NoBarriers);
+        pipeline
+            .resume(&crash.seal_id)
+            .await
+            .expect("the resume completes — by paying for the whole work again")
+    });
+
+    let fresh = journal
+        .receipt(&crash.seal_id)
+        .expect("journal read")
+        .expect("journaled");
+    let after = ant_balance(env.rpc_url(), &token, &wallet).expect("balance after");
+    let spent = before.checked_sub(after).expect("balance did not decrease");
+
+    assert_eq!(
+        spent,
+        stranded + fresh.storage_cost_atto,
+        "the wallet paid the stranded sub-batches AND the whole work again"
+    );
+    assert!(
+        spent > fresh.storage_cost_atto,
+        "the on-chain delta did not exceed the completed seal's receipt — the double payment S31 \
+         closed did not happen, so this red-direction row is not red"
+    );
+    assert_eq!(
+        transfers_in(&fresh),
+        fresh.txs.len(),
+        "the resume re-paid every transfer of the work"
+    );
+    assert_eq!(
+        consent.calls(),
+        1,
+        "the resume re-consented, as it must before re-paying"
+    );
+
+    eprintln!(
+        "S18 case1c-RED OK (the defect, reproduced): child pid {pid} SIGKILLed INSIDE pay after \
+         {KILL_AFTER_SUB_BATCHES} sub-batch txs with a NON-durable sink; nothing was journaled, \
+         so {stranded} atto-ANT was stranded and the resume bought all {txs} sub-batches again. \
+         Total spent {spent} vs {accounted} the seal's receipt accounts for — {stranded} \
+         atto-ANT lost, {secs:.1}s",
+        pid = crash.child_pid,
+        txs = fresh.txs.len(),
+        accounted = fresh.storage_cost_atto,
+        secs = started.elapsed().as_secs_f64()
     );
 }
 

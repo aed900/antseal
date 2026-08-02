@@ -25,6 +25,7 @@
 pub mod consent;
 pub mod error;
 pub mod journal;
+pub mod receipt_sink;
 pub mod restore;
 pub mod resume;
 pub mod seal;
@@ -38,6 +39,7 @@ pub use journal::{
     StagedBytesUnavailable, UNIT_ENTRY_BASE, WorkIdentity, check_staged_integrity,
     verify_all_staged,
 };
+pub use receipt_sink::{ReceiptSinkFault, VaultReceiptSink};
 pub use restore::{
     BlobOrigin, ByteSource, FailedFile, FailureKind, FileError, FileOutcome, ManifestSource,
     RestoreEngine, RestoreError, RestoreReport, VerifiedFile, hex32,

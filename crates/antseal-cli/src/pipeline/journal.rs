@@ -755,6 +755,31 @@ pub trait SealJournal {
     /// [`JournalError::Corrupt`] on a malformed record.
     fn receipt(&self, seal_id: &SealId) -> Result<Option<PaymentReceipt>, JournalError>;
 
+    /// Tell a durable receipt sink which work is about to be paid for, and
+    /// what it must not overwrite (D37 Decision 7, S31).
+    ///
+    /// The pipeline calls this immediately before **every** `pay`, on
+    /// every path that can pay — fresh seal, post-anchor resume, the
+    /// unpaid remainder, and the proofs-expired re-payment. That is what
+    /// makes the sink's target structural rather than something a caller
+    /// has to remember.
+    ///
+    /// `prior` is the already-durable receipt this `pay` is *extending*
+    /// (the unpaid-remainder path) so the sink can fold it into every
+    /// capture. It is `None` when the payment stands alone — and
+    /// deliberately `None` on the proofs-expired retry, where the old
+    /// records are what is being replaced.
+    ///
+    /// Why it lives on the journal and not on the backend: the sink writes
+    /// a *journal record*, so the journal is what owns knowing where its
+    /// records go (S10). The pipeline is generic over `B: StorageBackend`
+    /// and could not reach a sink through it in any case.
+    ///
+    /// The default is a no-op, which is exactly right for every journal
+    /// that has no sink attached — test doubles, and a `VaultJournal`
+    /// built without one.
+    fn arm_receipts(&self, _seal_id: &SealId, _prior: Option<&PaymentReceipt>) {}
+
     /// Record the D36 consent record at every affirmative consent —
     /// display-only baseline for the next resume render, never a payment
     /// input.

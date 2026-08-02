@@ -154,6 +154,24 @@ mod ant {
         fn capture(&self, receipt: &PaymentReceipt);
     }
 
+    /// **The production sink** (D37 Decision 7 / S31): each sub-batch
+    /// receipt is written to the vault journal *inline*, so `pay`'s loop
+    /// cannot submit the next transaction until the last one is on disk.
+    ///
+    /// The bridge is three lines on purpose. Everything the sink actually
+    /// does — the `Arc<UnlockedVault>` sharing, the `Mutex`, U9's atomic
+    /// write, the arming contract, the fault slot — lives **ungated** in
+    /// [`crate::pipeline::receipt_sink`], where the default required lane
+    /// compiles and tests it. Putting the body here would have made the
+    /// one implementation of D37's durability guarantee visible only to
+    /// S22's tier-2 sweep, which is exactly the gap S30 is open on and
+    /// D89 overturned for the wallet primitives.
+    impl ReceiptSink for crate::pipeline::VaultReceiptSink {
+        fn capture(&self, receipt: &PaymentReceipt) {
+            Self::capture(self, receipt);
+        }
+    }
+
     /// The sink for commands that never pay.
     ///
     /// `restore`, `verify --live` and `status --upgrade` call `get_data`
