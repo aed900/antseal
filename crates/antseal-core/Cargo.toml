@@ -59,6 +59,22 @@ chacha20poly1305.workspace = true
 ed25519-dalek.workspace = true
 hkdf.workspace = true
 ml-dsa.workspace = true
+# RFC 3161 / RFC 5652 / X.509 anchor-verification stack (A5/A8/A9; decision
+# D60). These seven are declared HERE AND NOWHERE ELSE: `antseal-anchor`,
+# `antseal-net` and `antseal-cli` must never declare them, because all anchor
+# verification lives in this crate (MVP-SPEC.md 47-53, 106) and a second
+# declaration site is how that containment erodes (A30's lane rule). Feature
+# shapes and the pre-release rationale live on the workspace pins. All seven
+# are RNG-free and `no_std`-shaped, so the `core-dep-graph` and `wasm32-core`
+# lanes stay meaningful — measured at D60: +27 packages, zero new duplicate
+# pairs, zero getrandom/rand, wasm32 green.
+cms.workspace = true
+const-oid.workspace = true
+der.workspace = true
+p384.workspace = true
+rsa.workspace = true
+sha1.workspace = true
+x509-cert.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -78,6 +94,19 @@ proptest = { workspace = true, optional = true }
 # Both are pure Rust and build for wasm32, so they stay unconditional.
 hmac.workspace = true
 rand_chacha.workspace = true
+# The RFC 3161 stack again, as DEV edges. An integration test under `tests/`
+# is a separate crate and cannot see this crate's normal dependencies, and
+# A5/A8's suites must build adversarial artifacts out of real ones — a
+# nine-certificate bag, a 20 KiB certificate, a flipped `certHash` — which
+# means decoding, mutating and re-encoding real CMS. Building those by hand
+# at the byte level would make the fixtures unreadable and their derivation
+# unauditable. These add ZERO packages: every one is already in the normal
+# graph, and the same exact workspace pins apply.
+cms.workspace = true
+const-oid.workspace = true
+der.workspace = true
+sha1.workspace = true
+x509-cert.workspace = true
 
 # The self-dependency is the standard feature-for-tests pattern: cargo
 # feature unification turns the named feature on for every test target of

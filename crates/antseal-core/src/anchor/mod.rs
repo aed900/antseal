@@ -15,6 +15,35 @@
 //!   per-anchor verdict datum over the frozen seven states, the online
 //!   evidence a host feeds in, and the capture records U persists in the
 //!   vault.
+//! - [`ots`] (tasks **A11**, **A12**) — the in-house `.ots` codec: iterative
+//!   op-DAG execution, the digest-commitment check inside the parser, the
+//!   seven D58 limits, and the embedded Bitcoin header check that yields
+//!   `attested`.
+//! - [`caps`] (task **A5**) — the three anchor-stage structural limits D60 §6
+//!   ruled, plus the reason the DER nesting depth is consumed from `der`
+//!   rather than minted here.
+//! - [`error`] (tasks **A5**, **A8**) — the `anchor-` error taxonomy: one
+//!   distinct code per rejection class, all under the single prefix D91 §6.1
+//!   registered to the A domain.
+//! - [`rfc3161`] (task **A5**) — the hand-written RFC 3161 shell. No crate in
+//!   the pinned closure defines `TimeStampResp`, `TSTInfo`, `MessageImprint`
+//!   or `PKIStatusInfo`; `cms` and `x509-cert` stop at RFC 5652 and RFC 5280.
+//! - [`alg`] (task **A8**) — D60 §3.3's accepted-algorithm registry, as data.
+//! - [`ess`] (task **A8**) — the `SigningCertificate` / `SigningCertificateV2`
+//!   attribute types and the signer-certificate binding.
+//! - [`tsa`] (task **A8**) — CMS `SignedData` verification over a timestamp
+//!   token: signed attributes, `messageImprint`, nonce, ESSCertID, EKU.
+//! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
+//!   the crate so the ordinary suite compiles and exercises it.
 
+pub mod alg;
+pub mod caps;
+pub mod error;
+pub mod ess;
+pub mod fuzz_entry;
 pub mod model;
 pub mod ots;
+pub mod rfc3161;
+pub mod tsa;
+
+pub use error::{AlgPosition, AnchorError, DerFault, DerSite, SignedAttrId};

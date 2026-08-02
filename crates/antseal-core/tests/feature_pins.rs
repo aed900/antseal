@@ -236,11 +236,32 @@ fn leading_names(cell: &str) -> Vec<&str> {
 
 fn is_exact_version(token: &str) -> bool {
     token.strip_prefix('=').is_some_and(|v| {
-        let parts: Vec<&str> = v.split('.').collect();
-        parts.len() == 3
+        // A pre-release exact pin (`=0.3.0-pre.2`, `=0.10.0-rc.18`) is every
+        // bit as exact as `=0.3.0`, and the project takes them deliberately —
+        // D14's `ml-dsa`, D40's `argon2`/`blake2`, and D60's `cms`/`rsa`, the
+        // last two because the stable alternatives are *structurally* worse
+        // (a forked DER stack, and `rand` in antseal-core's normal graph).
+        //
+        // Corrected 2026-08-02 (D60 landing). This previously required three
+        // all-digit dot-separated parts, so **every pre-release pin was
+        // invisible to both callers**: `nothing_is_exactly_pinned_without_a_
+        // policy_row` skipped them, so an rc pin needed no policy row at all,
+        // and the class-membership check below could not see them either.
+        // The hole had never fired only because the one landed rc row
+        // (D40's) titles itself "Argon2/scrypt (vault KDF)" rather than
+        // leading with a backticked crate name, so the parser never
+        // extracted it as a member. A guard that exempts exactly the
+        // dependencies whose versions move fastest is the wrong way round.
+        let core = v.split(['-', '+']).next().unwrap_or(v);
+        let parts: Vec<&str> = core.split('.').collect();
+        let core_ok = parts.len() == 3
             && parts
                 .iter()
-                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+        // Either there is no suffix at all, or the `-`/`+` introduces a
+        // non-empty identifier: `=1.2.3-` is malformed, not a pre-release.
+        let suffix_ok = v.len() == core.len() || v.len() > core.len() + 1;
+        core_ok && suffix_ok
     })
 }
 
