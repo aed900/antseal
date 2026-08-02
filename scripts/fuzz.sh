@@ -280,6 +280,13 @@ case "${1:-}" in
   corpus-report) shift; cmd_corpus_report "$@" ;;
   classify-failure) shift; cmd_classify_failure "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+    # The header comment block, however long it is: every line after the
+    # shebang up to the first non-comment line. The fixed `2,30p` window this
+    # replaces ran FIVE lines into the code (it printed `set -uo pipefail`,
+    # `repo=…`, `fuzz_dir=…` and half the TARGETS comment) and drifted
+    # further with every header edit — a help text that leaks its own
+    # implementation is small, but it is the same class as a lane whose
+    # prose and code disagree.
+    awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}" ;;
   *) die "unknown subcommand '$1' (try --help)" ;;
 esac

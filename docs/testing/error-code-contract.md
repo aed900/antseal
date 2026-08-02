@@ -35,7 +35,7 @@ algorithm, a tiling-violation class — each value gets its own code
 | `bundle-` | F | `.sealproof` bundle schema validation (F8–F9) |
 | `crypto-` | C | HKDF, commitments, padding, AEAD, signatures (C2–C14) |
 | `content-` | G | canonicalization, unit model, fine tree (G2–G13) |
-| **UNRESOLVED — D91** | A | anchor-artifact verification (A5–A18) and capture-path outcomes (A10). **Two decisions resolved on the same day disagree on the spelling** — see below. **No A code may be minted until D91 rules**, and §3 makes whichever is written permanent from the first code that binds to it. |
+| `anchor-` | A | anchor-artifact verification: strict DER/CMS, X.509 path validation, `.ots` op execution, embedded-header and online-header checks (A5–A18); and capture-path outcomes in `antseal-anchor` (A10) |
 | *(unprefixed)* | R | verification-pipeline outcomes (R1–R5) |
 | *(none — S mints no codes)* | S | ruled below, not omitted |
 
@@ -128,63 +128,68 @@ other prefix, and the Q7 registry sweep proves it. R's exemplar list
 *sources* the fine-tree rows from G's rather than restating them, so the two
 cannot drift.
 
-### The A domain's prefix is UNRESOLVED and blocking — D91 (raised 2026-08-02)
+### The `anchor-` family (A), registered 2026-08-02 at Q80
 
-The gap itself is not in doubt and is not new. §2's table bound five domains
-while this document's header claims six; §2 forbids the only workaround
-(*"a domain never mints a code under another domain's prefix"*); and A5, A8,
-A9, A10, A11, A12 and all eight of A21/Q18's rows owe codes. Until an A row
-exists, A can neither mint nor borrow. **D53 §7** and **D59 §5** found this
-independently, from opposite ends.
+Registered ahead of the first code that needs it, because §2's own rule —
+*"a domain never mints a code under another domain's prefix"* — leaves an
+unregistered domain with no legal move at all. A5, A8, A9, A11 and A12 each
+promise a distinct code, A21/Q18's eight anchor tamper rows bind six of
+them, and until this row existed every one of those was blocked: A could
+neither mint under `anchor-` (unregistered) nor borrow `bundle-`
+(forbidden). Found independently by **D53 §7** and **D59 §5**; the table row
+is D53 §7's text, extended by the trailing capture-path clause because D59
+§5 mints `anchor-tsa-nonce-mismatch` in `antseal-anchor`, which D53 §7's
+"A5–A18" wording does not reach.
 
-What is in doubt is the **spelling**, and two decisions resolved on the same
-day give different answers:
+**Ratified by D91** (2026-08-02), which was needed because a *second*
+namespace had been proposed the same day: D58 §10.4's `ots-`, with a
+predicted sibling `tsa-`, under which sixteen codes had already been
+specified. D91 rules **one prefix, `anchor-`**; `ots-` and `tsa-` are closed
+as not-taken, D58's sixteen become `anchor-ots-*` (D91 §7.1), and the
+digest-commitment check is `anchor-ots-digest-mismatch` — D58's
+`ots-ops-do-not-commit-anchor-digest` is never minted. The row above is the
+text this section landed with, ratified rather than rewritten.
 
-| decision | requires | mints |
-| --- | --- | --- |
-| **D53 §7** (with D59 §5) | one prefix, `anchor-` | 3 codes, + D59's `anchor-tsa-nonce-mismatch` |
-| **D58 §10.4** | `ots-`, owner A, *"A5 will want a sibling `tsa-` on the same grounds"* | **16** `ots-*` codes |
+**The sub-namespace convention** (D91 §7.3), because the family mixes
+kind-qualified names with unqualified ones and writing it down here is what
+stops it becoming the next collision:
 
-This is not a style question. §3 makes a prefix permanent from the moment
-the first code binds to it, so the first A task to land a code decides it by
-accident. **No A code may be minted until D91 rules**, and this row stays
-`UNRESOLVED` rather than being filled with either candidate.
+> The segment after `anchor-` names the **check**. A kind segment
+> (`ots`/`tsa`) appears only where the same check name would otherwise be
+> ambiguous across the two artifact kinds.
 
-There is a second, narrower instance of the same collision, on one check
-rather than one namespace: **D56 §7** gives `anchor-ots-digest-mismatch` for
-*"the `.ots` stamped digest is not this seal's `anchor_digest`"*, and
-**D58 §10.3 step 5** gives `ots-ops-do-not-commit-anchor-digest` for the
-same equality on the same field. D53 §8 binds M2 tamper row 1 to the first
-of the two, so `testdata/tamper/MATRIX.json` and A11's implementation cannot
-both be right as written. That cell is held at `expected: null` under D91
-(see the registry's own `why`, and the checker's `EXPECTED_M2_UNMINTED`).
+That is why `anchor-ots-digest-mismatch` and `anchor-tsa-imprint-mismatch`
+both carry one — both are "this artifact stamps a different digest", and
+both exist — while `anchor-chain-signature-invalid` does not, there being no
+OTS chain. It is a **review guideline and deliberately not machine-enforced**:
+§3 makes codes permanent, so a naming-*style* test would turn a judgement
+call into a red build whose only available fix is the rename §3 forbids. The
+one machine-enforced rule is the prefix itself (**Q77**).
 
-Two properties of the A family are **independent of the spelling** and are
-recorded now, because they are what the ruling has to preserve rather than
-what it decides:
+Two codes in the family need their backing recorded at registration rather
+than inferred later.
 
-**One code will be owner-backed, not row-backed** — D59 §5's nonce-mismatch
-code, whatever it ends up being called; its owner is **A10**. No tamper row
-can ever reach it, and the reason is structural rather than a matter of
-nobody having written one yet: a tamper row mutates a **bundle**, the
-comparison only runs when `expected_nonce = Some(_)` (D59 §1), and **no
-bundle path ever supplies an expected nonce** — a bundle carries the TSA's
-echoed copy inside the signed `TSTInfo` but never the request, so the
-verifier holds one copy of a two-copy equality. Unreachable from any
-mutation of any bundle. §4b layer 4 accepts exactly this shape (*"a named
-row in an integration target, or … an entry naming the task that owes it"*),
-and G22's `content-canonicalize-invalid-utf8` is the standing precedent for
-a code with a real owner, real tests and no pipeline row. Recorded here so
-the Q7 sweep reads it as claimed rather than orphaned.
+**`anchor-tsa-nonce-mismatch` is owner-backed, not row-backed.** Its owner
+is **A10**. No tamper row can ever reach it, and the reason is structural
+rather than a matter of nobody having written one yet: a tamper row mutates
+a **bundle**, the comparison only runs when `expected_nonce = Some(_)`
+(D59 §1), and **no bundle path ever supplies an expected nonce** — a bundle
+carries the TSA's echoed copy inside the signed `TSTInfo` but never the
+request, so the verifier holds one copy of a two-copy equality. The
+comparison is therefore unreachable from any mutation of any bundle. §4b
+layer 4 accepts exactly this shape (*"a named row in an integration target,
+or … an entry naming the task that owes it"*), and G22's
+`content-canonicalize-invalid-utf8` is the standing precedent for a code
+with a real owner, real tests and no pipeline row. Recorded here so the Q7
+sweep reads it as claimed rather than orphaned.
 
-**One code will cover both temporal directions** (D53 §7): `notAfter <
-genTime` *and* `notBefore > genTime`. That is D85's rule applied — a cause
-belongs in rendering, never in the code set — and
+**`anchor-cert-not-valid-at-gentime` covers both temporal directions**
+(D53 §7): `notAfter < genTime` *and* `notBefore > genTime`. That is D85's
+rule applied — a cause belongs in rendering, never in the code set — and
 `bundle-wrong-length-block-header` is the standing precedent for one code
-over a two-sided bound. The expired direction is row-backed (M2 row
-`anchor-expired-at-gentime`, whose **row id** is a permanent handle and is
-unaffected by the prefix ruling); the back-dating direction is carried by
-the named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`
+over a two-sided bound. The expired direction is row-backed
+(`anchor-expired-at-gentime`); the back-dating direction is carried by the
+named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`
 (D53 §9) and by nothing else, which D53 §12 records as a residual risk.
 
 ### Why S has no prefix — ruled 2026-08-02 at Q80, not omitted
@@ -232,12 +237,23 @@ no `--force-degraded`"). It is *not* a collision — different field,
 different document, different consumer — but a same-string *stem* shared
 between the two is indistinguishable from one to a reader.
 
-> **This is evidence for D91, not a ruling.** If A's prefix is `anchor-`,
-> the A namespace and U2's exit-code namespace share a stem at the one
-> place where an A failure and a U failure are most likely to be discussed
-> in the same breath (a seal aborting for want of a TSA token). If it is
-> `ots-`/`tsa-`, they do not. Either way `anchor-gate-abort` is a **reserved
-> spelling** the A domain must never mint as a code.
+> `anchor-gate-abort` is a **reserved spelling**: the A domain must never
+> mint it as a code. If A ever needs to name that outcome it mints a
+> distinct one.
+
+This was offered to **D91** as evidence for the `ots-`/`tsa-` split — one
+shared stem under `anchor-`, none under the split — and D91 §5 answered it
+by measurement, which is recorded here because the conclusion inverted.
+`"ots-pending"` and `"tsa-0.der"` are the **vault's live anchor slot
+names** (U9's store): **9 occurrences across 4 files in `antseal-cli`,
+against 3 for `anchor-gate-abort`**. Under the split the A code namespace
+would share a stem with the vault-slot namespace at *every single code*, and
+`ots-pending` is the better error-code impostor — kebab-case, naming an
+anchor condition, and `pending` is one of the seven frozen `AnchorState`
+spellings. Under `anchor-` exactly one stem is shared, it is reserved above,
+and the reservation is machine-enforceable; under the split the shared stems
+are the prefixes themselves, and a spelling cannot be reserved while it is
+being minted under.
 
 The general rule this instance makes explicit, and which no prefix ruling
 changes: a `--json` consumer reads `error.class`, a verdict/tamper consumer
@@ -980,9 +996,11 @@ kebab-case id, and never edit an existing row's expected code.
      `…::covered_reveal_construction_enforces_the_cover_and_path_caps`,
      `…::bundle_construction_enforces_the_section_caps_ahead_of_ordering_rules`.
 
-- **2026-08-02 (M2 wave 1, Q80)** — **S ruled to have no prefix; A's prefix
-  RAISED AS BLOCKING and held for D91.** No code was minted, renamed,
-  re-scoped or removed; the committed universe stays **194**.
+- **2026-08-02 (M2 wave 1, Q80)** — **the `anchor-` prefix registered for A,
+  and S ruled to have none.** No code was minted, renamed, re-scoped or
+  removed; the committed universe stays **194** until A5 mints the first
+  `anchor-` code, at which point §4a's additions-only path takes it up (§3:
+  adding is routine and unrestricted).
 
   The A gap is live and blocking, not cosmetic: §2's table bound five
   domains while the header claimed six, §2 forbids borrowing another
@@ -992,24 +1010,43 @@ kebab-case id, and never edit an existing row's expected code.
   a capture-path comparison needing one) is the strongest evidence available
   that it was a hole in the contract rather than a gap in one task.
 
-  **It was not registered, because two decisions resolved the same day
-  disagree on the spelling** — D53 §7 requires `anchor-`, D58 §10.4 requires
-  `ots-` (plus a sibling `tsa-`) and mints **16** codes under it — and §3
-  makes a prefix permanent from the first code that binds to it. Writing
-  either would have decided D91 by accident, which is the failure mode the
-  whole append-only rule exists to prevent. The table row therefore reads
-  `UNRESOLVED — D91` and says so out loud: the point of Q80 was that a blank
-  is indistinguishable from an oversight, and a blank labelled with its
-  owning decision is not a blank.
+  **It was landed, then held, then ratified**, and the sequence is recorded
+  because the branch history shows all three. Registered here; held at
+  `UNRESOLVED — D91` for the length of one planning round when D58 §10.4 was
+  found to have specified sixteen codes under a *different* namespace
+  (`ots-`, plus a predicted `tsa-`) — §3 makes whichever binds first
+  permanent, so writing either would have decided the question by accident;
+  then ratified unchanged by **D91**, which rules one prefix, `anchor-`.
 
-  **The sweep method, run and recorded so D91 inherits data rather than
-  repeating it.** Over the 194 committed codes: `anchor-*` occurs **0**
-  times and `ots-*`/`tsa-*` occur **0** times, so *both* candidate
-  namespaces are free and the ruling is unconstrained by existing codes.
-  Both candidate code sets are internally distinct, kebab-case, and disjoint
-  from the 194. Distinctness therefore decides nothing here; the ruling
-  turns on the other grounds (one family or two; whether `.ots` and RFC 3161
-  are one surface; and the `anchor-gate-abort` stem-sharing in §2).
+  **The Q7 cross-domain distinctness sweep, re-run over the combined set**
+  (the 194 committed codes plus the six `anchor-` codes M2's resolved
+  decisions name). Every arm green:
+
+  | check | result |
+  |---|---|
+  | six new codes, pairwise distinct | OK |
+  | lowercase kebab-case shape (§1) | OK |
+  | every one carries the `anchor-` prefix (§2) | OK |
+  | disjoint from the 194 committed codes | OK — no intersection |
+  | `anchor-*`, `ots-*`, `tsa-*` already in the universe | **none** — every candidate namespace was free |
+  | combined universe | **200** distinct codes, once A5 and A11 append |
+
+  Run over *both* candidate namespaces and handed to D91, which is how it
+  could record that **distinctness decided nothing here**: both were free,
+  both candidate sets were well-formed and disjoint from the 194, so the
+  ruling turned on the other grounds.
+
+  The six, with what backs each — recorded because three of them are *not*
+  row-backed and §4b layer 4 will ask:
+
+  | code | backing |
+  |---|---|
+  | `anchor-cert-not-valid-at-gentime` | row `anchor-expired-at-gentime` (D53 C3); the back-dating direction by named test only |
+  | `anchor-ots-digest-mismatch` | row `anchor-ots-digest-mismatch` (D56 O2, named by D91 §6.2) |
+  | `anchor-tsa-imprint-mismatch` | row `anchor-tsa-imprint-mismatch` (A8; D53 §8 row 2) |
+  | `anchor-chain-constraint-violation` | **owner-backed — A9**; no spec case at line 168, named tests in D53 §9 |
+  | `anchor-chain-signature-invalid` | **owner-backed — A9**; likewise |
+  | `anchor-tsa-nonce-mismatch` | **owner-backed — A10**; no row is *possible* (§2 records why) |
 
   **S is ruled to have no prefix**, and this half is independent of D91:
   §1's definition does not reach S, its failures already carry U2's
@@ -1020,8 +1057,37 @@ kebab-case id, and never edit an existing row's expected code.
   `path-commit-mismatch` kind recorded in this document, and the first
   *across* namespaces rather than within one. U2's
   `ErrorClass::AnchorGateAbort` renders as `anchor-gate-abort`. Measured: 28
-  `ErrorClass` names, zero intersection with the 194-code universe. Not yet
-  machine-checked — **Q77**. It is now also an input to D91 (§2).
+  `ErrorClass` names, zero intersection with the 194-code universe; the
+  spelling is reserved against A in §2. Offered to D91 as an argument for the
+  split and **answered by measurement in the other direction** (D91 §5, and
+  §2 above): the split would have shared a stem with the vault's live anchor
+  slot names at every code. Not yet machine-checked — **Q77**.
+
+- **2026-08-02 (M2 planning round, D91)** — **the `anchor-` family is
+  registered and no code is minted, renamed or removed; the universe stays
+  194.** Two decisions resolved the same day proposed different namespaces
+  for A — D53 §7 (with D56 §7, D59 §5 and D60 §7.2) `anchor-`, D58 §10.4
+  `ots-` with a predicted sibling `tsa-` — and §3 makes whichever binds
+  first permanent. D91 rules **one prefix, `anchor-`**. The F precedent does
+  not license the split: `manifest-`/`bundle-` encodes an information-flow
+  guarantee D78 enforces in the type system, while `ots-`/`tsa-` encodes
+  `AnchorKind`, already a typed field on `AnchorVerdict` **and** on frozen
+  report v1's `AnchorResult` — the same duplication §2 refuses for the
+  decode layer. Measured: seven of the sixteen already-ruled `anchor-*`
+  codes belong to neither of the split's namespaces, so its honest count is
+  four prefixes, not two; and D58's own prediction was falsified the same
+  day by **D60**, A5's decision, which chose `anchor-`. D58's sixteen
+  `ots-*` codes become `anchor-ots-*` (D91 §7.1), fifteen mechanically and
+  one by merge: the digest-commitment check is
+  **`anchor-ots-digest-mismatch`** (D56 §7), and
+  `ots-ops-do-not-commit-anchor-digest` is never minted. Also found, and
+  larger than the naming: **D56 rule O2 is unreachable and reads a field
+  `OtsArtifact` does not have** — D58 puts the comparison inside
+  `parse_ots`, so O1 always claims it first (D91 §6.4). §2's headline rule
+  *"a domain never mints a code under another domain's prefix"* is enforced
+  by **nothing** today — `census` sorts an unregistered prefix into R's
+  bucket and prints it — which is how sixteen codes came to be minted under
+  an unregistered namespace with a green suite. → **Q77**.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a

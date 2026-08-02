@@ -167,39 +167,30 @@ const EXPECTED_M2_CASES: usize = 8;
 /// Pinned in **both** directions, the [`EXPECTED_M0_PENDING`] pattern: an
 /// unlisted null fails, and a listed case whose code has since been minted
 /// fails too.
-/// **Four entries, and three of them are one defect.** D53 §7 requires the A
-/// domain's prefix to be `anchor-`; D58 §10.4 requires `ots-` (plus a sibling
-/// `tsa-`) and mints 16 codes under it; both resolved 2026-08-02. Since §3 of
-/// the error-code contract makes a prefix permanent from the first code that
-/// binds to it, filling any of these cells would decide the namespace by
-/// accident — so they are held, by name, until **D91** rules. The row ids
-/// themselves are permanent handles and are NOT held: a prefix ruling renames
-/// no row.
+/// **One entry.** Three more were held here between Q76 and **D91**, because
+/// two decisions resolved on 2026-08-02 proposed different prefixes for the A
+/// domain (D53 §7 `anchor-` vs D58 §10.4 `ots-` plus a predicted `tsa-`) and
+/// §3 of the error-code contract makes whichever binds first permanent —
+/// filling them would have decided the namespace by accident. D91 ruled one
+/// prefix, `anchor-`, and the three were released (D91 §9.1/§9.2). The row
+/// ids were never held: a prefix ruling renames no row.
 ///
-/// The four **verdict** cells are deliberately absent from this list. Verdict
-/// states live in a namespace separate from error codes (contract §5, owned
-/// by A18/R17), so D91 does not reach them and they are filled — which is
-/// what keeps layer 3 comparing something while the codes are owed.
-const EXPECTED_M2_UNMINTED: &[(&str, &str)] = &[
-    (
-        "anchor-token-for-a-different-digest/ots-digest-mismatch",
-        "D91 — the check is named TWICE, differently: D56 §7 `anchor-ots-digest-mismatch` vs \
-         D58 §10.3 step 5 `ots-ops-do-not-commit-anchor-digest`",
-    ),
-    (
-        "anchor-token-for-a-different-digest/tsa-imprint-mismatch",
-        "D91 — A8 owns the check; the A-domain prefix is unresolved (D53 §7 `anchor-` vs D58 \
-         §10.4 `ots-`/`tsa-`)",
-    ),
-    (
-        "tsa-chain-expiry/expired-at-gentime",
-        "D91 — D53 rule C3 settles the RULE; only the spelling is owed",
-    ),
-    (
-        "ber-where-der-required/ber-where-der-required",
-        "A5's strict-DER code, owed by D60 (D53 §8 row 8)",
-    ),
-];
+/// **The list must never silently empty**, which is why the release is an
+/// edit here rather than a deletion of the mechanism: the arming assertion
+/// reads it in *both* directions, so an unlisted null fails and a listed cell
+/// that has since been filled fails too.
+///
+/// The four **verdict** cells are deliberately absent. Verdict states live in
+/// a namespace separate from error codes (contract §5, owned by A18/R17), so
+/// no prefix ruling reaches them — which is what kept layer 3 comparing
+/// something rather than nothing while the codes were owed.
+const EXPECTED_M2_UNMINTED: &[(&str, &str)] = &[(
+    "ber-where-der-required/ber-where-der-required",
+    // D91 §11.4: this reason is stale — D60 §7.3 has named the code
+    // (`anchor-der-not-strict`). D91 explicitly leaves the call to D60/A5
+    // rather than claiming it, so the cell stays owed and the entry stays.
+    "A5's strict-DER code (D53 §8 row 8); D60 §7.3 names it — A5's call to fill",
+)];
 
 /// Mutations deliberately recorded as non-rows (see the module docs).
 ///
