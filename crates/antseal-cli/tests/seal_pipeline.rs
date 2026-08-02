@@ -576,3 +576,57 @@ fn a_kill_after_staging_leaves_a_resumable_work() {
             .expect("every staged blob is durable and intact");
     });
 }
+
+/// **S13 accept, mock half**: a zero-anchor seal is representable as
+/// UNANCHORED — the empty anchor set aggregates to zero headline-eligible
+/// anchors, which is the verdict the M1 E2E asserts on a devnet-sealed
+/// work (S17 does the devnet half; this pins the shape a `--no-anchor`
+/// seal actually produces).
+#[test]
+fn a_zero_anchor_seal_is_representable_as_unanchored() {
+    use antseal_core::verify::aggregate::aggregate_anchors;
+
+    let files = files();
+    let mock = MockBackend::new();
+    let gate = RecordingGate::refusing();
+    let consent = ScriptedConsent::always_yes();
+
+    let outcome = with_journal(|journal| {
+        let mut req = request(&files, NetworkId::Devnet);
+        req.no_anchor = true;
+        let pipeline = Pipeline::new(&mock, &gate, journal, &consent, &NoBarriers);
+        let SealResult::Sealed(outcome) =
+            block_on(pipeline.seal(&req, &mut seal_rng(31))).expect("zero-anchor seal")
+        else {
+            panic!("expected Sealed");
+        };
+        outcome
+    });
+
+    // The work carries no anchors at all — nothing was submitted, so
+    // nothing was persisted to anchor a verifier could evaluate.
+    let aggregate = aggregate_anchors(&[]);
+    assert!(aggregate.is_unanchored(), "zero headline-eligible anchors");
+    assert_eq!(aggregate.total_anchors(), 0);
+    assert_eq!(aggregate.headline_time_unix(), None);
+
+    with_journal(|journal| {
+        assert!(
+            journal
+                .recorded_identity(&outcome.seal_id)
+                .expect("identity")
+                .unanchored
+        );
+        // The manifest itself is complete and decodable — an UNANCHORED
+        // seal is a normal seal with an empty anchor set, not a degraded
+        // artifact.
+        let manifest = journal
+            .manifest(&outcome.seal_id)
+            .expect("read")
+            .expect("journaled");
+        let envelope = Manifest::decode(&manifest).expect("decodes");
+        let body = ManifestBodyV1::decode(envelope.body_bytes()).expect("body decodes");
+        assert_eq!(body.files().len(), 2);
+        assert_eq!(body.units_total(), 4);
+    });
+}
