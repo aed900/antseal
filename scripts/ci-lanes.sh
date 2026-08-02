@@ -155,7 +155,10 @@ lane_dep_graph() {
   #     S5's EVM half (evm.rs), the feature-gated devnet suite that parses
   #     the adapter's real bytes via upstream's own deserializer (S7
   #     capture-consistency — tests consuming upstream to VERIFY the
-  #     adapter are the point), and the never-published devnet-launcher.
+  #     adapter are the point), S9's constants suite whose whole purpose is
+  #     to assert our constants EQUAL upstream's (a literal copy would be
+  #     the bug it exists to catch; feature-gated, test-only, zero product
+  #     graph), and the never-published devnet-launcher.
   #     Churn from an ant-core bump is thereby bounded to exactly these
   #     files (S20's procedure relies on it).
   note "S6: forbidden upstream call sites + ant-core usage confinement"
@@ -163,6 +166,7 @@ lane_dep_graph() {
   local allowlist='crates/antseal-net/src/ant_backend.rs
 crates/antseal-net/src/evm.rs
 crates/antseal-net/tests/devnet_backend.rs
+crates/antseal-net/tests/storage_constants.rs
 crates/devnet-launcher/src/devnet.rs
 crates/devnet-launcher/src/main.rs'
   # Self-test FIRST (house pattern): both detectors must trip on planted

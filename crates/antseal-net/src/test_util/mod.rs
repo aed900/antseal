@@ -16,7 +16,10 @@
 
 mod mock;
 
-pub use mock::{CallRecord, Fault, Method, MockBackend};
+// `DEFAULT_MAX_TRANSFERS_PER_TX` is re-exported so S9's constants suite
+// can assert it equals upstream's `MAX_TRANSFERS_PER_TRANSACTION` — the
+// mock's sub-batch shape must stay linked to the real one (D37).
+pub use mock::{CallRecord, DEFAULT_MAX_TRANSFERS_PER_TX, Fault, Method, MockBackend};
 
 use std::future::Future;
 use std::pin::pin;

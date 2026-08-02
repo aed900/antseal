@@ -816,3 +816,136 @@ async fn devnet_s15_live_persistence_identical_missing_and_different() {
         summary.total
     );
 }
+
+// ===========================================================================
+// S9 — the size ladder on the real network
+// ===========================================================================
+
+/// The S9 size ladder, stored for real: 272 B (smallest padded-unit
+/// ciphertext) / 65 552 B (mid) / 4 194 064 B (the largest ciphertext a
+/// real unit plaintext can produce) / 4 194 304 B (the exact chunk cap).
+///
+/// The offline half of S9 — the cap's linkage to `ant_protocol`, the
+/// max-plaintext derivation, the padding/tag constants, the two over-cap
+/// refusals — is `tests/storage_constants.rs`. This is the half that needs
+/// a network: **the addresses ant-core itself assigns must byte-match
+/// S4's WASM-safe recomputation at every rung**, and every rung must come
+/// back byte-identical.
+const S9_LADDER: [(&str, usize); 4] = [
+    ("min-unit-ciphertext", 272),
+    ("mid", 65_552),
+    ("max-plaintext-derived", 4_194_064),
+    ("cap-edge", 4_194_304),
+];
+
+/// Address-equality with a failure that NAMES THE SIZE CLASS (S9 accept
+/// row 4): a divergence between S4's rule and the real network must not
+/// read as a generic assert_eq.
+fn assert_address_matches(
+    class: &str,
+    size: usize,
+    stage: &str,
+    from_network: antseal_net::Address,
+    blob_bytes: &[u8],
+) {
+    let s4 = antseal_core::storage::compute_storage_address(blob_bytes)
+        .expect("ladder rungs are under the cap");
+    let s4 = antseal_net::Address::from(s4);
+    assert_eq!(
+        from_network, s4,
+        "ADDRESS DIVERGENCE in size class `{class}` ({size} B) at {stage}: the network assigned \
+         {from_network} but S4's BLAKE3-256 recomputation says {s4}. The chunk-address rule \
+         (D32/D11 — blake3 of the ciphertext, ant-protocol-2.3.0/src/chunk.rs:43) no longer \
+         matches the pinned upstream; this is a deliberate-bump event (S20), never a drive-by."
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s9_size_ladder_addresses_and_byte_identity() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("backend connects to the live devnet");
+
+    let sizes: Vec<usize> = S9_LADDER.iter().map(|(_, size)| *size).collect();
+    let batch = test_blobs(&env, "s9-ladder", &sizes);
+    for ((class, size), blob) in S9_LADDER.iter().zip(&batch) {
+        assert_eq!(blob.len(), *size, "rung `{class}` is exactly {size} B");
+    }
+
+    // ── quote: the addresses upstream computes, at every rung ─────────
+    let started = std::time::Instant::now();
+    let quote = backend.quote_batch(&batch).await.expect("quote the ladder");
+    let quote_elapsed = started.elapsed();
+    assert_eq!(quote.blobs.len(), S9_LADDER.len());
+    for (((class, size), line), blob) in S9_LADDER.iter().zip(&quote.blobs).zip(&batch) {
+        assert_address_matches(class, *size, "quote", line.address, blob.as_bytes());
+    }
+
+    // ── pay: 4 transfers fit one sub-batch (upstream cap 256) ─────────
+    let started = std::time::Instant::now();
+    let receipt = backend.pay(&quote).await.expect("pay the ladder");
+    let pay_elapsed = started.elapsed();
+    assert_eq!(receipt.txs.len(), 1, "4 transfers ⇒ one EVM tx (D37)");
+
+    // ── finalize: the addresses the network assigns on store ──────────
+    let started = std::time::Instant::now();
+    let addresses = backend
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize the ladder");
+    let finalize_elapsed = started.elapsed();
+    assert_eq!(addresses.len(), S9_LADDER.len());
+    for (((class, size), address), blob) in S9_LADDER.iter().zip(&addresses).zip(&batch) {
+        assert_address_matches(class, *size, "finalize", *address, blob.as_bytes());
+    }
+
+    // ── get_data: byte-identity at every rung ─────────────────────────
+    let started = std::time::Instant::now();
+    for (((class, size), address), blob) in S9_LADDER.iter().zip(&addresses).zip(&batch) {
+        let fetched = backend
+            .get_data(*address)
+            .await
+            .unwrap_or_else(|error| panic!("rung `{class}` ({size} B) must serve: {error}"));
+        assert_eq!(
+            fetched.len(),
+            blob.len(),
+            "rung `{class}` ({size} B) came back the wrong length"
+        );
+        assert!(
+            fetched == blob.as_bytes(),
+            "rung `{class}` ({size} B) is not byte-identical on re-fetch"
+        );
+    }
+    let fetch_elapsed = started.elapsed();
+
+    // ── cap + 1 never reaches the network ─────────────────────────────
+    // Structurally, not by observation: the value cannot be constructed,
+    // so no backend call can be written that carries it. The wallet nonce
+    // witnesses that the attempt moved nothing.
+    let nonce_before = wallet_nonce(&backend, &env).await;
+    let over_cap = vec![0u8; antseal_net::MAX_CHUNK_SIZE + 1];
+    let refused = antseal_net::Blob::new(over_cap).expect_err("cap + 1 is not a blob");
+    assert_eq!(refused.len, antseal_net::MAX_CHUNK_SIZE + 1);
+    assert_eq!(
+        wallet_nonce(&backend, &env).await,
+        nonce_before,
+        "a refused over-cap blob moves nothing"
+    );
+
+    // Live evidence for the S9 report.
+    eprintln!(
+        "S9 ladder: rungs {:?} | quote {:?} | pay {:?} ({} tx) | finalize {:?} | fetch {:?}",
+        S9_LADDER.map(|(_, size)| size),
+        quote_elapsed,
+        pay_elapsed,
+        receipt.txs.len(),
+        finalize_elapsed,
+        fetch_elapsed
+    );
+}

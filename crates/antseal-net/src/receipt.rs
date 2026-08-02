@@ -43,12 +43,19 @@
 //!
 //! # Time-boxed usability (D37 Decision 6)
 //!
-//! A journaled receipt is PUT-usable only within the node-side proof
-//! validity window (`QUOTE_MAX_AGE_SECS`, ~24 h — node policy, pinned by
-//! S9). After it, storers reject the proofs even though the receipt is
-//! intact: that is the distinct [`StorageError::ProofsExpired`] state,
-//! and completing the seal then requires re-consented re-payment, never a
-//! silent one.
+//! A journaled receipt is treated as PUT-usable only within antseal's
+//! conservative ~24 h proof-age window. When a storer rejects proofs on
+//! payment grounds past it, that is the distinct
+//! [`StorageError::ProofsExpired`] state, and completing the seal then
+//! requires re-consented re-payment, never a silent one.
+//!
+//! **Attribution, corrected by S9 (2026-08-02):** the window is antseal's
+//! own client-side policy, not a pinned-node rule. `QUOTE_MAX_AGE_SECS`
+//! does not exist in ant-node 0.15.0 and the single-node payment path
+//! applies no timestamp gate; the figure mirrors ant-core's client-side
+//! `CACHED_PROOF_MAX_AGE_SECS` (`batch.rs:1051-1058`). Kept conservative
+//! deliberately — see [`StorageError::ProofsExpired`] and
+//! `crates/antseal-net/tests/storage_constants.rs`.
 //!
 //! [`StorageError::ProofsExpired`]: crate::StorageError::ProofsExpired
 
