@@ -425,9 +425,20 @@ needing a build to go green.
 Why this is the important part: **Q17 adds two targets to `TARGETS`**, and
 under today's arrangement that silently multiplies the bill by 1.5 with
 nothing anywhere noticing until the allowance runs out and every lane stops.
-With this guard, Q17's first commit turns a lane red and forces the one-line
-`seconds` change in the same PR. The knob is always `seconds`; **cadence is
-not a knob**, because cadence protects the corpus (E2).
+With this guard, a target count that breaches the ceiling turns a lane red and
+forces the one-line `seconds` change in the same PR. The knob is always
+`seconds`; **cadence is not a knob**, because cadence protects the corpus (E2).
+
+> **Corrected 2026-08-02 (Q81, at implementation).** This paragraph and the
+> one at line ~442 said *"Q17's first commit turns a lane red"*. **That is
+> false by this document's own arithmetic**: at six targets, twice weekly ×
+> 600 s costs **650.25 min/month**, which is under the 700-minute ceiling, so
+> Q17's two targets land **green**. §3's ~650 figure and §11's *"a seventh
+> fuzz target … goes red by construction"* are the consistent pair — the
+> ceiling is calibrated at **seven**, not at Q17. The guard is still what
+> makes the breach visible; it simply does not fire where this sentence
+> claimed. Measured red/green either side: 7 targets → 736.95 (RED), 6 →
+> 650.25 (GREEN).
 
 Self-test, mandatory and in the house pattern (`secret-guard`'s planted
 fakes, `wasm-bitmatch`'s injected divergence, `fuzz.sh selftest`'s tripwire):
@@ -715,9 +726,18 @@ same defect with money attached.
   required contexts; the §5 ceiling is recomputed against the new allowance
   and the cadence may go back up. Note this is the same plan change that
   unblocks branch protection (D52 E1), so it arrives with its own wave.
-- **§1's measurement shows a per-run overhead far above 15 minutes** — the
-  `PER_RUN_OVERHEAD_MINUTES` constant moves and `seconds` moves with it; the
-  ceiling does not.
+- **§1's measurement shows a per-run overhead far from 15 minutes, in either
+  direction** — the `PER_RUN_OVERHEAD_MINUTES` constant moves and `seconds`
+  moves with it; the ceiling does not. *(Corrected 2026-08-02 at
+  implementation: this read "far **above** 15 minutes", which is one-sided and
+  would have left the measured case unhandled. Q81 measured the five runs at
+  ~61.9 min wall clock against 60 min of fuzzing — **1.9 min of overhead, not
+  15**. The constant was deliberately **left at 15**, because over-estimating
+  the bill is the safe direction for a ceiling whose breach stops every
+  workflow in the repository; the trigger is recorded here so that choice is a
+  decision rather than an oversight. Note the measurement also moved the
+  **real** bill of the replaced configuration to ~1 877 min/month = **94 %** of
+  the allowance, above §1's 91 % lower bound.)*
 - **A seventh fuzz target is proposed** — §5 goes red by construction, which
   is the trigger firing correctly rather than a problem.
 

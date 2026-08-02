@@ -1165,6 +1165,21 @@ its regex is a list of nine async/network/RNG names. `env_logger`, `libc`,
 `is-terminal`, `termcolor` and `regex` pass it. The hole is independent of
 this decision and would be exercised by the next crate anyone nominates.
 
+> **Corrected 2026-08-02 (Q74, at implementation).** This heading — *"the
+> forbidden list has a hole"* — states the defect in a way that **invites the
+> wrong fix**, and the D90 planner measured that the wrong fix does not work:
+> extending the name list still admits `env_logger`, `libc`, `is-terminal`,
+> `regex` and `termcolor`. **I/O-freedom is not decidable from a dependency
+> graph**, so the list can never be completed. Q74 therefore narrowed the
+> *claim* rather than widening the *check*: the lane now asserts that
+> `antseal-core`'s normal graph is **exactly a 57-name reviewed set** (set
+> equality, both directions), keeps the nine names as the separately-titled
+> *decided prohibitions*, and carries a scope note stating outright that a
+> green verdict is a "nothing entered unreviewed" proof and **not** an
+> I/O-freedom proof, and may not be cited as one. Proven to bite by planting
+> `env_logger` on `antseal-core`: new check **RED** naming 13 unreviewed
+> arrivals, pre-Q74 check **GREEN** on the identical graph.
+
 ### 12.6 `tasks/A.md` A14 — the "not ready" discriminator is three-way, and the task implies two
 
 A14's `Do` requires distinguishing "not ready yet" from hard calendar errors
