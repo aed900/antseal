@@ -8,9 +8,12 @@ here comes from), docs/upstream/P16-lockfile-event.md (the dependency
 review that admitted this graph).
 
 **There is no public Autonomi 2.0 testnet today.** This local devnet and the
-Arbitrum-Sepolia devnet (P17) are the only development networks; nothing
-here can be outsourced to a faucet or a hosted endpoint. (Spec: MVP-SPEC.md
-"Network decision".)
+[Arbitrum-Sepolia devnet](sepolia-devnet.md) (P17) are the only development
+networks; nothing here can be outsourced to a faucet or a hosted endpoint.
+(Spec: MVP-SPEC.md "Network decision".) The two differ in exactly one place
+that matters to a developer: here the funded wallet is a public Anvil
+constant and funding is a non-event, there it is real key material that a
+human has to obtain by asking another human (D38).
 
 **D52 venue statement.** The devnet E2E runs as a **required local gate**
 (`scripts/e2e-devnet.sh`, Q15 — landed 2026-08-02) before merging

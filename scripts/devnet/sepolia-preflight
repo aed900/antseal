@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+# P17 — Arbitrum-Sepolia devnet PREFLIGHT (chain 421614).
+#
+#   scripts/devnet/sepolia-preflight [--address 0x…] [--rpc URL] [--self-test]
+#
+# ############################################################################
+# ##  Arbitrum Sepolia, chain id 421614 (0x66eee) — NOT Ethereum Sepolia    ##
+# ##  (11155111 / 0xaa36a7). ETH and contracts from Ethereum Sepolia are    ##
+# ##  useless here, and the public GAS FAUCETS are exactly where a          ##
+# ##  developer wanders onto the wrong one.                                 ##
+# ############################################################################
+#
+# READ-ONLY. This script never sends a transaction, never creates an account,
+# never asks anyone for funds. It makes four `eth_*` JSON-RPC calls, all of
+# them reads, and writes a `.devnet/sepolia-env` export for S/U consumers.
+# Funding is a MAINTAINER action and lives in the runbook
+# (docs/devnet/sepolia-devnet.md), per D38 and the standing external-actions
+# rule.
+#
+# What it asserts:
+#   1. the RPC really is chain 421614 (and names Ethereum Sepolia by number
+#      if that is what answered);
+#   2. the two canonical payment contracts have code at the pinned addresses
+#      (D38 §1, verbatim from evmlib-0.9.0/src/lib.rs — the same literals
+#      antseal-net's `network.rs` carries);
+#   3. optionally, whether a given address is funded with gas and test ANT —
+#      via `eth_getBalance` and an ERC-20 `balanceOf` `eth_call`.
+#
+# Environment surface: `.devnet/sepolia-env`, same KEY='value' shape and the
+# same `ANTSEAL_DEVNET_*` key names as P16's local export, so consumers need
+# no second parser. ONE key is deliberately absent — see "the wallet key"
+# below and docs/devnet/sepolia-devnet.md.
+set -uo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo" || exit 1
+
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m::error::sepolia-preflight: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Pinned by D38 §1 from evmlib-0.9.0/src/lib.rs:58-76, and cross-recorded in
+# crates/antseal-net/src/network.rs (ARBITRUM_SEPOLIA_*). Three copies of the
+# same literals is two too many in general; here the copies are deliberate —
+# a script that reads the constant out of the crate could not run before the
+# crate builds, and this is the check that runs first.
+SEPOLIA_RPC_DEFAULT='https://sepolia-rollup.arbitrum.io/rpc'
+SEPOLIA_CHAIN_ID_HEX='0x66eee'
+SEPOLIA_CHAIN_ID_DEC='421614'
+SEPOLIA_TOKEN='0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C'
+SEPOLIA_VAULT='0xd742E8CFEf27A9a884F3EFfA239Ee2F39c276522'
+# The wrong-Sepolia this script exists to catch.
+ETH_SEPOLIA_CHAIN_ID_HEX='0xaa36a7'
+
+rpc="$SEPOLIA_RPC_DEFAULT"
+address=""
+
+banner() {
+  printf '\033[33m'
+  printf '  +------------------------------------------------------------------+\n'
+  printf '  |  ARBITRUM SEPOLIA (chain %s) -- NOT Ethereum Sepolia (11155111) |\n' "$SEPOLIA_CHAIN_ID_DEC"
+  printf '  |  Gas faucets are where the two get confused. Check the chain id.  |\n'
+  printf '  +------------------------------------------------------------------+\n'
+  printf '\033[0m'
+}
+
+# One JSON-RPC read.  rpc_call <method> <params-json> [fixture-tag]
+#
+# ANTSEAL_SEPOLIA_RPC_FIXTURE points at a directory of canned responses
+# (`<method>[-<tag>].json`) and is `--self-test`'s only seam: the chain-id
+# assertion is the safety-critical line in this file, so its red direction is
+# proven offline against a planted Ethereum-Sepolia answer rather than
+# assumed.
+rpc_call() {
+  local method="$1" params="$2" tag="${3:-}" fixture
+  if [ -n "${ANTSEAL_SEPOLIA_RPC_FIXTURE:-}" ]; then
+    fixture="$ANTSEAL_SEPOLIA_RPC_FIXTURE/$method${tag:+-$tag}.json"
+    [ -f "$fixture" ] || fixture="$ANTSEAL_SEPOLIA_RPC_FIXTURE/$method.json"
+    [ -f "$fixture" ] || { printf 'FIXTURE-MISSING\n'; return 1; }
+    cat "$fixture"
+    return 0
+  fi
+  command -v curl >/dev/null 2>&1 || die "curl is not installed — this script needs it for the read-only RPC calls"
+  curl -sS --max-time 20 -X POST -H 'Content-Type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}" \
+    "$rpc"
+}
+
+# result field of a JSON-RPC response, or empty on an error/absent field.
+rpc_result() {
+  python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if isinstance(d, dict) and "result" in d:
+    print(d["result"])
+'
+}
+
+# 18-decimal fixed-point rendering of a 0x quantity (ETH and ANT both).
+units() {
+  python3 -c '
+import sys
+raw = sys.argv[1].strip()
+try:
+    v = int(raw, 16)
+except ValueError:
+    print("?"); sys.exit(0)
+whole, frac = divmod(v, 10**18)
+print(f"{whole}.{frac:018d}".rstrip("0").rstrip(".") or "0")
+' "$1"
+}
+
+check_chain_id() {
+  local got
+  got="$(rpc_call eth_chainId '[]' | rpc_result)"
+  if [ -z "$got" ]; then
+    printf '::error::sepolia-preflight: the RPC at %s did not answer eth_chainId (offline, blocked, or wrong URL)\n' "$rpc" >&2
+    return 1
+  fi
+  if [ "$got" = "$ETH_SEPOLIA_CHAIN_ID_HEX" ]; then
+    printf '::error::sepolia-preflight: THIS IS ETHEREUM SEPOLIA (chain id %s = 11155111), not Arbitrum Sepolia (%s = %s). The endpoint %s is the wrong network: its ETH cannot pay for anything here and the payment contracts do not exist on it. Use %s.\n' \
+      "$got" "$SEPOLIA_CHAIN_ID_HEX" "$SEPOLIA_CHAIN_ID_DEC" "$rpc" "$SEPOLIA_RPC_DEFAULT" >&2
+    return 1
+  fi
+  if [ "$got" != "$SEPOLIA_CHAIN_ID_HEX" ]; then
+    printf '::error::sepolia-preflight: chain id is %s, expected %s (%s = Arbitrum Sepolia). Wrong endpoint.\n' \
+      "$got" "$SEPOLIA_CHAIN_ID_HEX" "$SEPOLIA_CHAIN_ID_DEC" >&2
+    return 1
+  fi
+  printf '    chain id      %s = %s  (Arbitrum Sepolia)\n' "$got" "$SEPOLIA_CHAIN_ID_DEC"
+}
+
+check_contract() {
+  local label="$1" addr="$2" tag="$3" code
+  code="$(rpc_call eth_getCode "[\"$addr\",\"latest\"]" "$tag" | rpc_result)"
+  if [ -z "$code" ] || [ "$code" = "0x" ]; then
+    printf '::error::sepolia-preflight: no contract code at the %s address %s on this endpoint. Either the endpoint is not Arbitrum Sepolia, or upstream redeployed (D38 residual risk 2 — that surfaces as an ant-core/evmlib bump under P7 §4, never as silent drift).\n' \
+      "$label" "$addr" >&2
+    return 1
+  fi
+  printf '    %-13s %s  (%s bytes of code)\n' "$label" "$addr" "$(( (${#code} - 2) / 2 ))"
+}
+
+# A hex quantity is zero. NOT a string compare against "0x0": `eth_call`
+# returns a full 32-byte word (`0x0000…0000`), and the first live run of this
+# script reported an ANT balance of zero as FUNDED for exactly that reason.
+# The fixtures below now carry the wide form, because a self-test fed a shape
+# the real endpoint never emits proves nothing.
+is_zero() {
+  python3 -c '
+import sys
+raw = sys.argv[1].strip()
+try:
+    sys.exit(0 if int(raw, 16) == 0 else 1)
+except ValueError:
+    sys.exit(0)
+' "$1"
+}
+
+check_funding() {
+  local addr="$1" eth ant padded
+  eth="$(rpc_call eth_getBalance "[\"$addr\",\"latest\"]" | rpc_result)"
+  # ERC-20 balanceOf(address): selector 0x70a08231 + the address left-padded
+  # to 32 bytes. A read (`eth_call`), not a transaction.
+  padded="$(printf '%064s' "$(printf '%s' "${addr#0x}" | tr 'A-F' 'a-f')" | tr ' ' '0')"
+  ant="$(rpc_call eth_call "[{\"to\":\"$SEPOLIA_TOKEN\",\"data\":\"0x70a08231$padded\"},\"latest\"]" | rpc_result)"
+  printf '    gas (ETH)     %s\n' "$(units "${eth:-0x0}")"
+  printf '    test ANT      %s\n' "$(units "${ant:-0x0}")"
+  if is_zero "${eth:-0x0}" || is_zero "${ant:-0x0}"; then
+    printf '\033[33m    NOT FUNDED for a paid operation. Funding is a MAINTAINER action:\n    gas from a public Arbitrum Sepolia faucet, test ANT only by ERC-20\n    transfer from an existing holder (D38 — there is no faucet, no mint,\n    no bridge). Runbook: docs/devnet/sepolia-devnet.md\033[0m\n'
+    return 3
+  fi
+  printf '    FUNDED for a paid operation (size it against a real quote before trusting it)\n'
+}
+
+write_env() {
+  local out="$repo/.devnet/sepolia-env"
+  mkdir -p "$repo/.devnet" || die "cannot create $repo/.devnet"
+  {
+    printf "# P17 Arbitrum-Sepolia environment export — chain %s, NOT Ethereum Sepolia.\n" "$SEPOLIA_CHAIN_ID_DEC"
+    printf "# Written by scripts/devnet/sepolia-preflight at %s.\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf "# Same key names as P16's .devnet/env so consumers need no second parser.\n"
+    printf "#\n"
+    printf "# THE WALLET KEY IS DELIBERATELY ABSENT. Upstream's start-devnet-sepolia\n"
+    printf "# embeds no wallet ('the user must connect their own funded Sepolia\n"
+    printf "# wallet'), and a REAL key on Sepolia is real key material — unlike the\n"
+    printf "# local devnet's public Anvil constant. It is never written to a file.\n"
+    printf "# Supply it through the process environment instead:\n"
+    printf "#\n"
+    printf "#     set -a; . .devnet/sepolia-env; set +a\n"
+    printf "#     export ANTSEAL_DEVNET_WALLET_PRIVATE_KEY=\"\$(your key source)\"\n"
+    printf "#\n"
+    printf "# so that DevnetEnv::from_process_env() sees all ten keys and none of\n"
+    printf "# them touched disk. docs/devnet/sepolia-devnet.md, 'Environment surface'.\n"
+    printf "ANTSEAL_DEVNET_NETWORK='arbitrum-sepolia'\n"
+    printf "ANTSEAL_DEVNET_RPC_URL='%s'\n" "$rpc"
+    printf "ANTSEAL_DEVNET_CHAIN_ID='%s'\n" "$SEPOLIA_CHAIN_ID_DEC"
+    printf "ANTSEAL_DEVNET_TOKEN_ADDRESS='%s'\n" "$SEPOLIA_TOKEN"
+    printf "ANTSEAL_DEVNET_PAYMENT_VAULT_ADDRESS='%s'\n" "$SEPOLIA_VAULT"
+  } > "$out" || die "cannot write $out"
+  printf '    export        %s\n' "$out"
+}
+
+preflight() {
+  banner
+  note "preflight against $rpc"
+  local rc=0 funding_rc=0
+  check_chain_id || rc=1
+  check_contract "payment token" "$SEPOLIA_TOKEN" token || rc=1
+  check_contract "payment vault" "$SEPOLIA_VAULT" vault || rc=1
+  [ "$rc" -eq 0 ] || { printf '\033[31mpreflight FAILED — do not proceed.\033[0m\n' >&2; return 1; }
+  if [ -n "$address" ]; then
+    note "funding of $address"
+    check_funding "$address" || funding_rc=$?
+  else
+    printf '    (no --address given: funding not checked)\n'
+  fi
+  write_env
+  if [ "$funding_rc" -eq 3 ]; then
+    printf '\033[33mpreflight OK, wallet NOT funded (see above).\033[0m\n'
+    return 3
+  fi
+  printf '\033[32mpreflight OK.\033[0m\n'
+}
+
+# ── Test-of-the-test ──────────────────────────────────────────────────────
+#
+# Offline, seconds, and pointed at the one assertion whose failure would be
+# expensive: sending real value to the wrong chain. Planted answers, all
+# three directions.
+self_test() {
+  local tmp fail=0 out
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  probe() { # <label> <chainid-hex> <token-code> <want-rc> <want-substring>
+    mkdir -p "$tmp/f"
+    printf '{"jsonrpc":"2.0","id":1,"result":"%s"}\n' "$2" > "$tmp/f/eth_chainId.json"
+    printf '{"jsonrpc":"2.0","id":1,"result":"%s"}\n' "$3" > "$tmp/f/eth_getCode.json"
+    out="$(ANTSEAL_SEPOLIA_RPC_FIXTURE="$tmp/f" preflight 2>&1)"
+    local rc=$?
+    if [ "$rc" -ne "$4" ] || ! printf '%s' "$out" | grep -qF "$5"; then
+      printf '::error:: %s -> exit %s (wanted %s), output did not contain %s:\n%s\n' \
+        "$1" "$rc" "$4" "$5" "$(printf '%s' "$out" | tail -4)"
+      fail=1
+    else
+      printf '  planted answer: %-42s -> %s\n' "$1" "$5"
+    fi
+  }
+
+  probe "Ethereum Sepolia answering the RPC" "$ETH_SEPOLIA_CHAIN_ID_HEX" '0xdeadbeef' 1 'THIS IS ETHEREUM SEPOLIA'
+  probe "some other chain entirely (Arbitrum One)" '0xa4b1' '0xdeadbeef' 1 'expected 0x66eee'
+  probe "right chain, but no contract at the address" "$SEPOLIA_CHAIN_ID_HEX" '0x' 1 'no contract code'
+  probe "right chain, contracts present" "$SEPOLIA_CHAIN_ID_HEX" '0xdeadbeef' 0 'preflight OK'
+
+  # The unfunded-wallet path must be distinguishable from a pass: a zero
+  # balance is not a failure of the network, but it IS a reason to stop.
+  mkdir -p "$tmp/g"
+  printf '{"jsonrpc":"2.0","id":1,"result":"%s"}\n' "$SEPOLIA_CHAIN_ID_HEX" > "$tmp/g/eth_chainId.json"
+  printf '{"jsonrpc":"2.0","id":1,"result":"0xdeadbeef"}\n' > "$tmp/g/eth_getCode.json"
+  # The WIDE zero word an `eth_call` really returns, plus gas present — the
+  # exact combination the first live run got wrong.
+  printf '{"jsonrpc":"2.0","id":1,"result":"0x1d3f4b0b1a2c3d4e5f"}\n' > "$tmp/g/eth_getBalance.json"
+  printf '{"jsonrpc":"2.0","id":1,"result":"0x0000000000000000000000000000000000000000000000000000000000000000"}\n' > "$tmp/g/eth_call.json"
+  out="$(address='0x0000000000000000000000000000000000000001' \
+         ANTSEAL_SEPOLIA_RPC_FIXTURE="$tmp/g" preflight 2>&1)"
+  if [ $? -ne 3 ] || ! printf '%s' "$out" | grep -q 'NOT FUNDED'; then
+    printf '::error:: gas but ZERO test ANT (32-byte zero word) did not produce the distinct NOT-FUNDED outcome:\n%s\n' "$out"; fail=1
+  else
+    printf '  planted answer: %-42s -> %s\n' "gas but zero ANT (wide zero word)" "exit 3, NOT FUNDED"
+  fi
+
+  # And the funded direction, so NOT-FUNDED is not simply always returned.
+  printf '{"jsonrpc":"2.0","id":1,"result":"0x00000000000000000000000000000000000000000000003635c9adc5dea00000"}\n' > "$tmp/g/eth_call.json"
+  out="$(address='0x0000000000000000000000000000000000000001' \
+         ANTSEAL_SEPOLIA_RPC_FIXTURE="$tmp/g" preflight 2>&1)"
+  if [ $? -ne 0 ] || ! printf '%s' "$out" | grep -q 'FUNDED for a paid operation'; then
+    printf '::error:: a funded wallet was not reported as funded:\n%s\n' "$out"; fail=1
+  else
+    printf '  planted answer: %-42s -> %s\n' "gas and 1000 ANT" "exit 0, FUNDED"
+  fi
+
+  # And the export must never contain key-shaped material.
+  if grep -qE "PRIVATE_KEY[[:space:]]*=[[:space:]]*'?(0x)?[0-9a-fA-F]{64}" "$repo/.devnet/sepolia-env" 2>/dev/null; then
+    printf '::error:: the written export carries a wallet key — it must never contain one\n'; fail=1
+  else
+    printf '  invariant:      %-42s -> %s\n' "no key material in the export" "clean"
+  fi
+  [ "$fail" -eq 0 ] || return 1
+  note "sepolia-preflight self-test PASS"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --address) shift; address="${1:-}"; [ -n "$address" ] || die "--address needs a value" ;;
+    --rpc)     shift; rpc="${1:-}";     [ -n "$rpc" ] || die "--rpc needs a value" ;;
+    --self-test) self_test; exit $? ;;
+    -h|--help) sed -n '1,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) die "unknown argument: $1 (see --help)" ;;
+  esac
+  shift
+done
+
+preflight
