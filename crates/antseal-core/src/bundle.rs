@@ -15,7 +15,7 @@
 //!   ├── manifest (bstr)         OPAQUE here — F9's layer 2 decodes it
 //!   ├── StorageRecord           {0: address, 1: nonce, 2: k_m}
 //!   ├── OtsAnchor               {0: status, 1: ots, 2–4: upgrade group}
-//!   ├── TsaAnchor               {0: status … 4: source}
+//!   ├── TsaAnchor               {0: status … 3: fetch_date}
 //!   ├── ReceiptRecord           {0: tx_hashes, 1: block_number, 2: payload}
 //!   ├── CoveredReveal           {0: unit_id … 4: paths}
 //!   │     ├── CoverEntry        [level, index, seed]

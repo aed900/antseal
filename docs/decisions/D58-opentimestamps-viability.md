@@ -848,9 +848,17 @@ crates/antseal-core/src/anchor/ots/error.rs    — OtsError
 crates/antseal-core/src/anchor/ots/encode.rs   — the writer (task A34)
 ```
 
-`crates/antseal-core/src/lib.rs` gains `pub mod anchor;` between the existing
-`pub mod bundle;` (line 19) and `pub mod canon;` (line 20), keeping the list
-alphabetical.
+`crates/antseal-core/src/lib.rs` gains `pub mod anchor;` **immediately before
+`pub mod bundle;`**, keeping the list alphabetical.
+
+> **Amendment, 2026-08-02 (orchestrator, reported by the A2 lane).** This
+> paragraph originally read *"between the existing `pub mod bundle;` (line 19)
+> and `pub mod canon;` (line 20), keeping the list alphabetical"*, which is
+> **self-contradictory**: `anchor` sorts *before* `bundle`, so the stated
+> position and the stated reason cannot both be satisfied. A2 landed the
+> module at the alphabetically correct position, which is what this text now
+> says. Recorded rather than silently fixed, per the round's rule that a
+> correction left in a task report is one the next reader never sees.
 
 ### 10.2 Public API
 
