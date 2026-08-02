@@ -96,6 +96,18 @@ pub fn with_journal<T>(body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T) -
     body(&journal)
 }
 
+/// Run `body` against an already-unlocked vault — for suites that would
+/// otherwise pay an Argon2id derivation per pipeline invocation (the kill
+/// matrices run dozens). Each call still builds a fresh journal.
+pub fn journal_over<T>(
+    vault: &UnlockedVault,
+    body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T,
+) -> T {
+    let mut rng = rng();
+    let journal = VaultJournal::new(WorkStore::new(vault), &mut rng);
+    body(&journal)
+}
+
 /// A vault of its own, for the tests that assert **the vault did not
 /// change**.
 ///
@@ -125,8 +137,12 @@ impl IsolatedVault {
         Self { root, layout }
     }
 
+    pub fn unlock(&self) -> UnlockedVault {
+        unlock_vault(&self.layout, &passphrase()).expect("unlock")
+    }
+
     pub fn with_journal<T>(&self, body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T) -> T {
-        let vault = unlock_vault(&self.layout, &passphrase()).expect("unlock");
+        let vault = self.unlock();
         let mut rng = rng();
         let journal = VaultJournal::new(WorkStore::new(&vault), &mut rng);
         body(&journal)

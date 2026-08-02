@@ -147,9 +147,20 @@ where
         // submitted on a user's behalf before they agree (spec line 34).
         // A work killed after anchoring never re-anchors: anchors made
         // before the kill stay valid (D36 rule 6).
+        // **A journaled receipt is what says money moved — not the state
+        // tag.** The two normally agree, but there is exactly one window
+        // where they cannot: D37's capture hook journals each sub-batch
+        // receipt *inside* `pay`, before `pay` returns, so a crash between
+        // that write and the `Paid` transition leaves a durable receipt on
+        // a work still tagged pre-pay. Branching on the tag there would
+        // re-quote, re-consent and **pay a second time** for a seal that is
+        // already paid for. The receipt is therefore the authority and the
+        // tag is repaired from it (S11's "`pay` is never invoked when a
+        // receipt is journaled", read strictly). Found by S16's matrix.
+        let journaled_receipt = self.journal.receipt(seal_id)?;
         let mut paid_here = false;
         let mut paid_atto = 0_u128;
-        if !state.is_post_pay() {
+        if journaled_receipt.is_none() && !state.is_post_pay() {
             let anchor = if state == SealState::Staged {
                 let manifest = plan
                     .manifest_bytes
@@ -166,6 +177,12 @@ where
                 .await?;
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
+        } else if !state.is_post_pay() {
+            // The repair: a durable receipt on a pre-pay tag. Advancing it
+            // is what lets `finalize` run at all (`Anchored → Finalizing`
+            // is not a legal edge, and widening the machine to allow it
+            // would erase the distinction the repair exists to record).
+            self.journal.set_state(seal_id, SealState::Paid)?;
         }
         let state = self.journal.state(seal_id)?;
 
