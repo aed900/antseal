@@ -64,4 +64,6 @@ pub use decode::{
     CanonicalDecoder, DecodeError, ExpectedKind, ForbiddenKind, ItemKind, MapReader,
     check_canonical,
 };
-pub use encode::{ArrayEncoder, CanonicalEncoder, EncodeError, MapEncoder, encode_item};
+pub use encode::{
+    ArrayEncoder, CanonicalEncoder, CappedArtifact, EncodeError, MapEncoder, encode_item,
+};
