@@ -15,15 +15,17 @@
 
 mod common;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 use antseal_cli::error::ConsentOutcome;
 use antseal_cli::pipeline::{
     Barrier, BlobSlot, NoBarriers, Pipeline, SealError, SealFile, SealJournal, SealPlan,
-    SealRequest, SealResult, SealState, StagedBlob, UNIT_ENTRY_BASE, WorkIdentity,
+    SealRequest, SealResult, SealState, StagedBlob, UNIT_ENTRY_BASE, VaultJournal,
+    VaultReceiptSink, WorkIdentity,
 };
 use antseal_cli::vault::session::UnlockedVault;
-use antseal_cli::vault::store::SealShapingFlags;
+use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::material::MasterSecretRef;
 use antseal_core::crypto::secrets::SealId;
@@ -82,42 +84,98 @@ fn request<'a>(files: &'a [SealFile<'a>]) -> SealRequest<'a> {
     }
 }
 
-/// A backend that journals the receipt **inside** `pay`, before returning
-/// it — the D37 per-sub-batch capture hook, which production installs via
-/// `AntCoreBackend::with_capture_hook`.
+/// A backend that fires D37's capture hook **inside** `pay`, into the real
+/// [`VaultReceiptSink`], before returning — which is what production does
+/// once `SealBackend::connect` installs the hook (S31) and
+/// `SealSession` supplies the sink (S36).
 ///
 /// This is what makes the post-pay/pre-receipt-journal window empty. Its
 /// absence is not a theoretical concern: the paired test below shows a kill
 /// in that window double-pays without it.
-struct CapturingBackend<'a, J> {
+///
+/// `crash_after_blobs` is the mid-sequence case. `Some(k)` pays only the
+/// first `k` blob lines through the inner mock — really moving the money and
+/// really sub-batching it at the configured cap — captures the receipt
+/// covering them, and *then* fails with [`StorageError::StrandedPayment`].
+/// That is a crash **between** sub-batch txs, modelled the only way the mock
+/// allows: `Fault::AfterSubBatches` fires *instead of* paying and has no
+/// hook, so it can produce the error but not the durable partial receipt
+/// that is the thing under test.
+///
+/// **Why the real sink and not a hand-rolled `put_receipt` (S31's report).**
+/// The previous version called `journal.put_receipt` itself and only on the
+/// success path, so the mid-sequence fault propagated with nothing durable —
+/// which was an accurate model of the tree *before* S31 and stopped being
+/// one the moment the sink landed. A double that models a mechanism which no
+/// longer exists still passes, and quietly asserts the wrong number.
+struct CapturingBackend<'a> {
     inner: &'a MockBackend,
-    journal: &'a J,
-    seal_id: SealId,
+    sink: Arc<VaultReceiptSink>,
+    crash_after_blobs: Option<usize>,
+    armed: Cell<bool>,
     captures: RefCell<usize>,
 }
 
-impl<'a, J: SealJournal> CapturingBackend<'a, J> {
-    fn new(inner: &'a MockBackend, journal: &'a J, seal_id: SealId) -> Self {
+impl<'a> CapturingBackend<'a> {
+    fn new(inner: &'a MockBackend, sink: &Arc<VaultReceiptSink>) -> Self {
         Self {
             inner,
-            journal,
-            seal_id,
+            sink: Arc::clone(sink),
+            crash_after_blobs: None,
+            armed: Cell::new(false),
             captures: RefCell::new(0),
+        }
+    }
+
+    /// Crash between sub-batch txs, once, after `blobs` blob lines are paid.
+    fn crashing_after(inner: &'a MockBackend, sink: &Arc<VaultReceiptSink>, blobs: usize) -> Self {
+        Self {
+            crash_after_blobs: Some(blobs),
+            armed: Cell::new(true),
+            ..Self::new(inner, sink)
         }
     }
 }
 
-impl<J: SealJournal> StorageBackend for CapturingBackend<'_, J> {
+impl StorageBackend for CapturingBackend<'_> {
     async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
         self.inner.quote_batch(blobs).await
     }
 
     async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+        if let (Some(landed), true) = (self.crash_after_blobs, self.armed.replace(false)) {
+            let lines: Vec<antseal_net::BlobQuote> =
+                quote.blobs.iter().take(landed).cloned().collect();
+            let total: u128 = lines
+                .iter()
+                .map(|line| match &line.cost {
+                    antseal_net::BlobCost::AlreadyStored => 0,
+                    antseal_net::BlobCost::Priced { payments, .. } => {
+                        payments.iter().map(|p| p.amount_atto).sum()
+                    }
+                })
+                .sum();
+            let partial = self
+                .inner
+                .pay(&CostQuote {
+                    blobs: lines,
+                    total_ant_atto: total,
+                    gas_estimate_wei: 0,
+                })
+                .await?;
+            // The hook, doing its one job: the receipt-so-far is on disk
+            // before upstream's loop could submit the next sub-batch.
+            self.sink.capture(&partial);
+            *self.captures.borrow_mut() += 1;
+            return Err(StorageError::StrandedPayment {
+                landed_tx_count: partial.txs.len(),
+                reason: "test: killed between payment sub-batch txs".into(),
+            });
+        }
         let receipt = self.inner.pay(quote).await?;
-        // The capture: durable before the caller can be interrupted.
-        self.journal
-            .put_receipt(&self.seal_id, &receipt)
-            .expect("capture hook journals");
+        // The last sub-batch's capture: durable before the caller can be
+        // interrupted.
+        self.sink.capture(&receipt);
         *self.captures.borrow_mut() += 1;
         Ok(receipt)
     }
@@ -137,6 +195,23 @@ impl<J: SealJournal> StorageBackend for CapturingBackend<'_, J> {
     async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
         self.inner.balances().await
     }
+}
+
+/// [`journal_over`], plus S31's durable receipt sink attached — i.e. the
+/// pairing `SealSession` builds for the real `seal` command (S36), in the
+/// shape this suite's per-invocation helper already uses.
+///
+/// A fresh session per call, so every durability claim still crosses a real
+/// close/reopen rather than a live cache.
+fn paying_journal_over<T>(
+    vault: &Arc<UnlockedVault>,
+    sink: &Arc<VaultReceiptSink>,
+    body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>) -> T,
+) -> T {
+    let mut rng = common::rng();
+    let journal =
+        VaultJournal::new(WorkStore::new(vault), &mut rng).with_receipt_sink(Arc::clone(sink));
+    body(&journal)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -318,17 +393,18 @@ fn every_pre_pay_barrier_resumes_to_exactly_one_payment() {
 /// optimisation.
 #[test]
 fn barrier_post_pay_is_atomic_only_because_of_the_capture_hook() {
-    let vault = shared_vault().unlock();
+    let vault = Arc::new(shared_vault().unlock());
 
     // (a) With the capture hook: survivable.
     let with_hook = fixture_seal_id(60);
     stage(&vault, with_hook, SealState::Anchored);
     let mock = MockBackend::new();
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
     let gate = RecordingGate::new();
     let consent = Consent::always_yes();
     let kill = KillAt::new(Barrier::PostPayPreReceiptJournal);
-    journal_over(&vault, |journal| {
-        let backend = CapturingBackend::new(&mock, journal, with_hook);
+    paying_journal_over(&vault, &sink, |journal| {
+        let backend = CapturingBackend::new(&mock, &sink);
         let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &kill);
         assert!(matches!(
             block_on(pipeline.resume(&with_hook)),
@@ -516,21 +592,46 @@ fn missing_staged_bytes_abandon_without_a_backend_call() {
 /// **D37 row**: with a sub-batch cap forcing ≥ 2 transactions, a kill
 /// *between* sub-batch txs resumes to **exactly one tx per sub-batch**,
 /// with the quote→tx map complete and no sub-batch ever re-paid.
+///
+/// # What this row used to claim, and why the number changed (S31 → S36)
+///
+/// It asserted **three** transactions for a two-sub-batch work, with the
+/// comment "the resumed invocation re-quotes, so its two sub-batches are new
+/// quote hashes — what must never happen is paying a hash twice". That was
+/// the honest reading when it was written: the double modelled the capture
+/// hook by journaling from the *success* path only, so a mid-sequence fault
+/// propagated with nothing durable, the resume found no receipt, and it
+/// correctly re-bought the whole work. The row's name was a statement of
+/// intent, not of fact.
+///
+/// S31 landed the sink that makes the name true, and S36 attached it to the
+/// command, so the model is now the production one: the receipt-so-far is on
+/// disk before the next submission, the resume buys only the blobs that
+/// receipt does not cover, and the count is **two** — one transaction per
+/// sub-batch, which is what the function is called. Renaming it to match the
+/// weaker claim was the alternative and was rejected: "no hash is paid
+/// twice" is already asserted below and is a strictly weaker property (it
+/// holds in the pre-S31 tree, where the user pays for the same *blobs*
+/// twice under fresh hashes), so a rename would have preserved a name for a
+/// guarantee nothing needed and quietly dropped the one D37 actually makes.
 #[test]
 fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
-    let vault = shared_vault().unlock();
+    // The sink is `'static`, so the vault it writes through is shared by
+    // `Arc` — the same pairing `SealSession` builds for a real `seal`.
+    let vault = Arc::new(shared_vault().unlock());
     let seal_id = fixture_seal_id(66);
     stage(&vault, seal_id, SealState::Anchored);
 
     // Three blobs, two transfers per tx ⇒ two sub-batches.
     let mock = MockBackend::new().with_max_transfers_per_tx(2);
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
     let gate = RecordingGate::new();
     let consent = Consent::always_yes();
 
-    // Kill after the first sub-batch lands (D37's mid-sequence point).
-    mock.arm_fault(Fault::AfterSubBatches(1));
-    journal_over(&vault, |journal| {
-        let backend = CapturingBackend::new(&mock, journal, seal_id);
+    // Kill after the first sub-batch lands (D37's mid-sequence point), with
+    // the hook journaling what it bought from inside `pay`.
+    paying_journal_over(&vault, &sink, |journal| {
+        let backend = CapturingBackend::crashing_after(&mock, &sink, 2);
         let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
         match block_on(pipeline.resume(&seal_id)) {
             Err(SealError::Storage(StorageError::StrandedPayment {
@@ -538,12 +639,25 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
             })) => assert_eq!(landed_tx_count, 1),
             other => panic!("expected a stranded payment, got {other:?}"),
         }
+        // The property the whole row rests on: durable *before* the crash,
+        // not written by the resume afterwards.
+        assert_eq!(
+            journal
+                .receipt(&seal_id)
+                .expect("read")
+                .expect("the sink journaled the receipt-so-far from inside pay")
+                .blobs
+                .len(),
+            2,
+            "the partial receipt must cover exactly the sub-batch that landed"
+        );
     });
     assert_eq!(mock.payment_tx_count(), 1, "one sub-batch landed");
+    assert_eq!(sink.fault(), None);
 
     // Resume: the remaining sub-batch is paid, and only that one.
-    journal_over(&vault, |journal| {
-        let backend = CapturingBackend::new(&mock, journal, seal_id);
+    paying_journal_over(&vault, &sink, |journal| {
+        let backend = CapturingBackend::new(&mock, &sink);
         let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
         block_on(pipeline.resume(&seal_id)).expect("resume completes");
         assert_eq!(journal.state(&seal_id).expect("state"), SealState::Complete);
@@ -551,19 +665,32 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
 
     assert_eq!(
         mock.payment_tx_count(),
+        2,
+        "one transaction per sub-batch across the crash: the resume bought the sub-batch nobody \
+         had paid for and nothing else. Three would mean it re-bought the landed one under a \
+         fresh quote hash — money the user spends twice for blobs they already own"
+    );
+    assert_eq!(
+        mock.paid_map().len(),
         3,
-        "the resumed invocation re-quotes, so its two sub-batches are new \
-         quote hashes — what must never happen is paying a hash twice"
+        "exactly one paying quote per blob, across both invocations"
     );
     assert!(
         mock.double_paid().is_empty(),
         "no quote hash was ever paid twice"
     );
     assert_eq!(mock.stored_count(), 3);
-    // The map is complete over the receipt that actually finalized.
-    journal_over(&vault, |journal| {
+    // The map is complete over the receipt that actually finalized, and it
+    // still carries the dead invocation's transaction.
+    paying_journal_over(&vault, &sink, |journal| {
         let receipt = journal.receipt(&seal_id).expect("read").expect("present");
         assert!(receipt.covers_all_paid_quotes(), "quote→tx map complete");
+        assert_eq!(
+            receipt.txs.len(),
+            2,
+            "the merged receipt carries both invocations' transactions, not just the resume's"
+        );
+        assert_eq!(receipt.blobs.len(), 3, "every blob has a payment record");
     });
 }
 
@@ -737,7 +864,7 @@ fn d49_row_dry_run_writes_nothing_and_calls_quote_only() {
 /// regression fixture (none found).
 #[test]
 fn any_interleaving_of_kills_and_resumes_terminates_without_double_paying() {
-    let vault = shared_vault().unlock();
+    let vault = Arc::new(shared_vault().unlock());
     let barriers = [
         Barrier::PostStagingJournal,
         Barrier::PostQuote,
@@ -766,13 +893,14 @@ fn any_interleaving_of_kills_and_resumes_terminates_without_double_paying() {
             stage(&vault, seal_id, SealState::Anchored);
 
             let mock = MockBackend::new();
+            let sink = VaultReceiptSink::new(Arc::clone(&vault));
             let gate = RecordingGate::new();
             let consent = Consent::always_yes();
 
             for index in &kill_order {
                 let kill = KillAt::new(barriers[*index]);
-                journal_over(&vault, |journal| {
-                    let backend = CapturingBackend::new(&mock, journal, seal_id);
+                paying_journal_over(&vault, &sink, |journal| {
+                    let backend = CapturingBackend::new(&mock, &sink);
                     let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &kill);
                     // Either it was killed, or the barrier was already
                     // behind this invocation and the seal completed.
@@ -791,8 +919,8 @@ fn any_interleaving_of_kills_and_resumes_terminates_without_double_paying() {
                     break;
                 }
                 let no_barriers = NoBarriers;
-                journal_over(&vault, |journal| {
-                    let backend = CapturingBackend::new(&mock, journal, seal_id);
+                paying_journal_over(&vault, &sink, |journal| {
+                    let backend = CapturingBackend::new(&mock, &sink);
                     let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &no_barriers);
                     let _ = block_on(pipeline.resume(&seal_id));
                 });

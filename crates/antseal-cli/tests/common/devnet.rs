@@ -29,8 +29,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antseal_cli::backend::ReceiptSink;
-use antseal_net::evm::WalletKey;
-use antseal_net::{DevnetEnv, NetworkConfig, PaymentReceipt};
+// `antseal_net::WalletKey`, not `antseal_net::evm::WalletKey`: S17 wrote the
+// latter when `evm.rs` re-exported the type, and U37/D89 (`6bc8dbf`) moved
+// the wallet light half into the default graph, demoting that re-export to a
+// private `use`. Nothing noticed, because no lane type-checks this feature's
+// TEST targets — `cargo check -p antseal-cli --features ant-backend` builds
+// lib+bin only, and the devnet suites are environment-gated so they skip
+// rather than fail. The whole M1 devnet gate has not compiled since.
+// Second instance of U39's gap, and the reason its lane must be
+// `--all-targets`.
+use antseal_net::{DevnetEnv, NetworkConfig, PaymentReceipt, WalletKey};
 
 // ─────────────────────────────────────────────────────────────────────
 // Serialization and the environment gate

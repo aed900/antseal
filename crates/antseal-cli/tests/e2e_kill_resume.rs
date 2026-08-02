@@ -53,12 +53,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use antseal_cli::backend::{ReceiptSink, SealBackend, runtime};
+use antseal_cli::backend::{ReadOnly, ReceiptSink, SealBackend, runtime};
+use antseal_cli::cli::{Cli, Command};
 use antseal_cli::pipeline::{
     Barrier, BarrierHook, BlobSlot, NoBarriers, Pipeline, RestoreEngine, SealError, SealFile,
     SealJournal, SealRequest, SealResult, SealState, StagedBytesUnavailable, UNIT_ENTRY_BASE,
     VaultJournal, VaultReceiptSink, hex32,
 };
+use antseal_cli::seal_consent::ConsentPrompt;
+use antseal_cli::seal_plan::{SealPlan, build_plan};
+use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
+use antseal_cli::seal_session::SealSession;
 use antseal_cli::vault::kdf::KdfSelection;
 use antseal_cli::vault::layout::VaultLayout;
 use antseal_cli::vault::session::{UnlockedVault, create_vault, unlock_vault};
@@ -86,6 +91,11 @@ const CHILD_ENV: &str = "ANTSEAL_S18_CHILD";
 const VAULT_ENV: &str = "ANTSEAL_S18_VAULT";
 /// The file the child touches when it has reached its kill point.
 const MARKER_ENV: &str = "ANTSEAL_S18_MARKER";
+/// The directory holding the files the CLI rows seal (S36). The parent
+/// writes them; the child seals them; both build their `SealPlan` from the
+/// same argv against this same directory, because D45 keys the resume on
+/// the ordered, lexically-absolutized argument list.
+const WORKDIR_ENV: &str = "ANTSEAL_S36_WORKDIR";
 
 /// Kill after the receipt is durable and before `finalize_batch` — case (1).
 const SCENARIO_STALL_PRE_FINALIZE: &str = "stall-pre-finalize";
@@ -99,6 +109,15 @@ const SCENARIO_STALL_MID_PAY_DURABLE: &str = "stall-mid-pay-durable";
 /// The same stall with a non-durable (in-memory) sink — the red direction:
 /// the tree as it stood before S31.
 const SCENARIO_STALL_MID_PAY_LOSSY: &str = "stall-mid-pay-lossy";
+/// **S36**: the same mid-`pay` stall, driven through the *command layer* —
+/// a real `SealPlan` from real argv, `seal_run::run_seal`, and the
+/// `SealSession` pairing that `commands::seal` constructs.
+const SCENARIO_CLI_MID_PAY_DURABLE: &str = "cli-mid-pay-durable";
+/// The red direction of the CLI row: the identical `run_seal` invocation
+/// with a sink the pipeline never arms handed to the backend, which is
+/// behaviourally the tree as it stood before S36 (an in-memory
+/// `SealReceipts` and a bare journal — nothing durable either way).
+const SCENARIO_CLI_MID_PAY_LOSSY: &str = "cli-mid-pay-lossy";
 
 /// How many sub-batch txs land before the child is killed. At
 /// [`FORCED_CAP`] = 1 this is a blob count, and the work has five priced
@@ -315,6 +334,71 @@ impl ReceiptSink for StallInPayAfter {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// The CLI construction path (S36)
+// ─────────────────────────────────────────────────────────────────────
+
+/// The files a CLI row seals, on disk, exactly as a user's would be.
+///
+/// The same bytes the pipeline-direct rows use, so both halves of this file
+/// produce the same five priced blobs (three text units, one binary unit,
+/// the encrypted manifest) and the forced cap makes each one its own EVM
+/// transaction.
+fn write_cli_sources(dir: &Path) {
+    std::fs::create_dir_all(dir).expect("mk the CLI work dir");
+    std::fs::write(dir.join("work.txt"), original_text()).expect("write work.txt");
+    std::fs::write(dir.join("work.bin"), original_binary()).expect("write work.bin");
+}
+
+/// Build the seal plan **through the real argv parser**, the way
+/// `commands::seal` does.
+///
+/// Hand-building a `SealPlan` would let this row drift from the flag surface
+/// the binary actually accepts — and D45's resume match is over exactly what
+/// this produces, so a plan built two different ways in parent and child
+/// would silently stop being a resume and start being a second seal.
+fn cli_plan(workdir: &Path) -> SealPlan {
+    // `--split blank-lines` is what makes the text file three units, so this
+    // row's blob set (3 units + the binary + the encrypted manifest) matches
+    // the pipeline-direct rows above and the two are directly comparable.
+    // Without it a two-file seal is three blobs and the remainder is one
+    // sub-batch, which proves the same property with less of it.
+    let argv = [
+        "antseal",
+        "seal",
+        "work.txt",
+        "work.bin",
+        "--split",
+        "blank-lines",
+        "--no-anchor",
+        "--yes",
+    ];
+    let cli = Cli::parse_checked(argv.iter().copied()).expect("the CLI argv parses");
+    let Command::Seal(args) = &cli.command else {
+        panic!("built a non-seal argv");
+    };
+    build_plan(args, NetworkId::Devnet, workdir).expect("the plan validates")
+}
+
+/// `--yes` is on every plan here, so the gate must never reach a prompt.
+/// A prompt inside a test binary would block forever, which is the one
+/// failure mode worth turning into a panic.
+struct NeverAsked;
+impl ConsentPrompt for NeverAsked {
+    fn ask(&mut self) -> Result<bool, antseal_cli::error::CliError> {
+        panic!("the consent gate prompted where --yes must have answered");
+    }
+}
+
+fn cli_ctx() -> SealContext {
+    SealContext {
+        machine_mode: true,
+        to_stderr: true,
+        now_unix_secs: 1_800_000_000,
+        app_version: "antseal-m1-gate/1".to_owned(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Child driver
 // ─────────────────────────────────────────────────────────────────────
 
@@ -334,6 +418,10 @@ fn spawn_child(scenario: &str, root: &Path, marker: &Path) -> std::process::Chil
         .env(CHILD_ENV, scenario)
         .env(VAULT_ENV, root)
         .env(MARKER_ENV, marker)
+        // The CLI rows seal files that live beside the vault, so the child
+        // gets the same directory and therefore the same absolutized
+        // argument list the parent's resume will match against.
+        .env(WORKDIR_ENV, root.join("work"))
         // The child must derive the same W, nonces and fixture bytes as
         // the parent, so it inherits the run tag rather than minting one.
         .env(RUN_TAG_ENV, run_tag());
@@ -383,6 +471,14 @@ fn child_seals_until_its_kill_point() {
     let Some((config, _env, key)) = gate() else {
         panic!("a child was spawned without a live devnet");
     };
+
+    // **S36's rows go through the command layer**, not the pipeline, so they
+    // assemble nothing themselves: `SealSession` + `run_seal` IS the
+    // production wiring, and that is the whole claim under test. Handled
+    // first because their result type is the command's, not the pipeline's.
+    if scenario == SCENARIO_CLI_MID_PAY_DURABLE || scenario == SCENARIO_CLI_MID_PAY_LOSSY {
+        child_seals_through_the_cli_path(&scenario, &root, &marker, &config, &key);
+    }
 
     let sources = Sources::original();
     let files = sources.files();
@@ -480,6 +576,77 @@ fn child_seals_until_its_kill_point() {
     // loudly rather than exiting 0, which `await_marker`/`sigkill` would
     // report as "the child exited before its kill point".
     panic!("the child completed its seal ({result:?}) — the parent never killed it");
+}
+
+/// **S36's child**: one `antseal seal` invocation, assembled exactly as
+/// `commands::seal` assembles it, stalled inside `pay`.
+///
+/// The only difference between the two scenarios is one expression — which
+/// sink reaches `SealBackend::connect`:
+///
+/// * `DURABLE` hands it [`SealSession::receipts`], so the object the backend
+///   fires from inside `pay` is the object `run_seal`'s journal armed with
+///   the drawn `seal_id`. Every sub-batch receipt is on disk before the next
+///   transaction is submitted.
+/// * `LOSSY` hands it a sink the pipeline never arms. That is behaviourally
+///   the tree as it stood before S36: `seal` built an in-memory
+///   `SealReceipts` for the backend and a bare journal for the pipeline, so
+///   the hook fired and nothing durable happened. It is also precisely the
+///   bypass `seal_session.rs`'s "one sink per production file" scan exists
+///   to refuse.
+///
+/// Never returns: it either stalls forever waiting to be killed, or panics.
+fn child_seals_through_the_cli_path(
+    scenario: &str,
+    root: &Path,
+    marker: &Path,
+    config: &antseal_net::NetworkConfig,
+    key: &antseal_net::WalletKey,
+) -> ! {
+    let workdir =
+        PathBuf::from(std::env::var_os(WORKDIR_ENV).expect("the parent passes a workdir"));
+    let plan = cli_plan(&workdir);
+    // The command layer's one construction: unlock straight into a session,
+    // which mints the sink beside the vault.
+    let session = SealSession::open(unlock_at(root));
+    let durable = scenario == SCENARIO_CLI_MID_PAY_DURABLE;
+
+    let mut journal_rng =
+        ChaCha20Rng::from_seed(run_seed(&format!("s36-child-journal-{scenario}")));
+    let mut seal_rng = ChaCha20Rng::from_seed(run_seed(&format!("s36-child-seal-{scenario}")));
+
+    let rt = runtime().expect("runtime");
+    let result = rt.block_on(async {
+        let inner: Arc<dyn ReceiptSink> = if durable {
+            session.receipts()
+        } else {
+            Arc::new(ReadOnly)
+        };
+        let backend = SealBackend::connect(
+            config,
+            key,
+            Arc::new(StallInPayAfter {
+                inner,
+                after: KILL_AFTER_SUB_BATCHES,
+                seen: AtomicUsize::new(0),
+                marker: marker.to_path_buf(),
+            }),
+        )
+        .await
+        .expect("child connects")
+        .with_max_transfers_per_tx(FORCED_CAP);
+        run_seal(
+            &backend,
+            &session,
+            &plan,
+            &mut NeverAsked,
+            &cli_ctx(),
+            &mut journal_rng,
+            &mut seal_rng,
+        )
+        .await
+    });
+    panic!("the child's `seal` completed ({result:?}) — the parent never killed it");
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1157,6 +1324,315 @@ fn case1c_without_a_durable_sink_the_same_kill_re_pays_the_landed_sub_batches() 
          so {stranded} atto-ANT was stranded and the resume bought all {txs} sub-batches again. \
          Total spent {spent} vs {accounted} the seal's receipt accounts for — {stranded} \
          atto-ANT lost, {secs:.1}s",
+        pid = crash.child_pid,
+        txs = fresh.txs.len(),
+        accounted = fresh.storage_cost_atto,
+        secs = started.elapsed().as_secs_f64()
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Case (1d) — S36: the same crash through the CLI's construction path
+// ─────────────────────────────────────────────────────────────────────
+//
+// Case (1c) proves the durability guarantee for a pipeline assembled by
+// hand. That is what S18's harness could reach, and it is what S31 landed
+// against — but nothing a *user* runs went through it: `commands::seal`
+// built an in-memory sink for the backend and a bare journal for the
+// pipeline, so `antseal seal` had exactly the pre-S31 behaviour while the
+// suites had the guarantee. These two rows close that: the child is a real
+// `seal` invocation — argv → `build_plan` → `SealSession` → `run_seal` —
+// and the parent's resume is a second one over the same arguments, which is
+// what makes D45's detection part of the evidence rather than a step the
+// harness skipped.
+
+/// **S36 / U40**: a real `SIGKILL` between sub-batch transactions of an
+/// `antseal seal` — the command's own construction path, not a hand-built
+/// pipeline — pays each sub-batch exactly once across the crash.
+///
+/// Everything is settled on the chain: the transaction set is confirmed
+/// against Anvil and the money is a wallet balance delta, never a number
+/// read back out of a receipt the process under test wrote.
+#[test]
+fn case1d_the_cli_path_pays_each_sub_batch_once_across_a_mid_pay_sigkill() {
+    let _guard = serial();
+    let Some((config, env, key)) = gate() else {
+        return;
+    };
+
+    let root = vault_root("case1d-cli-durable");
+    create_at(&root);
+    let workdir = root.join("work");
+    write_cli_sources(&workdir);
+
+    let wallet = key.address().to_string();
+    let token = env.payment_token().to_string();
+    let before = ant_balance(env.rpc_url(), &token, &wallet).expect("balance before");
+
+    let started = Instant::now();
+    let crash = crash_between_sub_batches(SCENARIO_CLI_MID_PAY_DURABLE, &root);
+
+    // What a real `antseal seal` made durable before it was killed.
+    let partial = crash.receipt_at_crash.clone().expect(
+        "a real `seal` invocation journaled the receipt-so-far from INSIDE pay — this is the \
+         guarantee S31 built and S36 attached to the command",
+    );
+    assert_eq!(
+        partial.txs.len(),
+        KILL_AFTER_SUB_BATCHES,
+        "the crash must land after exactly {KILL_AFTER_SUB_BATCHES} sub-batch txs"
+    );
+    assert_eq!(crash.state_at_crash, SealState::Anchored);
+    let mid = ant_balance(env.rpc_url(), &token, &wallet).expect("balance mid");
+    assert_eq!(
+        before - mid,
+        partial.storage_cost_atto,
+        "the chain and the journaled partial receipt disagree about what the dead `seal` spent"
+    );
+
+    // The resume is a SECOND `antseal seal` over the same arguments: D45
+    // detection has to recognise it, and `run_seal` has to route it into
+    // the paying resume rather than a fresh seal.
+    let session = SealSession::open(unlock_at(&root));
+    let plan = cli_plan(&workdir);
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-journal"));
+    let mut seal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-seal"));
+
+    let rt = runtime().expect("runtime");
+    let report = rt.block_on(async {
+        let backend = SealBackend::connect(&config, &key, session.receipts())
+            .await
+            .expect("connect")
+            .with_max_transfers_per_tx(FORCED_CAP);
+        let result = run_seal(
+            &backend,
+            &session,
+            &plan,
+            &mut NeverAsked,
+            &cli_ctx(),
+            &mut journal_rng,
+            &mut seal_rng,
+        )
+        .await
+        .expect("the crashed seal resumes");
+        let SealCommandResult::Sealed(report) = result else {
+            panic!("a non-dry-run seal returns Sealed");
+        };
+        report
+    });
+    let elapsed = started.elapsed();
+
+    assert!(
+        report.resumed,
+        "the second invocation started a NEW seal instead of resuming — D45 did not match, so \
+         everything the first one paid for is stranded and this row proves nothing"
+    );
+    assert_eq!(
+        report.seal_id, crash.seal_id,
+        "the resume finished a different work than the one that crashed"
+    );
+
+    let mut rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-read"));
+    let journal = session.journal(&mut rng);
+    let merged = journal
+        .receipt(&crash.seal_id)
+        .expect("journal read")
+        .expect("journaled");
+    let transfers = transfers_in(&merged);
+
+    // (a) One tx per sub-batch across the crash, all of them on the chain.
+    assert!(
+        transfers > KILL_AFTER_SUB_BATCHES,
+        "the crash consumed the whole payment ({transfers} transfers) — no remainder, nothing \
+         proven"
+    );
+    assert_eq!(
+        merged.txs.len(),
+        transfers.div_ceil(FORCED_CAP),
+        "one sub-batch tx per transfer, no more and no fewer, across kill+resume"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for tx in &merged.txs {
+        assert!(
+            seen.insert(tx.tx_hash),
+            "a sub-batch tx hash repeats — a sub-batch was paid twice"
+        );
+        assert!(
+            tx_succeeded(env.rpc_url(), &hex32_0x(tx.tx_hash.as_bytes())).expect("receipt lookup"),
+            "a receipted sub-batch tx is not on the chain"
+        );
+    }
+    for tx in &partial.txs {
+        assert!(
+            seen.contains(&tx.tx_hash),
+            "the merged receipt dropped a tx the crashed `seal` had already paid for"
+        );
+    }
+    assert_eq!(
+        merged.tx_map.len(),
+        transfers,
+        "the quote→tx map must cover every paying quote of both invocations"
+    );
+
+    // (b) The money, from the chain.
+    let after = ant_balance(env.rpc_url(), &token, &wallet).expect("balance after");
+    let spent = before.checked_sub(after).expect("balance did not decrease");
+    assert_eq!(
+        spent, merged.storage_cost_atto,
+        "the on-chain ANT delta across SIGKILL+resume must equal the merged receipt exactly once \
+         — anything more means `antseal seal` bought a sub-batch twice"
+    );
+    assert_eq!(
+        report.cost_atto,
+        merged.storage_cost_atto - partial.storage_cost_atto,
+        "the invocation reported paying for more than the remainder"
+    );
+    assert!(
+        report.paid_here,
+        "the resume did move money — the remainder"
+    );
+    assert_eq!(
+        session.receipts().fault(),
+        None,
+        "the command's sink recorded a fault"
+    );
+    assert!(
+        session.receipts().writes() >= 1,
+        "the resume's own sub-batches were never journaled from inside pay — the session's sink \
+         reached the journal but not the backend"
+    );
+    assert_eq!(
+        journal.state(&crash.seal_id).expect("state"),
+        SealState::Complete
+    );
+
+    eprintln!(
+        "S36 case1d OK (the CLI path): child pid {pid} SIGKILLed INSIDE pay of a real \
+         `antseal seal` after {KILL_AFTER_SUB_BATCHES}/{transfers} sub-batch txs (state \
+         {state:?}, partial receipt durable = {partial_cost} atto-ANT), reaped in {reaped:.0}ms; \
+         a second `seal` over the same argv resumed via D45 and bought only the {remaining} \
+         remaining sub-batches. Total {txs} txs on Anvil = one per sub-batch, tx_map {map} \
+         entries, {spent} atto-ANT spent ONCE (invocation reported {here}), {secs:.1}s",
+        pid = crash.child_pid,
+        state = crash.state_at_crash,
+        partial_cost = partial.storage_cost_atto,
+        reaped = crash.killed_after.as_secs_f64() * 1000.0,
+        remaining = transfers - KILL_AFTER_SUB_BATCHES,
+        txs = merged.txs.len(),
+        map = merged.tx_map.len(),
+        here = report.cost_atto,
+        secs = elapsed.as_secs_f64()
+    );
+}
+
+/// **The red direction of the CLI row**, same devnet, same `SIGKILL`, same
+/// `run_seal`.
+///
+/// One expression differs: the backend is connected with a sink the pipeline
+/// never arms, so the capture hook fires and nothing durable happens. That
+/// is behaviourally the tree as it stood before S36 — `commands::seal` built
+/// an in-memory `SealReceipts` for the backend and a bare journal for the
+/// pipeline — and it is the exact bypass `seal_session.rs`'s
+/// one-sink-per-production-file scan refuses.
+///
+/// The landed sub-batches die with the process, the resuming `seal` finds no
+/// receipt, re-quotes and buys the **whole** work again. Without this row
+/// the green one above would only show that a `seal` can resume, not that
+/// the session's pairing is what made it cheap.
+#[test]
+fn case1d_the_cli_path_without_the_session_sink_re_pays_the_landed_sub_batches() {
+    let _guard = serial();
+    let Some((config, env, key)) = gate() else {
+        return;
+    };
+
+    let root = vault_root("case1d-cli-lossy");
+    create_at(&root);
+    let workdir = root.join("work");
+    write_cli_sources(&workdir);
+
+    let wallet = key.address().to_string();
+    let token = env.payment_token().to_string();
+    let before = ant_balance(env.rpc_url(), &token, &wallet).expect("balance before");
+
+    let started = Instant::now();
+    let crash = crash_between_sub_batches(SCENARIO_CLI_MID_PAY_LOSSY, &root);
+
+    assert!(
+        crash.receipt_at_crash.is_none(),
+        "an unarmed sink left a durable receipt — the two CLI scenarios are not actually different"
+    );
+    assert_eq!(crash.state_at_crash, SealState::Anchored);
+    let stranded = before - ant_balance(env.rpc_url(), &token, &wallet).expect("balance mid");
+    assert!(
+        stranded > 0,
+        "the child died without paying for anything — nothing was stranded, so nothing can be \
+         re-paid and this row proves nothing"
+    );
+
+    // The resume is correctly wired; it simply has nothing to resume *from*.
+    let session = SealSession::open(unlock_at(&root));
+    let plan = cli_plan(&workdir);
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-lossy-journal"));
+    let mut seal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-lossy-seal"));
+
+    let rt = runtime().expect("runtime");
+    let report = rt.block_on(async {
+        let backend = SealBackend::connect(&config, &key, session.receipts())
+            .await
+            .expect("connect")
+            .with_max_transfers_per_tx(FORCED_CAP);
+        let SealCommandResult::Sealed(report) = run_seal(
+            &backend,
+            &session,
+            &plan,
+            &mut NeverAsked,
+            &cli_ctx(),
+            &mut journal_rng,
+            &mut seal_rng,
+        )
+        .await
+        .expect("the resume completes — by paying for the whole work again") else {
+            panic!("expected Sealed");
+        };
+        report
+    });
+
+    let mut rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-lossy-read"));
+    let journal = session.journal(&mut rng);
+    let fresh = journal
+        .receipt(&crash.seal_id)
+        .expect("journal read")
+        .expect("journaled");
+    let after = ant_balance(env.rpc_url(), &token, &wallet).expect("balance after");
+    let spent = before.checked_sub(after).expect("balance did not decrease");
+
+    assert_eq!(
+        spent,
+        stranded + fresh.storage_cost_atto,
+        "the wallet paid the stranded sub-batches AND the whole work again"
+    );
+    assert!(
+        spent > fresh.storage_cost_atto,
+        "the on-chain delta did not exceed the completed seal's receipt — the double payment S36 \
+         closed did not happen, so this red-direction row is not red"
+    );
+    assert_eq!(
+        transfers_in(&fresh),
+        fresh.txs.len(),
+        "the resume re-paid every transfer of the work"
+    );
+    assert!(
+        report.resumed,
+        "D45 still matched — only the money was lost"
+    );
+
+    eprintln!(
+        "S36 case1d-RED OK (the defect, reproduced through `run_seal`): child pid {pid} SIGKILLed \
+         INSIDE pay of a real `antseal seal` whose backend fired a sink the pipeline never armed; \
+         nothing was journaled, so {stranded} atto-ANT was stranded and the resuming `seal` \
+         bought all {txs} sub-batches again. Total spent {spent} vs {accounted} the completed \
+         seal's receipt accounts for — {stranded} atto-ANT lost, {secs:.1}s",
         pid = crash.child_pid,
         txs = fresh.txs.len(),
         accounted = fresh.storage_cost_atto,

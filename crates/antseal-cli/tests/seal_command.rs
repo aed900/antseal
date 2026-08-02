@@ -25,6 +25,7 @@ use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
 use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
+use antseal_cli::seal_session::SealSession;
 use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
 use antseal_cli::vault::bookkeeping::{self, LOSS_WARNING, THEFT_WARNING};
 use antseal_cli::vault::store::{WorkState, WorkStore};
@@ -154,7 +155,7 @@ fn a_scripted_seal_completes_prints_work_id_and_cost_and_persists_the_record() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-happy");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let result = block_on(run_seal(
         &backend,
@@ -186,7 +187,7 @@ fn a_scripted_seal_completes_prints_work_id_and_cost_and_persists_the_record() {
     assert!(rendered.contains("UNANCHORED"), "{rendered}");
 
     // U13 accept: the cost is persisted to the work record (U9).
-    let store = WorkStore::new(&unlocked);
+    let store = WorkStore::new(unlocked.vault());
     let meta = store.load_meta(&report.seal_id).expect("record exists");
     assert_eq!(meta.state, WorkState::Complete);
     assert_eq!(meta.cost_atto, Some(report.cost_atto));
@@ -223,7 +224,7 @@ fn declining_aborts_before_any_payment_and_leaves_the_work_resumable() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-declined");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let err = block_on(run_seal(
         &backend,
@@ -251,7 +252,7 @@ fn declining_aborts_before_any_payment_and_leaves_the_work_resumable() {
 
     // D36 rule 3: declining is never abandonment — the work stays
     // incomplete and resumable.
-    let store = WorkStore::new(&unlocked);
+    let store = WorkStore::new(unlocked.vault());
     let works = store.list_works().expect("list");
     assert_eq!(works.len(), 1);
     assert_eq!(
@@ -270,7 +271,7 @@ fn machine_mode_without_yes_aborts_with_the_consent_class_and_never_prompts() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-machine");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let err = block_on(run_seal(
         &backend,
@@ -319,7 +320,7 @@ fn the_two_shortfalls_are_distinct_and_nothing_is_paid() {
 
         let backend = MockBackend::new().with_balances(balances);
         let vault = IsolatedVault::create("seal-short");
-        let unlocked = vault.unlock();
+        let unlocked = SealSession::open(vault.unlock());
 
         let err = block_on(run_seal(
             &backend,
@@ -357,7 +358,7 @@ fn re_running_the_same_command_resumes_rather_than_starting_a_second_work() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-resume");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     // Run 1: declined at the gate. The work is staged and resumable.
     block_on(run_seal(
@@ -370,7 +371,7 @@ fn re_running_the_same_command_resumes_rather_than_starting_a_second_work() {
         &mut ChaCha20Rng::from_seed([0x62; 32]),
     ))
     .expect_err("declined");
-    let store = WorkStore::new(&unlocked);
+    let store = WorkStore::new(unlocked.vault());
     let first = store.list_works().expect("list");
     assert_eq!(first.len(), 1);
 
@@ -423,7 +424,7 @@ fn a_pre_pay_resume_renders_the_plan_and_the_consent_screen_in_one_pass() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-mergedrender");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     // Run 1: declined at the gate, so the work is staged and pre-pay —
     // and its next resume still has the anchor step ahead of it.
@@ -490,7 +491,7 @@ fn a_near_miss_refuses_with_its_own_class_before_anything_is_staged() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nearmiss");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     // Leave an incomplete work behind.
     block_on(run_seal(
@@ -503,7 +504,7 @@ fn a_near_miss_refuses_with_its_own_class_before_anything_is_staged() {
         &mut ChaCha20Rng::from_seed([0x72; 32]),
     ))
     .expect_err("declined");
-    let store = WorkStore::new(&unlocked);
+    let store = WorkStore::new(unlocked.vault());
     let before = store.list_works().expect("list").len();
 
     // Overlap, not exact: a subset of the recorded list.
@@ -596,7 +597,7 @@ fn no_anchor_on_arbitrum_one_is_refused_at_the_cli_layer_and_at_the_library_laye
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-mainnet");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     let err = block_on(run_seal(
         &backend,
         &unlocked,
@@ -664,7 +665,7 @@ fn a_dry_run_quotes_reports_and_mutates_nothing() {
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-dryrun");
     let before = vault.fingerprint();
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let result = block_on(run_seal(
         &backend,
@@ -718,7 +719,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-dryresume");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     // Leave a resumable work behind (declined at the gate).
     let plan = work
@@ -735,7 +736,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     ))
     .expect_err("declined");
     let (staged, state_before) = {
-        let store = WorkStore::new(&unlocked);
+        let store = WorkStore::new(unlocked.vault());
         let staged = store.list_works().expect("list");
         assert_eq!(staged.len(), 1);
         let state = store.load_meta(&staged[0]).expect("meta").state;
@@ -745,7 +746,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     let fingerprint_before = vault.fingerprint();
 
     // Now the identical invocation with --dry-run. It exact-matches.
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     let rehearsal = work
         .plan(&["a.txt", "--no-anchor", "--dry-run", "--yes"])
         .expect("plan validates");
@@ -781,7 +782,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     assert_eq!(backend.calls(Method::QuoteBatch), calls_before.0);
     assert_eq!(backend.calls(Method::Balances), calls_before.1);
     {
-        let store = WorkStore::new(&unlocked);
+        let store = WorkStore::new(unlocked.vault());
         assert_eq!(store.list_works().expect("list").len(), 1);
         assert_eq!(
             store.load_meta(&staged[0]).expect("meta").state,
@@ -828,7 +829,7 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
             ant_atto: ant,
             gas_wei: gas,
         });
-        let unlocked = vault.unlock();
+        let unlocked = SealSession::open(vault.unlock());
         let err = block_on(run_seal(
             &backend,
             &unlocked,
@@ -876,7 +877,7 @@ fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-drycombo");
     let before = vault.fingerprint();
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let result = block_on(run_seal(
         &backend,
@@ -912,7 +913,10 @@ fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
     // No work record was created — `--yes` did not turn the rehearsal into
     // a seal, and the vault is byte-identical.
     assert_eq!(
-        WorkStore::new(&unlocked).list_works().expect("list").len(),
+        WorkStore::new(unlocked.vault())
+            .list_works()
+            .expect("list")
+            .len(),
         0
     );
     drop(unlocked);
@@ -939,7 +943,7 @@ fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it()
     work.file("a.txt", b"content").file("b.txt", b"more");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nag");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
 
     let first = work
         .plan(&["a.txt", "--no-anchor", "--yes"])
@@ -986,7 +990,7 @@ fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it()
 
     // Record an export, then seal again: silence.
     bookkeeping::record_export(
-        &unlocked,
+        unlocked.vault(),
         1_800_000_000,
         &mut ChaCha20Rng::from_seed([0x73; 32]),
     )
@@ -1029,7 +1033,7 @@ fn vault_with_a_declined_work(tag: &str) -> (IsolatedVault, Work, SealId) {
         .expect("plan validates");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create(tag);
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     block_on(run_seal(
         &backend,
         &unlocked,
@@ -1040,7 +1044,7 @@ fn vault_with_a_declined_work(tag: &str) -> (IsolatedVault, Work, SealId) {
         &mut ChaCha20Rng::from_seed([0x62; 32]),
     ))
     .expect_err("declined");
-    let seal_id = WorkStore::new(&unlocked).list_works().expect("list")[0];
+    let seal_id = WorkStore::new(unlocked.vault()).list_works().expect("list")[0];
     drop(unlocked);
     (vault, work, seal_id)
 }
@@ -1175,7 +1179,7 @@ fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
         .expect("plan validates");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("abandon-complete");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     let result = block_on(run_seal(
         &backend,
         &unlocked,
@@ -1190,9 +1194,9 @@ fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
         panic!("expected a completed seal");
     };
 
-    let store = WorkStore::new(&unlocked);
+    let store = WorkStore::new(unlocked.vault());
     let mut rng = ChaCha20Rng::from_seed([0x69; 32]);
-    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let journal = VaultJournal::new(WorkStore::new(unlocked.vault()), &mut rng);
     let err = abandon_pre_pay(&store, &journal, &report.seal_id).expect_err("complete is terminal");
     assert_eq!(err.class(), ErrorClass::Usage);
     assert!(err.to_string().contains("is complete"), "{err}");
@@ -1284,7 +1288,7 @@ fn the_seal_warnings_reach_the_pre_consent_screen_and_the_json_document() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-warnings");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     let result = block_on(run_seal(
         &backend,
         &unlocked,
@@ -1508,7 +1512,7 @@ fn no_fine_tree_matches_are_recorded_per_file() {
     // matches on it (a re-run without the flag is a flag mismatch).
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nft");
-    let unlocked = vault.unlock();
+    let unlocked = SealSession::open(vault.unlock());
     let result = block_on(run_seal(
         &backend,
         &unlocked,
@@ -1522,7 +1526,7 @@ fn no_fine_tree_matches_are_recorded_per_file() {
     let SealCommandResult::Sealed(report) = result else {
         panic!("expected Sealed");
     };
-    let meta = WorkStore::new(&unlocked)
+    let meta = WorkStore::new(unlocked.vault())
         .load_meta(&report.seal_id)
         .expect("meta");
     assert_eq!(meta.shaping.no_fine_tree, vec!["*.bin".to_owned()]);

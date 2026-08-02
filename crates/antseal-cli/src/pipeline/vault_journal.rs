@@ -65,12 +65,23 @@ impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
     /// backend fires it from inside `pay`, and this journal is what tells
     /// it which work to write to ([`SealJournal::arm_receipts`]).
     ///
-    /// Without this the journal behaves exactly as it did before S31 —
-    /// correct for every non-paying command, and the reason `restore`,
-    /// `verify --live` and `status --upgrade` need no sink at all. The
-    /// *paying* path must attach one or D37 Decision 2's guarantee is
-    /// unimplemented again; making that structural belongs to U13's `seal`
-    /// wiring (recorded as **S36**).
+    /// **Production code does not call this** — [`SealSession`] does, in the
+    /// same expression that builds the journal, and `seal_session.rs`'s scan
+    /// refuses any other production caller of [`VaultJournal::new`]. S36's
+    /// reason: a paying command that forgot the builder step behaved exactly
+    /// as the tree did before S31 (the hook fires, nothing durable happens,
+    /// a crash between sub-batch txs re-pays), and that is not a compile
+    /// error anywhere.
+    ///
+    /// It stays public for the suites, which need both directions: the
+    /// red-direction rows that prove the sink is doing work are built out of
+    /// a journal that deliberately has none.
+    ///
+    /// A sinkless journal is also simply *correct* for every non-paying
+    /// command — `restore`, `verify --live` and `status --upgrade` construct
+    /// their backend with `ReadOnly` and never reach `pay`.
+    ///
+    /// [`SealSession`]: crate::seal_session::SealSession
     #[must_use]
     pub fn with_receipt_sink(mut self, receipts: Arc<VaultReceiptSink>) -> Self {
         self.receipts = Some(receipts);
