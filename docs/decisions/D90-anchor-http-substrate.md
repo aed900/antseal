@@ -41,6 +41,85 @@
 - **Owner: A3**, consumed by A10, A13, A14, A15, A16, A17, A24, A28
 - **Blocks: A3 → A10/A13/A16/A17 → A14/A15/A20/A25**
 
+---
+
+## Amendment, 2026-08-02 — what executing this decision falsified (A3 lane)
+
+The A3 lane implemented this document and found **one functional defect and
+seven specification errors**. The defect would have shipped a
+double-submission; it is recorded first.
+
+### A. The timeout table would have retried a *delivered* calendar POST
+
+**§3's ladder is increasing across a boundary where `ureq`'s model requires
+it to decrease.** `ureq` does not evaluate one deadline per phase:
+`CallTimings::next_timeout` (`timings.rs:157-176`) takes the **minimum over
+the current phase and its immediate predecessors**, and `record_time`
+(`run.rs:430,528,588`) starts a predecessor's clock when that predecessor
+*ends*. §3 put `send_request = 4 s` inside `recv_response = 8 s`, so the
+send-request deadline expires **while awaiting the response**. Executed
+against a stub that reads the request and then stalls:
+
+```
+SendTimeout { endpoint: "http://127.0.0.1:39199", phase: "send-request" }
+```
+
+**§6.3's retry table then classifies `Timeout(SendRequest)` under
+"headers/body incomplete → retry"**, so an `AtMostOnceAfterSend` calendar
+POST is retried after the calendar already has it — producing **three**
+pending attestations where A13's Accept row 1 asserts two. §6.3's rows for
+`Timeout(SendRequest)` and `Timeout(SendBody)` are wrong **independently of
+the constants**: both can fire against a delivered request.
+
+Fixed twice over in the implementation: a strictly **decreasing** ladder
+(10 s global; 9/8/7/6/5/4), and — the load-bearing half — **phase placement
+derived from `ureq`'s predecessor graph rather than from the phase names**,
+so only `Resolve` and `Connect` are pre-send. Deriving retryability from a
+phase *name* is what made this look correct.
+
+### B. A test instrument that could not fail
+
+§7's stub server serves connections **serially**, which makes this document's
+own `post_is_not_retried_after_the_request_was_delivered` **incapable of
+failing**: the retry sits unaccepted in the backlog, is never read, never
+recorded, and `requests().len()` is 1 whether or not the bug is present. Each
+connection now gets its own thread. §7's `StubReply` also cannot express two
+obligations this document sets — write accounting for the streaming-cap test,
+and a peer that accepts without reading.
+
+### C. Six specification errors
+
+1. **`HTTP_OPPORTUNISTIC_CONNECT = 1500 ms` cannot be the connect rung** under
+   any decreasing ladder inside a 3 s global that also leaves room for the
+   1.772 s TTFB **this document itself measured**. Retained as an asserted
+   floor instead; a naive `within(3000)` tenths ladder would have given
+   recv-response 1.5 s and timed out on a *healthy* calendar.
+2. **`MAX_TSA_TOKEN_BYTES as u64` / `MAX_OTS_BYTES as u64`** — both constants
+   are already `u64` (`caps.rs:229,232`), so the casts trip
+   `clippy::unnecessary_cast`, which is in the default set and **fatal** under
+   CI's `-D warnings`.
+3. **Name inconsistency**: `OTS_RESPONSE_CAP_BYTES` in the status and
+   verification-obligation sections vs `OTS_CALENDAR_RESPONSE_CAP_BYTES` in
+   §6.8's table and §3's verbatim block. The verbatim block's name is used.
+4. **`get_is_retried_on_pre_send_failure_and_succeeds` is not deterministically
+   constructible** as specified — one listener cannot refuse connections and
+   later answer on the same port without a rebind race. Split into two
+   deterministic tests.
+5. **§6.6** says "the URL's host must be an `https` scheme". A host has no
+   scheme.
+6. Two response caps were already corrected before implementation, by
+   orchestrator arbitration under F4's raise-only rule: the calendar reply cap
+   from `MAX_OTS_BYTES` (1 MiB) down to 65 536 — it conflated the merged
+   bundle-embedded artifact with one HTTP reply, and the largest of 18 real
+   replies is **220 B** — and the RPC cap from 64 KiB up to 512 KiB, since
+   D37 permits 256 transfers in one transaction (≈188 328 B) and 64 KiB
+   truncates at 89 logs, making A17 report `Unavailable` for exactly the large
+   seals it exists to corroborate.
+
+**Everything else in this document stands**, including the pin, the ungated
+placement, the D89 coverage argument, the execution model, and the three
+undocumented `ureq` behaviours — all of which the lane confirmed.
+
 ## Context — the decision that was missing
 
 `tasks/A.md:35` states A3's dependency as
