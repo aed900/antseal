@@ -441,6 +441,54 @@ getrandom03 = { package = "getrandom", version = "0.3" }
 # (evmlib-0.9.0/src/lib.rs:90-99) — parsing ourselves keeps the no-panic
 # rule.
 url = "2"
+# HTTP client for anchor acquisition (A3; decision D90,
+# docs/decisions/D90-anchor-http-substrate.md). Declared by
+# `antseal-anchor` ALONE and UNGATED: required CI is default-features-only
+# (ci.yml:122, :148), so a feature-gated network half would leave every
+# Accept row of A3/A10/A13/A16/A17 — all of them local-stub unit tests —
+# compiled by nothing, the D89 coverage cliff one milestone later. Measured
+# 2026-08-02: default `--workspace` graph 129 -> 144 (+15 names, 25-package
+# closure); ant-backend 447 -> 451; devnet 475 -> 479; four names new to
+# Cargo.lock (ureq, ureq-proto, utf8-zero, webpki-roots). Every other crate
+# in the closure resolves to the version the lock ALREADY carries —
+# including `subtle 2.6.1` and `zeroize 1.9.0`, the project's own exact
+# pins — and it brings no `digest`/`sha2`, so no second RustCrypto
+# generation enters (rustls hashes through `ring`).
+#
+# BLOCKING, deliberately. `antseal-anchor` creates no runtime, borrows
+# none, and requires no async context: `AnchorGate::run` keeps its frozen
+# `async fn` signature and completes in ONE poll under the noop-waker
+# executor `gate.rs` already uses (D90 probe 6). That is what makes A15/U24
+# — an upgrade attempt on EVERY CLI invocation, in builds where tokio is
+# not compiled in at all — implementable. reqwest's `blocking` feature is
+# not an alternative: it is `tokio/sync` plus a background runtime, and
+# costs +72 default packages against ureq's +15.
+#
+# EXACT-PINNED though it is outside dependency-policy §1's format/crypto/
+# consensus class — the `rpassword` row's reason: it is the sole path by
+# which adversary-controlled bytes enter the process before any parser of
+# ours sees them, and three of its behaviours are load-bearing contracts a
+# minor bump could move silently (`.limit(N)` accepts N-1 bytes;
+# `max_redirects(0)` RETURNS the 3xx instead of erroring; `Config::default`
+# reads HTTP_PROXY/ALL_PROXY from the environment). NO lockstep with
+# anything.
+#
+# default-features = false drops `gzip` (flate2/miniz_oxide/crc32fast/
+# adler2/simd-adler32 — 5 packages) and, with it, the whole
+# decompression-bomb path under A28's streaming byte ceiling: a limit on a
+# compressed body bounds the wrong number. `rustls` = rustls 0.23 over
+# `ring` with the compiled `webpki-roots` snapshot — pinned trust, not the
+# OS store, the same discipline as A6's pinned TSA roots one layer down.
+# `webpki-roots` is NOT declared directly: it arrives through ureq and is
+# frozen by Cargo.lock §3; an ureq bump review must state which
+# webpki-roots it moves to.
+#
+# RUSTSEC + GHSA/osv.dev sweep 2026-08-02T19:32:36Z: zero advisories on
+# record for ureq, ureq-proto, utf8-zero, webpki-roots and httparse; rustls
+# 0.23.43, ring 0.17.14 and rustls-webpki 0.103.13 are each past every
+# advisory on record (rustls-webpki sits exactly on RUSTSEC-2026-0104's
+# fix). Licence MIT OR Apache-2.0; rust-version 1.85 <= the 1.92.0 pin.
+ureq = { version = "=3.3.0", default-features = false, features = ["rustls"] }
 # CLI argument surface (U1). Outside the exact-pin class by the policy's own
 # §1 text (which names clap): nothing format-, crypto-, or consensus-
 # affecting flows through it, so a caret-major requirement + the committed
