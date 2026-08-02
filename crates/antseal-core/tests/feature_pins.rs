@@ -436,8 +436,10 @@ fn nothing_is_exactly_pinned_without_a_policy_row() {
     // cargo's implicit `*`, which deny.toml's `wildcards = "deny"` rejects.
     // They are not third-party version commitments and have no policy rows.
     // (`antseal-net` joined at S3 for its self-dev-dep `test-util` edge and
-    // `antseal-cli`'s M1 dev-dependency on the mock, D34's sub-finding.)
-    const NOT_A_THIRD_PARTY_PIN: &[&str] = &["antseal-core", "antseal-net"];
+    // `antseal-cli`'s M1 dev-dependency on the mock, D34's sub-finding;
+    // `antseal-anchor` joined at S12 for the pipeline's `AnchorGate` edge,
+    // D34 Decision 4.)
+    const NOT_A_THIRD_PARTY_PIN: &[&str] = &["antseal-core", "antseal-net", "antseal-anchor"];
 
     let class = policy_exact_pin_class();
     let manifest = workspace_manifest();
