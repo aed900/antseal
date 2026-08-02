@@ -356,10 +356,8 @@ fn walk(
                 });
             }
             let commitment = walk.top_ref().value.clone();
-            let attestation = parse_attestation(reader, commitment)?;
-            shape.max_attestation_payload_bytes = shape
-                .max_attestation_payload_bytes
-                .max(declared_payload_len(&attestation));
+            let (attestation, declared) = parse_attestation(reader, commitment)?;
+            shape.max_attestation_payload_bytes = shape.max_attestation_payload_bytes.max(declared);
             attestations.push(attestation);
             shape.attestations = shape.attestations.saturating_add(1);
 
@@ -424,30 +422,6 @@ fn walk(
     Ok((attestations, shape))
 }
 
-/// The payload length an attestation declared, recovered for the shape
-/// record. Pending and Bitcoin payloads are re-encoded rather than carried,
-/// because the parsed forms are what the artifact keeps.
-fn declared_payload_len(attestation: &OtsAttestation) -> u32 {
-    match attestation {
-        OtsAttestation::Pending { uri, .. } => {
-            let len = uri.len() as u32;
-            varuint_len(u64::from(len)).saturating_add(len)
-        }
-        OtsAttestation::Bitcoin { height, .. } => varuint_len(*height),
-        OtsAttestation::UnknownType { payload_len, .. } => *payload_len,
-    }
-}
-
-/// Bytes a value occupies in the little-endian base-128 encoding.
-fn varuint_len(mut value: u64) -> u32 {
-    let mut len = 1;
-    while value >= VARUINT_RADIX {
-        value /= VARUINT_RADIX;
-        len += 1;
-    }
-    len
-}
-
 /// Parse one attestation, with its payload **sub-sliced** to the declared
 /// length.
 ///
@@ -462,7 +436,7 @@ fn varuint_len(mut value: u64) -> u32 {
 fn parse_attestation(
     reader: &mut Reader<'_>,
     commitment: Option<Vec<u8>>,
-) -> Result<OtsAttestation, OtsError> {
+) -> Result<(OtsAttestation, u32), OtsError> {
     let tag = read_attestation_tag(reader)?;
 
     // Rule h — the declared payload length, checked **before** the bytes are
@@ -480,19 +454,25 @@ fn parse_attestation(
 
     if tag == PENDING_TAG {
         let uri = parse_pending_uri(payload)?;
-        return Ok(OtsAttestation::Pending { uri, commitment });
+        return Ok((OtsAttestation::Pending { uri, commitment }, payload_len));
     }
     if tag == BITCOIN_TAG {
         let height = parse_bitcoin_height(payload)?;
-        return Ok(OtsAttestation::Bitcoin {
-            height,
-            merkle_root: commitment,
-        });
+        return Ok((
+            OtsAttestation::Bitcoin {
+                height,
+                merkle_root: commitment,
+            },
+            payload_len,
+        ));
     }
     // An attestation type this verifier does not know: skipped structurally,
     // carried as evidence, never verified. **The payload bytes are
     // deliberately not retained** — only the length (D58 §10.2).
-    Ok(OtsAttestation::UnknownType { tag, payload_len })
+    Ok((
+        OtsAttestation::UnknownType { tag, payload_len },
+        payload_len,
+    ))
 }
 
 fn read_attestation_tag(reader: &mut Reader<'_>) -> Result<[u8; ATTESTATION_TAG_LEN], OtsError> {

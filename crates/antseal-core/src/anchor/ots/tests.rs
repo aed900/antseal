@@ -272,13 +272,17 @@ fn the_committed_fixtures_have_the_shape_the_f4_registry_records() {
 
 // ── the digest-commitment check (D58 §11 row 4 = D56 §9's row) ────────────
 
-/// **One test in two documents.** D58 §11's
-/// `ots_stamping_a_different_digest_is_rejected` pins the *position* (step 5,
-/// before the walk); D56 §9's
-/// `a_wrong_digest_ots_is_invalid_regardless_of_its_attestations` makes the
-/// stronger statement (it beats a genuine, online-confirmable Bitcoin
-/// attestation). D91 §6.4 records that they are the same input, so this
-/// asserts both — which is what D91 §11.7 asks for.
+/// **One test in two documents**, and it carries D58's name.
+///
+/// D58 §11 names this test and pins the *position* — step 5, before the walk.
+/// D56 §9 names the same input *"a wrong digest ots is invalid regardless of
+/// its attestations"* and makes the stronger statement: it beats a genuine,
+/// online-confirmable Bitcoin attestation. D91 §6.4 records that they are one
+/// test, and §11.7 asks for one name asserting both claims, which is what
+/// this is. D56's name is spelled in prose rather than as an identifier on
+/// purpose: `doc_pointer_liveness` reads a backticked snake_case name as a
+/// pointer to a function that exists, and there is deliberately no second
+/// function here.
 ///
 /// Red when step 5 is removed or moved after the walk. **The worst reachable
 /// defect in the file**: a `.ots` for someone else's seal, carrying a real
@@ -503,6 +507,43 @@ fn ots_module_contains_no_runtime_shift() {
             );
         }
     }
+
+    // The scan is a hardcoded file list, so a **seventh** library file would
+    // be invisible to it. This is the latch that stops that: native-only,
+    // because `wasm32-unknown-unknown` has no filesystem (P14) — and the
+    // wasm32 lane still runs the scan above over the six it can see.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("anchor")
+            .join("ots");
+        let mut present: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the module directory must be readable")
+            .map(|entry| {
+                entry
+                    .expect("directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        present.sort();
+        assert_eq!(
+            present,
+            vec![
+                "error.rs",
+                "exec.rs",
+                "header.rs",
+                "limits.rs",
+                "mod.rs",
+                "parse.rs",
+                "tests.rs",
+            ],
+            "anchor/ots/ gained or lost a file — add it to `sources` above, or \
+             the no-shift scan silently stops covering the module"
+        );
+    }
 }
 
 /// **D58 §4 — 90 bytes, two implementations, identical bytes, different
@@ -559,6 +600,56 @@ fn attestation_payload_length_is_authoritative() {
     // And, said the other way, because "different attestation sets" is the
     // property and not the code: this input never yields two attestations.
     assert!(result.is_err(), "must not report two attestations");
+}
+
+/// The other two ways an attestation payload can fail its own grammar. One
+/// code covers all three — the check that failed is one check (D58 §10.2
+/// rule 2) — and the `PayloadDefect` says which, as payload rather than as a
+/// discriminant (C28, D85/R33).
+#[test]
+fn a_malformed_pending_payload_is_rejected_with_its_defect() {
+    let digest = digest_of(0x42);
+
+    // Leftover: the varbytes URI ends before the declared payload does.
+    let mut payload = vec![0x02_u8];
+    payload.extend_from_slice(b"ab");
+    payload.extend_from_slice(b"junk");
+    let bytes = container(&digest, &attestation(PENDING_TAG, &payload));
+    assert_eq!(
+        parse_ots(&bytes, &digest),
+        Err(OtsError::AttestationPayloadNotConsumed {
+            defect: PayloadDefect::Leftover,
+        })
+    );
+
+    // ShortRead: the URI's own length reaches outside the payload slice.
+    let payload = [0x40_u8, b'a', b'b'];
+    let bytes = container(&digest, &attestation(PENDING_TAG, &payload));
+    assert_eq!(
+        parse_ots(&bytes, &digest),
+        Err(OtsError::AttestationPayloadNotConsumed {
+            defect: PayloadDefect::ShortRead,
+        })
+    );
+
+    // NotUtf8: a lone 0xff is not a UTF-8 sequence. The reference
+    // implementation rejects the whole file here too
+    // (`PendingAttestation.deserialize` raises after `validate_uri`), so
+    // rejecting is what keeps the two in agreement — and no sixteenth code is
+    // minted to say so.
+    let payload = [0x02_u8, 0xff, 0xfe];
+    let bytes = container(&digest, &attestation(PENDING_TAG, &payload));
+    assert_eq!(
+        parse_ots(&bytes, &digest),
+        Err(OtsError::AttestationPayloadNotConsumed {
+            defect: PayloadDefect::NotUtf8,
+        })
+    );
+
+    // …and a URI that *is* well-formed at those boundaries still parses, so
+    // the three rejections are not simply "reject everything".
+    let bytes = container(&digest, &pending("ab"));
+    assert!(parse_ots(&bytes, &digest).is_ok());
 }
 
 /// D58 §4's weaker instance, visible without an exploit: fed `len = 1`
