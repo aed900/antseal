@@ -17,3 +17,4 @@
 //!   vault.
 
 pub mod model;
+pub mod ots;
