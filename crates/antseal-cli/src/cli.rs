@@ -33,7 +33,8 @@
 use std::path::PathBuf;
 
 use clap::error::ErrorKind;
-use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::parser::ValueSource;
+use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 /// Top-level parser: globals + the canonical command tree.
 ///
@@ -208,6 +209,45 @@ pub struct InitArgs {
     /// declined)
     #[arg(long, value_enum, default_value_t = WrapChoice::None, value_name = "WRAP")]
     pub wrap: WrapChoice,
+
+    /// Which of the three defaulted values the user actually typed (U38).
+    ///
+    /// **Not a flag.** `#[arg(skip)]` fields are invisible to clap's
+    /// builder — no argument is added, nothing appears in `--help`, and
+    /// the frozen U1 surface is untouched (`clap_derive-4.6.4/src/
+    /// item.rs:403-405`, `MagicAttrName::Skip`). It is filled by
+    /// [`Cli::parse_checked`] from the `ArgMatches` that parse produced,
+    /// which is the only place the distinction still exists.
+    #[arg(skip)]
+    pub provided: InitProvided,
+}
+
+/// Which `init` values arrived **on the command line**, as opposed to
+/// being clap's declared default (U38; D39 Decision 1).
+///
+/// `--wallet`, `--kdf` and `--wrap` all carry `default_value_t`, so by the
+/// time `InitArgs` exists "the user typed `--wallet generate`" and "the
+/// user said nothing" are the *same value*. D39's rule — "a value already
+/// supplied by flag/fd is not asked again" — and U11 Accept row 3 both
+/// turn on telling them apart, and `ArgMatches::value_source` is where
+/// clap still knows.
+///
+/// **Default direction is `false` everywhere** — "nothing was
+/// flag-supplied" — so a hand-constructed [`InitArgs`] (tests, fixtures)
+/// makes the wizard *ask* rather than assume. Asking twice is a nuisance;
+/// silently skipping a question the user never answered is a wrong vault.
+///
+/// `ValueSource::EnvVariable` is unreachable by construction: D41 rejected
+/// env-var channels for secrets and no argument on this surface declares
+/// one, so `CommandLine` vs everything-else is a total distinction here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InitProvided {
+    /// `--wallet` was typed.
+    pub wallet: bool,
+    /// `--kdf` was typed.
+    pub kdf: bool,
+    /// `--wrap` was typed.
+    pub wrap: bool,
 }
 
 /// `--wallet` values (D39: default `generate` — the non-destructive branch).
@@ -359,6 +399,24 @@ impl Cli {
     /// express. This is the single entry every driver (binary, tests)
     /// uses, so no path can skip validation.
     ///
+    /// # Value sources (U38)
+    ///
+    /// The parse is spelled out as the two steps
+    /// [`Parser::try_parse_from`] performs internally
+    /// (`clap_builder-4.6.5/src/derive.rs:71-78`) rather than called as
+    /// one, for a single reason: `try_parse_from` consumes and **discards**
+    /// the `ArgMatches`, and the `ArgMatches` is the only place that still
+    /// knows whether a defaulted value was typed. Keeping it lets
+    /// [`InitArgs::provided`] be filled here — inside the one entry point —
+    /// instead of by a second, source-aware entry point a caller could
+    /// take by mistake and silently lose the distinction.
+    ///
+    /// Behaviour is unchanged: same error type, same kinds, same exit
+    /// codes, same `--help`/`--version` paths. The `map_err` is not
+    /// decoration — `format_error` (derive.rs:387-390) is what attaches
+    /// usage context to a `from_arg_matches` failure, and dropping it is
+    /// the one observable difference between the two spellings.
+    ///
     /// # Errors
     ///
     /// Returns the `clap::Error` for malformed argv, `--help`/`--version`
@@ -369,9 +427,38 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let cli = Self::try_parse_from(itr)?;
+        let matches = Self::command().try_get_matches_from(itr)?;
+        let mut cli =
+            Self::from_arg_matches(&matches).map_err(|e| e.format(&mut Self::command()))?;
+        cli.record_value_sources(&matches);
         cli.cross_validate()?;
         Ok(cli)
+    }
+
+    /// Fill [`InitArgs::provided`] from the parse's own `ArgMatches`
+    /// (U38). Runs **before** [`Self::cross_validate`], so a future
+    /// cross-check may read the sources too.
+    ///
+    /// Only `init` has defaulted values whose supplied-ness matters:
+    /// `--wallet-key-fd` and every global are `Option`/`bool`, which
+    /// already distinguish absence by their own shape (`--network` is
+    /// `Option` for exactly this reason — U4's note above).
+    fn record_value_sources(&mut self, matches: &clap::ArgMatches) {
+        let Command::Init(args) = &mut self.command else {
+            return;
+        };
+        let Some(init) = matches.subcommand_matches("init") else {
+            // A hand-built `ArgMatches` without the subcommand cannot
+            // happen through this entry point, but "no evidence it was
+            // supplied" is the safe reading either way: the wizard asks.
+            return;
+        };
+        let typed = |name: &str| init.value_source(name) == Some(ValueSource::CommandLine);
+        args.provided = InitProvided {
+            wallet: typed("wallet"),
+            kdf: typed("kdf"),
+            wrap: typed("wrap"),
+        };
     }
 
     /// D39 rules with no declarative clap encoding:
