@@ -640,6 +640,10 @@ mod tests {
             self.inner.quote_batch(blobs).await
         }
 
+        async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+            self.inner.balances().await
+        }
+
         async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
             if !self.armed.replace(false) {
                 return self.inner.pay(quote).await;
