@@ -435,10 +435,14 @@ fn antseal_bin() -> Process {
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
-    // `init` (U11) is the exemplar stub: `list` and `restore` have real
-    // handlers since U19/U20.
+    // `seal` (U13) is the exemplar stub. The row has moved three times as
+    // handlers landed — `vault export|import` at U12, `list`/`restore` at
+    // U19/U20, `init` at U11 — and when U13 lands it moves to `status`.
+    // It must always point at a command that is *actually* still stubbed:
+    // an exemplar that quietly stopped exercising the stub path would
+    // pass for the wrong reason.
     let out = antseal_bin()
-        .arg("init")
+        .args(["seal", "a.txt"])
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");

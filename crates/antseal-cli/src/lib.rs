@@ -25,6 +25,7 @@ pub mod cli;
 mod commands;
 pub mod config;
 pub mod error;
+pub mod init;
 pub mod listing;
 pub mod machine;
 pub mod passphrase;

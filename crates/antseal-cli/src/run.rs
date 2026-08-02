@@ -2,8 +2,9 @@
 //! its real handler lands, a command returns the typed not-implemented
 //! error for its milestone (U1) — never a panic, never silence.
 //!
-//! Arrival map (tasks/U.md milestones): `init` U11, `seal` U13 — M1
-//! pending; **`list` — U19, LANDED**; **`restore` — U20, LANDED** (its
+//! Arrival map (tasks/U.md milestones): **`init` — U11, LANDED**;
+//! `seal` U13 — M1 pending;
+//! **`list` — U19, LANDED**; **`restore` — U20, LANDED** (its
 //! policy and report are complete; the storage-backend construction seam
 //! it reaches is U36's, shared with `seal`); **`vault export|import` —
 //! U12, LANDED**; `status` U23 — M2; `show` U27, `reveal` U28, `verify`
@@ -23,7 +24,7 @@ use crate::error::{CliError, Milestone};
 pub(crate) fn run(cli: &Cli) -> Result<Outcome, CliError> {
     tracing::debug!(network = ?cli.globals.network, json = cli.globals.json, "dispatch");
     let (command, milestone) = match &cli.command {
-        Command::Init(_) => ("init", Milestone::M1),
+        Command::Init(args) => return commands::init(&cli.globals, args),
         Command::Seal(_) => ("seal", Milestone::M1),
         Command::List => return commands::list(&cli.globals),
         Command::Show { .. } => ("show", Milestone::M3),
