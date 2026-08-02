@@ -973,7 +973,11 @@ lane_fuzz_budget() {
   # A budget checker that has never been observed failing is the exact defect
   # this project keeps finding.
   note "fuzz-budget self-test: the arithmetic, the cron reader, and both directions of the verdict"
-  local got want
+  # `cron` is declared here rather than at its first `for` loop below: a loop
+  # variable that has not been declared `local` first assigns to the GLOBAL
+  # scope, and a lane leaking a global into a script that runs nine of them
+  # is the kind of thing that is harmless until it is not.
+  local got want cron
   # (1) cron reader. Getting the day-of-week field wrong would make the guard
   #     read a DAILY lane as weekly and pass it — the single most damaging way
   #     this checker could be wrong.
@@ -1032,7 +1036,7 @@ lane_fuzz_budget() {
   # Target count from scripts/fuzz.sh's own TARGETS array, via its `targets`
   # subcommand — reading the array rather than re-parsing the file, so the
   # guard and the runner can never disagree about what runs.
-  local targets seconds_default seconds_schedule cron n
+  local targets seconds_default seconds_schedule n
   targets="$(bash "$repo/scripts/fuzz.sh" targets | grep -c .)"
   # Anti-vacuity, on every parse below: a failed parse yields an empty value
   # that arithmetic reads as ZERO, and a zero-cost lane always passes. Each
