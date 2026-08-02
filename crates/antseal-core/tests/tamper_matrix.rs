@@ -607,6 +607,14 @@ fn tamper_matrix_non_row_discharges_are_the_pinned_ones() {
     tamper_completeness::assert_non_row_cases_are_the_pinned_ones(&all_rows());
 }
 
+/// The M2 anchor half is **eight** cases and its layer-3 distinctness check
+/// is **armed** — i.e. every case supplies an outcome key to compare, so the
+/// check is not silently skipping them (Q76; D53 §8).
+#[test]
+fn tamper_matrix_m2_anchor_set_is_the_pinned_size_and_armed() {
+    tamper_completeness::assert_m2_anchor_set_is_armed(&all_rows());
+}
+
 /// Prints Q14's gate condition and the outstanding work every run.
 #[test]
 fn tamper_matrix_reports_the_q14_gate() {

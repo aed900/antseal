@@ -123,7 +123,54 @@ const EXPECTED_M0_FAMILIES: usize = 17;
 /// Q18 so extending the matrix is a data change, not a schema change
 /// (tasks/Q.md Q8 accept: "Registry format supports the M2 anchor
 /// extension").
+///
+/// **Families, not cases** — the (M2) clause has six semicolon-separated
+/// clauses and two of them are compound, so six families carry
+/// [`EXPECTED_M2_CASES`] cases. Splitting a compound clause adds a case and
+/// must NOT add a family.
 const EXPECTED_M2_FAMILIES: usize = 6;
+
+/// Number of **M2** anchor spec cases the six families expand to.
+///
+/// **Eight, and the number is the finding.** `TODO.md`, the M2 gate line and
+/// `tasks/A.md` A21 all said seven — and the tree reached "seven" twice by
+/// *different* routes, so the two sevens were never the same seven: this
+/// registry split the expiry clause and kept the digest clause whole (6
+/// families, 7 cases), while A21's `Do` split the digest clause and kept the
+/// expiry clause whole (7 numbered items describing 8 tests). D53 §8 read
+/// line 168's (M2) half back: six clauses, of which clauses 1 and 5 are each
+/// explicitly compound, expanding to **eight** cases. Both halves of clause 1
+/// are now cases here, because under §4b layer 3 they are different checks in
+/// different stages on different artifact kinds (`.ots` stamped digest at
+/// A11; `TSTInfo.messageImprint` at A8) and cannot share an outcome key.
+///
+/// Pinned on **cases** rather than on pending markers so it survives A21:
+/// when a case lands its row it stops being pending, but it is still a case.
+const EXPECTED_M2_CASES: usize = 8;
+
+/// M2 anchor cases whose expected outcome is still `null`, each with the
+/// decision that owes the code.
+///
+/// **This list is the anti-dormancy latch.** §4b layer 3 —
+/// *"a pending row whose expected code is already claimed … fails the
+/// registry"* — compares `expected` keys and **skips every case whose
+/// `expected` is null**. Until Q76 filled them in, four of the seven M2
+/// anchor cases carried `null`, so the check that D53 §2a calls the decisive
+/// argument (a back-dated token cannot be registered at
+/// `verdict:internally-consistent-only`, because `anchor-untrusted-root`
+/// already claims that key) had **nothing to compare**: it was dormant, not
+/// satisfied. Filling the keys in is what arms it. This list is what keeps it
+/// armed — every remaining null must be named here with the decision that
+/// owes it, so a second null cannot appear silently and this one cannot
+/// outlive its decision.
+///
+/// Pinned in **both** directions, the [`EXPECTED_M0_PENDING`] pattern: an
+/// unlisted null fails, and a listed case whose code has since been minted
+/// fails too.
+const EXPECTED_M2_UNMINTED: &[(&str, &str)] = &[(
+    "ber-where-der-required/ber-where-der-required",
+    "A5's strict-DER code, owed by D60 (D53 §8 row 8)",
+)];
 
 /// Mutations deliberately recorded as non-rows (see the module docs).
 ///
@@ -185,6 +232,8 @@ pub struct Registry {
     pub m0_non_row_cases: Vec<(String, String)>,
     /// Total M0 spec cases (implemented + pending + non-row).
     pub m0_cases: usize,
+    /// Total M2 spec cases, in whatever state (see [`EXPECTED_M2_CASES`]).
+    pub m2_cases: usize,
     /// Implemented rows declared as project additions.
     pub project_added: Vec<String>,
     /// Deliberate non-row ids.
@@ -349,6 +398,7 @@ fn check_text(text_bytes: &str, rows: &[TamperRow]) -> Result<Registry, Vec<Stri
         m0_implemented_cases: 0,
         m0_non_row_cases: Vec::new(),
         m0_cases: 0,
+        m2_cases: 0,
         project_added: Vec::new(),
         non_rows: Vec::new(),
     };
@@ -466,6 +516,8 @@ fn check_text(text_bytes: &str, rows: &[TamperRow]) -> Result<Registry, Vec<Stri
             }
             if milestone == "M0" {
                 registry.m0_cases += 1;
+            } else {
+                registry.m2_cases += 1;
             }
 
             // Exactly one of the three states (module docs, D81). Zero is
@@ -1024,6 +1076,68 @@ pub fn assert_pending_set_is_the_pinned_one(rows: &[TamperRow]) {
     );
 }
 
+/// The M2 anchor set is the right size **and its layer-3 check is armed**.
+///
+/// Two claims, and the second is the one that had to be earned.
+///
+/// 1. **Size.** [`EXPECTED_M2_CASES`] cases across [`EXPECTED_M2_FAMILIES`]
+///    families. The families are already pinned inside `check_registry`; the
+///    *case* count was not, which is how the tree came to hold two different
+///    sevens without anything going red (see [`EXPECTED_M2_CASES`]).
+/// 2. **Armed.** Every M2 case's expected outcome is a real key, except the
+///    ones [`EXPECTED_M2_UNMINTED`] names — because a `null` expected makes
+///    `check_pending_cross_distinctness` skip the case entirely. A registry
+///    that is complete but whose distinctness check silently compares
+///    nothing has not proved anything, and that was the state of this half
+///    of the matrix from Q8 until Q76.
+///
+/// Also printed, every run: the outcome key each M2 case claims. Layer 3
+/// asserts they are pairwise distinct; printing them is what lets a reader
+/// see *which* eight outcomes the M2 milestone is buying.
+pub fn assert_m2_anchor_set_is_armed(rows: &[TamperRow]) {
+    let registry = checked(rows);
+    for p in &registry.m2_pending {
+        println!(
+            "tamper matrix M2 [{}] {} — {} -> {}",
+            p.task,
+            p.path,
+            p.row_id,
+            p.expected_key.as_deref().unwrap_or("<code to be minted>")
+        );
+    }
+    assert_eq!(
+        registry.m2_cases, EXPECTED_M2_CASES,
+        "the M2 anchor case count changed. It is EIGHT (D53 §8: line 168's (M2) half is six \
+         clauses, two of them compound); the project reached `seven` twice by different routes \
+         and the two sevens were not the same seven. Changing this number means re-reading the \
+         spec line, not adjusting a constant to fit"
+    );
+    let unminted: Vec<(&str, &str)> = registry
+        .m2_pending
+        .iter()
+        .filter(|p| p.expected_key.is_none())
+        .map(|p| {
+            (
+                p.path.as_str(),
+                EXPECTED_M2_UNMINTED
+                    .iter()
+                    .find(|(path, _)| *path == p.path)
+                    .map_or(
+                        "<UNRECORDED — name the decision that owes this code>",
+                        |e| e.1,
+                    ),
+            )
+        })
+        .collect();
+    assert_eq!(
+        unminted, EXPECTED_M2_UNMINTED,
+        "the set of M2 cases with a null `expected` changed. A null makes layer 3 SKIP the case, \
+         so every one of them is a hole in the cross-distinctness check and must be named here \
+         with the decision that owes the code — and a case whose code has since been minted must \
+         be removed here in the same commit"
+    );
+}
+
 /// **Q14's gate condition**, expressed as executable code rather than
 /// prose: the freeze may not be taken while any M0 spec case is still owed.
 ///
@@ -1145,11 +1259,17 @@ fn case_mut<'a>(root: &'a mut Value, path: &str) -> &'a mut Value {
 /// is a deliberate re-anchor rather than a weakening: the rules under test
 /// (a case in no state, a case in two, a stale marker, an unowned marker, a
 /// marker colliding with a live row) are milestone-agnostic, and the M2
-/// markers are real registrations rather than props. This one is chosen for
-/// `outcome_kind: "error"` with a null `expected`, which is the shape the
-/// collision fixtures below overwrite.
-const A_PENDING_CASE: &str =
-    "anchor-token-for-a-different-digest/anchor-token-for-a-different-digest";
+/// markers are real registrations rather than props.
+///
+/// It is chosen for `outcome_kind: "error"`; every fixture below that cares
+/// about the outcome **overwrites** `expected` or replaces the whole
+/// `pending` block, so none of them depends on its committed value. (Until
+/// Q76 that value was `null` — which is exactly the dormancy
+/// [`EXPECTED_M2_UNMINTED`] records, and a fixture resting on it would have
+/// had to be rewritten when the null was filled in.) Its case id moved from
+/// `anchor-token-for-a-different-digest` to `ots-digest-mismatch` when D53 §8
+/// split the compound clause into its `.ots` and TSA halves.
+const A_PENDING_CASE: &str = "anchor-token-for-a-different-digest/ots-digest-mismatch";
 
 /// A case the committed registry currently holds as **implemented**.
 const AN_IMPLEMENTED_CASE: &str = "wrong-salt/unit-commit";
