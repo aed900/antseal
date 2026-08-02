@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antseal_cli::backend::ReceiptSink;
 // `antseal_net::WalletKey`, not `antseal_net::evm::WalletKey`: S17 wrote the
-// latter when `evm.rs` re-exported the type, and U37/D89 (`6bc8dbf`) moved
+// latter when `evm.rs` re-exported the type, and U37/D89 (`b775e02`) moved
 // the wallet light half into the default graph, demoting that re-export to a
 // private `use`. Nothing noticed, because no lane type-checks this feature's
 // TEST targets — `cargo check -p antseal-cli --features ant-backend` builds

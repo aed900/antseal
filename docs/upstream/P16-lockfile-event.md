@@ -19,7 +19,7 @@
 
 | State | `[[package]]` entries |
 | --- | --- |
-| before (commit a72da5e, P15) | **128** |
+| before (commit 96f1367, P15) | **128** |
 | fresh resolve (adding the launcher's edges) | 725 |
 | after the tested-set precise-pins (§2) | **736** (+608 vs before) |
 
@@ -128,7 +128,7 @@ proves the direct-dependency half on every run).
 ## 5. Containment proof (default lanes unchanged)
 
 - `cargo tree --workspace -e normal --prefix none --locked | sort -u`:
-  **96 entries at a72da5e → 97 after** — the single addition is
+  **96 entries at 96f1367 → 97 after** — the single addition is
   `devnet-launcher v0.0.0` itself (the featureless stub). Zero third-party
   packages entered any default build graph.
 - `cargo test --workspace --locked` compiles the stub only; suite runtime is

@@ -251,7 +251,7 @@ mod ant {
         // this module is behind the non-default `ant-backend` feature, a
         // default `cargo check --workspace` never compiled the mistake.
         // U13 is the first work to build the feature since, and found it
-        // red at `fa2ecff`. (Cross-lane touch: this file is the S31
+        // red at `b11be2f`. (Cross-lane touch: this file is the S31
         // lane's; the change is one identifier and no behaviour.)
         use super::{
             Address, AntCoreBackend, Arc, BalanceReport, Blob, CaptureHook, CliError, CostQuote,
