@@ -311,6 +311,28 @@
 - Accept: an S17/S18-cited verdict recorded in ant_backend.rs docs (keep) OR the hardened loop landed with the same tests; either way the store path's failure classification (Finalize vs ProofsExpired vs Network) stays byte-for-byte
 - Notes: **Discovered by S6 (lane ζ, 2026-08-01)** replicating upstream's majority semantics over the public single-peer surface.
 
+### S25 — Add a proof-age re-verification step to the S20 bump procedure
+- Milestone: M1
+- Size: XS
+- Deps: S9, S20
+- Spec: D37 (as corrected 2026-08-02)
+- Do: S9's constants suite pins what exists; it structurally **cannot** pin an absence — `QUOTE_MAX_AGE_SECS` and `validate_quote_timestamps` have zero occurrences in ant-node 0.15.0 and no test can reference them. Add an explicit human step to S20's bump checklist: re-grep the new ant-node/ant-core for quote-age enforcement on the **single-node** path, and if it returns, restore the node-side attribution in D37 and re-tighten `PROOF_VALIDITY_WINDOW_SECS` from a classifier to a real pre-emptive gate.
+- Accept:
+  - S20's procedure names the grep, the two constants, and the single-node call path to re-read
+  - A returning gate is a reviewed event with a recorded D37 amendment, never a silent behaviour change
+- Notes: Discovered by S9 (lane θ) 2026-08-02. The asymmetry is the point: a *changed* constant surfaces as a test diff; a *returning* one surfaces as nothing at all.
+
+### S26 — Record that the expired-proofs path is mock-only by upstream necessity
+- Milestone: M1
+- Size: XS
+- Deps: S9, S16 (S18 consumes)
+- Spec: D37 Decision 6 (as corrected 2026-08-02)
+- Do: State, where S16's mock-clock matrix and S18's devnet matrix are defined, that the proofs-expired branch is exercised on a mock **because no pinned node can produce it** — not because ageing quotes on a devnet is inconvenient. S9 established that the single-node verification path reads no timestamp, so a real age rejection is unobtainable on any devnet running the pinned node.
+- Accept:
+  - S16/S18 task text and the test module docs carry the reason, with the S9 citation
+  - The gap is recorded as upstream-imposed, so no later wave spends devnet time trying to close it
+- Notes: Discovered by S9 (lane θ) 2026-08-02. `ProofsExpired` remains reachable in principle — a storer rejecting on payment grounds past the window still classifies as expired — so the branch is defensive, not dead.
+
 ## Open decisions (S)
 - Blob↔address model: whether a Blob maps to one top-level address with an internal chunk set (data-map style) or requires explicit per-chunk address handling in `antseal-net`, per ant-core 0.5.0's actual storage model — blocks S2, S4, S6 — must land by M1 start (informed by S1). — **[2026-07-27]** inputs captured (S1 memo): recommended Blob = one chunk, single 32-B BLAKE3 address, offline-recomputable with blake3 alone; `data_download` takes a `DataMap` not an address, so `get_data(Address)` maps to `chunk_get`; 4 MiB chunk cap. Decision itself stays due M1. — **[2026-08-01]** RESOLVED (**D32**): chunk-level, no data-map path in v1; hard 4 MiB cap enforced at seal plan validation before consent/anchor/quote (docs/decisions/D32-blob-address-model.md).
 - Block-number acquisition locus: from ant-core/evmlib's payment confirmation inside `antseal-net::pay`, vs A's `eth_getTransactionReceipt` Arbitrum client invoked by the pipeline (spec's architecture comment puts "Arbitrum receipt capture" in `antseal-anchor`; the churn-boundary rule keeps anchor HTTP out of `antseal-net`) — blocks S7 — M1. — **[2026-07-27]** inputs captured (S1 memo): NO ant-core/evmlib payment API returns a block number (`GasInfo` is gas-only; the native merkle handler reads the event then discards the tx hash) — own `eth_getTransactionReceipt` is mandatory; in the native flow tx hashes survive only inside `PaidChunk.proof_bytes`. Decision itself stays due M1. — **[2026-08-01]** RESOLVED (**D33**): `antseal-net::pay()` — the anchor-side framing overturned; the payment RPC is not anchor HTTP, capture is payment-coupled, backfill over S5's payment RPC via the `ant_protocol` `http_provider` re-export; `antseal-anchor` gets zero M1 work (docs/decisions/D33-block-number-locus.md).

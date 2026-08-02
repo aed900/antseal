@@ -650,6 +650,18 @@
 - Accept:
   - The decision recorded as a dated D27 amendment; the mechanism (or the recorded no-mechanism argument) exercised by a test with a many-failure bundle.
 
+### R59 — Decide R11's final home and build its bundle-shaped half
+- Milestone: M3
+- Size: S
+- Deps: R11, R21; D34
+- Spec: Core user flows — verify `--live` (line 38); Storage-linkage layer (line 119)
+- Do: R11's M1 half landed in `antseal-net::live::manifest` — the only crate that can see both `StorageBackend` and the manifest types, and a shape adapter rather than one of the *drivers* D34 sends to the `antseal_cli` lib (argued in R11's execution note). At M3, when R21 lands in the cli lib, take one of two paths deliberately: (a) build the bundle-shaped adapter through the public `StorageRecord::new` extension point and keep the split — net owns "how to check", the cli lib owns "what to check"; or (b) relocate the module into the cli lib beside R21. Either way, produce the bundle-shaped constructor (a bundle's embedded ciphertexts + its encrypted-manifest record → `Vec<StorageRecord>`) that R11 deliberately deferred.
+- Accept:
+  - The placement is a recorded decision, not a default — with D34 re-read against the shape R21 actually takes
+  - The bundle-shaped adapter exists and is covered by R6-constructed fixtures; a relocation, if chosen, moves no behaviour and changes no cross-crate contract
+  - `--live` over a bundle covers unit ciphertexts **and** the encrypted-manifest blob (R11 accept row 3, at bundle shape)
+- Notes: Discovered by R11 (lane θ) 2026-08-02. The M1 placement was made under a concurrent-lane constraint on `crates/antseal-cli`; that constraint must not be mistaken for the argument, which stands on its own (a shape adapter is not a driver).
+
 ## Open decisions (R)
 - Verifier-page host + domain (one canonical URL) — decide with P/Q; blocks R26 (and the URL constant consumed by R16/R25); must land by M3 (domain availability checked pre-M0 per spec line 3).
 - Footer build-hash mechanism (build-time injection into HTML vs runtime self-hash of the fetched wasm) and exactly which artifact set the published SHA-256 covers — blocks R25; by M3.
