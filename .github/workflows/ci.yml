@@ -644,3 +644,12 @@ jobs:
         run: ./scripts/ci-lanes.sh traceability
       - name: Q43 — every workflow `run:` block is a committed script or an allowlisted line
         run: ./scripts/ci-lanes.sh ci-shell
+      # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its
+      # named 700-minute ceiling. It rides HERE, as a step of an existing
+      # job, for the reason `ci-shell` does: it needs no cargo and no
+      # network, so folding it in costs SECONDS and ZERO new required-status
+      # contexts (the set stays at 19; Q56's generated context list is
+      # untouched). A separate job would have added a context for a check
+      # that reads four literals out of committed files.
+      - name: Q81 — the scheduled fuzz lane fits its named minutes ceiling
+        run: ./scripts/ci-lanes.sh fuzz-budget

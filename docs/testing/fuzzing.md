@@ -109,9 +109,11 @@ it and so should you.
 scripts/fuzz.sh lint                  # fmt + clippy the fuzz crate (stable toolchain)
 scripts/fuzz.sh build                 # build the instrumented binaries
 scripts/fuzz.sh smoke [seconds]       # per-PR budget per target (default 90 s)
-scripts/fuzz.sh long  [seconds]       # nightly budget per target (default 900 s)
+scripts/fuzz.sh long  [seconds]       # interactive long budget (default 900 s;
+                                      #   the SCHEDULED lane passes 600 — D61 §3)
 scripts/fuzz.sh runs  <n> [target...] # a fixed ITERATION count — deterministic
 scripts/fuzz.sh selftest              # prove a crash becomes an artifact
+scripts/fuzz.sh classify-failure      # D61 §7: crash vs infrastructure red
 scripts/fuzz.sh cmin                  # coverage-minimize the working corpus
 scripts/fuzz.sh repro <target> <file> # re-run one crashing input
 ```
@@ -254,7 +256,8 @@ that stand between a user and an adversary's `.sealproof`.
 | lane | trigger | budget | required |
 | --- | --- | --- | --- |
 | `fuzz-smoke` (`.github/workflows/ci.yml`) | every PR + push to main | self-test, then 90 s per target | yes — branch-protection context |
-| `fuzz-nightly` (`.github/workflows/fuzz-nightly.yml`) | scheduled + manual | 900 s per target, corpus persisted | no (not a PR context) |
+| `fuzz-nightly` (`.github/workflows/fuzz-nightly.yml`) | scheduled **twice weekly** (Mon/Thu 03:41 UTC) + manual | 600 s per target, corpus persisted | no (not a PR context) |
+| `fuzz-budget` (a step of ci.yml's `traceability` job) | every PR + push to main | reads four committed literals; no cargo, no network | no new context — folded into an existing job |
 
 `fuzz-smoke` runs `scripts/fuzz.sh selftest` **before** it fuzzes, every
 run: the tripwire (§6) makes each target crash on its first input, and the

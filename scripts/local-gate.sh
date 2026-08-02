@@ -71,6 +71,17 @@ run format-freeze scripts/format-freeze.sh
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
 
+# Q81/D61 — the scheduled fuzz lane's monthly minute bill against its named
+# 700-minute ceiling. Reads committed sources only (no cargo, no network), so
+# it costs a fraction of a second. It is here because the failure it guards
+# against is a REVIEW-time one: adding a name to scripts/fuzz.sh's TARGETS is
+# a one-line diff that silently multiplies a bill which, when the 2 000-minute
+# GitHub Free allowance runs out, stops EVERY workflow in the repository —
+# including all 19 required contexts. Self-tests first, five arms, one of
+# which asserts the configuration this lane shipped with (4 x 900 s daily,
+# 2 274 min/month) is refused.
+run fuzz-budget scripts/ci-lanes.sh fuzz-budget
+
 # Q66 — the traceability lane, which until 2026-07-31 was the one required
 # context this gate did not run. Its self-test fixtures rotted the moment Q14
 # ticked the gate rows, and the red sat invisible for want of exactly this

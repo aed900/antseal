@@ -1296,3 +1296,90 @@ the measurement** (D52's D→C degradation), not to quietly let it run red.
 **Triage while it is non-required** (D52 residual risk 2): a red scheduled run
 gets a tracking note in the next wave's bookkeeping; **two consecutive reds
 block storage-wave starts** until diagnosed.
+
+---
+
+# Q81/D61 — the scheduled fuzz lane was read for the first time (2026-08-02)
+
+## The five runs nobody had ever looked at
+
+`fuzz-nightly.yml` landed on the default branch at commit **5302829**
+(2026-07-28) and has been firing `cron: "41 3 * * *"` ever since. D61
+Correction 1 found that **nothing anywhere recorded that a single one of
+those runs had happened, passed, or cost anything** — the general form of
+the gap Q43 and Q66 were written to close, one level out: not a lane that
+never ran, but a lane that ran and was never read.
+
+D61 Decision 1 says to measure before changing anything. Executed
+**2026-08-02**, read-only:
+
+```
+gh api /repos/aed900/antseal/actions/workflows/fuzz-nightly.yml/runs \
+  --jq '.workflow_runs[] | [.created_at, .conclusion, .run_started_at, .updated_at] | @tsv'
+```
+
+| started (UTC) | conclusion | wall clock |
+| --- | --- | --- |
+| 2026-07-29T06:16:44Z | success | 62 m 50 s |
+| 2026-07-30T06:09:41Z | success | 61 m 40 s |
+| 2026-07-31T06:32:13Z | success | 61 m 39 s |
+| 2026-08-01T06:15:51Z | success | 61 m 34 s |
+| 2026-08-02T06:19:15Z | success | 61 m 40 s |
+
+**Exactly five runs, all green.** D61 §1's precondition — *"if any of the
+five was red, that is a finding to triage under §7 before the cadence change
+lands"* — is therefore discharged, and the count confirms D61 Correction 1's
+derived figure of five rather than the ≥ 2 the git evidence alone bounded.
+
+Three things the numbers settle that the derivation could not.
+
+1. **Per-run overhead is ~1.9 minutes, not 15.** Wall clock is 61.6–62.8 min
+   against 60 min of `-max_total_time`, because both caches hit
+   (`Swatinem/rust-cache` on `fuzz/`, and the pinned `cargo-fuzz` binary).
+   D61's `PER_RUN_OVERHEAD_MINUTES = 15` is ~8× that and is **kept
+   deliberately** — over-estimating is the safe direction for a guard whose
+   failure mode is "every workflow in the repository stops", and lowering it
+   loosens the guard, which is a decision rather than an implementer's call.
+   D61's revisit trigger anticipated the *opposite* finding (an overhead far
+   **above** 15); it did not occur, so the trigger does not fire.
+2. **The real bill exceeds D61's lower bound.** 61.87 min × 30.33 runs/month
+   = **~1 877 min/month, 94 %** of the 2 000-minute GitHub Free allowance,
+   against the ≥ 1 824 / 91 % D61 derived from the committed literals alone.
+   The measurement tightens the ruling in the direction D61 predicted it
+   could only tighten.
+3. **GitHub started these runs at ~06:15Z against an 03:41Z cron** — a
+   2.5-hour slip, consistently. Scheduled instants are best-effort under
+   load. It changes no arithmetic (the count per month is what bills), and
+   it is a second reason not to sit on the 7-day cache-eviction boundary.
+
+## The cadence change, and the guard that keeps it
+
+Landed in one commit with the guard, because the guard is red at the
+configuration it replaces (D61 §5's landing-order note): twice weekly
+(`41 3 * * 1,4`) at 600 s/target ⇒ **476.85 min/month, 23 %** of the
+allowance, against a named ceiling of 700 (35 %).
+
+`scripts/ci-lanes.sh fuzz-budget` computes that from four committed literals
+— `TARGETS` in `scripts/fuzz.sh`, the `seconds` default and the scheduled
+`|| '600'` fallback in `fuzz-nightly.yml`, and the `cron:` day-of-week field
+— and refuses the configuration if it exceeds the ceiling **or** if the cron
+leaves more than 5 days between runs (the corpus cache is evicted after 7
+days without access, and accumulation is this lane's only reason to exist).
+
+It rides as a **step of the existing `traceability` job**, not as a job of
+its own: it needs no cargo and no network, so the **required-context set
+stays at 19** and Q56's generated context list is untouched.
+
+**Billing was not read.** `gh api /users/aed900/settings/billing/actions`
+needs the `user` OAuth scope, which this token does not carry; obtaining it
+(`gh auth refresh`) is an account-bearing action. So the allowance-share
+figures above remain derived from the per-run measurement, not read from
+GitHub's own counter. Recorded as the one half of D61 §1 that is still owed.
+
+**Failure policy** (D61 §7) is now asserted rather than inferred:
+`scripts/fuzz.sh classify-failure` runs on `failure()` and distinguishes a
+**crash** (a reproducer was written — release-blocking on the *first*
+occurrence, no grace) from an **infrastructure red** (no reproducer —
+D52's tracking-note convention, two consecutive block wave starts). It is a
+committed script rather than inline YAML because Q43's `check-ci-shell.py`
+refuses a `run:` block that carries logic, and is right to.
