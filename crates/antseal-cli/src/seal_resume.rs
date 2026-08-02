@@ -273,6 +273,159 @@ pub fn match_candidates(
     })
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// U17: user-initiated abandonment of a pre-pay incomplete work
+// ─────────────────────────────────────────────────────────────────────
+
+/// What a user-initiated abandon did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbandonReport {
+    /// The work that was abandoned.
+    pub seal_id: SealId,
+    /// The fine journal state it was in before (`None` when the journal
+    /// carried no tag — an imported or half-written work).
+    pub previous_state: Option<SealState>,
+    /// The work was **already** abandoned and nothing was written. The
+    /// postcondition holds either way, so this is an outcome rather than
+    /// an error: a script re-running the same abandon must not fail.
+    pub already: bool,
+}
+
+impl AbandonReport {
+    /// The human report.
+    #[must_use]
+    pub fn render(&self) -> Vec<String> {
+        if self.already {
+            return vec![format!(
+                "Work {} was already abandoned; nothing changed.",
+                hex_seal(&self.seal_id)
+            )];
+        }
+        vec![
+            format!(
+                "Abandoned the interrupted seal {}.",
+                hex_seal(&self.seal_id)
+            ),
+            "  Nothing was paid for it and nothing was uploaded, so nothing is lost but the \
+             local encryption work. Sealing these files again starts a completely fresh work: \
+             a new seal_id, a new master secret, freshly drawn nonces, and therefore a \
+             different work-id."
+                .to_owned(),
+            "  The staged ciphertexts stay in the vault until it is compacted; they are no \
+             longer resumable and no longer match any invocation."
+                .to_owned(),
+        ]
+    }
+}
+
+/// Abandon a **pre-pay** incomplete work at the user's explicit request
+/// (U17; the exit D45's flag-mismatch error records as missing).
+///
+/// # Why this exists, and why nothing calls it yet
+///
+/// D45 §2 makes an inexact re-run a hard error: a user with a staged work
+/// over paths `P` who now wants different flags cannot resume (the flags
+/// differ) and cannot start fresh (the paths overlap). That is a trap, and
+/// D45's own residual-risk section records it as one — *"a user-initiated
+/// abandon is safe and needed for the §2 error text to offer a real way
+/// forward … surface addition to be decided deliberately, not smuggled in
+/// here"*.
+///
+/// This function is that mechanism, with its safety rules and its tests.
+/// The **surface token** that would invoke it — a `seal` flag, a `vault`
+/// subcommand, or a new verb — is deliberately *not* added here: the
+/// canonical command surface is frozen and shared, adding to it is the
+/// deliberate decision D45 asked for rather than a side effect of an
+/// implementation lane, and `cli.rs` is outside this lane's containment.
+/// Recorded as **U41**.
+///
+/// # The three rules, in the order they are checked
+///
+/// 1. **A finished work is never abandoned.** Its ciphertexts are on the
+///    network permanently; "abandoning" the record would only throw away
+///    the keys that make them readable.
+/// 2. **A paid work is never abandoned on request.** The authority is the
+///    *journaled receipt*, not the state tag — S16 found a real
+///    double-payment defect that came from trusting the tag, because
+///    D37's capture hook journals the receipt inside `pay()` and a crash
+///    in that window leaves a durable receipt on a pre-pay tag. Reading
+///    the receipt first means the money question is answered by the money
+///    evidence. S11 *does* abandon paid works, but only as a safety
+///    outcome when the staged bytes are gone and the alternative is
+///    re-encrypting under a journaled nonce; forfeiting a payment because
+///    someone typed a flag is a different thing entirely.
+/// 3. Anything else — staged or anchored, no receipt — is abandonable,
+///    and the transition is the S10 state machine's own
+///    [`SealJournal::set_state`], never a hand-written tag write, so the
+///    coarse [`WorkState`] mirror moves with it.
+///
+/// # Errors
+///
+/// [`CliError::Usage`] for rules 1 and 2 (no new exit class: this is the
+/// user asking for something that is not a valid action for this work,
+/// and the message says why); the journal's and store's own classes for
+/// a damaged vault.
+pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
+    store: &WorkStore<'_>,
+    journal: &J,
+    seal_id: &SealId,
+) -> Result<AbandonReport, CliError> {
+    let meta = store.load_meta(seal_id)?;
+
+    // Rule 1: terminal states.
+    match meta.state {
+        WorkState::Complete => {
+            return Err(CliError::Usage {
+                message: format!(
+                    "work {} is complete: its ciphertexts are on the network permanently and \
+                     cannot be recalled, so there is nothing to abandon — discarding the \
+                     record would only destroy the keys that make them readable",
+                    hex_seal(seal_id)
+                ),
+            });
+        }
+        WorkState::Abandoned => {
+            return Ok(AbandonReport {
+                seal_id: *seal_id,
+                previous_state: recorded_state(store, seal_id).map_err(CliError::from)?,
+                already: true,
+            });
+        }
+        WorkState::IncompletePrePay | WorkState::IncompletePostPay => {}
+    }
+
+    // Rule 2: the receipt is the authority on whether money moved.
+    let paid = journal.receipt(seal_id).map_err(CliError::from)?.is_some()
+        || meta.state == WorkState::IncompletePostPay;
+    if paid {
+        return Err(CliError::Usage {
+            message: format!(
+                "work {} has already been paid for — a payment receipt is journaled for it. \
+                 Abandoning it would forfeit that payment permanently, and antseal will not \
+                 do that on request. Finish it instead by re-running `{}`: no further \
+                 payment is needed, and the network's payment proofs stay usable for \
+                 uploading only about a day",
+                hex_seal(seal_id),
+                crate::listing::seal_invocation(
+                    &meta.input_paths_as_given,
+                    &meta.shaping,
+                    &meta.network
+                ),
+            ),
+        });
+    }
+
+    let previous_state = recorded_state(store, seal_id).map_err(CliError::from)?;
+    journal
+        .set_state(seal_id, SealState::Abandoned)
+        .map_err(CliError::from)?;
+    Ok(AbandonReport {
+        seal_id: *seal_id,
+        previous_state,
+        already: false,
+    })
+}
+
 /// The resume plan U17's merged render shows beside the fresh quote: what
 /// is staged, whether money has already moved, and what is left to do.
 ///

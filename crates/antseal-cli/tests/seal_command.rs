@@ -19,16 +19,44 @@ use std::path::{Path, PathBuf};
 
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
+use antseal_cli::listing::WorkListing;
+use antseal_cli::pipeline::{SealJournal, VaultJournal};
 use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
+use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
 use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
 use antseal_cli::vault::store::{WorkState, WorkStore};
+use antseal_core::crypto::secrets::SealId;
 use antseal_net::test_util::{Method, MockBackend, block_on};
 use antseal_net::{BalanceReport, network::EvmAddress20};
 use common::IsolatedVault;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+/// A NON-SECRET, structurally complete fixture receipt (one sub-batch
+/// tx): the money-moved evidence the abandon guard reads. Every value is
+/// an obviously synthetic byte pattern.
+fn fixture_receipt() -> antseal_net::PaymentReceipt {
+    use antseal_net::{GasSummary, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus};
+
+    let quote = QuoteHash::from_bytes([0xB1; 32]);
+    let tx = TxHash::from_bytes([0xB2; 32]);
+    PaymentReceipt {
+        blobs: Vec::new(),
+        tx_map: [(quote, tx)].into_iter().collect(),
+        txs: vec![TxRecord {
+            tx_hash: tx,
+            block_number: Some(42),
+            status: TxStatus::Confirmed,
+            quote_hashes: vec![quote],
+        }],
+        storage_cost_atto: 4_200,
+        gas: GasSummary {
+            gas_cost_wei: 21_000,
+        },
+    }
+}
 
 /// NON-SECRET fixture wallet address: a repeated byte pattern.
 const FIXTURE_WALLET: [u8; 20] = [0x5A; 20];
@@ -892,6 +920,236 @@ fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
         vault.fingerprint(),
         "--dry-run --yes --force-degraded must still leave the vault untouched (D49)"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U17: user-initiated abandonment, and the loud safety aborts
+// ─────────────────────────────────────────────────────────────────────
+
+/// Leave one declined (pre-pay, staged) work behind and hand back its
+/// vault. The decline is D36 rule 3's "incomplete, never abandoned"
+/// outcome — the exact state a user-initiated abandon has to act on.
+fn vault_with_a_declined_work(tag: &str) -> (IsolatedVault, Work, SealId) {
+    let work = Work::new(tag);
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create(tag);
+    let unlocked = vault.unlock();
+    block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        &mut SaysNo,
+        &ctx(false),
+        &mut ChaCha20Rng::from_seed([0x61; 32]),
+        &mut ChaCha20Rng::from_seed([0x62; 32]),
+    ))
+    .expect_err("declined");
+    let seal_id = WorkStore::new(&unlocked).list_works().expect("list")[0];
+    drop(unlocked);
+    (vault, work, seal_id)
+}
+
+/// U17 Accept row 3's second half: declining leaves the work resumable
+/// (asserted above), while the **explicit** abandonment marks it
+/// abandoned — two different outcomes from two different acts, which is
+/// exactly why abandonment may never be a side effect of a decline.
+#[test]
+fn the_explicit_abandonment_marks_the_work_and_it_stops_being_a_resume_candidate() {
+    let (vault, work, seal_id) = vault_with_a_declined_work("abandon");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // Before: D45 matches it, so the re-run with different flags is the
+    // trap this action exists to open.
+    let trapped = work
+        .plan(&["a.txt", "--no-anchor", "--split", "blank-lines"])
+        .expect("plan validates");
+    let err = detect(
+        &store,
+        antseal_net::NetworkId::Devnet,
+        &trapped.absolute_paths(),
+        &trapped.shaping,
+    )
+    .expect_err("D45 refuses an inexact re-run");
+    assert_eq!(err.class(), ErrorClass::ResumeFlagMismatch);
+
+    let report = {
+        let mut rng = ChaCha20Rng::from_seed([0x63; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        abandon_pre_pay(&store, &journal, &seal_id).expect("a pre-pay work is abandonable")
+    };
+    assert!(!report.already);
+    assert_eq!(report.seal_id, seal_id);
+    let rendered = report.render().join("\n");
+    assert!(
+        rendered.contains("Abandoned the interrupted seal"),
+        "{rendered}"
+    );
+    // The copy states what a fresh seal will and will not reuse.
+    assert!(rendered.contains("new seal_id"), "{rendered}");
+    assert!(rendered.contains("freshly drawn nonces"), "{rendered}");
+
+    // U17 Accept row 5: marked in the record store…
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::Abandoned
+    );
+    // …and shown by `list` as abandoned.
+    let listing = WorkListing::gather(&store).expect("listing");
+    let text = listing.render().join("\n");
+    assert!(text.contains("abandoned"), "{text}");
+    assert_eq!(listing.json()["counts"]["abandoned"], 1);
+
+    // After: the trap is open — the same invocation now runs fresh,
+    // because an abandoned work is never a resume candidate (D45 §2).
+    let decision = detect(
+        &store,
+        antseal_net::NetworkId::Devnet,
+        &trapped.absolute_paths(),
+        &trapped.shaping,
+    )
+    .expect("the abandoned work no longer matches anything");
+    assert!(matches!(decision, ResumeDecision::Fresh { .. }));
+
+    // Idempotent: a script that re-runs the abandon must not fail.
+    let again = {
+        let mut rng = ChaCha20Rng::from_seed([0x64; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        abandon_pre_pay(&store, &journal, &seal_id).expect("already abandoned is an outcome")
+    };
+    assert!(again.already);
+    assert!(again.render().join("\n").contains("already abandoned"));
+}
+
+/// The rule that matters most: **a paid work is never abandoned on
+/// request**, and the authority is the journaled receipt rather than the
+/// state tag (S16 found a real double-payment defect that came from
+/// trusting the tag).
+#[test]
+fn a_paid_work_is_refused_and_the_receipt_is_the_authority_not_the_tag() {
+    let (vault, _work, seal_id) = vault_with_a_declined_work("abandon-paid");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // Journal a receipt while the COARSE tag still reads pre-pay — the
+    // exact D37 window S16 exposed. The tag says "safe to discard"; the
+    // receipt says money moved. The receipt must win.
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePrePay
+    );
+    {
+        let mut rng = ChaCha20Rng::from_seed([0x65; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        journal
+            .put_receipt(&seal_id, &fixture_receipt())
+            .expect("journal a receipt");
+    }
+
+    let mut rng = ChaCha20Rng::from_seed([0x66; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let err = abandon_pre_pay(&store, &journal, &seal_id)
+        .expect_err("a paid work is never abandoned on request");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    let rendered = err.to_string();
+    assert!(rendered.contains("already been paid for"), "{rendered}");
+    assert!(rendered.contains("forfeit that payment"), "{rendered}");
+    // It offers the real way forward: finish it, at no further cost.
+    assert!(
+        rendered.contains("no further payment is needed"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("antseal seal a.txt"), "{rendered}");
+
+    // Nothing was written: the work is still exactly where it was.
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePrePay
+    );
+}
+
+/// A finished work has nothing to abandon: its ciphertexts are permanent,
+/// and discarding the record would destroy only the keys that read them.
+#[test]
+fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
+    let work = Work::new("abandon-complete");
+    work.file("a.txt", b"content");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("abandon-complete");
+    let unlocked = vault.unlock();
+    let result = block_on(run_seal(
+        &backend,
+        &unlocked,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x67; 32]),
+        &mut ChaCha20Rng::from_seed([0x68; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+
+    let store = WorkStore::new(&unlocked);
+    let mut rng = ChaCha20Rng::from_seed([0x69; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let err = abandon_pre_pay(&store, &journal, &report.seal_id).expect_err("complete is terminal");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    assert!(err.to_string().contains("is complete"), "{err}");
+    assert_eq!(
+        store.load_meta(&report.seal_id).expect("meta").state,
+        WorkState::Complete
+    );
+}
+
+/// U17's loud safety aborts: one exit code, two messages that cannot be
+/// mistaken for each other, each stating the rule it is enforcing.
+///
+/// The `SourceChanged` arm is deliberately asserted at the *type* level
+/// rather than by driving a scenario: S11 made it unreachable by
+/// construction (resume never opens a source file), which is a stronger
+/// guarantee than the abort U17 asked for — see the variant's own docs
+/// and U42.
+#[test]
+fn the_two_resume_safety_aborts_are_distinct_and_say_what_they_protect() {
+    use antseal_cli::error::{CliError, ResumeSafetyReason};
+
+    let changed = CliError::ResumeSafetyAbort {
+        reason: ResumeSafetyReason::SourceChanged,
+    };
+    let missing = CliError::ResumeSafetyAbort {
+        reason: ResumeSafetyReason::StagedBytesMissing,
+    };
+
+    // One class, one exit code (U2's table), two messages.
+    assert_eq!(changed.class(), ErrorClass::ResumeSafetyAbort);
+    assert_eq!(missing.class(), ErrorClass::ResumeSafetyAbort);
+    assert_eq!(changed.exit_code(), 24);
+    assert_eq!(missing.exit_code(), 24);
+    assert_ne!(changed.to_string(), missing.to_string());
+
+    // Changed source: names the forbidden operation and why.
+    let text = changed.to_string();
+    assert!(text.contains("never re-encrypts"), "{text}");
+    assert!(text.contains("journaled nonce"), "{text}");
+
+    // Missing staged bytes: forfeiture stated as a deliberate choice, and
+    // the fresh seal's new seal_id + fresh nonces named (U17's copy).
+    let text = missing.to_string();
+    assert!(text.contains("abandoned"), "{text}");
+    assert!(text.contains("forfeited"), "{text}");
+    assert!(text.contains("safety-over-cost"), "{text}");
+    assert!(text.contains("NEW seal_id"), "{text}");
+    assert!(text.contains("freshly generated nonces"), "{text}");
+    assert!(text.contains("(k_u, nonce)"), "{text}");
 }
 
 // ─────────────────────────────────────────────────────────────────────

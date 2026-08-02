@@ -194,6 +194,25 @@ pub enum ResumeSafetyReason {
     /// A source file no longer reproduces the anchored commitments;
     /// re-encrypting under the journaled nonce would be catastrophic
     /// `(k_u, nonce)` reuse.
+    ///
+    /// # Unreachable by construction on the resume path, deliberately
+    ///
+    /// Nothing constructs this variant, and that is the *stronger*
+    /// outcome rather than a gap. U17 asked for an abort when a source
+    /// file changed; S11 implemented something better — resume never
+    /// opens a source file at all (`RecordedIdentity` carries no `W`, and
+    /// the re-upload is of the journaled staged ciphertexts), so a
+    /// changed source is not a hazard to abort on but a non-event: S18
+    /// case (3) proves a resume with edited sources restores the
+    /// **original** bytes. There is no abort because the wrong thing
+    /// cannot happen.
+    ///
+    /// The variant is kept rather than deleted: it is the frozen class
+    /// for any future path that *does* read plaintext against a journaled
+    /// nonce (a re-stage or repair feature would need exactly this
+    /// refusal), and its `Display` states the rule that makes such a path
+    /// illegal. Whether to keep it or shrink the error universe by one is
+    /// recorded as **U42**.
     SourceChanged,
     /// The journaled staged ciphertext bytes are unavailable; the
     /// in-progress seal is abandoned rather than ever re-encrypted.
@@ -208,11 +227,19 @@ impl ResumeSafetyReason {
                  (re-using a journaled nonce on new plaintext would break the encryption), so \
                  this seal is abandoned; re-run `antseal seal` to start a fresh one"
             }
+            // U17 fixes the exact wording this abort owes the user: what
+            // was lost, that losing it was chosen, and what a fresh seal
+            // will and will not reuse. "Start a fresh one" alone left the
+            // reader to wonder whether the new seal reuses the old keys —
+            // which is the one thing it must never do.
             ResumeSafetyReason::StagedBytesMissing => {
                 "the staged ciphertext bytes of the interrupted seal are missing from the \
                  vault: resume never re-encrypts, so this seal is abandoned; re-run \
-                 `antseal seal` to start a fresh one (any payment already made is forfeited \
-                 — the deliberate safety-over-cost choice)"
+                 `antseal seal` to start a fresh one, which draws a NEW seal_id and freshly \
+                 generated nonces and therefore produces a different work-id (any payment \
+                 already made is forfeited — the deliberate safety-over-cost choice: a \
+                 reused (k_u, nonce) pair would destroy the confidentiality of everything \
+                 encrypted under it)"
             }
         }
     }
@@ -533,18 +560,32 @@ pub enum CliError {
 
     /// D45 §2: the invocation's inputs overlap an incomplete work without
     /// matching it exactly — refuse loudly rather than guess.
+    ///
+    /// The way-forward clause names only actions this build can actually
+    /// perform. It used to end "or abandon it first", which was an
+    /// instruction with no command behind it: the abandon **mechanism**
+    /// exists ([`crate::seal_resume::abandon_pre_pay`]) but the surface
+    /// token that would invoke it is D45's deliberately-deferred decision
+    /// (U41). An error that tells a trapped user to do something
+    /// impossible leaves them worse off than one that names the two exits
+    /// that work.
     #[error(
         "these inputs overlap an incomplete seal without matching it exactly ({detail}): \
-         re-run with exactly the original path list to resume it, with a disjoint path \
-         list to start a fresh seal, or abandon it first (D45)"
+         re-run with exactly the original path list to resume it, or with a disjoint path \
+         list to start a fresh seal — `antseal list` shows the incomplete seal and the \
+         exact command that finishes it (D45)"
     )]
     ResumeOverlapNotExact { detail: String },
 
     /// D45 §2: same inputs, different seal-shaping flags.
+    ///
+    /// See [`Self::ResumeOverlapNotExact`] on why the way-forward clause
+    /// no longer offers an abandon.
     #[error(
         "these inputs match an incomplete seal but the seal-shaping flags differ \
-         ({detail}): re-run with the original flags to resume, or abandon the incomplete \
-         seal first (D45)"
+         ({detail}): re-run with the original flags to resume and finish it. This build \
+         has no way to discard a staged work, so finishing it — or sealing a copy under a \
+         different path — are the two ways forward; `antseal list` shows it (D45)"
     )]
     ResumeFlagMismatch { detail: String },
 
