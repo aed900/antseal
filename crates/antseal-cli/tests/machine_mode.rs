@@ -136,6 +136,12 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // for a passphrase — a build with no network cannot restore, and
         // collecting a secret first would be rude as well as pointless.
         "restore" => (23, "network-failure"),
+        // U13's handler validates the plan FIRST, before the seam, the
+        // vault and any secret. The minimal argv names `x.txt`, which
+        // does not exist, so what it exhibits here is D46 rule 4's
+        // ordinary I/O class — and that is the point: an argument problem
+        // is answerable without a network, a vault or a passphrase.
+        "seal" => (4, "io-error"),
         _ => (3, "not-implemented"),
     }
 }
@@ -322,10 +328,11 @@ fn render_fixture() -> String {
             // rendered by the real producer rather than hand-copied
             // (U19's rule).
             "init" => antseal_cli::init::existing_vault_refusal(Path::new("/home/user/.antseal")),
-            "seal" => CliError::NotImplemented {
-                command: "seal",
-                milestone: Milestone::M1,
-            },
+            // U13's handler is complete. Its registered exemplar is the
+            // M1 anchor-stage gate — the refusal a user who types plain
+            // `antseal seal notes.txt` today actually gets, and the one
+            // that disappears when U22 lands at M2.
+            "seal" => CliError::AnchorStageUnavailable,
             "status" => CliError::NotImplemented {
                 command: "status",
                 milestone: Milestone::M2,
@@ -357,6 +364,12 @@ fn render_fixture() -> String {
         "[list] result\n{}\n",
         success_envelope("list", "arbitrum-one", fixture_listing().json())
     ));
+    // U13's, rendered by `SealReport::json` — the real producer, so the
+    // registered document cannot drift from the command's own output.
+    out.push_str(&format!(
+        "[seal] result\n{}\n",
+        success_envelope("seal", "arbitrum-one", fixture_seal_report().json())
+    ));
     out.push_str(&format!(
         "[restore] result\n{}\n",
         success_envelope("restore", "arbitrum-one", fixture_restore().json())
@@ -384,6 +397,22 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// A completed `seal`, rendered by U13's own report type. The cost is a
+/// real-shaped atto-ANT value (18 decimals — past what a JSON number
+/// survives, which is why the field is a decimal string).
+fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
+    antseal_cli::seal_run::SealReport {
+        work_id: [0xA1; 32],
+        seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xE1; 16]),
+        cost_atto: 4_200_000_000_000_000_000,
+        paid_here: true,
+        blob_count: 4,
+        resumed: false,
+        unanchored: false,
+        network: "arbitrum-one".to_owned(),
+    }
 }
 
 /// A completed `init`, rendered by U11's own report type so the

@@ -435,14 +435,14 @@ fn antseal_bin() -> Process {
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
-    // `seal` (U13) is the exemplar stub. The row has moved three times as
-    // handlers landed — `vault export|import` at U12, `list`/`restore` at
-    // U19/U20, `init` at U11 — and when U13 lands it moves to `status`.
-    // It must always point at a command that is *actually* still stubbed:
-    // an exemplar that quietly stopped exercising the stub path would
-    // pass for the wrong reason.
+    // `status` (U23, M2) is the exemplar stub. The row has moved four
+    // times as handlers landed — `vault export|import` at U12,
+    // `list`/`restore` at U19/U20, `init` at U11, `seal` at U13 — and
+    // when U23 lands it moves to `show`. It must always point at a
+    // command that is *actually* still stubbed: an exemplar that quietly
+    // stopped exercising the stub path would pass for the wrong reason.
     let out = antseal_bin()
-        .args(["seal", "a.txt"])
+        .args(["status", "w1"])
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");
@@ -454,7 +454,7 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not implemented until M1"),
+        stderr.contains("not implemented until M2"),
         "stub error names its milestone; stderr was {stderr:?}"
     );
     // RUST_LOG=debug: the dispatch trace event must land on stderr —

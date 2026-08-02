@@ -3,7 +3,9 @@
 //! error for its milestone (U1) — never a panic, never silence.
 //!
 //! Arrival map (tasks/U.md milestones): **`init` — U11, LANDED**;
-//! `seal` U13 — M1 pending;
+//! **`seal` — U13, LANDED** (plan validation, D45 resume detection and
+//! the U14 consent gate are complete and drive the pipeline over any
+//! `StorageBackend`; the live path shares `restore`'s U36 seam);
 //! **`list` — U19, LANDED**; **`restore` — U20, LANDED** (its
 //! policy and report are complete; the storage-backend construction seam
 //! it reaches is U36's, shared with `seal`); **`vault export|import` —
@@ -25,7 +27,7 @@ pub(crate) fn run(cli: &Cli) -> Result<Outcome, CliError> {
     tracing::debug!(network = ?cli.globals.network, json = cli.globals.json, "dispatch");
     let (command, milestone) = match &cli.command {
         Command::Init(args) => return commands::init(&cli.globals, args),
-        Command::Seal(_) => ("seal", Milestone::M1),
+        Command::Seal(args) => return commands::seal(&cli.globals, args),
         Command::List => return commands::list(&cli.globals),
         Command::Show { .. } => ("show", Milestone::M3),
         Command::Status { .. } => ("status", Milestone::M2),

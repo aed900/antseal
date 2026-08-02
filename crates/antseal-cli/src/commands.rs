@@ -128,6 +128,146 @@ pub(crate) fn init(globals: &GlobalArgs, args: &crate::cli::InitArgs) -> Result<
     })
 }
 
+/// `seal <PATH>…` (U13; plan validation in [`crate::seal_plan`], resume
+/// detection in [`crate::seal_resume`], the consent gate in
+/// [`crate::seal_consent`], the orchestration in [`crate::seal_run`]).
+///
+/// # The order of refusals, and why it is this one
+///
+/// Plan validation runs **first**, before the backend seam, before the
+/// vault is opened and before any passphrase is collected. Every D46
+/// problem, the `--no-anchor` × `arbitrum-one` refusal and the M1
+/// anchor-stage gate are answerable from argv and `stat` alone, and a
+/// build that cannot reach the network should not be the reason a user
+/// never learns that one of their arguments is a directory. (`restore`
+/// reaches its seam first because it has no argument validation to do —
+/// the shared rule is "the cheapest thing that can say no goes first",
+/// not "the seam goes first".)
+pub(crate) fn seal(globals: &GlobalArgs, args: &crate::cli::SealArgs) -> Result<Outcome, CliError> {
+    let network = effective_network(globals)?;
+    let cwd = std::env::current_dir().map_err(|source| CliError::Io {
+        context: "resolving the current directory to absolutize the seal arguments".to_owned(),
+        source,
+    })?;
+    let plan = crate::seal_plan::build_plan(args, network, &cwd)?;
+    seal_over_backend(globals, &plan)
+}
+
+/// The network the invocation actually runs on: flag > config > built-in
+/// default (U4's precedence).
+///
+/// `config::load()` runs a second time here — `main_entry` already loaded
+/// it to fill the U3 envelope's `network` field but does not pass the
+/// resolution down, and a handler that guessed instead would be a second
+/// answer to a question U4 settled. A malformed config has already hard-
+/// failed before dispatch, so the reload can only agree.
+fn effective_network(globals: &GlobalArgs) -> Result<antseal_net::NetworkId, CliError> {
+    Ok(crate::config::effective_network(
+        globals.network,
+        &crate::config::load()?,
+    ))
+}
+
+/// The storage-backend half of `seal`, reached only after the whole plan
+/// has been validated.
+#[cfg(not(feature = "ant-backend"))]
+fn seal_over_backend(
+    _globals: &GlobalArgs,
+    _plan: &crate::seal_plan::SealPlan,
+) -> Result<Outcome, CliError> {
+    Err(crate::backend::unavailable("seal"))
+}
+
+/// The live path: unlock, connect, run the pipeline, render.
+///
+/// Every step is ordered so the expensive and the secret come last: the
+/// plan is already validated when this is entered, the vault lock is taken
+/// before the passphrase (a second antseal mid-seal should not first ask
+/// for a secret), and the network connection is made only once the wallet
+/// key is in hand.
+#[cfg(feature = "ant-backend")]
+fn seal_over_backend(
+    globals: &GlobalArgs,
+    plan: &crate::seal_plan::SealPlan,
+) -> Result<Outcome, CliError> {
+    use std::sync::Arc;
+
+    use antseal_net::NetworkConfig;
+
+    use crate::backend::{SealBackend, runtime, wallet_key};
+    use crate::seal_consent::TtyConsentPrompt;
+    use crate::seal_run::{SealContext, SealReceipts, run_seal};
+    use crate::vault::wallet::load_wallet_key;
+
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let _lock =
+        VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile)).map_err(CliError::from)?;
+
+    // The network definition BEFORE the passphrase: a devnet with no
+    // exported environment cannot be sealed to, and finding that out
+    // after typing a passphrase is the rudeness U20 named.
+    let config = NetworkConfig::select(plan.network, devnet_env().as_ref()).map_err(|e| {
+        CliError::Usage {
+            message: format!(
+                "{e} — export ANTSEAL_DEVNET_ENV pointing at a running devnet's .devnet/env \
+                 (scripts/devnet/local-up), or seal to --network arbitrum-sepolia"
+            ),
+        }
+    })?;
+
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_vault(&layout, &passphrase)?;
+    let handle = load_wallet_key(&vault)?.ok_or_else(|| CliError::Usage {
+        message: "this vault holds no wallet key, so it cannot pay for a seal — it was \
+                  created by an older build, or the wallet record was removed. Restore from a \
+                  `antseal vault export` backup"
+            .to_owned(),
+    })?;
+    let key = wallet_key(&handle)?;
+
+    let ctx = SealContext {
+        machine_mode: crate::machine::machine_mode_for(globals),
+        to_stderr: globals.json,
+        now_unix_secs: now_unix_secs(),
+        app_version: format!("antseal/{}", env!("CARGO_PKG_VERSION")),
+    };
+    let receipts = SealReceipts::new();
+    let rt = runtime()?;
+    let result = rt.block_on(async {
+        let backend = SealBackend::connect(&config, &key, Arc::clone(&receipts) as Arc<_>).await?;
+        run_seal(
+            &backend,
+            &vault,
+            plan,
+            &mut TtyConsentPrompt,
+            &ctx,
+            &mut OsEntropy,
+            &mut OsEntropy,
+        )
+        .await
+    })?;
+
+    for line in result.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome {
+        json: result.json(),
+    })
+}
+
+/// The devnet's exported environment, when one is present.
+///
+/// The devnet has no built-in definition anywhere by design (S5): its
+/// contract addresses are minted by the Anvil run that created it, so the
+/// only truthful source is the file that run wrote.
+#[cfg(feature = "ant-backend")]
+fn devnet_env() -> Option<antseal_net::DevnetEnv> {
+    let path = std::env::var_os("ANTSEAL_DEVNET_ENV")?;
+    let text = std::fs::read_to_string(path).ok()?;
+    antseal_net::DevnetEnv::from_env_file(&text).ok()
+}
+
 /// `list` (U19).
 ///
 /// Read-only, and deliberately **not** under the U5 single-writer lock:
