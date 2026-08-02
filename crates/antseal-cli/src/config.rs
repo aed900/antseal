@@ -37,7 +37,12 @@
 //!
 //! # Pinned online-endpoint override SLOTS for `verify --online`
 //! # (consumer: U30 at M3; two independent must-agree sources per
-//! # evidence class).
+//! # evidence class). These MUST be https (loopback IP literals are the
+//! # only exemption) — their replies are unsigned, so the transport is
+//! # their only integrity control and a plain-http override would let one
+//! # on-path attacker forge both halves of a "must agree" pair (A49,
+//! # decision D90 §6.6). `tsa_urls` above is deliberately not subject to
+//! # this: RFC 3161 tokens are signed and nonce-bound.
 //! [verify]
 //! bitcoin_endpoints = ["https://a.example", "https://b.example"]
 //! arbitrum_endpoints = ["https://c.example", "https://d.example"]
@@ -435,6 +440,22 @@ fn apply(
             Value::Str(_) => Err(err(format!("`{what}` takes an array of strings"))),
         }
     };
+    // A49: the same array shape, plus antseal-anchor's transport rule. The
+    // check is the substrate's own `Endpoint::parse`, not a second URL
+    // opinion here — one implementation of "which URLs may carry unsigned
+    // evidence", used at config load and again inside `HttpClient::send`.
+    let expect_tls_endpoint_array =
+        |value: Value, what: &str| -> Result<Vec<String>, ConfigParseError> {
+            let items = expect_url_array(value, what)?;
+            for item in &items {
+                antseal_anchor::Endpoint::parse(
+                    item,
+                    antseal_anchor::TlsPolicy::RequiredExceptLoopback,
+                )
+                .map_err(|reason| err(format!("`{what}`: {reason}")))?;
+            }
+            Ok(items)
+        };
 
     let section_names: Vec<&str> = section.iter().map(String::as_str).collect();
     match (section_names.as_slice(), key) {
@@ -480,11 +501,25 @@ fn apply(
         (["anchors"], "tsa_urls") => {
             config.tsa_urls = Some(expect_url_array(value, "tsa_urls")?);
         }
+        // A49 (decision D90 §6.6): the `[verify]` endpoints are the two
+        // must-agree pairs, and their replies are **unsigned** — an esplora
+        // block header and an `eth_getTransactionReceipt` result carry no
+        // signature of their own, so they are trusted only because two
+        // independent endpoints agree. Over plain HTTP one on-path attacker
+        // forges both halves and the must-agree primitive reports agreement
+        // on a lie, which is why transport security is not optional here.
+        // Refused at **load**, naming the endpoint, so a bad override fails
+        // before any seal or verify work rather than midway through
+        // `verify --online`. The RFC 3161 slot above (`tsa_urls`) is
+        // deliberately NOT subject to this: TSA tokens are signed and
+        // nonce-bound, and `timestamp.digicert.com` has no port 443 at all.
         (["verify"], "bitcoin_endpoints") => {
-            config.verify_bitcoin_endpoints = Some(expect_url_array(value, "bitcoin_endpoints")?);
+            config.verify_bitcoin_endpoints =
+                Some(expect_tls_endpoint_array(value, "bitcoin_endpoints")?);
         }
         (["verify"], "arbitrum_endpoints") => {
-            config.verify_arbitrum_endpoints = Some(expect_url_array(value, "arbitrum_endpoints")?);
+            config.verify_arbitrum_endpoints =
+                Some(expect_tls_endpoint_array(value, "arbitrum_endpoints")?);
         }
         _ => {
             config.warnings.push(format!(

@@ -156,6 +156,78 @@ arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
     assert!(config.warnings.is_empty());
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// A49 — the transport requirement on unsigned online evidence
+// ─────────────────────────────────────────────────────────────────────
+
+/// A49 (decision D90 §6.6). The `[verify]` endpoints are the two must-agree
+/// pairs; their replies carry no signature of their own and are trusted only
+/// because two *independent* endpoints agree, so an `http://` override hands
+/// one on-path attacker both halves and the agreement becomes a tautology
+/// that still reports success.
+///
+/// Refused at **load**, naming the endpoint, before any network call.
+#[test]
+fn a_plain_http_verify_endpoint_is_refused_at_config_load() {
+    for (key, other) in [
+        ("bitcoin_endpoints", "arbitrum_endpoints"),
+        ("arbitrum_endpoints", "bitcoin_endpoints"),
+    ] {
+        let text = format!(
+            "[verify]\n{key} = [\"https://good.example\", \"http://plain.example/api\"]\n\
+             {other} = [\"https://a.example\", \"https://b.example\"]\n"
+        );
+        let err = parse(&text).expect_err("a plain-http must-agree endpoint is refused");
+        let rendered = err.detail.clone();
+        assert!(
+            rendered.contains("http://plain.example/api"),
+            "the failure must name the offending endpoint: {rendered}"
+        );
+        assert!(
+            rendered.contains("must be https"),
+            "…and the reason: {rendered}"
+        );
+        assert!(rendered.contains(key), "…and the key: {rendered}");
+    }
+}
+
+/// The other direction, so the rule is proven to be a *rule* and not a
+/// blanket refusal: `https` passes, a loopback IP literal passes (A16/A17's
+/// stub suites bind `127.0.0.1`, and Q16 forbids real endpoints in CI), and
+/// the RFC 3161 slot still accepts plain HTTP — `timestamp.digicert.com` has
+/// no port 443 at all, and its tokens are signed and nonce-bound.
+#[test]
+fn https_and_loopback_verify_endpoints_are_admitted_and_tsa_http_is_untouched() {
+    let text = r#"
+[anchors]
+tsa_urls = ["http://timestamp.digicert.com"]
+
+[verify]
+bitcoin_endpoints = ["https://btc-a.example", "http://127.0.0.1:8332/rest"]
+arbitrum_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
+"#;
+    let config = parse(text).expect("https, loopback literals and a plain-http TSA all load");
+    assert_eq!(
+        config.verify_bitcoin_endpoints.as_ref().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        config.verify_arbitrum_endpoints.as_ref().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        config.tsa_urls.as_deref(),
+        Some(&["http://timestamp.digicert.com".to_owned()][..])
+    );
+
+    // The carve-out is IP literals only: a NAME that resolves to loopback,
+    // and a hostname that merely contains one, are both refused.
+    for hostile in ["http://localhost:8332/", "http://127.0.0.1.evil.example/"] {
+        let text = format!("[verify]\nbitcoin_endpoints = [\"{hostile}\"]\n");
+        parse(&text).expect_err(hostile);
+    }
+}
+
 /// The networks the config selects map onto DISTINCT endpoint/contract
 /// sets from S5's schema (the U4 Accept, via antseal-net's pure half).
 #[test]
