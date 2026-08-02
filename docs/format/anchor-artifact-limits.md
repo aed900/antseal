@@ -207,7 +207,38 @@ A28 fill it at M2; nothing else may.
 
 | limit | owner | initial value | date set | measured against (A25 fixture path) | margin | lowered |
 | --- | --- | --- | --- | --- | --- | --- |
-| _(empty at M0 — A5/A11/A28 fill this at M2)_ | | | | | | |
+| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (100 ops; **bootstrap** measurement taken on the rust-opentimestamps `LARGE_TEST` mainnet proof, blocks 449397/449399, pending A25's two-day cycle) | 40.96x | never |
+| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (depth **67**; bootstrap measurement as above) | 15.28x | never |
+| `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width 3) | 21.33x | never |
+| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (3) and `.../upgraded/rust-opentimestamps-LARGE_TEST.ots` (4, the binding one; bootstrap measurement as above) | 64.00x | never |
+| `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (174 B coinbase-prefix operand; bootstrap measurement as above) | 94.16x | never |
+| `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (210 B running value; bootstrap measurement as above) | 156.04x | never |
+| `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (46 B pending payload); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never |
+
+**Four of these seven rows are bootstrapped, not measured, and say so in the
+cell.** No real *upgraded* `.ots` of this project's own exists yet — A25's
+two-day OTS pending → upgraded cycle started 2026-08-02T19:16Z and cannot
+complete before 2026-08-04 — so the `upgraded/` rows are measured against the
+`LARGE_TEST` constant of `opentimestamps-0.2.0`, a genuine mainnet proof over
+Bitcoin blocks 449397 and 449399 (≈ January 2017), committed with its
+provenance at `testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md`.
+**A25 must re-measure them against the real fixture and append.** The values
+do not change — F4 forbids lowering and none needs raising — but the
+provenance cell must stop citing a third-party crate's test constant. Every
+number in the `measured against` cells is produced by the parser itself
+(`anchor::ots::parse_ots_measured`), so a re-measurement is a call rather
+than a second implementation.
+
+**Correction to D58 §9.5, recorded rather than silently applied.** D58's
+rows read *depth 69* for the upgraded proof and *depth 13* for the merged
+pending file. Under D58 §9.3's own normative definition — *"edges from the
+root step, root at 0 … a chain of `N` ops terminated by an attestation has
+maximum depth `N`"*, which §9.3 says *"must be the one the implementation
+uses"* — the measured depths are **67** and **12**: an attestation is a leaf
+hanging off a node, not a node of its own. Both values were confirmed by an
+independently written length-respecting scanner as well as by the parser.
+The direction is safe (the margin grows, 14.84x → 15.28x) and F4 forbids
+lowering, so nothing moves; the cell records what was measured.
 
 **Update rule.** One row per artifact-internal limit and per receive-side
 cap, added when the limit is first set, never deleted. `lowered` starts at
