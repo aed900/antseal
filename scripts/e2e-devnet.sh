@@ -71,7 +71,7 @@ suite_registry() {
 live|S6-S8|antseal-net|ant-backend|devnet_backend|real-backend adapter suite against a live devnet: store/fetch round-trips, quote+pay, capture consistency
 live|S17|antseal-cli|ant-backend|e2e_devnet|multi-file --split seal, restore, UNANCHORED library verify, --live re-fetch
 live|S18|antseal-cli|ant-backend|e2e_kill_resume|kill between pay and finalize (no double payment, Anvil tx counting), kill mid-upload (byte-identical resume), (k_u,nonce)-reuse abort
-pending|S19|antseal-cli|ant-backend|e2e_restore|clean-tree restore from the vault export alone
+live|S19|antseal-cli|ant-backend|e2e_restore|clean-tree restore from the vault export alone
 EOF
 }
 

@@ -571,6 +571,14 @@ fn a_zero_anchor_seal_library_verifies_as_unanchored() {
 /// a hit. The alternative (excluding this file from its own scan) would
 /// leave the scan unable to see the file most likely to acquire a
 /// shortcut.
+///
+/// **The cost of that choice, learned the hard way**: *prose* in these
+/// files is scanned too, so a comment that spells a needle out fails the
+/// suite. The S18 wave added a comment naming one, this test went red, and
+/// the full-registry gate run is what caught it — the standalone S18 run
+/// could not, because the regression was in S17's file. Refer to needles
+/// obliquely ("the cargo-binary-path needle"), never verbatim. Weakening
+/// the scan to exempt itself would trade a real guarantee for a comment.
 #[test]
 fn the_gate_suites_invoke_no_m3_cli_or_bundle_builder() {
     let split = |head: &str, tail: &str| format!("{head}{tail}");
@@ -620,8 +628,10 @@ fn the_gate_suites_invoke_no_m3_cli_or_bundle_builder() {
         // this very test binary. What must stay forbidden is spawning
         // anything *else*, above all the CLI. So the rule is conditional
         // rather than blanket: a gate suite that spawns must resolve its
-        // program from `current_exe`, and the `CARGO_BIN_EXE` needle above
-        // independently blocks the one way a cargo test can name the CLI.
+        // program from `current_exe`, and the cargo-binary-path needle
+        // above independently blocks the one way a cargo test can name the
+        // CLI. (Named obliquely on purpose — see the note on the docstring
+        // about prose tripping this scan.)
         let spawns = text.contains(&split("Command::", "new"));
         if spawns && !text.contains(&split("current_", "exe")) {
             violations.push(format!(
