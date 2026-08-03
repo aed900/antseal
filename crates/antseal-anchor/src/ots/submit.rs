@@ -25,9 +25,20 @@
 //! Each response is validated **on its own**, by wrapping it in a container
 //! header and running it through `parse_ots` against `anchor_digest`. A
 //! one-branch container is a legal `.ots`, so this is the real parser and not
-//! an approximation of it — and a calendar that returns something that is not
-//! a timestamp over our digest is recorded as *that calendar's* failure
-//! instead of poisoning the merge and losing which endpoint was at fault.
+//! an approximation of it — and a calendar that returns something malformed is
+//! recorded as *that calendar's* failure instead of poisoning the merge and
+//! losing which endpoint was at fault.
+//!
+//! **What this validation does not establish**, stated because the signature
+//! `parse_ots(bytes, anchor_digest)` invites the opposite reading: it does not
+//! show that the calendar stamped *our* digest. The digest is checked against
+//! the container header, this client writes that header, and a calendar's
+//! contribution is a bare op stream that executes from any starting value. A
+//! response issued for another digest is well-formed here and yields a
+//! commitment the calendar never issued. That is detected at upgrade time and
+//! only there — by the calendar answering `404 Not found` — which is why
+//! A14's hard-error arm exists and why it must stay distinguishable from
+//! "not yet confirmed".
 
 use std::time::{Duration, Instant};
 
@@ -55,12 +66,16 @@ pub enum CalendarFailure {
     /// Transport, timeout, non-2xx, over-cap. Carries the endpoint URL.
     #[error(transparent)]
     Http(#[from] AnchorHttpError),
-    /// A 2xx body that is not a timestamp over this `anchor_digest`.
+    /// A 2xx body that is not a well-formed timestamp at all.
     ///
-    /// Includes the case that matters most: a calendar whose response commits
-    /// a *different* digest fails here, because the digest-commitment check
-    /// lives inside `parse_ots` and takes `anchor_digest` as a parameter.
-    #[error("{calendar}: the response is not a timestamp over this digest ({source})")]
+    /// **This does not catch a response issued for a different digest**, and
+    /// the original version of this comment claimed it did. It cannot: the
+    /// digest lives in the container header, which this client writes from its
+    /// own `anchor_digest`, and an op stream executes from any starting value.
+    /// That case is detected at upgrade time, by the calendar itself, as
+    /// `404 Not found` — see
+    /// [`tests::a_response_for_another_digest_is_only_detectable_at_upgrade_time`].
+    #[error("{calendar}: the response is not a well-formed timestamp ({source})")]
     Artifact {
         /// The calendar's submit URL.
         calendar: String,

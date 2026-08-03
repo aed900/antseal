@@ -302,25 +302,211 @@ fn three_upgrades_accumulate_into_one_artifact() {
     assert_eq!(artifact.len(), 664 + 3 + 1_000 + 1_036 + 1_105);
 }
 
-/// An upgrade body spliced against the **wrong** pending attestation cannot
-/// pass: the ops execute from a different commitment, so nothing derives.
+/// An upgrade body spliced against the **wrong** pending attestation **merges
+/// cleanly**, and is stopped one step later by the header check.
+///
+/// **Written after the opposite assertion failed**, and the correction is the
+/// point. The expectation was that a mismatched splice could not produce a
+/// Bitcoin attestation. It does: `append`/`prepend`/`sha256` execute from any
+/// value, and the height comes from the attestation payload — which is
+/// verbatim from the calendar — not from the ops. So the merge yields a
+/// structurally perfect attestation at the **right height** with a **wrong**
+/// merkle root.
+///
+/// That is not a hole, but it does relocate the defence, and a reader needs to
+/// know where it actually is: nothing but
+/// [`confirm_header`] can catch this, because catching it means comparing the
+/// derived root against a header two independent endpoints agree on. A merge
+/// that "validated" without that comparison would record a forged attestation
+/// that parses, and the artifact would then fail its own verifier at reveal
+/// time — the failure mode A14's "reject before recording" exists to prevent.
 #[test]
-fn an_upgrade_merged_at_the_wrong_attestation_is_refused() {
+fn a_mis_spliced_upgrade_merges_but_cannot_be_recorded() {
     let references = pending_refs(fixtures::MERGED_A, &fixtures::DIGEST_A).expect("parses");
     let bob = references
         .iter()
         .find(|reference| reference.uri.contains("bob"))
         .expect("bob");
+    let alice = references
+        .iter()
+        .find(|reference| reference.uri.contains("alice"))
+        .expect("alice");
 
-    // alice's upgrade body against bob's attestation.
-    let error = merge_upgrade(
+    // alice's upgrade body against bob's attestation: it merges.
+    let wrong = merge_upgrade(
         fixtures::MERGED_A,
         &fixtures::DIGEST_A,
         bob,
         fixtures::UPGRADE_A_ALICE,
     )
-    .expect_err("a mismatched upgrade must not merge");
-    assert_eq!(error, MergeError::NoBitcoinAttestation);
+    .expect("a mis-spliced upgrade is still well-formed");
+    assert_eq!(wrong.added.len(), 1);
+
+    // …at the same height as the correct splice, and with a different root.
+    let right = merge_upgrade(
+        fixtures::MERGED_A,
+        &fixtures::DIGEST_A,
+        alice,
+        fixtures::UPGRADE_A_ALICE,
+    )
+    .expect("the correct splice");
+
+    let (wrong_height, wrong_root) = bitcoin_parts(&wrong.added[0]);
+    let (right_height, right_root) = bitcoin_parts(&right.added[0]);
+    assert_eq!(
+        wrong_height, right_height,
+        "the height is payload, not ops — a mis-splice cannot change it"
+    );
+    assert_ne!(
+        wrong_root, right_root,
+        "the root is ops-derived, so a mis-splice does change it"
+    );
+
+    // The header check is what refuses it. Both roots are offered the *same*
+    // agreed header — the one the correct splice derives — and only the
+    // correct one is accepted.
+    let mut header = [0_u8; 80];
+    header[36..68].copy_from_slice(&right_root);
+    let upgrade = antseal_core::bundle::schema::OtsUpgrade::new(right_height, header, 0);
+
+    assert!(antseal_core::anchor::ots::header_commits(
+        &right.added[0],
+        &upgrade
+    ));
+    assert!(
+        !antseal_core::anchor::ots::header_commits(&wrong.added[0], &upgrade),
+        "the mis-spliced attestation must not commit the real header"
+    );
+}
+
+fn bitcoin_parts(attestation: &OtsAttestation) -> (u64, [u8; 32]) {
+    let OtsAttestation::Bitcoin {
+        height,
+        merkle_root: Some(root),
+    } = attestation
+    else {
+        panic!("expected a Bitcoin attestation with a determinate root")
+    };
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(root);
+    (*height, out)
+}
+
+/// The heights and roots the six real upgrades attest, pinned.
+///
+/// These are the values A48 re-measures against a fetched mainnet header, and
+/// they are asserted here so that a re-recorded fixture cannot quietly change
+/// what the tree believes the day-2 capture said.
+#[test]
+fn the_real_upgrades_attest_the_recorded_heights() {
+    let mut observed: Vec<Vec<u64>> = Vec::new();
+    for (digest, merged, bodies) in [
+        (
+            fixtures::DIGEST_A,
+            fixtures::MERGED_A,
+            [
+                fixtures::UPGRADE_A_ALICE,
+                fixtures::UPGRADE_A_BOB,
+                fixtures::UPGRADE_A_CATALLAXY,
+            ],
+        ),
+        (
+            fixtures::DIGEST_B,
+            fixtures::MERGED_B,
+            [
+                fixtures::UPGRADE_B_ALICE,
+                fixtures::UPGRADE_B_BOB,
+                fixtures::UPGRADE_B_CATALLAXY,
+            ],
+        ),
+    ] {
+        let references = pending_refs(merged, &digest).expect("parses");
+        assert_eq!(references.len(), 3);
+        let heights: Vec<u64> = references
+            .iter()
+            .zip(bodies)
+            .map(|(reference, body)| {
+                let merged = merge_upgrade(merged, &digest, reference, body).expect("merges");
+                bitcoin_parts(&merged.added[0]).0
+            })
+            .collect();
+        observed.push(heights);
+    }
+
+    // **Three calendars, three different Bitcoin blocks** — alice 960767,
+    // bob 960768, catallaxy 960771 — and identically for both digests, which
+    // is what three operators on independent aggregation schedules looks like.
+    //
+    // This is the shape that makes A14's "fetch the header on the FIRST
+    // Bitcoin attestation" rule matter rather than being a detail: a fully
+    // upgraded artifact carries three attestations at three heights, and the
+    // single embedded header can only commit one of them. A12's predicate is
+    // "at least one Bitcoin attestation commits the embedded header at its
+    // recorded height", which this satisfies — but an implementation that
+    // required *every* attestation to commit the header would fail on a
+    // perfectly honest three-calendar artifact.
+    assert_eq!(
+        observed,
+        vec![
+            vec![960_767, 960_768, 960_771],
+            vec![960_767, 960_768, 960_771],
+        ]
+    );
+}
+
+/// The consequence of the row above, asserted rather than left as a comment:
+/// in a fully upgraded artifact exactly one attestation commits the embedded
+/// header, and the other two do not.
+#[test]
+fn only_one_of_three_attestations_commits_the_single_embedded_header() {
+    let mut artifact = fixtures::MERGED_A.to_vec();
+    for (uri, body) in [
+        (
+            "https://alice.btc.calendar.opentimestamps.org",
+            fixtures::UPGRADE_A_ALICE,
+        ),
+        (
+            "https://bob.btc.calendar.opentimestamps.org",
+            fixtures::UPGRADE_A_BOB,
+        ),
+        (
+            "https://btc.calendar.catallaxy.com",
+            fixtures::UPGRADE_A_CATALLAXY,
+        ),
+    ] {
+        let references = pending_refs(&artifact, &fixtures::DIGEST_A).expect("parses");
+        let target = references
+            .iter()
+            .find(|reference| reference.uri == uri)
+            .expect("pending");
+        artifact = merge_upgrade(&artifact, &fixtures::DIGEST_A, target, body)
+            .expect("merges")
+            .artifact;
+    }
+
+    let parsed = parse_ots(&artifact, &fixtures::DIGEST_A).expect("A11-clean");
+    let bitcoin: Vec<&OtsAttestation> = parsed
+        .attestations
+        .iter()
+        .filter(|a| matches!(a, OtsAttestation::Bitcoin { .. }))
+        .collect();
+    assert_eq!(bitcoin.len(), 3);
+
+    // The header group recorded for the first upgrade (alice, 960767).
+    let (height, root) = bitcoin_parts(bitcoin[0]);
+    assert_eq!(height, 960_767);
+    let mut header = [0_u8; 80];
+    header[36..68].copy_from_slice(&root);
+    let upgrade = antseal_core::bundle::schema::OtsUpgrade::new(height, header, 0);
+
+    let committing = bitcoin
+        .iter()
+        .filter(|attestation| antseal_core::anchor::ots::header_commits(attestation, &upgrade))
+        .count();
+    assert_eq!(
+        committing, 1,
+        "exactly one attestation commits the one embedded header"
+    );
 }
 
 /// A body that is not a timestamp at all is refused by the re-validation, and

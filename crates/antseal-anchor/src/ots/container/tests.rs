@@ -230,14 +230,21 @@ fn a_splice_over_the_embeddable_ceiling_is_refused_before_it_is_built() {
     let uri = "https://bob.btc.calendar.opentimestamps.org";
     let offset = locate_pending(&merged, uri, 0, 1).expect("locate");
 
-    let error = splice_sibling_before(&merged, offset, &[0x08; 16], 700)
-        .expect_err("681 bytes over a 700-byte ceiling must be refused");
+    // 664 + 1 separator + 16 = 681, so 680 is the ceiling that must refuse it
+    // and 681 is the one that must not. Both directions, because a check
+    // written `>=` instead of `>` passes the first assertion alone.
+    let error = splice_sibling_before(&merged, offset, &[0x08; 16], 680)
+        .expect_err("681 bytes over a 680-byte ceiling must be refused");
     assert_eq!(
         error,
         ContainerError::TooLarge {
-            len: 664 + 1 + 16,
-            limit: 700
+            len: 681,
+            limit: 680
         }
+    );
+    assert!(
+        splice_sibling_before(&merged, offset, &[0x08; 16], 681).is_ok(),
+        "a result of exactly the ceiling is admitted"
     );
     // The real ceiling admits it with room: 681 against 1 MiB.
     assert!(splice_sibling_before(&merged, offset, &[0x08; 16], MAX_OTS_BYTES).is_ok());

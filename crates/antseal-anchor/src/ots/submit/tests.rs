@@ -241,20 +241,52 @@ fn a_garbage_response_is_attributed_to_its_own_calendar() {
     assert!(matches!(failure, CalendarFailure::Artifact { .. }));
 }
 
-/// A calendar's timestamp for a **different digest** is refused, because the
-/// digest-commitment check is a parameter of the parser and not an optional
-/// extra step this client could forget.
+/// A calendar's response for **another digest** is accepted at submit time,
+/// and that is a property of the protocol rather than a hole in this client.
+///
+/// **Written after the opposite assertion failed**, which is the useful part.
+/// The intuition was that `parse_ots` takes `anchor_digest` as a parameter, so
+/// a response for the wrong digest must fail. It cannot: the digest lives in
+/// the **container header**, this client writes that header from its own
+/// `anchor_digest`, and the calendar's contribution is a bare op stream.
+/// `append`/`prepend`/`sha256` execute from *any* starting value, so a
+/// response for digest B run from digest A yields a perfectly well-formed
+/// timestamp — with a commitment the calendar has never heard of.
+///
+/// There is no local check that can see this, and one should not be invented:
+/// the detection is D58 §7.4(a)'s, and it is stronger than anything local
+/// could be. The upgrade poll asks the calendar about the commitment we
+/// derived, and a calendar that never issued it answers `404 Not found` —
+/// which is precisely why that hard-error arm has to exist and has to be
+/// distinguishable from `not yet confirmed`.
 #[test]
-fn a_response_stamping_another_digest_is_refused() {
+fn a_response_for_another_digest_is_only_detectable_at_upgrade_time() {
     let wrong = stub(&pending(fixtures::CALENDAR_ALICE_A));
-    // The alice capture stamps digest A; submit under digest B.
+    // The alice capture is the response to digest A; submit under digest B.
     let submission = submit_to_calendars(&client(), &fixtures::DIGEST_B, &[wrong.base_url()]);
 
-    assert_eq!(submission.outcome(), OtsSubmitOutcome::Absent);
-    assert!(matches!(
-        submission.attempts[0].outcome,
-        Err(CalendarFailure::Artifact { .. })
-    ));
+    assert_eq!(
+        submission.outcome(),
+        OtsSubmitOutcome::Thin,
+        "structurally valid, so it is accepted here"
+    );
+    let record = submission.pending().next().expect("accepted");
+
+    // …but the commitment it derives is NOT the one the calendar issued for
+    // this response, which is what the upgrade poll will discover.
+    let real = pending_refs_for(fixtures::MERGED_A, &fixtures::DIGEST_A);
+    assert!(
+        !real.contains(&record.commitment),
+        "the derived commitment must differ from the one the calendar issued"
+    );
+}
+
+fn pending_refs_for(artifact: &[u8], digest: &[u8; 32]) -> Vec<Vec<u8>> {
+    crate::ots::pending_refs(artifact, digest)
+        .expect("parses")
+        .into_iter()
+        .map(|reference| reference.commitment)
+        .collect()
 }
 
 /// D54's named test: an over-cap response is a typed error, never a
