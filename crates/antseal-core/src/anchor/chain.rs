@@ -463,7 +463,16 @@ impl<'a> PathBuilder<'a> {
         let mut nodes = Vec::with_capacity(supplied.len() + 1);
         nodes.push(Node::new(signer));
         for cert in supplied {
-            nodes.push(Node::new(cert));
+            let node = Node::new(cert);
+            // The token's bag and the bundle's `intermediates` field routinely
+            // carry the same certificate, and a duplicated node is duplicated
+            // work in a search an adversary chooses the input to. Dropping the
+            // duplicate cannot change a verdict: the two nodes are byte-equal,
+            // so every predicate over them agrees.
+            if nodes.iter().any(|n: &Node<'_>| n.der == node.der) {
+                continue;
+            }
+            nodes.push(node);
         }
         // A pinned root that does not parse cannot anchor anything, and it
         // takes nothing else down with it (F2). `every_pinned_root_parses…`
@@ -1856,6 +1865,16 @@ mod tests {
             builder.memo.len() <= MAX_CHAIN_CERTS * (supplied.len() + 1),
             "memo states blew the (node, depth) bound: {}",
             builder.memo.len()
+        );
+        // The path-length bound is *reached* here, not merely declared. On
+        // this graph every node chains to every other, so the search would
+        // run forever without it — a cap that cannot be hit is the defect
+        // class this project keeps finding, and this is where it is hit.
+        let deepest = builder.memo.keys().map(|&(_, d)| d).max().expect("visited");
+        assert_eq!(
+            deepest,
+            MAX_CHAIN_CERTS - 2,
+            "the search must stop at the deepest position an intermediate can occupy"
         );
     }
 

@@ -309,7 +309,7 @@ the currency C1 would otherwise contribute. That is a real argument — and it
 is an argument for **amending D57's procedure**, which is a decision, not a
 judgement call for the implementing task. Making it here would mean this task
 had rewritten its own admission rule to admit the root it was evaluating.
-**A57** owns it: either execute C1 from a host SwissSign does not block, or
+**A56** owns it: either execute C1 from a host SwissSign does not block, or
 carry the amendment as a reviewed decision.
 
 ---

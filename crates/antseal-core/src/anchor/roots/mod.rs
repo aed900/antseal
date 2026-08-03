@@ -524,6 +524,27 @@ mod tests {
         assert_eq!(ROOT_EXPIRY_HORIZON_SECS, 31_536_000, "365 days");
     }
 
+    /// `from_static` is gated so that it does not exist in a default build.
+    ///
+    /// A test cannot observe this directly — `cfg(test)` is on while the test
+    /// runs, so the symbol is always present here. What a test *can* do is
+    /// assert the attribute is still on the item, which is the mutation that
+    /// would silently turn A6's "page/CLI production paths provably use
+    /// `pinned()` only" from a compile-time fact back into a review checklist
+    /// item. `include_str!` of this module is the crate's existing pattern
+    /// for exactly this shape of guard (see `anchor::ots::limits`).
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn from_static_is_absent_from_a_default_build() {
+        const THIS_FILE: &str = include_str!("mod.rs");
+        let needle = "#[cfg(any(test, feature = \"test-util\"))]\n    #[must_use]\n    pub const fn from_static(";
+        assert!(
+            THIS_FILE.contains(needle),
+            "`from_static` must stay behind `#[cfg(any(test, feature = \"test-util\"))]`; \
+             without it a production build can construct a store that is not `pinned()`"
+        );
+    }
+
     /// `hex32` rejects the malformed literal shapes, so the compile-time
     /// guard is not taken on trust.
     ///
