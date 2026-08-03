@@ -6,3 +6,12 @@
 # (G3 UTF-8 corpus inputs/outputs, Q4 golden vectors, Q7 tamper fixtures;
 # layout owned by Q2) survive checkout unchanged on every OS.
 testdata/** -text
+
+# Production trust anchors compiled into antseal-core (D57 §7 / A6). Same
+# byte-exactness hazard as testdata/, different tree: the rule above matches
+# nothing under crates/, and a CRLF-mangled DER is an unparseable root — so
+# without this line the pinned TSA root store silently stops working on a
+# Windows checkout. Asserted from the crate itself by
+# `anchor::roots::tests::the_gitattributes_binary_rule_covers_this_directory`,
+# because the cross-os lane can only observe the damage on a Windows runner.
+crates/antseal-core/src/anchor/roots/*.der -text
