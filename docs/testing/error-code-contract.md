@@ -192,7 +192,99 @@ over a two-sided bound. The expired direction is row-backed
 named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`
 (D53 §9) and by nothing else, which D53 §12 records as a residual risk.
 
-### Why S has no prefix — ruled 2026-08-02 at Q80, not omitted
+**One task, three ids, and one of the three does not exist** (D91 §11.5).
+D53 §10 calls this registration **A38**, D59 §7 and Q80's landed commit call
+it **Q80**, and D60 §7.2/§11 item 8 calls it **Q72** — measured 2026-08-03
+against `tasks/` and `TODO.md` in both this lane's tree and the integration
+tree, **`Q72` is named by neither**, so D60 points a reader at nothing. The ids are recorded here rather than
+renumbered, because a resolved decision is amended, never rewritten:
+**A38 = Q80 = Q72 = the work this section is**, and the `anchor-ots-*` half
+of the same registration is **A52** (renumbered from A50). A fifth id,
+**Q73**, is the name review below, and **Q77** is the machine enforcement.
+
+### The name review at Q73 — 2026-08-02, before the first append
+
+§3 makes a code permanent from its first binding, and the append into
+`testdata/error-codes/v1/CODES.txt` *is* a binding. So the one moment at
+which an A code can still be renamed is the moment before that append, and
+this is the record that it was used rather than skipped.
+
+**The set reviewed: 52 codes**, live in `crates/antseal-core/src/anchor/` —
+35 from `AnchorError` (A5/A8), 16 from `OtsError` (A11), and
+`EmbeddedHeader::UNCOMMITTED_CODE` (A12). Ten are fixed by resolved
+decisions (D60 §7.3's eight, D53 §8's `anchor-tsa-imprint-mismatch`, D59
+§5's `anchor-tsa-nonce-mismatch`); fifteen are D91 §7.1's mechanical
+renames of D58 §10.4's list; two are D56 §7's (`anchor-ots-digest-mismatch`,
+`anchor-ots-header-uncommitted`). That leaves **25 minted by A5/A8** for
+outcomes no decision enumerated — a stripped content-type attribute, a
+message-digest mismatch, an ESSCertID naming a different certificate, a
+missing or non-critical EKU, a token signature that does not verify — since
+a rejection class with no code of its own cannot be a tamper row.
+
+**The rule applied, and it is narrower than "make the family consistent":**
+a name is changed only where it (a) is ambiguous against a spelling that is
+already live somewhere in the tree, (b) mis-describes the check it names, or
+(c) makes two codes read as one observable. **Consistency of grouping is not
+a ground, because it is not achievable** — measured, on the ten codes that
+cannot be renamed at all:
+
+- `anchor-signed-attr-count` (D60) is a CMS `signedAttrs` check that sits
+  *outside* the `anchor-cms-` group and cannot be moved into it, so no
+  rename of the 25 can make "every CMS check carries `cms`" true.
+- `anchor-ots-unsupported-version` (D58, via D91 §7.1) and the minted
+  `anchor-tst-version-unsupported` put `unsupported` at opposite ends of the
+  name. Only the second is renameable, so no rename can make the word order
+  uniform either.
+
+A rename spends a permanent decision; buying a uniformity that two frozen
+codes already make unreachable buys nothing. **Result: zero renames.**
+
+**The judgement call A5/A8 flagged, decided on measurement rather than on
+precedent.** `anchor-tsa-status-not-granted` and `anchor-tsa-token-absent`
+carry a `tsa` segment although §7.3's letter would drop it: there is no OTS
+`PKIStatus` and no OTS `timeStampToken`, so nothing is ambiguous across the
+two kinds. They are **kept**, and the reason is not that
+`anchor-tsa-nonce-mismatch` does the same (it does, and D59 ruled it, so it
+is evidence of nothing but its own permanence). It is that the unqualified
+spellings collide with strings that are **already live in this tree**:
+
+- `anchor-status-not-granted` would sit beside `bundle-unknown-anchor-status`
+  and the wire field `AnchorStatus`, where "anchor status" is the bundle's
+  own vocabulary, not RFC 3161's `PKIStatusInfo`.
+- `anchor-token-absent` would sit beside the anchor model's `absent`
+  verdict for *a kind with no artifacts at all* — a different claim about a
+  different object, in the same four letters.
+
+The `tsa` segment is what keeps both readings apart, which is §7.3's own
+test ("a kind segment appears where the check name would otherwise be
+ambiguous") applied to ambiguity against the **surrounding namespaces**
+rather than only against the other artifact kind.
+
+**Two near-misses in the minted 25, kept separable** — the fifth and sixth
+of the `path-commit-mismatch` kind recorded in this document:
+
+1. `anchor-cms-signature-invalid` (A8 — the *token* is not signed by the
+   certificate it names) vs `anchor-chain-signature-invalid` (A9, D53 §7 —
+   a *certificate-link* signature). One is about the CMS `SignerInfo`
+   signature over `signedAttrs`; the other is about an issuer signing a
+   subject. Merging them would tell a verdict reader "a signature failed"
+   and withhold which of two unrelated things was forged. This pair is also
+   the one place a segment earns itself under §7.3: `cms` and `chain` are
+   what make the two names different at all.
+2. `anchor-cms-message-digest-attr-mismatch` (the `message-digest` signed
+   attribute does not equal the digest of `eContent`) vs
+   `anchor-digest-alg-unsupported` (D60 — a CMS digest **OID** outside the
+   registry). Same artifact, adjacent fields, and a third "digest" name
+   beside D91 §7.2's three; the check is a value comparison in one and an
+   algorithm-registry lookup in the other.
+
+**And two `-count` codes that mean different things**, recorded because the
+suffix invites the wrong reading and neither name can be repaired:
+`anchor-chain-cert-count` and `anchor-signed-attr-count` (both D60) are
+**caps** — more material than the limit admits — while
+`anchor-cms-signer-count` is an **exact-arity** rule: RFC 3161 §2.4.2 admits
+exactly one `SignerInfo`, so both 0 and 2 are refused by it. The payload
+carries the number in all three; only the two cap codes have a limit to name.
 
 This document's header binds *"every component domain (F/C/G/S/A/R)"*, and
 the table above now assigns a prefix to five of the six. The sixth is
