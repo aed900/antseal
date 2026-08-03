@@ -73,6 +73,19 @@
 //! check rejects all of them (A32 owns the prohibition on the capture side,
 //! where a clock does exist).
 //!
+//! # No revocation checking, and what that costs
+//!
+//! Out of MVP scope by decision (A9's own note), and the framing "valid at
+//! stamping" reads as stronger than it is, so the cost is stated here rather
+//! than left to be inferred. **A TSA key compromised and its certificate
+//! revoked *after* `genTime` still yields [`AnchorState::Proven`]**, because
+//! nothing here consults a CRL or an OCSP responder — and under D53 §5(a) a
+//! revoked *root* is not detected at all, since a trust anchor is an input to
+//! path validation rather than a certificate to be validated. Fetching either
+//! would also break the offline guarantee that MVP-SPEC.md line 38 makes for
+//! this path. Q's threat model owns the exposure; the revisit trigger is any
+//! v1.1 CRL/OCSP work, or a real TSA compromise.
+//!
 //! `verify_at` is additionally **one-sided** (D53 §5b): it can only separate
 //! `proven` from `valid-at-stamping-cert-since-expired`, via
 //! `notAfter < verify_at`. It is never a validity check, so a caller with a
