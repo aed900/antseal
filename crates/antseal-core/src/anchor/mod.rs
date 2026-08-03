@@ -33,17 +33,26 @@
 //!   attribute types and the signer-certificate binding.
 //! - [`tsa`] (task **A8**) — CMS `SignedData` verification over a timestamp
 //!   token: signed attributes, `messageImprint`, nonce, ESSCertID, EKU.
+//! - [`roots`] (tasks **A6**, **A7**, **A26**) — the pinned TSA root store:
+//!   versioned const data, `include_bytes!`-compiled DER, the test-only
+//!   injection API, and the A7 provenance record that gates what may be
+//!   compiled in at all.
+//! - [`chain`] (tasks **A9**, **A43**) — X.509 path validation to those
+//!   roots at the token's `genTime`, implementing D53's six-way partition and
+//!   D57's rulings P1/P2/P3.
 //! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
 //!   the crate so the ordinary suite compiles and exercises it.
 
 pub mod alg;
 pub mod caps;
+pub mod chain;
 pub mod error;
 pub mod ess;
 pub mod fuzz_entry;
 pub mod model;
 pub mod ots;
 pub mod rfc3161;
+pub mod roots;
 pub mod tsa;
 
 pub use error::{AlgPosition, AnchorError, DerFault, DerSite, SignedAttrId};
