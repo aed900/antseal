@@ -231,16 +231,18 @@ pub(crate) fn live_universe() -> BTreeSet<&'static str> {
 /// D30's freeze entry (`docs/testing/error-code-contract.md` §7) records the
 /// count per family at the freeze commit, and a printed census is a number
 /// nobody has to maintain by hand.
+///
+/// It reads [`REGISTERED_PREFIXES`] rather than a literal of its own, which is
+/// **Q77 / D91 §11.6**. Until then this function held a private six-element
+/// list and was, in D91's words, *"presented as a census, but … the closest
+/// thing the tree has to a prefix registry, and wrong by omission the moment
+/// `anchor-` lands"*. It was: the run of the gate that first wired the A
+/// domain printed `(unprefixed) 85` — R's 33 codes plus all 52 of A's, sorted
+/// into R's bucket and printed as if they were R's, with a green suite. One
+/// list now feeds both the census and the conformance gate, so the two cannot
+/// drift.
 fn census(codes: &BTreeSet<&'static str>) -> Vec<(&'static str, usize)> {
-    const PREFIXES: &[&str] = &[
-        "cbor-",
-        "manifest-",
-        "bundle-",
-        "crypto-",
-        "content-",
-        "fine-root-",
-    ];
-    let mut out: Vec<(&'static str, usize)> = PREFIXES
+    let mut out: Vec<(&'static str, usize)> = REGISTERED_PREFIXES
         .iter()
         .map(|prefix| {
             (
@@ -253,10 +255,188 @@ fn census(codes: &BTreeSet<&'static str>) -> Vec<(&'static str, usize)> {
         "(unprefixed)",
         codes
             .iter()
-            .filter(|code| !PREFIXES.iter().any(|p| code.starts_with(p)))
+            .filter(|code| !REGISTERED_PREFIXES.iter().any(|p| code.starts_with(p)))
             .count(),
     ));
     out
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Q77 — §2's namespace rules, machine-enforced (D91 §8)
+// ─────────────────────────────────────────────────────────────────────
+//
+// §2's headline rule — *"A domain never mints a code under another domain's
+// prefix"* — was enforced by **nothing**. A foreign-prefix code is pairwise
+// distinct, correctly kebab-shaped and new, so all three distinctness layers
+// pass it; `census` sorted it into the `"(unprefixed)"` bucket and *printed*
+// it; and this module's comparison is additions-only, so it was absorbed.
+// That is not hypothetical: it is how D58 came to specify sixteen codes under
+// a namespace nobody had registered, with a fully green suite.
+
+/// What prefixes one enumerator's codes may carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Allowed {
+    /// Exactly one prefix. Every code from this enumerator must start with it.
+    Only(&'static str),
+    /// Anything. Reserved for `verify::error`, whose exemplar list is a
+    /// **superset of every other family's** by §2's wrapper rule — R surfaces
+    /// the inner code unchanged — so it legitimately yields `cbor-`,
+    /// `crypto-`, `content-`, `fine-root-` and `bundle-` codes beside its own
+    /// unprefixed ones. Deliberately permissive rather than clever: an
+    /// unprefixed R code and a code under an *unregistered* prefix are the
+    /// same string shape, so no rule over this list can separate them. A
+    /// foreign prefix is caught at the enumerator that actually mints it.
+    AnyRegisteredOrUnprefixed,
+}
+
+/// §2's prefix table, transcribed — **one row per entry in
+/// [`by_enumerator`], and the lookup against it is total**.
+///
+/// D91 §8.2 is emphatic about the totality and it is the load-bearing half: a
+/// `filter_map` here would silently exempt an enumerator with no row, and the
+/// enumerator without a row would be *the newly added one* — so the check
+/// would go green over exactly the domain the ruling exists to constrain. An
+/// unknown enumerator is therefore a failure, reported by name.
+const ENUMERATOR_PREFIXES: &[(&str, Allowed)] = &[
+    ("codec::decode::all_code_exemplars", Allowed::Only("cbor-")),
+    (
+        "manifest::error::all_code_exemplars",
+        Allowed::Only("manifest-"),
+    ),
+    (
+        "bundle::error::all_code_exemplars",
+        Allowed::Only("bundle-"),
+    ),
+    (
+        "crypto::error::all_code_exemplars",
+        Allowed::Only("crypto-"),
+    ),
+    (
+        "content::error::all_code_exemplars",
+        Allowed::Only("content-"),
+    ),
+    ("canon::canon_code_exemplars", Allowed::Only("content-")),
+    (
+        "content::fine_tree::error::all_code_exemplars",
+        Allowed::Only("fine-root-"),
+    ),
+    (
+        "anchor::error::all_code_exemplars",
+        Allowed::Only("anchor-"),
+    ),
+    (
+        "anchor::ots::error::all_code_exemplars",
+        Allowed::Only("anchor-"),
+    ),
+    (
+        "anchor::ots::header::EmbeddedHeader::UNCOMMITTED_CODE",
+        Allowed::Only("anchor-"),
+    ),
+    (
+        "verify::error::all_error_exemplars",
+        Allowed::AnyRegisteredOrUnprefixed,
+    ),
+];
+
+/// §2's table, first column, backticked cells only — the registered
+/// namespaces, in table order.
+///
+/// This is also what [`census`] buckets by, so the census and the
+/// conformance gate cannot drift (D91 §11.6), and
+/// [`tests::section_2_prefix_table_matches_registered_prefixes`] compares it
+/// with the document itself, so neither can drift from §2.
+const REGISTERED_PREFIXES: &[&str] = &[
+    "cbor-",
+    "manifest-",
+    "bundle-",
+    "crypto-",
+    "content-",
+    "fine-root-",
+    "anchor-",
+];
+
+/// A namespace rule broken by one `(enumerator, code)` pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Violation<'a> {
+    /// A code carrying a prefix its domain does not own — §2's headline rule.
+    ForeignPrefix {
+        /// Which enumerator yielded it.
+        enumerator: &'a str,
+        /// The offending code.
+        code: &'a str,
+        /// The prefix §2 registers to that enumerator's domain.
+        expected: &'static str,
+    },
+    /// An enumerator with no [`ENUMERATOR_PREFIXES`] row. **Never a skip.**
+    UnregisteredEnumerator {
+        /// Which enumerator has no row.
+        enumerator: &'a str,
+    },
+}
+
+/// Every violation of §2's namespace rules in `roster`, against `table`.
+///
+/// A pure function over both inputs so the planted-fault test can exercise it
+/// on a synthetic roster: the real roster cannot be made to violate the rule
+/// at runtime without minting a code, and a code minted to prove a test works
+/// is a code §3 makes permanent.
+fn prefix_violations<'a>(
+    roster: &'a [(&'a str, BTreeSet<&'a str>)],
+    table: &[(&'static str, Allowed)],
+) -> Vec<Violation<'a>> {
+    let mut out = Vec::new();
+    for (enumerator, codes) in roster {
+        // Total by construction: no `filter_map`, no `continue` on a miss.
+        let Some((_, allowed)) = table.iter().find(|(name, _)| name == enumerator) else {
+            out.push(Violation::UnregisteredEnumerator { enumerator });
+            continue;
+        };
+        if let Allowed::Only(expected) = allowed {
+            for code in codes {
+                if !code.starts_with(expected) {
+                    out.push(Violation::ForeignPrefix {
+                        enumerator,
+                        code,
+                        expected,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The backticked first-column cells of a Markdown table, in order.
+///
+/// Rows whose first cell carries no backticks are skipped **by construction**,
+/// which is what excludes §2's `*(unprefixed)*` and
+/// `*(none — S mints no codes)*` rows without naming them.
+fn backticked_first_column(table: &str) -> Vec<String> {
+    table
+        .lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+        .filter_map(|line| {
+            let cell = line.trim().trim_start_matches('|').split('|').next()?;
+            let (_, rest) = cell.split_once('`')?;
+            let (token, _) = rest.split_once('`')?;
+            Some(token.to_owned())
+        })
+        .collect()
+}
+
+/// The lines of §2's prefix table: the first contiguous run of `|` lines after
+/// the `## 2. Domain prefixes` heading.
+///
+/// Scoped to that one table on purpose — the document holds several others
+/// (the decode-layer table, Q80's backing table, this section's own census)
+/// and a document-wide scrape would silently absorb them.
+fn section_2_table(doc: &str) -> String {
+    doc.lines()
+        .skip_while(|line| !line.starts_with("## 2. Domain prefixes"))
+        .skip_while(|line| !line.trim_start().starts_with('|'))
+        .take_while(|line| line.trim_start().starts_with('|'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The snapshot's own parse: one code per line, `#` comments and blank lines
@@ -486,6 +666,149 @@ mod tests {
             live, expected,
             "`live_universe` is not the union of the registered enumerators — a source \
              dropped, added, or filtered"
+        );
+    }
+
+    // ── Q77: §2's namespace rules (D91 §8) ─────────────────────────────
+
+    /// **§2's headline rule, enforced for the first time.** Every code
+    /// carries the prefix §2 registers to the domain that mints it, and every
+    /// enumerator has a row saying which prefix that is.
+    #[test]
+    fn every_code_carries_the_prefix_registered_to_its_domain() {
+        let roster = by_enumerator();
+        assert!(!roster.is_empty(), "an empty roster checks nothing");
+
+        let violations = prefix_violations(&roster, ENUMERATOR_PREFIXES);
+        assert!(
+            violations.is_empty(),
+            "docs/testing/error-code-contract.md §2: *a domain never mints a code under \
+             another domain's prefix*. Violations:\n{}\n\n\
+             If an enumerator is reported as unregistered, add its row to \
+             `ENUMERATOR_PREFIXES` — the lookup is deliberately total, because a skipped \
+             enumerator is exactly the newly added one and the check would go green over \
+             the domain it exists to constrain (D91 §8.2).",
+            violations
+                .iter()
+                .map(|v| format!("  - {v:?}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /// **Test of the test**, on D91 §8.1's own example. The comparator must
+    /// return the planted pair; it fails if anyone weakens it to a warning, to
+    /// `starts_with(anything)`, or — the one D91 names — to skipping an
+    /// enumerator it has no row for.
+    #[test]
+    fn the_prefix_check_goes_red_on_a_foreign_prefix() {
+        let anchor = "anchor::error::all_code_exemplars";
+        let roster: Vec<(&str, BTreeSet<&str>)> =
+            vec![(anchor, ["ots-bad-magic"].into_iter().collect())];
+        assert_eq!(
+            prefix_violations(&roster, ENUMERATOR_PREFIXES),
+            vec![Violation::ForeignPrefix {
+                enumerator: anchor,
+                code: "ots-bad-magic",
+                expected: "anchor-",
+            }],
+            "the exact mutation D91 forbids — D58's sixteen codes were this shape"
+        );
+
+        // A code under the right prefix is not a violation, so the check is
+        // not simply "everything fails".
+        let ok: Vec<(&str, BTreeSet<&str>)> =
+            vec![(anchor, ["anchor-ots-bad-magic"].into_iter().collect())];
+        assert!(prefix_violations(&ok, ENUMERATOR_PREFIXES).is_empty());
+    }
+
+    /// **The totality D91 §8.2 calls the load-bearing half.** An enumerator
+    /// with no table row is a failure naming it, never a silent skip.
+    #[test]
+    fn an_enumerator_with_no_prefix_row_fails_rather_than_skipping() {
+        let roster: Vec<(&str, BTreeSet<&str>)> = vec![(
+            "somebody::new_family::all_code_exemplars",
+            ["anything-at-all"].into_iter().collect(),
+        )];
+        assert_eq!(
+            prefix_violations(&roster, ENUMERATOR_PREFIXES),
+            vec![Violation::UnregisteredEnumerator {
+                enumerator: "somebody::new_family::all_code_exemplars",
+            }],
+            "a `filter_map` here would exempt precisely the family that has just been added \
+             — which is the A family this whole mechanism exists to catch"
+        );
+    }
+
+    /// **The const *is* the doc.** [`REGISTERED_PREFIXES`] is exactly the
+    /// backticked first column of §2's table.
+    ///
+    /// Red when a prefix is added to the table and not the const, or the
+    /// reverse. The length assertion is what stops it passing vacuously on a
+    /// parse that finds nothing.
+    #[test]
+    fn section_2_prefix_table_matches_registered_prefixes() {
+        const CONTRACT: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/testing/error-code-contract.md"
+        );
+        let doc = std::fs::read_to_string(CONTRACT)
+            .unwrap_or_else(|e| panic!("cannot read docs/testing/error-code-contract.md: {e}"));
+        let parsed = backticked_first_column(&section_2_table(&doc));
+
+        assert!(
+            parsed.len() >= 7,
+            "§2's table parsed to {} prefix(es) — the table moved, or the scrape found the \
+             wrong one; a check that parses nothing agrees with any const",
+            parsed.len()
+        );
+        assert_eq!(
+            parsed.len(),
+            REGISTERED_PREFIXES.len(),
+            "§2's table lists {} prefix(es) and `REGISTERED_PREFIXES` holds {}",
+            parsed.len(),
+            REGISTERED_PREFIXES.len()
+        );
+        let from_doc: BTreeSet<&str> = parsed.iter().map(String::as_str).collect();
+        let from_const: BTreeSet<&str> = REGISTERED_PREFIXES.iter().copied().collect();
+        assert_eq!(
+            from_doc, from_const,
+            "§2's table and `REGISTERED_PREFIXES` disagree. The table is the registry; the \
+             const is what `census` buckets by and what the conformance gate reads, so a \
+             prefix in one and not the other is a family registered in prose only — which \
+             is what `fine-root-` was until Q77"
+        );
+    }
+
+    /// The two parsers of §2's table, on planted input, so neither is trusted
+    /// on the real document alone.
+    #[test]
+    fn the_section_2_scrape_reads_the_right_table_and_skips_unbackticked_rows() {
+        let doc = "\
+# preamble
+
+| ignored | table |
+|---|---|
+| `not-` | wrong table |
+
+## 2. Domain prefixes
+
+| Prefix | Owner | Surface |
+|---|---|---|
+| `alpha-` | F | first |
+| *(unprefixed)* | R | skipped by construction |
+| `beta-` | A | second |
+
+Trailing prose.
+
+| `gamma-` | X | a later table |
+";
+        assert_eq!(
+            backticked_first_column(&section_2_table(doc)),
+            vec!["alpha-".to_owned(), "beta-".to_owned()],
+            "the scrape must take §2's table only, and drop rows whose first cell carries no \
+             backticks — which is how the `*(unprefixed)*` and S rows are excluded without \
+             being named"
         );
     }
 

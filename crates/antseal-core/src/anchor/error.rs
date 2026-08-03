@@ -13,12 +13,15 @@
 //! **nothing**: `error_universe::census` sorts an unrecognised code into its
 //! `"(unprefixed)"` bucket and prints it, so a family invented under an
 //! unregistered namespace passes every check in the tree. A sibling decision
-//! specified sixteen codes that way with a fully green suite. **Q77** lands
-//! the workspace-wide check; until it does,
-//! [`tests::every_code_is_under_the_anchor_prefix`] is this module's own
-//! guard, and [`tests::codes_are_frozen_in_the_committed_universe`] replaced
-//! the disjointness test A52's append falsified — both assert a non-empty
-//! roster first, so neither can pass vacuously.
+//! specified sixteen codes that way with a fully green suite. **Q77 has since
+//! landed the workspace-wide check** — `error_universe`'s
+//! `every_code_carries_the_prefix_registered_to_its_domain`, with a total
+//! per-enumerator lookup — and `census` no longer has an unregistered-prefix
+//! bucket to hide a family in.
+//! [`tests::every_code_is_under_the_anchor_prefix`] stays as this module's
+//! local guard, and [`tests::codes_are_frozen_in_the_committed_universe`]
+//! replaced the disjointness test A52's append falsified — both assert a
+//! non-empty roster first, so neither can pass vacuously.
 //!
 //! # Which codes were ruled elsewhere and must not be respelled
 //!

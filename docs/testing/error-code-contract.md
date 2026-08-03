@@ -34,7 +34,8 @@ algorithm, a tiling-violation class — each value gets its own code
 | `manifest-` | F | manifest schema validation (F5–F7) |
 | `bundle-` | F | `.sealproof` bundle schema validation (F8–F9) |
 | `crypto-` | C | HKDF, commitments, padding, AEAD, signatures (C2–C14) |
-| `content-` | G | canonicalization, unit model, fine tree (G2–G13) |
+| `content-` | G | canonicalization and the unit model (G2–G8) |
+| `fine-root-` | G | fine-tree root binding and cover shape (G9–G13) — a **standing exception**, recorded below: the family lives in G but does not carry `content-`, and R mints one member of it |
 | `anchor-` | A | anchor-artifact verification: strict DER/CMS, X.509 path validation, `.ots` op execution, embedded-header and online-header checks (A5–A18); and capture-path outcomes in `antseal-anchor` (A10) |
 | *(unprefixed)* | R | verification-pipeline outcomes (R1–R5) |
 | *(none — S mints no codes)* | S | ruled below, not omitted |
@@ -114,6 +115,18 @@ The fine-tree errors live in G (`content/fine_tree/error.rs`) but carry
 **`fine-root-`**, not `content-`. This is deliberate and is the only
 standing exception.
 
+**It had no row in §2's table until Q77 (2026-08-03), and the omission was
+load-bearing.** The family has been ratified since 2026-07-28 and has carried
+nine committed codes since Q52's freeze, but the table above — which this
+document treats as *the* registry — described six prefixes for seven
+families. Nothing could see it: `census`'s private literal listed
+`fine-root-` and the table did not, and neither was compared with the other.
+D91 §8.1 then transcribed the table as *"§2's table, first column, backticked
+cells only"* and wrote **seven** entries including `fine-root-`, which is the
+set the tree needs and **not** the set the table then held. Q77's
+`section_2_prefix_table_matches_registered_prefixes` compares the two for the
+first time, so the row is now required rather than remembered.
+
 R2 minted `fine-root-binding-failed` and `fine-root-over-broad-cover` before
 G9–G13 existed, to declare the seam the fine tree would later fill. §3 makes
 codes append-only — *a failing test is never fixed by editing a code* — so
@@ -164,7 +177,12 @@ both exist — while `anchor-chain-signature-invalid` does not, there being no
 OTS chain. It is a **review guideline and deliberately not machine-enforced**:
 §3 makes codes permanent, so a naming-*style* test would turn a judgement
 call into a red build whose only available fix is the rename §3 forbids. The
-one machine-enforced rule is the prefix itself (**Q77**).
+one machine-enforced rule is the prefix itself, and it is enforced as of
+2026-08-03 (**Q77**): `error_universe`'s
+`every_code_carries_the_prefix_registered_to_its_domain` pairs each
+enumerator with the prefix this table registers to its domain, with a
+**total** lookup — an enumerator with no row fails rather than being skipped,
+because the enumerator without a row is always the one just added.
 
 Two codes in the family need their backing recorded at registration rather
 than inferred later.
@@ -350,8 +368,14 @@ being minted under.
 The general rule this instance makes explicit, and which no prefix ruling
 changes: a `--json` consumer reads `error.class`, a verdict/tamper consumer
 reads the code, and a program that treats the two fields as one namespace is
-reading the contract wrong. Making that disjointness *machine-checked*
-rather than stated is discovered work (**Q77**).
+reading the contract wrong. That disjointness is **machine-checked as of
+2026-08-03 (Q77)**, in `crates/antseal-cli/tests/namespace_disjointness.rs` —
+the only target that can see both `CliError` and the committed universe, which
+is why it lives there rather than in `error_universe.rs` with a hardcoded copy
+of the class table. It pins the reservation above in both directions: red if
+`anchor-gate-abort` is ever minted as a code, and red if it stops being a
+class name, since a reservation protecting nothing should be retired
+deliberately rather than left standing.
 
 ## 3. Append-only
 
@@ -1231,6 +1255,40 @@ kebab-case id, and never edit an existing row's expected code.
   M2 anchor cases and not one is yet an implemented `TamperRow`, so
   `claimed_in_integration_target` — which `tests/tamper_matrix.rs` validates
   against live rows — would have been a false claim for the whole domain.
+
+- **2026-08-03 (M2 wave 3, Q77)** — **§2's headline rule acquires a
+  mechanism.** *"A domain never mints a code under another domain's prefix"*
+  was, until this commit, enforced by **nothing**: a foreign-prefix code is
+  pairwise distinct, correctly kebab-shaped and new, so all three §4b layers
+  pass it; `census` sorted it into the `(unprefixed)` bucket and *printed*
+  it; and §4a is additions-only, so it was absorbed. That is how D58 came to
+  specify sixteen codes under an unregistered namespace with a green suite.
+  **No code was minted, renamed or removed; the universe stays 246.**
+
+  Three parts, per D91 §8:
+
+  1. `ENUMERATOR_PREFIXES` pairs every entry of `by_enumerator()` with the
+     prefix this section registers to its domain. **The lookup is total** — an
+     enumerator with no row is a failure naming it, never a skip — because the
+     enumerator without a row is always the one just added, so a `filter_map`
+     would go green over exactly the domain being introduced.
+     `verify::error` is deliberately permissive: §2's wrapper rule makes R's
+     exemplar list a superset of every other family's, and an unprefixed R
+     code is textually indistinguishable from a code under an unregistered
+     prefix, so a foreign prefix is caught at the enumerator that mints it.
+  2. `REGISTERED_PREFIXES` **replaces** `census`'s private literal, so the
+     census and the gate cannot drift, and
+     `section_2_prefix_table_matches_registered_prefixes` compares the const
+     with this table, so neither can drift from the document.
+  3. The code/`ErrorClass` disjointness Q80 measured by hand is now checked,
+     in `crates/antseal-cli/tests/namespace_disjointness.rs`.
+
+  **The table was wrong, and only the new check could say so.** `fine-root-`
+  has been a ratified family since 2026-07-28 with nine committed codes and
+  **had no row in §2's table** — registered in prose, in the subsection below
+  it. D91 §8.1 transcribed the table as seven backticked cells including
+  `fine-root-`; the table held six. The row is added above, and the comparison
+  is what now requires it.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
