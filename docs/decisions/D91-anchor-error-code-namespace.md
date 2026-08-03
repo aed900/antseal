@@ -232,7 +232,7 @@ brief names, and it is what one prefix removes.
 Three sweeps exist and F37 exists to merge them, so the cost is real. But the
 tree records **why** there are three, and it is not "three prefixes".
 
-**Measured, at HEAD (`06d5b4c`):**
+**Measured, at HEAD (`c7e4d80`):**
 
 - `crates/antseal-core/src/test_util/tamper_coverage.rs:93` —
   `pub const DOMAINS: &[&CoverageDomain] = &[&BUNDLE, &MANIFEST];`, with the
