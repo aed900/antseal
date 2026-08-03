@@ -17,9 +17,28 @@
 //! no-real-endpoints-in-CI policy *by construction*: it binds
 //! `127.0.0.1:0`, and a loopback listener cannot reach a real endpoint.
 //!
-//! Connections are served **one at a time**, in script order. Every scripted
+//! Every connection is served **in a thread of its own** — see [`serve`] for
+//! the test that could not fail before that was true — and the reply for a
+//! connection is chosen either by position in the script or, for a
+//! [`StubScript::route`]d script, by matching the request. Every scripted
 //! reply sets `Connection: close`, so `ureq` cannot pool a connection and the
 //! recorded request count is the true number of round trips.
+//!
+//! # Two ways to choose a reply, and why both exist
+//!
+//! - **Sequential** ([`StubScript::then`] / [`StubScript::always`]) — the
+//!   reply is chosen by acceptance order. This is what a retry/backoff test
+//!   needs, because "the second attempt sees a different answer" is a
+//!   statement about order and nothing else.
+//! - **Routed** ([`StubScript::route`]) — the reply is chosen by matching the
+//!   request target and/or body. A16's esplora endpoint answers two different
+//!   paths in one exchange (height, then header) and A17's RPC endpoint
+//!   answers two different JSON-RPC methods on one path, so neither can be
+//!   expressed as a fixed sequence: a client that issued the calls in the
+//!   other order, or retried one of them, would silently be handed the wrong
+//!   body and the test would assert against a fiction.
+//!
+//! The two modes are mutually exclusive, asserted at [`StubServer::spawn`].
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -114,11 +133,57 @@ impl StubReply {
     }
 }
 
-/// The replies a [`StubServer`] will give, in order.
+/// Which requests a [`StubScript::route`] answers.
+///
+/// Substring matching rather than exact equality, deliberately: a test that
+/// pinned the full request line would break on a client that legitimately
+/// changed its `Host` header or query ordering, and the property under test is
+/// never "the request line is exactly this" — it is "this endpoint was asked
+/// *this question*".
+#[derive(Debug, Clone)]
+pub enum StubMatch {
+    /// The request target (the second token of the request line) contains
+    /// this substring. A16's `/api/block-height/800000` vs
+    /// `/api/block/<hash>/header`.
+    Target(String),
+    /// The request body contains these bytes. A17's `"eth_chainId"` vs
+    /// `"eth_getTransactionReceipt"`, which arrive at the same path.
+    Body(Vec<u8>),
+    /// Both.
+    TargetAndBody(String, Vec<u8>),
+}
+
+impl StubMatch {
+    /// A target-substring match.
+    #[must_use]
+    pub fn target(needle: impl Into<String>) -> Self {
+        Self::Target(needle.into())
+    }
+
+    /// A body-substring match.
+    #[must_use]
+    pub fn body(needle: impl AsRef<[u8]>) -> Self {
+        Self::Body(needle.as_ref().to_vec())
+    }
+
+    fn matches(&self, request: &[u8]) -> bool {
+        match self {
+            Self::Target(needle) => request_target(request).contains(needle.as_str()),
+            Self::Body(needle) => contains(request, needle),
+            Self::TargetAndBody(target, body) => {
+                request_target(request).contains(target.as_str()) && contains(request, body)
+            }
+        }
+    }
+}
+
+/// The replies a [`StubServer`] will give.
 #[derive(Debug, Clone, Default)]
 pub struct StubScript {
     replies: Vec<StubReply>,
     tail: Option<StubReply>,
+    routes: Vec<(StubMatch, StubReply)>,
+    unmatched: Option<StubReply>,
 }
 
 impl StubScript {
@@ -142,6 +207,47 @@ impl StubScript {
         self.tail = Some(reply);
         self
     }
+
+    /// Answer any request matching `when` with `reply`.
+    ///
+    /// Routes are tried in the order they were added and the first match
+    /// wins. A request matching none is answered with [`Self::unmatched`], or
+    /// — if that was not set — with a `404` naming the request target, so a
+    /// mis-built client fails with a legible message instead of a parse error
+    /// against an empty body.
+    #[must_use]
+    pub fn route(mut self, when: StubMatch, reply: StubReply) -> Self {
+        self.routes.push((when, reply));
+        self
+    }
+
+    /// The reply for a request no route matched.
+    #[must_use]
+    pub fn unmatched(mut self, reply: StubReply) -> Self {
+        self.unmatched = Some(reply);
+        self
+    }
+
+    /// Whether this script chooses replies by matching rather than by order.
+    #[must_use]
+    pub fn is_routed(&self) -> bool {
+        !self.routes.is_empty()
+    }
+}
+
+/// The request line's target, as far as the first CRLF.
+fn request_target(request: &[u8]) -> &str {
+    let line_end = request
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap_or(request.len());
+    let line = core::str::from_utf8(&request[..line_end]).unwrap_or("");
+    line.split(' ').nth(1).unwrap_or("")
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || (haystack.len() >= needle.len() && haystack.windows(needle.len()).any(|w| w == needle))
 }
 
 #[derive(Debug, Default)]
@@ -166,9 +272,17 @@ impl StubServer {
     /// # Panics
     ///
     /// If the loopback listener cannot be bound — which in a test process
-    /// means the environment, not the code, is broken.
+    /// means the environment, not the code, is broken — or if the script
+    /// mixes routed and sequential replies, which has no well-defined
+    /// meaning: the routed reply would win and the sequential one would be
+    /// silently unreachable, so a test asserting on the latter would pass
+    /// against a server that never sent it.
     #[must_use]
     pub fn spawn(script: StubScript) -> Self {
+        assert!(
+            !(script.is_routed() && (!script.replies.is_empty() || script.tail.is_some())),
+            "a StubScript is either routed or sequential, never both"
+        );
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
         let addr = listener.local_addr().expect("local_addr");
         listener
@@ -243,6 +357,9 @@ impl Drop for StubServer {
 /// is still taken from the script in acceptance order, so scripted sequences
 /// remain deterministic.
 fn serve(listener: &TcpListener, state: &Arc<StubState>, script: StubScript) {
+    let routed = script.is_routed();
+    let routes = Arc::new(script.routes);
+    let unmatched = Arc::new(script.unmatched);
     let mut queued: VecDeque<StubReply> = script.replies.into();
     let mut connections: Vec<JoinHandle<()>> = Vec::new();
 
@@ -250,10 +367,18 @@ fn serve(listener: &TcpListener, state: &Arc<StubState>, script: StubScript) {
         match listener.accept() {
             Ok((socket, _)) => {
                 state.connections.fetch_add(1, Ordering::SeqCst);
+                let state = Arc::clone(state);
+                if routed {
+                    let routes = Arc::clone(&routes);
+                    let unmatched = Arc::clone(&unmatched);
+                    connections.push(thread::spawn(move || {
+                        handle_routed(socket, &state, &routes, unmatched.as_ref().as_ref());
+                    }));
+                    continue;
+                }
                 let Some(reply) = queued.pop_front().or_else(|| script.tail.clone()) else {
                     continue;
                 };
-                let state = Arc::clone(state);
                 connections.push(thread::spawn(move || handle(socket, &state, &reply)));
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -268,6 +393,43 @@ fn serve(listener: &TcpListener, state: &Arc<StubState>, script: StubScript) {
     }
 }
 
+/// Read first, then choose. A routed script cannot know which reply a
+/// connection wants until the request is on the wire, so the read is
+/// unconditional here — which is also why no routed reply may be
+/// [`StubReply::DropConnection`] or [`StubReply::AcceptWithoutReading`]:
+/// those two are defined by *not* reading, and reaching them through a route
+/// would already have read.
+fn handle_routed(
+    mut socket: TcpStream,
+    state: &StubState,
+    routes: &[(StubMatch, StubReply)],
+    unmatched: Option<&StubReply>,
+) {
+    let _ = socket.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = socket.set_write_timeout(Some(Duration::from_secs(5)));
+    let _ = socket.set_nodelay(true);
+
+    let request = read_request(&mut socket, state);
+    let matched = routes
+        .iter()
+        .find(|(when, _)| when.matches(&request))
+        .map(|(_, reply)| reply);
+
+    let fallback;
+    let reply = match matched.or(unmatched) {
+        Some(reply) => reply,
+        None => {
+            fallback = StubReply::Body {
+                status: 404,
+                content_type: "text/plain",
+                bytes: format!("no stub route matched {}", request_target(&request)).into_bytes(),
+            };
+            &fallback
+        }
+    };
+    write_reply(&mut socket, state, reply);
+}
+
 fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
     let _ = socket.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = socket.set_write_timeout(Some(Duration::from_secs(5)));
@@ -275,9 +437,15 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
 
     match reply {
         StubReply::DropConnection | StubReply::AcceptWithoutReading(_) => {}
-        _ => read_request(&mut socket, state),
+        _ => {
+            let _ = read_request(&mut socket, state);
+        }
     }
 
+    write_reply(&mut socket, state, reply);
+}
+
+fn write_reply(socket: &mut TcpStream, state: &StubState, reply: &StubReply) {
     match reply {
         StubReply::Body {
             status,
@@ -286,19 +454,19 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
         } => {
             let mut out = head(*status, Some(content_type), bytes.len() as u64);
             out.extend_from_slice(bytes);
-            write_all(&mut socket, state, &out);
+            write_all(socket, state, &out);
         }
-        StubReply::Raw(bytes) => write_all(&mut socket, state, bytes),
+        StubReply::Raw(bytes) => write_all(socket, state, bytes),
         StubReply::StallBeforeHeaders(delay) => {
             sleep_interruptible(state, *delay);
             let out = head(200, None, 0);
-            write_all(&mut socket, state, &out);
+            write_all(socket, state, &out);
         }
         StubReply::StallAfterHeaders(delay) => {
             let out = head(200, Some("application/octet-stream"), 16);
-            write_all(&mut socket, state, &out);
+            write_all(socket, state, &out);
             sleep_interruptible(state, *delay);
-            write_all(&mut socket, state, &[0x5A; 16]);
+            write_all(socket, state, &[0x5A; 16]);
         }
         StubReply::DropConnection => {}
         StubReply::AcceptWithoutReading(hold) => sleep_interruptible(state, *hold),
@@ -311,7 +479,7 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
                 terminator..terminator,
                 format!("Location: {location}\r\n").into_bytes(),
             );
-            write_all(&mut socket, state, &out);
+            write_all(socket, state, &out);
         }
         StubReply::StreamUntilClosed {
             status,
@@ -320,7 +488,7 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
             stop_after_bytes,
         } => {
             let out = head(*status, Some("application/octet-stream"), *content_length);
-            write_all(&mut socket, state, &out);
+            write_all(socket, state, &out);
             let chunk = vec![0x5A; *chunk_len];
             let mut written: u64 = 0;
             while written < *stop_after_bytes && !state.stop.load(Ordering::SeqCst) {
@@ -340,7 +508,7 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
 /// Read one HTTP request: the head, plus a `Content-Length` body if it
 /// declares one. Recorded verbatim so tests can assert on the raw bytes —
 /// which headers were sent, and which were not.
-fn read_request(socket: &mut TcpStream, state: &StubState) {
+fn read_request(socket: &mut TcpStream, state: &StubState) -> Vec<u8> {
     let mut buffer = Vec::new();
     let mut scratch = [0u8; 4096];
     let mut expected: Option<usize> = None;
@@ -374,7 +542,8 @@ fn read_request(socket: &mut TcpStream, state: &StubState) {
         .requests
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .push(buffer);
+        .push(buffer.clone());
+    buffer
 }
 
 fn find_head_end(buffer: &[u8]) -> Option<usize> {

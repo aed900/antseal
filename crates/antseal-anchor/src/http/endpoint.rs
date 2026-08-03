@@ -96,6 +96,7 @@ impl TlsPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
     url: String,
+    origin: String,
     https: bool,
     loopback_literal: bool,
 }
@@ -150,8 +151,14 @@ impl Endpoint {
             return Err(invalid("no host"));
         }
 
+        let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
         let endpoint = Self {
             url: url.to_owned(),
+            origin: format!(
+                "{}://{}:{port}",
+                if https { "https" } else { "http" },
+                host.to_ascii_lowercase()
+            ),
             https,
             loopback_literal: host_is_loopback_literal(host),
         };
@@ -163,6 +170,27 @@ impl Endpoint {
     #[must_use]
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// `scheme://host:port`, normalised — the identity two endpoints share
+    /// when they are **one endpoint wearing two names**.
+    ///
+    /// This exists for [`crate::agree`], and the hazard is the one already
+    /// recorded on [`AnchorHttpError::Redirected`](super::AnchorHttpError):
+    /// A16's "both must succeed and agree" is a tautology across two URLs on
+    /// one origin, and a tautology still reports agreement. Host case and the
+    /// default port are folded in, because `HTTPS://Example.ORG` and
+    /// `https://example.org:443` are the same server and a pair check that
+    /// compared raw URLs would call them independent.
+    ///
+    /// It is deliberately **not** a same-operator test: `blockstream.info`
+    /// and `mempool.space` are distinct origins and that is all this can
+    /// establish. Two hostnames that resolve to one machine, or two services
+    /// behind one CDN, are indistinguishable here — see [`crate::agree`] for
+    /// what that leaves unguarded.
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        &self.origin
     }
 
     /// Whether the scheme is `https`.
@@ -388,6 +416,40 @@ mod tests {
             Endpoint::parse("HTTP://127.0.0.1/", TlsPolicy::Optional).expect("HTTP:// parses");
         assert!(!upper_plain.is_https());
         assert!(upper_plain.is_loopback_literal());
+    }
+
+    /// The origin folds host case and the default port, and separates two
+    /// genuinely different servers. Both directions, because an `origin` that
+    /// returned a constant, or one that returned the whole URL, would each
+    /// pass a one-sided version of this.
+    #[test]
+    fn the_origin_folds_case_and_default_port_but_not_distinct_hosts() {
+        let same: &[&str] = &[
+            "https://example.org/api",
+            "https://example.org:443/api",
+            "HTTPS://Example.ORG/other/path?q=1",
+            "https://EXAMPLE.org",
+        ];
+        let expected = "https://example.org:443";
+        for url in same {
+            let endpoint = parse_strict(url).unwrap_or_else(|e| panic!("{url}: {e}"));
+            assert_eq!(endpoint.origin(), expected, "{url}");
+        }
+
+        for (a, b) in [
+            // Different host.
+            ("https://blockstream.info/api", "https://mempool.space/api"),
+            // Different port on one host is a different server.
+            ("https://example.org/api", "https://example.org:8443/api"),
+            // Scheme is part of the origin.
+            ("https://127.0.0.1:9/", "http://127.0.0.1:9/"),
+        ] {
+            let first = parse_strict(a)
+                .unwrap_or_else(|_| Endpoint::parse(a, TlsPolicy::Optional).expect("permissive"));
+            let second = parse_strict(b)
+                .unwrap_or_else(|_| Endpoint::parse(b, TlsPolicy::Optional).expect("permissive"));
+            assert_ne!(first.origin(), second.origin(), "{a} vs {b}");
+        }
     }
 
     /// The URL is carried through byte-for-byte: what was validated is what

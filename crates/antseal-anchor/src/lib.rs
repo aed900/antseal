@@ -45,8 +45,13 @@
 //! [`AnchorGate::run`]: gate::AnchorGate::run
 //! [`NoAnchorGate`]: gate::NoAnchorGate
 
+pub mod agree;
+pub mod arbitrum;
+pub mod esplora;
 pub mod gate;
 pub mod http;
+pub mod nonce;
+pub mod ots;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;

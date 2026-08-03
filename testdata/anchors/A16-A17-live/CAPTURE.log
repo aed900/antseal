@@ -1,0 +1,96 @@
+# A16/A17 live-endpoint capture log
+#
+# Captured for tasks A16 (esplora must-agree pair) and A17 (Arbitrum two-RPC
+# advisory confirmation) against the endpoints D55/A16 rule in. These are the
+# fixtures A24's stub servers replay; CI contacts nothing (Q16).
+#
+# Nothing here is antseal's own material: the transactions are third parties'
+# public mainnet/testnet transactions taken from head blocks, and block 800000
+# is a public Bitcoin block. No secret material, per testdata/README.md.
+
+utc_start=2026-08-03T08:20Z
+host_clock_note=this machine runs ~129 s slow (D90 §6.10); every figure below \
+is a byte count or an HTTP status, never a wall-clock comparison
+
+## 1. esplora — the two A16 defaults, paths confirmed live
+
+GET https://blockstream.info/api/block-height/800000 -> 200, 64 B, no trailing newline
+GET https://mempool.space/api/block-height/800000    -> 200, 64 B, no trailing newline
+  both: 00000000000000000002a7c4c1e48d76c5a37902165a270156b7a8d72728a054
+
+GET https://blockstream.info/api/block/<hash>/header -> 200, 160 B (80 bytes, lowercase hex)
+GET https://mempool.space/api/block/<hash>/header    -> 200, 160 B
+  BYTE-IDENTICAL between the two services (diff clean). This is the property
+  A16's byte-identity rule rests on, and it holds because an esplora header is
+  a fixed-width 80-byte object with no encoding freedom — NOT because two
+  endpoints generally agree byte-for-byte (A17 is the counter-case, §2).
+
+GET .../api/block-height/99999999 -> 404, 15 B, body exactly `Block not found`
+  on BOTH services, byte-identical, no trailing newline. This is the agreed
+  -absence case that becomes `OnlineBlockResult::NoSuchBlock` (D56 rule O7).
+
+Files:
+  esplora-blockstream-height-800000.txt   64 B
+  esplora-blockstream-header-800000.txt  160 B
+  esplora-blockstream-404-body.txt        15 B
+  esplora-mempool-height-800000.txt       64 B
+  esplora-mempool-header-800000.txt      160 B
+  esplora-mempool-404-body.txt            15 B
+
+## 2. Arbitrum RPC — D55's key-set finding, reproduced one day later
+
+Method probed is the one A17 issues, against a real argument (D90 §6.9(b)):
+`eth_getTransactionReceipt`, never `eth_blockNumber`.
+
+### 2a. arbitrum-one, tx 0x06a5012dddc0365d81d93a9ceac5a0060f4a23650fb75ddd683fbc1fb805b0b3
+    (block 0x1d3de74b, ~200 blocks behind head at capture time)
+
+POST https://arb1.arbitrum.io/rpc  -> 200, 1786 B   arbone-arb1-receipt.json
+POST https://arbitrum.drpc.org     -> 200, 1785 B   arbone-drpc-receipt.json
+
+  result key sets: IDENTICAL (both carry `timeboosted`; neither carries
+    `blobGasUsed` on mainnet today)
+  differing shared keys: NONE
+  extracted tuple (status, blockNumber, blockHash, transactionHash): EQUAL
+  raw bodies: DIFFER — 1786 vs 1785 B, first difference at byte 3
+
+  **A second, independent reason byte comparison is wrong.** D55 §3 recorded
+  differing *result* key sets on Sepolia. On mainnet today the key sets match
+  and the bodies still differ, because the two endpoints order the JSON-RPC
+  envelope differently:
+     arb1: {"jsonrpc":…,"id":…,"result":…}
+     drpc: {"id":…,"jsonrpc":…,"result":…}
+  A byte comparator would therefore report "a lying endpoint" for two honest
+  ones even on the network where D55's original reason does not apply.
+
+  eth_chainId, both endpoints: 0xa4b1 (42161). Envelope key order differs here
+  too, on a 42-byte reply.
+
+### 2b. arbitrum-sepolia, tx 0xdeae7e5fc869ad1e3b27fe7f4a04ed3f12ac7f2b2e3302a43c38b9f84d96ab21
+    (block 0x118985d8)
+
+POST https://sepolia-rollup.arbitrum.io/rpc -> 200, 6975 B  sepolia-rollup-receipt.json
+POST https://arbitrum-sepolia.drpc.org      -> 200, 6974 B  sepolia-drpc-receipt.json
+
+  keys only from sepolia-rollup.arbitrum.io: timeboosted
+  keys only from arbitrum-sepolia.drpc.org:  blobGasUsed
+  differing shared keys: NONE
+  extracted tuple: EQUAL
+
+  **D55 §3's finding reproduced exactly**, on a different transaction one day
+  later. This is the pair D55 §7's `receipt_facts_ignore_unknown_and_extra_keys`
+  requires ("the two real committed Sepolia responses from §3") — that test
+  could not previously be written as specified, because §3's responses were
+  never committed.
+
+  eth_chainId, both endpoints: 0x66eee (421614).
+
+### 2c. absent transaction
+
+POST both arbitrum-one endpoints with
+  0x000000000000000000000000000000000000000000000000000000000000dead
+-> 200 with `"result":null` from both. This is the `Absent` outcome; one
+   endpoint answering `null` while the other returns a receipt is `Lagging`,
+   which is a different outcome for a reason (D55 §3).
+
+utc_end=2026-08-03T08:34Z
