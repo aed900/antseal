@@ -173,6 +173,17 @@ pub mod fixtures {
 /// The block height the committed esplora captures are for.
 pub const RECORDED_HEIGHT: u64 = 800_000;
 
+/// The request line of a recorded request, for tests that assert which
+/// question an endpoint was asked.
+#[must_use]
+pub fn request_line(request: &[u8]) -> String {
+    let end = request
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap_or(request.len());
+    String::from_utf8_lossy(&request[..end]).into_owned()
+}
+
 /// What a stub esplora endpoint does.
 #[derive(Debug, Clone)]
 pub enum EsploraBehaviour {
