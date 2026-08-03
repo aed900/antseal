@@ -257,6 +257,58 @@ pub fn upgrade_pending(
     budget: UpgradeBudget,
     fetch_date: u64,
 ) -> UpgradeReport {
+    upgrade_pending_with(client, pair, works, budget, fetch_date, &|uri| {
+        UpgradeTarget::from_pending_uri(uri, configured)
+    })
+}
+
+/// [`upgrade_pending`] with the allowlist step supplied by the caller.
+///
+/// **`pub(crate)` and `cfg(test)`, and it must stay that way.** A42's
+/// allowlist requires `https`, a bare host and no port, so a loopback stub can
+/// never be admitted through the real constructor — which is correct, and
+/// which also means the engine's poll → merge → header path cannot be driven
+/// end to end against A24's stubs without this seam.
+///
+/// The alternative that was tried first was worse and is worth recording: the
+/// tests drove the real path with the committed artifact, whose pending URIs
+/// are the **real** calendar hostnames. The allowlist admits those, so the
+/// suite quietly contacted live calendars on every run — a Q16 violation that
+/// passed every assertion, because the outcome is the same whether the
+/// endpoint answers or not. A test that reaches the internet to prove a
+/// timeout is not a test of the timeout.
+#[cfg(test)]
+pub(crate) fn upgrade_pending_with(
+    client: &HttpClient,
+    pair: &EndpointPair,
+    works: &[PendingWork],
+    budget: UpgradeBudget,
+    fetch_date: u64,
+    resolve: &dyn Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal>,
+) -> UpgradeReport {
+    run(client, pair, works, budget, fetch_date, resolve)
+}
+
+#[cfg(not(test))]
+fn upgrade_pending_with(
+    client: &HttpClient,
+    pair: &EndpointPair,
+    works: &[PendingWork],
+    budget: UpgradeBudget,
+    fetch_date: u64,
+    resolve: &dyn Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal>,
+) -> UpgradeReport {
+    run(client, pair, works, budget, fetch_date, resolve)
+}
+
+fn run(
+    client: &HttpClient,
+    pair: &EndpointPair,
+    works: &[PendingWork],
+    budget: UpgradeBudget,
+    fetch_date: u64,
+    resolve: &dyn Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal>,
+) -> UpgradeReport {
     let started = Instant::now();
     let mut report = UpgradeReport::default();
 
@@ -284,7 +336,7 @@ pub fn upgrade_pending(
                 anchor_index,
                 anchor,
                 &refs,
-                configured,
+                resolve,
                 budget,
                 fetch_date,
                 started,
@@ -309,7 +361,7 @@ fn upgrade_one_anchor(
     anchor_index: usize,
     anchor: &StoredOtsAnchor,
     refs: &[PendingRef],
-    configured: &[String],
+    resolve: &dyn Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal>,
     budget: UpgradeBudget,
     fetch_date: u64,
     started: Instant,
@@ -326,7 +378,7 @@ fn upgrade_one_anchor(
             break;
         }
 
-        let target = match UpgradeTarget::from_pending_uri(&pending.uri, configured) {
+        let target = match resolve(&pending.uri) {
             Ok(target) => target,
             Err(source) => {
                 report.notes.push(UpgradeNote::Refused {

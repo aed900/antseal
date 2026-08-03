@@ -22,6 +22,23 @@ fn esplora_pair(first: &StubServer, second: &StubServer) -> EndpointPair {
     .expect("distinct loopback origins")
 }
 
+/// Resolve every pending URI onto one loopback stub.
+///
+/// This is the seam `upgrade_pending_with` exists for: A42's allowlist
+/// requires https, a bare host and no port, so a stub can never be admitted
+/// through the production constructor — and a test that used the production
+/// constructor with the committed artifact would be dialling the **real**
+/// calendars, which Q16 forbids and which no assertion here would notice.
+fn to_stub(server: &StubServer) -> impl Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal> {
+    let base = server.base_url();
+    move |_uri: &str| Ok(UpgradeTarget::loopback_for_tests(&base))
+}
+
+/// Refuse everything, as the allowlist does for a host it does not know.
+fn refuse_all() -> impl Fn(&str) -> Result<UpgradeTarget, UpgradeUriRefusal> {
+    |_uri: &str| Err(UpgradeUriRefusal::HostNotAllowed)
+}
+
 fn dead_pair() -> (StubServer, StubServer) {
     (
         StubServer::spawn(esplora(&EsploraBehaviour::Down)),
@@ -88,16 +105,16 @@ fn no_failure_mode_produces_an_error_the_host_command_could_inherit() {
 
     // A tiny budget so the unreachable real calendars are not actually dialled
     // for long. The point is the shape of the return, not the timing.
-    let report = upgrade_pending(
+    let report = upgrade_pending_with(
         &client(),
         &pair,
         &works,
-        &[],
         UpgradeBudget {
             total: Duration::from_millis(1),
             max_polls: 1,
         },
         0,
+        &refuse_all(),
     );
     assert!(report.upgraded.is_empty());
     assert!(report.is_empty());
@@ -118,20 +135,33 @@ fn the_poll_budget_is_respected() {
     let (first, second) = dead_pair();
     let pair = esplora_pair(&first, &second);
 
+    // A deliberately slow calendar: every poll costs 400 ms, so a budget that
+    // did not stop would spend 1.2 s here.
+    let slow = StubServer::spawn(calendar(&CalendarBehaviour::Slow(
+        Duration::from_millis(400),
+        Vec::new(),
+    )));
     let works = vec![work_with(fixtures::MERGED_A)];
-    let report = upgrade_pending(
+    let started = std::time::Instant::now();
+    let report = upgrade_pending_with(
         &client(),
         &pair,
         &works,
-        &[],
         UpgradeBudget {
             total: Duration::from_secs(60),
             max_polls: 1,
         },
         0,
+        &to_stub(&slow),
     );
+    let wall = started.elapsed();
 
     assert_eq!(report.polls, 1, "the artifact has three pending calendars");
+    assert_eq!(slow.connections(), 1, "exactly one calendar round trip");
+    assert!(
+        wall < Duration::from_millis(1_200),
+        "the budget must stop before three 400 ms polls; took {wall:?}"
+    );
     assert!(report.budget_exhausted);
     assert!(
         report
@@ -149,16 +179,17 @@ fn without_a_budget_the_same_artifact_polls_every_calendar() {
     let (first, second) = dead_pair();
     let pair = esplora_pair(&first, &second);
 
-    let report = upgrade_pending(
+    let calendar = StubServer::spawn(calendar(&CalendarBehaviour::PendingSubmit(Vec::new())));
+    let report = upgrade_pending_with(
         &client(),
         &pair,
         &[work_with(fixtures::MERGED_A)],
-        &[],
         UpgradeBudget {
             total: Duration::from_secs(60),
             max_polls: 10,
         },
         0,
+        &to_stub(&calendar),
     );
     assert_eq!(
         report.polls, 3,
@@ -243,6 +274,114 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
     assert_eq!(with_header.ots[0].state, OtsAnchorState::Attested);
     assert_eq!(with_header.ots[0].fetch_date, Some(1_754_211_818));
     assert_eq!(with_header.ots[0].pending_uris.len(), 3);
+}
+
+/// A15 Accept row 3, end to end through the engine: poll → merge → header →
+/// transition, with every byte of the calendar exchange being a **real
+/// recorded upgrade**.
+///
+/// Only the block header is synthesised, and it has to be: the attestation is
+/// for Bitcoin block 960767 and this lane did not fetch a mainnet header for
+/// it (that half is A48's). What the synthetic header establishes is the
+/// wiring — that a committing header produces a transition carrying both the
+/// merged artifact and the upgrade group — and the *non*-committing direction
+/// is covered against the same machinery by `a_wrong_header_is_rejected…`.
+#[test]
+fn the_engine_records_artifact_and_header_together() {
+    // The upgrade the real calendar returned, and the root it derives.
+    let references =
+        crate::ots::pending_refs(fixtures::MERGED_A, &fixtures::DIGEST_A).expect("parses");
+    let alice = references
+        .iter()
+        .find(|reference| reference.uri.contains("alice"))
+        .expect("alice");
+    let merged = crate::ots::merge_upgrade(
+        fixtures::MERGED_A,
+        &fixtures::DIGEST_A,
+        alice,
+        fixtures::UPGRADE_A_ALICE,
+    )
+    .expect("merges");
+    let antseal_core::anchor::ots::OtsAttestation::Bitcoin {
+        height,
+        merkle_root: Some(root),
+    } = &merged.added[0]
+    else {
+        panic!("a Bitcoin attestation with a determinate root")
+    };
+
+    let mut header = [0_u8; 80];
+    header[36..68].copy_from_slice(root);
+    let header_hex: String = header.iter().map(|byte| format!("{byte:02x}")).collect();
+
+    let calendar_stub = StubServer::spawn(calendar(&CalendarBehaviour::Upgraded {
+        pending: Vec::new(),
+        upgrade: fixtures::UPGRADE_A_ALICE.to_vec(),
+    }));
+    let first = StubServer::spawn(esplora_at(*height, &header_hex));
+    let second = StubServer::spawn(esplora_at(*height, &header_hex));
+
+    let report = upgrade_pending_with(
+        &client(),
+        &esplora_pair(&first, &second),
+        &[work_with(fixtures::MERGED_A)],
+        UpgradeBudget {
+            total: Duration::from_secs(60),
+            // One poll: the stub answers every URI with alice's upgrade, and
+            // splicing it at bob's attestation would derive a different root
+            // that the header no longer commits — which is a different test.
+            max_polls: 1,
+        },
+        0,
+        &to_stub(&calendar_stub),
+    );
+
+    assert_eq!(report.upgraded.len(), 1, "notes: {:?}", report.notes);
+    let applied = &report.upgraded[0];
+    assert_eq!(applied.work_id, [0xA5; 32]);
+    assert_eq!(applied.anchor_index, 0);
+    assert_eq!(applied.artifact, merged.artifact, "the merged bytes");
+
+    // Both halves, recorded together — never one without the other.
+    let upgrade = applied.upgrade.as_ref().expect("the header group");
+    assert_eq!(upgrade.block_height(), *height);
+    assert_eq!(upgrade.block_header(), &header);
+
+    // And the recorded pair is exactly what A12 will check offline.
+    let parsed = parse_ots(&applied.artifact, &fixtures::DIGEST_A).expect("A11-clean");
+    assert!(
+        parsed
+            .attestations
+            .iter()
+            .any(|a| antseal_core::anchor::ots::header_commits(a, upgrade)),
+        "the recorded artifact must commit the recorded header"
+    );
+}
+
+/// A stub esplora pair answering for one height with one header hex.
+fn esplora_at(height: u64, header_hex: &str) -> crate::testing::stub::StubScript {
+    use crate::testing::stub::{StubMatch, StubReply, StubScript};
+    // A block hash is only ever echoed back into the next path, so any
+    // 64-character lowercase hex string serves; the pair must agree on it,
+    // which they do because both stubs are built from this one function.
+    let hash: String = "00000000000000000000".to_owned() + &"ab".repeat(22);
+    StubScript::new()
+        .route(
+            StubMatch::target(format!("/block-height/{height}")),
+            StubReply::Body {
+                status: 200,
+                content_type: "text/plain",
+                bytes: hash.as_bytes()[..64].to_vec(),
+            },
+        )
+        .route(
+            StubMatch::target("/header"),
+            StubReply::Body {
+                status: 200,
+                content_type: "text/plain",
+                bytes: header_hex.as_bytes().to_vec(),
+            },
+        )
 }
 
 /// The stored artifact's URI is attacker-writable, so the allowlist must fire
