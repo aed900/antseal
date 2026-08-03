@@ -1,6 +1,7 @@
-//! **Reverse coverage** (task F23): every code an F-side error family can
-//! emit is claimed by a tamper row, by a Q7 seed row, or by an entry naming
-//! the task that owes it — never by silence.
+//! **Reverse coverage** (task F23; the A domain appended by **A38**): every
+//! code a registered error family can emit is claimed by a tamper row, by a
+//! Q7 seed row, or by an entry naming the task that owes it — never by
+//! silence.
 //!
 //! # The direction Q8's registry cannot check
 //!
@@ -14,10 +15,12 @@
 //!
 //! R7 closed exactly this gap on R's own unprefixed namespace
 //! (`every_unprefixed_verify_code_has_a_row_or_a_named_owner`) and earned
-//! itself immediately by surfacing two unowned codes. This module is the
-//! F-side twin, and it is deliberately *data* rather than a bespoke test, so
-//! the `cbor-` family's sibling check (F24) drops in as one more
-//! [`CoverageDomain`] rather than a second implementation.
+//! itself immediately by surfacing two unowned codes. This module began as
+//! the F-side twin, and it is deliberately *data* rather than a bespoke test,
+//! so a further family drops in as one more [`CoverageDomain`] rather than a
+//! second implementation. F24's `cbor-` sibling did **not** take that route
+//! and recorded why (a concurrent lane); **A38's three A-domain families
+//! did**, which is the first evidence that the data design pays.
 //!
 //! # The three ways a code may be accounted for
 //!
@@ -89,8 +92,10 @@ impl CoverageDomain {
 }
 
 /// The domains this check runs over. **F24 appends its `cbor-` domain here**;
-/// nothing else needs to change for it.
-pub const DOMAINS: &[&CoverageDomain] = &[&BUNDLE, &MANIFEST];
+/// nothing else needs to change for it. A38 appended the three A-domain
+/// families the same way, which is the mechanism working as F23 designed it:
+/// a new family costs one `CoverageDomain` const and one entry here.
+pub const DOMAINS: &[&CoverageDomain] = &[&BUNDLE, &MANIFEST, &ANCHOR, &ANCHOR_OTS, &ANCHOR_HEADER];
 
 /// F8's `.sealproof` schema family — 47 codes.
 pub const BUNDLE: CoverageDomain = CoverageDomain {
@@ -401,6 +406,289 @@ pub const MANIFEST: CoverageDomain = CoverageDomain {
     ],
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// The A domain (task A38)
+// ─────────────────────────────────────────────────────────────────────
+//
+// **Three families, one prefix.** D91 §6.1 rules that A has exactly one
+// namespace, `anchor-`, so all three share [`CoverageDomain::prefix`] and the
+// domains are distinguished by `name`. That is why `universe_of` below
+// dispatches on the name rather than the prefix: keying a lookup on the
+// prefix silently merges two families the moment a domain gains a sibling,
+// and the A domain arrived with two siblings at once.
+//
+// **Nothing here is claimed by a row yet, and that is the honest state.**
+// `testdata/tamper/MATRIX.json` pends eight M2 anchor cases and every one is
+// owned by A21; none is an implemented `TamperRow`, so
+// `claimed_in_integration_target` — which `tests/tamper_matrix.rs` validates
+// in the other direction against *live* rows — would be a false claim for all
+// three families. Every code is therefore accounted for by a **named owner**,
+// which is the third of §4b layer 4's three ways and the one G22's
+// `content-canonicalize-invalid-utf8` established.
+//
+// **What that leaves this check biting on**, since a list of owners could
+// otherwise read as a formality: a *new* A code minted without an entry goes
+// red, and a code recorded here that no variant emits any more goes red in
+// the other direction (`the_coverage_accounting_is_not_stale`). Between them
+// they are the reverse-coverage direction §4b layer 4 names and the direction
+// D91 §8 found unenforced for this whole domain.
+//
+// The suites the owner strings refer to, named once here rather than 52
+// times: `tests/der_pin_eval.rs` and `tests/anchor_caps.rs` (A5),
+// `tests/anchor_real_tokens.rs` (A8, nine real TSA responses),
+// `tests/anchor_ots_blast_radius.rs` (A11).
+
+/// A5/A8's RFC 3161 / RFC 5652 / X.509 family — 35 codes, ten of them fixed
+/// by resolved decisions (D60 §7.3, D53 §8, D59 §5) and 25 minted by A8's
+/// Accept row for outcomes no decision enumerated, reviewed at Q73.
+pub const ANCHOR: CoverageDomain = CoverageDomain {
+    name: "AnchorError",
+    prefix: "anchor-",
+    claimed_in_integration_target: &[],
+    owed: &[
+        (
+            "anchor-der-not-strict",
+            "A21 - MATRIX.json pending row `anchor-ber-not-der`; `expected` null until Q75",
+        ),
+        (
+            "anchor-der-malformed",
+            "A21 - row or recorded non-row; A5's strict-DER suite drives it",
+        ),
+        (
+            "anchor-der-nesting-depth",
+            "A21 - row or recorded non-row; A5's strict-DER suite drives it",
+        ),
+        (
+            "anchor-chain-cert-count",
+            "A21 - row or recorded non-row; A5's cap suite drives it at cap and cap+1",
+        ),
+        (
+            "anchor-chain-cert-size",
+            "A21 - row or recorded non-row; A5's cap suite drives it at cap and cap+1",
+        ),
+        (
+            "anchor-signed-attr-count",
+            "A21 - row or recorded non-row; A5's cap suite drives it at cap and cap+1",
+        ),
+        (
+            "anchor-tsa-status-not-granted",
+            "A21 - row or recorded non-row; A5's response-envelope suite drives it",
+        ),
+        (
+            "anchor-tsa-token-absent",
+            "A21 - row or recorded non-row; A5's response-envelope suite drives it",
+        ),
+        (
+            "anchor-cms-not-signed-data",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-not-tst-info",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-econtent-absent",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-signer-count",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-signed-attrs-absent",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-attr-duplicate",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-attr-not-single-valued",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-content-type-attr-missing",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-content-type-attr-mismatch",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-message-digest-attr-missing",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-message-digest-attr-mismatch",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-signature-invalid",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-cms-signer-id-unsupported",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-signer-cert-not-found",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-esscert-attr-missing",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-esscert-empty",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-esscert-mismatch",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-eku-missing",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-eku-not-critical",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-eku-no-timestamping",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-tst-version-unsupported",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-tsa-imprint-mismatch",
+            "A21 - MATRIX.json pending row `anchor-tsa-imprint-mismatch` (D53 S8 row 2)",
+        ),
+        (
+            "anchor-tsa-nonce-mismatch",
+            "A10 - owner-backed; NO bundle tamper row is possible (contract S2)",
+        ),
+        (
+            "anchor-digest-alg-unsupported",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-signature-alg-unsupported",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-spki-unsupported",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+        (
+            "anchor-key-alg-mismatch",
+            "A21 - row or recorded non-row; A8's CMS suite drives it from real tokens",
+        ),
+    ],
+};
+
+/// A11's `.ots` codec family — 16 codes: fifteen minted by A11 as D91 §7.1's
+/// mechanical renames of D58 §10.4's list, plus D56's
+/// `anchor-ots-digest-mismatch`, which A11 raises rather than mints.
+pub const ANCHOR_OTS: CoverageDomain = CoverageDomain {
+    name: "OtsError",
+    prefix: "anchor-",
+    claimed_in_integration_target: &[],
+    owed: &[
+        (
+            "anchor-ots-bad-magic",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-unsupported-version",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-unsupported-digest-type",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-truncated",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-trailing-bytes",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-varint-too-long",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-digest-mismatch",
+            "A21 - MATRIX.json pending row `anchor-ots-digest-mismatch` (D56 O2 / D91 S6.2)",
+        ),
+        (
+            "anchor-ots-too-many-ops",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-too-deep",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-branch-too-wide",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-too-many-attestations",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-operand-too-long",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-value-too-long",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-attestation-payload-too-long",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-attestation-payload-not-consumed",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+        (
+            "anchor-ots-unknown-op",
+            "A21 - row or recorded non-row; A11's codec suite drives it from real bytes",
+        ),
+    ],
+};
+
+/// A12's embedded-header family — **one code, and it is not an error code**.
+///
+/// `anchor-ots-header-uncommitted` (D56 rule O8) is a `const` on
+/// `EmbeddedHeader`, not a `code()` arm: A12 answers one offline question and
+/// deliberately does not own an `AnchorState`, so the code travels as a
+/// diagnostic string that A18 attaches to a verdict. It is a family of one for
+/// exactly that reason, and it is registered rather than skipped because a
+/// code outside every enumerator is a code that can be renamed with a fully
+/// green suite — the hole Q52 exists to close, reopened for one string.
+///
+/// It is the first member of a shape the A domain will have more of: D56's
+/// `anchor-ots-online-header-mismatch` and `anchor-ots-online-block-absent`
+/// (rules O6/O7) are the same kind and are **not** registered here, because
+/// A18 has not landed them and a snapshot may only carry codes something
+/// actually emits.
+pub const ANCHOR_HEADER: CoverageDomain = CoverageDomain {
+    name: "EmbeddedHeader",
+    prefix: "anchor-",
+    claimed_in_integration_target: &[],
+    owed: &[(
+        "anchor-ots-header-uncommitted",
+        "A21 - row or recorded non-row; A12's embedded-header suite drives it offline",
+    )],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,12 +709,78 @@ mod tests {
             .collect()
     }
 
+    /// Every code `AnchorError` can emit (A5/A8).
+    fn anchor_universe() -> Vec<&'static str> {
+        crate::anchor::error::all_code_exemplars()
+            .iter()
+            .map(crate::anchor::AnchorError::code)
+            .collect()
+    }
+
+    /// Every code `OtsError` can emit (A11).
+    fn anchor_ots_universe() -> Vec<&'static str> {
+        crate::anchor::ots::all_code_exemplars()
+            .iter()
+            .map(crate::anchor::ots::OtsError::code)
+            .collect()
+    }
+
+    /// A12's one diagnostic code, which lives on a `const` rather than in an
+    /// error enum.
+    fn anchor_header_universe() -> Vec<&'static str> {
+        vec![crate::anchor::ots::EmbeddedHeader::UNCOMMITTED_CODE]
+    }
+
+    /// Dispatch on the **name**, not the prefix.
+    ///
+    /// D91 §6.1 gives the whole A domain one prefix, so three of the five
+    /// domains answer `"anchor-"`. Keying this lookup on the prefix — as it
+    /// did until A38 — would have handed `OtsError` the `AnchorError`
+    /// universe: every `anchor-ots-*` code reported unaccounted, and one
+    /// family swept twice.
     fn universe_of(domain: &CoverageDomain) -> Vec<&'static str> {
-        match domain.prefix {
-            "bundle-" => bundle_universe(),
-            "manifest-" => manifest_universe(),
+        match domain.name {
+            "BundleError" => bundle_universe(),
+            "ManifestError" => manifest_universe(),
+            "AnchorError" => anchor_universe(),
+            "OtsError" => anchor_ots_universe(),
+            "EmbeddedHeader" => anchor_header_universe(),
             other => panic!("no universe wired for the `{other}` domain"),
         }
+    }
+
+    /// Every domain in [`DOMAINS`] has a universe wired, no two share a name,
+    /// and none is empty.
+    ///
+    /// Without this, adding a `CoverageDomain` and forgetting the
+    /// `universe_of` arm is a panic in one test rather than a statement; two
+    /// domains sharing a name makes the dispatch silently ambiguous — the
+    /// failure the prefix key already had — and an empty universe is a
+    /// reverse-coverage check over nothing.
+    #[test]
+    fn every_registered_domain_has_a_wired_universe() {
+        let mut names: Vec<&str> = Vec::new();
+        for domain in DOMAINS {
+            assert!(
+                !names.contains(&domain.name),
+                "two coverage domains are named `{}`; the `universe_of` dispatch cannot tell \
+                 them apart",
+                domain.name
+            );
+            names.push(domain.name);
+            assert!(
+                !universe_of(domain).is_empty(),
+                "`{}` has an empty universe — a reverse-coverage check over nothing is the \
+                 purest form of a check that cannot fail",
+                domain.name
+            );
+        }
+        assert_eq!(
+            names.len(),
+            5,
+            "the coverage-domain roster changed size; a family added to `DOMAINS` needs a \
+             `universe_of` arm, and a family REMOVED from it stops being swept at all"
+        );
     }
 
     /// Every row registered on the **lib** side, whichever domain owns it.
@@ -445,10 +799,16 @@ mod tests {
         rows
     }
 
-    /// **F23.** Every code of every registered domain is claimed by a row, by
-    /// a named integration row, or by a task recorded as owing one.
+    /// **F23, extended to the A domain by A38.** Every code of every
+    /// registered domain is claimed by a row, by a named integration row, or
+    /// by a task recorded as owing one.
+    ///
+    /// Renamed from `every_f_side_code_has_a_row_or_a_named_owner` when A38
+    /// appended `AnchorError`, `OtsError` and `EmbeddedHeader` to [`DOMAINS`]:
+    /// the sweep is no longer F-side, and a guard whose name asserts something
+    /// false is the defect this project keeps finding in its own prose.
     #[test]
-    fn every_f_side_code_has_a_row_or_a_named_owner() {
+    fn every_registered_domain_code_has_a_row_or_a_named_owner() {
         let rows = lib_rows();
         let mut report = String::new();
         for domain in DOMAINS {
@@ -463,7 +823,7 @@ mod tests {
         }
         assert!(
             report.is_empty(),
-            "these F-side codes have no tamper row and no named owner:{report}\n\
+            "these codes have no tamper row and no named owner:{report}\n\
              A new schema rejection class needs a row, an entry in \
              `claimed_in_integration_target` naming the row that binds it, or an entry in \
              `owed` naming the task that owes it — the whole point of this check is that the \
