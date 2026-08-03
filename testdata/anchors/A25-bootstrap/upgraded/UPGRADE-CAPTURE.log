@@ -1,0 +1,14 @@
+# A25 day-2 upgrade capture log (task A14 lane m2w3-iota)
+utc_start=2026-08-03T09:03:38Z
+upgrade digest=A calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a6f9804b8063c5cf589fe03d0d11958f4d45c0caab0b98306251891cdc4699151a60180ed69d89a4dab025f http=200 bytes=1000 sha256=1eb05bea0785cb6520a8f1ca4b61a0ecfb7dd53ced449dfa737dcc29b1008ee5 utc=2026-08-03T09:03:38Z
+upgrade digest=A calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a6f9805da7f14a96bcb07a45dc11eabc6ec73a21edc256fc1e4a109dc32556f003873210b8c9c8c453329b8 http=200 bytes=1036 sha256=55bb16547e373c9b8e9f13923f362f1eac386e686b88823fac705757dd82a944 utc=2026-08-03T09:03:39Z
+upgrade digest=A calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a6f9806091b1bec1509b116f4ce5207854885530c911c1f4d5f8dd824a453c16613157fd8b0bbdcb691861f http=200 bytes=1105 sha256=d360114bc1787684e656a2381280c051d7b98108570e439cba5b1c6702d8db09 utc=2026-08-03T09:03:41Z
+upgrade digest=B calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a6f9808d2275014bcf1cc77c06e754860bb2d860e9e9c8426e26c7ccbe9250be073405e96c68f22e0d7e21f http=200 bytes=1000 sha256=71a7c95941bb7ae6c36587da53689dbaa06f296335971f78adc579435743b771 utc=2026-08-03T09:03:41Z
+upgrade digest=B calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a6f980904a893ee64e4897f81a67c7721d083d5f59c8087e4be54113eaca69b820499c1aaea1ece35d9e656 http=200 bytes=1036 sha256=ad741c5c6df6c027dc46bc4a313a571493f05020a366c2f20c4442738a849a90 utc=2026-08-03T09:03:42Z
+upgrade digest=B calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a6f980aa8436f3deff0938b8c3bbc0eca7640f5bfea07be7f6a9e60a9309b83ad88ca1a4e7af957447d182a http=200 bytes=1105 sha256=408faa12660239be95aa4ce260a45cbb773d8181fb43e11700dc136f7862eba6 utc=2026-08-03T09:03:42Z
+utc_end=2026-08-03T09:03:42Z
+# hard-error discriminator: a one-byte-corrupted commitment (D58 7.4 row 2), captured for the byte-level fixture
+notfound calendar=alice url=https://alice.btc.calendar.opentimestamps.org http=404 bytes=9 sha256=e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31 body=0000000   N   o   t       f   o   u   n   d 0000011  utc=2026-08-03T09:04:07Z
+notfound calendar=bob url=https://bob.btc.calendar.opentimestamps.org http=404 bytes=9 sha256=e3ebaa16dd9d9b9fc107c42183fb6cf9d22927e1af03dbbdfa0ccc38e4e4ac31 body=0000000   N   o   t       f   o   u   n   d 0000011  utc=2026-08-03T09:04:12Z
+notfound calendar=catallaxy url=https://btc.calendar.catallaxy.com http=000 bytes= sha256= body=0000000  utc=2026-08-03T09:04:22Z
+utc_end_notfound=2026-08-03T09:04:22Z
