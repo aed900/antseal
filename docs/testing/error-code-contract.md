@@ -34,7 +34,8 @@ algorithm, a tiling-violation class — each value gets its own code
 | `manifest-` | F | manifest schema validation (F5–F7) |
 | `bundle-` | F | `.sealproof` bundle schema validation (F8–F9) |
 | `crypto-` | C | HKDF, commitments, padding, AEAD, signatures (C2–C14) |
-| `content-` | G | canonicalization, unit model, fine tree (G2–G13) |
+| `content-` | G | canonicalization and the unit model (G2–G8) |
+| `fine-root-` | G | fine-tree root binding and cover shape (G9–G13) — a **standing exception**, recorded below: the family lives in G but does not carry `content-`, and R mints one member of it |
 | `anchor-` | A | anchor-artifact verification: strict DER/CMS, X.509 path validation, `.ots` op execution, embedded-header and online-header checks (A5–A18); and capture-path outcomes in `antseal-anchor` (A10) |
 | *(unprefixed)* | R | verification-pipeline outcomes (R1–R5) |
 | *(none — S mints no codes)* | S | ruled below, not omitted |
@@ -114,6 +115,18 @@ The fine-tree errors live in G (`content/fine_tree/error.rs`) but carry
 **`fine-root-`**, not `content-`. This is deliberate and is the only
 standing exception.
 
+**It had no row in §2's table until Q77 (2026-08-03), and the omission was
+load-bearing.** The family has been ratified since 2026-07-28 and has carried
+nine committed codes since Q52's freeze, but the table above — which this
+document treats as *the* registry — described six prefixes for seven
+families. Nothing could see it: `census`'s private literal listed
+`fine-root-` and the table did not, and neither was compared with the other.
+D91 §8.1 then transcribed the table as *"§2's table, first column, backticked
+cells only"* and wrote **seven** entries including `fine-root-`, which is the
+set the tree needs and **not** the set the table then held. Q77's
+`section_2_prefix_table_matches_registered_prefixes` compares the two for the
+first time, so the row is now required rather than remembered.
+
 R2 minted `fine-root-binding-failed` and `fine-root-over-broad-cover` before
 G9–G13 existed, to declare the seam the fine tree would later fill. §3 makes
 codes append-only — *a failing test is never fixed by editing a code* — so
@@ -164,7 +177,12 @@ both exist — while `anchor-chain-signature-invalid` does not, there being no
 OTS chain. It is a **review guideline and deliberately not machine-enforced**:
 §3 makes codes permanent, so a naming-*style* test would turn a judgement
 call into a red build whose only available fix is the rename §3 forbids. The
-one machine-enforced rule is the prefix itself (**Q77**).
+one machine-enforced rule is the prefix itself, and it is enforced as of
+2026-08-03 (**Q77**): `error_universe`'s
+`every_code_carries_the_prefix_registered_to_its_domain` pairs each
+enumerator with the prefix this table registers to its domain, with a
+**total** lookup — an enumerator with no row fails rather than being skipped,
+because the enumerator without a row is always the one just added.
 
 Two codes in the family need their backing recorded at registration rather
 than inferred later.
@@ -192,7 +210,99 @@ over a two-sided bound. The expired direction is row-backed
 named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`
 (D53 §9) and by nothing else, which D53 §12 records as a residual risk.
 
-### Why S has no prefix — ruled 2026-08-02 at Q80, not omitted
+**One task, three ids, and one of the three does not exist** (D91 §11.5).
+D53 §10 calls this registration **A38**, D59 §7 and Q80's landed commit call
+it **Q80**, and D60 §7.2/§11 item 8 calls it **Q72** — measured 2026-08-03
+against `tasks/` and `TODO.md` in both this lane's tree and the integration
+tree, **`Q72` is named by neither**, so D60 points a reader at nothing. The ids are recorded here rather than
+renumbered, because a resolved decision is amended, never rewritten:
+**A38 = Q80 = Q72 = the work this section is**, and the `anchor-ots-*` half
+of the same registration is **A52** (renumbered from A50). A fifth id,
+**Q73**, is the name review below, and **Q77** is the machine enforcement.
+
+### The name review at Q73 — 2026-08-02, before the first append
+
+§3 makes a code permanent from its first binding, and the append into
+`testdata/error-codes/v1/CODES.txt` *is* a binding. So the one moment at
+which an A code can still be renamed is the moment before that append, and
+this is the record that it was used rather than skipped.
+
+**The set reviewed: 52 codes**, live in `crates/antseal-core/src/anchor/` —
+35 from `AnchorError` (A5/A8), 16 from `OtsError` (A11), and
+`EmbeddedHeader::UNCOMMITTED_CODE` (A12). Ten are fixed by resolved
+decisions (D60 §7.3's eight, D53 §8's `anchor-tsa-imprint-mismatch`, D59
+§5's `anchor-tsa-nonce-mismatch`); fifteen are D91 §7.1's mechanical
+renames of D58 §10.4's list; two are D56 §7's (`anchor-ots-digest-mismatch`,
+`anchor-ots-header-uncommitted`). That leaves **25 minted by A5/A8** for
+outcomes no decision enumerated — a stripped content-type attribute, a
+message-digest mismatch, an ESSCertID naming a different certificate, a
+missing or non-critical EKU, a token signature that does not verify — since
+a rejection class with no code of its own cannot be a tamper row.
+
+**The rule applied, and it is narrower than "make the family consistent":**
+a name is changed only where it (a) is ambiguous against a spelling that is
+already live somewhere in the tree, (b) mis-describes the check it names, or
+(c) makes two codes read as one observable. **Consistency of grouping is not
+a ground, because it is not achievable** — measured, on the ten codes that
+cannot be renamed at all:
+
+- `anchor-signed-attr-count` (D60) is a CMS `signedAttrs` check that sits
+  *outside* the `anchor-cms-` group and cannot be moved into it, so no
+  rename of the 25 can make "every CMS check carries `cms`" true.
+- `anchor-ots-unsupported-version` (D58, via D91 §7.1) and the minted
+  `anchor-tst-version-unsupported` put `unsupported` at opposite ends of the
+  name. Only the second is renameable, so no rename can make the word order
+  uniform either.
+
+A rename spends a permanent decision; buying a uniformity that two frozen
+codes already make unreachable buys nothing. **Result: zero renames.**
+
+**The judgement call A5/A8 flagged, decided on measurement rather than on
+precedent.** `anchor-tsa-status-not-granted` and `anchor-tsa-token-absent`
+carry a `tsa` segment although §7.3's letter would drop it: there is no OTS
+`PKIStatus` and no OTS `timeStampToken`, so nothing is ambiguous across the
+two kinds. They are **kept**, and the reason is not that
+`anchor-tsa-nonce-mismatch` does the same (it does, and D59 ruled it, so it
+is evidence of nothing but its own permanence). It is that the unqualified
+spellings collide with strings that are **already live in this tree**:
+
+- `anchor-status-not-granted` would sit beside `bundle-unknown-anchor-status`
+  and the wire field `AnchorStatus`, where "anchor status" is the bundle's
+  own vocabulary, not RFC 3161's `PKIStatusInfo`.
+- `anchor-token-absent` would sit beside the anchor model's `absent`
+  verdict for *a kind with no artifacts at all* — a different claim about a
+  different object, in the same four letters.
+
+The `tsa` segment is what keeps both readings apart, which is §7.3's own
+test ("a kind segment appears where the check name would otherwise be
+ambiguous") applied to ambiguity against the **surrounding namespaces**
+rather than only against the other artifact kind.
+
+**Two near-misses in the minted 25, kept separable** — the fifth and sixth
+of the `path-commit-mismatch` kind recorded in this document:
+
+1. `anchor-cms-signature-invalid` (A8 — the *token* is not signed by the
+   certificate it names) vs `anchor-chain-signature-invalid` (A9, D53 §7 —
+   a *certificate-link* signature). One is about the CMS `SignerInfo`
+   signature over `signedAttrs`; the other is about an issuer signing a
+   subject. Merging them would tell a verdict reader "a signature failed"
+   and withhold which of two unrelated things was forged. This pair is also
+   the one place a segment earns itself under §7.3: `cms` and `chain` are
+   what make the two names different at all.
+2. `anchor-cms-message-digest-attr-mismatch` (the `message-digest` signed
+   attribute does not equal the digest of `eContent`) vs
+   `anchor-digest-alg-unsupported` (D60 — a CMS digest **OID** outside the
+   registry). Same artifact, adjacent fields, and a third "digest" name
+   beside D91 §7.2's three; the check is a value comparison in one and an
+   algorithm-registry lookup in the other.
+
+**And two `-count` codes that mean different things**, recorded because the
+suffix invites the wrong reading and neither name can be repaired:
+`anchor-chain-cert-count` and `anchor-signed-attr-count` (both D60) are
+**caps** — more material than the limit admits — while
+`anchor-cms-signer-count` is an **exact-arity** rule: RFC 3161 §2.4.2 admits
+exactly one `SignerInfo`, so both 0 and 2 are refused by it. The payload
+carries the number in all three; only the two cap codes have a limit to name.
 
 This document's header binds *"every component domain (F/C/G/S/A/R)"*, and
 the table above now assigns a prefix to five of the six. The sixth is
@@ -258,8 +368,14 @@ being minted under.
 The general rule this instance makes explicit, and which no prefix ruling
 changes: a `--json` consumer reads `error.class`, a verdict/tamper consumer
 reads the code, and a program that treats the two fields as one namespace is
-reading the contract wrong. Making that disjointness *machine-checked*
-rather than stated is discovered work (**Q77**).
+reading the contract wrong. That disjointness is **machine-checked as of
+2026-08-03 (Q77)**, in `crates/antseal-cli/tests/namespace_disjointness.rs` —
+the only target that can see both `CliError` and the committed universe, which
+is why it lives there rather than in `error_universe.rs` with a hardcoded copy
+of the class table. It pins the reservation above in both directions: red if
+`anchor-gate-abort` is ever minted as a code, and red if it stops being a
+class name, since a reservation protecting nothing should be retired
+deliberately rather than left standing.
 
 ## 3. Append-only
 
@@ -1088,6 +1204,91 @@ kebab-case id, and never edit an existing row's expected code.
   by **nothing** today — `census` sorts an unregistered prefix into R's
   bucket and prints it — which is how sixteen codes came to be minted under
   an unregistered namespace with a green suite. → **Q77**.
+
+- **2026-08-03 (M2 wave 3, A38/A52/Q73)** — **the A domain enters the frozen
+  universe: 194 → 246 codes, 52 appended, none renamed, none removed.**
+  `anchor-` 0 → 52. The first append under §4a's additions-only path since
+  F40, and the largest in the project's history.
+
+  The 52, by source and by who ruled the name:
+
+  | source | codes | ruled by |
+  |---|---|---|
+  | `AnchorError` (A5/A8) | 35 | ten by D60 §7.3 / D53 §8 / D59 §5; **25 minted by A8's Accept row**, reviewed at Q73 |
+  | `OtsError` (A11) | 16 | fifteen are D91 §7.1's mechanical renames of D58 §10.4; the sixteenth is D56's `anchor-ots-digest-mismatch`, raised not minted |
+  | `EmbeddedHeader::UNCOMMITTED_CODE` (A12) | 1 | D56 rule O8 |
+
+  Four things this registration settles that no prose had:
+
+  1. **The A domain has three code sources, not one, and the third is not an
+     error type.** D91 §8.1's table has one A row and §8.2 calls the roster
+     move "8 → 9"; it is **8 → 11**. `anchor-ots-header-uncommitted` lives as
+     a `const` on A12's `EmbeddedHeader` — A12 answers one offline question
+     and deliberately owns no `AnchorState` — so **no `code()` arm emits it
+     and no enumerator sweep could reach it**. A code outside every
+     enumerator is a code that can be renamed with a fully green suite, which
+     is the whole hole §4a exists to close, and it was invisible to every
+     count taken of this family. It is registered. D56's `O6`/`O7` codes are
+     the same shape and are **not** registered, because A18 has not landed
+     them and the snapshot may only carry codes something emits.
+  2. **A count that three methods disagreed on.** Grepping
+     `"anchor-…"` string literals under `src/anchor/` gives **54** — it
+     counts two *test fixture* strings in `anchor/model.rs`
+     (`anchor-model-test-code`, `anchor-model-diagnostic-probe`), which are
+     not codes and must never be registered. The error enums give **51**. The
+     answer is **52**.
+  3. **`census`'s bucket, caught in the act.** Running the gate after the
+     wiring and before Q77 printed
+     `census — 246 total: … (unprefixed) 85`. R has 33 unprefixed codes; the
+     other 52 are the whole A domain, sorted into R's bucket and *printed* as
+     if they were R's. That is D91 §8's prediction reproduced verbatim rather
+     than quoted, and Q77's `REGISTERED_PREFIXES` is what ends it.
+  4. **The append is what ends the free-rename window**, so Q73's review ran
+     first and is recorded in §2 above. Renaming any of the 52 now fails the
+     §4a gate under the frozen spelling — proven by planting exactly that.
+
+  §4b layer 4 gains the A domain in the same wave (**A38**): three
+  `CoverageDomain`s in `test_util::tamper_coverage`, appended as *data*, which
+  is the first time F23's design has been extended rather than sibling-ed
+  (F24's `cbor-` twin recorded a concurrent lane as its reason). All 52 are
+  accounted for by a **named owner**, none by a row: `MATRIX.json` pends eight
+  M2 anchor cases and not one is yet an implemented `TamperRow`, so
+  `claimed_in_integration_target` — which `tests/tamper_matrix.rs` validates
+  against live rows — would have been a false claim for the whole domain.
+
+- **2026-08-03 (M2 wave 3, Q77)** — **§2's headline rule acquires a
+  mechanism.** *"A domain never mints a code under another domain's prefix"*
+  was, until this commit, enforced by **nothing**: a foreign-prefix code is
+  pairwise distinct, correctly kebab-shaped and new, so all three §4b layers
+  pass it; `census` sorted it into the `(unprefixed)` bucket and *printed*
+  it; and §4a is additions-only, so it was absorbed. That is how D58 came to
+  specify sixteen codes under an unregistered namespace with a green suite.
+  **No code was minted, renamed or removed; the universe stays 246.**
+
+  Three parts, per D91 §8:
+
+  1. `ENUMERATOR_PREFIXES` pairs every entry of `by_enumerator()` with the
+     prefix this section registers to its domain. **The lookup is total** — an
+     enumerator with no row is a failure naming it, never a skip — because the
+     enumerator without a row is always the one just added, so a `filter_map`
+     would go green over exactly the domain being introduced.
+     `verify::error` is deliberately permissive: §2's wrapper rule makes R's
+     exemplar list a superset of every other family's, and an unprefixed R
+     code is textually indistinguishable from a code under an unregistered
+     prefix, so a foreign prefix is caught at the enumerator that mints it.
+  2. `REGISTERED_PREFIXES` **replaces** `census`'s private literal, so the
+     census and the gate cannot drift, and
+     `section_2_prefix_table_matches_registered_prefixes` compares the const
+     with this table, so neither can drift from the document.
+  3. The code/`ErrorClass` disjointness Q80 measured by hand is now checked,
+     in `crates/antseal-cli/tests/namespace_disjointness.rs`.
+
+  **The table was wrong, and only the new check could say so.** `fine-root-`
+  has been a ratified family since 2026-07-28 with nine committed codes and
+  **had no row in §2's table** — registered in prose, in the subsection below
+  it. D91 §8.1 transcribed the table as seven backticked cells including
+  `fine-root-`; the table held six. The row is added above, and the comparison
+  is what now requires it.
 
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a

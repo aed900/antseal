@@ -5,7 +5,7 @@
 #
 # One code per line, sorted, no duplicates. Lines starting with '#' and blank
 # lines are ignored. This file is COMPARED ON EVERY TEST RUN against the codes
-# collected from the eight per-domain exemplar enumerators, with
+# collected from the per-domain exemplar enumerators, with
 # ADDITIONS-ONLY semantics:
 #
 #   adding a code    passes  (D30 section 3: routine and unrestricted)
@@ -20,6 +20,58 @@
 #
 # The bless path writes the UNION of this file and the live set, so it can
 # never drop a code; removing one is a hand edit with a reviewable diff.
+anchor-chain-cert-count
+anchor-chain-cert-size
+anchor-cms-attr-duplicate
+anchor-cms-attr-not-single-valued
+anchor-cms-content-type-attr-mismatch
+anchor-cms-content-type-attr-missing
+anchor-cms-econtent-absent
+anchor-cms-message-digest-attr-mismatch
+anchor-cms-message-digest-attr-missing
+anchor-cms-not-signed-data
+anchor-cms-not-tst-info
+anchor-cms-signature-invalid
+anchor-cms-signed-attrs-absent
+anchor-cms-signer-count
+anchor-cms-signer-id-unsupported
+anchor-der-malformed
+anchor-der-nesting-depth
+anchor-der-not-strict
+anchor-digest-alg-unsupported
+anchor-eku-missing
+anchor-eku-no-timestamping
+anchor-eku-not-critical
+anchor-esscert-attr-missing
+anchor-esscert-empty
+anchor-esscert-mismatch
+anchor-key-alg-mismatch
+anchor-ots-attestation-payload-not-consumed
+anchor-ots-attestation-payload-too-long
+anchor-ots-bad-magic
+anchor-ots-branch-too-wide
+anchor-ots-digest-mismatch
+anchor-ots-header-uncommitted
+anchor-ots-operand-too-long
+anchor-ots-too-deep
+anchor-ots-too-many-attestations
+anchor-ots-too-many-ops
+anchor-ots-trailing-bytes
+anchor-ots-truncated
+anchor-ots-unknown-op
+anchor-ots-unsupported-digest-type
+anchor-ots-unsupported-version
+anchor-ots-value-too-long
+anchor-ots-varint-too-long
+anchor-signature-alg-unsupported
+anchor-signed-attr-count
+anchor-signer-cert-not-found
+anchor-spki-unsupported
+anchor-tsa-imprint-mismatch
+anchor-tsa-nonce-mismatch
+anchor-tsa-status-not-granted
+anchor-tsa-token-absent
+anchor-tst-version-unsupported
 bundle-cert-too-large
 bundle-ciphertext-length-residue
 bundle-ciphertext-too-short

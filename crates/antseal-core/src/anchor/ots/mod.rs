@@ -59,6 +59,15 @@ mod limits;
 mod parse;
 
 pub use error::{OtsError, PayloadDefect};
+
+/// The `.ots` code roster, reachable from `error_universe` and
+/// `test_util::tamper_coverage` (**A38/A52**) without making `error` a public
+/// module: `mod error` is private, so `anchor::ots::error::all_code_exemplars`
+/// — the path D91 §8.1 and this module's own docs name — does not resolve
+/// outside `anchor::ots`. `#[cfg(test)]` because the enumerator it feeds is,
+/// so nothing here reaches a production build.
+#[cfg(test)]
+pub(crate) use error::all_code_exemplars;
 pub use header::{
     EmbeddedHeader, check_embedded_header, header_commits, header_time_unix, merkle_root_of,
 };
