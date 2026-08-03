@@ -1267,6 +1267,240 @@ mod tests {
         assert_eq!(production.state(), AnchorState::InternallyConsistentOnly);
     }
 
+    /// Flip one bit inside a certificate's `authorityKeyIdentifier`.
+    ///
+    /// The AKI lives in the TBS, so this also breaks the signature — which is
+    /// exactly what makes the test decisive. With the AKI/SKI rule the path is
+    /// never *built* (D53 §3's name chaining) and the artifact is
+    /// `internally-consistent-only`; without it the path is built and dies on
+    /// the signature instead. Two different states from one mutation.
+    fn with_wrong_aki(cert: &Certificate) -> Certificate {
+        const OID: [u8; 5] = [0x06, 0x03, 0x55, 0x1D, 0x23];
+        const KEYID: [u8; 2] = [0x80, 0x14];
+        let mut der = der_of(cert);
+        let at = der
+            .windows(OID.len())
+            .position(|w| w == OID)
+            .expect("the fixture carries an authorityKeyIdentifier");
+        let rel = der[at..]
+            .windows(KEYID.len())
+            .position(|w| w == KEYID)
+            .expect("a 20-byte keyIdentifier");
+        let last = at + rel + 2 + 19;
+        der[last] ^= 0x01;
+        Certificate::from_der(&der).expect("only the keyIdentifier changed")
+    }
+
+    /// Clear the `keyCertSign` bit in a certificate's `keyUsage`.
+    ///
+    /// One bit, no length change, and — as with [`with_ca_false`] — legitimate
+    /// on a **root** only, because an anchor's own signature is never checked.
+    fn without_key_cert_sign(cert: &Certificate) -> Vec<u8> {
+        const OID: [u8; 5] = [0x06, 0x03, 0x55, 0x1D, 0x0F];
+        const BITS: [u8; 2] = [0x03, 0x02];
+        let mut der = der_of(cert);
+        let at = der
+            .windows(OID.len())
+            .position(|w| w == OID)
+            .expect("every pinned root carries keyUsage");
+        let rel = der[at..]
+            .windows(BITS.len())
+            .position(|w| w == BITS)
+            .expect("a two-octet BIT STRING");
+        let value = at + rel + 3;
+        assert_ne!(der[value] & 0x04, 0, "keyCertSign was set before the edit");
+        der[value] &= !0x04;
+        der
+    }
+
+    /// Move a certificate's `notAfter` year back to 2018, in place.
+    ///
+    /// `UTCTime` is fixed width, so this is two ASCII digits and no reshaping.
+    /// Used only on a **root**, for the same reason as above.
+    fn with_expired_not_after(cert: &Certificate) -> Vec<u8> {
+        let mut der = der_of(cert);
+        // Validity ::= SEQUENCE { notBefore UTCTime, notAfter UTCTime }
+        let pat = [0x30u8, 0x1E, 0x17, 0x0D];
+        let at = der
+            .windows(pat.len())
+            .position(|w| w == pat)
+            .expect("two UTCTime validity fields");
+        let not_after_year = at + 4 + 13 + 2;
+        assert_eq!(&der[not_after_year..not_after_year + 2], b"38");
+        der[not_after_year..not_after_year + 2].copy_from_slice(b"18");
+        der
+    }
+
+    /// **D53 §5(a).** The trust anchor's own validity period is *not* checked.
+    ///
+    /// Pinned roots are long-lived and will expire while sealed bundles are
+    /// still being verified. An implementation that checks `R.notAfter` flips
+    /// every bundle anchored under a root to a worse state on that root's
+    /// expiry date — the silent rot MVP-SPEC.md lines 109 and 130 forbid.
+    ///
+    /// Not reachable from an unmodified fixture: every real root outlives
+    /// every certificate beneath it, so only a root whose `notAfter` has been
+    /// moved can separate "the chain expired" from "the anchor expired".
+    #[test]
+    fn an_expired_pinned_root_still_yields_proven() {
+        let t = token(DIGICERT, &PROBE);
+        let real = Certificate::from_der(TsaRootStore::pinned().roots()[1].der).expect("parses");
+        let expired = with_expired_not_after(&real);
+        assert_eq!(expired.len(), der_of(&real).len());
+        let store = store_of(vec![(expired, "root-expired-in-2018")]);
+        let v = validate_chain(
+            t.signer(),
+            &certs(&t),
+            &store,
+            t.gen_time_unix(),
+            AFTER_CAPTURE,
+        );
+        assert_eq!(
+            v.state(),
+            AnchorState::Proven,
+            "an expired ANCHOR must not rot the evidence beneath it; fault {:?}",
+            v.fault()
+        );
+        assert_eq!(v.verified_time_unix(), Some(t.gen_time_unix()));
+    }
+
+    /// D53 C4 through `keyUsage` rather than `basicConstraints`.
+    ///
+    /// A separate row because the two are separate conjuncts and a validator
+    /// can implement one and skip the other: no real certificate in any
+    /// captured chain is `CA:TRUE` *and* missing `keyCertSign`, so nothing
+    /// else in the suite can see the omission.
+    #[test]
+    fn an_issuer_whose_key_usage_forbids_cert_signing_is_a_constraint_violation() {
+        let t = token(DIGICERT, &PROBE);
+        let real = Certificate::from_der(TsaRootStore::pinned().roots()[1].der).expect("parses");
+        let crippled = without_key_cert_sign(&real);
+        assert_eq!(
+            crippled
+                .iter()
+                .zip(der_of(&real).iter())
+                .filter(|(a, b)| a != b)
+                .count(),
+            1,
+            "exactly one byte differs: the keyCertSign bit"
+        );
+        let store = store_of(vec![(crippled, "no-key-cert-sign")]);
+        let v = validate_chain(
+            t.signer(),
+            &certs(&t),
+            &store,
+            t.gen_time_unix(),
+            AFTER_CAPTURE,
+        );
+        assert_eq!(v.state(), AnchorState::Invalid, "fault {:?}", v.fault());
+        assert_eq!(v.fault(), Some(ChainFault::ChainConstraintViolation));
+
+        // Anti-vacuity: the same path with the bit set reaches `proven`.
+        let ok = store_of(vec![(der_of(&real), "intact")]);
+        assert_eq!(
+            validate_chain(
+                t.signer(),
+                &certs(&t),
+                &ok,
+                t.gen_time_unix(),
+                AFTER_CAPTURE
+            )
+            .state(),
+            AnchorState::Proven
+        );
+    }
+
+    /// **P3, with two paths of different grades in the pool.**
+    ///
+    /// The permutation row above cannot see a "first path wins"
+    /// implementation, and that is worth stating rather than discovering
+    /// later: a real token offers essentially one viable path, so every
+    /// ordering finds the same one first. This row supplies a broken copy of
+    /// every certificate alongside the real ones, so the pool holds a
+    /// `Valid` path *and* a `SignatureInvalid` path, and asks that **every**
+    /// ordering still return `proven`.
+    ///
+    /// It is also the ordering half of "an unsigned bundle lets any relay
+    /// append a certificate": the relay chooses the order too.
+    #[test]
+    fn a_junk_intermediate_never_demotes_a_valid_chain_in_any_order() {
+        let t = token(DIGICERT, &PROBE);
+        let junk: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(with_broken_signature)
+            .collect();
+        let mut pool: Vec<&Certificate> = certs(&t);
+        pool.extend(junk.iter());
+        assert_eq!(pool.len(), 6);
+
+        // 6! = 720 orderings; each is a full validation over a 7-node graph.
+        let mut checked = 0usize;
+        for order in permutations(pool.len()) {
+            let permuted: Vec<&Certificate> = order.iter().map(|&i| pool[i]).collect();
+            let v = validate_chain(
+                t.signer(),
+                &permuted,
+                TsaRootStore::pinned(),
+                t.gen_time_unix(),
+                AFTER_CAPTURE,
+            );
+            assert_eq!(
+                v.state(),
+                AnchorState::Proven,
+                "order {order:?} demoted an honest anchor to {:?}",
+                v.fault()
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 720);
+    }
+
+    /// D53 §3's name chaining is **issuer DN *and* AKI/SKI where both are
+    /// present**, not the DN alone.
+    ///
+    /// A certificate whose `authorityKeyIdentifier` names a different key
+    /// builds no candidate path, so `NAMED` is empty and the artifact is
+    /// `internally-consistent-only`. An implementation that matches on the DN
+    /// alone builds the path and reports a signature failure instead — a
+    /// different state, which is what makes this row able to fail.
+    #[test]
+    fn an_authority_key_identifier_naming_another_key_builds_no_path() {
+        let t = token(DIGICERT, &PROBE);
+        let root_subject = Certificate::from_der(TsaRootStore::pinned().roots()[1].der)
+            .expect("parses")
+            .tbs_certificate()
+            .subject()
+            .to_der()
+            .expect("encodes");
+        let rewritten: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(|c| {
+                if c.tbs_certificate().issuer().to_der().expect("encodes") == root_subject {
+                    with_wrong_aki(c)
+                } else {
+                    c.clone()
+                }
+            })
+            .collect();
+        let supplied: Vec<&Certificate> = rewritten.iter().collect();
+        let v = validate_chain(
+            t.signer(),
+            &supplied,
+            TsaRootStore::pinned(),
+            t.gen_time_unix(),
+            AFTER_CAPTURE,
+        );
+        assert_eq!(
+            v.state(),
+            AnchorState::InternallyConsistentOnly,
+            "no candidate path names a pinned root; fault {:?}",
+            v.fault()
+        );
+        assert_eq!(v.anchor_label(), None);
+    }
+
     // ── D53 §9 — the six-way partition ──────────────────────────────────
 
     /// D53 C1.

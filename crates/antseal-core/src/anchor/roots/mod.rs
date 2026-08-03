@@ -39,11 +39,11 @@
 //! D57 §5 names five target roots and §6 makes admission conditional:
 //! **no root may be compiled in ahead of its provenance.** Store version 1
 //! therefore holds the roots whose channel set is complete on the day it was
-//! built — three of the five — and the other two are **quarantined**, named
-//! in `PROVENANCE.md` with the exact missing channel. A quarantined root is
-//! not a silent omission: a user who configures that TSA gets a
-//! pre-payment seal abort (A20), which is loud, and A26's append process is
-//! how it is fixed.
+//! built — **four of the five** — and the fifth is **quarantined**, named in
+//! `PROVENANCE.md` with the exact missing channel and the reason it was not
+//! waived. A quarantine is not a silent omission: a user who configures that
+//! TSA gets a pre-payment seal abort (A20), which is loud, and A26's append
+//! process (`docs/anchors/root-store-update.md`) is how it is fixed.
 
 use x509_cert::Certificate;
 
@@ -116,6 +116,13 @@ pub const TSA_ROOT_STORE_VERSION: u32 = 1;
 /// ISO-8601 date the store contents were last changed (A26).
 pub const TSA_ROOT_STORE_BUILD_DATE: &str = "2026-08-03";
 
+/// The A26 release-gate horizon: **365 days**.
+///
+/// "No pinned root may be within 365 days of `notAfter` at release time"
+/// (D57 §8.6). Earliest expiry in store v1 is `digicert-trusted-root-g4`,
+/// 2038-01-15.
+pub const ROOT_EXPIRY_HORIZON_SECS: u64 = 365 * 24 * 60 * 60;
+
 /// The version an **injected** store reports.
 ///
 /// Zero, and deliberately outside the released sequence: a test store must
@@ -155,6 +162,45 @@ impl TsaRootStore {
     #[must_use]
     pub const fn roots(&self) -> &'static [PinnedRoot] {
         self.roots
+    }
+
+    /// Pinned roots whose `notAfter` falls within `horizon_secs` of
+    /// `now_unix` — the A26 release gate, and A44's scheduled read.
+    ///
+    /// **`now` is a parameter and always will be.** `antseal-core` reads no
+    /// clock (A9's WASM-determinism rule), so this function is deterministic
+    /// and identical on `wasm32`. The consequence is worth stating rather
+    /// than glossing: a unit test with a frozen `now` proves **the function,
+    /// not the calendar**. It cannot detect a real approaching expiry and
+    /// must not be credited with doing so — driving it with the real clock is
+    /// A44's non-gating scheduled lane, and
+    /// `docs/anchors/root-store-update.md` §6 is the gating half.
+    ///
+    /// A root whose bytes do not parse is reported as expiring, on the
+    /// principle that an unreadable trust anchor is a release-blocking fact
+    /// and silence is the wrong default. It cannot happen in a build that
+    /// passes this module's own suite.
+    #[must_use]
+    pub fn roots_within_expiry_horizon(
+        &self,
+        now_unix: u64,
+        horizon_secs: u64,
+    ) -> Vec<&'static PinnedRoot> {
+        self.roots
+            .iter()
+            .filter(|root| match root.parse() {
+                Ok(cert) => {
+                    let not_after = cert
+                        .tbs_certificate()
+                        .validity()
+                        .not_after
+                        .to_unix_duration()
+                        .as_secs();
+                    not_after <= now_unix.saturating_add(horizon_secs)
+                }
+                Err(_) => true,
+            })
+            .collect()
     }
 
     /// Test-only injection (A6 Accept; A24's mock-CA suites; A43's negative
@@ -420,6 +466,62 @@ mod tests {
         assert_ne!(injected.version(), TSA_ROOT_STORE_VERSION);
         assert_eq!(injected.build_date(), INJECTED_STORE_BUILD_DATE);
         assert!(injected.roots().is_empty());
+    }
+
+    /// The horizon function, driven with synthetic `now` values either side
+    /// of each pinned root's `notAfter - 365 d`: it must flag and not flag
+    /// respectively.
+    ///
+    /// This proves the **function**. It says nothing about whether a real
+    /// root is approaching expiry today, and A44's scheduled lane is the only
+    /// thing that can — stated here because a frozen-clock test that is
+    /// *credited* with calendar coverage is worse than no test at all.
+    #[test]
+    fn root_expiry_horizon_flags_a_root_inside_the_window() {
+        let store = TsaRootStore::pinned();
+        assert!(!store.roots().is_empty());
+        for root in store.roots() {
+            let not_after = root
+                .parse()
+                .expect("parses")
+                .tbs_certificate()
+                .validity()
+                .not_after
+                .to_unix_duration()
+                .as_secs();
+            let boundary = not_after - ROOT_EXPIRY_HORIZON_SECS;
+
+            let inside = store.roots_within_expiry_horizon(boundary + 1, ROOT_EXPIRY_HORIZON_SECS);
+            assert!(
+                inside.iter().any(|r| r.label == root.label),
+                "{} not flagged one second inside its horizon",
+                root.label
+            );
+
+            let outside =
+                store.roots_within_expiry_horizon(boundary - 86_400, ROOT_EXPIRY_HORIZON_SECS);
+            assert!(
+                !outside.iter().any(|r| r.label == root.label),
+                "{} flagged a day outside its horizon",
+                root.label
+            );
+        }
+
+        // Both extremes, so neither branch can be the constant function.
+        assert!(
+            store
+                .roots_within_expiry_horizon(0, ROOT_EXPIRY_HORIZON_SECS)
+                .is_empty(),
+            "no root expired before the epoch"
+        );
+        assert_eq!(
+            store
+                .roots_within_expiry_horizon(u64::MAX / 2, ROOT_EXPIRY_HORIZON_SECS)
+                .len(),
+            store.roots().len(),
+            "every root expires eventually"
+        );
+        assert_eq!(ROOT_EXPIRY_HORIZON_SECS, 31_536_000, "365 days");
     }
 
     /// `hex32` rejects the malformed literal shapes, so the compile-time
