@@ -645,6 +645,26 @@ D54 should treat finney as absent, not flaky.
 ### 7.5 A real upgraded `.ots`
 
 The two-day A25 cycle has not run, so no upgraded fixture exists in the tree
+
+> **Amended 2026-08-03 — the cycle has now run, in 13 h 47 m rather than two
+> days.** All six commitments returned `200` with a Bitcoin attestation at
+> 2026-08-03T09:03Z, having served the pending body at 19:34Z the evening
+> before, so **six upgraded fixtures now exist** under
+> `testdata/anchors/A25-bootstrap/upgraded/`. Nothing in the protocol promises
+> two days: a calendar aggregates and commits its root to Bitcoin, and the wait
+> is however long that takes — planning at 48 h is prudent, but recording 48 h
+> as *the* figure taught this document a number the network does not owe it.
+> Three consequences: §9's `upgraded/` margins can be re-measured against real
+> material instead of the `LARGE_TEST` bootstrap (replies are 1 000 / 1 036 /
+> 1 105 B, identical per calendar across both digests); the **three calendars
+> committed to three different blocks** — 960767, 960768, 960771 — so a fully
+> upgraded artifact carries three attestations against one embedded header and
+> A12's "at least one commits" rule is load-bearing, an implementation
+> requiring all three to commit rejecting an honest artifact; and §7.4's
+> discriminator has a **fourth** observed behaviour, catallaxy answering
+> nothing at all to a corrupted commitment where the other two answered `404`
+> + `Not found`, which must stay re-pollable and never be promoted to the hard
+> error.
 yet. One real upgraded mainnet proof was available and is used below with its
 provenance stated exactly: it is the `LARGE_TEST` constant in
 `opentimestamps-0.2.0/src/lib.rs:54-113`, a genuine proof over Bitcoin blocks

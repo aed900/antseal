@@ -231,10 +231,18 @@ two is a compile-time assertion in `crates/antseal-anchor/src/ots/mod.rs` and
 `crates/antseal-anchor/src/http.rs` — strict, because equality *is* the
 conflation.
 
-**Four of the first seven rows are bootstrapped, not measured, and say so in
-the cell.** No real *upgraded* `.ots` of this project's own exists yet — A25's
-two-day OTS pending → upgraded cycle started 2026-08-02T19:16Z and cannot
-complete before 2026-08-04 — so the `upgraded/` rows are measured against the
+**Four of the first seven rows were bootstrapped, not measured, and say so in
+the cell.** *(Corrected 2026-08-03. This read "No real *upgraded* `.ots` of this
+project's own exists yet — A25's two-day OTS pending → upgraded cycle started
+2026-08-02T19:16Z and **cannot complete before 2026-08-04**". **Six now exist.**
+The cycle completed in **13 h 47 m**, not 48 h: all six commitments returned 200
+with a Bitcoin attestation at 2026-08-03T09:03Z, having served the pending body
+at 19:34Z. Nothing in the protocol promises two days — a calendar aggregates and
+commits its root to Bitcoin, and the wait is however long that takes. The
+bootstrapped rows may now be re-measured against real material; A25 owes that
+re-measurement. This paragraph sits outside the §7 rule text the freeze-boundary
+check pins byte-for-byte, so correcting it here is legitimate — it is narrative,
+not rule.)* The `upgraded/` rows were measured against the
 `LARGE_TEST` constant of `opentimestamps-0.2.0`, a genuine mainnet proof over
 Bitcoin blocks 449397 and 449399 (≈ January 2017), committed with its
 provenance at `testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md`.

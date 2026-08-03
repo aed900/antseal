@@ -321,7 +321,7 @@ pub const OTS_SUBMIT_DEADLINE_SECS: u64 = 30;
 /// upgrade). Distinct from `antseal_core::codec::caps::MAX_OTS_BYTES`
 /// (1 MiB), which caps the merged artifact inside a bundle; four
 /// responses at this cap still fit that ceiling with 4x margin.
-pub const MAX_OTS_CALENDAR_RESPONSE_BYTES: usize = 65_536;
+pub const MAX_OTS_CALENDAR_RESPONSE_BYTES: u64 = 65_536;  // u64, not usize — corrected 2026-08-03 at A42: the substrate's `receive_cap_bytes` is u64, and a usize here forces a cast at every call site
 ```
 
 `MAX_OTS_CALENDAR_RESPONSE_BYTES` is a **new limit** and takes an F4
