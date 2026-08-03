@@ -953,6 +953,9 @@ name = "antseal-anchor"
 version = "0.0.0"
 dependencies = [
  "antseal-core",
+ "antseal-net",
+ "getrandom 0.4.3",
+ "serde_json",
  "thiserror 2.0.19",
  "ureq",
 ]

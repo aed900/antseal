@@ -25,6 +25,10 @@
 //! - [`error`] (tasks **A5**, **A8**) — the `anchor-` error taxonomy: one
 //!   distinct code per rejection class, all under the single prefix D91 §6.1
 //!   registered to the A domain.
+//! - [`request`] (task **A4**) — the DER `TimeStampReq` constructor: the one
+//!   request shape antseal sends, deterministic and golden-vectorable
+//!   because the nonce arrives as a parameter and is drawn on the network
+//!   side (D59 §4).
 //! - [`rfc3161`] (task **A5**) — the hand-written RFC 3161 shell. No crate in
 //!   the pinned closure defines `TimeStampResp`, `TSTInfo`, `MessageImprint`
 //!   or `PKIStatusInfo`; `cms` and `x509-cert` stop at RFC 5652 and RFC 5280.
@@ -43,6 +47,7 @@ pub mod ess;
 pub mod fuzz_entry;
 pub mod model;
 pub mod ots;
+pub mod request;
 pub mod rfc3161;
 pub mod tsa;
 

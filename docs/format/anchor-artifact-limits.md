@@ -203,7 +203,9 @@ that behaviour keeps its own treatment and is not governed by a limit at all.
 ## 5. The F4 registry
 
 **Empty at M0. This is correct** — no limit has been chosen yet. A5, A11 and
-A28 fill it at M2; nothing else may.
+A28 fill it at M2 — **and A42**, added 2026-08-03: D54 §7 rules a registry row
+for `MAX_OTS_CALENDAR_RESPONSE_BYTES` and this list of owners predates that
+decision. Nothing outside those four may.
 
 | limit | owner | initial value | date set | measured against (A25 fixture path) | margin | lowered |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -214,9 +216,23 @@ A28 fill it at M2; nothing else may.
 | `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (174 B coinbase-prefix operand; bootstrap measurement as above) | 94.16x | never |
 | `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (210 B running value; bootstrap measurement as above) | 156.04x | never |
 | `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (46 B pending payload); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never |
+| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (220 B — the largest of 18 real calendar **submit** responses measured for D54 §8b). The **upgrade** response is larger, carrying a Bitcoin merkle path, and has not been measured: A25's day-2 run must record it and append the second margin here (D54 §6.1) | 298.0x (submit; upgrade **not yet measured**) | never |
 
-**Four of these seven rows are bootstrapped, not measured, and say so in the
-cell.** No real *upgraded* `.ots` of this project's own exists yet — A25's
+**A note on the row above, because the next reader will assume one number
+serves both.** `MAX_OTS_CALENDAR_RESPONSE_BYTES` bounds **one HTTP reply from
+one calendar**. `MAX_OTS_BYTES` (§2 row 16, 1 MiB) bounds the **merged `.ots`
+artifact** a bundle embeds — every calendar, every upgrade, accumulated. They
+are different quantities, and passing the second where the first belongs would
+let four calendars hand `antseal-anchor` 4 MiB per seal against a measured
+worst case of 220 B. It is also the only one of the rows here that is a
+*network-stage* limit rather than an *artifact-parse* limit, which is why it
+is not one of the eight §4 leaves it open. The strict inequality between the
+two is a compile-time assertion in `crates/antseal-anchor/src/ots/mod.rs` and
+`crates/antseal-anchor/src/http.rs` — strict, because equality *is* the
+conflation.
+
+**Four of the first seven rows are bootstrapped, not measured, and say so in
+the cell.** No real *upgraded* `.ots` of this project's own exists yet — A25's
 two-day OTS pending → upgraded cycle started 2026-08-02T19:16Z and cannot
 complete before 2026-08-04 — so the `upgraded/` rows are measured against the
 `LARGE_TEST` constant of `opentimestamps-0.2.0`, a genuine mainnet proof over

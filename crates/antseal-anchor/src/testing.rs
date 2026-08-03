@@ -8,4 +8,5 @@
 //! Q16's policy is absolute: no test in this workspace contacts a real
 //! endpoint. Everything here binds `127.0.0.1:0`, which cannot.
 
+pub mod replay;
 pub mod stub;

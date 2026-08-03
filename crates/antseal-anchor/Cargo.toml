@@ -23,6 +23,29 @@ test-util = []
 
 [dependencies]
 antseal-core.workspace = true
+# `NetworkId` and the two chain-id constants A17's guard compares against
+# (D55 §4: consumed BY NAME from `antseal_net::network`, never re-typed —
+# the same discipline D84 rule F4 applies to limits). DEFAULT features only:
+# `crates/antseal-net/src/network.rs` is pure data with no `ant-core`, no
+# evmlib and no network I/O, compiled in the default set precisely so
+# consumers can use it without the heavy graph, and `antseal-cli` already
+# takes exactly this edge. Measured 2026-08-03: default `--workspace` graph
+# unchanged at 145 names.
+antseal-net.workspace = true
+# The 8-byte TSA request nonce, drawn from the OS CSPRNG (D59 §4 puts
+# generation HERE so `antseal_core::anchor::request` stays RNG-free and
+# golden-vectorable). The project's own exact-pinned 0.4.3 generation, already
+# a normal dependency of `antseal-cli` and `antseal-net`, so this adds no
+# package and no second getrandom generation.
+getrandom.workspace = true
+# JSON for A17's `eth_getTransactionReceipt`/`eth_chainId` exchanges, parsed
+# into `serde_json::Value` — no derive, no schema, because the two ruled
+# endpoints return different key sets for the same receipt (D55 §3) and a
+# typed struct would have to model the union of two vendors' spellings.
+# `from_slice`'s recursion limit is left at its default 128, so an adversarial
+# nesting depth is an error rather than a stack overflow. Already in the
+# default `--workspace` graph via `antseal-core`: +0 packages.
+serde_json.workspace = true
 thiserror.workspace = true
 # The anchor HTTP substrate (A3/P29; decision D90). This is the ONLY
 # manifest in the workspace that may name `ureq` — the rationale, the
