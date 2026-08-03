@@ -85,6 +85,79 @@ pub mod fixtures {
     pub const CALENDAR_CATALLAXY_A: &[u8] =
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/A-catallaxy.timestamp");
 
+    /// The same three calendars over the second golden-vector digest, whose
+    /// arithmetic differs (170/207/185 B, merging to 629 B not 664 B).
+    pub const CALENDAR_ALICE_B: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/B-alice.timestamp");
+    /// See [`CALENDAR_ALICE_B`].
+    pub const CALENDAR_BOB_B: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/B-bob.timestamp");
+    /// See [`CALENDAR_ALICE_B`].
+    pub const CALENDAR_CATALLAXY_B: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/B-catallaxy.timestamp");
+
+    /// The 3-calendar merged pending `.ots` for digest A, committed by A11
+    /// and rebuilt byte-identically by A13's writer.
+    pub const MERGED_A: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/merged-A.ots");
+    /// The same for digest B.
+    pub const MERGED_B: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/merged-B.ots");
+
+    /// Golden-vector `anchor_digest` A — what `MERGED_A` stamps.
+    pub const DIGEST_A: [u8; 32] =
+        *include_bytes!("../../../../testdata/anchors/A25-bootstrap/digest-A.bin");
+    /// Golden-vector `anchor_digest` B.
+    pub const DIGEST_B: [u8; 32] =
+        *include_bytes!("../../../../testdata/anchors/A25-bootstrap/digest-B.bin");
+
+    // ── the day-2 upgrade capture (2026-08-03T09:03Z) ──────────────────────
+    //
+    // Real Bitcoin attestations for the same six pending stamps, retrieved
+    // 13 h 47 m after submission — the estimate said "not before
+    // 2026-08-04". These are the bodies of `200` responses to
+    // `GET <calendar>/timestamp/<hex-commitment>`; each is a timestamp body
+    // rooted at that pending attestation's commitment, NOT a `.ots` file.
+
+    /// alice's upgrade for digest A — **1000 B**.
+    pub const UPGRADE_A_ALICE: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/A-alice.upgrade");
+    /// bob's upgrade for digest A — **1036 B**.
+    pub const UPGRADE_A_BOB: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/A-bob.upgrade");
+    /// catallaxy's upgrade for digest A — **1105 B**, the largest of the six
+    /// and the figure A42's F4 margin is completed from.
+    pub const UPGRADE_A_CATALLAXY: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/A-catallaxy.upgrade");
+    /// alice's upgrade for digest B.
+    pub const UPGRADE_B_ALICE: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/B-alice.upgrade");
+    /// bob's upgrade for digest B.
+    pub const UPGRADE_B_BOB: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/B-bob.upgrade");
+    /// catallaxy's upgrade for digest B.
+    pub const UPGRADE_B_CATALLAXY: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/B-catallaxy.upgrade");
+
+    /// The **9-byte** body a calendar returns with `404` for a commitment it
+    /// does not know — captured 2026-08-03T09:04Z against a deliberately
+    /// one-byte-corrupted commitment, identical from alice and bob.
+    ///
+    /// The hard-error half of D58 §7.4's three-way discriminator, as bytes.
+    pub const CALENDAR_NOT_FOUND: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/upgraded/notfound-alice.body");
+
+    /// The **42-byte** body the same `404` carries for a real commitment that
+    /// is not yet in a block (D58 §7.4, measured 2026-08-02T19:34:10Z).
+    ///
+    /// Not a captured file: by the time this lane ran, every committed
+    /// commitment had upgraded, so the pending response for these six can
+    /// never be re-observed. D58 recorded it verbatim and this is that
+    /// transcription — which is why the classifier compares **trimmed
+    /// content** and never a length: D90 measured the same body at 9 and 10
+    /// bytes from different calendars, one with a trailing newline.
+    pub const CALENDAR_PENDING_BODY: &[u8] = b"Pending confirmation in Bitcoin blockchain";
+
     /// A real granted `TimeStampResp` (FreeTSA, ECDSA P-384).
     pub const TSA_FREETSA: &[u8] =
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-freetsa-resp.tsr");
@@ -99,6 +172,17 @@ pub mod fixtures {
 
 /// The block height the committed esplora captures are for.
 pub const RECORDED_HEIGHT: u64 = 800_000;
+
+/// The request line of a recorded request, for tests that assert which
+/// question an endpoint was asked.
+#[must_use]
+pub fn request_line(request: &[u8]) -> String {
+    let end = request
+        .windows(2)
+        .position(|window| window == b"\r\n")
+        .unwrap_or(request.len());
+    String::from_utf8_lossy(&request[..end]).into_owned()
+}
 
 /// What a stub esplora endpoint does.
 #[derive(Debug, Clone)]
@@ -278,26 +362,109 @@ pub fn rpc(behaviour: &RpcBehaviour) -> StubScript {
     }
 }
 
-/// A mock OpenTimestamps calendar replaying a recorded submit response.
+/// What a stub OpenTimestamps calendar does.
 ///
-/// Routed on the submit path (`digest`), so the same script also answers an
-/// upgrade GET with a 404 the way a real calendar does for a commitment it
-/// has not yet included.
+/// Every variant answers **both** legs — the submit POST and the upgrade GET —
+/// because A15 polls a calendar it never submitted to in the same process, and
+/// a script that only answered one leg would make the other leg's failure look
+/// like the behaviour under test.
+#[derive(Debug, Clone)]
+pub enum CalendarBehaviour {
+    /// Accept the submit with `pending`, and answer every upgrade poll with
+    /// the `404` + 42-byte body a real calendar returns for a commitment it
+    /// knows but has not yet buried.
+    PendingSubmit(Vec<u8>),
+    /// Accept the submit with `pending`, and answer upgrade polls with `200`
+    /// and `upgrade` — the day-2 transition.
+    Upgraded {
+        /// The submit response.
+        pending: Vec<u8>,
+        /// The upgrade response body.
+        upgrade: Vec<u8>,
+    },
+    /// Answer every upgrade poll with the `404` + 9-byte `Not found` body:
+    /// the calendar does not know this commitment. A **hard** error — the
+    /// submission was lost or the commitment was derived wrongly, and
+    /// re-polling forever will not fix it.
+    NotFound,
+    /// A `404` whose body is neither discriminator — the shape that must not
+    /// be read as either one, exactly as A16 refuses to read a mistyped-path
+    /// 404 as an absent block.
+    UnknownFourOhFour(&'static str),
+    /// Accept and close without answering: the endpoint-down case, and the
+    /// third behaviour the live capture found (catallaxy answered *nothing*
+    /// to a corrupted-commitment poll, `http=000`).
+    Down,
+    /// A 500 on the submit leg.
+    ServerError,
+    /// Answer the submit, slowly. For budget tests.
+    Slow(Duration, Vec<u8>),
+    /// Answer the submit with more bytes than
+    /// [`MAX_OTS_CALENDAR_RESPONSE_BYTES`](crate::ots::MAX_OTS_CALENDAR_RESPONSE_BYTES)
+    /// admits, so the cap is exercised as a typed error rather than a
+    /// truncation.
+    Oversize,
+    /// Answer the submit with a well-formed 200 whose body is not a timestamp
+    /// at all.
+    Garbage(Vec<u8>),
+}
+
+/// Build a routed script for one stub calendar.
+///
+/// Routed rather than sequential: submit and upgrade are different paths on
+/// one host, and a sequential script would hand an upgrade poll the submit
+/// body if the client ever retried.
 #[must_use]
-pub fn calendar(pending: &[u8]) -> StubScript {
-    StubScript::new()
-        .route(
-            StubMatch::target("digest"),
-            StubReply::Body {
-                status: 200,
-                content_type: "application/vnd.opentimestamps.v1",
-                bytes: pending.to_vec(),
-            },
-        )
-        .route(
+pub fn calendar(behaviour: &CalendarBehaviour) -> StubScript {
+    let submit = |bytes: Vec<u8>| StubReply::Body {
+        status: 200,
+        content_type: "application/vnd.opentimestamps.v1",
+        bytes,
+    };
+    let pending_404 = || text(404, fixtures::CALENDAR_PENDING_BODY.to_vec());
+
+    match behaviour {
+        CalendarBehaviour::PendingSubmit(pending) => StubScript::new()
+            .route(StubMatch::target("digest"), submit(pending.clone()))
+            .route(StubMatch::target("timestamp/"), pending_404()),
+        CalendarBehaviour::Upgraded { pending, upgrade } => StubScript::new()
+            .route(StubMatch::target("digest"), submit(pending.clone()))
+            .route(
+                StubMatch::target("timestamp/"),
+                StubReply::Body {
+                    status: 200,
+                    content_type: "application/vnd.opentimestamps.v1",
+                    bytes: upgrade.clone(),
+                },
+            ),
+        CalendarBehaviour::NotFound => StubScript::new().route(
             StubMatch::target("timestamp/"),
-            text(404, b"Pending confirmation in Bitcoin blockchain".to_vec()),
-        )
+            text(404, fixtures::CALENDAR_NOT_FOUND.to_vec()),
+        ),
+        CalendarBehaviour::UnknownFourOhFour(body) => StubScript::new().route(
+            StubMatch::target("timestamp/"),
+            text(404, body.as_bytes().to_vec()),
+        ),
+        CalendarBehaviour::Down => StubScript::new().always(StubReply::DropConnection),
+        CalendarBehaviour::ServerError => StubScript::new()
+            .route(StubMatch::target("digest"), text(500, b"boom".to_vec()))
+            .route(StubMatch::target("timestamp/"), text(500, b"boom".to_vec())),
+        CalendarBehaviour::Slow(delay, pending) => StubScript::new()
+            .route(StubMatch::target("digest"), slow(*delay, pending.clone()))
+            .route(StubMatch::target("timestamp/"), pending_404()),
+        CalendarBehaviour::Oversize => StubScript::new().route(
+            StubMatch::target("digest"),
+            StubReply::StreamUntilClosed {
+                status: 200,
+                content_length: crate::ots::MAX_OTS_CALENDAR_RESPONSE_BYTES * 2,
+                chunk_len: 4096,
+                stop_after_bytes: crate::ots::MAX_OTS_CALENDAR_RESPONSE_BYTES * 2,
+            },
+        ),
+        CalendarBehaviour::Garbage(bytes) => StubScript::new()
+            .route(StubMatch::target("digest"), submit(bytes.clone()))
+            .route(StubMatch::target("timestamp/"), pending_404()),
+    }
 }
 
 /// A mock TSA replaying a recorded `TimeStampResp`.

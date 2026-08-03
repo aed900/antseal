@@ -75,6 +75,10 @@ pub use limits::{
     MAX_OTS_ATTESTATION_PAYLOAD_BYTES, MAX_OTS_ATTESTATIONS, MAX_OTS_BRANCH_WIDTH, MAX_OTS_DEPTH,
     MAX_OTS_OPERAND_BYTES, MAX_OTS_OPS, MAX_OTS_VALUE_BYTES,
 };
+pub use parse::{
+    DIGEST_TYPE_SHA256 as OTS_DIGEST_TYPE_SHA256, MAGIC as OTS_MAGIC,
+    PENDING_TAG as OTS_PENDING_TAG, VERSION_1 as OTS_VERSION,
+};
 
 /// A parsed and executed `.ots` artifact.
 ///
@@ -262,10 +266,18 @@ const MERGED_B: &[u8] =
 ///
 /// **Provenance, stated because the margin it feeds is bootstrapped and not
 /// measured:** these bytes are the `LARGE_TEST` constant from
-/// `opentimestamps-0.2.0/src/lib.rs`, not an A25 capture. The two-day OTS
-/// pending → upgraded cycle started 2026-08-02T19:16Z and cannot complete
-/// before 2026-08-04, so **A25 must re-measure the four `upgraded/` F4 rows
-/// against the real fixture and append** (D58 §9.5, §13.1).
+/// `opentimestamps-0.2.0/src/lib.rs`, not an A25 capture. **A25 must
+/// re-measure the four `upgraded/` F4 rows against a real fixture and append**
+/// (D58 §9.5, §13.1).
+///
+/// **Amended 2026-08-03 (A14 lane).** This said the cycle *"cannot complete
+/// before 2026-08-04"*. It completed on **2026-08-03T09:03Z** — 13 h 47 m
+/// after the 19:16Z submission, not the assumed ~48 h — and
+/// `testdata/anchors/A25-bootstrap/upgraded/` now holds six real upgrade
+/// responses for this project's own golden-vector digests. The re-measurement
+/// needs the *assembled* artifact rather than the response bodies, which is a
+/// deterministic merge of files already in the tree (lane task A63); this
+/// constant stays until that lands, with its provenance unchanged.
 #[cfg(test)]
 const UPGRADED_LARGE_TEST: &[u8] = include_bytes!(
     "../../../../../testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots"

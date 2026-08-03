@@ -102,10 +102,22 @@ fn receive_cap_accepts_exactly_the_ceiling_and_rejects_one_more() {
 /// announces a 64 MiB body and streams, and the call must fail having caused
 /// only a bounded number of bytes to be written.
 ///
-/// The bound asserted is deliberately loose (1 MiB against an announced
-/// 64 MiB): the kernel's socket buffers absorb some writes the client never
-/// reads, so a tight bound would be flaky while a loose one is still three
-/// orders of magnitude away from "buffered the whole thing".
+/// The bound asserted is deliberately loose, and **it was too tight until
+/// 2026-08-03** (A14 lane). It read 1 MiB against an announced 64 MiB and
+/// described that as "three orders of magnitude away from buffered the whole
+/// thing" — the ratio is **64×**, not 1000×, and the margin was consumed the
+/// moment this crate grew enough tests to saturate a 2-core machine. It then
+/// failed in the full parallel run while passing 3/3 in isolation and 148/148
+/// under `--test-threads=1`, which is the worst shape a test can have: red
+/// only when the suite is busy, and green whenever anyone investigates it.
+///
+/// The race is between the stub's `write_all` loop and a client thread that
+/// may be descheduled for an arbitrary slice; every 16 KiB chunk the kernel's
+/// socket buffers accept is written before the client can act on the ceiling,
+/// so the absolute number is a property of the machine and not of the code.
+/// What the test actually establishes is that the body was **not buffered
+/// whole**, so the bound is expressed as a fraction of the announced length
+/// and given enough room that scheduling cannot reach it.
 #[test]
 fn receive_cap_is_enforced_before_the_body_is_buffered() {
     const CAP: u64 = 4 * 1024;
@@ -129,7 +141,7 @@ fn receive_cap_is_enforced_before_the_body_is_buffered() {
     );
     let written = server.bytes_written();
     assert!(
-        written < 1024 * 1024,
+        written < ANNOUNCED / 4,
         "the stub wrote {written} bytes of an announced {ANNOUNCED}: the ceiling is not \
          being applied while streaming"
     );
