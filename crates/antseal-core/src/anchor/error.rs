@@ -13,11 +13,12 @@
 //! **nothing**: `error_universe::census` sorts an unrecognised code into its
 //! `"(unprefixed)"` bucket and prints it, so a family invented under an
 //! unregistered namespace passes every check in the tree. A sibling decision
-//! specified sixteen codes that way with a fully green suite. Q77/A38 lands
-//! the machine check; until it does, [`tests::every_code_is_under_the_anchor_prefix`]
-//! and [`tests::codes_are_disjoint_from_the_committed_universe`] are this
-//! module's own guard, and they are deliberately not the kind that can pass
-//! vacuously — both assert a non-empty roster first.
+//! specified sixteen codes that way with a fully green suite. **Q77** lands
+//! the workspace-wide check; until it does,
+//! [`tests::every_code_is_under_the_anchor_prefix`] is this module's own
+//! guard, and [`tests::codes_are_frozen_in_the_committed_universe`] replaced
+//! the disjointness test A52's append falsified — both assert a non-empty
+//! roster first, so neither can pass vacuously.
 //!
 //! # Which codes were ruled elsewhere and must not be respelled
 //!
@@ -521,14 +522,14 @@ pub(crate) fn der_error(site: DerSite, err: der::Error) -> AnchorError {
 
 /// One value per distinct code, for the Q52 error-code universe.
 ///
-/// **Not yet wired into [`crate::error_universe::by_enumerator`]** — D91 §8.2
-/// makes that A38's move, together with the roster-size assertion going from
-/// eight enumerators to nine and the `testdata/error-codes/v1/CODES.txt`
-/// snapshot gaining these rows. Landing it from this lane would flip a test
-/// that exists to make the roster change deliberate. The function is `pub` so
-/// A38 needs no edit here beyond the one line in `by_enumerator`, and this
-/// module's own tests already assert the two properties A38's check will
-/// enforce workspace-wide.
+/// **Wired into `error_universe::by_enumerator` at A38/A52**, together with
+/// A11's `.ots` sibling and A12's `EmbeddedHeader::UNCOMMITTED_CODE`, which
+/// took the roster from eight to eleven and the committed snapshot from 194
+/// codes to 246. Every code below is therefore permanent from that commit
+/// (error-code contract §3): renaming one now fails
+/// `error_code_universe_has_not_lost_or_renamed_a_code`, naming it under its
+/// frozen spelling. The names had their one free review at **Q73**, which is
+/// why that review ran before the append rather than after it.
 #[must_use]
 pub fn all_code_exemplars() -> Vec<AnchorError> {
     use AnchorError as E;
@@ -692,17 +693,36 @@ mod tests {
         }
     }
 
-    /// The sweep D91 §7 ran by hand, run by machine: not one of these codes
-    /// collides with a code already frozen in the committed universe.
+    /// Every code this family emits is **frozen in the committed universe**.
     ///
-    /// This is what Q77/A38 will generalise. It is native-only for the same
-    /// reason `error_universe` is — `wasm32-unknown-unknown` has no
-    /// filesystem — and it asserts both sets non-empty first, because a
-    /// disjointness test over an empty set is the purest form of a test that
-    /// cannot fail.
+    /// # This test used to claim the opposite, and the registration is why
+    ///
+    /// It was written by A5/A8 as codes_are_disjoint_from_the_committed_universe
+    /// (unbackticked deliberately: Q69's liveness guard reads a backticked test
+    /// name as a live pointer, and this one is a historical record) — D91 §7's
+    /// hand sweep, run by machine: *"not one of these codes
+    /// collides with a code already frozen"*. That was the right claim while
+    /// the A domain was unregistered, and A52's append **falsified it in one
+    /// commit**, naming all 35. Nothing was wrong: the premise expired. The
+    /// snapshot is a flat list with no owner column, so after registration
+    /// "already claimed by another domain" and "claimed by me" are the same
+    /// observation, and the disjointness question has moved to Q77's
+    /// per-enumerator prefix sweep, which *can* tell the two apart.
+    ///
+    /// What replaces it is strictly stronger and is a claim §4a does **not**
+    /// make. The Q52 gate checks committed ⊆ live; additions are legal and
+    /// merely printed, so a family can be landed and never blessed and the
+    /// gate stays green — the "bounded residue" `error_universe`'s own docs
+    /// record. This asserts live ⊆ committed for one family: **the A domain is
+    /// blessed, not merely legal.**
+    ///
+    /// Native-only for the same reason `error_universe` is
+    /// (`wasm32-unknown-unknown` has no filesystem), and it asserts both sets
+    /// non-empty first, because a subset test over an empty set is the purest
+    /// form of a test that cannot fail.
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
-    fn codes_are_disjoint_from_the_committed_universe() {
+    fn codes_are_frozen_in_the_committed_universe() {
         const SNAPSHOT: &str = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../testdata/error-codes/v1/CODES.txt"
@@ -722,10 +742,14 @@ mod tests {
         let mine: BTreeSet<&'static str> =
             all_code_exemplars().iter().map(AnchorError::code).collect();
         assert!(!mine.is_empty());
-        let collisions: Vec<&&str> = mine.iter().filter(|c| frozen.contains(**c)).collect();
+        let unfrozen: Vec<&&str> = mine.iter().filter(|c| !frozen.contains(**c)).collect();
         assert!(
-            collisions.is_empty(),
-            "these anchor codes are already claimed by another domain: {collisions:?}"
+            unfrozen.is_empty(),
+            "these anchor codes are emitted but are NOT in \
+             testdata/error-codes/v1/CODES.txt: {unfrozen:?}\n\
+             A code outside the snapshot can still be renamed with a fully green suite — the \
+             append-only rule pins nothing it has not been told about. Record them:\n  \
+             ANTSEAL_BLESS_ERROR_CODES=1 cargo test -p antseal-core --lib -- error_universe"
         );
     }
 

@@ -803,7 +803,9 @@ mod tests {
     /// registered domain is claimed by a row, by a named integration row, or
     /// by a task recorded as owing one.
     ///
-    /// Renamed from `every_f_side_code_has_a_row_or_a_named_owner` when A38
+    /// Renamed at A38 from every_f_side_code_has_a_row_or_a_named_owner
+    /// (unbackticked: Q69's guard reads a backticked test name as a live
+    /// pointer, and this is a record of one that is gone), when A38
     /// appended `AnchorError`, `OtsError` and `EmbeddedHeader` to [`DOMAINS`]:
     /// the sweep is no longer F-side, and a guard whose name asserts something
     /// false is the defect this project keeps finding in its own prose.

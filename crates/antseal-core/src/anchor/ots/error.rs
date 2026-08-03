@@ -12,14 +12,17 @@
 //!
 //! So A11 mints **fifteen** codes and raises a sixteenth that is D56's.
 //!
-//! # Registration is A38's, not A11's
+//! # Registration was A38's, not A11's — and it has landed
 //!
-//! `docs/testing/error-code-contract.md` §2 has no `anchor-` row in this
-//! worktree and `error_universe::by_enumerator()` has no A-domain enumerator;
-//! both are **A38/Q80**'s (D91 §10). [`all_code_exemplars`] is written to the
-//! same shape as its six siblings so that A38's wiring is one entry, and
-//! `tests::every_ots_code_is_pairwise_distinct_and_anchor_prefixed` (D56
-//! §9) holds the line until then.
+//! `docs/testing/error-code-contract.md` §2 carries the `anchor-` row (Q80,
+//! ratified by D91) and `error_universe::by_enumerator()` reaches
+//! [`all_code_exemplars`] through `anchor::ots`'s `pub(crate)` re-export —
+//! `mod error` is private, so the path D91 §8.1 writes,
+//! `anchor::ots::error::all_code_exemplars`, does not itself resolve from
+//! outside this module. **A52** landed the wiring and the fifteen codes are in
+//! the committed snapshot, so they are permanent (§3).
+//! `tests::every_ots_code_is_pairwise_distinct_and_anchor_prefixed` (D56 §9)
+//! remains the local guard; the workspace-wide one is Q77's.
 //!
 //! # Secret hygiene (project rule 6)
 //!
@@ -272,10 +275,11 @@ impl OtsError {
 
 /// One exemplar per distinct code, in the shape `error_universe` collects.
 ///
-/// Kept `pub(crate)` and `cfg(test)` to match its six siblings; **A38** adds
-/// the `anchor::error::all_code_exemplars` row that reaches it (D91 §8.1),
-/// which is also when `the_universe_is_exactly_the_eight_enumerators` moves
-/// 8 → 9 (D91 §8.2).
+/// Kept `pub(crate)` and `cfg(test)` to match its six siblings, and
+/// re-exported from `anchor::ots` at the same visibility because `mod error`
+/// is private. **A52** added the roster row that reaches it (D91 §8.1); the
+/// roster assertion moved 8 → **11** rather than D91 §8.2's predicted 9,
+/// because the A domain turned out to have three code sources, not one.
 #[cfg(test)]
 pub(crate) fn all_code_exemplars() -> Vec<OtsError> {
     use OtsError as E;

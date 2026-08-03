@@ -30,8 +30,8 @@
 //! # The mechanism
 //!
 //! One sorted, committed file — `testdata/error-codes/v1/CODES.txt` — holding
-//! every stable code the crate can emit, collected from the **eight**
-//! enumerators that already exist per domain. On every run the live universe
+//! every stable code the crate can emit, collected from the
+//! [`ENUMERATOR_COUNT`] per-domain enumerators. On every run the live universe
 //! is recollected and compared with **additions-only** semantics:
 //!
 //! | change | verdict | why |
@@ -92,13 +92,29 @@ const SNAPSHOT_DISPLAY: &str = "testdata/error-codes/v1/CODES.txt";
 /// plays the same role for the golden-vector documents.
 const BLESS_VAR: &str = "ANTSEAL_BLESS_ERROR_CODES";
 
-/// The eight per-domain enumerators, each as `(path, its own codes)`.
+/// How many per-domain enumerators the roster holds.
+///
+/// **Eight until A38/A52, eleven after**, and the three that arrived are all
+/// one domain's: the A domain has two error families (`AnchorError` for
+/// A5/A8's RFC 3161 / CMS / X.509 stage, `OtsError` for A11's `.ots` codec)
+/// **and** one code that is not in an error type at all
+/// (`EmbeddedHeader::UNCOMMITTED_CODE`, D56 rule O8).
+///
+/// D91 §8.2 requires this number to move deliberately and calls the move
+/// "8 → 9", counting the A domain as one enumerator. It is **three**: D91's
+/// §8.1 table was written from A5/A8's family alone, before A11's codec
+/// sibling and A12's const were measured. The stake is unchanged and is the
+/// reason the constant exists — a family with no roster entry freezes under
+/// nothing.
+const ENUMERATOR_COUNT: usize = 11;
+
+/// The per-domain enumerators, each as `(path, its own codes)`.
 ///
 /// Splitting the collection per source — rather than folding straight into one
-/// set — is what lets [`tests::the_universe_is_exactly_the_eight_enumerators`]
-/// recompute the expected universe from the same eight calls and compare. A
-/// call dropped from a fold would be invisible; a call dropped from this
-/// roster changes its length.
+/// set — is what lets [`tests::the_universe_is_exactly_the_registered_enumerators`]
+/// recompute the expected universe from the same calls and compare. A call
+/// dropped from a fold would be invisible; a call dropped from this roster
+/// changes its length.
 fn by_enumerator() -> Vec<(&'static str, BTreeSet<&'static str>)> {
     vec![
         (
@@ -150,6 +166,33 @@ fn by_enumerator() -> Vec<(&'static str, BTreeSet<&'static str>)> {
                 .map(crate::content::fine_tree::error::FineTreeError::code)
                 .collect(),
         ),
+        // ── A (D91 §6.1: one prefix, three sources) ──────────────────────
+        (
+            "anchor::error::all_code_exemplars",
+            crate::anchor::error::all_code_exemplars()
+                .iter()
+                .map(crate::anchor::AnchorError::code)
+                .collect(),
+        ),
+        (
+            "anchor::ots::error::all_code_exemplars",
+            crate::anchor::ots::all_code_exemplars()
+                .iter()
+                .map(crate::anchor::ots::OtsError::code)
+                .collect(),
+        ),
+        // Not an error family: D56 rule O8's code is a `const` on A12's
+        // `EmbeddedHeader`, because A12 answers one offline question and owns
+        // no `AnchorState`. Registered anyway — a code no enumerator reaches
+        // is a code that can be renamed with a fully green suite, which is
+        // precisely what this module exists to prevent, and nothing in §1's
+        // definition of a code requires it to come from a `code()` arm.
+        (
+            "anchor::ots::header::EmbeddedHeader::UNCOMMITTED_CODE",
+            [crate::anchor::ots::EmbeddedHeader::UNCOMMITTED_CODE]
+                .into_iter()
+                .collect(),
+        ),
         (
             "verify::error::all_error_exemplars",
             crate::verify::error::all_error_exemplars()
@@ -160,7 +203,7 @@ fn by_enumerator() -> Vec<(&'static str, BTreeSet<&'static str>)> {
     ]
 }
 
-/// Every stable code the crate can emit, collected from the eight per-domain
+/// Every stable code the crate can emit, collected from the per-domain
 /// enumerators and de-duplicated.
 ///
 /// Codes legitimately appear in more than one enumerator: R's `VerifyError`
@@ -266,7 +309,7 @@ fn header() -> String {
 #
 # One code per line, sorted, no duplicates. Lines starting with '#' and blank
 # lines are ignored. This file is COMPARED ON EVERY TEST RUN against the codes
-# collected from the eight per-domain exemplar enumerators, with
+# collected from the per-domain exemplar enumerators, with
 # ADDITIONS-ONLY semantics:
 #
 #   adding a code    passes  (D30 section 3: routine and unrestricted)
@@ -399,8 +442,8 @@ mod tests {
         );
     }
 
-    /// The universe is **exactly** the union of the eight enumerators —
-    /// recomputed here from the same eight calls rather than read back out of
+    /// The universe is **exactly** the union of the registered enumerators —
+    /// recomputed here from the same calls rather than read back out of
     /// [`live_universe`], so dropping a source shrinks one side only.
     ///
     /// Note what this can and cannot see. Five families are also reachable
@@ -410,13 +453,20 @@ mod tests {
     /// direct calls leaves the union unchanged — and correctly stays green,
     /// because what D30 freezes is the *set*, not the call graph. What cannot
     /// hide is a family that no longer reaches the union at all.
+    ///
+    /// Renamed at A52 from the_universe_is_exactly_the_eight_enumerators
+    /// (unbackticked: Q69's guard reads a backticked test name as a live
+    /// pointer, and this is a record of one that is gone),
+    /// when the roster went to [`ENUMERATOR_COUNT`]: a guard whose name
+    /// asserts a number it no longer checks is worse than one with no number
+    /// at all, and the count now lives in a constant that the message quotes.
     #[test]
-    fn the_universe_is_exactly_the_eight_enumerators() {
+    fn the_universe_is_exactly_the_registered_enumerators() {
         let sources = by_enumerator();
         assert_eq!(
             sources.len(),
-            8,
-            "the enumerator roster changed size; a ninth domain must be added to \
+            ENUMERATOR_COUNT,
+            "the enumerator roster changed size; a new domain must be added to \
              `by_enumerator` or its codes freeze under nothing"
         );
 
@@ -434,7 +484,7 @@ mod tests {
         let live = live_universe();
         assert_eq!(
             live, expected,
-            "`live_universe` is not the union of the eight enumerators — a source was \
+            "`live_universe` is not the union of the registered enumerators — a source \
              dropped, added, or filtered"
         );
     }

@@ -1181,6 +1181,57 @@ kebab-case id, and never edit an existing row's expected code.
   bucket and prints it — which is how sixteen codes came to be minted under
   an unregistered namespace with a green suite. → **Q77**.
 
+- **2026-08-03 (M2 wave 3, A38/A52/Q73)** — **the A domain enters the frozen
+  universe: 194 → 246 codes, 52 appended, none renamed, none removed.**
+  `anchor-` 0 → 52. The first append under §4a's additions-only path since
+  F40, and the largest in the project's history.
+
+  The 52, by source and by who ruled the name:
+
+  | source | codes | ruled by |
+  |---|---|---|
+  | `AnchorError` (A5/A8) | 35 | ten by D60 §7.3 / D53 §8 / D59 §5; **25 minted by A8's Accept row**, reviewed at Q73 |
+  | `OtsError` (A11) | 16 | fifteen are D91 §7.1's mechanical renames of D58 §10.4; the sixteenth is D56's `anchor-ots-digest-mismatch`, raised not minted |
+  | `EmbeddedHeader::UNCOMMITTED_CODE` (A12) | 1 | D56 rule O8 |
+
+  Four things this registration settles that no prose had:
+
+  1. **The A domain has three code sources, not one, and the third is not an
+     error type.** D91 §8.1's table has one A row and §8.2 calls the roster
+     move "8 → 9"; it is **8 → 11**. `anchor-ots-header-uncommitted` lives as
+     a `const` on A12's `EmbeddedHeader` — A12 answers one offline question
+     and deliberately owns no `AnchorState` — so **no `code()` arm emits it
+     and no enumerator sweep could reach it**. A code outside every
+     enumerator is a code that can be renamed with a fully green suite, which
+     is the whole hole §4a exists to close, and it was invisible to every
+     count taken of this family. It is registered. D56's `O6`/`O7` codes are
+     the same shape and are **not** registered, because A18 has not landed
+     them and the snapshot may only carry codes something emits.
+  2. **A count that three methods disagreed on.** Grepping
+     `"anchor-…"` string literals under `src/anchor/` gives **54** — it
+     counts two *test fixture* strings in `anchor/model.rs`
+     (`anchor-model-test-code`, `anchor-model-diagnostic-probe`), which are
+     not codes and must never be registered. The error enums give **51**. The
+     answer is **52**.
+  3. **`census`'s bucket, caught in the act.** Running the gate after the
+     wiring and before Q77 printed
+     `census — 246 total: … (unprefixed) 85`. R has 33 unprefixed codes; the
+     other 52 are the whole A domain, sorted into R's bucket and *printed* as
+     if they were R's. That is D91 §8's prediction reproduced verbatim rather
+     than quoted, and Q77's `REGISTERED_PREFIXES` is what ends it.
+  4. **The append is what ends the free-rename window**, so Q73's review ran
+     first and is recorded in §2 above. Renaming any of the 52 now fails the
+     §4a gate under the frozen spelling — proven by planting exactly that.
+
+  §4b layer 4 gains the A domain in the same wave (**A38**): three
+  `CoverageDomain`s in `test_util::tamper_coverage`, appended as *data*, which
+  is the first time F23's design has been extended rather than sibling-ed
+  (F24's `cbor-` twin recorded a concurrent lane as its reason). All 52 are
+  accounted for by a **named owner**, none by a row: `MATRIX.json` pends eight
+  M2 anchor cases and not one is yet an implemented `TamperRow`, so
+  `claimed_in_integration_target` — which `tests/tamper_matrix.rs` validates
+  against live rows — would have been a false claim for the whole domain.
+
 - **Formal freeze**: Q7/Q8, with C14 ratifying the per-algorithm signature
   codes. Frozen for good at Q14 along with the rest of format v1 — with §4a
   as the enforcement, and with §3's "before the Q14 freeze a code may still
