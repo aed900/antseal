@@ -15,6 +15,7 @@ use crate::testing::replay::{
     EsploraBehaviour, RECORDED_HEIGHT, esplora, fixtures, tampered_header,
 };
 use crate::testing::stub::StubServer;
+use std::time::{Duration, Instant};
 
 fn client() -> HttpClient {
     let mut policy = HttpPolicy::verify();
@@ -316,4 +317,38 @@ fn a_trailing_slash_on_the_base_url_does_not_double_the_separator() {
     let derived = join(&with_slash, "block-height/800000");
     assert!(!derived.contains("//block-height"), "{derived}");
     assert!(derived.ends_with("/block-height/800000"), "{derived}");
+}
+
+/// The pair is queried **concurrently**: a slow endpoint delays the pair by
+/// its own latency, not by twice it.
+///
+/// A16's primitive inherits A10's rule that "one endpoint's failure never
+/// aborts or **delays** the others", and a sequential implementation passes
+/// every outcome test in this file while doubling the worst case. Two
+/// assertions, because a wall-clock bound alone is satisfiable by a
+/// sequential run that happens to be fast enough: the total must be under one
+/// and a half stalls, and it must also exceed one stall — otherwise the stub
+/// was not slow and the test measured nothing.
+#[test]
+fn the_two_endpoints_are_queried_concurrently() {
+    // Each endpoint answers two requests, and `StallBeforeHeaders` applies to
+    // both, so one endpoint costs 2 x STALL.
+    const STALL: Duration = Duration::from_millis(400);
+
+    let slow = StubServer::spawn(esplora(&EsploraBehaviour::Slow(STALL)));
+    let also_slow = StubServer::spawn(esplora(&EsploraBehaviour::Slow(STALL)));
+
+    let started = Instant::now();
+    let _ = fetch_agreed_header(&client(), &pair(&slow, &also_slow), RECORDED_HEIGHT);
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed >= 2 * STALL,
+        "the stubs did not actually stall ({elapsed:?}); the test would measure nothing"
+    );
+    assert!(
+        elapsed < 3 * STALL,
+        "sequential: two endpoints x two stalled requests would be ~{:?}, took {elapsed:?}",
+        4 * STALL
+    );
 }

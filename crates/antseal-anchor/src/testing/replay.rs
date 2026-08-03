@@ -172,11 +172,11 @@ pub fn esplora(behaviour: &EsploraBehaviour) -> StubScript {
         EsploraBehaviour::Slow(delay) => StubScript::new()
             .route(
                 StubMatch::target(height_target),
-                StubReply::StallBeforeHeaders(*delay),
+                slow(*delay, fixtures::BLOCKSTREAM_HEIGHT.to_vec()),
             )
             .route(
                 StubMatch::target("/header"),
-                StubReply::StallBeforeHeaders(*delay),
+                slow(*delay, fixtures::BLOCKSTREAM_HEADER.to_vec()),
             ),
     }
 }
@@ -308,6 +308,17 @@ pub fn tsa(response: &[u8]) -> StubScript {
         content_type: "application/timestamp-reply",
         bytes: response.to_vec(),
     })
+}
+
+/// A correct `200 text/plain` reply, delayed. Used for the concurrency test,
+/// where an endpoint must be slow across its **whole** exchange.
+fn slow(delay: Duration, bytes: Vec<u8>) -> StubReply {
+    StubReply::SlowBody {
+        delay,
+        status: 200,
+        content_type: "text/plain",
+        bytes,
+    }
 }
 
 fn text(status: u16, bytes: Vec<u8>) -> StubReply {

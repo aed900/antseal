@@ -84,6 +84,23 @@ pub enum StubReply {
     /// stall, then send the 16 bytes. Same two uses as
     /// [`StubReply::StallBeforeHeaders`], one phase later.
     StallAfterHeaders(Duration),
+    /// **Addition.** Read the request, stall, then send a full reply.
+    ///
+    /// [`StubReply::StallBeforeHeaders`] answers with an *empty* body, so a
+    /// client that needs the body fails at the first request and never issues
+    /// the second — which makes it useless for timing a multi-request
+    /// exchange. This one stalls and then answers properly, so a routed
+    /// endpoint's whole exchange is slow rather than only its first leg.
+    SlowBody {
+        /// How long to stall before answering.
+        delay: Duration,
+        /// Status line code.
+        status: u16,
+        /// `Content-Type` header value.
+        content_type: &'static str,
+        /// Body bytes.
+        bytes: Vec<u8>,
+    },
     /// Accept and close immediately, without reading.
     DropConnection,
     /// A redirect, which this substrate refuses rather than follows.
@@ -457,6 +474,17 @@ fn write_reply(socket: &mut TcpStream, state: &StubState, reply: &StubReply) {
             write_all(socket, state, &out);
         }
         StubReply::Raw(bytes) => write_all(socket, state, bytes),
+        StubReply::SlowBody {
+            delay,
+            status,
+            content_type,
+            bytes,
+        } => {
+            sleep_interruptible(state, *delay);
+            let mut out = head(*status, Some(content_type), bytes.len() as u64);
+            out.extend_from_slice(bytes);
+            write_all(socket, state, &out);
+        }
         StubReply::StallBeforeHeaders(delay) => {
             sleep_interruptible(state, *delay);
             let out = head(200, None, 0);
