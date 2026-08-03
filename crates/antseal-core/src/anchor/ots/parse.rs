@@ -61,15 +61,22 @@ use super::{OtsArtifact, OtsAttestation, OtsShape};
 
 /// The 31-byte container magic (`ser.rs:25` of the rejected crate; verified
 /// byte-for-byte against every fixture in `testdata/anchors/A25-bootstrap/`).
-pub(super) const MAGIC: [u8; 31] =
+///
+/// `pub` because A13 **writes** the container this parser reads, from another
+/// crate, and a second copy of these bytes over there is the drift D84 §5
+/// forbids for limits and this project forbids for format surface generally.
+/// Exported as [`super::OTS_MAGIC`].
+pub const MAGIC: [u8; 31] =
     *b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94";
 
-/// The only major version this codec reads.
-const VERSION_1: u64 = 1;
+/// The only major version this codec reads. `pub` for A13's writer, as
+/// [`super::OTS_VERSION`].
+pub const VERSION_1: u64 = 1;
 
 /// Digest-type tag `0x08` = SHA-256. Written in decimal for the reason
-/// [`super::exec`] records.
-const DIGEST_TYPE_SHA256: u8 = 8;
+/// [`super::exec`] records. `pub` for A13's writer, as
+/// [`super::OTS_DIGEST_TYPE_SHA256`].
+pub const DIGEST_TYPE_SHA256: u8 = 8;
 
 /// Length of the start digest a `0x08` header declares.
 const START_DIGEST_LEN: usize = 32;
@@ -87,8 +94,12 @@ const TAG_FORK: u8 = 255;
 const ATTESTATION_TAG_LEN: usize = 8;
 
 /// `83 df e3 0d 2e f9 0c 8e` — a calendar's pending attestation. Payload is a
-/// varbytes URI.
-const PENDING_TAG: [u8; ATTESTATION_TAG_LEN] = [0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e];
+/// varbytes URI. `pub` for the same reason as [`MAGIC`]: A14 has to *find* one
+/// of these in a stored file to splice an upgrade beside it, and a second copy
+/// of the tag in the anchor crate could drift from the one that parses it.
+/// Exported as [`super::OTS_PENDING_TAG`].
+pub const PENDING_TAG: [u8; ATTESTATION_TAG_LEN] =
+    [0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e];
 
 /// `05 88 96 0d 73 d7 19 01` — a Bitcoin attestation. Payload is a varuint
 /// block height.
