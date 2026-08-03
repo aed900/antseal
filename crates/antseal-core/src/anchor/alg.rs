@@ -92,6 +92,17 @@ pub struct SignatureAlg {
     pub digest: Option<Digest>,
 }
 
+/// `id-sha256` — the one `messageImprint` digest antseal requests and the
+/// only one it accepts back (D60 §3.3; MVP-SPEC.md line 109).
+///
+/// Exposed so [`super::request::build_timestamp_req`] can consume the OID by
+/// name instead of re-typing its nine content octets. The `DIGESTS` table
+/// below holds the same value; the two are pinned to each other by
+/// `tests::the_public_sha_256_oid_is_the_message_imprint_row`, because a
+/// request built under one OID and a response checked under another would be
+/// two independent constants that happen to agree today.
+pub const SHA_256: ObjectIdentifier = rfc5912::ID_SHA_256;
+
 /// `id-ecPublicKey` — the SPKI algorithm for every EC key.
 pub const ID_EC_PUBLIC_KEY: ObjectIdentifier = rfc5912::ID_EC_PUBLIC_KEY;
 /// `secp384r1` — the only curve antseal verifies on (D60 §4).
@@ -364,6 +375,28 @@ mod tests {
         let err = signature(&sha1_rsa, AlgPosition::SignerSignature, false)
             .expect_err("sha1WithRSAEncryption must never be accepted");
         assert_eq!(err.code(), "anchor-signature-alg-unsupported");
+    }
+
+    /// The OID A4 builds requests with and the OID A8 accepts imprints under
+    /// are the same value, asserted rather than assumed.
+    ///
+    /// Two constants that happen to agree today is the shape in which a
+    /// request/response mismatch ships silently: every TSA would answer, every
+    /// token would parse, and `messageImprint` would be checked against an
+    /// algorithm the request never asked for.
+    #[test]
+    fn the_public_sha_256_oid_is_the_message_imprint_row() {
+        let row = DIGESTS
+            .iter()
+            .find(|row| row.message_imprint)
+            .expect("exactly one row is the messageImprint algorithm");
+        assert_eq!(SHA_256, row.oid);
+        assert_eq!(row.digest, Digest::Sha256);
+        assert_eq!(
+            DIGESTS.iter().filter(|row| row.message_imprint).count(),
+            1,
+            "a second messageImprint row would make the constant ambiguous"
+        );
     }
 
     /// `messageImprint` is SHA-256 exactly. SHA-384 and SHA-512 are accepted
