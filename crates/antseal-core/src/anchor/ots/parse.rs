@@ -66,8 +66,7 @@ use super::{OtsArtifact, OtsAttestation, OtsShape};
 /// crate, and a second copy of these bytes over there is the drift D84 §5
 /// forbids for limits and this project forbids for format surface generally.
 /// Exported as [`super::OTS_MAGIC`].
-pub const MAGIC: [u8; 31] =
-    *b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94";
+pub const MAGIC: [u8; 31] = *b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94";
 
 /// The only major version this codec reads. `pub` for A13's writer, as
 /// [`super::OTS_VERSION`].
@@ -98,8 +97,7 @@ const ATTESTATION_TAG_LEN: usize = 8;
 /// of these in a stored file to splice an upgrade beside it, and a second copy
 /// of the tag in the anchor crate could drift from the one that parses it.
 /// Exported as [`super::OTS_PENDING_TAG`].
-pub const PENDING_TAG: [u8; ATTESTATION_TAG_LEN] =
-    [0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e];
+pub const PENDING_TAG: [u8; ATTESTATION_TAG_LEN] = [0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e];
 
 /// `05 88 96 0d 73 d7 19 01` — a Bitcoin attestation. Payload is a varuint
 /// block height.

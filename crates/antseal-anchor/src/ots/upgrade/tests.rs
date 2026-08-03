@@ -112,7 +112,10 @@ fn the_classifier_is_immune_to_trailing_whitespace_and_case() {
 /// permanently dead.
 #[test]
 fn an_unrecognised_404_is_a_failure_and_not_either_discriminator() {
-    assert_eq!(classify_404(b"endpoint does not exist \"/timestamp/aa\""), None);
+    assert_eq!(
+        classify_404(b"endpoint does not exist \"/timestamp/aa\""),
+        None
+    );
     assert_eq!(classify_404(b""), None);
     assert_eq!(classify_404(&[0xff, 0xfe]), None);
 
@@ -235,7 +238,11 @@ fn a_real_upgrade_merges_and_the_result_commits_a_real_header() {
 
     // A12's own predicate, against the header the attestation derives — which
     // is the same function the offline verifier will run.
-    let OtsAttestation::Bitcoin { height, merkle_root } = bitcoin[0] else {
+    let OtsAttestation::Bitcoin {
+        height,
+        merkle_root,
+    } = bitcoin[0]
+    else {
         unreachable!("filtered above")
     };
     let root = merkle_root.as_ref().expect("a determinate merkle root");
@@ -274,8 +281,7 @@ fn three_upgrades_accumulate_into_one_artifact() {
             .iter()
             .find(|reference| reference.uri == *uri)
             .expect("still pending");
-        let merged =
-            merge_upgrade(&artifact, &fixtures::DIGEST_A, target, body).expect("merges");
+        let merged = merge_upgrade(&artifact, &fixtures::DIGEST_A, target, body).expect("merges");
         artifact = merged.artifact;
 
         // A14 Accept row 3: partially upgraded is representable and
@@ -598,7 +604,10 @@ fn an_agreeing_pair_whose_header_commits_the_attestation_is_accepted() {
     )
     .expect("an agreeing, committing pair");
 
-    assert_eq!(upgrade.block_height(), crate::testing::replay::RECORDED_HEIGHT);
+    assert_eq!(
+        upgrade.block_height(),
+        crate::testing::replay::RECORDED_HEIGHT
+    );
     assert_eq!(upgrade.block_header(), &header);
     assert_eq!(upgrade.fetch_date(), 1_754_211_818);
 }
@@ -702,10 +711,16 @@ fn an_agreed_absence_is_refused() {
 #[test]
 fn the_default_esplora_pair_is_usable_for_the_upgrade_time_fetch() {
     let pair = EndpointPair::new(
-        Endpoint::parse(DEFAULT_ESPLORA_ENDPOINTS[0], TlsPolicy::RequiredExceptLoopback)
-            .expect("first"),
-        Endpoint::parse(DEFAULT_ESPLORA_ENDPOINTS[1], TlsPolicy::RequiredExceptLoopback)
-            .expect("second"),
+        Endpoint::parse(
+            DEFAULT_ESPLORA_ENDPOINTS[0],
+            TlsPolicy::RequiredExceptLoopback,
+        )
+        .expect("first"),
+        Endpoint::parse(
+            DEFAULT_ESPLORA_ENDPOINTS[1],
+            TlsPolicy::RequiredExceptLoopback,
+        )
+        .expect("second"),
     );
     assert!(pair.is_ok(), "the two defaults are distinct origins");
 }

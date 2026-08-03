@@ -126,7 +126,10 @@ fn one_calendar_down_still_records_the_others() {
 
     assert_eq!(submission.outcome(), OtsSubmitOutcome::Thin);
     assert_eq!(submission.distinct_calendars(), 1);
-    let artifact = submission.artifact.as_ref().expect("the survivor is stored");
+    let artifact = submission
+        .artifact
+        .as_ref()
+        .expect("the survivor is stored");
     assert_eq!(
         parse_ots(artifact, &fixtures::DIGEST_A)
             .expect("parses")

@@ -62,9 +62,7 @@
 //! group free-standing at the *parse* layer, which is a rule about what
 //! decodes; it does not oblige this stage to produce half a transition.
 
-use antseal_core::anchor::ots::{
-    OtsArtifact, OtsAttestation, OtsError, header_commits, parse_ots,
-};
+use antseal_core::anchor::ots::{OtsArtifact, OtsAttestation, OtsError, header_commits, parse_ots};
 use antseal_core::bundle::schema::OtsUpgrade;
 use antseal_core::codec::caps::MAX_OTS_BYTES;
 
@@ -201,16 +199,18 @@ pub fn poll_upgrade(client: &HttpClient, target: &UpgradeTarget, commitment: &[u
         Ok(response) if response.body.is_empty() => UpgradePoll::Empty,
         Ok(response) => UpgradePoll::Upgraded(response.body),
         Err(AnchorHttpError::Status { status, body, .. }) if status == 404 => {
-            classify_404(&body).map_or_else(
-                || {
-                    UpgradePoll::Failed(AnchorHttpError::Status {
-                        endpoint: endpoint.url().to_owned(),
-                        status,
-                        body,
-                    })
-                },
-                |poll| poll,
-            )
+            match classify_404(&body) {
+                Some(poll) => poll,
+                // A 404 that says neither thing is neither thing. The status
+                // and the body are both carried forward, so a calendar that
+                // grows a third message is diagnosable rather than silently
+                // sorted into one of the two known arms.
+                None => UpgradePoll::Failed(AnchorHttpError::Status {
+                    endpoint: endpoint.url().to_owned(),
+                    status,
+                    body,
+                }),
+            }
         }
         Err(error) => UpgradePoll::Failed(error),
     }

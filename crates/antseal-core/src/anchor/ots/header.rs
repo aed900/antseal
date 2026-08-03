@@ -34,12 +34,22 @@
 //!
 //! **That is structural, not empirical.** A12's `Do` asks for the byte order
 //! to be *"pinned empirically by a real upgraded fixture"*, and pinning it
-//! against a fetched mainnet header is **A25's**, once the two-day OTS cycle
-//! completes (not before 2026-08-04): no real upgraded `.ots` of this
-//! project's own exists yet. What is pinned here is that the implementation
-//! does **not** reverse — `tests::a_byte_reversed_merkle_root_does_not_match`
-//! goes red if anyone adds a reversal — and that the field is read at bytes
-//! 36..68.
+//! against a fetched mainnet header is **A25's/A48's**. What is pinned here is
+//! that the implementation does **not** reverse —
+//! `tests::a_byte_reversed_merkle_root_does_not_match` goes red if anyone adds
+//! a reversal — and that the field is read at bytes 36..68.
+//!
+//! **Amended 2026-08-03 (A14 lane).** This paragraph said the fixture was
+//! owed *"once the two-day OTS cycle completes (not before 2026-08-04): no
+//! real upgraded `.ots` of this project's own exists yet"*. Both halves are
+//! now out of date. The cycle completed on **2026-08-03T09:03Z**, 13 h 47 m
+//! after stamping rather than the assumed ~48 h, and
+//! `testdata/anchors/A25-bootstrap/upgraded/` holds six real Bitcoin
+//! attestations for this project's own golden-vector digests. They attest
+//! blocks **960767** (alice), **960768** (bob) and **960771** (catallaxy).
+//! What is still owed is the other half of A48: a *fetched mainnet header* for
+//! one of those heights to compare against. The fixture is no longer the
+//! blocker; the fetch is.
 
 use crate::bundle::registry::BLOCK_HEADER_LEN;
 use crate::bundle::schema::OtsUpgrade;

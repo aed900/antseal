@@ -83,7 +83,10 @@ fn a_wrong_separator_count_does_not_reproduce_the_committed_merge() {
 #[test]
 fn one_branch_needs_no_separator_and_parses() {
     let single = assemble(&fixtures::DIGEST_A, &[fixtures::CALENDAR_ALICE_A.to_vec()]);
-    assert_eq!(single.len(), OTS_HEADER_LEN + fixtures::CALENDAR_ALICE_A.len());
+    assert_eq!(
+        single.len(),
+        OTS_HEADER_LEN + fixtures::CALENDAR_ALICE_A.len()
+    );
     let artifact = parse_ots(&single, &fixtures::DIGEST_A).expect("a one-branch container parses");
     assert_eq!(artifact.attestations.len(), 1);
 }
@@ -128,7 +131,10 @@ fn the_pending_needle_is_present_in_the_real_captures() {
         );
         // D58 §7.1's dump: 0x00, 8 tag bytes, then two varuints.
         assert_eq!(needle[0], TAG_ATTESTATION);
-        assert_eq!(&needle[1..9], &[0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e]);
+        assert_eq!(
+            &needle[1..9],
+            &[0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e]
+        );
     }
 
     // The 45-character alice URI: payload = varuint(45) + 45 = 46 bytes, and
@@ -146,7 +152,10 @@ fn locating_requires_the_byte_search_and_the_parser_to_agree() {
     let uri = "https://bob.btc.calendar.opentimestamps.org";
 
     let offset = locate_pending(merged, uri, 0, 1).expect("one occurrence, one attestation");
-    assert_eq!(&merged[offset..offset + 9], &pending_attestation_bytes(uri)[..9]);
+    assert_eq!(
+        &merged[offset..offset + 9],
+        &pending_attestation_bytes(uri)[..9]
+    );
 
     // The parser says two, the bytes say one → refuse rather than guess.
     assert_eq!(

@@ -309,11 +309,7 @@ pub fn submit_to_calendars(
 }
 
 /// One calendar: POST the 32 raw digest bytes, then validate the reply alone.
-fn submit_one(
-    client: &HttpClient,
-    anchor_digest: &[u8; 32],
-    calendar: &str,
-) -> CalendarAttempt {
+fn submit_one(client: &HttpClient, anchor_digest: &[u8; 32], calendar: &str) -> CalendarAttempt {
     let started = Instant::now();
     let outcome = submit_and_validate(client, anchor_digest, calendar);
     CalendarAttempt {

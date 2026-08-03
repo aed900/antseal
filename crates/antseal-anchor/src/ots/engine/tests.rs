@@ -217,7 +217,10 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
         }],
         tsa: Vec::new(),
     });
-    assert_eq!(no_header.ots[0].state, OtsAnchorState::AttestedHeaderMissing);
+    assert_eq!(
+        no_header.ots[0].state,
+        OtsAnchorState::AttestedHeaderMissing
+    );
 
     let mut header = [0_u8; 80];
     let heights = no_header.ots[0].heights.clone();
@@ -226,10 +229,14 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
         anchor_digest: fixtures::DIGEST_A,
         ots: vec![StoredOtsAnchor {
             artifact: applied.artifact,
-            upgrade: Some(OtsUpgrade::new(heights[0], {
-                header[0] = 1;
-                header
-            }, 1_754_211_818)),
+            upgrade: Some(OtsUpgrade::new(
+                heights[0],
+                {
+                    header[0] = 1;
+                    header
+                },
+                1_754_211_818,
+            )),
         }],
         tsa: Vec::new(),
     });

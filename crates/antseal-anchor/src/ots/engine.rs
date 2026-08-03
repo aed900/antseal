@@ -433,11 +433,17 @@ fn upgrade_one_anchor(
 }
 
 /// Re-locate `pending` in the current artifact bytes.
-fn current_ref(artifact: &[u8], anchor_digest: &[u8; 32], pending: &PendingRef) -> Option<PendingRef> {
+fn current_ref(
+    artifact: &[u8],
+    anchor_digest: &[u8; 32],
+    pending: &PendingRef,
+) -> Option<PendingRef> {
     pending_refs(artifact, anchor_digest)
         .ok()?
         .into_iter()
-        .find(|candidate| candidate.uri == pending.uri && candidate.commitment == pending.commitment)
+        .find(|candidate| {
+            candidate.uri == pending.uri && candidate.commitment == pending.commitment
+        })
 }
 
 // ── the status backend (A15's second half) ───────────────────────────────
@@ -524,9 +530,9 @@ pub fn work_status(work: &PendingWork) -> WorkAnchorStatus {
         .collect();
 
     let has_verified_tsa = work.tsa.iter().any(|tsa| tsa.token_present && tsa.verified);
-    let has_pending = ots
-        .iter()
-        .any(|status| !status.pending_uris.is_empty() && status.state != OtsAnchorState::Unreadable);
+    let has_pending = ots.iter().any(|status| {
+        !status.pending_uris.is_empty() && status.state != OtsAnchorState::Unreadable
+    });
     let has_any_anchor = !work.ots.is_empty() || !work.tsa.is_empty();
 
     let nag = if has_verified_tsa {
