@@ -621,7 +621,7 @@ matters.
    silently exempt the entire A family — the check would go green over
    *exactly* the domain D91 exists to constrain. The lookup is therefore
    total: an unknown enumerator is reported by name.
-2. **`the_universe_is_exactly_the_eight_enumerators` must move 8 → 9 when
+2. **`the_universe_is_exactly_the_registered_enumerators` must move 8 → 9 when
    A38 lands**, and that is a second, independent guard rather than
    bookkeeping. Its existing failure message already states the stake: *"the
    enumerator roster changed size; a ninth domain must be added to
@@ -878,3 +878,43 @@ orchestrator's.
 ## Register entry for `TODO.md` (orchestrator pastes; do not edit `TODO.md`)
 
 - [x] **D91** The A-domain error-code namespace: one `anchor-` prefix vs per-surface `ots-`/`tsa-`, and the canonical code for the `.ots` digest-commitment check (A38/Q80, A5, A11 — blocking) — **Resolved 2026-08-02** (docs/decisions/D91-anchor-error-code-namespace.md): **one prefix, `anchor-`**, and the two-way framing overturned — the split's honest count is **four** prefixes, since seven of the sixteen already-ruled `anchor-*` codes (the two online checks, `anchor-ots-header-uncommitted`, the three chain rules, and D59's `antseal-anchor` capture-path code) belong to neither of its namespaces. D58 §10.4's prediction that *"A5 will want a sibling `tsa-`"* was **falsified the same day by D60**, A5's own decision, which independently registered `anchor-`; four resolved decisions choose `anchor-` (16 codes) against D58's one (16 codes). The F precedent **cuts against** the split: D78 makes `manifest-`/`bundle-` a structural guarantee enforced in the type system, while `ots-`/`tsa-` merely re-encodes `AnchorKind`, already a typed field on `AnchorVerdict` and on frozen report v1's `AnchorResult` — the exact duplication §2 refuses for the decode layer. Q80's `anchor-gate-abort` stem argument **inverts on measurement** (9 live `ots-pending`/`tsa-0.der` vault slot names vs 3). Digest check ruled **`anchor-ots-digest-mismatch`**; `ots-ops-do-not-commit-anchor-digest` never minted — 6 occurrences, all prose, none in code, in any worktree. D58's 16 codes → `anchor-ots-*` (15 mechanical + 1 merge); D58 amended, D56 clarified. Found: **D56 rule O2 is unreachable and reads a field `OtsArtifact` lacks**, and §2's own "never another domain's prefix" rule is **enforced by nothing** → **Q77**. Releases three of `EXPECTED_M2_UNMINTED`'s four held cells. Zero codes minted or renamed; universe stays 194
+
+---
+
+## Amendment, 2026-08-03 — what the registration lane found (A38/A52/Q73/Q77)
+
+Four corrections, all from executing this decision rather than reading it.
+
+1. **§8.2's roster move is 8 → 11, not 8 → 9.** That table was written from
+   A5/A8's single family; the A domain has **three** code sources
+   (`anchor::error`, `anchor::ots::error`, `anchor::chain`). The `.ots`
+   enumerator also needed a bridge this document does not mention: `mod error`
+   inside `anchor/ots` is **private**, so the path §8.1 writes does not resolve
+   from `error_universe` at all. The test is renamed
+   `the_universe_is_exactly_the_registered_enumerators`, since a literal count
+   in a name is a second thing to keep in step.
+2. **§8.1's `REGISTERED_PREFIXES` transcribes seven backticked cells; §2's
+   table held six.** `fine-root-` had been ratified since 2026-07-28 with nine
+   committed codes, registered in the **prose** of a subsection and never in
+   the table above it — invisible for months because `census`'s private literal
+   listed it while the table did not, and nothing had ever compared the two.
+   Q77's check is what surfaced it; the row is now in the table.
+3. **§6.3's "six occurrences … not one of them is code" is now eight, and two
+   are code** (`anchor/ots/error.rs:369`, `anchor/ots/tests.rs:320` — both
+   guards). The first attempt at a raw-text ban also went red inside
+   `MATRIX.json`'s `why` field, which §9.1 authorises **verbatim** and which
+   quotes the spelling it forbids; the artifact side is therefore checked
+   structurally and the prose is not.
+4. **§11.5's alias tangle is worse than recorded**: `Q72`, which D60 §7.2 and
+   §11 item 8 send the reader to, is named by **no task file and no `TODO.md`
+   row**. It was a third independent mint of the same work and was never
+   issued; A38 = Q80 = Q72, recorded here so the citations resolve.
+
+Two further test renames the registration made necessary, for anyone following
+a citation: `every_f_side_code_has_a_row_or_a_named_owner` →
+`every_registered_domain_code_has_a_row_or_a_named_owner` (the check is no
+longer F-side), and `codes_are_disjoint_from_the_committed_universe` →
+`codes_are_frozen_in_the_committed_universe` — the original asserted these
+codes were **absent** from the snapshot, which was true only while the A domain
+was unregistered and false one commit later. The replacement asserts
+live ⊆ committed, which is what §4a actually claims.

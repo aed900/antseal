@@ -824,7 +824,7 @@ question).**
 - Deps: F23/F24/R7 (the three existing sweeps), **F37** (which merges them — land as one mechanism, not a fourth), Q52 (the frozen code universe this quantifies over)
 - Spec: Tamper matrix — every mutation fails with a **distinct** error (MVP-SPEC.md line 168); the stable error-code contract (`docs/testing/error-code-contract.md` §§1, 3, 4a)
 - Discovered by: **the Q14 freeze-gate audit** (`docs/format/Q14-freeze-gate-plan.md` §2.3 line 238 and finding **C3**, `:561-576`, 2026-07-28), which reserved the ID; written up in wave 7.
-- The gap, confirmed at HEAD. Three reverse-coverage sweeps exist and not one quantifies over C's or G's codes. F23's `every_f_side_code_has_a_row_or_a_named_owner` (`crates/antseal-core/src/test_util/tamper_coverage.rs:450`) iterates `DOMAINS`, which is exactly `&[&BUNDLE, &MANIFEST]` (`:93`). F24's `every_cbor_code_has_a_row_or_a_named_owner` (`test_util/tamper_rows_cbor.rs:437`) covers the 15 `cbor-` codes. R7's `every_unprefixed_verify_code_has_a_row_or_a_named_owner` (`test_util/tamper_rows_structural.rs:874`) **skips six prefixes by name**, and `crypto-`, `content-` and `fine-root-` are three of them (`:875-882`). Q52's snapshot pins *existence*, not coverage, and says so at `docs/testing/error-code-contract.md:176-178`.
+- The gap, confirmed at HEAD. Three reverse-coverage sweeps exist and not one quantifies over C's or G's codes. F23's `every_registered_domain_code_has_a_row_or_a_named_owner *(renamed 2026-08-03 at A38 — the check is no longer F-side)*` (`crates/antseal-core/src/test_util/tamper_coverage.rs:450`) iterates `DOMAINS`, which is exactly `&[&BUNDLE, &MANIFEST]` (`:93`). F24's `every_cbor_code_has_a_row_or_a_named_owner` (`test_util/tamper_rows_cbor.rs:437`) covers the 15 `cbor-` codes. R7's `every_unprefixed_verify_code_has_a_row_or_a_named_owner` (`test_util/tamper_rows_structural.rs:874`) **skips six prefixes by name**, and `crypto-`, `content-` and `fine-root-` are three of them (`:875-882`). Q52's snapshot pins *existence*, not coverage, and says so at `docs/testing/error-code-contract.md:176-178`.
 - The numbers, counted from the frozen snapshot `testdata/error-codes/v1/CODES.txt` (191 codes): **25 `crypto-`**, **14 `content-`**, **9 `fine-root-`** — **48 codes outside any enum→rows quantifier**. Measured row coverage: 20 of 25 `crypto-`, 4 of 9 `fine-root-`, and **0 of 14 `content-`**.
 - **Correction to the plan's own scope.** §2.3 names five unrowed `crypto-` codes and they are exactly right — `crypto-fine-root-commit-mismatch`, `crypto-rng-failure`, `crypto-signature-invalid-ml-dsa-65`, `crypto-signature-missing-ed25519`, `crypto-signature-unlisted-ed25519`. It does **not** name the five unrowed `fine-root-` codes: `fine-root-bad-node-hash-length`, `fine-root-bad-seed-length`, `fine-root-byte-len-mismatch`, `fine-root-range-out-of-bounds`, `fine-root-wrong-cover-shape`. So the unrowed count across the two families is **ten**, not five, on top of the fourteen `content-` codes that have no sweep at all. One trap to avoid while counting: the strings `content-fine-root-*` at `test_util/tamper_rows_fine_tree.rs:501`, `:508`, `:516` are row **ids**, not error codes, and must not be read as coverage.
 - Do: build on F37's shared helper — universe in, rows + seed-row list + named-owner list in, unaccounted codes out — and supply two more namespaces rather than writing two more sweeps. The failure mode to avoid is already on the tree and documented: F23's `DOMAINS` doc comment (`tamper_coverage.rs:91-92`) says *"F24 appends its `cbor-` domain here"* and **F24 did not** — it built a sibling and recorded why (`tamper_rows_cbor.rs:70-76`). Repeating that gives five sweeps that each cover a fifth of the ground.
@@ -1035,7 +1035,7 @@ question).**
   cannot be a tamper row, so A5/A8 minted **25 further codes**, all under
   `anchor-` per D91 §6.1, all pairwise distinct, all disjoint from the 216 in
   `testdata/error-codes/v1/CODES.txt` (machine-checked in
-  `anchor::error::tests::codes_are_disjoint_from_the_committed_universe`).
+  `anchor::error::tests::codes_are_frozen_in_the_committed_universe` *(renamed 2026-08-03: the original asserted these codes were ABSENT from the snapshot — true only while the A domain was unregistered, false one commit later; the replacement asserts live ⊆ committed, which is what §4a claims)*).
   They are **not yet in the committed universe**: `anchor::error::all_code_exemplars`
   is deliberately not wired into `error_universe::by_enumerator`, because D91
   §8.2 makes that A38's move together with the roster assertion going 8 -> 9.
@@ -1045,7 +1045,7 @@ question).**
   is no binding yet.
 - Accept:
   - `testdata/error-codes/v1/CODES.txt` contains every `anchor-` code.
-  - `the_universe_is_exactly_the_eight_enumerators` reads nine.
+  - `the_universe_is_exactly_the_registered_enumerators` reads **eleven** *(renamed and recounted 2026-08-03: the A domain has three code sources, not one)*.
   - A review pass over the 25 minted names against D91 §7.3's convention, with
     any rename applied **before** a tamper row or golden vector binds one.
 - Notes: The judgement call worth reviewing explicitly: the two
@@ -1130,7 +1130,7 @@ question).**
   - **The enumerator lookup is TOTAL: an enumerator with no table row FAILS, never skips.** D91 is emphatic — a `filter_map` there would silently exempt the entire A family, i.e. go green over exactly the domain the ruling exists to constrain.
   - Test-of-the-test over a synthetic roster: `[("anchor::error::all_code_exemplars", {"ots-bad-magic"})]` must be returned.
   - `section_2_prefix_table_matches_registered_prefixes` asserts set equality **plus** `len() >= 7`, so a parse finding nothing cannot pass.
-  - `the_universe_is_exactly_the_eight_enumerators` moves 8 → 9 with A38.
+  - `the_universe_is_exactly_the_registered_enumerators` moves 8 → **11** with A38/A52 *(renamed and recounted 2026-08-03)*.
   - `error_codes_and_exit_class_names_are_disjoint` asserts both sets non-empty and the class set at its pinned size — it cannot pass vacuously, and it stays in the CLI target rather than being weakened to a hardcoded list in `error_universe.rs`.
 - Notes: blocks nothing (A5 and A11 may proceed on D91's ruling). Native-only, like the rest of `error_universe.rs` (P14: wasm32 has no filesystem).
 

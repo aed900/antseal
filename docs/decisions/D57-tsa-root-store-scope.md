@@ -10,7 +10,7 @@
   follows our own docs and configures `zeitstempel.dfn.de` as their TSAs
   with its root unpinned does not get a weaker bundle — they get a
   **pre-payment seal abort**. Documenting an alternate we cannot verify
-  ships a trap. Store version 1 is therefore **five roots, 7 937 bytes of
+  ships a trap. Store version 1 is therefore **four roots, 6 429 bytes of
   DER**, enumerated in §5. Two structural findings came out of fetching real
   tokens from all five TSAs, and neither could have been found with a
   hand-made test CA: **(1) two of the five chains (DigiCert, Sectigo)
@@ -240,7 +240,19 @@ FreeTSA's leaf `notBefore = Feb 15 19:44:22 2026 GMT` — this is the "2026
 cert" spec line 109 names, and it is confirmed EC P-384, which is why P-384
 support is normative.
 
-## 5. Store version 1 — the five roots, by the closure rule
+## 5. Store version 1 — the roots admitted by the closure rule
+
+> **Corrected 2026-08-03 at A7.** This section says *five roots, 7 937 bytes*; the
+> gate in §6 admits **four, 6 429 bytes**. **SwissSign is QUARANTINED**: its C3
+> now exists and C4 holds, but `www.swisssign.com` returns **403 to this host for
+> every request** — both schemes, with and without a browser UA, and *including a
+> deliberately nonexistent path under the same prefix*, so the block is on the
+> client rather than the resource. Promoting C3 to stand in for a blocked C1
+> substitutes one channel *class* for another, and the gated task would be
+> rewriting its own admission rule to admit the root it was evaluating. Left to
+> **A56**. Sectigo, by contrast, **completed**: CCADB's Microsoft feed now
+> answers 200 / 220 193 B / 550 rows where this document measured a 404, which
+> is exactly the revisit this document's own trigger pre-authorised.
 
 | # | label | subject CN | serial | SHA-256 fingerprint | key | validity | DER |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -262,9 +274,9 @@ its §6 channels are complete. Three of these five are not yet complete
 alone, which is same-operator corroboration and never sufficient. No root
 may be compiled in ahead of its provenance.
 
-**Total 7 937 B.** For scale, D87 measured `include_bytes!` carriage of the
+**Total **6 429 B** *(four roots — see §5's correction)*.** For scale, D87 measured `include_bytes!` carriage of the
 v1 golden vectors at 28.15 % of a 2 MiB per-version budget; the whole root
-store is **0.38 %** of that same budget. Store size is not a constraint on
+store is ****0.31 %**** of that same budget. Store size is not a constraint on
 this decision and no cost argument should be built on it.
 
 Roots deliberately **not** pinned, with reasons:
@@ -317,7 +329,16 @@ Per root, obtain **channel C1, plus at least one of C2/C3, plus C4 always**:
   the CA offers it.
 - **C2 — public root-programme data.** Mozilla NSS `certdata.txt`. Available
   only for multipurpose commercial roots.
-- **C3 — historical archive.** An Internet Archive Wayback `…id_/` raw
+- **C3 — historical archive.** *(Corrected 2026-08-03 at A7: as written this
+  channel is **unexecutable for two of the five roots**, because it required the
+  snapshot to be **of the C1 URL** and no capture of those URLs exists at any
+  date — for Sectigo, 624 archived `crt.sectigo.com` URLs contain no capture of
+  this root, the two near-misses being cross-certificates under 12 months old.
+  It must read: a snapshot that yields the candidate root's exact DER — from the
+  C1 URL where one is archived, **otherwise from any other URL**. DFN was
+  admitted on that reading, via two independent snapshots ≥12 months old, one of
+  them under an operator independent of the vendor, which is stronger than the
+  letter of the original rule.)* An Internet Archive Wayback `…id_/` raw
   snapshot of the C1 URL, **at least 12 months old**. Independent operator
   *and* independent in time: it defeats a present-day compromise of the
   vendor's web server, which is the threat C1 alone cannot address.
@@ -340,7 +361,7 @@ recorded fingerprint is identical.
 | DigiCert Trusted Root G4 | ✅ `https://cacerts.digicert.com/DigiCertTrustedRootG4.crt.pem`, 19:26:40Z | ✅ NSS, identical fingerprint | not needed | ✅ intermediate verifies under it with the cross-cert withheld; `openssl ts -verify -CAfile DigiCertTrustedRootG4.pem` → `Verification: OK` |
 | DFN Community Root CA 2022 | ✅ `https://pki.pca.dfn.de/dfn-verein-community-root-ca/pub/cacert/cacert.pem`, 19:35:11Z, and a second vendor path (`…/dfn-verein-community-ca/pub/cacert/chain.txt`) — **DER byte-identical to the token-embedded copy** | ✖ not in NSS | **⚠ NOT EXECUTED** | ✅ root embedded in the live token, 19:31:00Z, identical fingerprint |
 | Sectigo Public Time Stamping Root R46 | ✅ `http://crt.sectigo.com/SectigoPublicTimeStampingRootR46.crt`, 19:34:49Z | ✖ not in NSS | **⚠ NOT EXECUTED** | ✅ SPKI equality with the token's cross-certificate (`a4db8668…4795`) |
-| SwissSign Signature Services Root 2020 - 2 | **⚠ NOT EXECUTED** | ✖ not in NSS | **⚠ NOT EXECUTED** | ✅ root embedded in the live token, 19:31:33Z |
+| SwissSign Signature Services Root 2020 - 2 | **⛔ ATTEMPTED AND BLOCKED (HTTP 403 to this host, incl. a nonexistent path under the same prefix — the block is on the client, not the resource; A56)** | ✖ not in NSS | **⚠ NOT EXECUTED** | ✅ root embedded in the live token, 19:31:33Z |
 
 Two roots are complete; three carry a named gap. **That is A7's remaining
 work, not a defect in the procedure** — and stating it beats the failure
@@ -497,7 +518,7 @@ names* (D89), and this decision introduces no name.
 | test | lives in | fails when |
 | --- | --- | --- |
 | `pinned_store_fingerprints_match_the_embedded_bytes` | `antseal-core` unit | any `cert_sha256`/`spki_sha256` literal drifts from `sha256(der)` — the one drift class the format permits, closed mechanically. |
-| `pinned_store_is_exactly_five_roots_at_version_1` | `antseal-core` unit | a root is added or removed without bumping `TSA_ROOT_STORE_VERSION` and updating this record. Asserts the version, the count, and every `label`. |
+| `pinned_store_is_exactly_four_roots_at_version_1` | `antseal-core` unit | a root is added or removed without bumping `TSA_ROOT_STORE_VERSION` and updating this record. Asserts the version, the count, and every `label`. |
 | `real_digicert_token_reaches_proven_with_the_cross_cert_present` | `antseal-core` + `testdata/anchors/` | **P1 is not implemented.** Uses the committed real token, whose chain terminates at a cross-certificate. An implementation that walks to the end of the supplied chain returns `internally-consistent-only` and fails here. |
 | `real_digicert_token_reaches_proven_with_the_cross_cert_REMOVED` | same | P1's other side: a two-certificate chain that closes directly on the pinned root must also pass, so the fixture proves the cross-cert is optional rather than load-bearing. |
 | `real_sectigo_token_reaches_proven_with_the_cross_cert_present` | same | as above, second hierarchy — one TSA passing could be luck. |
@@ -529,7 +550,7 @@ roots-probe.tsq              # the TimeStampReq, so §1 is reproducible
 ```
 
 No secret material: the probe digest derives from the documented fixed test
-seed and the certificates are public trust anchors. A7 promotes the five
+seed and the certificates are public trust anchors. A7 promotes the **four**
 `.der` files into `crates/antseal-core/src/anchor/roots/` once its remaining
 C1/C3 channels (§6) are executed.
 
@@ -552,4 +573,4 @@ C1/C3 channels (§6) are executed.
 
 ## Index row (orchestrator applies at merge)
 
-| [D57](D57-tsa-root-store-scope.md) | Pinned TSA root-store scope — **include the alternates, lean confirmed on a reason the register never gave, and the list replaced by a closure rule** (*a root is pinned iff antseal NAMES a TSA whose live chain closes at it*). The decider is the sealing side, not rendering: U26 makes alternates configurable and A20 aborts a seal on zero fully-verified tokens, so documenting an alternate whose root we withhold ships a **pre-payment abort**, not a weaker bundle. Store v1 = **5 roots / 7 937 B** (0.38 % of D87's per-version budget). Two findings from live tokens at all five TSAs, neither reachable with A24's test CA: **2 of 5 chains terminate at a CROSS-CERTIFICATE** (DigiCert→Assured ID, Sectigo→USERTrust; SPKI equality proven), so A9 must **stop at the first pinned match** or the production DigiCert default renders `internally-consistent-only`; and **3 of 5 tokens ship their own self-signed root**, in **3 different certificate orders**, so P2 needs a positive twin and P3 forbids any positional assumption. Also measured: FreeTSA signs **`ecdsa-with-SHA512`** (A8 names no digest) and SwissSign's leaf is **RSA-3072** (no size allow-list). The provenance procedure names four channel classes and was **executed** — Wayback snapshots from 2016 and 2019 corroborate FreeTSA, NSS corroborates DigiCert — with the three unfinished rows stated as A7 work; mandating root-programme membership would have been unexecutable, since **only 2 of 5 candidates are in Mozilla NSS**. Corrects A7's "DFN-PKI/T-TeleSec" (the live chain is a self-signed DFN Community Root 2022) and finds `crt.sectigo.com` serves its root over **plain HTTP only** (TLS handshake failure) | RESOLVED (A6/A7/A26 + new A43/A44 implement) | 2026-08-02 |
+| [D57](D57-tsa-root-store-scope.md) | Pinned TSA root-store scope — **include the alternates, lean confirmed on a reason the register never gave, and the list replaced by a closure rule** (*a root is pinned iff antseal NAMES a TSA whose live chain closes at it*). The decider is the sealing side, not rendering: U26 makes alternates configurable and A20 aborts a seal on zero fully-verified tokens, so documenting an alternate whose root we withhold ships a **pre-payment abort**, not a weaker bundle. Store v1 = ****4 roots / 6 429 B**** (**0.31 %** of D87's per-version budget). Two findings from live tokens at all five TSAs, neither reachable with A24's test CA: **2 of 5 chains terminate at a CROSS-CERTIFICATE** (DigiCert→Assured ID, Sectigo→USERTrust; SPKI equality proven), so A9 must **stop at the first pinned match** or the production DigiCert default renders `internally-consistent-only`; and **3 of 5 tokens ship their own self-signed root**, in **3 different certificate orders**, so P2 needs a positive twin and P3 forbids any positional assumption. Also measured: FreeTSA signs **`ecdsa-with-SHA512`** (A8 names no digest) and SwissSign's leaf is **RSA-3072** (no size allow-list). The provenance procedure names four channel classes and was **executed** — Wayback snapshots from 2016 and 2019 corroborate FreeTSA, NSS corroborates DigiCert — with the three unfinished rows stated as A7 work; mandating root-programme membership would have been unexecutable, since **only 2 of 5 candidates are in Mozilla NSS**. Corrects A7's "DFN-PKI/T-TeleSec" (the live chain is a self-signed DFN Community Root 2022) and finds `crt.sectigo.com` serves its root over **plain HTTP only** (TLS handshake failure) | RESOLVED (A6/A7/A26 + new A43/A44 implement) | 2026-08-02 |
