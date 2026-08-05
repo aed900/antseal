@@ -1812,3 +1812,58 @@ fn no_receipt_internal_can_reach_a_verdict() {
         ReceiptClass::SupportingEvidenceNoProvenTime
     );
 }
+
+/// **D56 §5's branch model, at the one place it bites.** A pending attestation
+/// whose path crossed a registered-but-unimplemented op has an
+/// **indeterminate** commitment, is `Unevaluable`, and must **not** satisfy
+/// O5.
+///
+/// What makes it fail: an O5 predicate written as *"some `Pending`
+/// attestation exists"* rather than *"some **evaluable** pending branch
+/// exists"*. Such an artifact would render `pending` — which tells the user to
+/// run `status --upgrade`, and that can never help, because the commitment the
+/// upgrade URL needs is exactly the value the unimplemented op made
+/// unknowable. D56 §2 names that as one of the two wrong answers.
+///
+/// The differential is one wire byte: the same attestation with and without a
+/// `0x02` op in front of it.
+#[test]
+fn an_indeterminate_pending_branch_does_not_satisfy_o5() {
+    const UNIMPLEMENTED_OP: u8 = 0x02;
+    let digest = synthetic_digest(0xf1);
+    let uri = "https://alice.btc.calendar.opentimestamps.org";
+
+    let evaluable = ots_offline(&container(&digest, &pending(uri)), &digest, None);
+    assert_eq!(state_of(&evaluable), AnchorState::Pending, "the baseline");
+
+    let mut shadowed = vec![UNIMPLEMENTED_OP];
+    shadowed.extend_from_slice(&pending(uri));
+    let artifact = parse_ots(&container(&digest, &shadowed), &digest).expect("parses");
+    assert!(
+        matches!(
+            artifact.attestations.as_slice(),
+            [OtsAttestation::Pending {
+                commitment: None,
+                ..
+            }]
+        ),
+        "the fixture must really be indeterminate, or this compares two identical things"
+    );
+
+    let outcome = ots_offline(&container(&digest, &shadowed), &digest, None);
+    assert_eq!(state_of(&outcome), AnchorState::InternallyConsistentOnly);
+    assert!(!outcome.verdict().is_headline_eligible());
+
+    // …and the calendar is still *named*, because a URI is read out of the
+    // attestation payload rather than derived through the ops. A40's identity
+    // is about who the artifact points at, not about what the verifier could
+    // compute.
+    assert_eq!(
+        outcome
+            .verdict()
+            .source()
+            .map(|s| s.identity().to_owned())
+            .as_deref(),
+        Some(uri)
+    );
+}

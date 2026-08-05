@@ -636,9 +636,23 @@ pub fn evaluate_ots_artifact(
         && agreed_header == *u.block_header()
     {
         // The time is the **agreed** header's `nTime`, never the embedded
-        // one (D56 §5). See `the_proven_time_is_read_from_the_agreed_header`
-        // for why no fixture can tell the two apart, and what is pinned
-        // instead.
+        // one (D56 §5).
+        //
+        // **Measured, so that nobody re-derives it the hard way:** under the
+        // guard above the two headers are byte-identical, so swapping this
+        // for `header_time_unix(u.block_header())` is a *semantically
+        // equivalent* mutation — planted, it survives the whole suite,
+        // because it is the same computation. D56 §5 calls this rule "the
+        // invariant no existing test can see"; the sharper statement is that
+        // **no test can see it, existing or not**, because O3's byte equality
+        // makes the distinction unobservable (D56 §9's row for it is
+        // unsatisfiable — see `the_proven_time_is_read_from_the_agreed_header`).
+        //
+        // What *is* observable is a weakened guard — comparing merkle roots
+        // instead of the whole header, which is the natural way to "fix" the
+        // untestable rule — and that mutation is caught by two rows. So the
+        // line below is written the safe way on principle, and the guard
+        // above is where the defence actually lives.
         let time = i64::from(header_time_unix(&agreed_header));
         return AnchorOutcome::new(
             AnchorVerdict::proven(
@@ -658,10 +672,20 @@ pub fn evaluate_ots_artifact(
     // headline-eligible offline, carrying no time. A lone header's
     // proof-of-work is self-referential (MVP-SPEC.md line 108), and A2 made
     // the time unrepresentable rather than merely unset.
-    if committed {
-        let height = upgrade.map_or(0, |u| u.block_height());
+    //
+    // The `let Some(u)` is structural rather than defensive: `committed` is
+    // `upgrade.is_some_and(…)`, so the two conditions cannot disagree — and
+    // writing it this way means there is no `unwrap_or(0)` here that would
+    // silently render `bitcoin-block-0` if they ever did.
+    if let Some(u) = upgrade
+        && committed
+    {
         return AnchorOutcome::new(
-            AnchorVerdict::attested(AnchorKind::Ots, Some(bitcoin_source(height)), fetch_date),
+            AnchorVerdict::attested(
+                AnchorKind::Ots,
+                Some(bitcoin_source(u.block_height())),
+                fetch_date,
+            ),
             refutation.into_iter().collect(),
             Some(identity),
         );
