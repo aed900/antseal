@@ -20,16 +20,25 @@
 //! the fixtures are committed rather than fetched: **CI contacts nothing**
 //! (Q16), and a loopback listener cannot.
 //!
-//! # What is still owed
+//! # The signing half, and where it went (A59, 2026-08-05)
 //!
-//! A24's *signing* mock TSA — a generated test CA with RSA and ECDSA P-384
-//! signers and controllable `genTime`/`PKIStatus` — is **not** here, and it
-//! cannot be: `cms`, `x509-cert`, `rsa` and `p384` are declared by
-//! `antseal-core` **and nowhere else** (A30's containment rule,
-//! `crates/antseal-core/Cargo.toml`), so a crate that signs tokens is not
-//! this one. It also needs A6's root-store injection API, which has not
-//! landed. Replay covers the transport-level shapes A16/A17/A42 need; the
-//! signing half is recorded as owed in the lane's discovered work.
+//! A24's *signing* mock TSA is **not in this module**, and the earlier note
+//! here was right about why: `cms`, `x509-cert`, `rsa` and `p384` are declared
+//! by `antseal-core` and nowhere else (A30's containment rule), so a
+//! token-minting crate is not this one. Two things that note got wrong, both
+//! corrected here:
+//!
+//! - *"It also needs A6's root-store injection API, which has not landed."* —
+//!   it **has**: `TsaRootStore::from_static`, gated on the same `test-util`.
+//! - A30's rule reads as a *blocker* and is a **placement constraint**. It
+//!   does not stop the mock existing; it says where it must live, which is
+//!   `antseal_core::anchor::testing` — the one crate already declaring the
+//!   pins. Reading it as a blocker is what kept A59 filed rather than done.
+//!
+//! What lives here is the transport half that reaches it:
+//! [`signing_tsa`], over [`StubReply::Computed`]. Replay covers the recorded
+//! shapes A16/A17/A42 need; a *signed* answer to a *live* nonce needs the
+//! minter, and the two meet at a closure.
 
 use std::time::Duration;
 
@@ -468,6 +477,10 @@ pub fn calendar(behaviour: &CalendarBehaviour) -> StubScript {
 }
 
 /// A mock TSA replaying a recorded `TimeStampResp`.
+///
+/// Replay answers the nonce of the request it was *recorded* from, so a client
+/// that draws a fresh one is always refused. Use [`signing_tsa`] when the test
+/// needs the capture to succeed.
 #[must_use]
 pub fn tsa(response: &[u8]) -> StubScript {
     StubScript::new().always(StubReply::Body {
@@ -475,6 +488,40 @@ pub fn tsa(response: &[u8]) -> StubScript {
         content_type: "application/timestamp-reply",
         bytes: response.to_vec(),
     })
+}
+
+/// A mock TSA that **signs**, answering whatever request arrives (A59/A24).
+///
+/// The `signer` is `antseal_core::anchor::testing::MockTsa`, taken as a
+/// closure so this transport module keeps no RFC 3161 knowledge. What it buys
+/// over [`tsa`] is the one thing a recording can never do: echo a nonce the
+/// client drew a millisecond ago, so a test can drive the whole capture path —
+/// fresh CSPRNG draw, real request, real signature, real core verification —
+/// to a *success* rather than to a predetermined failure.
+///
+/// A request the signer cannot answer becomes an empty 200 body, which the
+/// capture path reports as an unverifiable token: a broken test never looks
+/// like a broken endpoint.
+#[must_use]
+pub fn signing_tsa(
+    signer: impl Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync + 'static,
+) -> StubScript {
+    StubScript::new().always(StubReply::computed(
+        "application/timestamp-reply",
+        move |request| signer(request_body(request)).unwrap_or_default(),
+    ))
+}
+
+/// The body of a raw HTTP request, i.e. everything after the blank line.
+///
+/// Empty when the request has no head terminator, which is what a truncated
+/// read looks like.
+#[must_use]
+pub fn request_body(request: &[u8]) -> &[u8] {
+    match request.windows(4).position(|w| w == b"\r\n\r\n") {
+        Some(end) => &request[end + 4..],
+        None => &[],
+    }
 }
 
 /// A correct `200 text/plain` reply, delayed. Used for the concurrency test,

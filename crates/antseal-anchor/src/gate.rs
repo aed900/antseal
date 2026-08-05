@@ -54,6 +54,17 @@
 //! precisely so A20 can add the populated arm without breaking the M1
 //! consumers, and building any of that machinery now is out of A1's
 //! scope by instruction.
+//!
+//! # What arrived at M2 (task A20)
+//!
+//! [`crate::submit`] holds the orchestrator and the pure decision
+//! [`evaluate_seal_gate`](crate::submit::evaluate_seal_gate);
+//! [`SubmitAnchorGate`](crate::submit::SubmitAnchorGate) is the real
+//! implementation of this interface. The types this module gained for it are
+//! [`AnchorSubmissionOutcome::Submitted`], the three new
+//! [`AnchorGateError`] arms, and [`AnchorEndpointFailure`].
+
+use crate::submit::AnchorSubmission;
 
 /// What the anchor-submission step produced.
 ///
@@ -69,15 +80,83 @@ pub enum AnchorSubmissionOutcome {
     /// manifest/bundle anchor sections stay empty, and every verify-side
     /// anchor slot evaluates `absent` — the UNANCHORED aggregate.
     Empty,
+    /// A20's populated arm: anchors were submitted and the gate let the seal
+    /// proceed. Boxed because the submission carries whole tokens and a
+    /// merged `.ots`, and the `Empty` arm must stay free.
+    Submitted(Box<AnchorSubmission>),
 }
 
 impl AnchorSubmissionOutcome {
-    /// Whether this outcome carries no anchors at all (always `true` for
-    /// [`AnchorSubmissionOutcome::Empty`]; M2's populated arm returns
-    /// `false`).
+    /// Whether this outcome carries no anchors at all.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)
+    }
+
+    /// The submission, when there was one.
+    #[must_use]
+    pub const fn submission(&self) -> Option<&AnchorSubmission> {
+        match self {
+            Self::Empty => None,
+            Self::Submitted(submission) => Some(submission),
+        }
+    }
+}
+
+/// Which half of the anchor stage an endpoint failure came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnchorStage {
+    /// An OpenTimestamps calendar submit (A13).
+    Ots,
+    /// An RFC 3161 TSA capture (A10).
+    Tsa,
+}
+
+impl AnchorStage {
+    /// The label used in the abort error and the degradation report.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ots => "ots",
+            Self::Tsa => "tsa",
+        }
+    }
+}
+
+/// One endpoint's failure, as it appears **verbatim** in A20's typed abort
+/// error and in the degradation report.
+///
+/// `class` is not restated here — it comes from the underlying typed error's
+/// own `class()` method ([`crate::tsa::TsaFailure::class`],
+/// [`crate::ots::submit::CalendarFailure::class`]), so a new failure variant
+/// cannot acquire a wrong label by being forgotten in a second table. `detail`
+/// is the typed error's `Display`, which is what makes "verbatim" checkable:
+/// the endpoint URL is inside it as well as beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorEndpointFailure {
+    /// Which half of the stage.
+    pub stage: AnchorStage,
+    /// The endpoint URL, exactly as configured.
+    pub endpoint: String,
+    /// The failure class, from the typed error.
+    pub class: &'static str,
+    /// The typed error's own message.
+    pub detail: String,
+    /// How long this endpoint's exchange took.
+    pub elapsed_millis: u128,
+}
+
+impl core::fmt::Display for AnchorEndpointFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} {} [{}] {} ({} ms)",
+            self.stage.label(),
+            self.endpoint,
+            self.class,
+            self.detail,
+            self.elapsed_millis
+        )
     }
 }
 
@@ -90,14 +169,47 @@ impl AnchorSubmissionOutcome {
 #[non_exhaustive]
 pub enum AnchorGateError {
     /// The minimum-anchor policy was not met and the seal must abort —
-    /// before any payment (S12 ordering). At M2, A20 replaces the
-    /// free-form detail with a typed enumeration of every per-endpoint
-    /// failure (its accept requires them verbatim in the abort error).
+    /// before any payment (S12 ordering). Kept from M1 as the free-form
+    /// arm the pipeline's own test doubles construct; A20's real gate emits
+    /// [`AnchorGateError::MinimumAnchor`], which carries the failures.
     #[error("anchor gate refused the seal: {detail}")]
     PolicyNotMet {
         /// Human-readable summary of why the gate refused.
         detail: String,
     },
+    /// **A20's abort.** Zero TSA endpoints produced a token that verified in
+    /// core, and `--force-degraded` was not given. Every per-endpoint failure
+    /// is carried verbatim, because the operator's next action is to look at
+    /// *those URLs*.
+    #[error(
+        "the minimum-anchor policy was not met: 0 of {attempted} TSA endpoint(s) \
+         produced a verified token, so nothing was paid for.\n{}\n\
+         Re-run when an endpoint recovers, or pass --force-degraded to seal with a \
+         loudly recorded degraded anchor set.",
+        failures.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")
+    )]
+    MinimumAnchor {
+        /// How many TSA endpoints were attempted.
+        attempted: usize,
+        /// Every endpoint failure from both halves of the stage, in stage
+        /// order (OTS first, then TSA), each verbatim.
+        failures: Vec<AnchorEndpointFailure>,
+    },
+    /// `--no-anchor` on a permanent (paid, mainnet) network. The rule is
+    /// stated in this module's docs and enforced at the CLI (U13) and library
+    /// (S13) layers before a gate is even chosen; this arm is the third,
+    /// innermost layer, so driving the gate directly cannot bypass it.
+    #[error(
+        "--no-anchor cannot be used on a permanent network: a paid, permanent seal \
+         must never be mintable with the anchor gate bypassed"
+    )]
+    NoAnchorOnPermanentNetwork,
+    /// The OS CSPRNG is unavailable, so no timestamp request could be built.
+    ///
+    /// Its own arm, and deliberately: "this machine cannot produce randomness"
+    /// must never be triaged as "the TSAs are down". No request was sent.
+    #[error(transparent)]
+    Entropy(#[from] crate::nonce::NonceUnavailable),
 }
 
 /// The injected pre-pay anchor-gate step (D34 Decision 2: defined here
@@ -204,6 +316,7 @@ mod tests {
             AnchorGateError::PolicyNotMet { detail } => {
                 assert_eq!(detail, "0 TSA tokens verified");
             }
+            other => panic!("the M1 double must keep emitting the M1 arm: {other:?}"),
         }
         assert!(err.to_string().contains("refused the seal"));
     }

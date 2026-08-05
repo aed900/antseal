@@ -46,6 +46,11 @@
 //!   D57's rulings P1/P2/P3.
 //! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
 //!   the crate so the ordinary suite compiles and exercises it.
+//! - `testing` (task **A59**, completing **A24**) — the signing mock TSA and
+//!   its test CA, compiled only under `test`/`test-util`. It lives here rather
+//!   than in a crate of its own because A30(c) makes `antseal-core` the sole
+//!   declaration site of the seven D60 pins, and `cargo metadata --no-deps`
+//!   sees dev edges too; the module's own docs carry the argument.
 
 pub mod alg;
 pub mod caps;
@@ -58,6 +63,8 @@ pub mod ots;
 pub mod request;
 pub mod rfc3161;
 pub mod roots;
+#[cfg(any(test, feature = "test-util"))]
+pub mod testing;
 pub mod tsa;
 
 pub use error::{AlgPosition, AnchorError, DerFault, DerSite, SignedAttrId};
