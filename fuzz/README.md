@@ -9,12 +9,34 @@ Registered targets:
 | `codec_round_trip` | F17 | either of the above | `codec_fuzz::round_trip` — decode ⇒ byte-identical re-encode |
 | `verify_bundle` | R10 | **entropy** | `verify::verify_bundle`, over structure-aware mutations of valid R6 bundles |
 | `anchor_token` | A5 (runs: A23) | a TSA artifact, with its `anchor_digest` taken from the first 32 bytes | `anchor::tsa::verify_token` — the whole RFC 3161/CMS/X.509 stage, alternating the bundle path (`expected_nonce = None`) and the capture path on one input bit |
+| `anchor_ots` | A23 (lanes: Q17) | an `.ots` artifact, **unmodified** — the digest is read from its own start-digest field | `anchor::ots::parse_ots` — decode, op execution, and all seven D58 limits |
 
-A23's `.ots` target joins at M2 (Q17); the `TimeStampResp` half is
-`anchor_token`, landed with A5. Its seeds are the real ones:
-`testdata/anchors/A25-bootstrap/` holds nine live TSA responses plus five
-derived BER/reordering variants, and a mutation of a valid CMS structure
-reaches far deeper into the parser than any random buffer.
+Both anchor targets are seeded from `testdata/anchors/A25-bootstrap/`: nine
+live TSA responses, five derived BER/reordering variants, and the captured
+`.timestamp` artifacts. A mutation of a valid CMS structure reaches far
+deeper into the parser than any random buffer.
+
+Two things about that wiring are worth stating, because both were silent:
+
+- **it did not exist until Q17.** `corpus_dirs()` looked for
+  `testdata/fuzz-seeds/<target>/`, found nothing for `anchor_token`, and
+  said nothing — the target had run since A5 with an empty corpus while
+  this file and `fuzz/Cargo.toml` both described the seeds above. The lookup
+  for the anchor targets is now a hard failure rather than a `[ -d … ] &&`.
+- **the anchor seeds are not under `testdata/fuzz-seeds/`** and must not be
+  moved there. That tree is generated from `codec_fuzz::all_corpora()` and
+  `codec_fuzz.rs` fails the ordinary suite on a stray directory in it;
+  captured TSA tokens are not derivable from the test seed `W`.
+
+`anchor_ots`'s inputs are raw `.ots` files with no framing, which is a
+property of `fuzz_entry::drive_ots`: it reads the anchor digest out of the
+artifact's own start-digest field. A head-split like `anchor_token`'s would
+fail every well-formed input at step 5 of 7 — before the walk, where all
+four of D58's crashers live (an 80-byte `SIGABRT`, a 102-byte one, and an
+87-byte input that panicked in debug and returned a *different answer* in
+release). Rediscovering that class is this target's calibration, which is
+why its seeds are real artifacts and its budget assertion is the one that
+catches `vec![0; attacker_varint]` directly.
 
 **The invariant `anchor_token` exists for is the one a proptest cannot
 assert**: not "no panic" but "no **abort**". A stack overflow is not a panic,
@@ -24,8 +46,13 @@ one with a recursive DER walker at depth 20 000 in 83 407 bytes. Depth is
 — every re-parse of an inner field starts a fresh budget, and this stage has
 four. Adding a target
 means three edits — `Cargo.toml`, `scripts/fuzz.sh`'s `TARGETS` list, and
-this table — which is deliberate: a target nothing runs is worse than no
-target at all.
+this table — plus, since D61, a fourth consequence to check rather than
+edit: `scripts/ci-lanes.sh fuzz-budget` prices the scheduled lane from that
+`TARGETS` list against a 700 min/month ceiling, and a **seventh** target
+turns it red by construction. That is the guard firing correctly, and the
+knob is the workflow's `seconds`; cadence is not a knob, because cadence is
+what protects the corpus cache from GitHub's 7-day eviction. All of which
+is deliberate: a target nothing runs is worse than no target at all.
 
 **Everything about running these lives in
 [`docs/testing/fuzzing.md`](../docs/testing/fuzzing.md)**: run commands,

@@ -37,7 +37,12 @@ run() {
 # `gate-features.sh --check-partition` fails unless this literal equals the
 # computed LIGHT union AND every declared feature is classified by some tier,
 # which is what stops a newly added feature from being compiled by nothing.
-GATE_LIGHT_FEATURES='antseal-core/test-util,antseal-core/test-vectors,antseal-net/test-util'
+# `antseal-anchor/test-util` added 2026-08-02 (found by `gate-features.sh
+# --self-test`, whose control arm was RED at 408ca26): A3 landed the feature
+# and did not classify it, so no tier compiled A24's stub servers. LIGHT by
+# the partition's own rule — it activates no optional dependency and pulls no
+# ant-core/EVM edge, exactly like `antseal-net/test-util` beside it.
+GATE_LIGHT_FEATURES='antseal-anchor/test-util,antseal-core/test-util,antseal-core/test-vectors,antseal-net/test-util'
 
 echo "gate: $(git rev-parse --short HEAD) — $(git log -1 --format=%s | cut -c1-60)"
 run fmt    cargo fmt --all -- --check

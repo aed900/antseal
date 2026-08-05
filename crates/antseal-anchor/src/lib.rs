@@ -34,6 +34,15 @@
 //! blocking inside `antseal-cli`'s `rt.block_on` is safe **only because**
 //! that runtime is `new_multi_thread`. On a `new_current_thread` runtime,
 //! ant-core's spawned tasks would starve while this crate sat on a socket.
+//! The other side is `crates/antseal-cli/src/backend.rs`'s `ant::runtime`,
+//! whose doc comment points back here; the invariant is asserted, not
+//! merely written down, by that file's
+//! `anchor_blocking_calls_require_a_multi_thread_runtime` and
+//! `a_spawned_task_progresses_while_the_runtime_thread_blocks`. Both are
+//! behind the non-default `ant-backend` feature, so `gate-features.sh`
+//! lists `backend.rs` as a tier-2 trigger path to make an edit there
+//! actually run them (Q84; before that fix such an edit classified
+//! **light** and was compiled by no tier that runs).
 //!
 //! This crate is **never** compiled to wasm32: the verifier web page performs
 //! its own online fetches in JS and feeds the results to WASM-safe core

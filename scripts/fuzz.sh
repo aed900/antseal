@@ -36,7 +36,7 @@ seed_root="$repo/testdata/fuzz-seeds"
 # Every registered target. Adding one means editing fuzz/Cargo.toml, this
 # list, and fuzz/README.md's table — deliberately, because a target nothing
 # runs is worse than no target at all.
-TARGETS=(manifest_decode bundle_decode codec_round_trip verify_bundle anchor_token)
+TARGETS=(manifest_decode bundle_decode codec_round_trip verify_bundle anchor_token anchor_ots)
 
 # Toolchain: the pin in fuzz/rust-toolchain.toml governs, because cargo runs
 # with `fuzz/` as its working directory. ANTSEAL_FUZZ_TOOLCHAIN overrides it
@@ -74,6 +74,35 @@ select_targets() {
 # `codec_round_trip` deliberately has no seed directory of its own: its input
 # space is the union of the two decode corpora, so it reads both rather than
 # committing the same bytes twice (testdata/fuzz-seeds/MANIFEST.json).
+#
+# The two ANCHOR targets read `testdata/anchors/A25-bootstrap/` instead of a
+# directory under `testdata/fuzz-seeds/`, and that is deliberate on three
+# grounds (Q17):
+#
+#   1. The material is already committed, with provenance (its CAPTURE.log
+#      and OTS-BOOTSTRAP.md). A second copy under fuzz-seeds/ would be the
+#      "same bytes twice" that `codec_round_trip` exists to avoid.
+#   2. `testdata/fuzz-seeds/` is a GENERATED tree. `codec_fuzz.rs`'s
+#      the_seed_tree_holds_nothing_but_the_generated_corpora compares its
+#      directory set to `codec_fuzz::all_corpora()` and fails on a stray
+#      one, so a hand-added anchor directory would turn the ordinary suite
+#      red. Captured TSA tokens are not derivable from the test seed W and
+#      cannot come from that generator.
+#   3. `.ots` artifacts there are valid inputs byte for byte (see
+#      `fuzz_entry::drive_ots`), so nothing has to be derived at all.
+#
+# Mixed content in that directory is fine and cheap: a `.tsr` handed to the
+# `.ots` parser is a `bad-magic` rejection in microseconds, and vice versa.
+# libFuzzer seeds are starting points, not a contract.
+#
+# CAVEAT, recorded because it bounds what the anchor_token seeds buy (A71):
+# `drive_anchor_token` takes its digest off the HEAD of the input, so a raw
+# `.tsr` seed is consumed 32 bytes short and cannot pass the imprint check
+# on the unmutated seed. It still seeds the DER structure, which is what a
+# mutation engine works from; a corpus of `real_imprint ‖ token` pairs would
+# reach further and is A71.
+anchor_seed_root="$repo/testdata/anchors/A25-bootstrap"
+
 corpus_dirs() {
   local target="$1"
   local work="$fuzz_dir/corpus/$target"
@@ -82,6 +111,14 @@ corpus_dirs() {
   case "$target" in
     codec_round_trip)
       printf '%s\n%s\n' "$seed_root/manifest_decode" "$seed_root/bundle_decode" ;;
+    anchor_token|anchor_ots)
+      # Not `[ -d … ] && …`: a missing directory here is a BROKEN LANE, not
+      # a target without seeds. The guard below silently degraded
+      # `anchor_token` to an empty corpus from A5 until Q17.
+      [ -d "$anchor_seed_root" ] || die "the anchor seed corpus is missing: $anchor_seed_root
+    Both anchor targets are seeded from the A25 bootstrap captures; running
+    them without it is a search from nothing, and it would report green."
+      printf '%s\n' "$anchor_seed_root" ;;
     *)
       [ -d "$seed_root/$target" ] && printf '%s\n' "$seed_root/$target" ;;
   esac
