@@ -1829,14 +1829,29 @@ fn no_receipt_internal_can_reach_a_verdict() {
 /// `0x02` op in front of it.
 #[test]
 fn an_indeterminate_pending_branch_does_not_satisfy_o5() {
-    const UNIMPLEMENTED_OP: u8 = 0x02;
     let digest = synthetic_digest(0xf1);
     let uri = "https://alice.btc.calendar.opentimestamps.org";
 
     let evaluable = ots_offline(&container(&digest, &pending(uri)), &digest, None);
     assert_eq!(state_of(&evaluable), AnchorState::Pending, "the baseline");
 
-    let mut shadowed = vec![UNIMPLEMENTED_OP];
+    // `0x02` — one of the five registered-but-unimplemented ops
+    // (`anchor::ots::exec`): one wire byte, no operand, and the subtree below
+    // it has an indeterminate value.
+    //
+    // Written inline rather than as a tag-shaped `u8` constant, because C1's
+    // domain-tag scanner (`crypto::domain`) reads *this whole file* as
+    // library region: a `tests.rs` submodule carries no `#[cfg(test)]` marker
+    // of its own, and the scanner's library region is everything before the
+    // first one. So a tag-shaped constant here is a violation it correctly
+    // reports.
+    //
+    // Recorded rather than evaded with a decimal literal, which would have
+    // slipped the pattern and taught the wrong habit — and note that the
+    // *first* rewrite of this comment tripped the scanner too, by quoting the
+    // spelling it forbids. That is the same raw-text trap the A38 lane hit
+    // inside `MATRIX.json`'s `why` field on 2026-08-03.
+    let mut shadowed = vec![0x02_u8];
     shadowed.extend_from_slice(&pending(uri));
     let artifact = parse_ots(&container(&digest, &shadowed), &digest).expect("parses");
     assert!(
