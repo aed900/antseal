@@ -1256,3 +1256,39 @@ Exact line to add to Q65's Accept:
   - `scripts/gate-features.sh` classifies a change touching only `crates/antseal-cli/src/backend.rs` as **heavy**; proven with the script's own dry-run path, and the pre-change classification (**light**) recorded alongside so the fix is a measurement rather than a claim.
   - The doc comments on both sides name each other and D90 §3.3, so neither can be edited in ignorance of the other.
 - Notes: Small, and deliberately so — the cost of the invariant being implicit is a hang with no local cause, which is the most expensive class of bug this substrate can produce. The trigger-path half is the more valuable half: it is what makes the test *run* when the file changes.
+
+### Q85 — Make the traceability lane resolve **task** citations, not only decision citations
+- Milestone: M2
+- Size: S
+- Deps: Q66 (the lane and its self-tests), Q57/Q58 (the decision half this mirrors)
+- Spec: `TODO.md` adaptation protocol rules 1–2 (statuses live only in TODO.md; discovered work takes the next free ID and gets a row)
+- Discovered by: **the wave-5 orchestrator** (2026-08-06), reconciling the wave-4 merge.
+- Do: `scripts/check-traceability.py` already has exactly the right mechanism for **decisions**: `check_decisions()` sweeps `crates/`, `docs/format/` and `docs/testing/` for `D<n>` citations, bounds them by `allocated_decision_ids()` read from TODO.md's register, and fails when a cited decision has no record. There is **no equivalent for task IDs**, and the consequence has already happened: seven task IDs (`A56`, `A59`, `A63`, `A67`, `A68`, `A70`, `Q87`) were minted in wave-4 lane briefs, cited in committed source and docs, and given **no row in TODO.md and no entry in `tasks/*.md`** — invisible to every lane, including this one. Add the mirrored check: sweep the same surfaces for `[A-Z][0-9]+` task citations in the nine allocated domains, bound them by the IDs actually registered in TODO.md, and fail naming each unregistered citation. Bound the sweep the same way the decision half is bounded — an unbounded pattern reports `P384`, `U256`, `A5` inside a hash and every curve name in the tree, which is how a lint teaches people to ignore it.
+- Accept:
+  - The check fails on the current tree **before** the seven rows are added, naming all seven (run it against the pre-fix state to prove it, then again after).
+  - A planted citation of a genuinely unallocated ID (e.g. `A99`) in a swept file turns the lane red; removing it turns it green. Both directions executed.
+  - False-positive control: `P384`, `U256`, `p384`, `sha1` and the DER/curve identifiers already in the tree do **not** trip it, asserted as a test rather than observed once.
+  - The self-test fixtures derive their mutations from the file's current state, per Q66's rule — a fixture that hard-codes a literal goes vacuous the moment the tree moves past it.
+- Notes: this is the Q43/Q49 shape one level out — the guard exists, and its sibling was never written. The decision half proves the design works; this is the same twenty lines pointed at the other kind of pointer.
+
+### Q87 — The wasm32 lane can prove *something* ran, but not *what* or *how many*
+- Milestone: M2
+- Size: S
+- Deps: P14 (the runner), Q66
+- Spec: Architecture (lines 47–51, WASM-safe core); `docs/wasm-toolchain.md`
+- Discovered by: **the A43 lane** (2026-08-03), which had to plant a failure to prove its five wasm32 rows executed at all.
+- Do: On `wasm32-unknown-unknown` std's stdout is a discarding sink, so libtest's report is unreadable and `main() == 0` is the only success signal. `scripts/wasm-test-runner.mjs` already closes the worst half of this with a real non-vacuity check: it scans linear memory for an execution witness, asserts it is **absent before** `main()` and **present after**, and fails a green run whose witness is missing with *"the suite ran ZERO tests"*. What it still cannot report is **which** tests ran or **how many** — so a lane that silently drops from 44 rows to 1 stays green, and every task adding wasm32 rows must plant a fault to prove its own rows execute. Recover the count: libtest writes `test <name> ... ` before each body into memory that survives, and the runner already parses those progress lines for the failure path (`postMortem`). Use the same parse on the **success** path to report the executed count and names, and let a caller assert an expected minimum.
+- Accept:
+  - A successful run prints the executed test count and it matches `cargo test --lib` on native for the same crate — measured, both numbers recorded.
+  - Deleting a `#[cfg(target_arch = "wasm32")]` test makes the reported count drop; a lane asserting a minimum goes **red**. Executed, not assumed.
+  - The existing witness check is kept, not replaced: the count is a strictly stronger signal but is parsed from memory heuristics, and the witness is the thing that cannot lie.
+  - A43's five rows, and A18's 44, are asserted by count rather than by having planted a fault once.
+- Notes: correcting the wave-4 note that recorded this as *"the runner discards libtest's count"* — the runner discards libtest's **stdout**; the count is recoverable from the same linear-memory progress lines it already reads to name a failing test. That makes this smaller than it was recorded as being.
+
+### Q92 — Register the O7 row in `MATRIX.json`'s `project_added[]`
+- Milestone: M2
+- Size: XS
+- Deps: D93; **before A81**
+- Do: Add the `project_added[]` entry for `anchor-ots-online-block-absent` with the D93 §12 justification (line 168 names it nowhere; its only instrument was measured blind). Re-run the combined distinctness sweep.
+- Accept: the sweep is green with the new key; a planted duplicate of an existing key goes red naming both rows.
+- Notes: registry-side only — A81 builds the fixture. Ordered before A81 for the same reason Q76 was ordered before A21.

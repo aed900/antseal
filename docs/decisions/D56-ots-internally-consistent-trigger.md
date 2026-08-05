@@ -81,11 +81,18 @@ construal on which the two assign the same state.
    offline; `--online` promotes it to `proven`"* — already owns the *offline*
    upgraded case. If line 133 also owned "not confirmed online", `attested`
    and `internally-consistent-only` would name the same artifact.
-3. **The tamper matrix is already committed to it.**
+3. ~~**The tamper matrix is already committed to it.**
    `testdata/tamper/MATRIX.json` pre-registers `anchor-forged-header` with
    `"outcome_kind": "verdict", "expected": "invalid", "why": "Spec-stated
    outcome (→ `invalid`)"`. Changing it would be a row edit, and row expected
-   outcomes are never edited (`docs/testing/error-code-contract.md` §6).
+   outcomes are never edited (`docs/testing/error-code-contract.md` §6).~~
+   — **DELETED 2026-08-06 by [D93](D93-online-refutation-precedence.md) §4.3.
+   This ground was never available.** `anchor-forged-header` is a `pending`
+   **marker, not a row**; contract §6 governs *implemented* rows, and Q76's
+   own Accept says so (*"this task touches `pending` entries only"*). The
+   ruling survives on grounds 1, 2 and 4 — which is why deleting it costs
+   nothing, and why leaving it in would have let a future reader treat a
+   registry cell as unamendable when it is not.
 4. **Under D53's partition principle it is the right answer anyway.** A
    fetched-and-agreed block header that differs from the embedded one is a
    **refutation** from trusted material. That is `Invalid` by definition:
@@ -261,6 +268,28 @@ be to blame the rule.
 
 ## 5. The complete OTS mapping — `evaluate_anchors`'s decision order
 
+> **Amended 2026-08-06 by [D93](D93-online-refutation-precedence.md) §4/§5.**
+> As first written this list placed **O4 above O6 and O7**, which made both
+> online refutations unreachable whenever the ops commit the embedded header
+> — the case they were written for. §3's stated defect (*"an `.ots` claiming a
+> block beyond the chain tip would render `attested` for ever"*) was live, and
+> §5's own summary table row (*"upgraded with header, `--online` mismatch →
+> Invalid, O6"*) contradicted the list below it. The three precedences the
+> tree needs form a **cycle** — O4 beats O5, O5 beats O6/O7, O6/O7 beat O4 —
+> which is why breaking it linearly broke it in the wrong place. O4 now
+> carries a **guard** rather than a position; O5 keeps precedence over O6/O7,
+> so §4's best-evidence and anti-downgrade rulings are unchanged. The guarded
+> form below is normative; D93 §5 carries the exhaustive table of every
+> behaviour that moves.
+
+```text
+let refuted_online = match agreed {                    // O6/O7 only. NOT O8.
+    Some(Header(h)) => h != *u.block_header(),
+    Some(NoSuchBlock) => true,
+    None => false,
+};
+```
+
 **Branch model.** Executing an `.ots` yields, for each root-to-leaf path,
 either `Branch::Evaluable { commitment: [u8; 32], attestation }` with
 `attestation ∈ { Pending { calendar }, Bitcoin { height } }`, or
@@ -302,8 +331,11 @@ O3.  upgrade.is_some()
                                                            verified_time_unix = Some(nTime(h))
 
 O4.  upgrade.is_some()
-       && bitcoin.iter().any(|b| header_commits(b, u)) ->  AnchorState::Attested
+       && bitcoin.iter().any(|b| header_commits(b, u))
+       && !refuted_online                              ->  AnchorState::Attested
                                                            verified_time_unix = None
+                                                           (D93: `suppressed` is
+                                                            always empty here)
 
 O5.  !pending.is_empty()                               ->  AnchorState::Pending
                                                            verified_time_unix = None
@@ -333,6 +365,12 @@ O9.  otherwise                                         ->  AnchorState::Internal
 > `stamped_digest` field to read. O1 always claims this input; its code for it
 > is `anchor-ots-digest-mismatch`, which is what O2 says. Do **not** add a
 > `stamped_digest` field to make O2 literally executable.
+
+**On O3's guard, added 2026-08-06 (D93 §4).** The byte equality over all 80
+bytes is **deliberate, not incidental**: a merkle-root comparison would
+promote a header that agrees on the root and disagrees on `nTime`, which is
+not block H. It is also what makes the `nTime` rule in §9 unobservable — see
+that section's amendment.
 
 **On O8's name and breadth.** The registry makes the D79 upgrade group
 **singular** — keys 2–4 of one artifact
@@ -523,6 +561,21 @@ recorded pending and upgraded fixtures). All run native **and**
 > existing or not**. What *is* observable is a weakened guard (comparing merkle
 > roots instead of the whole header), and that reddens two rows; A18 pins those
 > two reachable claims instead.
+>
+> **Amendment 1, 2026-08-06 ([D93](D93-online-refutation-precedence.md) §8) —
+> formally RETIRED AND REPLACED.** A18's correction above is promoted from an
+> inline note to a numbered amendment, because a row this section still lists
+> as required reads as owed work until it is struck. The row is retired: it
+> specifies a fixture the machine cannot produce, and O3's whole-header
+> equality that makes it unsatisfiable is **deliberate** (§5's O3 note) — a
+> merkle-root comparison would promote a header agreeing on the root and
+> disagreeing on `nTime`, which is not block H. It is replaced by tamper-matrix
+> **row 4** (`anchor-forged-header`), which is the *reachable* form of the same
+> claim: the mutation is the embedded header's `nTime` with the merkle-root
+> field at bytes 36..68 untouched, so the base renders `proven`, the mutant
+> `invalid`, and the mutant with the evidence withheld `attested`. What was
+> unobservable as an equality between two promoted times is observable as a
+> refutation.
 | `online_evidence_that_does_not_commit_the_ops_root_does_not_promote` | O3's conjunction | Checking only `h == u.block_header` and skipping `header_commits`; the artifact would reach `Proven` on a real block unrelated to the seal. |
 | `a_mismatched_online_header_is_invalid` | O6 | The register's losing option (`internally-consistent-only`); also `MATRIX.json` row `anchor-forged-header`. |
 | `agreed_absence_of_the_block_is_invalid` | O7 | Collapsing `NoSuchBlock` into "no evidence" — the artifact would render `attested` for ever on a claimed height beyond the chain tip. |

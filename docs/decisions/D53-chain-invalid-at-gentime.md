@@ -558,6 +558,16 @@ which is why rows 2, 6 and 8, all of which also *render* `Invalid`, must pin
 codes rather than the state. That is the structural reason C3/C4/C5 mint
 codes at all.
 
+> **Clarified 2026-08-06 by [D93](D93-online-refutation-precedence.md) §6.**
+> The dependency runs **one way**. `verdict:invalid` being claimed exactly
+> once is a **consequence** of rows 2, 6 and 8 minting codes, not a premise of
+> it: the checker enforces **distinctness, not coverage**, so *zero* claimants
+> would satisfy the same constraint. This matters because the sentence above
+> reads, at a glance, as though row 4's cell were load-bearing for the other
+> three — it is not, and a reader who believed it would conclude that row 4's
+> `expected` could never be revisited. D93 revisited it, and confirmed the
+> value while rejecting that reason for it.
+
 **The row-id `anchor-expired-at-gentime` keeps its name** even though the
 code it binds covers both temporal directions: row ids are *"permanent
 handles"* (`tamper_rows_anchor/mod.rs`), the row exercises the expired

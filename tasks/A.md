@@ -223,7 +223,7 @@
 - Do: Implement pure `evaluate_anchors(artifacts, online_evidence, verify_at) -> AnchorVerdicts` in `antseal-core`, mapping every artifact to exactly one of the seven states with headline-eligibility flags: TSA → `proven` [H] / `valid-at-stamping-cert-since-expired` [H] / `internally-consistent-only` / `invalid` / `absent`; OTS → `pending` / `attested` / `proven` [H] (only when online evidence shows the embedded header equals the agreed fetched header for height H, taking the block timestamp as the proven time) / `invalid` (online header mismatch, or ops not committing `anchor_digest`) / **`internally-consistent-only`** / `absent`. **The OTS route to `internally-consistent-only` was missing from this list** (**added 2026-08-02, D56** — an implementer following A18 alone would have shipped the state as TSA-only). Its trigger is D56's, taken from spec line 133's own definition: an `.ots` whose ops **do** commit `anchor_digest` while **every** branch ends in an op or attestation the verifier cannot evaluate. Precedence across a merged multi-branch `.ots` is **best-evidence-wins**, not refutation-wins — D56 §4: the bundle is unsigned, so under refutation-wins any relay could append one garbage branch and turn an honest anchor `invalid`, a downgrade-to-forgery-accusation primitive. Read `docs/decisions/D56-ots-internally-consistent-trigger.md` for the full ordered rule set (O1–O9); implement that order, not this summary. Emit wording-free PER-ANCHOR result data for R: state, verified time + source, headline-eligibility flag, and artifact metadata. Verdict AGGREGATION — earliest headline selection, the >48 h divergence flag, and the UNANCHORED outcome — is R17's (M3); A1's minimal zero-headline-eligible aggregate flag covers M1/M2 library use until R17 lands. Online evidence is pure input — core never fetches; CLI (via `antseal-anchor`) or page JS supplies it.
 - Accept:
   - Exhaustive test: every one of the seven states reachable from a concrete fixture. **Corrected 2026-08-02 (D53 §4a)**: this said "`absent` covered by the empty-anchor vector" — **that clause passes vacuously**, because the empty-anchor vector produces *zero* anchor slots, so it witnesses nothing and would keep passing if the variant were deleted. `Absent` is what the evaluator returns for an anchor **kind with no artifact**, and R12 emits no slot for it; test it that way, and make the test fail if the variant is removed.
-  - `attested` is never [H] without online evidence; matching online evidence promotes to `proven` with the block-header timestamp; mismatch → `invalid`.
+  - `attested` is never [H] without online evidence; matching online evidence promotes to `proven` with the block-header timestamp; mismatch → `invalid` — and the fixture must be one whose ops **commit** the embedded header; the uncommitted shape is already `invalid` offline through O8, so it discharges this clause **vacuously** (D93 §3, which measured exactly that).
   - Empty artifact set → all `absent` (zero-eligible aggregate via A1's flag); no system-clock access (verify_at is a parameter); deterministic native-vs-wasm output (locked by A22).
 
 ### A19 — Enforce Arbitrum receipt classification: supporting evidence, never anchor, never headline
@@ -254,10 +254,11 @@
 - Size: L
 - Deps: A8, A9, A11, A12, A18, A24 (test CA + mock infra); A-OD1; Q: CI retention (Q18)
 - Spec: Verification — tamper matrix M2 rows (line 168), Milestones M2 (line 155)
-- Do: Build committed fixtures and tests covering every M2 anchor row, each failing (or classifying) with a distinct error/state. **The row count is EIGHT, not seven** (**corrected 2026-08-02, D53**: spec line 168's M2 half is six semicolon clauses of which two are compound, expanding to eight cases — and the project reached "seven" twice by *different* routes, `MATRIX.json` splitting the expiry clause and this entry splitting the digest clause, so the two sevens were never the same seven. The eighth is A9's **not-yet-valid-at-genTime** direction). **Trap, recorded by D53 so the lane does not lose a day to it**: the `anchor-forged-header` fixture must be **single-branch** — built the obvious way, by forging the header of a real *merged* `.ots` from A25, the sibling pending branches survive, D56's rule O5 fires first and the row renders `pending`; the test then fails correctly and the temptation is to blame the rule. Rows: (1) `.ots` stamping a different digest → `invalid`; (2) TSA token whose messageImprint is a different digest → `invalid`; (3) well-formed TSA token chaining to an untrusted root (test-CA root excluded from the injected store) → `internally-consistent-only`, not headline-eligible; (4) forged Bitcoin header that fails the `--online` block match → `invalid`; (5) positive control: an `attested` OTS anchor correctly withheld from offline headline eligibility; (6) expired-at-genTime chain (per A-OD1 state) vs expired-after-genTime (`valid-at-stamping-cert-since-expired` [H]) — distinct outcomes; (7) BER-where-DER-required → distinct DER-strictness error. Fixture generation is scripted and reproducible; test-CA keys are fixture-only material.
+- Do: Build committed fixtures and tests covering every M2 anchor row, each failing (or classifying) with a distinct error/state. **The row count is EIGHT, not seven** (**corrected 2026-08-02, D53**: spec line 168's M2 half is six semicolon clauses of which two are compound, expanding to eight cases — and the project reached "seven" twice by *different* routes, `MATRIX.json` splitting the expiry clause and this entry splitting the digest clause, so the two sevens were never the same seven. The eighth is A9's **not-yet-valid-at-genTime** direction). **Trap, recorded by D53 so the lane does not lose a day to it**: the `anchor-forged-header` fixture must be **single-branch** — built the obvious way, by forging the header of a real *merged* `.ots` from A25, the sibling pending branches survive, D56's rule O5 fires first and the row renders `pending`; the test then fails correctly and the temptation is to blame the rule. Rows: (1) `.ots` stamping a different digest → `invalid`; (2) TSA token whose messageImprint is a different digest → `invalid`; (3) well-formed TSA token chaining to an untrusted root (test-CA root excluded from the injected store) → `internally-consistent-only`, not headline-eligible; (4) forged Bitcoin header that fails the `--online` block match → `invalid`; (5) positive control: an `attested` OTS anchor correctly withheld from offline headline eligibility; (6) expired-at-genTime chain (per A-OD1 state) vs expired-after-genTime (`valid-at-stamping-cert-since-expired` [H]) — distinct outcomes; (7) BER-where-DER-required → distinct DER-strictness error. Fixture generation is scripted and reproducible; test-CA keys are fixture-only material. **Second trap, found at D93 §3 and worse than the first**: row 4's fixture must be single-branch **and** its ops must **COMMIT** the embedded header. The uncommitted forgery satisfies `verdict:invalid` today through O8 — offline, with the online gate never running — so a row built that way is green and blind. The mutation is the embedded header's `nTime` with bytes 36..68 untouched; the base renders `proven`, the mutant `invalid`, and the same mutant with the evidence withheld renders `attested`. **A80 must land first** (the machine cannot produce that outcome at the wave-4 head) and **A82 must land first** (the `.ots` builder is `#[cfg(test)]`-private to `anchor::verdicts::tests` and invisible to every home the matrix uses).
 - Accept:
   - One test per row; no two rows share an error/state variant (distinctness asserted).
   - **Row 3 needs a positive twin** (**added 2026-08-02, D57**): the untrusted-root row is a negative with nothing opposite it, yet **three of the five real tokens ship their own root inside the chain** and must still reach `proven` while doing so. Without the twin, an implementation that rejects any chain containing a self-signed cert passes the whole matrix.
+  - Row 5 returns `VerdictState("attested")` **only when `!is_headline_eligible()`**; a plain state name is blind to the rule the row is named after (D93 §9).
   - Rows execute in both native and wasm32 test suites.
   - Fixtures + generation script committed under `testdata/`; no vault/secret material in fixtures.
 
@@ -569,10 +570,11 @@
 - Discovered by: **D53** (2026-08-02) while reading `docs/format/registry-v1.md` §8 for anchor list-ordering rules.
 - Problem: §8 decides that **duplicate anchor artifacts are legal v1, deliberately** — *"a sealer wanting two 'independent' TSA anchors from one TSA simply requests two tokens — different bytes, same TSA, passes any byte-distinctness check"* — and discharges the resulting obligation by naming it: *"**anchor independence must be evaluated from verified identities, never from array length** — an obligation on A18/R17"*. That obligation is carried by **no task text**: A18's Do/Accept never mention independence, A20's minimum-anchor policy counts *"≥1 TSA token passed full core verification"* with no distinctness rule at all, and R17's divergence flag compares times across anchors that may all be one TSA. The registry is frozen prose asserting a guarantee nothing implements. §8 also records this is the **irreversible** direction — permissive now cannot be tightened after the freeze — so the check has to live in the verdict layer or nowhere.
 - Spec: Anchoring — minimum-anchor policy (MVP-SPEC.md lines 19, 34, 149); Verifier web page — divergence flag (line 137); `docs/format/registry-v1.md` §8
-- Do: Define anchor **identity** in `antseal-core`: for a TSA anchor, the verified signer identity established by the validated path (`AnchorResult::source`'s verified arm — never a bundle-recorded string, per D8 §1); for an OTS anchor, the set of calendar URLs its attestations name. Expose, from `AnchorVerdicts`, the count of **distinct verified identities** among headline-eligible anchors, and have A20's gate and R17's divergence rule read that rather than `anchors.len()`. State what identity means for the states that carry only a *claimed* identity (`internally-consistent-only`, `invalid`): they contribute **zero** identities, because a claimed identity is not verified.
+- Do: Define anchor **identity** in `antseal-core`: for a TSA anchor, the verified signer identity established by the validated path (`AnchorResult::source`'s verified arm — never a bundle-recorded string, per D8 §1); for an OTS anchor, the **chain that proved it** — a single opaque Bitcoin identity shared by every headline-eligible OTS anchor whatever its block or calendars (**D92**; the calendar set was this task's original text and is overturned there, because a calendar URI is a sealer-chosen bundle-recorded string that D54 §4 shows is not a witness at all). Expose, from `AnchorVerdicts`, the count of **distinct verified identities** among headline-eligible anchors, and have R17's rendering read the identity count rather than `anchors.len()`. **A20's gate reads the TSA-scoped count, never the mixed scalar** (`distinct_verified_identities_of(AnchorKind::Tsa)`, or the seal-time `AnchorSubmission::verified_tsa_count`): D54 §3 rules that OTS contributes exactly zero to the minimum-anchor gate, so a `>= 1` test over the mixed scalar would pass a bundle with no TSA at all. R17's **divergence** rule compares times, not identities, and reads neither. State what identity means for the states that carry only a *claimed* identity (`internally-consistent-only`, `invalid`): they contribute **zero** identities, because a claimed identity is not verified.
 - Accept:
   - Two `proven` TSA anchors from the same TSA count as **one** distinct identity (test); two from different TSAs count as two.
   - A bundle carrying a byte-identical duplicate `.ots` counts one identity, and still decodes and verifies (§8's legality is not walked back).
+  - Two `proven` OTS anchors at different Bitcoin heights, or at one height through disjoint calendar sets, are **one** identity (D92; implemented at A67).
   - `internally-consistent-only` and `invalid` anchors contribute zero identities even when their claimed source strings differ.
   - No code path derives independence from `ots_anchors.len()` or `tsa_anchors.len()` (grep-level review item, plus a test over a duplicate-bearing fixture).
 - Notes: this task does **not** change the minimum-anchor gate's threshold — that is A20/D-A's, and MVP-SPEC.md line 137's *"the minimum-anchor policy guarantees ≥1 TSA token"* is unaffected by counting identities instead of artifacts when the count is 1.
@@ -860,10 +862,133 @@
 - Notes: D91 §12's residual risk — *"A5 or A11 landing a code before Q77 —
   acceptable once, not twice"* — is now **spent**: A11 has landed fifteen.
 
+### A56 — Resolve the SwissSign root: execute C1 from an unblocked host, or amend D57
+- Milestone: M2
+- Size: S
+- Deps: A7 (which quarantined it), D57
+- Spec: Anchoring (line 109); D57 §C1–C4 (the provenance procedure)
+- Discovered by: **the A7 lane** (2026-08-03), which held the root back rather than promoting a C3 snapshot to stand in for C1 — recorded at `crates/antseal-core/src/anchor/roots/PROVENANCE.md` under the QUARANTINED heading.
+- Do: SwissSign is the one root A7 collected and did **not** admit. `www.swisssign.com` returns 403 to this host for **every** request, including a deliberately nonexistent path under the same prefix — so the block is on the client, not on the resource, and the bytes are almost certainly publishable. Two admissible routes, and only two: (a) execute D57's channel **C1** (the vendor's own URL) from a host SwissSign does not block, and admit the root under the unamended procedure; or (b) carry an **amendment to D57** as a reviewed decision that lets a C3 archive snapshot of the C1 URL stand in for C1, with C4 supplying currency. Route (b) is a decision, not an implementer's judgement call: A7 declined it precisely because taking it inside the gated task would have meant the task rewrote its own admission rule to admit the root it was evaluating.
+- Accept:
+  - Either the root is admitted with a complete C1 provenance record, or D57 carries a dated amendment and the root is admitted under it — never a silent promotion.
+  - `PROVENANCE.md`'s QUARANTINED section is updated in whichever direction resolves, and the test that reads its headings and QUARANTINED lines still fails in both directions.
+  - If neither route is executable, the root stays quarantined and that is recorded as the outcome — a quarantine that is never revisited is the failure mode this row exists to prevent.
+- Notes: not gating for M2 — the store admits four roots and A20's gate needs one verifying token, so SwissSign is capability, not a blocker.
+
+### A59 — The signing mock TSA, completing A24's second half
+- Milestone: M2
+- Size: M
+- Deps: A24 (transport half), A6 (`TsaRootStore::from_static` injection), A30 (containment rule)
+- Spec: Anchor smoke tests (line 173); Milestones M2 (line 155)
+- Do: Build the token-minting half of A24: a mock TSA that **signs** a `TimeStampResp` from a generated test CA, with controllable `genTime`, validity window and `PKIStatus`, verified through the injected test root store. It lives in `antseal-core` behind the existing `test-util` feature rather than in a new crate, because A30(c)'s containment rule — the seven D60 pins are declared by `antseal-core` and by **no other crate**, read from `cargo metadata --no-deps`, which reports dev edges too — makes a separate `antseal-mock-tsa` crate a second declaration site.
+- Accept:
+  - Minted tokens verify through A8's `verify_token` and A9's chain validation against an injected store, and fail against the production store.
+  - `genTime`, validity window and `PKIStatus` are all controllable, so A21's temporal rows are mintable rather than captured.
+  - Zero new dependency declarations in any crate.
+- Notes: **Registered retroactively 2026-08-06.** The work landed 2026-08-05 and is documented at `crates/antseal-core/src/anchor/testing.rs`; the ID was minted in a lane brief and cited in committed source, and no row was ever added here. That gap is what Q85 exists to make impossible.
+
+### A63 — Assemble the real upgraded `.ots` from the committed upgrade responses
+- Milestone: M2
+- Size: S
+- Deps: A14 (the merge primitive), A25's captured `upgraded/` responses
+- Spec: D58 §9.5, §13.1
+- Discovered by: **the A14 lane** (2026-08-03), recorded at `crates/antseal-core/src/anchor/ots/mod.rs` beside the `UPGRADED_LARGE_TEST` constant.
+- Do: `testdata/anchors/A25-bootstrap/upgraded/` holds six real upgrade **response bodies** for this project's own golden-vector digests, captured 2026-08-03T09:03Z. D58 §9.5's four F4 rows must be re-measured against the *assembled* artifact, not against response bodies — and the assembly is a deterministic merge of files already in the tree, using A14's pure byte-insertion path re-validated through `parse_ots`. Produce and commit that artifact.
+- Accept:
+  - The assembled artifact round-trips through `parse_ots` and its attestation set matches what the response bodies name.
+  - Assembly is reproducible from committed inputs by a committed script — two independent runs produce byte-identical output.
+  - The borrowed third-party fixture `upgraded/rust-opentimestamps-LARGE_TEST.ots` is no longer the only upgraded artifact in the tree.
+- Notes: A48 is the consumer — it re-measures D58 §9.5's four rows and retires the borrowed fixture, and it needs this artifact to exist first.
+
+### A67 — Re-key the OTS half of anchor identity onto Bitcoin, not calendars
+- Milestone: M2
+- Size: S
+- Deps: A40 (the type and both count accessors exist); blocks A20's degradation report and R17's aggregate reading the count
+- Discovered by: **A40** (2026-08-05), which implemented its own `Do` literally and recorded the consequence rather than re-ruling it; registered as a row and resolved by **D92** (2026-08-06).
+- Problem: A40's `Do` makes a `proven` OTS anchor's identity the set of calendars its attestations name. What proved it is Bitcoin. The calendar URI is a **bundle-recorded string** — the exact input A40's own `TsaSigner` rustdoc forbids — it is chosen by the sealer at submit time, and `antseal-anchor`'s merge *enforces* that upgrading never drops an attestation (`crates/antseal-anchor/src/ots/upgrade.rs:356-358`), so the value is byte-identical before and after the anchor becomes `proven`. It is also set-valued, so overlapping calendar sets count as distinct identities. The measured 2026-08-03 cycle produces the over-count with no adversary: one digest, three calendars, **three different Bitcoin blocks** (960767/960768/960771), which the calendar key and the block key both score as 3 against MVP-SPEC.md line 19's 1.
+- Spec: Anchoring — OTS online promotion (MVP-SPEC.md lines 19, 108); verdict taxonomy and headline (lines 129–137); `docs/format/registry-v1.md` §8; `docs/decisions/D92-proven-ots-anchor-identity.md`; D54 §4 (a calendar is not a witness), D56 rule O3
+- Do: Apply D92 §8. Replace `AnchorIdentity::OtsCalendars(Vec<String>)` with a unit `AnchorIdentity::BitcoinChain`; pass it at D56's O3 and O4 arms only and `None` at O5; keep `calendars_of`/`calendar_source` for the `pending`/`invalid`/`internally-consistent-only` source strings and amend their docs to say so. Add `AnchorVerdicts::distinct_verified_identities_of(kind: AnchorKind)`, whose rustdoc records that **A20's gate must read the TSA-scoped count, never the mixed scalar** (D54 §3). Rewrite `AnchorIdentity`'s and `distinct_verified_identities`'s rustdoc onto D92 §1/§5 and off A40's `Do`. Touch no wire byte, no vector, no error code, no crate but `antseal-core`.
+- Accept:
+  - Two `proven` OTS anchors at **different real Bitcoin heights** (449399 and 449397, both in the committed `LARGE_TEST` fixture) are **one** identity, with `headline_eligible_count() == 2` asserted first so the row is not vacuous (D92 §9 T1).
+  - Two `proven` OTS anchors at **one height through disjoint calendar sets** are **one** identity, with the disjointness witnessed by evaluating the same bytes without an upgrade group and comparing the two `pending` source strings (D92 §9 T2). This row fails under the pre-D92 code.
+  - An `attested` OTS anchor's `identity()` is `None` — the first OTS-side witness for the eligibility filter, which today is falsifiable only through the TSA path (D92 §9 T3).
+  - A lone `proven` OTS establishes **one** identity and is not UNANCHORED; `distinct_verified_identities() == 0` iff `aggregate().is_unanchored()` (D92 §9 T4).
+  - A `proven` TSA plus a `proven` OTS is **two**, asserted by matching **one of each enum arm**, not by cardinality alone (D92 §9 T5).
+  - `distinct_verified_identities_of(AnchorKind::Ots) <= 1` over every combination of the module's OTS fixtures, and the total equals D92 §5.4's closed form (D92 §9 T6).
+  - Every row states its planted fault in its own rustdoc (D92 §9's table is the source).
+  - `cargo clippy` clean; `antseal-core` still builds for `wasm32-unknown-unknown`; no golden vector, report vector, `MATRIX.json` row or error code changes.
+- Notes: `AnchorIdentity` is in-memory only — it appears in no wire format and in no report byte — so deleting an arm is a source change, never a format event. It also has **zero** consumers outside `verdicts.rs` and its tests today, which is why this is cheap now and expensive after R12 wires `evaluate_anchors` into the pipeline. A future Litecoin/Ethereum OTS attestation (D56 rule O9) gets its **own arm**, deliberately, with its own independence argument — never a payload on `BitcoinChain`.
+
+### A68 — The Sectigo nonce-encoding regression fixture
+- Milestone: M2
+- Size: S
+- Deps: A10 (which found the defect), A4 (the nonce encoder)
+- Spec: D59 (request-nonce persistence); Anchoring (line 109)
+- Discovered by: **the A10 lane** (2026-08-05).
+- Do: A10 found that the nonce comparison's two operands were encoded differently — the drawn value is 8 raw bytes, the DER canonical form prepends `0x00` when the top bit is set — so **half of all real captures would have been rejected**, aborting before payment. The fix landed; the regression fixture did not. The committed FreeTSA fixture **cannot** catch it (its nonce's top bit is clear, so both encodings coincide); Sectigo's capture can. Commit a fixture whose nonce has the high bit set and assert the comparison succeeds, so the defect cannot return silently.
+- Accept:
+  - A fixture with a top-bit-set nonce is committed and asserted to verify.
+  - Reverting the encoding fix makes that test **red** — planted and demonstrated, not assumed.
+  - The FreeTSA fixture is asserted to have a top-bit-**clear** nonce, so the reason it cannot catch this is itself pinned rather than remembered.
+
+### A70 — The RSA signer variant of the mock TSA, and the `deny.toml` premise it would falsify
+- Milestone: M2
+- Size: S
+- Deps: A59, P23 (the `deny.toml` ignore that owns the premise)
+- Spec: A24's Accept (controllable failure modes); `deny.toml` (RUSTSEC-2023-0071)
+- Discovered by: **the A59 lane** (2026-08-05), recorded at `crates/antseal-core/src/anchor/testing.rs`.
+- Do: A24 asks for RSA **and** ECDSA P-384 signer variants; A59 shipped P-384 only, deliberately. The mandatory `deny.toml` ignore for RUSTSEC-2023-0071 (Marvin) is justified on the stated premise that *antseal performs no RSA private-key operation*, and `deny.toml` scans with `all-features = true` — so an RSA signer here, **even feature-gated, even fixture-only**, falsifies the stated premise of a live security exception. Decide and record whether the variant ships at all: either it does not, and A24's Accept row is narrowed with this reason attached, or it does, and the ignore's premise is rewritten first.
+- Accept:
+  - The outcome is recorded in `deny.toml`'s ignore rationale and in A24's Accept, whichever way it goes.
+  - If the variant does not ship, the compensating evidence is named: five real RSA tokens (DigiCert, Sectigo, Entrust, DFN, Certum) already exercise every branch A8 has for RSA, and what a mock uniquely supplies — controllable CA, `genTime`, validity window, `PKIStatus` — needs no RSA.
+- Notes: this is the rare case where *not* building the test helper is the defensible outcome; the row exists so that stays a decision rather than an omission.
+
+### A80 — Lift the online refutations above O4 in `evaluate_ots_artifact`
+- Milestone: M2 — **blocks A21**
+- Size: S
+- Deps: A18 (the machine); D93
+- Discovered by: **D93 §3** (2026-08-06)
+- Problem: `verdicts.rs:680-692` returns `Attested` on `upgrade.is_some() && committed` without consulting `agreed`, so rules O6 and O7 can only ever produce a verdict when the artifact is *already* refutable offline through O8. A forged header the ops commit is unrefutable by the online gate, and an `.ots` claiming a height beyond the chain tip renders `attested` for ever — the defect D56 §3 states in those words as the reason O7 exists. A18's Accept row 2 (*"mismatch → `invalid`"*) and MVP-SPEC.md lines 108/168 are discharged vacuously.
+- Do: Give O4 the guard in D93 §5 (`committed && !refuted_online`, where `refuted_online` covers O6 and O7 and **not** O8). Leave O0–O3, O5, O8, O9 and every offline path untouched. Invert and rename `a_self_consistent_forgery_refuted_online_is_attested_with_the_refutation_recorded`, and give `agreed_absence_of_the_block_is_invalid` a **committed** twin, keeping the existing `!committed` case as the O7-over-O8 ordering assertion. Update `ANCHOR_ONLINE`'s owner note in `test_util/tamper_coverage.rs`.
+- Accept:
+  - A single-branch committed `.ots` whose embedded header the agreed pair refutes renders `Invalid`/`anchor-ots-online-header-mismatch`; the **same artifact with the evidence removed** renders `Attested` — both directions, or the rule is untested.
+  - A committed `.ots` at a height the agreed pair says does not exist renders `Invalid`/`anchor-ots-online-block-absent`.
+  - A committed, online-refuted `.ots` **with** a pending branch renders `Pending` and carries the refutation as an A39 suppressed entry (D56 §4 preserved).
+  - The eight tests D93 §5 lists as "must stay green" are green, unchanged.
+  - `O4`'s `suppressed` list is asserted empty by construction.
+  - Native and wasm32.
+
+### A81 — Build the O7 tamper row (`anchor-ots-online-block-absent`)
+- Milestone: M2
+- Size: S
+- Deps: A80, A21, A82, Q92
+- Discovered by: **D93 §12** (2026-08-06)
+- Problem: O7 is the one online refutation the spec never named, so D56 §8 gave it no row and its only instrument is a unit test — and D93 §3 measured that this test exercised the one corner where its own stated defect is invisible. A rule whose sole instrument was blind for a whole wave is the shape this project puts in the matrix.
+- Do: Add the row as a `project_added[]` entry (the mechanism D56 §8 names) with `outcome_kind: "error"`, `expected: "anchor-ots-online-block-absent"` — distinct from every other claimed key. Fixture: A21's row-4 base with `OnlineBlockResult::NoSuchBlock` at the recorded height instead of a refuting header.
+- Accept: the row is red when O7 is folded into "no evidence", and red when O4's D93 guard is reverted; native and wasm32.
+
+### A82 — Promote the synthetic `.ots` writer into `anchor::testing`
+- Milestone: M2 — **blocks A21**
+- Size: S
+- Deps: A11 (the container format), A24/A59 (`anchor::testing`)
+- Discovered by: **D93 §9** (2026-08-06)
+- Problem: `container`, `fork`, `bitcoin`, `pending`, `unknown`, `varuint`, `header_with` and `derived_root` live in `crates/antseal-core/src/anchor/verdicts/tests.rs` behind `#[cfg(test)]`. A21's rows cannot reach them from either home the matrix uses — `test_util` is not `cfg(test)`, and `crates/antseal-core/tests/` is a separate crate. The shapes no capture contains (a single-branch committed upgrade, an unknown attestation, a Bitcoin branch with no upgrade group) are exactly the ones A21 needs.
+- Do: Move them to `anchor::testing` beside `MockTsa`, keeping every format constant imported by name from the parser so a format change breaks the build rather than silently minting bytes the parser rejects for the wrong reason. Re-point `verdicts/tests.rs` and `anchor::ots::tests`' private twin at the one copy.
+- Accept: an integration target under `crates/antseal-core/tests/` mints a single-branch committed upgraded `.ots` and evaluates it; the builder is not reachable from non-test builds (feature- or `cfg`-gated as `MockTsa` is); no duplicate writer remains.
+
+### A83 — Audit the A18 suite for rules asserted in the wrong corner
+- Milestone: M2
+- Size: M
+- Deps: A80
+- Discovered by: **D93 §3** (2026-08-06)
+- Problem: `agreed_absence_of_the_block_is_invalid` names its defect in prose and cannot see it, because its fixture reaches the asserted state through O8 rather than through O7. It is the same defect class as the root-store lane's 25/25-green suite and the seven blind instruments of wave 4, and D56 §9 specifies ~22 such tests — two of which have now been found wrong by hand.
+- Do: For every D56 §9 and D53 §9 test now committed, check that the fixture reaches the asserted outcome **through the rule the test names** and not through an earlier one. Where it does not, add the shape that does. Where a rule genuinely cannot be isolated, record why in the test's doc comment instead of implying it is.
+- Accept: every such test either exercises its named rule in isolation or states why it cannot; at least one further planted fault per corrected test; no test's assertion is weakened to make it pass.
+
 ---
 
 ## Returned unused
 
-**A51**, **Q79** — no work found that needed them.
+~~**A51**, **Q79** — no work found that needed them.~~ — **CORRECTED 2026-08-06 (orchestrator):** both were subsequently used and are live open rows in `TODO.md` — A51 is the `std::thread::scope` fan-out entry above, minted by the A3 lane, and Q79 is the scheduled-lane read. The note was true when written and was never retracted when the IDs were taken up.
 
 > **Renumbered from A50, 2026-08-02 (orchestrator).** A50 and A51 were issued to two lanes by an allocation error of mine; the gamma lane merged first, so it keeps them and this later arrival is renumbered. IDs are permanent and cross-referenced — the protocol is to renumber the later arrival, never to reuse a number.
