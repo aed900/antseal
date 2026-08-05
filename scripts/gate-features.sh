@@ -85,7 +85,18 @@ devnet-launcher devnet'
 # Tier 2's trigger. Same list as CONTRIBUTING's "Devnet E2E gate", because
 # the two gates guard the same surface: if a change can break the storage
 # path, it must both compile the feature paths and run the devnet E2E.
+#
+# `crates/antseal-cli/src/backend.rs` added at Q84 (D90 §3.3). It is the
+# sole home of the tokio runtime and the `SealBackend` seam, and ALL of its
+# substantive content — including the two runtime-flavour invariants D90's
+# blocking anchor substrate depends on — is behind the non-default
+# `ant-backend` feature. Before this entry a change touching only that file
+# classified **light** and was therefore compiled by no tier that runs
+# (measured 2026-08-02 with `--needs-heavy`: "no storage-touching path
+# changed"). That is D89 Evidence 3's coverage gap landing in the one file
+# whose feature-gated content D90 now depends on.
 HEAVY_TRIGGER_PATHS='crates/antseal-net/
+crates/antseal-cli/src/backend.rs
 crates/antseal-cli/src/pipeline/
 crates/antseal-cli/src/vault/wallet.rs
 crates/devnet-launcher/
@@ -163,6 +174,15 @@ check_partition() {
     "$(printf '%s\n' "$declared" | grep -c .)" "$light" "$(printf '%s' "$HEAVY_FEATURES" | tr '\n' ',')"
 }
 
+# The trigger match, factored out of `needs_heavy` at Q84 so it can be fed a
+# planted change-set. It was previously inline and therefore untestable, and
+# it was the only verdict-bearing expression in this script with no planted
+# fault — the same gap Q83 had just closed in `ci-lanes.sh`. Reads a list of
+# changed paths on stdin; prints the ones that trigger tier 2.
+heavy_hits() {
+  grep -F -f <(printf '%s\n' "$HEAVY_TRIGGER_PATHS") || true
+}
+
 needs_heavy() {
   local base="${ANTSEAL_GATE_BASE:-main}" changed
   if ! git rev-parse --verify --quiet "$base" >/dev/null; then
@@ -173,7 +193,7 @@ needs_heavy() {
   # a dirty tree is the normal state when it does.
   changed="$( { git diff --name-only "$base"...HEAD; git status --porcelain | cut -c4-; } | sort -u )"
   local hits
-  hits="$(printf '%s\n' "$changed" | grep -F -f <(printf '%s\n' "$HEAVY_TRIGGER_PATHS") || true)"
+  hits="$(printf '%s\n' "$changed" | heavy_hits)"
   if [ -n "$hits" ]; then
     printf 'storage-touching: %s\n' "$(printf '%s' "$hits" | tr '\n' ' ')"
     return 0
@@ -258,6 +278,35 @@ self_test() {
     printf '  planted fault: %-44s -> RED\n' "the gate line deleted outright"
   fi
   rm -f "$gatecopy"
+
+  # 5/6. THE TRIGGER MATCH, both directions (Q84). `check_partition` above
+  #      guards "is every feature compiled by some tier"; nothing guarded
+  #      "does a change to a heavy file actually SELECT that tier", which is
+  #      the half that decides whether the tier-2 suites run at all. A
+  #      dropped entry here is silent: the gate stays green and simply
+  #      compiles less, which is exactly how backend.rs went uncovered.
+  #
+  #      The positive arm is pinned to backend.rs by name because that is
+  #      the entry Q84 added and the one whose absence had a measured cost.
+  local sel
+  sel="$(printf '%s\n' crates/antseal-cli/src/backend.rs | heavy_hits)"
+  if [ "$sel" != "crates/antseal-cli/src/backend.rs" ]; then
+    printf '::error:: a change to crates/antseal-cli/src/backend.rs is NOT classified heavy — it carries the runtime-flavour invariants D90 §3.3 depends on, all behind the non-default ant-backend feature, so no tier would compile them. Selected: [%s]\n' "$sel"; fail=1
+  else
+    printf '  planted change: %-43s -> HEAVY\n' "crates/antseal-cli/src/backend.rs"
+  fi
+
+  #      The negative arm is the anti-vacuity direction and is load-bearing:
+  #      `grep -F -f` treats a BLANK pattern line as "match everything", so a
+  #      stray empty entry in HEAVY_TRIGGER_PATHS would classify every change
+  #      heavy and the positive arm alone would still pass.
+  local nonsel
+  nonsel="$(printf '%s\n' crates/antseal-core/src/lib.rs README.md | heavy_hits | tr '\n' ' ')"
+  if [ -n "$nonsel" ]; then
+    printf '::error:: paths that touch no storage surface were classified heavy: [%s]. A blank line in HEAVY_TRIGGER_PATHS makes grep -F -f match everything, which turns the classifier into a constant\n' "$nonsel"; fail=1
+  else
+    printf '  planted change: %-43s -> light\n' "antseal-core/src/lib.rs, README.md"
+  fi
 
   # Control.
   out="$(check_partition 2>&1)"

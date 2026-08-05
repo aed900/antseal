@@ -197,6 +197,27 @@ mod ant {
     /// alloy's transport its own reactor tasks, and the pipeline awaits
     /// them from one blocking call at the command layer.
     ///
+    /// # `new_multi_thread` is load-bearing, not a default (D90 §3.3, Q84)
+    ///
+    /// `antseal-anchor` is **blocking** — it owns no runtime and requires no
+    /// async context, which is what lets A15/U24's upgrade hook run in a
+    /// build with no tokio compiled in (see that crate's docs, which point
+    /// back here). The price is one coupling: when an anchor call is made
+    /// from inside this runtime's `block_on`, the calling thread sits in a
+    /// socket syscall. That is safe **only** on a multi-thread runtime,
+    /// where ant-core's spawned tasks keep progressing on worker threads.
+    /// On `new_current_thread` they would starve, and the symptom — a seal
+    /// that hangs or times out — would surface nowhere near this line.
+    ///
+    /// One word here is therefore a silent behavioural change, so the
+    /// invariant is asserted rather than described:
+    /// `anchor_blocking_calls_require_a_multi_thread_runtime` checks the
+    /// flavour tag and
+    /// `a_spawned_task_progresses_while_the_runtime_thread_blocks` checks
+    /// the property the tag stands for. Both live in this file's `tests`
+    /// module, and `scripts/gate-features.sh`'s `HEAVY_TRIGGER_PATHS` names
+    /// this file so that editing it actually runs them.
+    ///
     /// # Errors
     ///
     /// [`CliError::NetworkFailure`] if the runtime cannot be created —
@@ -498,6 +519,66 @@ mod tests {
         let rt = super::runtime().expect("runtime builds");
         rt.block_on(async {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        });
+    }
+
+    /// D90 §3.3's coupling, asserted from the side that owns it (Q84).
+    ///
+    /// `antseal-anchor` is blocking, so an anchor call made from inside
+    /// this runtime parks the calling thread in a socket syscall. That is
+    /// safe only because the runtime is `new_multi_thread`. The check runs
+    /// from *inside* `block_on`, because the flavour that matters is the
+    /// one an anchor call would actually be executing under, not whatever
+    /// the builder was asked for.
+    #[cfg(feature = "ant-backend")]
+    #[test]
+    fn anchor_blocking_calls_require_a_multi_thread_runtime() {
+        use tokio::runtime::{Handle, RuntimeFlavor};
+
+        let rt = super::runtime().expect("runtime builds");
+        rt.block_on(async {
+            assert_eq!(
+                Handle::current().runtime_flavor(),
+                RuntimeFlavor::MultiThread,
+                "backend::ant::runtime() is no longer new_multi_thread. antseal-anchor is \
+                 blocking (D90 §3.3): on a current-thread runtime, ant-core's spawned tasks \
+                 starve while an anchor call sits on a socket, and the symptom is a seal that \
+                 hangs far from this cause"
+            );
+        });
+    }
+
+    /// The property the flavour tag stands for, asserted directly (Q84).
+    ///
+    /// A tag comparison would still pass if some future tokio grew a third
+    /// flavour that reports `MultiThread` without workers. What D90 §3.3
+    /// actually relies on is *progress*: a spawned task must run while the
+    /// thread inside `block_on` is blocked in a synchronous call — which is
+    /// precisely the shape of a `ureq` request. `std::thread::sleep` and a
+    /// std channel are used deliberately: an `.await` would yield to the
+    /// scheduler and prove nothing.
+    ///
+    /// Bounded by `recv_timeout`, so the current-thread failure mode is a
+    /// failed assertion rather than a hung suite.
+    #[cfg(feature = "ant-backend")]
+    #[test]
+    fn a_spawned_task_progresses_while_the_runtime_thread_blocks() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let rt = super::runtime().expect("runtime builds");
+        rt.block_on(async {
+            let (tx, rx) = mpsc::channel::<()>();
+            tokio::spawn(async move {
+                let _ = tx.send(());
+            });
+            // Blocking, not awaiting: this models an anchor HTTP call.
+            std::thread::sleep(Duration::from_millis(20));
+            rx.recv_timeout(Duration::from_secs(5)).expect(
+                "a spawned task made no progress while the block_on thread was blocked in a \
+                 synchronous call — the runtime has no worker threads, so every blocking \
+                 antseal-anchor call from inside it would deadlock ant-core's tasks (D90 §3.3)",
+            );
         });
     }
 }
