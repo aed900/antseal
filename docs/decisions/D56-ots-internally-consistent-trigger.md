@@ -416,8 +416,8 @@ unsupported calendar. §9 tests it.
 | --- | --- | --- |
 | O2 and any of O3–O9 | **O2** | The artifact is about a different document; no branch can attest to this seal. |
 | O1 and any of O2–O9 | **O1** | F3 — an artifact we refused to finish reading is not known to be well-formed. |
-| O3 and O6 (one branch online-confirmed, another online-mismatched) | **O3** | Best-evidence-wins (§4). The confirmed branch's proof is unaffected by a branch anyone could have appended. |
-| O3/O4 and O8 (a committing branch and a non-committing one) | **O3/O4** | Same. |
+| O3 and O6 (one branch online-confirmed, another online-mismatched) | **O3** | Best-evidence-wins (§4). The confirmed branch's proof is unaffected by a branch anyone could have appended. |  *(Corrected 2026-08-05 at A18: these two are **mutually exclusive by construction**, not an overlap needing a winner — `online` is keyed to the single D79 upgrade height, and O8 is the exact negation of O4. §5's own C3–C5-vs-C6 row already uses that wording.)*
+| O3/O4 and O8 (a committing branch and a non-committing one) | **O3/O4** | Same. |  *(Corrected 2026-08-05 at A18: these two are **mutually exclusive by construction**, not an overlap needing a winner — `online` is keyed to the single D79 upgrade height, and O8 is the exact negation of O4. §5's own C3–C5-vs-C6 row already uses that wording.)*
 | O4 and O5 (partially-upgraded merge: one calendar upgraded, one still pending) | **O4** | The **normal** post-partial-upgrade artifact. `attested` is the stronger true statement and carries the height/header evidence. |
 | O5 and O6/O7/O8 (a pending branch and a forged Bitcoin one) | **O5 — `Pending`** | Best-evidence-wins. The cheapest laundering append is a pending attestation, so this pair is the one an attacker actually reaches; it gains nothing, since `pending` proves no time either. **This is the pair that makes the A21 fixture trap in §4 real.** |
 | O5 and O9 (a pending branch and an unevaluable one) | **O5** | An unevaluable branch is not evidence; it must not demote a pending anchor. |
@@ -511,6 +511,18 @@ recorded pending and upgraded fixtures). All run native **and**
 | `an_attested_anchor_is_never_headline_eligible` | line 108/131; `MATRIX.json` row `anchor-attested-not-headline` | Adding `Attested` to `headline_eligible` — already guarded by `exactly_the_two_spec_h_states_are_headline_eligible`, asserted here at the anchor level too. |
 | `matching_online_evidence_promotes_attested_to_proven` | O3 | Online evidence not threaded into the state machine at all. |
 | `the_proven_time_is_the_online_headers_ntime_not_the_embedded_ones` | §5 | Reading `nTime` from the embedded header. Requires a fixture whose two headers **differ in `nTime` alone while both commit the ops root** — a fixture built by copying the real header would pass vacuously. |
+
+> **Corrected 2026-08-05 at A18 — this row is UNSATISFIABLE as written.** O3's
+> guard is `online == Some(Header(h)) && h == u.block_header`, a byte equality
+> over **all 80 bytes**, so a fixture whose headers differ in `nTime` alone
+> never reaches `proven`; and whenever O3 fires the two headers are identical,
+> so `nTime` read from either is the same integer. Confirmed by mutation:
+> swapping the promoted time to read the *embedded* header **survives the whole
+> suite**, because it is the same computation. §5 calls this "the invariant no
+> existing test can see" — the sharper statement is that **no test can see it,
+> existing or not**. What *is* observable is a weakened guard (comparing merkle
+> roots instead of the whole header), and that reddens two rows; A18 pins those
+> two reachable claims instead.
 | `online_evidence_that_does_not_commit_the_ops_root_does_not_promote` | O3's conjunction | Checking only `h == u.block_header` and skipping `header_commits`; the artifact would reach `Proven` on a real block unrelated to the seal. |
 | `a_mismatched_online_header_is_invalid` | O6 | The register's losing option (`internally-consistent-only`); also `MATRIX.json` row `anchor-forged-header`. |
 | `agreed_absence_of_the_block_is_invalid` | O7 | Collapsing `NoSuchBlock` into "no evidence" — the artifact would render `attested` for ever on a claimed height beyond the chain tip. |
