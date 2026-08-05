@@ -154,6 +154,98 @@ impl VerifiedToken {
     pub const fn ess_checked(&self) -> EssVersion {
         self.ess_checked
     }
+
+    /// **Which TSA issued this token** — task **A31**.
+    ///
+    /// The `(issuer, serialNumber)` pair of the signer certificate, which is
+    /// X.509's own unique identifier for a certificate (RFC 5280 §4.1.2.2:
+    /// serial numbers are unique per issuer). Two tokens with equal
+    /// identities were signed by the *same key under the same certificate*,
+    /// whatever URLs they came from.
+    ///
+    /// # Errors
+    ///
+    /// Only if the signer certificate's issuer `Name` fails to re-encode,
+    /// which cannot happen for a certificate that reached [`verify_token`] —
+    /// it was decoded from DER and its DER is held. Surfaced rather than
+    /// swallowed because this module has no `unwrap`.
+    pub fn signer_identity(&self) -> Result<TsaSignerIdentity, AnchorError> {
+        let tbs = self.signer.tbs_certificate();
+        Ok(TsaSignerIdentity {
+            issuer_der: ess::name_der(tbs.issuer())?,
+            serial: tbs.serial_number().as_bytes().to_vec(),
+        })
+    }
+}
+
+/// The identity of the TSA that signed a token (task **A31**).
+///
+/// # Why an observable and not a URL
+///
+/// Measured 2026-08-02 (D60's nine-TSA survey):
+/// `http://timestamp.entrust.net/TSS/RFC3161sha2TS` and
+/// `http://timestamp.sectigo.com` return the **byte-identical** 1766-byte
+/// signer certificate — same issuer (`CN=Sectigo Public Time Stamping CA
+/// R41`), same serial (`0xE74EF255B0504FFADBA6DFF7FC8BA315`). Entrust's
+/// timestamping service is served by Sectigo. A user who configures both and
+/// believes they hold two independent anchors holds **one**: one key
+/// compromise, one CA revocation, one outage takes out both. Counting
+/// endpoints would report two.
+///
+/// Both fixtures are committed
+/// (`testdata/anchors/A25-bootstrap/D60-tsa-{entrust,sectigo}-resp.tsr`), so
+/// the collapse has a permanent regression corpus.
+///
+/// # Keyed on the signer certificate, not on the CA
+///
+/// Deliberately (A31 Notes): two genuinely different TSAs operating under one
+/// root still count as two. TSA resale and white-labelling are ordinary in
+/// this market, so the check earns its place independently of this one
+/// instance.
+///
+/// `Ord` is derived so a caller can deduplicate with a `BTreeSet` without
+/// inventing a comparison; the order it induces carries no meaning.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TsaSignerIdentity {
+    issuer_der: Vec<u8>,
+    serial: Vec<u8>,
+}
+
+impl TsaSignerIdentity {
+    /// The DER encoding of the signer certificate's `issuer` `Name`.
+    #[must_use]
+    pub fn issuer_der(&self) -> &[u8] {
+        &self.issuer_der
+    }
+
+    /// The signer certificate's serial number, as DER INTEGER content
+    /// octets. Not an integer: real serials run to 17 octets.
+    #[must_use]
+    pub fn serial(&self) -> &[u8] {
+        &self.serial
+    }
+
+    /// A short stable label for reports and logs: the first 8 bytes of
+    /// `SHA-256(issuer_der ‖ serial)`, lowercase hex.
+    ///
+    /// Length-prefixing the issuer is what stops `(issuer ‖ serial)` from
+    /// being ambiguous — without it, an issuer one byte longer with a serial
+    /// one byte shorter would collide. Truncation is safe here because the
+    /// value is *presentation only*: [`PartialEq`] compares the full pair,
+    /// and no decision anywhere reads this string.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update((self.issuer_der.len() as u64).to_be_bytes());
+        hasher.update(&self.issuer_der);
+        hasher.update(&self.serial);
+        let digest = hasher.finalize();
+        digest
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
 }
 
 /// Verify an RFC 3161 timestamp artifact against a seal's `anchor_digest`.
@@ -633,6 +725,7 @@ fn verify_ecdsa_p384(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     /// The four OIDs this module compares against, spelled out. Every one of
     /// them fails *open-looking* if wrong — a mistyped `id-contentType`
@@ -644,5 +737,113 @@ mod tests {
         assert_eq!(ID_CONTENT_TYPE.to_string(), "1.2.840.113549.1.9.3");
         assert_eq!(ID_MESSAGE_DIGEST.to_string(), "1.2.840.113549.1.9.4");
         assert_eq!(ID_KP_TIME_STAMPING.to_string(), "1.3.6.1.5.5.7.3.8");
+    }
+
+    // ── A31: two endpoints that are one TSA ─────────────────────────────
+    //
+    // `include_bytes!` rather than `fs::read`, for A43's reason: the
+    // `wasm32-core-tests` lane runs this crate's `--lib` tests on
+    // `wasm32-unknown-unknown`, which has no filesystem.
+
+    const D60_ENTRUST: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-entrust-resp.tsr");
+    const D60_SECTIGO: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-sectigo-resp.tsr");
+    const D60_FREETSA: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-freetsa-resp.tsr");
+    const D60_DIGICERT: &[u8] =
+        include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-digicert-resp.tsr");
+
+    /// The digest the nine `D60-*` captures were stamped over.
+    const D60_STAMPED: [u8; 32] = [
+        0x08, 0x3f, 0x87, 0xdf, 0x00, 0xfd, 0x5c, 0x70, 0x3d, 0x35, 0xb8, 0x83, 0xd8, 0x35, 0x35,
+        0x64, 0x4c, 0x68, 0x6f, 0x9e, 0x53, 0xf1, 0x58, 0x4d, 0x7d, 0xf1, 0x26, 0xab, 0xda, 0xbd,
+        0x69, 0xdf,
+    ];
+
+    fn identity_of(bytes: &[u8]) -> TsaSignerIdentity {
+        verify_token(bytes, &D60_STAMPED, None)
+            .expect("a real token passes T2")
+            .signer_identity()
+            .expect("a decoded certificate's issuer re-encodes")
+    }
+
+    /// **A31 Accept row 1.** Entrust and Sectigo resolve to one identity;
+    /// FreeTSA and DigiCert resolve to two.
+    ///
+    /// Both directions in one test on purpose: an implementation that
+    /// returned a constant would pass the first half alone.
+    #[test]
+    fn entrust_and_sectigo_are_one_tsa_while_freetsa_and_digicert_are_two() {
+        let entrust = identity_of(D60_ENTRUST);
+        let sectigo = identity_of(D60_SECTIGO);
+        assert_eq!(
+            entrust, sectigo,
+            "timestamp.entrust.net is served by Sectigo — one signer certificate, two URLs"
+        );
+
+        let freetsa = identity_of(D60_FREETSA);
+        let digicert = identity_of(D60_DIGICERT);
+        assert_ne!(freetsa, digicert);
+
+        let distinct: BTreeSet<TsaSignerIdentity> =
+            [entrust, sectigo, freetsa, digicert].into_iter().collect();
+        assert_eq!(distinct.len(), 3, "four endpoints, three TSAs");
+    }
+
+    /// The collapse is on `(issuer, serialNumber)` — the pair really is
+    /// equal, and it is not equality-by-vacuity (both non-empty).
+    #[test]
+    fn the_collapsing_pair_is_issuer_and_serial_and_neither_is_empty() {
+        let entrust = identity_of(D60_ENTRUST);
+        let sectigo = identity_of(D60_SECTIGO);
+        assert!(!entrust.issuer_der().is_empty());
+        assert!(!entrust.serial().is_empty());
+        assert_eq!(entrust.issuer_der(), sectigo.issuer_der());
+        assert_eq!(entrust.serial(), sectigo.serial());
+        // A31, measured 2026-08-02: `0xE74EF255B0504FFADBA6DFF7FC8BA315`.
+        // **Seventeen** octets, not sixteen: DER INTEGER content is signed,
+        // `0xE7` sets the high bit, so a `0x00` pad keeps the value positive.
+        // Comparing the padded form is correct here — the pair is compared as
+        // the bytes the certificate actually carries, so two certificates
+        // that agree on the integer agree on the octets, and nothing has to
+        // normalise anything.
+        assert_eq!(
+            entrust.serial(),
+            &[
+                0x00, 0xe7, 0x4e, 0xf2, 0x55, 0xb0, 0x50, 0x4f, 0xfa, 0xdb, 0xa6, 0xdf, 0xf7, 0xfc,
+                0x8b, 0xa3, 0x15
+            ]
+        );
+    }
+
+    /// The presentation label agrees with identity in both directions, and
+    /// is 16 hex characters.
+    #[test]
+    fn the_label_tracks_identity_and_is_not_a_constant() {
+        let entrust = identity_of(D60_ENTRUST);
+        let sectigo = identity_of(D60_SECTIGO);
+        let freetsa = identity_of(D60_FREETSA);
+        assert_eq!(entrust.label().len(), 16);
+        assert!(entrust.label().chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(entrust.label(), sectigo.label());
+        assert_ne!(entrust.label(), freetsa.label());
+    }
+
+    /// The length prefix in [`TsaSignerIdentity::label`] is load-bearing:
+    /// without it, moving one byte from the issuer to the serial would
+    /// produce the same label for two different identities.
+    #[test]
+    fn the_label_is_not_ambiguous_across_the_issuer_serial_boundary() {
+        let a = TsaSignerIdentity {
+            issuer_der: vec![1, 2, 3],
+            serial: vec![4, 5],
+        };
+        let b = TsaSignerIdentity {
+            issuer_der: vec![1, 2],
+            serial: vec![3, 4, 5],
+        };
+        assert_ne!(a, b);
+        assert_ne!(a.label(), b.label(), "the length prefix was dropped");
     }
 }
