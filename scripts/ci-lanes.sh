@@ -332,6 +332,59 @@ lane_dep_graph() {
   cpufeatures
   libc                # <- cpufeatures, non-x86 targets only; absent on x86_64 and wasm32
 
+  # --- RFC 3161 / CMS / X.509 anchor verification (D60, A5/A8/A9) ---
+  # Reviewed 2026-08-05 at the A10/A20 merge. Every one of these arrives through
+  # the SEVEN pins D60 ruled, and D60 section 1 argued each against the alternatives it
+  # rejected; what follows is the I/O argument this lane demands per entry,
+  # which is a different question from whether the crate is any good.
+  #
+  # The whole subtree is PARSE-AND-ARITHMETIC. Not one of these opens a socket,
+  # reads a clock or touches a filesystem: DER decoding is byte-slice work,
+  # certificate path validation takes `verify_at` as a caller-supplied parameter
+  # (A32 makes reading a local clock a prohibition, not merely an omission),
+  # and the signature primitives are pure field arithmetic over caller-supplied
+  # bytes. Two specific absences that matter for the WASM page: NO getrandom and
+  # NO rand — `k256` is declared WITHOUT `ecdsa` (D89) and `rsa 0.9.10` was
+  # REJECTED by D60 precisely because it drags rand/rand_chacha in here, which
+  # this this lane own denylist would have failed red.
+  der                 # the DER reader; strictness IS the product requirement (A5)
+  der_derive          # proc-macro, compile-time only, contributes no runtime code
+  const-oid           # OID constants, feature `db`; identity of every algorithm named
+  spki                # SubjectPublicKeyInfo
+  pkcs1               # key encoding reached through the above
+  pkcs8
+  pem-rfc7468         # base64 armour; parse-only
+  base16ct            # constant-time hex codec, no I/O
+  base64ct            # constant-time base64 codec, no I/O
+  x509-cert           # certificate PARSING only — it has no path validation, which
+                      #   is why A9 writes single-path validation by hand (spec:108)
+  cms                 # RFC 5652 SignedData structure only; every semantic check is ours
+  flagset             # bitflag helper reached through the x509-cert KeyUsage type
+  sha1                # REQUIRED and simultaneously FORBIDDEN as a signature digest:
+                      #   the ESSCertID v1 certHash is SHA-1 by definition (RFC 5035)
+                      #   and FreeTSA emits v1, so the signer binding is impossible
+                      #   without it. Used for identity binding, never validation.
+  rsa                 # PKCS#1 v1.5 VERIFY only. antseal holds no RSA private key and
+                      #   performs no private-key operation, which is the whole basis
+                      #   of the RUSTSEC-2023-0071 ignore (a private-key timing channel
+                      #   with no secret in our computation to leak).
+  crypto-bigint       # the rsa arithmetic backend
+  crypto-primes
+  cpubits
+  p384                # ECDSA P-384 verification
+  primefield
+  primeorder
+  elliptic-curve
+  ff
+  group
+  sec1
+  wnaf
+                      # ECDSA P-384 verification — FreeTSA signs ecdsa-with-SHA512,
+                      #   not the SHA-384 the pairing suggests (measured, D60)
+  ecdsa               # deterministic ECDSA
+  rfc6979             # what lets the A59 signing mock
+                      #   be RNG-free, keeping getrandom out of this graph entirely
+
   # --- RustCrypto traits and plumbing ---
   aead
   block-buffer

@@ -52,5 +52,15 @@ thiserror.workspace = true
 # graph measurements and the advisory sweep live on the workspace entry.
 ureq.workspace = true
 
+[dev-dependencies]
+# A6's root-store injection API and A59's signing mock TSA
+# (`antseal_core::anchor::testing`), both gated on `antseal-core/test-util`.
+# A DEV edge only, and never enabled from the normal dependency above: the
+# house rule is `antseal-core/Cargo.toml:10`, "DEV-DEPENDENCY EDGES ONLY for
+# `test-util`". `antseal-cli` already takes this exact edge, so the workspace
+# test build is unchanged, and no D60 pin is declared here — A30(c)'s owner
+# set stays `antseal-core` alone.
+antseal-core = { workspace = true, features = ["test-util"] }
+
 [lints]
 workspace = true

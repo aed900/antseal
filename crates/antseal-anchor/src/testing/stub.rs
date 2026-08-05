@@ -41,6 +41,7 @@
 //! The two modes are mutually exclusive, asserted at [`StubServer::spawn`].
 
 use std::collections::VecDeque;
+use std::fmt;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -115,6 +116,24 @@ pub enum StubReply {
     /// with a request body larger than the socket buffers, the client's write
     /// blocks and `Timeout(SendBody)` fires.
     AcceptWithoutReading(Duration),
+    /// **Addition (A59).** Compute the body **from the request**.
+    ///
+    /// Every other arm decides its whole body before the connection exists,
+    /// which is exactly what a *replaying* stub can do and a *signing* one
+    /// cannot: an RFC 3161 token must echo the nonce the client just drew, and
+    /// a recording can only ever echo the nonce of the request it was recorded
+    /// from. This arm is what lets A24's mock TSA answer a live request, and
+    /// therefore what lets a test exercise the nonce comparison end to end
+    /// instead of asserting that it fails.
+    ///
+    /// The closure is supplied by the caller, so this module learns nothing
+    /// about RFC 3161 — it stays a transport.
+    Computed {
+        /// `Content-Type` header value.
+        content_type: &'static str,
+        /// Request bytes (headers and body, as received) to response body.
+        responder: Responder,
+    },
     /// **Addition.** Announce `content_length` and then stream `chunk_len`
     /// bytes at a time until the client hangs up or `stop_after_bytes` have
     /// been written, counting every byte into
@@ -138,7 +157,42 @@ pub enum StubReply {
     },
 }
 
+/// The function a [`StubReply::Computed`] arm calls: request bytes in,
+/// response-body bytes out.
+pub type ResponderFn = dyn Fn(&[u8]) -> Vec<u8> + Send + Sync;
+
+/// A request-to-response-body function, wrapped so [`StubReply`] can keep its
+/// `Debug` and `Clone` derives.
+#[derive(Clone)]
+pub struct Responder(Arc<ResponderFn>);
+
+impl Responder {
+    /// Wrap a responder function.
+    #[must_use]
+    pub fn new(f: impl Fn(&[u8]) -> Vec<u8> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl fmt::Debug for Responder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Responder(<fn>)")
+    }
+}
+
 impl StubReply {
+    /// A reply whose body is computed from the request (A59).
+    #[must_use]
+    pub fn computed(
+        content_type: &'static str,
+        f: impl Fn(&[u8]) -> Vec<u8> + Send + Sync + 'static,
+    ) -> Self {
+        Self::Computed {
+            content_type,
+            responder: Responder::new(f),
+        }
+    }
+
     /// A body reply with a neutral content type.
     #[must_use]
     pub fn body(status: u16, bytes: Vec<u8>) -> Self {
@@ -444,7 +498,7 @@ fn handle_routed(
             &fallback
         }
     };
-    write_reply(&mut socket, state, reply);
+    write_reply(&mut socket, state, reply, &request);
 }
 
 fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
@@ -452,17 +506,15 @@ fn handle(mut socket: TcpStream, state: &StubState, reply: &StubReply) {
     let _ = socket.set_write_timeout(Some(Duration::from_secs(5)));
     let _ = socket.set_nodelay(true);
 
-    match reply {
-        StubReply::DropConnection | StubReply::AcceptWithoutReading(_) => {}
-        _ => {
-            let _ = read_request(&mut socket, state);
-        }
-    }
+    let request = match reply {
+        StubReply::DropConnection | StubReply::AcceptWithoutReading(_) => Vec::new(),
+        _ => read_request(&mut socket, state),
+    };
 
-    write_reply(&mut socket, state, reply);
+    write_reply(&mut socket, state, reply, &request);
 }
 
-fn write_reply(socket: &mut TcpStream, state: &StubState, reply: &StubReply) {
+fn write_reply(socket: &mut TcpStream, state: &StubState, reply: &StubReply, request: &[u8]) {
     match reply {
         StubReply::Body {
             status,
@@ -474,6 +526,15 @@ fn write_reply(socket: &mut TcpStream, state: &StubState, reply: &StubReply) {
             write_all(socket, state, &out);
         }
         StubReply::Raw(bytes) => write_all(socket, state, bytes),
+        StubReply::Computed {
+            content_type,
+            responder,
+        } => {
+            let body = (responder.0)(request);
+            let mut out = head(200, Some(content_type), body.len() as u64);
+            out.extend_from_slice(&body);
+            write_all(socket, state, &out);
+        }
         StubReply::SlowBody {
             delay,
             status,

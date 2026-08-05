@@ -61,6 +61,8 @@ pub mod gate;
 pub mod http;
 pub mod nonce;
 pub mod ots;
+pub mod submit;
+pub mod tsa;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
