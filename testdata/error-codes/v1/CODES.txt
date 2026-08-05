@@ -52,6 +52,8 @@ anchor-ots-bad-magic
 anchor-ots-branch-too-wide
 anchor-ots-digest-mismatch
 anchor-ots-header-uncommitted
+anchor-ots-online-block-absent
+anchor-ots-online-header-mismatch
 anchor-ots-operand-too-long
 anchor-ots-too-deep
 anchor-ots-too-many-attestations

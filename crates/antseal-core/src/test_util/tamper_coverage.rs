@@ -95,7 +95,14 @@ impl CoverageDomain {
 /// nothing else needs to change for it. A38 appended the three A-domain
 /// families the same way, which is the mechanism working as F23 designed it:
 /// a new family costs one `CoverageDomain` const and one entry here.
-pub const DOMAINS: &[&CoverageDomain] = &[&BUNDLE, &MANIFEST, &ANCHOR, &ANCHOR_OTS, &ANCHOR_HEADER];
+pub const DOMAINS: &[&CoverageDomain] = &[
+    &BUNDLE,
+    &MANIFEST,
+    &ANCHOR,
+    &ANCHOR_OTS,
+    &ANCHOR_HEADER,
+    &ANCHOR_ONLINE,
+];
 
 /// F8's `.sealproof` schema family — 47 codes.
 pub const BUNDLE: CoverageDomain = CoverageDomain {
@@ -674,11 +681,12 @@ pub const ANCHOR_OTS: CoverageDomain = CoverageDomain {
 /// code outside every enumerator is a code that can be renamed with a fully
 /// green suite — the hole Q52 exists to close, reopened for one string.
 ///
-/// It is the first member of a shape the A domain will have more of: D56's
+/// It is the first member of a shape the A domain has more of: D56's
 /// `anchor-ots-online-header-mismatch` and `anchor-ots-online-block-absent`
-/// (rules O6/O7) are the same kind and are **not** registered here, because
-/// A18 has not landed them and a snapshot may only carry codes something
-/// actually emits.
+/// (rules O6/O7) are the same kind. This comment used to say they were *"not
+/// registered here, because A18 has not landed them and a snapshot may only
+/// carry codes something actually emits"* — A18 landed on 2026-08-05 and they
+/// are in [`ANCHOR_ONLINE`] below.
 pub const ANCHOR_HEADER: CoverageDomain = CoverageDomain {
     name: "EmbeddedHeader",
     prefix: "anchor-",
@@ -687,6 +695,37 @@ pub const ANCHOR_HEADER: CoverageDomain = CoverageDomain {
         "anchor-ots-header-uncommitted",
         "A21 - row or recorded non-row; A12's embedded-header suite drives it offline",
     )],
+};
+
+/// A18's two **online-refutation** codes — D56 rules O6 and O7.
+///
+/// The same shape as [`ANCHOR_HEADER`], one step further on. Neither is an
+/// error: nothing failed, agreed online evidence *refuted* the artifact, and
+/// the code travels as the diagnostic on an `invalid` verdict. They belong to
+/// the state machine rather than to any parser, which is why they had no
+/// enumerator before A18 existed — and why, until this entry, they would have
+/// frozen under nothing.
+///
+/// `anchor-ots-online-header-mismatch` is the code D56 §8 binds `MATRIX.json`
+/// row 4 (`anchor-forged-header`) to *behaviourally*; the row itself pins the
+/// **verdict** `invalid`, which is the single claimant of that key, so the row
+/// does not claim this code.
+pub const ANCHOR_ONLINE: CoverageDomain = CoverageDomain {
+    name: "OnlineRefutation",
+    prefix: "anchor-",
+    claimed_in_integration_target: &[],
+    owed: &[
+        (
+            "anchor-ots-online-header-mismatch",
+            "A21 - MATRIX.json pending row `anchor-forged-header` pins the verdict, not this \
+             code; A18's state-machine suite drives it",
+        ),
+        (
+            "anchor-ots-online-block-absent",
+            "A18 - D56 section 8 gives it no row (line 168 names it nowhere); a named test \
+             drives it, and `project_added[]` is the mechanism if A21 later wants one",
+        ),
+    ],
 };
 
 #[cfg(test)]
@@ -731,6 +770,11 @@ mod tests {
         vec![crate::anchor::ots::EmbeddedHeader::UNCOMMITTED_CODE]
     }
 
+    /// A18's two online-refutation codes (D56 rules O6/O7), same shape.
+    fn anchor_online_universe() -> Vec<&'static str> {
+        crate::anchor::verdicts::all_code_exemplars().to_vec()
+    }
+
     /// Dispatch on the **name**, not the prefix.
     ///
     /// D91 §6.1 gives the whole A domain one prefix, so three of the five
@@ -745,6 +789,7 @@ mod tests {
             "AnchorError" => anchor_universe(),
             "OtsError" => anchor_ots_universe(),
             "EmbeddedHeader" => anchor_header_universe(),
+            "OnlineRefutation" => anchor_online_universe(),
             other => panic!("no universe wired for the `{other}` domain"),
         }
     }
@@ -775,9 +820,11 @@ mod tests {
                 domain.name
             );
         }
+        // Six since A18 (2026-08-05) added `OnlineRefutation` — D56's two
+        // online codes, which belong to the state machine and to no parser.
         assert_eq!(
             names.len(),
-            5,
+            6,
             "the coverage-domain roster changed size; a family added to `DOMAINS` needs a \
              `universe_of` arm, and a family REMOVED from it stops being swept at all"
         );

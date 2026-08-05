@@ -106,7 +106,14 @@ const BLESS_VAR: &str = "ANTSEAL_BLESS_ERROR_CODES";
 /// sibling and A12's const were measured. The stake is unchanged and is the
 /// reason the constant exists — a family with no roster entry freezes under
 /// nothing.
-const ENUMERATOR_COUNT: usize = 11;
+/// **A18 took it to twelve** (2026-08-05). D56 §7 mints four `anchor-ots-*`
+/// codes and three of them already had a home — `anchor-ots-digest-mismatch`
+/// on `OtsError`, `anchor-ots-header-uncommitted` on A12's const. The two
+/// **online** refutations, O6's and O7's, are raised by the state machine
+/// itself and so had no enumerator until it existed; without this row they
+/// would freeze under nothing, which is the exact condition D91 §8 found the
+/// whole A domain in.
+const ENUMERATOR_COUNT: usize = 12;
 
 /// The per-domain enumerators, each as `(path, its own codes)`.
 ///
@@ -190,6 +197,18 @@ fn by_enumerator() -> Vec<(&'static str, BTreeSet<&'static str>)> {
         (
             "anchor::ots::header::EmbeddedHeader::UNCOMMITTED_CODE",
             [crate::anchor::ots::EmbeddedHeader::UNCOMMITTED_CODE]
+                .into_iter()
+                .collect(),
+        ),
+        // Also not an error family, for the same reason and one step further
+        // on: D56 rules O6 and O7 do not *fail*, they classify — the online
+        // evidence agreed and it refuted the artifact — so their codes are
+        // consts on A18's state machine. Registered here because a code no
+        // enumerator reaches is a code that can be renamed with a fully green
+        // suite.
+        (
+            "anchor::verdicts::all_code_exemplars",
+            crate::anchor::verdicts::all_code_exemplars()
                 .into_iter()
                 .collect(),
         ),
@@ -330,6 +349,10 @@ const ENUMERATOR_PREFIXES: &[(&str, Allowed)] = &[
     ),
     (
         "anchor::ots::header::EmbeddedHeader::UNCOMMITTED_CODE",
+        Allowed::Only("anchor-"),
+    ),
+    (
+        "anchor::verdicts::all_code_exemplars",
         Allowed::Only("anchor-"),
     ),
     (

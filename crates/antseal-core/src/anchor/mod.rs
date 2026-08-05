@@ -46,6 +46,11 @@
 //!   D57's rulings P1/P2/P3.
 //! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
 //!   the crate so the ordinary suite compiles and exercises it.
+//! - [`verdicts`] (tasks **A18**, **A19**, **A39**, **A40**) — the per-anchor
+//!   verdict state machine over D53's `T0–T3` and D56's `O0–O9`, the receipt's
+//!   separate supporting-evidence class, the suppressed-anomaly list
+//!   best-evidence-wins would otherwise discard, and anchor identity counted
+//!   from verified identities rather than from array length.
 
 pub mod alg;
 pub mod caps;
@@ -59,5 +64,6 @@ pub mod request;
 pub mod rfc3161;
 pub mod roots;
 pub mod tsa;
+pub mod verdicts;
 
 pub use error::{AlgPosition, AnchorError, DerFault, DerSite, SignedAttrId};
