@@ -1763,3 +1763,52 @@ fn one_bad_artifact_never_takes_another_down() {
     assert!(!verdicts.aggregate().is_unanchored());
     assert_eq!(verdicts.distinct_verified_identities(), 1);
 }
+
+/// **A19 Accept row 3.** Nothing in `antseal-core` parses receipt internals
+/// for a time claim.
+///
+/// Structural, and asserted as a differential anyway: two receipts whose
+/// opaque payloads differ produce **identical** evidence. The payload cannot
+/// reach a verdict, because [`ReceiptEvidence`] has no field it could reach
+/// through — registry §7.10 puts its internal layout outside v1 wire format
+/// on purpose, and MVP-SPEC.md line 110 is why: **no on-chain datum contains
+/// `anchor_digest`**, so there is nothing in there for a v1 verdict to depend
+/// on.
+///
+/// v1.1's verification chain stays out of scope with no reseal ever needed
+/// (A19 `Do`), and that stays true only while this holds.
+#[test]
+fn no_receipt_internal_can_reach_a_verdict() {
+    let make = |payload: &[u8]| {
+        ReceiptRecord::new(vec![[0xab; 32]], 200_000_001, opaque(payload))
+            .expect("a one-transaction receipt is well-formed")
+    };
+    let short = make(b"one");
+    let long = make(b"a very much longer opaque capture payload, with different bytes");
+
+    let evidence = |record: &ReceiptRecord| {
+        let artifacts = AnchorArtifacts::from_parts(&[], &[], Some(record));
+        *evaluate_anchors(
+            &artifacts,
+            &D60_STAMPED,
+            &OnlineEvidence::new(),
+            AFTER_CAPTURE,
+            TsaRootStore::pinned(),
+        )
+        .receipt()
+        .expect("the receipt is rendered")
+    };
+
+    assert_ne!(
+        short.payload().len(),
+        long.payload().len(),
+        "the two payloads must actually differ, or this compares a thing with itself"
+    );
+    assert_eq!(evidence(&short), evidence(&long));
+    // And the class is the same one value either way — there is no other to
+    // return.
+    assert_eq!(
+        evidence(&short).class(),
+        ReceiptClass::SupportingEvidenceNoProvenTime
+    );
+}
