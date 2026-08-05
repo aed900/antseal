@@ -26,11 +26,18 @@
 //! budget, of which this stage has several: `TSTInfo` out of `eContent`, a
 //! certificate out of the bag, an ESS attribute value, an extension's
 //! `extnValue`.
+//!
+//! # Two drivers, and they are not symmetric
+//!
+//! [`drive_anchor_token`] (+ [`drive_anchor_token_with_nonce`]) drive the
+//! RFC 3161 stage; [`drive_ots`] drives the `.ots` codec (task **A23**).
+//! They take their digest from **different places**, deliberately, and each
+//! function's docs give the reason. Do not "unify" them: the shared shape
+//! would silently cost one of the two targets the coverage it exists for,
+//! and no crash and no green run would ever say so.
 
 use super::error::AnchorError;
-use super::ots::{
-    OTS_DIGEST_TYPE_SHA256, OTS_MAGIC, OTS_VERSION, OtsArtifact, OtsError, parse_ots,
-};
+use super::ots::{OTS_MAGIC, OTS_VERSION, OtsArtifact, OtsError, parse_ots};
 use super::tsa::{VerifiedToken, verify_token};
 
 /// Drive the full anchor stage over arbitrary bytes.
@@ -129,12 +136,15 @@ pub fn drive_ots(data: &[u8]) -> Result<OtsArtifact, OtsError> {
 /// exactly the interesting case here — every one of D58's four crashers is
 /// under 103 bytes.
 fn embedded_start_digest(data: &[u8]) -> [u8; 32] {
-    // magic ‖ varuint(version) ‖ digest-type ‖ digest. `OTS_VERSION` is 1,
-    // which is a single-byte varuint, and `OTS_DIGEST_TYPE_SHA256` is one
-    // byte; both are read from the codec's own constants so a version bump
-    // shows up here as a compile-time visit rather than a silent drift.
-    const _: () = assert!(OTS_VERSION < 0x80, "a multi-byte version varuint moves this offset");
-    const _: () = assert!(OTS_DIGEST_TYPE_SHA256 != 0);
+    // magic ‖ varuint(version) ‖ digest-type ‖ digest. The two `+ 1`s are
+    // the version varuint and the digest-type byte. The version's width is
+    // an assumption, so it is a COMPILE-TIME one: a bump past 0x7F makes it
+    // a two-byte varuint and moves this offset, and the build stops here
+    // rather than the target quietly losing its coverage.
+    const _: () = assert!(
+        OTS_VERSION < 0x80,
+        "a multi-byte version varuint moves the start-digest offset"
+    );
     let offset = OTS_MAGIC.len() + 1 + 1;
 
     let mut digest = [0u8; 32];
@@ -220,6 +230,8 @@ mod tests {
     /// coverage collapse that no crash and no green run would reveal.
     #[test]
     fn the_ots_driver_reaches_the_walk_rather_than_stalling_at_the_digest() {
+        use crate::anchor::ots::OTS_DIGEST_TYPE_SHA256;
+
         let mut header = OTS_MAGIC.to_vec();
         header.push(u8::try_from(OTS_VERSION).expect("version 1 is one byte"));
         header.push(OTS_DIGEST_TYPE_SHA256);
