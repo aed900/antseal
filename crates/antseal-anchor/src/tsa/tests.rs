@@ -27,6 +27,7 @@
 use std::time::{Duration, Instant};
 
 use antseal_core::anchor::error::AnchorError;
+use antseal_core::anchor::testing::{MockTsa, MockTsaConfig};
 
 use super::*;
 use crate::http::HttpPolicy;
@@ -614,4 +615,121 @@ fn the_plain_http_default_is_admitted_by_this_familys_policy() {
     assert!(Endpoint::parse(DEFAULT_TSA_URLS[1], TlsPolicy::Optional).is_ok());
     assert!(Endpoint::parse(DEFAULT_TSA_URLS[1], TlsPolicy::RequiredExceptLoopback).is_err());
     assert_eq!(HttpPolicy::seal().tls, TlsPolicy::Optional);
+}
+
+// ── A59: a capture that succeeds on a nonce drawn a millisecond ago ──────
+
+/// **The row no recording can prove.** `capture_from_tsas` draws a fresh
+/// CSPRNG nonce, sends it, and the signing mock answers *that* nonce — so the
+/// full path runs end to end to a **success**, including the comparison that
+/// every replay-driven test above can only ever drive to a failure.
+///
+/// This is A59's payoff and A10's Accept row 1 in its strongest form.
+#[test]
+fn a_signing_tsa_answers_a_freshly_drawn_nonce_and_the_capture_succeeds() {
+    let mock = MockTsa::granted().expect("the mock CA mints");
+    let store = mock.root_store();
+    let responder = mock.clone();
+    let server = StubServer::spawn(crate::testing::replay::signing_tsa(move |request| {
+        responder.respond(request).ok()
+    }));
+
+    let stage = capture_from_tsas(
+        &client(),
+        &STAMPED,
+        &[server.base_url()],
+        &store,
+        FETCH_DATE,
+    )
+    .expect("the CSPRNG works in CI");
+
+    assert_eq!(server.requests().len(), 1, "the stub was not contacted");
+    assert_eq!(stage.verified_count(), 1);
+    assert_eq!(stage.distinct_tsas(), 1);
+    assert!(stage.degradation_report().is_empty());
+
+    let capture = stage.verified().next().expect("one capture");
+    assert_eq!(capture.state, AnchorState::Proven);
+    assert_eq!(capture.root_label, Some("antseal-mock-tsa-root"));
+    assert_eq!(capture.root_store_version, 0, "an injected store is v0");
+    assert_eq!(capture.record.anchor_digest, STAMPED);
+    // The nonce really was drawn here, not baked into a fixture.
+    assert_ne!(capture.record.request_nonce, [0u8; 8]);
+    assert_ne!(capture.record.request_nonce, NONCE_FREETSA);
+}
+
+/// The red direction of the same instrument: a mock that answers with any
+/// nonce but the requested one is refused, even though everything else about
+/// its token is perfect.
+///
+/// Without this pair, the test above would pass for a capture client that
+/// never compared nonces at all.
+#[test]
+fn a_signing_tsa_that_does_not_echo_the_nonce_is_refused() {
+    let mock = MockTsa::new(MockTsaConfig {
+        echo_nonce: false,
+        ..MockTsaConfig::default()
+    })
+    .expect("the mock CA mints");
+    let store = mock.root_store();
+    let responder = mock.clone();
+    let server = StubServer::spawn(crate::testing::replay::signing_tsa(move |request| {
+        responder.respond(request).ok()
+    }));
+
+    let stage = capture_from_tsas(
+        &client(),
+        &STAMPED,
+        &[server.base_url()],
+        &store,
+        FETCH_DATE,
+    )
+    .expect("the CSPRNG works in CI");
+
+    assert_eq!(stage.verified_count(), 0, "a replayed token must not count");
+    match stage.attempts[0].outcome.as_ref().expect_err("refused") {
+        TsaFailure::Token { source, .. } => {
+            assert_eq!(source.code(), "anchor-tsa-nonce-mismatch");
+        }
+        other => panic!("wrong class: {other:?}"),
+    }
+}
+
+/// Two signing mocks are two distinct TSAs only if their signer certificates
+/// differ — and this mock is deterministic, so two instances are the **same**
+/// TSA. A31's rule read the other way round: identical certificates collapse
+/// however many endpoints serve them.
+#[test]
+fn two_endpoints_serving_one_mock_collapse_to_one_tsa() {
+    let mock = MockTsa::granted().expect("mint");
+    let store = mock.root_store();
+    let spawn = || {
+        let responder = mock.clone();
+        StubServer::spawn(crate::testing::replay::signing_tsa(move |request| {
+            responder.respond(request).ok()
+        }))
+    };
+    let (first, second) = (spawn(), spawn());
+
+    let stage = capture_from_tsas(
+        &client(),
+        &STAMPED,
+        &[first.base_url(), second.base_url()],
+        &store,
+        FETCH_DATE,
+    )
+    .expect("the CSPRNG works in CI");
+
+    assert_eq!(stage.verified_count(), 2, "both endpoints answered");
+    assert_eq!(stage.distinct_tsas(), 1, "and they are one TSA");
+    // Different nonces, therefore different token bytes — the collapse is not
+    // byte-equality.
+    let tokens: Vec<&Vec<u8>> = stage.verified().map(|c| &c.token).collect();
+    assert_ne!(tokens[0], tokens[1]);
+    assert!(
+        stage
+            .degradation_report()
+            .iter()
+            .any(|line| line.contains("[one-tsa-two-endpoints]"))
+    );
 }

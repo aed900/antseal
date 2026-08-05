@@ -28,6 +28,7 @@ use crate::ots::submit::{CalendarAttempt, CalendarFailure, PendingRecord};
 use crate::testing::replay::{CalendarBehaviour, calendar, tsa as tsa_stub};
 use crate::testing::stub::{StubReply, StubScript, StubServer};
 use crate::tsa::{TsaAttempt, TsaFailure};
+use antseal_core::anchor::testing::MockTsa;
 
 /// The digest the committed `D60-*` captures were taken over.
 const STAMPED: [u8; 32] = [
@@ -648,4 +649,97 @@ fn a_config_override_replaces_each_family_independently() {
     let endpoints = AnchorEndpoints::from_config(Some(&tsa), None);
     assert_eq!(endpoints.tsa_urls, tsa);
     assert_eq!(endpoints.ots_calendars, effective_calendars(None));
+}
+
+// ── A59: the gate passing on evidence it actually verified ──────────────
+
+/// Spawn a signing mock TSA and return it with the store that pins its root.
+fn signing_tsa() -> (StubServer, MockTsa) {
+    let mock = MockTsa::granted().expect("the mock CA mints");
+    let responder = mock.clone();
+    let server = StubServer::spawn(crate::testing::replay::signing_tsa(move |request| {
+        responder.respond(request).ok()
+    }));
+    (server, mock)
+}
+
+/// **The wired gate passing for the right reason.** No `--force-degraded`, no
+/// pre-recorded token: the gate draws a nonce, the mock signs an answer to it,
+/// core verifies it against the injected root, and the decision is `Proceed`
+/// with nothing degraded.
+///
+/// Every other "the gate proceeds" test in this file is carried by
+/// `--force-degraded`, which proves the *flag* works and says nothing about
+/// the evidence path. This one is the evidence path.
+#[test]
+fn the_wired_gate_passes_on_a_token_it_verified_itself() {
+    let (server, mock) = signing_tsa();
+    let store = mock.root_store();
+    let endpoints = AnchorEndpoints {
+        tsa_urls: vec![server.base_url()],
+        ots_calendars: Vec::new(),
+    };
+    let client = client();
+    let gate = SubmitAnchorGate::new(
+        &client,
+        &endpoints,
+        &store,
+        NO_FLAGS,
+        NetworkClass::Permanent,
+    )
+    .with_fetch_date(FETCH_DATE);
+
+    let outcome = block_on(gate.run(STAMPED)).expect("a verified token passes the gate");
+    assert_eq!(server.requests().len(), 1, "the stub was not contacted");
+    let sub = outcome.submission().expect("a populated outcome");
+    assert_eq!(sub.verified_tsa_count(), 1);
+    assert_eq!(sub.distinct_tsas(), 1);
+
+    // MVP-SPEC.md line 137: the seal holds an offline headline-eligible anchor.
+    let capture = sub.tsa.verified().next().expect("one capture");
+    assert_eq!(
+        capture.state,
+        antseal_core::verify::report::AnchorState::Proven
+    );
+
+    // Total OTS failure is the only thing left to report, and OTS never gates.
+    assert!(
+        sub.degradation_report()
+            .iter()
+            .all(|line| !line.starts_with("tsa ")),
+        "{:?}",
+        sub.degradation_report()
+    );
+}
+
+/// The red twin: the same wiring, the same mock, but the response is verified
+/// against the **production pinned store**, where this CA is unknown. The gate
+/// aborts.
+///
+/// This is what stops the fixture CA from being a backdoor: a build that
+/// shipped `TsaRootStore::pinned()` and this mock together would still refuse
+/// its tokens.
+#[test]
+fn the_same_token_against_the_pinned_store_aborts_the_gate() {
+    let (server, _mock) = signing_tsa();
+    let endpoints = AnchorEndpoints {
+        tsa_urls: vec![server.base_url()],
+        ots_calendars: Vec::new(),
+    };
+    let client = client();
+    let gate = SubmitAnchorGate::new(
+        &client,
+        &endpoints,
+        TsaRootStore::pinned(),
+        NO_FLAGS,
+        NetworkClass::Permanent,
+    )
+    .with_fetch_date(FETCH_DATE);
+
+    let err = block_on(gate.run(STAMPED)).expect_err("the mock CA is not pinned");
+    let AnchorGateError::MinimumAnchor { failures, .. } = &err else {
+        panic!("wrong arm: {err:?}");
+    };
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].class, "untrusted-chain");
 }

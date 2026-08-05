@@ -15,6 +15,9 @@
 //!    request), so the abort is at the gate and not somewhere earlier;
 //! 3. **the same wiring can reach `pay`** — otherwise (1) would be satisfied
 //!    by a gate that always aborts, and the ordering claim would be vacuous.
+//!    That control is driven by A59's *signing* mock and no `--force-degraded`,
+//!    so the proceed is earned by a token this process verified rather than
+//!    granted by a flag.
 //!
 //! Q16: the TSA endpoint is a `127.0.0.1:0` stub. Nothing here can reach a
 //! real endpoint, and the request counter proves the stub is the one that was
@@ -27,12 +30,14 @@ mod common;
 use antseal_anchor::gate::AnchorGateError;
 use antseal_anchor::http::{HttpClient, HttpPolicy};
 use antseal_anchor::submit::{AnchorEndpoints, NetworkClass, SealGateFlags, SubmitAnchorGate};
+use antseal_anchor::testing::replay::signing_tsa;
 use antseal_anchor::testing::stub::{StubReply, StubScript, StubServer};
 use antseal_cli::pipeline::{
     NoBarriers, Pipeline, SealError, SealFile, SealJournal, SealRequest, SealResult, SealState,
 };
 use antseal_cli::vault::store::SealShapingFlags;
 use antseal_core::anchor::roots::TsaRootStore;
+use antseal_core::anchor::testing::MockTsa;
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::sig_policy::SigPolicy;
 use antseal_net::NetworkId;
@@ -166,17 +171,18 @@ fn the_real_gate_aborts_before_pay_with_no_money_spent() {
     assert_eq!(consent.calls(), 1, "consent runs before the gate");
 }
 
-/// **The non-vacuity control.** The identical wiring, with the gate allowed to
-/// proceed, reaches `pay` exactly once and completes.
+/// **The non-vacuity control.** The identical wiring, with a TSA that really
+/// answers, reaches `pay` exactly once and completes.
 ///
 /// Without this, the assertion above would be equally true of a gate that
 /// refuses unconditionally — and "the abort precedes payment" would be a
 /// statement about a pipeline that can never pay at all.
 ///
-/// `--force-degraded` is what makes the same zero-verified-token stage
-/// proceed. A gate-*passing* run needs a TSA that answers the nonce this
-/// process just drew, which needs the signing mock (A59); the ordering
-/// property does not depend on which of the two produces the proceed.
+/// The proceed here is earned, not flagged: **no `--force-degraded`**. A59's
+/// signing mock answers the nonce this process drew a millisecond ago, core
+/// verifies the token and chains it to the injected root, and the gate passes
+/// because it holds one `proven` anchor. A recorded token could not have done
+/// it — it answers only the nonce it was recorded with.
 #[test]
 fn the_same_wiring_reaches_pay_when_the_gate_proceeds() {
     let files = files();
@@ -184,24 +190,24 @@ fn the_same_wiring_reaches_pay_when_the_gate_proceeds() {
     let backend = RecordingBackend::new(&mock);
     let consent = ScriptedConsent::always_yes();
 
-    let tsa = unhelpful_tsa();
+    let signer = MockTsa::granted().expect("the mock CA mints");
+    let store = signer.root_store();
+    let responder = signer.clone();
+    let tsa = StubServer::spawn(signing_tsa(move |request| responder.respond(request).ok()));
     let endpoints = endpoints(&tsa);
     let client = HttpClient::new(HttpPolicy::seal());
     let gate = SubmitAnchorGate::new(
         &client,
         &endpoints,
-        TsaRootStore::pinned(),
-        SealGateFlags {
-            no_anchor: false,
-            force_degraded: true,
-        },
+        &store,
+        SealGateFlags::default(),
         NetworkClass::Development,
     )
     .with_fetch_date(1_800_000_000);
 
     let outcome = with_journal(|journal| {
         let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
-        block_on(pipeline.seal(&request(&files, true), &mut seal_rng(42))).expect("the seal lands")
+        block_on(pipeline.seal(&request(&files, false), &mut seal_rng(42))).expect("the seal lands")
     });
     let SealResult::Sealed(sealed) = outcome else {
         panic!("a non-dry-run seal returns Sealed");
@@ -210,7 +216,7 @@ fn the_same_wiring_reaches_pay_when_the_gate_proceeds() {
     assert_eq!(backend.pay_calls(), 1, "pay is reachable through this gate");
     assert_eq!(mock.calls(Method::Pay), 1);
     assert!(mock.stored_count() > 0);
-    assert!(!tsa.requests().is_empty(), "the same gate ran");
+    assert_eq!(tsa.requests().len(), 1, "the same gate ran");
     assert!(!sealed.addresses.is_empty());
 }
 
