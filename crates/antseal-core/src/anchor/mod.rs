@@ -46,6 +46,11 @@
 //!   D57's rulings P1/P2/P3.
 //! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
 //!   the crate so the ordinary suite compiles and exercises it.
+//! - [`verdicts`] (tasks **A18**, **A19**, **A39**, **A40**) — the per-anchor
+//!   verdict state machine over D53's `T1–T3` and D56's `O1–O9`, the receipt's
+//!   separate supporting-evidence class, the suppressed-anomaly list
+//!   best-evidence-wins would otherwise discard, and anchor identity counted
+//!   from verified identities rather than from array length.
 //! - `testing` (task **A59**, completing **A24**) — the signing mock TSA and
 //!   its test CA, compiled only under `test`/`test-util`. It lives here rather
 //!   than in a crate of its own because A30(c) makes `antseal-core` the sole
@@ -66,5 +71,6 @@ pub mod roots;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
 pub mod tsa;
+pub mod verdicts;
 
 pub use error::{AlgPosition, AnchorError, DerFault, DerSite, SignedAttrId};

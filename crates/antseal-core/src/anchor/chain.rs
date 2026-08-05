@@ -200,6 +200,7 @@ pub fn all_code_exemplars() -> Vec<ChainFault> {
 pub struct ChainVerdict {
     state: AnchorState,
     fault: Option<ChainFault>,
+    suppressed: GradeSet,
     verified_time_unix: Option<u64>,
     anchor_label: Option<&'static str>,
     root_store_version: u32,
@@ -217,6 +218,32 @@ impl ChainVerdict {
     #[must_use]
     pub const fn fault(&self) -> Option<ChainFault> {
         self.fault
+    }
+
+    /// Every refutation some candidate path exhibited that the precedence
+    /// rule discarded — **task A39**.
+    ///
+    /// D53's `C1/C2 → C3` and `C3 → C4 → C5` are both best-evidence-wins, and
+    /// both are chosen for a property rather than for taste: the `.sealproof`
+    /// bundle is **unsigned** (D8), so any relay can append a certificate, and
+    /// under the opposite rule one appended junk certificate would rewrite the
+    /// state or the code of an honest anchor. The price D53 §12 records is
+    /// that the discarded refutations become invisible in the state — *"a
+    /// bundle with one expired path and fifteen forged ones reports the
+    /// temporal code … and A39's anomaly list carries the rest"*. This is that
+    /// list, at the chain layer.
+    ///
+    /// Only the three **fault** grades appear. `valid-at-genTime-but-expired`
+    /// sitting under a `proven` path is a weaker success, not a refutation,
+    /// and putting it here would report an anomaly on a wholly honest
+    /// multi-path chain.
+    ///
+    /// Ordered worst-first (ascending [`Grade`]), so the list is a total
+    /// function of the artifact and the store — never of enumeration order,
+    /// exactly as the state and the code are.
+    #[must_use]
+    pub fn suppressed_faults(&self) -> Vec<ChainFault> {
+        self.suppressed.iter().filter_map(Grade::fault).collect()
     }
 
     /// The independently proven stamping time, populated **only** for the two
@@ -291,6 +318,142 @@ enum Grade {
     Valid,
 }
 
+/// How many distinct [`Grade`] values exist. `NotValidAtGenTime` counts twice
+/// because [`TemporalBound`] has two arms, and the bound is carried into the
+/// diagnostic.
+const GRADE_COUNT: u8 = 6;
+
+impl Grade {
+    /// Position in the lattice, `0` worst. The inverse of [`Self::from_rank`],
+    /// pinned in both directions by
+    /// [`tests::grade_ranks_round_trip_and_order_matches_the_lattice`].
+    const fn rank(self) -> u8 {
+        match self {
+            Self::SignatureInvalid => 0,
+            Self::ConstraintViolation => 1,
+            Self::NotValidAtGenTime(TemporalBound::Expired) => 2,
+            Self::NotValidAtGenTime(TemporalBound::NotYetValid) => 3,
+            Self::ValidAtGenTimeButExpired => 4,
+            Self::Valid => 5,
+        }
+    }
+
+    const fn from_rank(rank: u8) -> Self {
+        match rank {
+            0 => Self::SignatureInvalid,
+            1 => Self::ConstraintViolation,
+            2 => Self::NotValidAtGenTime(TemporalBound::Expired),
+            3 => Self::NotValidAtGenTime(TemporalBound::NotYetValid),
+            4 => Self::ValidAtGenTimeButExpired,
+            _ => Self::Valid,
+        }
+    }
+
+    /// The refutation this grade names, or `None` for the two grades that
+    /// refute nothing.
+    const fn fault(self) -> Option<ChainFault> {
+        match self {
+            Self::SignatureInvalid => Some(ChainFault::ChainSignatureInvalid),
+            Self::ConstraintViolation => Some(ChainFault::ChainConstraintViolation),
+            Self::NotValidAtGenTime(bound) => Some(ChainFault::CertNotValidAtGenTime { bound }),
+            Self::ValidAtGenTimeButExpired | Self::Valid => None,
+        }
+    }
+}
+
+/// The set of grades **some** candidate path achieved.
+///
+/// A39 needs more than the maximum: best-evidence-wins discards refutations,
+/// and the discarded ones must not vanish. The set is at most six values, so
+/// it is a bitmask and the DP carries it beside the maximum at no asymptotic
+/// cost — the alternative, re-running the search once per grade, would be six
+/// path builds over adversary-chosen input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct GradeSet(u8);
+
+impl GradeSet {
+    const EMPTY: Self = Self(0);
+
+    fn single(grade: Grade) -> Self {
+        Self(1 << grade.rank())
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// `{ min(step, g) : g ∈ self }` — extending every completion in `self`
+    /// through one more step whose own grade is `step`.
+    ///
+    /// This is the set-valued form of `step.min(rest)`, and it is what makes
+    /// the DP's grade *set* mean the same thing its maximum already did: a
+    /// path's grade is the minimum over its steps.
+    fn capped_at(self, step: Grade) -> Self {
+        let cap = step.rank();
+        let mut out = 0_u8;
+        let mut rank = 0_u8;
+        while rank < GRADE_COUNT {
+            if self.0 & (1 << rank) != 0 {
+                out |= 1 << if rank < cap { rank } else { cap };
+            }
+            rank += 1;
+        }
+        Self(out)
+    }
+
+    /// Every grade below `ceiling`, in ascending (worst-first) order.
+    fn below(self, ceiling: Grade) -> Self {
+        let bound = ceiling.rank();
+        let mask = if bound == 0 { 0 } else { (1 << bound) - 1 };
+        Self(self.0 & mask)
+    }
+
+    fn iter(self) -> impl Iterator<Item = Grade> {
+        (0..GRADE_COUNT)
+            .filter(move |rank| self.0 & (1 << rank) != 0)
+            .map(Grade::from_rank)
+    }
+}
+
+/// What the search found above one node: the best completion, and the set of
+/// grades **any** completion achieved.
+///
+/// The two are kept together rather than computed twice because they must
+/// agree: `best` is exactly the maximum of `grades`, and
+/// [`tests::the_best_grade_is_the_maximum_of_the_grade_set`] asserts it over
+/// every fixture in this module.
+#[derive(Debug, Clone, Copy, Default)]
+struct Reach {
+    best: Option<(Grade, &'static str)>,
+    grades: GradeSet,
+}
+
+impl Reach {
+    const NONE: Self = Self {
+        best: None,
+        grades: GradeSet::EMPTY,
+    };
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            best: max_step(self.best, other.best),
+            grades: self.grades.union(other.grades),
+        }
+    }
+
+    /// Extend every completion through one step of grade `step`.
+    fn capped_at(self, step: Grade) -> Self {
+        Self {
+            best: self.best.map(|(grade, label)| (grade.min(step), label)),
+            grades: self.grades.capped_at(step),
+        }
+    }
+}
+
 /// Validate a verified token's certificate chain to the pinned root store.
 ///
 /// `bundle_intermediates` are the `.sealproof`'s own `intermediates` field
@@ -335,28 +498,38 @@ pub fn validate_chain(
     verify_at_unix: u64,
 ) -> ChainVerdict {
     let mut builder = PathBuilder::new(signer, supplied, store, gen_time_unix, verify_at_unix);
-    let best = builder.best_grade();
+    let reach = builder.reach();
     let version = store.version();
 
-    let Some((grade, label)) = best else {
+    let Some((grade, label)) = reach.best else {
         // D53 C6 — `NAMED` is empty. No pinned root is named by any candidate
         // path, so the artifact asserts nothing this verifier can refute. That
         // includes the case where the chain closes cleanly on a root the
         // bundle itself supplied: MVP-SPEC.md line 109, "bundle-embedded
         // chains supply intermediates only".
+        //
+        // Nothing is suppressed either: with no path reaching a pinned root
+        // there is no refutation to discard (A39).
         return ChainVerdict {
             state: AnchorState::InternallyConsistentOnly,
             fault: None,
+            suppressed: GradeSet::EMPTY,
             verified_time_unix: None,
             anchor_label: None,
             root_store_version: version,
         };
     };
 
+    // A39 — every refutation the precedence rule discarded. Strictly below the
+    // winner, so a path that *achieved* the reported grade is never reported
+    // as an anomaly against itself.
+    let suppressed = reach.grades.below(grade);
+
     match grade {
         Grade::Valid => ChainVerdict {
             state: AnchorState::Proven,
             fault: None,
+            suppressed,
             verified_time_unix: Some(gen_time_unix),
             anchor_label: Some(label),
             root_store_version: version,
@@ -364,6 +537,7 @@ pub fn validate_chain(
         Grade::ValidAtGenTimeButExpired => ChainVerdict {
             state: AnchorState::ValidAtStampingCertSinceExpired,
             fault: None,
+            suppressed,
             // The whole point of this state (MVP-SPEC.md line 130): it "still
             // carries its independently-proven stamping time". Aging bundles
             // must not silently rot.
@@ -371,18 +545,37 @@ pub fn validate_chain(
             anchor_label: Some(label),
             root_store_version: version,
         },
-        Grade::NotValidAtGenTime(bound) => {
-            invalid(ChainFault::CertNotValidAtGenTime { bound }, label, version)
-        }
-        Grade::ConstraintViolation => invalid(ChainFault::ChainConstraintViolation, label, version),
-        Grade::SignatureInvalid => invalid(ChainFault::ChainSignatureInvalid, label, version),
+        Grade::NotValidAtGenTime(bound) => invalid(
+            ChainFault::CertNotValidAtGenTime { bound },
+            suppressed,
+            label,
+            version,
+        ),
+        Grade::ConstraintViolation => invalid(
+            ChainFault::ChainConstraintViolation,
+            suppressed,
+            label,
+            version,
+        ),
+        Grade::SignatureInvalid => invalid(
+            ChainFault::ChainSignatureInvalid,
+            suppressed,
+            label,
+            version,
+        ),
     }
 }
 
-fn invalid(fault: ChainFault, label: &'static str, version: u32) -> ChainVerdict {
+fn invalid(
+    fault: ChainFault,
+    suppressed: GradeSet,
+    label: &'static str,
+    version: u32,
+) -> ChainVerdict {
     ChainVerdict {
         state: AnchorState::Invalid,
         fault: Some(fault),
+        suppressed,
         // Never populated for an ineligible state (D53 §4).
         verified_time_unix: None,
         anchor_label: Some(label),
@@ -437,8 +630,8 @@ struct PathBuilder<'a> {
     roots: Vec<Anchor<'a>>,
     gen_time_unix: u64,
     verify_at_unix: u64,
-    /// `(node, depth) -> best grade of any completion above it`.
-    memo: BTreeMap<(usize, usize), Option<(Grade, &'static str)>>,
+    /// `(node, depth) -> what any completion above it reaches`.
+    memo: BTreeMap<(usize, usize), Reach>,
     /// `(child node, parent id) -> does the link signature verify?`
     ///
     /// Parent ids above [`usize::MAX`] / 2 are pinned roots. Memoised because
@@ -516,31 +709,31 @@ impl<'a> PathBuilder<'a> {
         }
     }
 
-    /// The artifact's grade: the maximum over every candidate path, together
-    /// with the label of the root that path closed at. `None` when no path
+    /// What the artifact reaches: the maximum over every candidate path
+    /// together with the label of the root that path closed at, **and** the
+    /// set of grades any candidate path achieved (A39). Empty when no path
     /// reaches any pinned root (D53 C6).
-    fn best_grade(&mut self) -> Option<(Grade, &'static str)> {
+    fn reach(&mut self) -> Reach {
         // The signer contributes only its own temporal checks: `constraints_ok`
         // covers issuer elements, and D60 measured why that matters —
         // **SwissSign's leaf carries no `basicConstraints` at all**, so
         // requiring it on the signer rejects a documented alternate.
         let signer_grade = self.temporal_grade(0);
-        let above = self.suffix(0, 0)?;
-        Some((signer_grade.min(above.0), above.1))
+        self.suffix(0, 0).capped_at(signer_grade)
     }
 
-    /// Best grade of any completion strictly above `node`, which sits at
+    /// What any completion strictly above `node` reaches, `node` sitting at
     /// `depth` (0 for the signer).
-    fn suffix(&mut self, node: usize, depth: usize) -> Option<(Grade, &'static str)> {
+    fn suffix(&mut self, node: usize, depth: usize) -> Reach {
         if let Some(hit) = self.memo.get(&(node, depth)) {
             return *hit;
         }
         // Guard against a cycle in the memo table while it is being filled.
         // A repeated node at the same depth is impossible (depth strictly
         // increases), so this is belt-and-braces rather than load-bearing.
-        self.memo.insert((node, depth), None);
+        self.memo.insert((node, depth), Reach::NONE);
 
-        let mut best: Option<(Grade, &'static str)> = None;
+        let mut best = Reach::NONE;
 
         // (a) Close on a pinned root. This is ruling P1: the moment a
         // certificate's issuer names a pinned root, the path may terminate
@@ -554,7 +747,10 @@ impl<'a> PathBuilder<'a> {
                 }
                 let grade = self.root_step_grade(node, idx, root_depth);
                 let label = self.roots[idx].pinned.label;
-                best = max_step(best, Some((grade, label)));
+                best = best.union(Reach {
+                    best: Some((grade, label)),
+                    grades: GradeSet::single(grade),
+                });
             }
         }
 
@@ -570,8 +766,9 @@ impl<'a> PathBuilder<'a> {
                     continue;
                 }
                 let step = self.intermediate_step_grade(node, parent, next_depth);
-                if let Some((rest, label)) = self.suffix(parent, next_depth) {
-                    best = max_step(best, Some((step.min(rest), label)));
+                let rest = self.suffix(parent, next_depth);
+                if !rest.grades.is_empty() {
+                    best = best.union(rest.capped_at(step));
                 }
             }
         }
@@ -1860,10 +2057,10 @@ mod tests {
             t.gen_time_unix(),
             AFTER_CAPTURE,
         );
-        let best = builder.best_grade();
+        let reach = builder.reach();
         // The honest path survives: the real chain is still in the pool.
         assert_eq!(
-            best.map(|(g, _)| g),
+            reach.best.map(|(g, _)| g),
             Some(Grade::Valid),
             "the hostile padding must not change the verdict"
         );
@@ -2058,5 +2255,208 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── A39 — the refutations best-evidence-wins discards ───────────────
+
+    /// The lattice's rank encoding is a bijection and it agrees with the
+    /// derived `Ord`.
+    ///
+    /// [`GradeSet`] indexes by rank, so a rank that disagreed with `Ord`
+    /// would make `capped_at` and `below` compute the wrong set while every
+    /// *state* stayed correct — a defect no state assertion anywhere can see.
+    #[test]
+    fn grade_ranks_round_trip_and_order_matches_the_lattice() {
+        let all = [
+            Grade::SignatureInvalid,
+            Grade::ConstraintViolation,
+            Grade::NotValidAtGenTime(TemporalBound::Expired),
+            Grade::NotValidAtGenTime(TemporalBound::NotYetValid),
+            Grade::ValidAtGenTimeButExpired,
+            Grade::Valid,
+        ];
+        assert_eq!(all.len(), usize::from(GRADE_COUNT));
+        for (i, g) in all.iter().enumerate() {
+            let rank = u8::try_from(i).expect("six grades");
+            assert_eq!(g.rank(), rank);
+            assert_eq!(Grade::from_rank(rank), *g);
+        }
+        for pair in all.windows(2) {
+            assert!(pair[0] < pair[1], "{:?} !< {:?}", pair[0], pair[1]);
+        }
+        // The two grades that refute nothing, named rather than assumed.
+        assert_eq!(Grade::Valid.fault(), None);
+        assert_eq!(Grade::ValidAtGenTimeButExpired.fault(), None);
+    }
+
+    /// The invariant the whole extension rests on: the maximum of the grade
+    /// **set** is the grade the verdict reports.
+    ///
+    /// If it ever failed, A39's list would be computed against a ceiling the
+    /// state does not come from, and the anomaly list would silently include
+    /// or exclude the wrong entries.
+    #[test]
+    fn the_best_grade_is_the_maximum_of_the_grade_set() {
+        let t = token(DIGICERT, &PROBE);
+        let junk: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(with_broken_signature)
+            .collect();
+        let mut pool: Vec<&Certificate> = certs(&t);
+        pool.extend(junk.iter());
+
+        for supplied in [certs(&t), pool] {
+            for store in [TsaRootStore::pinned(), &empty_store()] {
+                let mut builder = PathBuilder::new(
+                    t.signer(),
+                    &supplied,
+                    store,
+                    t.gen_time_unix(),
+                    AFTER_CAPTURE,
+                );
+                let reach = builder.reach();
+                let max = reach.grades.iter().max();
+                assert_eq!(
+                    reach.best.map(|(g, _)| g),
+                    max,
+                    "best and the grade set disagree"
+                );
+                assert_eq!(reach.best.is_none(), reach.grades.is_empty());
+            }
+        }
+    }
+
+    /// **A39 Accept row 1.** One valid path and one broken-signature path:
+    /// the anchor is `proven` **and** the discarded refutation is recorded,
+    /// exactly once, naming `anchor-chain-signature-invalid`.
+    ///
+    /// What makes it fail: an implementation that reports only the maximum
+    /// (the state stays `proven`, so `a_junk_intermediate_never_demotes…`
+    /// still passes and this is the only row that can see the loss); or one
+    /// that records the *winning* grade as an anomaly too, which would put an
+    /// anomaly on every honest chain.
+    #[test]
+    fn a_valid_chain_beside_a_broken_signature_path_records_the_suppression() {
+        let t = token(DIGICERT, &PROBE);
+        let junk: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(with_broken_signature)
+            .collect();
+        let mut pool: Vec<&Certificate> = certs(&t);
+        pool.extend(junk.iter());
+
+        let v = validate_chain(
+            t.signer(),
+            &pool,
+            TsaRootStore::pinned(),
+            t.gen_time_unix(),
+            AFTER_CAPTURE,
+        );
+        assert_eq!(v.state(), AnchorState::Proven);
+        assert_eq!(v.fault(), None);
+        assert_eq!(
+            v.suppressed_faults(),
+            vec![ChainFault::ChainSignatureInvalid],
+            "the appended broken path vanished from the verdict"
+        );
+    }
+
+    /// The anti-vacuity twin, and it is the load-bearing half: an **honest**
+    /// chain suppresses nothing.
+    ///
+    /// DigiCert's real token offers several candidate paths (the
+    /// cross-certificate gives two routes to the pinned root), so this is not
+    /// a degenerate single-path case. Without it, `suppressed_faults()`
+    /// returning "every fault class, always" would pass the row above.
+    #[test]
+    fn a_real_honest_chain_suppresses_nothing() {
+        for (bytes, digest) in [
+            (DIGICERT, &PROBE),
+            (FREETSA, &PROBE),
+            (SECTIGO, &PROBE),
+            (DFN, &PROBE),
+        ] {
+            let t = token(bytes, digest);
+            let v = validate_token_chain(&t, &[], TsaRootStore::pinned(), AFTER_CAPTURE);
+            assert_eq!(v.state(), AnchorState::Proven, "fault {:?}", v.fault());
+            assert!(
+                v.suppressed_faults().is_empty(),
+                "an honest chain reported anomalies: {:?}",
+                v.suppressed_faults()
+            );
+        }
+    }
+
+    /// D53 §12's residual risk, made visible: on a multi-defect artifact the
+    /// reported code names the **best** path's failure, and A39 carries the
+    /// rest.
+    ///
+    /// A constraint-violating root and a signature-broken copy of the same
+    /// chain: the verdict is the *less* severe `anchor-chain-constraint-
+    /// violation`, and the discarded `anchor-chain-signature-invalid` is in
+    /// the list. The reported fault is never also in the list.
+    #[test]
+    fn least_severe_wins_reports_the_better_failure_and_records_the_worse() {
+        let t = token(DIGICERT, &PROBE);
+        let real = Certificate::from_der(TsaRootStore::pinned().roots()[1].der).expect("parses");
+        let store = store_of(vec![(with_ca_false(&real), "ca-false")]);
+
+        let junk: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(with_broken_signature)
+            .collect();
+        let mut pool: Vec<&Certificate> = certs(&t);
+        pool.extend(junk.iter());
+
+        let v = validate_chain(t.signer(), &pool, &store, t.gen_time_unix(), AFTER_CAPTURE);
+        assert_eq!(v.state(), AnchorState::Invalid);
+        assert_eq!(v.fault(), Some(ChainFault::ChainConstraintViolation));
+        assert_eq!(
+            v.suppressed_faults(),
+            vec![ChainFault::ChainSignatureInvalid]
+        );
+        assert!(
+            !v.suppressed_faults().contains(&v.fault().expect("invalid")),
+            "the reported fault must not also be reported as suppressed"
+        );
+    }
+
+    /// The suppressed list is invariant under permutation of the supplied
+    /// certificates, exactly as the state and the code are (D53 §3).
+    ///
+    /// A "first path wins" implementation of the *set* — collecting only
+    /// until the first path is graded — passes every row above and fails
+    /// here.
+    #[test]
+    fn the_suppressed_list_is_invariant_under_permutation() {
+        let t = token(DIGICERT, &PROBE);
+        let junk: Vec<Certificate> = t
+            .chain_material()
+            .iter()
+            .map(with_broken_signature)
+            .collect();
+        let mut pool: Vec<&Certificate> = certs(&t);
+        pool.extend(junk.iter());
+
+        let mut seen = BTreeSet::new();
+        for order in permutations(pool.len()) {
+            let permuted: Vec<&Certificate> = order.iter().map(|&i| pool[i]).collect();
+            let v = validate_chain(
+                t.signer(),
+                &permuted,
+                TsaRootStore::pinned(),
+                t.gen_time_unix(),
+                AFTER_CAPTURE,
+            );
+            seen.insert(format!("{:?}/{:?}", v.state(), v.suppressed_faults()));
+        }
+        assert_eq!(
+            seen.len(),
+            1,
+            "permutation changed the anomaly list: {seen:?}"
+        );
     }
 }
