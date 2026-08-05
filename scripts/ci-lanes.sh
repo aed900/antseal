@@ -255,8 +255,23 @@ lane_dep_graph() {
   # structurally cannot reach an OS RNG; the `^rand ` entry's trailing
   # space keeps it unmatched. blake3 is consumed with default-features off
   # precisely so none of these enter (workspace Cargo.toml pin comment).
+  # HTTP/TLS half added at D90/Q83 (2026-08-02): `ureq` joins because it is
+  # the client D90 adopts for `antseal-anchor`, and
+  # `rustls`/`native-tls`/`openssl`/`webpki-roots`/`httparse`/`http` join it
+  # so no transport crate can enter antseal-core without one of them being
+  # named. antseal-anchor sits ABOVE core, so this is a regression guard on
+  # a direction the adoption makes newly plausible, not a claim about A3.
+  #
+  # SCOPE (D90, 2026-08-02): this is a DENYLIST. It catches the crates
+  # named and nothing else — `libc`, `regex`, `env_logger`, `is-terminal`
+  # and `termcolor` all pass it today, measured. The lane's headline
+  # ("must be I/O-free") is therefore stronger than this assertion, and
+  # closing that gap with a positive allowlist of antseal-core's permitted
+  # normal-graph names is Q74's work — landed as layer 2 below. Until then,
+  # treat a green verdict HERE as "none of the named offenders is present",
+  # not as "the graph is pure".
   note "antseal-core's NORMAL graph: none of the DECIDED-prohibited crates"
-  local forbidden='^(tokio|async-std|smol|hyper|reqwest|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
+  local forbidden='^(tokio|async-std|smol|hyper|reqwest|ureq|ureq-proto|attohttpc|isahc|curl|rustls|native-tls|openssl|webpki-roots|httparse|http|mio|socket2|getrandom|rand|rand_chacha) ' tree offenders
   # Self-test FIRST, in BOTH directions — the D89 rule-5 pattern, and the
   # thing this rule went without from S4 until Q74. It was the ONLY rule in
   # this lane with no planted fault (its siblings self-test above and
@@ -264,11 +279,23 @@ lane_dep_graph() {
   # ever watched it bite. The negative direction is load-bearing, not
   # decoration: the `^rand ` trailing space is the only thing keeping
   # `rand_core` — a real member of the set below — out of the ban.
+  #
+  # THREE directions since Q83, because the pattern now has two independent
+  # halves and one planted name only exercises one of them. `tokio` proves
+  # the S4 half still bites; `ureq` proves the D90 half does, in the shape
+  # `cargo tree --prefix none` actually emits; `rand_core` proves the rule
+  # still tells the permitted pure-trait crate apart from the banned family.
+  # A pattern edit that dropped the whole HTTP alternation would leave the
+  # tokio direction green, which is precisely why it is not sufficient.
   if ! printf 'tokio v1.49.0\n' | grep -qE "$forbidden"; then
     printf '::error::dep-graph prohibition self-test FAILED: the detector does not match a planted `tokio` tree line — fix it before trusting any green verdict\n'
     return 1
   fi
-  if printf 'rand_core v0.9.3\n' | grep -qE "$forbidden"; then
+  if ! printf 'ureq v3.3.0\n' | grep -qE "$forbidden"; then
+    printf '::error::dep-graph prohibition self-test FAILED: the forbidden-crate pattern does not match a planted `ureq v3.3.0` line in the shape `cargo tree --prefix none` emits — the D90 HTTP/TLS half is gone. Fix it before trusting any green verdict\n'
+    return 1
+  fi
+  if printf 'rand_core v0.10.1\n' | grep -qE "$forbidden"; then
     printf '::error::dep-graph prohibition self-test FAILED: the detector ALSO matches `rand_core`, which C5/C9 require in the graph. The `^rand ` entry has lost its trailing space, so this rule can never be green for the right reason\n'
     return 1
   fi
