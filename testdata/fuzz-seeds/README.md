@@ -10,7 +10,21 @@ seed's id, length and SHA-256. Normative doc:
 | `bundle_decode/` | F17 | `.sealproof` bytes |
 | `verify_bundle/` | R10 | **entropy strings**, not documents (see below) |
 
-A23's DER/`.ots` parsers add their directories at M2 (Q17).
+**A23's two anchor targets deliberately have no directory here** (settled at
+Q17; this line previously said they would add one at M2). `anchor_token` and
+`anchor_ots` are seeded from `../anchors/A25-bootstrap/` instead, wired in
+`scripts/fuzz.sh`'s `corpus_dirs()`. Two reasons, and the second is a hard
+constraint rather than a preference:
+
+- the captures are already committed there with provenance, so a directory
+  here would be the same bytes twice — the thing `codec_round_trip`'s
+  arrangement exists to avoid;
+- **this tree is generated.** `codec_fuzz.rs`'s
+  `the_seed_tree_holds_nothing_but_the_generated_corpora` compares the
+  directory set here against `codec_fuzz::all_corpora()` and fails on a
+  stray one. Real TSA tokens and `.ots` artifacts are not derivable from
+  the test seed `W`, so they cannot come from that generator and must not
+  be hand-dropped in here.
 
 `codec_round_trip` has no directory of its own: its input space is the union
 of the two decode corpora, so `scripts/fuzz.sh` passes both to it rather

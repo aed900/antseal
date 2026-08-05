@@ -87,9 +87,26 @@ bench = false
 # A5's anchor-stage target. Its seed corpus is `testdata/anchors/A25-bootstrap/`
 # — nine live TSA responses plus the derived BER variants — because a
 # mutation of a valid CMS structure reaches far deeper than a random buffer.
+#
+# WIRED AT Q17, not before: the sentence above was true of the intent and
+# false of the tree until `scripts/fuzz.sh`'s `corpus_dirs()` learned about
+# it. Until then `corpus_dirs()`'s `[ -d "$seed_root/$target" ]` guard found
+# no `testdata/fuzz-seeds/anchor_token/`, said nothing, and handed the target
+# its (empty) working corpus alone — the exact silent failure D61 §6 names.
 [[bin]]
 name = "anchor_token"
 path = "fuzz_targets/anchor_token.rs"
+test = false
+doc = false
+bench = false
+
+# A23's `.ots` target (registered by Q17). Same seed directory: the captured
+# `.timestamp` artifacts there are valid inputs BYTE FOR BYTE, because
+# `drive_ots` reads the anchor digest out of the artifact's own start-digest
+# field rather than off the head of the input. Nothing is committed twice.
+[[bin]]
+name = "anchor_ots"
+path = "fuzz_targets/anchor_ots.rs"
 test = false
 doc = false
 bench = false
