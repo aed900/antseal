@@ -319,9 +319,33 @@ they are what would make a venue change cheap, and they cost nothing:
   libFuzzer's, which is the property that makes the targets portable to a
   venue with its own corpus management.
 
-The one thing D61 must decide either way: OSS-Fuzz requires a public
-repository and an upstream-facing contact, so it is gated on the same
-publication decisions as the release lane, not on anything technical here.
+### When this is re-read, and by whom
+
+D61 is **resolved**, not deferred, so no wave inherits it as an open
+decision. The OSS-Fuzz arm is closed *with a condition attached*, and the
+condition has two halves — stating only the first is the error this section
+made before, and the one with an operational cost:
+
+> **D61 is re-read when, and only when, BOTH hold: (a)** `aed900/antseal` is
+> public — the Q65-gated flip; **and (b)** the project can point to use by
+> parties other than its maintainer, sufficient to argue OSS-Fuzz's own
+> *"significant user base and/or critical to the global IT infrastructure"*
+> criterion.
+
+**(a) alone does not reopen the OSS-Fuzz arm.** It reopens only the *budget*
+half — standard GitHub-hosted runners are free on public repositories, so
+the cadence of §5 and the 700 min/month ceiling become re-openable on their
+own merits at that moment, while eligibility does not move at all. Until
+both hold, OSS-Fuzz is **not applicable** rather than **pending**.
+
+The trigger has a **named owner** so it is a mechanism and not a hope: it is
+an Accept row of **Q65**, which fires the re-read in the same wave it
+resolves to *public*, and the re-read records which of (a)/(b) hold. Two
+costs to weigh **then** rather than assume away now: the required
+engineering contact must be an established committer's address *and* a
+Google account — the only email in this tree is the canonical noreply, so
+this is a new personal disclosure — and OSS-Fuzz publishes issues on a
+90-day disclosure clock.
 
 ## 8. Cross-references
 
