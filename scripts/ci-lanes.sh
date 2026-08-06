@@ -109,13 +109,13 @@ lane_dep_graph() {
   # actually emits for a dependency entry — before the real verdict is
   # trusted.
   local planted='{"name":"self_encryption","source":"registry+https://github.com/rust-lang/crates.io-index","req":"^0.36"}'
-  if ! printf '%s\n' "$planted" | grep -qF "$detector"; then
+  if ! grep -qF "$detector" <<<"$planted" ; then
     printf '::error::dep-graph self-test FAILED: the detector does not match a planted self_encryption dependency entry — fix the detector before trusting any green verdict\n'
     return 1
   fi
   local declared
   declared="$(cargo metadata --format-version 1 --no-deps --locked)" || return 1
-  if printf '%s\n' "$declared" | grep -qF "$detector"; then
+  if grep -qF "$detector" <<<"$declared" ; then
     printf '::error::P15/D35 violation: a workspace crate DECLARES self_encryption as a direct dependency. It is GPL-3.0 and wasm32-hostile, and D32/D35 removed every reason to depend on it (addresses are blake3). Candidate declaration sites:\n'
     grep -n 'self_encryption' crates/*/Cargo.toml Cargo.toml 2>/dev/null || true
     return 1
@@ -180,7 +180,7 @@ lane_dep_graph() {
   # Anti-vacuity, and S2's own existential half: "only antseal-net depends on
   # ant-core" is also the claim that it DOES. If this disappears, the parser
   # stopped matching and every verdict below is worthless.
-  if ! printf '%s\n' "$stack_edges" | grep -qxF 'antseal-net ant-core'; then
+  if ! grep -qxF 'antseal-net ant-core' <<<"$stack_edges" ; then
     printf '::error::S23 scan found no `antseal-net ant-core` edge — S2 says that edge exists, so the metadata parse is broken, not the tree clean. Edges found:\n%s\n' "${stack_edges:-(none)}"
     return 1
   fi
@@ -190,7 +190,7 @@ lane_dep_graph() {
     grep -nE '^[[:space:]]*(ant-core|ant-protocol|alloy|bytes)[[:space:].]' crates/*/Cargo.toml 2>/dev/null || true
     return 1
   fi
-  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(printf '%s\n' "$stack_edges" | grep -c .)"
+  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(grep -c .)" <<<"$stack_edges"
 
   # ── S4/Q74: what this rule proves, and what it cannot ───────────────────
   #
@@ -486,9 +486,9 @@ env_logger v0.10.2'
   # Anti-vacuity: an empty or unparsed tree yields an empty "unknown" set
   # and would pass. The root is always in its own tree, so its absence means
   # the parse broke rather than the graph being clean.
-  if ! printf '%s\n' "$core_names" | grep -qxF 'antseal-core'; then
+  if ! grep -qxF 'antseal-core' <<<"$core_names" ; then
     printf '::error::dep-graph: the parsed package set does not contain `antseal-core` itself, so `cargo tree` failed or its output shape changed — every verdict here would be vacuous. Parsed %s name(s)\n' \
-      "$(printf '%s\n' "$core_names" | grep -c .)"
+      "$(grep -c .)" <<<"$core_names"
     return 1
   fi
   core_unknown="$(comm -23 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
@@ -505,7 +505,7 @@ env_logger v0.10.2'
     return 1
   fi
   printf 'OK: antseal-core normal graph is exactly the %s reviewed package(s). NOTE: this is a "nothing entered unreviewed" proof, NOT an I/O-freedom proof — see the scope note in this function.\n' \
-    "$(printf '%s\n' "$core_names" | grep -c .)"
+    "$(grep -c .)" <<<"$core_names"
 
   # ── S6: ant-core adapter containment ────────────────────────────────────
   # Two rules from the S6 accept rows:
@@ -586,7 +586,7 @@ crates/devnet-launcher/src/main.rs'
     # have made it silently unfalsifiable — the exact failure mode the
     # counters at the top of this file exist to prevent.
     local planted_parent='1antseal-net v0.0.0 (/home/x/crates/antseal-net)'
-    if ! printf '%s\n' "$planted_parent" | grep -qF ' (/'; then
+    if ! grep -qF ' (/' <<<"$planted_parent" ; then
       printf '::error::P15/D35 resolved-parent self-test FAILED: the workspace-crate detector does not match a planted local-path parent — fix it before trusting any green verdict\n'
       return 1
     fi
@@ -630,7 +630,7 @@ crates/devnet-launcher/src/main.rs'
   treeerr="$(mktemp)"
   devnet_tree="$(cargo tree --workspace --features devnet-launcher/devnet -e normal,build,dev --prefix none --locked 2>"$treeerr")"
   rc=$?
-  if [ "$rc" -ne 0 ] || ! printf '%s\n' "$devnet_tree" | grep -qE '^ant-node v'; then
+  if [ "$rc" -ne 0 ] || ! grep -qE '^ant-node v' <<<"$devnet_tree" ; then
     # Diagnosable on purpose: a broken pattern and a cargo that failed to
     # produce a tree are different faults with the same symptom (an empty
     # match), and a lane whose red cannot be told apart from a flake gets
@@ -689,7 +689,7 @@ crates/devnet-launcher/src/main.rs'
       printf '::error::P20 violation: evmlib no longer depends on alloy at all — the lockstep partner this rule pins is gone; re-derive the rule before deleting it\n'
       return 1
     fi
-    if printf '%s\n' "$evmlib_alloy" | grep -qE "$split_detector"; then
+    if grep -qE "$split_detector" <<<"$evmlib_alloy" ; then
       printf '::error::P20 violation: evmlib depends on a version-QUALIFIED alloy (%s), which Cargo.lock emits only when alloy resolves to more than one version. D44 defines the accepted payment set as what the PINNED evmlib/alloy accept; two alloys means two accepted sets\n' "$evmlib_alloy"
       return 1
     fi
@@ -764,7 +764,7 @@ crates/devnet-launcher/src/main.rs'
         printf '::error::D89 violation: alloy-signer-local no longer depends on k256 at all — D44 acceptance is defined as what the PINNED stack accepts, and the function this rule pins us to has moved. Re-derive the rule (and D89 Evidence 4) before deleting it\n'
         return 1
       fi
-      if printf '%s\n' "$signer_k256" | grep -qE "$k256_split_detector"; then
+      if grep -qE "$k256_split_detector" <<<"$signer_k256" ; then
         printf '::error::D89 violation: alloy-signer-local depends on a version-QUALIFIED k256 (%s), which Cargo.lock emits only when k256 resolves to more than one version. Our light half would then validate wallet keys against a DIFFERENT secp256k1 than the payment path accepts\n' "$signer_k256"
         return 1
       fi
@@ -1046,7 +1046,7 @@ cron_days() {
 # day-of-WEEK schedule.
 cron_runs_per_month_x100() {
   local days; days="$(cron_days "$1")" || { printf '%s\n' "$days"; return 1; }
-  local n; n="$(printf '%s\n' "$days" | grep -c .)"
+  local n; n="$(grep -c .)" <<<"$days"
   printf '%s\n' "$(( (5200 * n + 6) / 12 ))"
 }
 
@@ -1152,7 +1152,7 @@ lane_fuzz_budget() {
     return 1
   fi
   cron="$(sed -nE 's/^[[:space:]]*-[[:space:]]*cron:[[:space:]]*"([^"]+)".*/\1/p' "$wf")"
-  n="$(printf '%s\n' "$cron" | grep -c .)"
+  n="$(grep -c .)" <<<"$cron"
   if [ "$n" -ne 1 ]; then
     printf '::error::fuzz-budget: found %s `cron:` line(s) in fuzz-nightly.yml, expected exactly 1. A second schedule multiplies the bill and this reader would price only one\n' "$n"
     return 1
@@ -1244,7 +1244,7 @@ self_test() {
     printf '::error:: the lane stayed GREEN with the Q8 flag order — the counter guard is not wired in\n'
     fail=1
   fi
-  if ! printf '%s' "$out" | grep -q 'registry target is EMPTY'; then
+  if ! grep -q 'registry target is EMPTY' <<<"$out" ; then
     printf '::error:: the lane went red for some other reason than the empty count\n'
     fail=1
   fi

@@ -1055,3 +1055,27 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: `AnchorGateError::MinimumAnchor` says *"Re-run when an endpoint recovers, or pass `--force-degraded`"* and never says the work is left `Staged` and that a re-run **auto-resumes** it rather than starting a second seal. A user who does not know that has no way to tell whether re-running is safe.
 - Accept: the message names the resume behaviour; the claim is asserted against D45's actual resume path, not just spell-checked. Cross-domain — A owns the words, U owns resume.
+
+### A100 — The `.ots` allocation guard and the `.ots` parser assert two different rules
+- Milestone: M2
+- Size: M
+- Deps: A11 (the parser), A23 (the target); rules from D58 and D10 §4, with D84 on which applies
+- Discovered by: **CI run 31086210534** (2026-08-06) — the first remote execution of A23's `anchor_ots` target, which found the disagreement in **3140 execs** of a `fuzz-smoke` run.
+- Problem: two committed rules give different answers for the same input, and nothing compared them until a fuzzer did.
+  - **D58's rule** is absolute: `MAX_OTS_VALUE_BYTES = 32_768` (`anchor/ots/limits.rs`) bounds the op executor's running value, and `alloc_checked` (`anchor/ots/exec.rs`) reserves only after checking against it. That is deliberately absolute — it is D58 §3.2's fix for the upstream crate's unbounded `vec![0; attacker_varint]`.
+  - **The target's rule** is relative: `assert_within_budget` (`fuzz/src/lib.rs`) asserts D10 §4's clamp — peak single allocation ≤ `input_len × MAX_CLAMPED_ELEMENT_BYTES(=1) + SLACK(=4096)`.
+  - For the 248-byte reproducer the caps are **32 768 B** and **4 344 B**; the measured peak was **5 120 B** — legal under D58, illegal under the guard.
+- Do: rule which applies to `.ots`, and do **not** patch either side by reflex. The evidence leans one way: **D84 rules that anchor-artifact *internal* limits are "verifier policy over foreign formats", set at M2 against A25's real artifacts, and are explicitly *not* an exception to line 123 nor D10 format surface** — which says the target is asserting a format-level rule against a parser that was never built to it, and should use a budget bounded by `MAX_OTS_VALUE_BYTES`. The other option is live and must be argued rather than dismissed: tighten the executor so a running value cannot exceed the input that claimed it, which would make `.ots` obey the same clamp every other decoder does. Whichever wins, the losing rule's site gets a comment naming this task, because the next reader will otherwise re-derive the conflict.
+- Accept:
+  - One rule, stated once, with the other site referring to it.
+  - The committed reproducer below is a regression case that is **red before the ruling lands and green after**, whichever way it goes.
+  - If the executor is tightened, a real `.ots` from `testdata/anchors/A25-bootstrap/` still parses — the cap must not reject honest artifacts, which is the failure mode D54's "at least one calendar commits" rule already had to avoid once.
+- Reproducer (248 B, sha1 `b5aec24c28e280a39dfba4027c750954fac646c3`; `fuzz/artifacts/` is gitignored, so it lives here):
+  ```
+  AE9wZW5UaW1lc3RhbXBzAABQcm9vZgC/ieLohOiSlAEIBpn9k0g/KGjTeVhD8AICAgICAgICAgICAgIC
+  AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIC
+  AgICAgICAgICApjTePAQ4uIkQ55/D92MHurHPqc42wjxIKV0REqlAAK2/lryRiZwCkv8lQ1h+BN8w52o
+  LVMnbJ1mCGIlUjcUDpEb0B38XN7G3K/wIAkAAvMf1aLw/wj34HM4S0/1K8XsCAjxINVt8w4A71LI1MJ+
+  led+oCY=
+  ```
+- Notes: the guard did exactly its job. This is the first defect the M2 fuzz targets have returned, and it arrived on the target's **first remote run** — which is the standing lesson that a lane never executed on the remote is not evidence, restated for fuzzing.

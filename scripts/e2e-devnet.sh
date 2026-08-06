@@ -180,7 +180,7 @@ run_gate() {
     return 1
   fi
   local n_run
-  n_run="$(printf '%s' "$PLAN_RUN" | grep -c .)"
+  n_run="$(grep -c .)" <<<"$PLAN_RUN"
   [ "$plan_only" -eq 1 ] && { verdict "$n_run" "" "0" "(plan only — nothing executed)"; return $?; }
 
   # Nothing to run means nothing to boot: a 14-node devnet spun up for an
@@ -316,7 +316,7 @@ self_test() {
       fail=1; return
     fi
     out="$(bash "$copy" --plan "$@" 2>&1)"; rc=$?
-    if [ "$rc" -ne "$want_rc" ] || ! printf '%s' "$out" | grep -qF "$want"; then
+    if [ "$rc" -ne "$want_rc" ] || ! grep -qF "$want" <<<"$out" ; then
       printf '::error:: %s -> exit %s (wanted %s) and the output did not contain %s:\n%s\n' \
         "$label" "$rc" "$want_rc" "$want" "$(printf '%s' "$out" | tail -6)"
       fail=1; return
@@ -349,7 +349,7 @@ self_test() {
         0 'DISCHARGES NO GATE' --allow-pending
   out="$(sed 's/^live|S6-S8|antseal-net|ant-backend|devnet_backend|/pending|S6-S8|antseal-net|ant-backend|not_written_yet|/' \
         "$repo/scripts/e2e-devnet.sh" > "$copy"; bash "$copy" --plan --allow-pending 2>&1)"
-  if printf '%s' "$out" | grep -q 'PASS'; then
+  if grep -q 'PASS' <<<"$out" ; then
     printf '::error:: an all-pending run printed PASS — a gate that passes with nothing to run is the Q66 class\n'
     fail=1
   fi
@@ -384,10 +384,10 @@ self_test() {
   key_b="0x$(printf 'b%.0s' $(seq 64))"
   red="$(printf "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='%s'\n  \"wallet_private_key\": \"%s\",\n  \"payment_token_address\": \"0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C\"\n" \
         "$key_a" "$key_b" | redact)"
-  if printf '%s' "$red" | grep -qE '(a{64}|b{64})'; then
+  if grep -qE '(a{64}|b{64})' <<<"$red" ; then
     printf '::error:: redact() left key material in the capture:\n%s\n' "$red"
     fail=1
-  elif ! printf '%s' "$red" | grep -q '0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C'; then
+  elif ! grep -q '0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C' <<<"$red" ; then
     printf '::error:: redact() destroyed a contract address — the filter must be key-name-scoped, not hex-shaped:\n%s\n' "$red"
     fail=1
   else

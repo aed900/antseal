@@ -236,8 +236,8 @@ self_test() {
   #    tier compiles it. Injected through declared_features' documented seam
   #    because the real thing lives in a Cargo.toml.
   out="$(GATE_FEATURES_EXTRA='antseal-core/brand-new' check_partition 2>&1)"
-  if [ $? -eq 0 ] || ! printf '%s' "$out" | grep -q 'NO tier compiles' \
-     || ! printf '%s' "$out" | grep -q 'antseal-core/brand-new'; then
+  if [ $? -eq 0 ] || ! grep -q 'NO tier compiles' <<<"$out" \
+     || ! grep -q 'antseal-core/brand-new' <<<"$out" ; then
     printf '::error:: a newly declared feature did NOT turn the guard red (this is the whole safety argument for dropping --all-features):\n%s\n' "$out"; fail=1
   else
     printf '  planted fault: %-44s -> RED\n' "a new feature no tier compiles"
@@ -247,7 +247,7 @@ self_test() {
   #    direction: tier 2 silently compiling nothing).
   sed 's|^antseal-net/ant-backend$|antseal-net/ant-backend-typo|' "$repo/scripts/gate-features.sh" > "$copy"
   out="$(bash "$copy" --check-partition 2>&1)"
-  if [ $? -eq 0 ] || ! printf '%s' "$out" | grep -q 'no workspace crate declares'; then
+  if [ $? -eq 0 ] || ! grep -q 'no workspace crate declares' <<<"$out" ; then
     printf '::error:: a HEAVY entry naming a nonexistent feature did NOT turn the guard red:\n%s\n' "$out"; fail=1
   else
     printf '  planted fault: %-44s -> RED\n' "a HEAVY entry for a feature that is gone"
@@ -261,8 +261,8 @@ self_test() {
   sed "s|^GATE_LIGHT_FEATURES='\(.*\)'|GATE_LIGHT_FEATURES='\1,antseal-core/removed-feature'|" \
     "$repo/scripts/local-gate.sh" > "$gatecopy"
   out="$(GATE_LOCAL_GATE="$gatecopy" check_partition 2>&1)"
-  if [ $? -eq 0 ] || ! printf '%s' "$out" | grep -q 'GATE_LIGHT_FEATURES names' \
-     || ! printf '%s' "$out" | grep -q 'antseal-core/removed-feature'; then
+  if [ $? -eq 0 ] || ! grep -q 'GATE_LIGHT_FEATURES names' <<<"$out" \
+     || ! grep -q 'antseal-core/removed-feature' <<<"$out" ; then
     printf '::error:: a stale GATE_LIGHT_FEATURES entry did NOT turn the guard red:\n%s\n' "$out"; fail=1
   else
     printf '  planted fault: %-44s -> RED\n' "a stale entry on the gate line"
@@ -272,7 +272,7 @@ self_test() {
   #    careless edit): every light feature is then compiled by no tier.
   sed '/^GATE_LIGHT_FEATURES=/d' "$repo/scripts/local-gate.sh" > "$gatecopy"
   out="$(GATE_LOCAL_GATE="$gatecopy" check_partition 2>&1)"
-  if [ $? -eq 0 ] || ! printf '%s' "$out" | grep -q 'NO tier compiles'; then
+  if [ $? -eq 0 ] || ! grep -q 'NO tier compiles' <<<"$out" ; then
     printf '::error:: a MISSING GATE_LIGHT_FEATURES line did NOT turn the guard red:\n%s\n' "$out"; fail=1
   else
     printf '  planted fault: %-44s -> RED\n' "the gate line deleted outright"

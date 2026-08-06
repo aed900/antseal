@@ -92,7 +92,7 @@ for entry in "${GRAPHS[@]}"; do
       *)         needed_feature="wasm_js" ; needs_cfg=1 ;;
     esac
 
-    if printf '%s' "${features}" | grep -qw "${needed_feature}"; then
+    if grep -qw "${needed_feature}" <<<"${features}" ; then
       echo "  OK    ${pkg} (-e ${edges}) — getrandom ${version} has feature \`${needed_feature}\`"
     else
       echo "::error::${pkg} (-e ${edges}) pulls getrandom ${version} into the ${TARGET} graph WITHOUT the \`${needed_feature}\` feature."

@@ -102,15 +102,15 @@ EOF
     printf '::error:: the runner returned 0 for a binary with a failing test\n' >&2
     fail=1
   fi
-  if ! printf '%s' "$out" | grep -q 'planted::zzz_this_one_is_the_planted_fault'; then
+  if ! grep -q 'planted::zzz_this_one_is_the_planted_fault' <<<"$out" ; then
     printf '::error:: the runner did not NAME the failing test (R41 accept)\n' >&2
     fail=1
   fi
-  if printf '%s' "$out" | grep -q 'aaa_this_one_passes'; then
+  if grep -q 'aaa_this_one_passes' <<<"$out" ; then
     printf '::error:: the runner named a test that PASSED — the attribution is wrong\n' >&2
     fail=1
   fi
-  if ! printf '%s' "$out" | grep -q 'R41 planted fault'; then
+  if ! grep -q 'R41 planted fault' <<<"$out" ; then
     printf '::error:: the runner did not report the assertion message\n' >&2
     fail=1
   fi
@@ -118,7 +118,7 @@ EOF
   # data section. Seeing it means the post-mortem is scanning below
   # `__heap_base` and is reporting decoys alongside evidence — the failure
   # mode that would let it name the wrong test on a bigger binary.
-  if printf '%s' "$out" | grep -q 'panicked at :'; then
+  if grep -q 'panicked at :' <<<"$out" ; then
     printf '::error:: the runner reported a data-section decoy — the __heap_base filter is not applied\n' >&2
     fail=1
   fi

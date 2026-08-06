@@ -1378,3 +1378,15 @@ Exact line to add to Q65's Accept:
 - Deps: R67 (D94)
 - Do: five committed places asserted that one named test would go red when R12 landed. All five were wrong simultaneously, because nothing compares a prediction to the thing predicted. Sweep the tree for the pattern — *"this will fail when X lands"*, *"invert this at X"*, *"X replaces this stub"* — and for each either bind it to a mechanism that fires, or delete it. A prediction nothing checks is a claim that ages into a lie, which is this project's dominant defect class stated in the future tense.
 - Accept: every surviving prediction names the task that will falsify it and is reachable from that task's entry; the sweep is repeatable as a script or recorded as a one-off with its date.
+
+### Q111 — `printf | grep -q` under `pipefail` inverts its own verdict
+- Milestone: M2
+- Size: S
+- Deps: Q43 (every CI `run:` block calls a committed script)
+- Discovered by: **CI run 31086210534** (2026-08-06), where it reddened `core-dep-graph` on a self-test that had passed locally for days.
+- Problem: `scripts/*.sh` run under `set -uo pipefail`. In `printf '%s\n' "$var" | grep -q PATTERN`, `grep -q` exits the instant it matches and closes the read end; bash's `printf` builtin flushes through stdio in ~4–8 KiB chunks, so on a payload of more than a few KiB its next write gets `EPIPE`; `pipefail` then makes the **pipeline's** status the failing `printf`'s. The result is that the idiom reports **"no match" exactly when the match is found early** — the guard inverts. It is timing-dependent, which is why the P20 self-test was green on this host (38 KB payload, printf wins) and red on the runner. Demonstrated deterministically: with an 8.4 MB payload whose match is on **line 1**, the old form reports NO MATCH and the herestring form reports MATCH.
+- Do: 32 sites were converted to `grep -q PATTERN <<<"$var"` (a herestring is a temp file — no pipe, no EPIPE). Every `printf | grep -q` left in the tree is safe **only because its payload is a small literal**, which is a property a future edit can silently remove. Add a lint (a `ci-shell` rule, since that lane already parses these scripts) forbidding `printf … | grep -q` in any script that sets `pipefail`, with the herestring named as the fix.
+- Accept:
+  - The lint is red on a planted `printf '%s' "$var" | grep -q x` and green on the converted form; both directions executed.
+  - The lint's own payload-size blindness is stated: it forbids the shape rather than trying to judge whether a given payload is large enough to race, because that judgement is exactly what was wrong before.
+- Notes: this is the third CI defect this project has had, and like the other two it was in shell rather than in Rust. Unlike them it was in a *committed script*, so Q43's rule ("call a committed script, don't inline YAML") did not protect against it — worth recording, because Q43 is cited as though it closes this class.

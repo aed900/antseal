@@ -171,7 +171,7 @@ update)
   if [ "${status}" = "frozen" ]; then
     while IFS= read -r line; do
       [ -z "${line}" ] && continue
-      if ! printf '%s\n' "${new}" | grep -Fqx -- "${line}"; then
+      if ! grep -Fqx -- "${line}" <<<"${new}"; then
         path="${line#*  }"
         echo "::error::${manifest} is FROZEN: \`${path}\` would be modified or dropped."
         echo "::error::The wire registry IS format v1. After Q14 the only legal change is an"
