@@ -45,9 +45,12 @@ default_network = "arbitrum-sepolia"
 [networks.arbitrum-one]
 rpc_url = "https://my-own-node.example/rpc"
 
-# RFC 3161 TSA list override for the seal-time anchor stage.
-# Reserved slot: validated now, consumed when anchoring lands (M2).
-# Empty or absent = the built-in defaults (FreeTSA + DigiCert).
+# RFC 3161 TSA list override for the seal-time anchor stage. LIVE: `seal`
+# contacts exactly these authorities. A non-empty list REPLACES the
+# built-in defaults wholesale; empty or absent = the defaults (FreeTSA +
+# DigiCert). The >= 1-verified-token-or-abort gate applies to whatever this
+# list resolves to, so a list of unreachable endpoints aborts the seal
+# before any payment rather than sealing without a timestamp.
 [anchors]
 tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 
@@ -81,6 +84,12 @@ per-line error, never a misparse:
 
 URLs in `rpc_url`, `tsa_urls`, `bitcoin_endpoints`, and
 `arbitrum_endpoints` must start with `http://` or `https://`.
+
+`tsa_urls`, `bitcoin_endpoints` and `arbitrum_endpoints` are additionally
+parsed as real endpoints when the file is read, so a URL with no host
+(`http:///tsr`), an unusable scheme, or embedded credentials
+(`http://user:pw@host/`) is refused at load — naming the entry and the
+line — rather than surfacing as a failed anchor midway through a seal.
 
 `bitcoin_endpoints` and `arbitrum_endpoints` must additionally be
 **`https://`**, and the file is refused at load if one is not — naming the

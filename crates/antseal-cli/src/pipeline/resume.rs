@@ -44,13 +44,14 @@
 //! already-spent ANT is gone and asked to authorize the new spend. One
 //! re-payment attempt per invocation; declining leaves the work incomplete.
 
-use antseal_anchor::{AnchorGate, AnchorSubmissionOutcome};
+use antseal_anchor::AnchorGate;
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::manifest::{Manifest, anchor_digest, work_id};
 use antseal_net::{
     Address, Blob, BlobCost, CostQuote, PaymentReceipt, StorageBackend, StorageError,
 };
 
+use super::anchors::{AnchorSummary, artifacts_of};
 use super::consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
 use super::error::{Barrier, BarrierHook, SealError};
 use super::journal::{
@@ -74,6 +75,14 @@ pub struct SealOutcome {
     pub paid_atto: u128,
     /// Whether this invocation moved money.
     pub paid_here: bool,
+    /// What **this invocation's** anchor stage produced (U22).
+    ///
+    /// `None` covers three distinct situations that the report renders
+    /// differently and must not be collapsed here: `--no-anchor` (no stage),
+    /// a resume of a work that was already `Anchored` (the stage ran in an
+    /// earlier invocation and anchors are never re-submitted, D36 rule 6),
+    /// and a resume that only had to finalize.
+    pub anchors: Option<AnchorSummary>,
 }
 
 /// The seal pipeline over its injected interfaces (D34 Decision 2).
@@ -163,6 +172,7 @@ where
         let journaled_receipt = self.journal.receipt(seal_id)?;
         let mut paid_here = false;
         let mut paid_atto = 0_u128;
+        let mut anchors = None;
         if journaled_receipt.is_none() && !state.is_post_pay() {
             let anchor = if state == SealState::Staged {
                 let manifest = plan
@@ -175,9 +185,10 @@ where
             };
             let quote = self.backend.quote_batch(&blobs).await?;
             self.barriers.at(Barrier::PostQuote)?;
-            let receipt = self
+            let (receipt, staged_anchors) = self
                 .consent_anchor_pay(seal_id, &quote, anchor, identity.unanchored, false, None)
                 .await?;
+            anchors = staged_anchors;
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
         } else {
@@ -227,7 +238,7 @@ where
                         // else, so what the user authorizes is exactly what
                         // is about to be spent (D36's unconditional
                         // re-consent).
-                        let merged = self
+                        let (merged, _) = self
                             .consent_anchor_pay(
                                 seal_id,
                                 &quote,
@@ -265,7 +276,7 @@ where
                 self.barriers.at(Barrier::PostQuote)?;
                 // `prior: None` — see `consent_anchor_pay`: the expired
                 // records are what is being replaced, not extended.
-                let fresh = self
+                let (fresh, _) = self
                     .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true, None)
                     .await?;
                 paid_atto = paid_atto.saturating_add(fresh.storage_cost_atto);
@@ -282,6 +293,7 @@ where
             addresses,
             paid_atto,
             paid_here,
+            anchors,
         })
     }
 
@@ -329,20 +341,69 @@ where
         Ok(blobs)
     }
 
-    /// Run the pre-pay anchor step.
+    /// Run the pre-pay anchor step and persist what it produced (U22).
     ///
     /// In `--no-anchor` mode the gate is **not called at all** (S13): the
     /// skip is the pipeline's, so no injected gate — not even a real one —
-    /// can perform a submission for an unanchored work.
+    /// can perform a submission for an unanchored work. The early return is
+    /// what makes that structural: there is no path through this function on
+    /// which `unanchored` is true and `self.gate.run` is reached, so the
+    /// property holds for every gate the pipeline can be built with.
+    ///
+    /// **Do not test that property through the product**, and the reason is
+    /// measured: `SubmitAnchorGate::run` checks the same flag, so deleting
+    /// this early return leaves every command-level `--no-anchor` test green.
+    /// The row that isolates *this* layer is
+    /// `tests/seal_pipeline.rs::no_anchor_is_allowed_on_the_development_networks`,
+    /// which drives a **refusing** gate double — with this return deleted it
+    /// fails with `AnchorGate(PolicyNotMet)`.
+    ///
+    /// Everything after the gate call is bookkeeping about a submission that
+    /// has already happened, and all of it lands **before `pay`** — the
+    /// artifacts are durable before any money can move, which is what makes
+    /// a crash in the payment window recoverable rather than a seal whose
+    /// anchors exist only at the calendars.
     pub(super) async fn run_anchor_gate(
         &self,
+        seal_id: &SealId,
         unanchored: bool,
         digest: [u8; 32],
-    ) -> Result<AnchorSubmissionOutcome, SealError> {
+    ) -> Result<Option<AnchorSummary>, SealError> {
         if unanchored {
-            return Ok(AnchorSubmissionOutcome::Empty);
+            return Ok(None);
         }
-        Ok(self.gate.run(digest).await?)
+        let outcome = self.gate.run(digest).await?;
+        let Some(submission) = outcome.submission() else {
+            // A gate that submitted nothing and did not refuse: the
+            // `--no-anchor` gate driven on a development network. Nothing to
+            // persist and nothing to report.
+            return Ok(None);
+        };
+        for (slot, artifact) in artifacts_of(submission, self.now_for_artifacts()) {
+            self.journal
+                .put_anchor(seal_id, &slot, &artifact.encode()?)?;
+        }
+        let summary = AnchorSummary::from_submission(submission);
+        if summary.degraded {
+            // The `--force-degraded` flag already sets this at `begin`; this
+            // is the case the flag cannot know about — a stage that cleared
+            // the gate and still lost an endpoint. "Anchor failures always
+            // downgrade the seal report explicitly, never silently" (U22).
+            self.journal.mark_degraded(seal_id)?;
+        }
+        Ok(Some(summary))
+    }
+
+    /// The fetch date stamped on the **OTS** artifact record.
+    ///
+    /// TSA captures carry their own (A2 recorded it at the exchange), so this
+    /// is only the merged `.ots`'s. It is provenance that gates no outcome
+    /// anywhere (A32), which is why reading the host clock here is safe and
+    /// why no test needs to control it.
+    fn now_for_artifacts(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs())
     }
 
     /// The money path, in the only order it may ever run:
@@ -371,7 +432,7 @@ where
         unanchored: bool,
         proofs_expired: bool,
         prior: Option<PaymentReceipt>,
-    ) -> Result<PaymentReceipt, SealError> {
+    ) -> Result<(PaymentReceipt, Option<AnchorSummary>), SealError> {
         let request = ConsentRequest {
             seal_id: *seal_id,
             quote,
@@ -399,8 +460,9 @@ where
 
         // The anchor gate: consented, and strictly before `pay`. A refusal
         // here aborts with zero money spent.
+        let mut anchors = None;
         if let Some(digest) = anchor {
-            self.run_anchor_gate(unanchored, digest).await?;
+            anchors = self.run_anchor_gate(seal_id, unanchored, digest).await?;
             self.journal.set_state(seal_id, SealState::Anchored)?;
             self.barriers.at(Barrier::PostAnchor)?;
         }
@@ -440,7 +502,7 @@ where
             self.journal.set_state(seal_id, SealState::Paid)?;
         }
         self.barriers.at(Barrier::PostReceiptJournalPreFinalize)?;
-        Ok(receipt)
+        Ok((receipt, anchors))
     }
 
     /// Store every not-yet-stored blob under the recorded receipt. Issues

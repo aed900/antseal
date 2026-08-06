@@ -328,11 +328,13 @@ fn render_fixture() -> String {
             // rendered by the real producer rather than hand-copied
             // (U19's rule).
             "init" => antseal_cli::init::existing_vault_refusal(Path::new("/home/user/.antseal")),
-            // U13's handler is complete. Its registered exemplar is the
-            // M1 anchor-stage gate — the refusal a user who types plain
-            // `antseal seal notes.txt` today actually gets, and the one
-            // that disappears when U22 lands at M2.
-            "seal" => CliError::AnchorStageUnavailable,
+            // U13's handler is complete and U22 wired its anchor stage, so
+            // the M1 "anchoring arrives in M2" exemplar is gone. What a
+            // plain `antseal seal notes.txt` meets in a default-feature
+            // build is the same storage-backend seam `restore` reaches
+            // (U36's, shared) — rendered by the real producer rather than
+            // hand-copied, per U19's rule.
+            "seal" => antseal_cli::backend::unavailable("seal"),
             "status" => CliError::NotImplemented {
                 command: "status",
                 milestone: Milestone::M2,
@@ -425,6 +427,54 @@ fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
         blob_count: 4,
         resumed: false,
         unanchored: false,
+        // U22: the registered exemplar shows a **degraded** anchor stage —
+        // one TSA verified, one failed, both calendars pending. That is the
+        // shape a consumer has to branch on; an all-green stage would
+        // document the fields without documenting the per-endpoint failure
+        // arm, which is the only reason they are structured rather than a
+        // count. The two counts are deliberately different quantities and
+        // separately named (`verified_tsa_tokens` is A20's gate input;
+        // `distinct_calendar_routes` is D54 §3's upgrade-route liveness) —
+        // neither is a count of independent attesting parties (D92 §5.6).
+        anchors: Some(antseal_cli::pipeline::AnchorSummary {
+            endpoints: vec![
+                antseal_cli::pipeline::AnchorEndpointOutcome {
+                    stage: antseal_anchor::gate::AnchorStage::Ots,
+                    endpoint: "https://alice.example/calendar".to_owned(),
+                    failure_class: None,
+                    detail: None,
+                },
+                antseal_cli::pipeline::AnchorEndpointOutcome {
+                    stage: antseal_anchor::gate::AnchorStage::Ots,
+                    endpoint: "https://bob.example/calendar".to_owned(),
+                    failure_class: None,
+                    detail: None,
+                },
+                antseal_cli::pipeline::AnchorEndpointOutcome {
+                    stage: antseal_anchor::gate::AnchorStage::Tsa,
+                    endpoint: "https://tsa-one.example/tsr".to_owned(),
+                    failure_class: None,
+                    detail: None,
+                },
+                antseal_cli::pipeline::AnchorEndpointOutcome {
+                    stage: antseal_anchor::gate::AnchorStage::Tsa,
+                    endpoint: "http://tsa-two.example".to_owned(),
+                    failure_class: Some("http"),
+                    detail: Some("http://tsa-two.example: HTTP 503 (26 bytes of body)".to_owned()),
+                },
+            ],
+            verified_tsa_tokens: 1,
+            distinct_calendar_routes: 2,
+            degraded: true,
+            degradation: vec![
+                "tsa http://tsa-two.example [http] http://tsa-two.example: HTTP 503 \
+                 (26 bytes of body) (12 ms)"
+                    .to_owned(),
+                "tsa: 1 verified token(s) from 1 distinct TSA(s); ots: 2 distinct calendar(s)"
+                    .to_owned(),
+            ],
+        }),
+        degraded: true,
         network: "arbitrum-one".to_owned(),
         // U18: the registered exemplar shows the nag ON, because that is
         // the shape a consumer has to notice — a first seal in a vault

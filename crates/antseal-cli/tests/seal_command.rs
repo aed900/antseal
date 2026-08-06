@@ -77,6 +77,11 @@ fn ctx(machine_mode: bool) -> SealContext {
         to_stderr: true,
         now_unix_secs: 1_800_000_000,
         app_version: "antseal-test/1".to_owned(),
+        // Every case in this suite is `--no-anchor`, so the stage is skipped
+        // by the pipeline and these endpoints are never read. They are empty
+        // rather than defaulted so that a future case which drops the flag
+        // aborts offline instead of contacting a live TSA (common's docs).
+        anchors: common::offline_anchor_stage(),
     }
 }
 
@@ -1407,16 +1412,28 @@ fn the_binary_refuses_bad_plans_without_a_vault_a_network_or_a_passphrase() {
         String::from_utf8_lossy(&out.stderr).contains("--no-anchor cannot be used on arbitrum-one")
     );
 
-    // The M1 anchor-stage gate: a plain seal says what is missing, and
-    // does not claim `seal` is unimplemented.
+    // **U22, from the binary.** A plain anchored seal no longer meets a
+    // milestone refusal at all: plan validation passes it through, and the
+    // next thing it meets is the storage-backend seam this default-feature
+    // build has no adapter for (exit 23). The two negative assertions are
+    // the point — the M1 sentence is gone, and nothing has replaced it with
+    // a differently-worded claim that anchoring is unavailable.
     let out = run(&["seal", "a.txt", "--network", "devnet"]);
-    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(
+        out.status.code(),
+        Some(23),
+        "a plain anchored seal must reach the backend seam, not a milestone gate"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("anchoring arrives in M2"), "{stderr}");
+    assert!(
+        !stderr.contains("anchoring arrives in M2"),
+        "the M1 anchor-stage refusal survived U22: {stderr}"
+    );
     assert!(
         !stderr.contains("`antseal seal` is not implemented"),
-        "seal IS implemented; only the anchor stage is missing: {stderr}"
+        "seal IS implemented: {stderr}"
     );
+    assert!(stderr.contains("ant-backend"), "{stderr}");
 
     // `--json`: exactly one envelope on stdout, same exit code.
     let out = run(&[

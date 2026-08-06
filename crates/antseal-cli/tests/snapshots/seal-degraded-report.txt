@@ -1,0 +1,7 @@
+  Anchors:
+    tsa http://127.0.0.1:<port> — FAILED [http] http://127.0.0.1:<port>: HTTP 503 (39 body byte(s))
+    0 of 1 TSA endpoint(s) returned a verified timestamp token; 0 calendar route(s) accepted a pending attestation to upgrade later.
+  WARNING: --force-degraded: this seal proceeded with ZERO verified timestamp tokens. It records that the holder of this key possessed this content, and that the content is intact — it does not establish a time attested by any independent party. The payment receipt is supporting evidence only.
+  DEGRADED ANCHOR SET — recorded on this work:
+    tsa http://127.0.0.1:<port> [http] http://127.0.0.1:<port>: HTTP 503 (39 body byte(s)) (<elapsed> ms)
+    tsa: 0 verified token(s) from 0 distinct TSA(s); ots: 0 distinct calendar(s)

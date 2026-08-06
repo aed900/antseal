@@ -805,6 +805,38 @@ pub trait SealJournal {
     /// [`JournalError::WorkNotFound`] / store-level failures.
     fn recorded_identity(&self, seal_id: &SealId) -> Result<RecordedIdentity, JournalError>;
 
+    /// Persist one anchor artifact into U9's `anchors/<slot>` area (U22).
+    ///
+    /// Called from inside the pre-pay anchor step, **before** the work
+    /// advances to [`SealState::Anchored`]: the artifacts are what that tag
+    /// asserts exist, so writing them afterwards would leave a window where
+    /// the state claims evidence the vault does not hold. A crash between
+    /// the two leaves a `Staged` work whose slots are already filled, and
+    /// resume re-runs the gate and overwrites them — which is correct,
+    /// because nothing downstream has read them yet.
+    ///
+    /// Slot names come from [`super::anchors`], never from user input.
+    ///
+    /// # Errors
+    ///
+    /// [`JournalError::WorkNotFound`], encoding failures, or a store-level
+    /// failure (including an invalid slot name — a caller bug).
+    fn put_anchor(&self, seal_id: &SealId, slot: &str, bytes: &[u8]) -> Result<(), JournalError>;
+
+    /// Record that this work's anchor set is degraded (U22).
+    ///
+    /// Write-once-true and never cleared: the flag is what `list` and the
+    /// record render, and a seal whose anchor stage degraded stays degraded
+    /// however many times it is resumed. The `--force-degraded` flag sets it
+    /// at [`begin`](SealJournal::begin); this is the path for the case the
+    /// flag cannot know about — a stage that *proceeded* (≥1 verified token)
+    /// but lost an endpoint or a calendar on the way.
+    ///
+    /// # Errors
+    ///
+    /// [`JournalError::WorkNotFound`] / store-level failures.
+    fn mark_degraded(&self, seal_id: &SealId) -> Result<(), JournalError>;
+
     /// Record the seal's outcome fields once known: `work_id` (spec line
     /// 75) and the total storage cost actually paid.
     ///

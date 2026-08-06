@@ -643,3 +643,51 @@
   - `vault export` → `import` round-trips the field (D47 payload; no export format-version change — the nonce rides inside the anchor record the export already carries).
   - `--json` fixture for `status` includes the nonce; the possession-language/copy audit (U31) confirms no wording implies the nonce check is part of the proof.
 - Notes: D59 Evidence 5 establishes the marginal disclosure of persisting this is **zero** — `anchor_digest`, the endpoint URL and the fetch date already in the same record dominate it, and in the ordinary case the value is already inside the shipped token. No D47 amendment is required.
+
+### U47 — A shared reader for the U9 anchor slots
+- Milestone: M2
+- Size: S
+- Deps: U22 (which writes them)
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: `pipeline/anchors.rs` writes `AnchorArtifact` records into the U9 slots and **nothing reads them back except a test**. U23 (`status`) and U28 (`reveal`) both need the decode path; without a shared reader each will grow its own, and two decoders of one versioned record is how they drift.
+- Accept: one reader, used by every consumer; a record written by the seal path round-trips through it; an unknown version is refused by name, not skipped.
+
+### U48 — The OTS artifact's fetch date cannot be pinned, so no golden vector is possible
+- Milestone: M2
+- Size: S
+- Deps: U22, A13
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: the OTS slot record's `fetch_date` comes from `SystemTime::now()` inside the pipeline; `with_fetch_date` reaches TSA captures only. A record whose bytes change every run cannot be a golden vector, which A22 will want. Thread the stage's pinned date through, or record A2's per-calendar `submitted_date` instead.
+- Accept: two runs over identical inputs with a pinned date produce byte-identical OTS slot records; the pinning is asserted, not merely available.
+
+### U49 — A re-run gate leaves slots from two different submissions
+- Milestone: M2
+- Size: S
+- Deps: U22, D45 (resume)
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: a resume killed at `Staged` re-runs the anchor gate and writes `tsa-<n>` **by index without clearing the area**. If attempt 1 verified two TSAs and attempt 2 verified one, `tsa-1` survives from the abandoned attempt beside an overwritten `tsa-0` — the slot set is then a mixture of two submissions, and nothing says so. Clear the area before re-submitting, or key slots by endpoint rather than by index.
+- Accept: the kill-then-resume matrix covers a **narrowing** second attempt (2 tokens → 1) and asserts the resulting slot set contains no artifact from the abandoned attempt; the fault is planted by restoring index-overwrite and proven red.
+
+### U50 — `seal --json`'s anchors object has no stated contract
+- Milestone: M2
+- Size: S
+- Deps: U22; consumed by D65
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: the `anchors` object is documented by exactly one committed example. A consumer branching on `failure_class: null` versus a string has nothing to rely on. Give it a shape assertion or a documented schema, and decide whether it falls under D65's stability commitment.
+- Accept: every field's presence rule is asserted by a fixture, including the null/absent distinction; the decision on D65 scope is recorded either way.
+
+### U51 — The seal summary prints the seal-side TSA count A72 says over-counts
+- Milestone: M2
+- Size: XS
+- Deps: U22, A72
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: the summary renders A20's `degradation_report()` verbatim — deliberately, rather than inventing second wording — and that report prints `distinct_tsas`, the seal-side identity count A72 records as over-counting a key-rotating TSA against the verify-side notion. When A72 resolves, re-read this copy.
+- Accept: after A72, the rendered number and the verify-side number agree for a rotated-key fixture, or the wording says which one it is.
+
+### U52 — `ots_calendars` will be silently ignored unless wired with U44
+- Milestone: M2
+- Size: XS
+- Deps: U22, U44
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: `AnchorStageConfig::from_config` passes `None` for calendars. When U44 lands the `[anchors] ots_calendars` key, a user setting it will be silently ignored unless that second argument is wired in the same change. A config key that parses and does nothing is worse than one that does not exist.
+- Accept: a configured calendar list reaches the stage, asserted on the stub's request counters the way U26's TSA list is; the empty/absent case still yields D54's defaults.

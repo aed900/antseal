@@ -160,11 +160,11 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 milestone: Milestone::M2,
             },
         ),
-        // U13's M1 gate: the anchor STAGE is what is missing, not the
-        // command — same class and code as a stub, deliberately
-        // different words (a user told `seal` is unimplemented goes
-        // looking for a milestone that already arrived).
-        ("anchor-stage-unavailable", CliError::AnchorStageUnavailable),
+        // `anchor-stage-unavailable` stood here from U13 to U22: the M1
+        // refusal of every anchored seal. U22 wired the real stage, so the
+        // variant and its row are gone — the anchored-seal refusal a user
+        // can still meet is `anchor-gate-abort` below (code 22), which is
+        // the gate's, not plan validation's.
         (
             "not-implemented-m3",
             CliError::NotImplemented {

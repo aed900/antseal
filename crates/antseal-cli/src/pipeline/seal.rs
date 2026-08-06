@@ -388,7 +388,7 @@ where
 
         // ── consent → anchor gate → pay → journal → finalize ──
         let digest = anchor_digest(&manifest_bytes).into_bytes();
-        let receipt = self
+        let (receipt, anchors) = self
             .consent_anchor_pay(
                 &seal_id,
                 &quote,
@@ -411,6 +411,7 @@ where
             addresses,
             paid_atto: receipt.storage_cost_atto,
             paid_here: true,
+            anchors,
         }))
     }
 }

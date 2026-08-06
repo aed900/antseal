@@ -1022,3 +1022,36 @@
 ~~**A51**, **Q79** — no work found that needed them.~~ — **CORRECTED 2026-08-06 (orchestrator):** both were subsequently used and are live open rows in `TODO.md` — A51 is the `std::thread::scope` fan-out entry above, minted by the A3 lane, and Q79 is the scheduled-lane read. The note was true when written and was never retracted when the IDs were taken up.
 
 > **Renumbered from A50, 2026-08-02 (orchestrator).** A50 and A51 were issued to two lanes by an allocation error of mine; the gamma lane merged first, so it keeps them and this later arrival is renumbered. IDs are permanent and cross-referenced — the protocol is to renumber the later arrival, never to reuse a number.
+
+### A94 — A TSA-only configuration marks every seal degraded
+- Milestone: M2
+- Size: S
+- Deps: A20, U22
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: `AnchorSubmission::is_degraded()` is true whenever `ots.outcome() != Complete`. A deliberate TSA-only configuration (zero calendars) therefore marks **every** seal degraded, with no way to express "no OTS wanted". Degradation is meant to be loud precisely so it is meaningful; a permanently-on warning trains the reader to ignore it. Decide whether zero configured calendars is a degradation or a configuration, and implement the answer.
+- Accept: a TSA-only configuration produces an undegraded seal, or the report says explicitly that OTS was not requested; the D54 default path is unchanged and asserted.
+
+### A95 — The gate duplicates the pipeline's `--no-anchor` skip, hiding the pipeline's own layer
+- Milestone: M2
+- Size: S
+- Deps: A20, U22
+- Discovered by: **the U22 lane** (2026-08-06), by measurement — deleting the pipeline's early return left the command-level row green.
+- Do: S13 makes the `--no-anchor` skip the **pipeline's**, so that no injected gate — not even a real one — can submit for an unanchored work. `SubmitAnchorGate::run` checks the same flag again, which is harmless in production and corrosive in testing: with two independent guards, no product-level test can falsify either one alone. Consider making the gate's copy an **error**: a caller that reaches the gate with the flag set has a bug, and saying so makes both layers independently falsifiable.
+- Accept: deleting either guard reddens at least one test that the other guard cannot rescue; the S13 property is still asserted at the pipeline layer.
+- Notes: the isolating row today is `seal_pipeline.rs`'s refusing-gate double, which does redden. The point is that the *product* path cannot see it.
+
+### A96 — `is_degraded()` is decided by whether a string came out non-empty
+- Milestone: M2
+- Size: S
+- Deps: A20
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: `is_degraded()` is defined as `!degradation_report().is_empty() || …`, so the predicate depends on **string production**. A rewording that emitted no line for some failure class would silently turn a degraded seal clean — a rendering change altering a verdict, which is the coupling direction this project forbids everywhere else. Compute the predicate from the typed attempts and derive the report from it.
+- Accept: a failure class that renders no text still reports degraded — planted and proven red against the current implementation.
+
+### A97 — The minimum-anchor abort does not say the work is resumable
+- Milestone: M2
+- Size: XS
+- Deps: A20, U22, D45
+- Discovered by: **the U22 lane** (2026-08-06).
+- Do: `AnchorGateError::MinimumAnchor` says *"Re-run when an endpoint recovers, or pass `--force-degraded`"* and never says the work is left `Staged` and that a re-run **auto-resumes** it rather than starting a second seal. A user who does not know that has no way to tell whether re-running is safe.
+- Accept: the message names the resume behaviour; the claim is asserted against D45's actual resume path, not just spell-checked. Cross-domain — A owns the words, U owns resume.

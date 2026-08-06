@@ -58,6 +58,30 @@ pub fn passphrase() -> SecretBuf {
     SecretBuf::new(FIXTURE_PASSPHRASE.to_vec())
 }
 
+/// The anchor stage every non-anchor suite runs with: **no endpoints at
+/// all** (U22, Q16).
+///
+/// `SealContext` has no `Default` for exactly this reason — the built-in
+/// list is `freetsa.org` and `timestamp.digicert.com`, so a defaulted field
+/// would have every `run_seal` test in the tree POST to a live TSA the first
+/// time someone wrote a case without `--no-anchor`. With empty lists that
+/// mistake is a *loud offline abort* (`MinimumAnchor { attempted: 0 }`)
+/// instead of a silent network call, and `tests/anchor_stage.rs` scans this
+/// tree for any source that names a real endpoint.
+///
+/// A suite that genuinely needs a submission builds its own config over a
+/// `127.0.0.1:0` stub — see `tests/anchor_stage.rs`.
+pub fn offline_anchor_stage() -> antseal_cli::seal_run::AnchorStageConfig {
+    antseal_cli::seal_run::AnchorStageConfig {
+        endpoints: antseal_anchor::submit::AnchorEndpoints {
+            tsa_urls: Vec::new(),
+            ots_calendars: Vec::new(),
+        },
+        roots: *antseal_core::anchor::roots::TsaRootStore::pinned(),
+        fetch_date: Some(1_800_000_000),
+    }
+}
+
 pub fn rng() -> ChaCha20Rng {
     ChaCha20Rng::from_seed(TEST_RNG_SEED)
 }

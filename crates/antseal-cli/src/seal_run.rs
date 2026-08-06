@@ -55,19 +55,24 @@
 //! render, never two prompts" true by construction: there is only one
 //! [`ConsentHook`](crate::pipeline::ConsentHook) in the process.
 
+use antseal_anchor::gate::AnchorStage;
+use antseal_anchor::http::{HttpClient, HttpPolicy};
+use antseal_anchor::submit::{AnchorEndpoints, NetworkClass, SealGateFlags, SubmitAnchorGate};
+use antseal_core::anchor::roots::TsaRootStore;
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::crypto::sig_policy::SigPolicy;
-use antseal_net::StorageBackend;
+use antseal_net::{NetworkId, StorageBackend};
 use rand_core::TryCryptoRng;
 
 use crate::error::CliError;
-use crate::pipeline::{NoBarriers, Pipeline, SealFile, SealRequest, SealResult};
+use crate::pipeline::{
+    AnchorSummary, NoBarriers, Pipeline, SealFile, SealJournal, SealRequest, SealResult,
+};
 use crate::seal_consent::{ConsentPrompt, ConsentReport, SealConsent};
 use crate::seal_plan::SealPlan;
 use crate::seal_resume::{ResumeDecision, detect, resume_plan_lines};
 use crate::seal_session::SealSession;
 use crate::vault::store::WorkStore;
-use antseal_anchor::NoAnchorGate;
 
 /// What a completed `seal` produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +92,14 @@ pub struct SealReport {
     pub resumed: bool,
     /// Sealed without anchors (dev-only `--no-anchor`).
     pub unanchored: bool,
+    /// What this invocation's anchor stage produced (U22). `None` under
+    /// `--no-anchor`, and on a resume whose anchors were made earlier.
+    pub anchors: Option<AnchorSummary>,
+    /// The work's recorded anchor set is degraded — either
+    /// `--force-degraded` was given, or the stage lost an endpoint. Read
+    /// back from the record rather than recomputed, so the seal report and
+    /// `list` cannot disagree about one work.
+    pub degraded: bool,
     /// The effective network's canonical spelling.
     pub network: String,
     /// U18: this vault has never recorded a `vault export`, so the keys to
@@ -125,8 +138,79 @@ impl SealReport {
                     .to_owned(),
             );
         }
+        out.extend(self.anchor_lines());
         if self.export_nag {
             out.extend(crate::vault::bookkeeping::export_nag());
+        }
+        out
+    }
+
+    /// The anchor block: **one line per endpoint contacted**, named, with
+    /// its outcome (U22's "seal summary output names each anchor's
+    /// outcome"), then the counts, then whatever must be said loudly.
+    ///
+    /// # Why two different counts, labelled differently
+    ///
+    /// "Verified token(s)" counts **TSA endpoints that returned a token this
+    /// process verified to a pinned root** — the quantity A20's gate compares
+    /// against its threshold, and the only one that licenses a claim about
+    /// proven time. "Calendar route(s)" counts distinct pending-attestation
+    /// URIs, which is D54 §3's **liveness** metric: how many independent
+    /// routes exist to upgrade this seal to Bitcoin later. They are different
+    /// quantities and neither is a count of independent attesting parties
+    /// (Q89 / D92 §5.6), so no line here adds them up or calls either one
+    /// "independent".
+    fn anchor_lines(&self) -> Vec<String> {
+        let Some(anchors) = &self.anchors else {
+            return Vec::new();
+        };
+        let mut out = vec!["  Anchors:".to_owned()];
+        for endpoint in &anchors.endpoints {
+            out.push(match (&endpoint.failure_class, &endpoint.detail) {
+                (Some(class), Some(detail)) => format!(
+                    "    {} {} — FAILED [{class}] {detail}",
+                    endpoint.stage.label(),
+                    endpoint.endpoint
+                ),
+                _ => format!(
+                    "    {} {} — {}",
+                    endpoint.stage.label(),
+                    endpoint.endpoint,
+                    // Exhaustive: a third anchor family must be described
+                    // deliberately, not inherit the TSA wording from a `_`.
+                    match endpoint.stage {
+                        AnchorStage::Ots => "pending attestation accepted",
+                        AnchorStage::Tsa => "verified timestamp token",
+                    }
+                ),
+            });
+        }
+        let tsa_attempted = anchors
+            .endpoints
+            .iter()
+            .filter(|e| e.stage == AnchorStage::Tsa)
+            .count();
+        out.push(format!(
+            "    {} of {tsa_attempted} TSA endpoint(s) returned a verified timestamp token; \
+             {} calendar route(s) accepted a pending attestation to upgrade later.",
+            anchors.verified_tsa_tokens, anchors.distinct_calendar_routes
+        ));
+        if anchors.verified_tsa_tokens == 0 {
+            // The `--force-degraded` proceed. Nothing else in this report can
+            // say it: the seal succeeded, the work id printed, and the one
+            // thing the user must not walk away believing is that a time was
+            // attested.
+            out.push(
+                "  WARNING: --force-degraded: this seal proceeded with ZERO verified timestamp \
+                 tokens. It records that the holder of this key possessed this content, and \
+                 that the content is intact — it does not establish a time attested by any \
+                 independent party. The payment receipt is supporting evidence only."
+                    .to_owned(),
+            );
+        }
+        if anchors.degraded {
+            out.push("  DEGRADED ANCHOR SET — recorded on this work:".to_owned());
+            out.extend(anchors.degradation.iter().map(|line| format!("    {line}")));
         }
         out
     }
@@ -143,6 +227,22 @@ impl SealReport {
             "blob_count": self.blob_count,
             "resumed": self.resumed,
             "unanchored": self.unanchored,
+            // U22: the anchor stage, machine-readable. `null` when no stage
+            // ran in this invocation — distinct from a stage that ran and
+            // produced nothing, which is an object with zero verified tokens.
+            "anchors": self.anchors.as_ref().map(|anchors| serde_json::json!({
+                "endpoints": anchors.endpoints.iter().map(|e| serde_json::json!({
+                    "stage": e.stage.label(),
+                    "endpoint": e.endpoint,
+                    "ok": e.succeeded(),
+                    "failure_class": e.failure_class,
+                    "detail": e.detail,
+                })).collect::<Vec<_>>(),
+                "verified_tsa_tokens": anchors.verified_tsa_tokens,
+                "distinct_calendar_routes": anchors.distinct_calendar_routes,
+                "degradation": anchors.degradation,
+            })),
+            "degraded": self.degraded,
             "network": self.network,
             // U18 Accept row 1: the nag reaches machine consumers too — a
             // scripted seal that never sees stderr must still be able to
@@ -306,7 +406,35 @@ where
     // sink and there is no builder step here that could be omitted. The
     // `store` above is the read side (D45's scan); this is the write side.
     let journal = session.journal(journal_rng);
-    let pipeline = Pipeline::new(backend, &NoAnchorGate, &journal, &consent, &NoBarriers);
+
+    // ── U22: the real pre-pay anchor gate ──
+    //
+    // Before U22 this was `&NoAnchorGate` — the M1 skip gate — while
+    // `seal_plan` refused every anchored seal outright, so A20's gate was
+    // built, tested, and reachable by nothing a user runs. Injecting the
+    // real one here is the whole of U22's wiring; everything downstream
+    // (the skip, the ordering, the abort-before-`pay`) already existed.
+    //
+    // `--no-anchor` reaches this line too, and deliberately: the pipeline is
+    // what skips the gate (`run_anchor_gate` returns before touching it), so
+    // the gate a caller holds cannot decide whether an unanchored work gets
+    // a submission. Handing it the real gate rather than `NoAnchorGate` also
+    // keeps the mainnet refusal's innermost layer live on that path.
+    let client = HttpClient::new(HttpPolicy::seal());
+    let mut gate = SubmitAnchorGate::new(
+        &client,
+        &ctx.anchors.endpoints,
+        &ctx.anchors.roots,
+        SealGateFlags {
+            no_anchor: plan.shaping.no_anchor,
+            force_degraded: plan.shaping.force_degraded,
+        },
+        network_class(plan.network),
+    );
+    if let Some(fetch_date) = ctx.anchors.fetch_date {
+        gate = gate.with_fetch_date(fetch_date);
+    }
+    let pipeline = Pipeline::new(backend, &gate, &journal, &consent, &NoBarriers);
 
     let (result, resumed) = match decision {
         ResumeDecision::Resume(candidate) => {
@@ -357,6 +485,12 @@ where
             blob_count: outcome.addresses.len(),
             resumed,
             unanchored: plan.shaping.no_anchor,
+            // Read from the record, not from `--force-degraded`: the flag
+            // says what the user allowed, the record says what the stage
+            // actually produced, and the second is what `list` will show.
+            // Reading it back is what makes the two agree by construction.
+            degraded: journal.recorded_identity(&outcome.seal_id)?.degraded,
+            anchors: outcome.anchors,
             network: plan.network.as_str().to_owned(),
             // U18: read after the seal, and read rather than assumed — a
             // vault restored from a backup carries its export record, so
@@ -388,6 +522,49 @@ where
     }
 }
 
+/// Where this invocation's anchor stage will submit, and which roots it
+/// will trust (U22 wires it; U26 fills the TSA half from config).
+///
+/// Injected rather than reached for, and **it has no `Default`** — every
+/// caller must state its endpoints. That is not ceremony: the built-in
+/// defaults are `freetsa.org` and `timestamp.digicert.com`, so a
+/// forget-to-set-it default would make every test that omitted the flag
+/// POST to a live TSA. The suites build this from a `127.0.0.1:0` stub
+/// (`tests/anchor_stage.rs` also scans the test tree for any source that
+/// names a real endpoint), and the production value comes from
+/// [`AnchorStageConfig::from_config`].
+#[derive(Debug, Clone)]
+pub struct AnchorStageConfig {
+    /// The TSA and calendar endpoint lists, already collapsed through
+    /// `antseal_anchor`'s config/default rule.
+    pub endpoints: AnchorEndpoints,
+    /// The TSA trust roots. [`TsaRootStore::pinned`] in production; A24's
+    /// injected store in the suites (A6's Accept).
+    pub roots: TsaRootStore,
+    /// Pin the `fetch_date` recorded on every capture instead of reading
+    /// the host clock. Safe to expose because `fetch_date` gates no outcome
+    /// anywhere (A32) — which is also why a deterministic test needs it.
+    pub fetch_date: Option<u64>,
+}
+
+impl AnchorStageConfig {
+    /// The production stage: U26's effective TSA list (config override, or
+    /// the built-in defaults when the key is absent **or empty**), the
+    /// built-in calendar list, and the pinned root store.
+    #[must_use]
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            // One collapse rule, `antseal_anchor`'s, for both families —
+            // deduplication and the empty-means-defaults decision included.
+            // A second answer here is how the config's semantics and the
+            // stage's would drift.
+            endpoints: AnchorEndpoints::from_config(config.tsa_urls.as_deref(), None),
+            roots: *TsaRootStore::pinned(),
+            fetch_date: None,
+        }
+    }
+}
+
 /// Per-invocation context the orchestration needs but does not decide.
 #[derive(Debug, Clone)]
 pub struct SealContext {
@@ -402,6 +579,8 @@ pub struct SealContext {
     pub now_unix_secs: u64,
     /// The `app_version` string the manifest records.
     pub app_version: String,
+    /// The anchor stage's endpoints and roots (U22/U26).
+    pub anchors: AnchorStageConfig,
 }
 
 impl SealContext {
@@ -411,6 +590,21 @@ impl SealContext {
         } else {
             println!("{line}");
         }
+    }
+}
+
+/// The one bit the anchor gate needs about the network: is this a
+/// permanent, paid seal?
+///
+/// `antseal-anchor` deliberately does not learn `arbitrum-one` from
+/// `arbitrum-sepolia` (its module docs say so), so the mapping lives here —
+/// on the side that owns network identity — and nowhere else. The `_`-free
+/// match is the point: a fourth network cannot be added without an author
+/// deciding which side of this line it falls on.
+const fn network_class(network: NetworkId) -> NetworkClass {
+    match network {
+        NetworkId::ArbitrumOne => NetworkClass::Permanent,
+        NetworkId::ArbitrumSepolia | NetworkId::Devnet => NetworkClass::Development,
     }
 }
 

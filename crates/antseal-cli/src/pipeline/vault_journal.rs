@@ -294,6 +294,16 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
         })
     }
 
+    fn put_anchor(&self, seal_id: &SealId, slot: &str, bytes: &[u8]) -> Result<(), JournalError> {
+        let mut rng = self.rng.borrow_mut();
+        self.store.put_anchor(seal_id, slot, bytes, &mut **rng)?;
+        Ok(())
+    }
+
+    fn mark_degraded(&self, seal_id: &SealId) -> Result<(), JournalError> {
+        self.update_meta(seal_id, |record| record.degraded = true)
+    }
+
     fn record_outcome(
         &self,
         seal_id: &SealId,

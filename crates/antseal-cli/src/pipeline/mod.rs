@@ -22,6 +22,7 @@
 //! `dyn` (both upstream traits are `async fn` traits and therefore not
 //! dyn-compatible — a deliberate trade recorded on each).
 
+pub mod anchors;
 pub mod consent;
 pub mod error;
 pub mod journal;
@@ -31,6 +32,10 @@ pub mod resume;
 pub mod seal;
 pub mod vault_journal;
 
+pub use anchors::{
+    AnchorArtifact, AnchorEndpointOutcome, AnchorSummary, ArtifactKind, OTS_SLOT, artifacts_of,
+    tsa_slot,
+};
 pub use consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
 pub use error::{Barrier, BarrierHook, NoBarriers, SealError};
 pub use journal::{

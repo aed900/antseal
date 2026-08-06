@@ -144,29 +144,29 @@ pub(crate) fn init(globals: &GlobalArgs, args: &crate::cli::InitArgs) -> Result<
 /// the shared rule is "the cheapest thing that can say no goes first",
 /// not "the seam goes first".)
 pub(crate) fn seal(globals: &GlobalArgs, args: &crate::cli::SealArgs) -> Result<Outcome, CliError> {
-    let network = effective_network(globals)?;
+    // Loaded ONCE here and used for both answers it holds: the effective
+    // network, and U26's TSA-list override for the anchor stage. Loading it
+    // twice would be two chances for one invocation to run on two configs.
+    // A malformed file has already hard-failed before dispatch, and this is
+    // still ahead of plan validation — so U26's "a malformed TSA URL is a
+    // config error before any pipeline work" holds twice over.
+    let config = crate::config::load()?;
+    let network = crate::config::effective_network(globals.network, &config);
     let cwd = std::env::current_dir().map_err(|source| CliError::Io {
         context: "resolving the current directory to absolutize the seal arguments".to_owned(),
         source,
     })?;
     let plan = crate::seal_plan::build_plan(args, network, &cwd)?;
-    seal_over_backend(globals, &plan)
+    seal_over_backend(globals, &plan, &config)
 }
 
-/// The network the invocation actually runs on: flag > config > built-in
-/// default (U4's precedence).
-///
-/// `config::load()` runs a second time here — `main_entry` already loaded
-/// it to fill the U3 envelope's `network` field but does not pass the
-/// resolution down, and a handler that guessed instead would be a second
-/// answer to a question U4 settled. A malformed config has already hard-
-/// failed before dispatch, so the reload can only agree.
-fn effective_network(globals: &GlobalArgs) -> Result<antseal_net::NetworkId, CliError> {
-    Ok(crate::config::effective_network(
-        globals.network,
-        &crate::config::load()?,
-    ))
-}
+// `effective_network(globals)` used to sit here, loading the config a
+// second time to answer one question. U26 needs a second answer out of the
+// same file (the TSA-list override), so `seal` now loads it once and reads
+// both — which is also the stronger property: one invocation cannot run
+// with its network resolved from one read of the file and its endpoints
+// from another. `main_entry`'s own load, for the U3 envelope's `network`
+// field, is unchanged; a malformed config hard-fails there, before dispatch.
 
 /// The storage-backend half of `seal`, reached only after the whole plan
 /// has been validated.
@@ -174,6 +174,7 @@ fn effective_network(globals: &GlobalArgs) -> Result<antseal_net::NetworkId, Cli
 fn seal_over_backend(
     _globals: &GlobalArgs,
     _plan: &crate::seal_plan::SealPlan,
+    _config: &crate::config::Config,
 ) -> Result<Outcome, CliError> {
     Err(crate::backend::unavailable("seal"))
 }
@@ -189,6 +190,7 @@ fn seal_over_backend(
 fn seal_over_backend(
     globals: &GlobalArgs,
     plan: &crate::seal_plan::SealPlan,
+    config: &crate::config::Config,
 ) -> Result<Outcome, CliError> {
     use std::sync::Arc;
 
@@ -196,7 +198,7 @@ fn seal_over_backend(
 
     use crate::backend::{ReceiptSink, SealBackend, runtime, wallet_key};
     use crate::seal_consent::TtyConsentPrompt;
-    use crate::seal_run::{SealContext, run_seal};
+    use crate::seal_run::{AnchorStageConfig, SealContext, run_seal};
     use crate::seal_session::SealSession;
     use crate::vault::wallet::load_wallet_key;
 
@@ -239,6 +241,10 @@ fn seal_over_backend(
         to_stderr: globals.json,
         now_unix_secs: now_unix_secs(),
         app_version: format!("antseal/{}", env!("CARGO_PKG_VERSION")),
+        // U22/U26. This is the ONLY production construction of the anchor
+        // stage's endpoint set, and it is the only one that may name the
+        // built-in defaults.
+        anchors: AnchorStageConfig::from_config(config),
     };
     let rt = runtime()?;
     let result = rt.block_on(async {

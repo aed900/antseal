@@ -15,7 +15,7 @@
 //! | 0    | success | |
 //! | 1    | `internal` | unexpected failure (bug class) |
 //! | 2    | `usage` | argv/parse/cross-validation errors (clap's own convention, kept) |
-//! | 3    | `not-implemented` | U1 frozen-surface stubs; message names the arriving milestone. Also U13's M1 anchor-stage gate (`AnchorStageUnavailable`) — a seal without `--no-anchor` before U22 lands |
+//! | 3    | `not-implemented` | U1 frozen-surface stubs; message names the arriving milestone. (U13's M1 anchor-stage gate also mapped here until U22 wired the real stage and deleted it) |
 //! | 4    | `io-error` | ordinary filesystem I/O failure (D46 row 4's "ordinary I/O class") |
 //! | 10   | `consent-not-obtained` | D51: declined ≡ unobtainable, one class; also machine-mode / declined `vault import` overwrite (D51 prompt-class table, "destructive confirm" row) |
 //! | 11   | `passphrase-unavailable` | D41: no TTY and no `--passphrase-fd`; fd read failure / empty / forbidden bytes / over-cap |
@@ -415,27 +415,16 @@ pub enum CliError {
         milestone: Milestone,
     },
 
-    /// U13's M1 gate: a `seal` without `--no-anchor` needs the anchor
-    /// stage, which arrives with U22 at M2.
-    ///
-    /// Deliberately **not** [`CliError::NotImplemented`] even though it
-    /// shares that class and code: `seal` *is* implemented, and saying
-    /// otherwise sends a user looking for a milestone that has already
-    /// arrived (the same distinction [`crate::backend::unavailable`]
-    /// draws). What is missing is one stage of it, and the message names
-    /// that stage and the development path that does not need it. Refused
-    /// at plan validation, so `--dry-run` refuses identically rather than
-    /// rehearsing a seal the real command would decline (D49's
-    /// faithful-prefix rule).
-    #[error(
-        "anchoring arrives in M2: this build cannot obtain the OpenTimestamps and RFC 3161 \
-         attestations a seal is supposed to carry, and it will not silently sell you an \
-         unanchored seal instead. For development seals without anchors, pass --no-anchor \
-         on --network devnet or arbitrum-sepolia (nothing was quoted, anchored, paid, or \
-         uploaded)"
-    )]
-    AnchorStageUnavailable,
-
+    // `AnchorStageUnavailable` lived here from U13 until U22. It was the M1
+    // plan-validation refusal of every seal without `--no-anchor`, and its
+    // message said "anchoring arrives in M2". U22 wired A20's real gate into
+    // `seal_run`, so the sentence became false in a build that can anchor —
+    // and a user-facing error stating something this build can do is the
+    // failure class this project polices hardest. Removed rather than left
+    // unconstructed: an error nothing can produce is a claim about the
+    // product that no test can falsify. The refusal that replaces it is the
+    // gate's own [`CliError::AnchorGateAbort`] (code 22), raised after
+    // consent and before `pay`.
     /// Ordinary filesystem I/O failure (D46 row 4's "ordinary I/O class").
     #[error("I/O error: {context}: {source}")]
     Io {
@@ -701,9 +690,7 @@ impl CliError {
         match self {
             CliError::Internal { .. } => ErrorClass::Internal,
             CliError::Usage { .. } => ErrorClass::Usage,
-            CliError::NotImplemented { .. } | CliError::AnchorStageUnavailable => {
-                ErrorClass::NotImplemented
-            }
+            CliError::NotImplemented { .. } => ErrorClass::NotImplemented,
             CliError::Io { .. } => ErrorClass::IoError,
             // D51's prompt-class table maps the vault-import destructive
             // confirm into the consent class: declined ≡ unobtainable,

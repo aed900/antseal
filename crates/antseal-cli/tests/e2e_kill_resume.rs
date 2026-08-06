@@ -395,6 +395,11 @@ fn cli_ctx() -> SealContext {
         to_stderr: true,
         now_unix_secs: 1_800_000_000,
         app_version: "antseal-m1-gate/1".to_owned(),
+        // `--no-anchor` throughout this gate: the kill/resume matrix is about
+        // the journal, and an anchor stage would put a network exchange
+        // inside a child process this harness `SIGKILL`s. Empty endpoints, so
+        // dropping the flag aborts offline rather than contacting a live TSA.
+        anchors: common::offline_anchor_stage(),
     }
 }
 

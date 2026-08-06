@@ -30,8 +30,11 @@
 //! [networks.arbitrum-one]
 //! rpc_url = "https://my-own-node.example/rpc"
 //!
-//! # RFC 3161 TSA list override SLOT (consumer: the M2 anchor stage,
-//! # U26; empty/absent = the built-in defaults).
+//! # RFC 3161 TSA list override (consumer: `seal`'s anchor stage, U26).
+//! # A non-empty list REPLACES the built-in defaults wholesale; an empty
+//! # or absent one uses them. Every entry is parsed by antseal-anchor's
+//! # `Endpoint` at load (A50) under `TlsPolicy::Optional` — plain http is
+//! # legitimate here, and required for DigiCert.
 //! [anchors]
 //! tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 //!
@@ -100,7 +103,11 @@ pub struct Config {
     /// [`Config::rpc_url_override`] as the reader (`NetworkId`
     /// deliberately gains no `Ord` for a map's sake).
     pub rpc_url_overrides: Vec<(NetworkId, String)>,
-    /// `[anchors] tsa_urls` (consumer: U26 at M2).
+    /// `[anchors] tsa_urls` — the effective TSA list for `seal`'s anchor
+    /// stage (U26). `None` and `Some(empty)` both mean "the built-in
+    /// defaults"; the collapse is
+    /// [`antseal_anchor::effective_tsa_urls`](antseal_anchor::submit::AnchorEndpoints::from_config)'s,
+    /// so one function decides it for every consumer.
     pub tsa_urls: Option<Vec<String>>,
     /// `[verify] bitcoin_endpoints` (consumer: U30 at M3).
     pub verify_bitcoin_endpoints: Option<Vec<String>>,
@@ -440,22 +447,29 @@ fn apply(
             Value::Str(_) => Err(err(format!("`{what}` takes an array of strings"))),
         }
     };
-    // A49: the same array shape, plus antseal-anchor's transport rule. The
-    // check is the substrate's own `Endpoint::parse`, not a second URL
-    // opinion here — one implementation of "which URLs may carry unsigned
-    // evidence", used at config load and again inside `HttpClient::send`.
-    let expect_tls_endpoint_array =
-        |value: Value, what: &str| -> Result<Vec<String>, ConfigParseError> {
-            let items = expect_url_array(value, what)?;
-            for item in &items {
-                antseal_anchor::Endpoint::parse(
-                    item,
-                    antseal_anchor::TlsPolicy::RequiredExceptLoopback,
-                )
+    // A49/A50: the same array shape, plus antseal-anchor's transport rule.
+    // The check is the substrate's own `Endpoint::parse`, not a second URL
+    // opinion here — one implementation of "which URLs this build will
+    // contact", used at config load and again inside `HttpClient::send`.
+    //
+    // The **policy is a parameter** because the two families genuinely differ
+    // and neither answer may leak into the other: `[verify]`'s replies are
+    // unsigned (A49 ⇒ [`TlsPolicy::RequiredExceptLoopback`]), while a
+    // `[anchors] tsa_urls` entry carries an RFC 3161 token that is signed and
+    // nonce-bound, and `timestamp.digicert.com` **refuses connections on 443**
+    // (measured, D90 §6.6) — so requiring TLS there would make one of the
+    // spec's two default TSAs unconfigurable (A50).
+    let expect_endpoint_array = |value: Value,
+                                 what: &str,
+                                 tls: antseal_anchor::TlsPolicy|
+     -> Result<Vec<String>, ConfigParseError> {
+        let items = expect_url_array(value, what)?;
+        for item in &items {
+            antseal_anchor::Endpoint::parse(item, tls)
                 .map_err(|reason| err(format!("`{what}`: {reason}")))?;
-            }
-            Ok(items)
-        };
+        }
+        Ok(items)
+    };
 
     let section_names: Vec<&str> = section.iter().map(String::as_str).collect();
     match (section_names.as_slice(), key) {
@@ -498,8 +512,19 @@ fn apply(
                  [networks.{network_name}] — ignored (newer antseal?)"
             ));
         }
+        // U26: the M2 anchor stage's effective TSA list. A present, non-empty
+        // override **replaces** the built-in defaults wholesale
+        // (`antseal_anchor::effective_tsa_urls`); an absent or empty one falls
+        // back to them. A50: validated through the substrate's parser at load,
+        // so a typo'd endpoint is a config error before any plan validation,
+        // vault unlock, quote or submission — not a failed anchor an hour into
+        // a seal.
         (["anchors"], "tsa_urls") => {
-            config.tsa_urls = Some(expect_url_array(value, "tsa_urls")?);
+            config.tsa_urls = Some(expect_endpoint_array(
+                value,
+                "tsa_urls",
+                antseal_anchor::TlsPolicy::Optional,
+            )?);
         }
         // A49 (decision D90 §6.6): the `[verify]` endpoints are the two
         // must-agree pairs, and their replies are **unsigned** — an esplora
@@ -514,12 +539,18 @@ fn apply(
         // deliberately NOT subject to this: TSA tokens are signed and
         // nonce-bound, and `timestamp.digicert.com` has no port 443 at all.
         (["verify"], "bitcoin_endpoints") => {
-            config.verify_bitcoin_endpoints =
-                Some(expect_tls_endpoint_array(value, "bitcoin_endpoints")?);
+            config.verify_bitcoin_endpoints = Some(expect_endpoint_array(
+                value,
+                "bitcoin_endpoints",
+                antseal_anchor::TlsPolicy::RequiredExceptLoopback,
+            )?);
         }
         (["verify"], "arbitrum_endpoints") => {
-            config.verify_arbitrum_endpoints =
-                Some(expect_tls_endpoint_array(value, "arbitrum_endpoints")?);
+            config.verify_arbitrum_endpoints = Some(expect_endpoint_array(
+                value,
+                "arbitrum_endpoints",
+                antseal_anchor::TlsPolicy::RequiredExceptLoopback,
+            )?);
         }
         _ => {
             config.warnings.push(format!(

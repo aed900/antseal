@@ -164,8 +164,6 @@ impl SealPlan {
 ///   with every offending argument named.
 /// - [`CliError::Io`] — arguments that do not exist or cannot be `stat`ed,
 ///   when that is the *only* problem (D46 rule 4).
-/// - [`CliError::AnchorStageUnavailable`] — the M1 gate: a seal without
-///   `--no-anchor` needs the anchor stage, which arrives in M2.
 /// - [`CliError::Usage`] — a `--no-fine-tree` pattern that matches no file
 ///   in the work.
 pub fn build_plan(args: &SealArgs, network: NetworkId, cwd: &Path) -> Result<SealPlan, CliError> {
@@ -182,20 +180,15 @@ pub fn build_plan(args: &SealArgs, network: NetworkId, cwd: &Path) -> Result<Sea
     // ── 2. D46, in one pass over every argument ──
     let files = validate_arguments(&args.paths, cwd)?;
 
-    // ── 3. The M1 anchor-stage gate ──
+    // ── 3. `--no-fine-tree` matching, over the validated list ──
     //
-    // Placed here rather than in the handler so `--dry-run` refuses
-    // identically: D49 makes a dry-run a faithful *prefix* of the real
-    // seal, and a rehearsal that quotes happily for a seal the next
-    // command would refuse is precisely the kind of unfaithful prefix
-    // D49 exists to prevent. (The anchor stage itself sits after consent,
-    // so a truncated run would never reach it — which is exactly why the
-    // check has to be explicit here.)
-    if !args.no_anchor {
-        return Err(CliError::AnchorStageUnavailable);
-    }
-
-    // ── 4. `--no-fine-tree` matching, over the validated list ──
+    // U22 removed the M1 anchor-stage gate that used to sit here and refuse
+    // **every** seal without `--no-anchor`. The stage it stood in for is
+    // wired now (`seal_run` injects A20's `SubmitAnchorGate`), and the
+    // refusal a user can still meet — zero verified TSA tokens — is that
+    // gate's own, made after consent and before `pay` with its own exit
+    // code. Nothing anchor-shaped is decidable from argv alone any more,
+    // except the `--no-anchor` × mainnet combination checked in step 1.
     let shaping = shaping_flags(args);
     let base = base_flags(args);
     let mut planned = Vec::with_capacity(files.len());
@@ -743,22 +736,51 @@ mod tests {
         assert_eq!(cli.exit_code(), library.exit_code());
     }
 
+    /// **U22's removal, asserted from the outside.** A plain `seal` — no
+    /// `--no-anchor` — now *validates*. Before U22 this same call was the
+    /// one refusal every anchored seal met, and the whole anchor stage was
+    /// unreachable behind it.
+    ///
+    /// The plan is checked field by field rather than merely `is_ok()`: a
+    /// validation that silently set `no_anchor` would also make this pass,
+    /// and that would be the M1 behaviour under a different name — an
+    /// unanchored seal sold as an anchored one, which is exactly what the
+    /// M1 error refused to do.
     #[test]
-    fn a_seal_without_no_anchor_reports_the_m2_anchor_stage_gap() {
-        let dir = Dir::new("m1-gate");
+    fn a_plain_seal_now_validates_and_stays_anchored() {
+        let dir = Dir::new("u22-anchored");
         dir.file("a.txt", b"x");
         let mut a = args(&["a.txt"]);
         a.no_anchor = false;
-        let err = build_plan(&a, NetworkId::Devnet, &dir.0).expect_err("refused");
-        assert_eq!(err.class(), crate::error::ErrorClass::NotImplemented);
-        assert!(err.to_string().contains("M2"), "{err}");
+        let plan = build_plan(&a, NetworkId::Devnet, &dir.0).expect("an anchored plan validates");
+        assert!(
+            !plan.shaping.no_anchor,
+            "validation must not sell UNANCHORED"
+        );
+        assert!(!plan.shaping.force_degraded);
+        assert_eq!(plan.as_given_paths(), vec!["a.txt"]);
+    }
+
+    /// The rehearsal is still a faithful prefix (D49): `--dry-run` neither
+    /// gains a refusal the real seal lacks nor loses one it has.
+    #[test]
+    fn a_dry_run_of_an_anchored_seal_validates_identically() {
+        let dir = Dir::new("u22-dry");
+        dir.file("a.txt", b"x");
+        let mut a = args(&["a.txt"]);
+        a.no_anchor = false;
+        let real = build_plan(&a, NetworkId::Devnet, &dir.0).expect("real plan");
+        a.dry_run = true;
+        let dry = build_plan(&a, NetworkId::Devnet, &dir.0).expect("dry plan");
+        assert_eq!(dry.shaping, real.shaping);
+        assert_eq!(dry.files, real.files);
+        assert!(dry.dry_run && !real.dry_run);
     }
 
     #[test]
-    fn d46_validation_precedes_the_m1_anchor_gate() {
-        // A permanent argument problem outranks a temporary milestone
-        // gap: fixing the network flag first and then discovering the
-        // directory would be two round trips.
+    fn d46_validation_still_precedes_everything_it_used_to() {
+        // A directory argument is a permanent argument problem and is
+        // refused on argv + `stat` alone, with no `--no-anchor` in sight.
         let dir = Dir::new("order");
         std::fs::create_dir_all(dir.0.join("sub")).expect("mk sub");
         let mut a = args(&["sub"]);
