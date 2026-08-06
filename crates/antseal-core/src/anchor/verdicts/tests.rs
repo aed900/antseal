@@ -25,6 +25,10 @@ use crate::verify::report::AnchorResult;
 
 use crate::anchor::roots::{PinnedRoot, TsaRootStore};
 
+use crate::anchor::testing::tamper_rows::{
+    AFTER_CAPTURE, D60_STAMPED, DIGEST_A, FREETSA, MERGED_A, RowOutcome,
+};
+
 // The synthetic `.ots` writer, promoted out of this file into
 // `anchor::testing` by **A82** so that A21's tamper rows and the integration
 // targets can reach it — `test_util` is not `cfg(test)` and
@@ -44,15 +48,14 @@ use crate::anchor::testing::ots_writer::{
 const SYNTHETIC_HEIGHT: u64 = 700_001;
 
 // ── real captured material ──────────────────────────────────────────────
-
-/// The nine D60 captures were all taken over this digest.
-const D60_STAMPED: [u8; 32] = [
-    0x08, 0x3f, 0x87, 0xdf, 0x00, 0xfd, 0x5c, 0x70, 0x3d, 0x35, 0xb8, 0x83, 0xd8, 0x35, 0x35, 0x64,
-    0x4c, 0x68, 0x6f, 0x9e, 0x53, 0xf1, 0x58, 0x4d, 0x7d, 0xf1, 0x26, 0xab, 0xda, 0xbd, 0x69, 0xdf,
-];
-
-const FREETSA: &[u8] =
-    include_bytes!("../../../../../testdata/anchors/A25-bootstrap/D60-tsa-freetsa-resp.tsr");
+//
+// The five fixtures A21's rows also need — `D60_STAMPED`, `FREETSA`,
+// `MERGED_A`, `DIGEST_A`, `AFTER_CAPTURE` — are **imported** from
+// `anchor::testing::tamper_rows` rather than declared twice. A21 needed them
+// under `feature = "test-util"` as well as `cfg(test)`, which is the same
+// promotion A82 made for the `.ots` writer one wave earlier and for the same
+// reason: a second `include_bytes!` of the same path is a duplicate whose
+// drift nothing would catch (the class task A88 records).
 const DIGICERT: &[u8] =
     include_bytes!("../../../../../testdata/anchors/A25-bootstrap/D60-tsa-digicert-resp.tsr");
 const SECTIGO: &[u8] =
@@ -67,19 +70,9 @@ const ENTRUST: &[u8] =
 const SWISSSIGN: &[u8] =
     include_bytes!("../../../../../testdata/anchors/A25-bootstrap/D60-tsa-swisssign-resp.tsr");
 
-/// A real merged **pending** `.ots` over three calendars (A25, 2026-08-02).
-const MERGED_A: &[u8] =
-    include_bytes!("../../../../../testdata/anchors/A25-bootstrap/merged-A.ots");
-const DIGEST_A: [u8; 32] =
-    *include_bytes!("../../../../../testdata/anchors/A25-bootstrap/digest-A.bin");
-
 /// A height no chain has reached — D56 §3's *"an `.ots` claiming a block
 /// beyond the chain tip"*, literally.
 const BEYOND_CHAIN_TIP: u64 = 99_999_999;
-
-/// A verification instant comfortably inside every captured certificate's
-/// validity window.
-const AFTER_CAPTURE: u64 = 1_785_000_000;
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -2503,4 +2496,136 @@ fn an_indeterminate_pending_branch_does_not_satisfy_o5() {
             .as_deref(),
         Some(uri)
     );
+}
+
+// ── A21's eight M2 tamper rows, on wasm32 as well as natively ───────────
+//
+// The rows themselves are registered in the tamper matrix
+// (`test_util::tamper_rows_anchor_verdicts`), which is gated
+// `feature = "test-util"` and driven from an integration target — neither of
+// which the wasm32 lane compiles or runs. A21's Accept requires all eight to
+// execute on `wasm32-unknown-unknown` too, so each row's verdict assertion is
+// additionally pinned here, in the `--lib` tests, exactly as A18's 44 rows and
+// A43's five are (A90's ruling, recorded in `tasks/A.md` before A21 began).
+//
+// These are not a second implementation of the rows. Both homes call the same
+// exercise in `anchor::testing::tamper_rows`, so what runs on wasm32 is the
+// row, not a description of it. What the matrix adds natively is the
+// cross-domain distinctness check; what these add is the target.
+
+/// Row 1 — a real merged pending `.ots` verified against the other committed
+/// golden digest (D56 rule O2).
+#[test]
+fn a21_row_1_ots_digest_mismatch() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_1_ots_digest_mismatch(),
+        RowOutcome::Error("anchor-ots-digest-mismatch")
+    );
+}
+
+/// Row 2 — a real TSA token verified against a digest it was not stamped
+/// over, against an empty store so the T2-before-T3 ordering is observable.
+#[test]
+fn a21_row_2_tsa_imprint_mismatch() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_2_tsa_imprint_mismatch(),
+        RowOutcome::Error("anchor-tsa-imprint-mismatch")
+    );
+}
+
+/// Row 3 — a well-formed mock token whose chain reaches no pinned root
+/// (D53 rule C6). Carries its own positive twin as a precondition.
+#[test]
+fn a21_row_3_untrusted_root() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_3_untrusted_root(),
+        RowOutcome::Verdict("internally-consistent-only")
+    );
+}
+
+/// Row 4 — a single-branch, ops-committing upgraded `.ots` whose embedded
+/// header's `nTime` is forged, refuted by the agreed header (D56 rule O6 as
+/// amended by D93). The one row claiming `verdict:invalid`.
+#[test]
+fn a21_row_4_forged_header() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_4_forged_header(),
+        RowOutcome::Verdict("invalid")
+    );
+}
+
+/// Row 5 — the positive control: an honest `attested` artifact withheld from
+/// the offline headline (D56 rule O4), asserted only when it is not
+/// headline-eligible.
+#[test]
+fn a21_row_5_attested_not_headline() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_5_attested_not_headline(),
+        RowOutcome::Verdict("attested")
+    );
+}
+
+/// Row 6 — the signing certificate had already expired at `genTime`
+/// (D53 rule C3), verified at an instant inside the signer window.
+#[test]
+fn a21_row_6_expired_at_gentime() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_6_expired_at_gentime(),
+        RowOutcome::Error("anchor-cert-not-valid-at-gentime")
+    );
+}
+
+/// Row 7 — the expiry pair's positive control: valid at `genTime`, expired
+/// since (D53 rule C2). `expired != invalid`.
+#[test]
+fn a21_row_7_expired_after_gentime() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_7_expired_after_gentime(),
+        RowOutcome::Verdict("valid-at-stamping-cert-since-expired")
+    );
+}
+
+/// Row 8 — the committed BER twin of a real token, where RFC 3161 requires
+/// strict DER (D53 §8 row 8; the code is A5's, named by D60 §7.3).
+#[test]
+fn a21_row_8_ber_not_der() {
+    assert_eq!(
+        crate::anchor::testing::tamper_rows::row_8_ber_not_der(),
+        RowOutcome::Error("anchor-der-not-strict")
+    );
+}
+
+/// The eight rows' outcomes are **pairwise distinct**, asserted here as well
+/// as in the matrix.
+///
+/// Natively this duplicates `check_registry`'s global distinctness pass. It is
+/// repeated because the matrix does not run on wasm32 at all, and because
+/// distinctness is the property the whole tamper matrix exists for: eight rows
+/// that all rendered `invalid` would satisfy every assertion above and prove
+/// nothing about the machine's ability to tell the eight cases apart.
+#[test]
+fn a21_the_eight_rows_are_pairwise_distinct() {
+    use crate::anchor::testing::tamper_rows as rows;
+
+    let outcomes = [
+        rows::row_1_ots_digest_mismatch(),
+        rows::row_2_tsa_imprint_mismatch(),
+        rows::row_3_untrusted_root(),
+        rows::row_4_forged_header(),
+        rows::row_5_attested_not_headline(),
+        rows::row_6_expired_at_gentime(),
+        rows::row_7_expired_after_gentime(),
+        rows::row_8_ber_not_der(),
+    ];
+
+    for (i, a) in outcomes.iter().enumerate() {
+        assert!(
+            !matches!(a, RowOutcome::Precondition(_)),
+            "row {} failed a precondition: {a:?}",
+            i + 1
+        );
+        for (j, b) in outcomes.iter().enumerate().skip(i + 1) {
+            assert_ne!(a, b, "rows {} and {} share an outcome", i + 1, j + 1);
+        }
+    }
 }

@@ -419,9 +419,13 @@ const ROWS: &[TamperRow] = &[
 /// Domains append their slice here as they land: C17 (crypto), G19 (fine
 /// tree), R7 (structural), R8 (pipeline integration), F15 (format) and F22
 /// (caps + D77's mirror-only shape) and F24 (the `cbor-` family) are present;
-/// A21's M2 anchor rows follow.
+/// **A21's eight M2 anchor verdict rows landed 2026-08-06**, which completes
+/// the spec's `(M2)` half and leaves the registry with no pending case at all
+/// — see [`tamper_completeness`] for what that did to Q8's own
+/// tests-of-the-test (decision D96).
 fn all_rows() -> Vec<TamperRow> {
     let mut rows = ROWS.to_vec();
+    rows.extend_from_slice(antseal_core::test_util::tamper_rows_anchor_verdicts::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_caps::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_cbor::ROWS);
     rows.extend_from_slice(antseal_core::test_util::tamper_rows_crypto::ROWS);

@@ -248,21 +248,49 @@ fn every_guard_site_still_spells_the_banned_string() {
 /// Reads `expected` only. Case ids and family ids are a different namespace
 /// with permanent handles of their own (`ots-digest-mismatch`,
 /// `tsa-imprint-mismatch`), and D91 §9.1 renames no row.
+///
+/// # Where the codes live now
+///
+/// **Corrected 2026-08-06 by A21, which broke this test by finishing its
+/// job.** Every `expected` cell in `MATRIX.json` lived inside a `pending`
+/// block, and A21 landed the last eight rows — so the walk now finds *zero*
+/// cells and the anti-vacuity control below fired exactly as designed,
+/// refusing to report green on a sweep that could no longer see anything.
+///
+/// That is the same shape as D96 rider (b), in a **third** instrument neither
+/// of D96's planners opened: a check computed from a set A21 was about to
+/// empty. The fix is the same one — follow the codes to where they now live.
+/// A row's expected code is authoritative in the row itself, so the sweep
+/// unions the registry's remaining cells (there may be pending cases again
+/// one day) with every live row's `ErrorCode`.
+///
+/// Verdict states are deliberately excluded: they are a namespace separate
+/// from error codes (contract §5, owned by A18/R17), and `ots-`/`tsa-` are
+/// closed as **error-code** prefixes only.
 #[test]
 fn no_matrix_row_expects_a_code_under_a_closed_prefix() {
+    use antseal_core::test_util::tamper::ExpectedOutcome;
+
     let path = PathBuf::from(WORKSPACE_ROOT).join("testdata/tamper/MATRIX.json");
     let text = fs::read_to_string(&path).expect("testdata/tamper/MATRIX.json must be readable");
     let doc: serde_json::Value = serde_json::from_str(&text).expect("MATRIX.json must parse");
 
     let mut expectations: BTreeSet<String> = BTreeSet::new();
     collect_expected(&doc, &mut expectations);
+    for row in live_rows() {
+        if let ExpectedOutcome::ErrorCode(code) = row.expected {
+            expectations.insert(code.to_owned());
+        }
+    }
 
-    // Anti-vacuity, and deliberately not a count: the walk must reach the one
-    // cell D91 §9.1 fills. A registry reorganisation that hid `expected`
-    // behind a new level would satisfy any threshold and fail this.
+    // Anti-vacuity, and deliberately not a count: the sweep must reach the one
+    // code D91 §9.1 fills — whether it is still a registry cell or, since A21,
+    // the live row that discharges that case. A registry reorganisation that
+    // hid `expected` behind a new level would satisfy any threshold and fail
+    // this, and so would a row slice that stopped being linked in.
     assert!(
         expectations.contains("anchor-ots-digest-mismatch"),
-        "the walk did not reach D91 §9.1's own filled cell — it found {expectations:?}, so it \
+        "the sweep did not reach D91 §9.1's own code — it found {expectations:?}, so it \
          could not have seen a violation either"
     );
 
@@ -286,6 +314,38 @@ fn no_matrix_row_expects_a_code_under_a_closed_prefix() {
          The A domain has one prefix, `anchor-`. A row id may keep its own spelling \
          (D91 §9.1 renames no row); its expected CODE may not."
     );
+}
+
+/// Every tamper row this target can reach — the ten slices homed in the
+/// library.
+///
+/// F20's `anchor-schema-*` slice lives in the `tamper_matrix` target and is
+/// out of reach from here; it binds `bundle-` codes, which no closed prefix
+/// can match. The A-domain rows this ruling is actually about (A21's) are all
+/// in the list below.
+///
+/// **This list is hand-maintained, which is the narrowing risk this file's
+/// own docs warn about — so read what actually holds it shut.** A new slice
+/// added elsewhere and not added here would silently shrink the sweep. What
+/// stops that from mattering is scope: D91 §6.1 closes `ots-`/`tsa-` as **A
+/// domain** prefixes, the A domain's rows are `tamper_rows_anchor_verdicts`,
+/// and the caller's anti-vacuity assertion fails unless *that* slice is
+/// present and reachable. A future **A** slice is the case to add here
+/// deliberately; a future C/F/G/R slice is a bonus this sweep never promised.
+fn live_rows() -> Vec<antseal_core::test_util::tamper::TamperRow> {
+    use antseal_core::test_util::*;
+    let mut rows = Vec::new();
+    rows.extend_from_slice(tamper_rows_anchor_verdicts::ROWS);
+    rows.extend_from_slice(tamper_rows_caps::ROWS);
+    rows.extend_from_slice(tamper_rows_cbor::ROWS);
+    rows.extend_from_slice(tamper_rows_crypto::ROWS);
+    rows.extend_from_slice(tamper_rows_fine_tree::ROWS);
+    rows.extend_from_slice(tamper_rows_format::ROWS);
+    rows.extend_from_slice(tamper_rows_mirror::ROWS);
+    rows.extend_from_slice(tamper_rows_pipeline::ROWS);
+    rows.extend_from_slice(tamper_rows_structural::ROWS);
+    rows.extend_from_slice(tamper_rows_version::ROWS);
+    rows
 }
 
 /// Walk any JSON shape, collecting every `"expected"` string. Shape-agnostic

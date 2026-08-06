@@ -34,8 +34,12 @@
     "                    does not `complete` the matrix by adding one and",
     "                    breaking the harness's distinctness assertion.",
     "",
-    "Q14's gate condition is ZERO pending. Q18 extends the same structure with",
-    "the M2 anchor rows, which are already enumerated here as pending."
+    "Q14's gate condition is ZERO pending. Q18 extended the same structure",
+    "with the M2 anchor rows, and A21 landed all eight on 2026-08-06 — so",
+    "BOTH halves of line 168 are now discharged by live rows and the registry",
+    "holds no pending case at all. That is the finished state, not a gap: see",
+    "decision D96 for what it did to the checker's own tests-of-the-test,",
+    "which used to borrow a live pending block and now synthesize one."
   ],
   "spec_source": {
     "file": "MVP-SPEC.md",
@@ -458,24 +462,12 @@
         {
           "id": "ots-digest-mismatch",
           "what": "an otherwise valid `.ots` whose stamped digest is not this seal's `anchor_digest`",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-ots-digest-mismatch",
-            "outcome_kind": "error",
-            "expected": "anchor-ots-digest-mismatch",
-            "why": "D56 rule O2, named by D91. The check is ONE check in ONE place — D58 section 10.3 step 5, inside `parse_ots`, before the walk, so a wrong-digest `.ots` costs one 32-byte comparison and is never a work amplifier. D91 section 6.2 rules that `anchor-ots-digest-mismatch` is its code and D58's `ots-ops-do-not-commit-anchor-digest` is never minted. Split from the TSA half at D53 section 8: line 168's clause is compound, and the two checks live in different stages on different artifact kinds (`.ots` stamped digest at A11; `TSTInfo.messageImprint` at A8), so they cannot share an outcome key."
-          }
+          "rows": ["anchor-ots-digest-mismatch"]
         },
         {
           "id": "tsa-imprint-mismatch",
           "what": "a TSA token whose `TSTInfo.messageImprint` is a digest other than this seal's `anchor_digest`",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-tsa-imprint-mismatch",
-            "outcome_kind": "error",
-            "expected": "anchor-tsa-imprint-mismatch",
-            "why": "D53 section 8 row 2; the A-domain prefix is `anchor-` per D91. A8 owns the check and the code; D53 fixes that it fires at stage T2, before any chain rule, so a token for a different digest is never classified by its chain."
-          }
+          "rows": ["anchor-tsa-imprint-mismatch"]
         }
       ]
     },
@@ -488,13 +480,7 @@
         {
           "id": "untrusted-tsa-root",
           "what": "a structurally valid TSA token whose chain does not reach the pinned root store",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-untrusted-root",
-            "outcome_kind": "verdict",
-            "expected": "internally-consistent-only",
-            "why": "D53 rule C6 (and MVP-SPEC.md:133). The spec states the outcome inline: an untrusted root does not ERROR, it lands in a specific non-headline verdict state. This is the case Q7's `ExpectedOutcome::VerdictState` namespace exists for. It is also the row that makes the layer-3 check bite: under the option D53 section 2a rejects, a back-dated token would claim this same key."
-          }
+          "rows": ["anchor-untrusted-root"]
         }
       ]
     },
@@ -507,13 +493,7 @@
         {
           "id": "forged-bitcoin-header",
           "what": "an OTS attestation whose embedded header does not match the block returned by the online endpoint",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-forged-header",
-            "outcome_kind": "verdict",
-            "expected": "invalid",
-            "why": "D56 rule O6; spec-stated outcome (→ `invalid`). `verdict:invalid` is claimed exactly ONCE across the eight M2 cases, by this row — which is the structural reason D53's C3/C4/C5 mint error codes instead of pinning the state."
-          }
+          "rows": ["anchor-forged-header"]
         }
       ]
     },
@@ -526,13 +506,7 @@
         {
           "id": "attested-ots-withheld-from-headline",
           "what": "a well-formed `attested` (not yet Bitcoin-confirmed) OTS anchor must not reach the offline headline verdict",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-attested-not-headline",
-            "outcome_kind": "verdict",
-            "expected": "attested",
-            "why": "D56 rule O4. A positive-shaped row: the artifact is honest, and what is being pinned is that the verdict machine withholds it. A18/R17 own the state names."
-          }
+          "rows": ["anchor-attested-not-headline"]
         }
       ]
     },
@@ -546,24 +520,12 @@
         {
           "id": "expired-at-gentime",
           "what": "the signing certificate had already expired when the token's genTime claims it signed",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-expired-at-gentime",
-            "outcome_kind": "error",
-            "expected": "anchor-cert-not-valid-at-gentime",
-            "why": "D53 rule C3, spelling ruled by D91. One code covers both temporal directions (D85: a cause belongs in rendering, not the code set); this row exercises the expired direction and the not-yet-valid direction is D53's named test `a_certificate_not_yet_valid_at_gentime_is_the_same_code`."
-          }
+          "rows": ["anchor-expired-at-gentime"]
         },
         {
           "id": "expired-after-gentime",
           "what": "the certificate was valid at genTime and expired later — must still verify (LTV)",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-expired-after-gentime",
-            "outcome_kind": "verdict",
-            "expected": "valid-at-stamping-cert-since-expired",
-            "why": "D53 rule C2 — the positive control for the expiry pair. `expired != invalid` when the certificate was valid AT genTime (MVP-SPEC.md:109/130, aging bundles must not silently rot)."
-          }
+          "rows": ["anchor-expired-after-gentime"]
         }
       ]
     },
@@ -576,13 +538,7 @@
         {
           "id": "ber-where-der-required",
           "what": "a token encoded in BER where RFC 3161 requires strict DER",
-          "pending": {
-            "task": "A21",
-            "row_id": "anchor-ber-not-der",
-            "outcome_kind": "error",
-            "expected": null,
-            "why": "D53 section 8 row 8: the outcome is A5's strict-DER code, which D60 has not yet decided. This is the ONE M2 anchor case whose `expected` is still null, and the null is recorded rather than dormant — the checker's EXPECTED_M2_UNMINTED pins it by name with the decision that owes it, so a second null cannot appear silently and this one cannot outlive D60. Strict-DER limits and their fuzz targets are A5/A23/Q17."
-          }
+          "rows": ["anchor-ber-not-der"]
         }
       ]
     }

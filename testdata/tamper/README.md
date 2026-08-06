@@ -60,9 +60,20 @@ the lane every run, and **the M0 half has been complete since F15
 Q14 gate — M0 tamper matrix: COMPLETE (0 pending)
 ```
 
-The remaining pending markers are Q18's M2 anchor cases, owned by A21. They
-are what keeps the mechanism live: the checker's own tests-of-the-test
-anchor on an M2 pending case now that no M0 one is owed.
+**There are no pending markers left.** A21 landed Q18's eight M2 anchor rows
+on 2026-08-06, so both halves of line 168 are discharged by live rows and the
+registry is in the state Q14's gate defines as finished.
+
+That removed the last thing the checker's own tests-of-the-test were standing
+on. They used to mutate a *live* pending block, an anchor already re-pointed
+twice in ten days (M0 → M2 at F15, then within M2 at Q76) — and this time
+there is nothing to re-point to: a case can only exist for a clause line 168
+names, M0's set must stay empty because that *is* the gate, and every M2
+clause is A21's. **Decision D96** rules the consequence: those fixtures now
+**synthesize** the pending case they need, which is the same move D81 forced
+one state down when it resolved the last borrowable outcome collision. The
+alternative — holding one of A21's eight rows back so a fixture keeps its
+prop — is a fixture requiring the project never to finish.
 
 ## `format/` — the format-level fixtures (F15, F22, F24)
 

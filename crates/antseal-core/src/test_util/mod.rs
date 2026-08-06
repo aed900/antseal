@@ -194,6 +194,8 @@ pub mod tamper;
 #[cfg(feature = "test-util")]
 pub mod tamper_coverage;
 #[cfg(feature = "test-util")]
+pub mod tamper_rows_anchor_verdicts;
+#[cfg(feature = "test-util")]
 pub mod tamper_rows_caps;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_cbor;

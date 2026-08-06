@@ -1426,3 +1426,30 @@ Exact line to add to Q65's Accept:
 - Do: add `--verdict-event <Dnn>`, and make it **checked rather than trusted** — a flag that merely asserted the classification would be the editorial version with an extra step. The flag unlocks a check that re-derives the class from the diff against `HEAD` and refuses if it does not hold: only a `report/` kind vector may move; `bundle_len`/`bundle_sha256`/`revealed_unit_ids` byte-identical on every case (else FIXTURE EVENT); `report_version` unchanged (else FORMAT EVENT); at least one case unchanged (a format event moves all of them, which is what R32 measured at `report_version` 0 → 1). The check prints the four numbers D94's commit-message rule requires, so the audit record is produced by the guard rather than typed by the person it guards against.
 - Accept: **landed 2026-08-06.** Default `--update` still refuses a frozen byte change with the three-class explanation. The guard was shown red on all three wrong classifications before being trusted to permit the right one — a moved `bundle_sha256`, all 21 cases moved, and a non-`report` vector each refused with their own cause. R12's real update printed *"1 of 21 report cases moved (cases [19]); 0 bundle digests moved; report_version unchanged"*.
 - Notes: Q107 owns the same vocabulary on the **documentation** side (`testdata/vectors/README.md`'s "What changes at Q14" table and Q27's policy); this is its enforcement counterpart, and the two must not disagree. The script's closing line said *"a changed (not added) digest is a format event"* — corrected in the same edit, since it was a seventh copy of the two-class claim.
+
+### Q115 — The wasm32 lane's warnings are invisible
+
+- Milestone: M2
+- Size: XS
+- Deps: P14 (the wasm32 lane), Q1 (CI)
+- Do: `cargo test -p antseal-core --lib --target wasm32-unknown-unknown`
+  currently emits `unused import: error::all_code_exemplars`
+  (`crates/antseal-core/src/anchor/ots/mod.rs:70`) and the lane stays green.
+  The import is used by `error_universe` and `tamper_coverage`, neither of
+  which compiles on the wasm32 dev edge (`test-vectors` only), so on that
+  target it really is unused. The finding is not the import — it is that
+  **`wasm32-core-tests` runs `cargo test`, not clippy**, so no warning on
+  that target can fail anything, and a target-specific `unused`/`dead_code`
+  regression can accumulate silently. Decide between: adding `-D warnings`
+  to the lane (and fixing whatever it surfaces), or gating the import so the
+  warning is genuinely absent rather than merely tolerated. Prefer the
+  first: the second fixes one instance of a class.
+- Accept:
+  - The wasm32 lane is warning-clean, and a planted warning turns it red
+    (self-test, the pattern every other lane in this tree uses).
+  - Whichever route is taken, the reason is recorded — a `#[cfg]` that
+    silences a warning without explaining which lane could not see it is
+    the same defect one layer down.
+- Notes: Pre-existing; observed 2026-08-06 by A21's lane while running the
+  wasm32 suite for the tamper rows, and unrelated to that work. Recorded by
+  D96 §Discovered work.

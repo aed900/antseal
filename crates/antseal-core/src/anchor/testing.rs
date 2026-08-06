@@ -100,6 +100,16 @@ use super::tsa::ID_KP_TIME_STAMPING;
 /// build.
 pub mod ots_writer;
 
+/// **A21's eight M2 anchor tamper rows** (task **A21**), as exercises rather
+/// than as tests.
+///
+/// It lives here for the reason [`ots_writer`] does, one step further: A21's
+/// rows must execute natively *and* on wasm32, and no single home reaches
+/// both lanes. Writing each exercise once, under this gate, is what stops the
+/// matrix slice and the in-module wasm32 tests from becoming two hand-written
+/// copies of one claim.
+pub mod tamper_rows;
+
 /// `id-ecPublicKey` (RFC 5480 §2.1.1).
 const ID_EC_PUBLIC_KEY: ObjectIdentifier = rfc5912::ID_EC_PUBLIC_KEY;
 /// `secp384r1` (RFC 5480 §2.1.1.1).
