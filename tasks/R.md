@@ -729,6 +729,7 @@
 - Discovered by: **the D94 planner** (2026-08-06).
 - Do: R12 adds `SupportingEvidenceResult::ArbitrumReceipt` — a **new value in report v1's value space, after the freeze** — and no vector exercises it, while the slot's doc comment still calls it *"a pre-Q14 extension per D29"*. Nothing goes red if it is wrong. Commit a vector that opts a receipt in, and correct the doc comment.
 - Accept: a committed case renders the receipt arm; deleting the arm or changing its fields reddens it; the doc comment describes what shipped.
+- **Scope correction, 2026-08-06 (measured at R12's landing):** the receipt arm's own doc comment *was* corrected by R12, but the claim it carried is **not unique to it**. `StorageLinkageResult` (`crates/antseal-core/src/verify/report.rs:226-231`) says the same thing about **R20 at M3** — *"until then the slot reports not-evaluated — a pre-Q14 extension per D29"* — and Q14 executed on 2026-07-28, so R20 will add a post-freeze variant to a serialized enum for exactly the same reason, one milestone later. Whatever this task rules for `SupportingEvidenceResult` must be applied to `StorageLinkageResult` in the same edit, or R20 arrives at an unruled question a second time. Measured: **no committed vector renders `arbitrum-receipt`**, so the value that shipped at R12 is still exercised by nothing.
 
 ### R70 — Is `AnchorState::Absent` reachable at all after R12?
 - Milestone: M2
