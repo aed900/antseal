@@ -1480,13 +1480,74 @@ themselves**, which is the reason for running them:
 
 ## What is NOT proven here
 
-The step has **never run on the remote**. It is a script call exercised
+> **Superseded 2026-08-06 — it has now run.** The 180-commit push put this
+> step on the remote for the first time. It has **passed on every run since**
+> (runs 31086210534, 31095668522 and the head run at `9145dc6`), inside the
+> `traceability` job, and the context count stayed at 19. What follows is
+> kept as the record of what was owed before that, because the reasoning is
+> what made the gap visible.
+
+The step had **never run on the remote**. It is a script call exercised
 locally by `scripts/local-gate.sh` (`anchor-net` lane), which is what Q43's
-rule asks for, but this document's own standing warning applies: a lane that
+rule asks for, but this document's own standing warning applied: a lane that
 has never executed remotely is not evidence, however long it has been
 committed.
 
-`ANTSEAL_NO_REAL_ANCHOR_NETWORK` being *honoured* by a GitHub runner is not
+`ANTSEAL_NO_REAL_ANCHOR_NETWORK` being *honoured* by a GitHub runner was not
 in doubt (it is an ordinary environment variable), but the arming reaching
-every job through workflow-level `env:` inheritance has been read, not
+every job through workflow-level `env:` inheritance had been read, not
 observed.
+
+## The push of 2026-08-06, and the four defects it found (wave 5)
+
+`518f342..a053272`, 180 commits, then four fix/bookkeeping commits to
+`9145dc6`. Every lane in the repository ran remotely for the first time
+since 2026-08-01, and this document's standing warning paid out at scale:
+**four defects surfaced that no local run had shown.**
+
+1. **`core-dep-graph` — a guard idiom that inverts its own verdict.** Under
+   `set -o pipefail`, `printf '%s\n' "$var" | grep -q PATTERN` reports *no
+   match exactly when the match is found early*: `grep -q` exits on first hit
+   and closes the pipe, bash's `printf` builtin takes `EPIPE` mid-flush, and
+   `pipefail` promotes that to the pipeline's status. The P20 self-test
+   asserts that `ant-node` **is** in the devnet-featured tree — it is, twice,
+   near the top, which is exactly why grep exits early enough to lose the
+   race on the runner and not on a 2-core dev host. **The self-test failed
+   because it succeeded.** Demonstrated deterministically with an 8.4 MB
+   payload whose match is on line 1: the old form reports NO MATCH, the
+   herestring form reports MATCH. 32 sites converted (→ **Q111** adds the
+   lint; every surviving `printf | grep -q` is safe only because its payload
+   is a small literal, which an edit can silently change).
+2. **`fuzz-smoke` — a real finding, on the target's first remote run.** In
+   3140 execs, `anchor_ots` found that it and `parse_ots` assert two
+   different allocation rules: D58's absolute `MAX_OTS_VALUE_BYTES = 32_768`
+   against D10 §4's input-relative clamp. A 248-byte input peaked at 5120 B —
+   legal under one rule, illegal under the other (→ **A100**). Left red on
+   purpose: D84 holds that anchor-artifact internal limits are verifier
+   policy and **not** D10 format surface, which points at the target, but
+   tightening the executor is a live option that has to be argued.
+3. **`heavy-features` — U22 shipped code that does not compile under
+   `--features ant-backend`.** A shadowed `config` binding retyped an
+   argument. Nothing could catch it: required CI passes no `--features`, and
+   `HEAVY_TRIGGER_PATHS` names neither `commands.rs` nor `seal_run.rs`, so
+   the tier was classified `n/a` for the whole wave (→ **Q112**). The run
+   that recorded Q112 then reported `n/a` on a `commands.rs` edit, which is
+   the defect demonstrating itself.
+4. **Pre-existing, surfaced by the same run.** `json-envelopes.txt` pins text
+   that differs **by `cfg` on purpose** and commits only one variant, so the
+   heavy tier can never be green (→ **Q113**; verified present at the wave-4
+   head).
+
+**Scheduled-lane read (Q79), and the reason it matters.** `fuzz-nightly` had
+run **daily** — 2026-08-01 through 2026-08-06, all success, wall clock
+61.6–61.8 min each — because Q81's re-cadence to `41 3 * * 1,4` was committed
+on 2026-08-02 and **not pushed**. This workflow says it itself: GitHub runs
+`schedule:` against the **default branch only**, so a committed cron is inert
+until it lands on `main`. The push activated it. **A CI configuration change
+is not in effect until it is pushed** — the config-side twin of this
+document's rule about lanes.
+
+**Verdict at the head (`9145dc6`): 18 of 19 contexts green.** `fuzz-smoke` is
+red on A100 and the heavy tier on Q113 — both recorded, neither blessed away.
+Judge by per-job conclusions, never by annotation glyphs: the planted-fault
+self-tests emit failure-styled annotations from **succeeding** steps.
