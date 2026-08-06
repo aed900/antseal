@@ -710,6 +710,16 @@ pub const ANCHOR_HEADER: CoverageDomain = CoverageDomain {
 /// row 4 (`anchor-forged-header`) to *behaviourally*; the row itself pins the
 /// **verdict** `invalid`, which is the single claimant of that key, so the row
 /// does not claim this code.
+///
+/// **Amended 2026-08-06 (A80, ruled by D93 §3/§13).** Until A80 both codes
+/// were reachable only on artifacts whose ops did **not** commit the embedded
+/// header — the shape O8 already convicts offline — because D56 §5 put O4
+/// above O6 and O7. The named tests below therefore drove the codes but not
+/// the rules: the O7 test in particular carried the *"would render `attested`
+/// for ever"* defect in its own doc comment over a fixture in which that
+/// outcome is unreachable. Both owner notes now name the committed-fixture
+/// test, which is the one that can report red on the rule rather than on the
+/// code.
 pub const ANCHOR_ONLINE: CoverageDomain = CoverageDomain {
     name: "OnlineRefutation",
     prefix: "anchor-",
@@ -718,12 +728,17 @@ pub const ANCHOR_ONLINE: CoverageDomain = CoverageDomain {
         (
             "anchor-ots-online-header-mismatch",
             "A21 - MATRIX.json pending row `anchor-forged-header` pins the verdict, not this \
-             code; A18's state-machine suite drives it",
+             code; A18's state-machine suite drives it, over the COMMITTED single-branch \
+             fixture A80 added (`a_committed_forgery_refuted_online_is_invalid`) - the \
+             uncommitted shape is already invalid offline through O8 and never runs the \
+             online gate (D93 section 3)",
         ),
         (
             "anchor-ots-online-block-absent",
-            "A18 - D56 section 8 gives it no row (line 168 names it nowhere); a named test \
-             drives it, and `project_added[]` is the mechanism if A21 later wants one",
+            "A81/Q92 - D56 section 8 gives it no row (line 168 names it nowhere) and \
+             `project_added[]` is the mechanism; until then A80's committed twin \
+             (`agreed_absence_of_the_block_is_invalid_when_the_ops_commit_the_header`) is \
+             the instrument, and it is the one that can see D56 section 3's stated defect",
         ),
     ],
 };

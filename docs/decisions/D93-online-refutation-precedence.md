@@ -237,6 +237,19 @@ Bitcoin branch renders `pending` and carries one suppressed entry"*, which is
 O5 over O6/O8 and still fires. The change removes the only case where a
 *genuine online refutation* was recorded-and-ignored rather than acted on.
 
+> **Corrected 2026-08-06 by the implementing lane (A80), which ran it.**
+> §7 below says to invert `a_self_consistent_forgery_refuted_online_is_attested…`,
+> and that reads as though the artifact moves to `Invalid`. **It does not.**
+> Its fixture is the real `LARGE_TEST` capture, which carries evaluable
+> **pending** branches, so under the amended order it lands on the *third* row
+> of the table above — `committed, online refuted, with a pending branch →
+> Pending` — not the first. §5's table is right; §7's phrasing is misleading
+> about which cell it reaches. The claims were therefore split: a new
+> single-branch fixture carries the `Invalid` claim, and the real capture
+> carries the `Pending` claim. Measured: applying the guard alone, before any
+> test was touched, turned **exactly one** committed test red (`left: Pending,
+> right: Attested`) and left all eight "must stay green" rows green.
+
 **Committed tests that must change** (measured by reading; not run — see §11):
 
 - `verdicts/tests.rs:661`

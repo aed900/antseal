@@ -470,6 +470,23 @@ none).
 
 ## 9. The tests, and the planted fault that proves each can report red
 
+> **Corrected 2026-08-06 by the implementing lane (A67), which built them.**
+> Two rows below are unbuildable exactly as specified, and both corrections
+> make the suite *stronger*, not weaker:
+>
+> - **T6 could not exercise its own TSA term.** `evaluate_anchors` takes one
+>   `anchor_digest` for the whole bundle, so a real TSA capture (stamped over
+>   `D60_STAMPED`) and T1's OTS anchors (over `DIGEST_UPGRADED`) cannot both
+>   verify. Every subset would have measured `0 + {0,1}`, and a `+ 0`
+>   implementation of the TSA term would have survived the row unchanged — a
+>   vacuous quantifier of exactly the kind §9 exists to prevent. Fixed with a
+>   mixed sub-case inside T6: four real tokens → three TSA identities, plus one
+>   `proven` OTS → total 4.
+> - **T2's fixture needs a height T1 does not use.** `BlockEvidence` is
+>   height-keyed with one result per height, so in T6's combination the two
+>   artifacts' headers collide. `SYNTHETIC_HEIGHT = 700_001` is used.
+
+
 Two anti-vacuity facts the lane must know before writing anything:
 
 - **The one existing OTS identity test cannot see this question.**

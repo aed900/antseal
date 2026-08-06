@@ -7,7 +7,15 @@
 //! check, A12 owns the embedded-header question. This module is the one place
 //! that puts an artifact into exactly one of the seven frozen states, and it
 //! implements **D53's `T0–T3`** and **D56's `O0–O9`** in their stated order
-//! rather than a summary of either.
+//! rather than a summary of either — with D56 §5's order as **amended by
+//! D93 §5**: O4 carries a guard rather than a position, because as first
+//! written it sat above O6 and O7 and made both online refutations
+//! unreachable on exactly the artifacts they were written for.
+//!
+//! Anchor identity is **D92's**: one arm per independent mechanism, so a
+//! headline-eligible `.ots` contributes [`AnchorIdentity::BitcoinChain`] —
+//! the chain that proved it — and not the calendars it names or the one block
+//! of many that its upgrade group happens to record.
 //!
 //! # Pure
 //!
@@ -214,8 +222,36 @@ impl AnchorAnomaly {
 /// rule instead of restating it: [`AnchorOutcome::identity`] is `Some` iff the
 /// verdict is headline-eligible, so `internally-consistent-only` and `invalid`
 /// contribute **zero** identities however different their claimed source
-/// strings are (A40 Accept row 3), and so do `attested` and `pending`, whose
-/// calendar names are equally unbound.
+/// strings are (A40 Accept row 3), and so does `attested`.
+///
+/// # One arm per independent *mechanism* — D92
+///
+/// Two identities are independent **iff compromising one does not compromise
+/// the other**, which is the only reading under which registry §8's motivating
+/// case ("two tokens, one TSA") is a defect at all. An arm is therefore *what a
+/// compromise takes out*, and that is why the OTS side is keyed on **Bitcoin,
+/// the chain** rather than on the block or on the calendars:
+///
+/// - two blocks of one chain share every failure mode they have — one
+///   proof-of-work regime, one reorg, one must-agree esplora pair — so they
+///   are one identity and two data points;
+/// - a calendar is not a witness at all. D54 §4: *"calendar compromise is a
+///   denial-of-service, not a forgery"*, and there is no key in the protocol
+///   to pin. A party that cannot lie about the proposition is not a witness
+///   to it.
+///
+/// MVP-SPEC.md line 19 states the same model in one line — *"OpenTimestamps
+/// (Bitcoin) + ≥2 free RFC 3161 TSAs on every seal"*: OTS is **one**
+/// mechanism, and the plurality is on the TSA side.
+///
+/// A future Litecoin or Ethereum OTS attestation (D56 rule O9 names both as
+/// live shapes) is a **new arm**, added deliberately with its own independence
+/// argument — never a `ChainId` payload a later lane can extend without making
+/// that argument. Merge-mined chains are not independent of Bitcoin.
+///
+/// The type is in-memory only: it appears in no wire format and in no report
+/// byte, so adding or removing an arm is a source change and never a format
+/// event.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AnchorIdentity {
     /// The TSA whose signer certificate the validated path closed under, by
@@ -234,10 +270,35 @@ pub enum AnchorIdentity {
         /// DER of the signer certificate's `subject` `Name`.
         subject_dn_der: Vec<u8>,
     },
-    /// The calendars an `.ots` names, sorted and de-duplicated
-    /// (A40 `Do`; `verify::report::AnchorResult::source` — *"OTS — the `.ots`
-    /// attestations, which name their calendars"*).
-    OtsCalendars(Vec<String>),
+    /// **Bitcoin, the chain** — what a headline-eligible `.ots` anchor was
+    /// proved by (**D92 §5.1**).
+    ///
+    /// Carries no height, no hash, no calendar and no payload, so every
+    /// headline-eligible OTS anchor in a bundle contributes the *same* value
+    /// and the whole OTS mechanism contributes **at most 1**, for any number
+    /// of artifacts, calendars, blocks or bundles.
+    ///
+    /// It replaced `OtsCalendars(Vec<String>)`, which was A40's original
+    /// reading and is overturned by D92 on three counts, of which the first
+    /// is the one that matters here:
+    ///
+    /// 1. a calendar URI is a **bundle-recorded string** — read verbatim out
+    ///    of an unsigned `.ots` attestation payload, chosen by the sealer at
+    ///    submit time — which is exactly the input the `TsaSigner` arm above
+    ///    forbids;
+    /// 2. it is **invariant across `pending → attested → proven`**, because
+    ///    `antseal-anchor`'s merge is a pure insertion that *enforces*
+    ///    attestation retention, so a value that cannot distinguish "no
+    ///    evidence" from "Bitcoin-confirmed evidence" was never the identity
+    ///    of the evidence;
+    /// 3. it was set-valued, and independence counting needs identities that
+    ///    are equal or disjoint — `{alice}` and `{alice, bob}` are neither.
+    ///
+    /// The block height is **not** lost: `bitcoin_source` renders it into the
+    /// verdict's `source` as `bitcoin-block-{H}`. The source says *what*
+    /// attested; the identity says *who*. For a TSA those coincide; for
+    /// Bitcoin one witness signs many blocks.
+    BitcoinChain,
 }
 
 // ---------------------------------------------------------------------------
@@ -460,17 +521,68 @@ impl AnchorVerdicts {
     }
 
     /// How many **distinct** verified identities the headline-eligible anchors
-    /// establish — the number A20's minimum-anchor gate and R17's divergence
-    /// rule must read instead of `ots_anchors.len()` or `tsa_anchors.len()`
-    /// (registry §8; **A40**).
+    /// establish — the number R17's rendering must read instead of
+    /// `ots_anchors.len()` or `tsa_anchors.len()` (registry §8; **A40**,
+    /// re-keyed by **D92**).
     ///
-    /// Two `proven` tokens from one TSA are **one**. A byte-identical
-    /// duplicate `.ots` is **one**. Neither is a malformed bundle: §8 makes
-    /// duplicates legal v1 by decision, and this is where that legality stops
-    /// being mistakable for independence.
+    /// In closed form (D92 §5.4):
+    ///
+    /// ```text
+    /// |{ signer subject DN : headline-eligible TSA anchors }|
+    ///   + (1 if any headline-eligible OTS anchor else 0)
+    /// ```
+    ///
+    /// Two `proven` tokens from one TSA are **one**. And **every**
+    /// headline-eligible OTS anchor in a bundle is one identity, whatever its
+    /// blocks or its calendars: two `.ots` proven at different heights are one
+    /// identity and two data points, because two blocks of one chain share
+    /// every failure mode they have (D92 §1.1). A byte-identical duplicate
+    /// `.ots` counting one is the *weakest* statement the rule makes, not the
+    /// rule. None of these is a malformed bundle: §8 makes duplicates legal v1
+    /// by decision, and this is where that legality stops being mistakable for
+    /// independence.
+    ///
+    /// A TSA identity and an OTS identity can never be equal — different enum
+    /// arms — so the sum needs no rule anyone must remember.
+    ///
+    /// # Not the input to A20's gate
+    ///
+    /// This scalar is **mixed**, and D54 §3 rules that *"OTS contributes
+    /// exactly zero to A20's minimum-anchor gate"*. A gate written as
+    /// `distinct_verified_identities() >= 1` would be satisfied by a bundle
+    /// with **zero** TSA anchors and one `proven` OTS, against a spec that
+    /// says "≥1 TSA token". Use
+    /// [`Self::distinct_verified_identities_of`] with [`AnchorKind::Tsa`], or
+    /// the seal-time `AnchorSubmission::verified_tsa_count`.
     #[must_use]
     pub fn distinct_verified_identities(&self) -> usize {
         self.verified_identities().len()
+    }
+
+    /// How many distinct verified identities of **one kind** the
+    /// headline-eligible anchors establish (**D92 §5.5**).
+    ///
+    /// Never `>= 2` for [`AnchorKind::Ots`]: every headline-eligible OTS
+    /// anchor contributes [`AnchorIdentity::BitcoinChain`], whatever its
+    /// height or calendars (D92 §5.1).
+    ///
+    /// # A20's gate must read this, never the mixed scalar
+    ///
+    /// A20's rule is *"proceed iff ≥1 TSA token passed full core
+    /// verification"*, and D54 §3 rules that OTS contributes **exactly zero**
+    /// to that gate. A `>= 1` test over
+    /// [`Self::distinct_verified_identities`] would pass a bundle carrying no
+    /// TSA anchor at all — one `proven` OTS is enough to satisfy it. This
+    /// method exists so the correct thing is spellable; A40's `Do` named the
+    /// mixed scalar and is amended by D92 §10.4.
+    #[must_use]
+    pub fn distinct_verified_identities_of(&self, kind: AnchorKind) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.verdict.kind() == kind)
+            .filter_map(AnchorOutcome::identity)
+            .collect::<BTreeSet<_>>()
+            .len()
     }
 }
 
@@ -595,9 +707,12 @@ pub fn evaluate_ots_artifact(
         }
     };
 
+    // The calendars are a **source string** and nothing else (D92 §8.3). They
+    // were the OTS identity until D92; they are not, because a calendar URI is
+    // a bundle-recorded string the sealer chooses, and D54 §4 shows a calendar
+    // is not a witness at all.
     let calendars = calendars_of(&artifact);
     let calendar_source = (!calendars.is_empty()).then(|| calendars.join(" "));
-    let identity = AnchorIdentity::OtsCalendars(calendars);
 
     // A12's offline question, existential over the branch set so the answer
     // is invariant under branch order.
@@ -618,6 +733,46 @@ pub fn evaluate_ots_artifact(
         )
     });
     let agreed = upgrade.and_then(|u| blocks.block(u.block_height()));
+
+    // ── D93 §5's guard on O4 ───────────────────────────────────────────
+    //
+    // Does agreed online evidence about the recorded height **refute** the
+    // artifact? That is rules O6 and O7 and deliberately **not O8**: the
+    // offline structural refutation stays outside this value, because O4
+    // requires `committed` and O8 fires only when `committed` is false.
+    //
+    // Why O4 needs a guard at all. As D56 §5 first wrote the order, O4
+    // returned on `upgrade.is_some() && committed` with `agreed` absent from
+    // its guard, and the refutation block below is reached only after O3, O4
+    // and O5 have fallen through. O6 and O7 could therefore only ever produce
+    // a verdict when `committed` was **false** — exactly when O8 already
+    // convicts the artifact offline, with no online evidence needed. Two
+    // consequences, both measured: a forged header the ops commit needs no
+    // mining at all (the attacker picks the ops, reads the root they derive,
+    // and writes it into bytes 36..68 of 80 bytes of its choosing) and
+    // rendered `attested` against *any* online evidence; and an `.ots`
+    // claiming a height beyond the chain tip rendered `attested` **for ever**,
+    // which is the defect D56 §3 states in those words as O7's whole reason.
+    //
+    // The three precedences the machine needs form a cycle — O4 over O5, O5
+    // over O6/O7, O6/O7 over O4 — so it is broken by **conditioning O4**
+    // rather than by reordering. O5 keeps its precedence over O6/O7, so D56
+    // §4's anti-downgrade ruling is untouched: a committed artifact that
+    // agreed evidence refutes still renders `pending` when it has a pending
+    // branch, and the refutation is carried as an A39 anomaly.
+    let refuted_online = match (upgrade, agreed) {
+        // O6 — an agreed header that is not the embedded one.
+        (Some(u), Some(OnlineBlockResult::Header(fetched))) => fetched != *u.block_header(),
+        // O7 — agreed absence of the block at the recorded height.
+        (_, Some(OnlineBlockResult::NoSuchBlock)) => true,
+        // No agreed evidence, or evidence that agrees: a cryptographic verdict
+        // does not move with network weather (D56 §3). `agreed` is `None`
+        // whenever `upgrade` is, so the first arm is the only one that can
+        // carry a header. Wildcard-free over [`OnlineBlockResult`] for the
+        // same reason [`OnlineBlockResult::agreement_with`] is: adding a
+        // failure variant must not compile.
+        (None, Some(OnlineBlockResult::Header(_))) | (_, None) => false,
+    };
 
     // The refutation O6/O7/O8 **would** have produced, computed once. When a
     // better rule wins it becomes the A39 suppressed entry; when none does it
@@ -662,16 +817,33 @@ pub fn evaluate_ots_artifact(
                 fetch_date,
             ),
             refutation.into_iter().collect(),
-            Some(identity),
+            // D92 §5.1: what proved this is **Bitcoin**, not the calendars the
+            // artifact happens to name and not the one block of many that the
+            // D79 upgrade group happens to record.
+            Some(AnchorIdentity::BitcoinChain),
         );
     }
 
     // ── O4 ─────────────────────────────────────────────────────────────
     //
-    // Upgraded, header embedded, committed by the ops — and **never**
-    // headline-eligible offline, carrying no time. A lone header's
-    // proof-of-work is self-referential (MVP-SPEC.md line 108), and A2 made
-    // the time unrepresentable rather than merely unset.
+    // Upgraded, header embedded, committed by the ops, **and not refuted by
+    // agreed online evidence** (D93 §5) — and never headline-eligible offline,
+    // carrying no time. A lone header's proof-of-work is self-referential
+    // (MVP-SPEC.md line 108), and A2 made the time unrepresentable rather than
+    // merely unset.
+    //
+    // `!refuted_online` is the whole of D93's amendment. Offline it is
+    // vacuously true — `agreed` is `None` for every evaluation with no
+    // evidence — so D56 §3's network-weather rule is unchanged and nothing
+    // that renders `attested` today stops doing so.
+    //
+    // **O4's `suppressed` list is empty by construction**, and the guard is
+    // why: `refutation` is `Some` only for O6 (excluded by `!refuted_online`),
+    // O7 (likewise) or O8 (excluded by `committed`). It is still written as
+    // `refutation.into_iter().collect()` rather than `Vec::new()`, so that
+    // weakening the guard records the refutation instead of discarding it;
+    // `an_attested_ots_never_carries_a_suppressed_anomaly` is what asserts the
+    // list is in fact always empty.
     //
     // The `let Some(u)` is structural rather than defensive: `committed` is
     // `upgrade.is_some_and(…)`, so the two conditions cannot disagree — and
@@ -679,6 +851,7 @@ pub fn evaluate_ots_artifact(
     // silently render `bitcoin-block-0` if they ever did.
     if let Some(u) = upgrade
         && committed
+        && !refuted_online
     {
         return AnchorOutcome::new(
             AnchorVerdict::attested(
@@ -687,7 +860,11 @@ pub fn evaluate_ots_artifact(
                 fetch_date,
             ),
             refutation.into_iter().collect(),
-            Some(identity),
+            // Passed and then dropped by `AnchorOutcome::new`, deliberately:
+            // `attested` is not headline-eligible, so the eligibility filter
+            // stays the **single** enforcement point rather than being
+            // duplicated as a `None` here (D92 §5.3).
+            Some(AnchorIdentity::BitcoinChain),
         );
     }
 
@@ -701,7 +878,11 @@ pub fn evaluate_ots_artifact(
         return AnchorOutcome::new(
             AnchorVerdict::pending(AnchorKind::Ots, calendar_source, fetch_date),
             refutation.into_iter().collect(),
-            Some(identity),
+            // `None`, not a value the filter would drop: there is no Bitcoin
+            // block behind a pending attestation at all. Passing an identity
+            // that is silently discarded is how the calendar key hid the
+            // question for a whole task (D92 §5.3).
+            None,
         );
     }
 
@@ -735,7 +916,17 @@ pub fn evaluate_ots_artifact(
 
 /// D56's refutation rules **O6 → O7 → O8**, first match wins.
 ///
-/// Every one is guarded on `upgrade.is_some()`, which is why the converse
+/// # When this value is a verdict and when it is an anomaly
+///
+/// Under D93 §5 the two **online** rules also gate O4, so a `committed`
+/// artifact that agreed evidence refutes no longer returns `Attested` before
+/// this block is consulted. It renders `Invalid` here, or `Pending` at O5 with
+/// this value carried as the A39 suppressed entry when a pending branch
+/// out-votes it. O8 is unchanged and still reachable only when `committed` is
+/// false, which is why `refuted_online` above covers O6 and O7 and not this
+/// function as a whole.
+///
+/// Every rule is guarded on `upgrade.is_some()`, which is why the converse
 /// shape — a Bitcoin-attested branch with **no** upgrade group — falls
 /// through to O9 rather than being refuted. That is correct rather than an
 /// oversight: MVP-SPEC.md line 108 defines `attested` as *"ops commit
@@ -795,10 +986,18 @@ fn ots_refutation(
 /// The calendars an artifact's pending attestations name — sorted and
 /// de-duplicated, so the value is invariant under branch order.
 ///
+/// **This builds a source string, not an identity** (D92 §8.3). It feeds the
+/// `pending`, `invalid` and `internally-consistent-only` verdicts' `source`
+/// field and nothing else. Until D92 the same value was also A40's OTS
+/// identity; it is not, and the reason is right here in this function — the
+/// URI is read verbatim out of an unsigned attestation payload, which is a
+/// **bundle-recorded string** the sealer chose at submit time, and
+/// [`AnchorIdentity::TsaSigner`]'s own rule forbids exactly that input.
+///
 /// **Indeterminate branches are included.** A calendar URI is read out of the
 /// attestation payload, not derived through the ops, so a branch that crossed
 /// an unimplemented op still names its calendar truthfully. That matters for
-/// A40: the identity is about *who* the artifact points at, not about what the
+/// the *source*: it is about who the artifact points at, not about what the
 /// verifier could compute.
 fn calendars_of(artifact: &OtsArtifact) -> Vec<String> {
     let mut calendars: Vec<String> = artifact

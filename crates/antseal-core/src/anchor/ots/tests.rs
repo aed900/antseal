@@ -14,6 +14,22 @@ use crate::bundle::schema::OtsUpgrade;
 use crate::codec::caps::MAX_OTS_BYTES;
 
 // ── builders ─────────────────────────────────────────────────────────────
+//
+// **This copy is deliberate and must not be consolidated.** A82 promoted the
+// *other* `.ots` writer — the one `anchor::verdicts::tests` used — into
+// `anchor::testing::ots_writer`, where every format constant is imported from
+// the parser by name so a format change breaks the build instead of silently
+// minting bytes. That is right for a suite testing something else, and wrong
+// here: this is the **parser's own** suite, and its fixtures must be
+// independent of the constants under test. Re-pointing it at the shared writer
+// would move every fixture with any mutation of `parse::MAGIC`,
+// `parse::VERSION_1` or `parse::DIGEST_TYPE_SHA256`, and the suite would stay
+// green over bytes that moved with the code.
+//
+// A82's task text asks for this twin to be re-pointed *"so no duplicate writer
+// remains"*; that clause is wrong on this file, and the two copies are
+// opposite instruments rather than redundancy. Recorded here rather than
+// silently obeyed.
 
 /// The container magic, restated here **independently of the parser's copy**
 /// so that a mutation of `parse::MAGIC` cannot silently move every fixture

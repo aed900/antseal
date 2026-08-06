@@ -25,6 +25,24 @@ use crate::verify::report::AnchorResult;
 
 use crate::anchor::roots::{PinnedRoot, TsaRootStore};
 
+// The synthetic `.ots` writer, promoted out of this file into
+// `anchor::testing` by **A82** so that A21's tamper rows and the integration
+// targets can reach it — `test_util` is not `cfg(test)` and
+// `crates/antseal-core/tests/` is a separate crate, so a `#[cfg(test)]` helper
+// here was invisible to both homes the matrix uses. Nothing below changed
+// except where these names resolve from.
+use crate::anchor::testing::ots_writer::{
+    ATTESTED_HEIGHT, DIGEST_UPGRADED_LARGE_TEST as DIGEST_UPGRADED, FETCH_DATE, HEADER_NTIME,
+    SECOND_ATTESTED_HEIGHT, UPGRADED_LARGE_TEST as UPGRADED, bitcoin, committed_single_branch,
+    committing_upgrade, committing_upgrade_at, container, derived_root, fork, header_with, pending,
+    synthetic_digest, unknown,
+};
+
+/// A height neither real Bitcoin attestation in [`UPGRADED`] uses, so a
+/// synthetic artifact and the two real ones can share one bundle and one
+/// [`BlockEvidence`] map.
+const SYNTHETIC_HEIGHT: u64 = 700_001;
+
 // ── real captured material ──────────────────────────────────────────────
 
 /// The nine D60 captures were all taken over this digest.
@@ -55,23 +73,9 @@ const MERGED_A: &[u8] =
 const DIGEST_A: [u8; 32] =
     *include_bytes!("../../../../../testdata/anchors/A25-bootstrap/digest-A.bin");
 
-/// A real **upgraded** mainnet proof: two pending branches and two Bitcoin
-/// attestations, at heights 449397 and 449399.
-const UPGRADED: &[u8] = include_bytes!(
-    "../../../../../testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots"
-);
-const DIGEST_UPGRADED: [u8; 32] = [
-    0x6f, 0xd9, 0xc1, 0xc4, 0xf0, 0x96, 0xb7, 0x7e, 0x6d, 0x44, 0x57, 0xba, 0xc1, 0xc7, 0xf5, 0x10,
-    0x10, 0xd3, 0x18, 0xdb, 0x48, 0x3f, 0x28, 0x68, 0xd3, 0x79, 0x58, 0x43, 0xf0, 0x98, 0xd3, 0x78,
-];
-
-/// The height whose Bitcoin attestation the upgrade fixtures below pin to.
-const ATTESTED_HEIGHT: u64 = 449_399;
-/// A recognisable `nTime` for the synthetic headers. Never read from an
-/// embedded header to produce a verdict (D56 §5); see
-/// `the_proven_time_is_read_from_the_agreed_header`.
-const HEADER_NTIME: u32 = 1_483_398_000;
-const FETCH_DATE: u64 = 1_785_000_100;
+/// A height no chain has reached — D56 §3's *"an `.ots` claiming a block
+/// beyond the chain tip"*, literally.
+const BEYOND_CHAIN_TIP: u64 = 99_999_999;
 
 /// A verification instant comfortably inside every captured certificate's
 /// validity window.
@@ -140,50 +144,6 @@ fn empty_store() -> TsaRootStore {
     store_of(Vec::new())
 }
 
-/// The 80-byte header shape: `root` at bytes 36..68, `ntime` little-endian at
-/// 68..72, everything else a recognisable filler.
-fn header_with(root: &[u8], ntime: u32) -> [u8; 80] {
-    let mut header = [0xaa_u8; 80];
-    header[36..68].copy_from_slice(root);
-    header[68..72].copy_from_slice(&ntime.to_le_bytes());
-    header
-}
-
-/// The merkle root the real upgraded fixture's ops derive at `height`.
-///
-/// Read out of the parsed artifact rather than transcribed, so the synthetic
-/// header below commits what the real ops actually produce and cannot drift
-/// from them.
-fn derived_root(height: u64) -> Vec<u8> {
-    let artifact = parse_ots(UPGRADED, &DIGEST_UPGRADED).expect("the real fixture parses");
-    artifact
-        .attestations
-        .iter()
-        .find_map(|attestation| match attestation {
-            OtsAttestation::Bitcoin {
-                height: h,
-                merkle_root: Some(root),
-            } if *h == height => Some(root.clone()),
-            _ => None,
-        })
-        .expect("the fixture attests this height")
-}
-
-/// The upgrade group the real upgraded fixture's ops **do** commit.
-///
-/// The merkle-root field is the real ops-derived value; the surrounding 48
-/// bytes are filler, because no fetched mainnet header for block 449399 is in
-/// the tree (A25/A48 owe that, `anchor::ots::header`'s module docs). Nothing
-/// below reads a filler byte: the only fields any rule touches are the merkle
-/// root and `nTime`.
-fn committing_upgrade() -> OtsUpgrade {
-    OtsUpgrade::new(
-        ATTESTED_HEIGHT,
-        header_with(&derived_root(ATTESTED_HEIGHT), HEADER_NTIME),
-        FETCH_DATE,
-    )
-}
-
 /// The same shape with a merkle root the ops do **not** derive — a header
 /// substituted into an otherwise honest artifact.
 fn forged_upgrade() -> OtsUpgrade {
@@ -200,89 +160,10 @@ fn evidence_header(height: u64, header: [u8; 80]) -> OnlineEvidence {
     OnlineEvidence::new().with_block(height, OnlineBlockResult::Header(header))
 }
 
-// ── a minimal `.ots` writer, for shapes no capture contains ─────────────
-//
-// The container format is A11's (`anchor::ots::parse`); this mirrors the
-// builder in `anchor::ots::tests` rather than importing it, because that one
-// is private to its own module. Every constant below is imported by name from
-// the parser, so a format change breaks the build here instead of silently
-// producing bytes the parser rejects for the wrong reason.
-
-use crate::anchor::ots::{
-    OTS_DIGEST_TYPE_SHA256, OTS_MAGIC, OTS_PENDING_TAG, OTS_VERSION, OtsError,
-};
-
-const BITCOIN_TAG: [u8; 8] = [0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01];
-/// An attestation type this verifier does not implement — the shape D56 §2
-/// says keeps `internally-consistent-only` reachable for OTS. Litecoin and
-/// Ethereum calendars really do exist.
-const UNKNOWN_TAG: [u8; 8] = [0x0f, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee];
-
-fn varuint(mut value: u64) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let byte = u8::try_from(value % 128).expect("masked to 7 bits");
-        value /= 128;
-        if value == 0 {
-            out.push(byte);
-            return out;
-        }
-        out.push(byte | 0x80);
-    }
-}
-
-fn container(digest: &[u8; 32], body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&OTS_MAGIC);
-    out.extend_from_slice(&varuint(OTS_VERSION));
-    out.push(OTS_DIGEST_TYPE_SHA256);
-    out.extend_from_slice(digest);
-    out.extend_from_slice(body);
-    out
-}
-
-fn attestation(tag: [u8; 8], payload: &[u8]) -> Vec<u8> {
-    let mut out = vec![0x00];
-    out.extend_from_slice(&tag);
-    out.extend_from_slice(&varuint(payload.len() as u64));
-    out.extend_from_slice(payload);
-    out
-}
-
-fn pending(uri: &str) -> Vec<u8> {
-    let mut payload = varuint(uri.len() as u64);
-    payload.extend_from_slice(uri.as_bytes());
-    attestation(OTS_PENDING_TAG, &payload)
-}
-
-fn bitcoin(height: u64) -> Vec<u8> {
-    attestation(BITCOIN_TAG, &varuint(height))
-}
-
-fn unknown() -> Vec<u8> {
-    attestation(
-        UNKNOWN_TAG,
-        b"opaque payload from a calendar we do not implement",
-    )
-}
-
-/// `N` children under one node: a fork marker before every child but the last
-/// (D58 §7.2).
-fn fork(children: &[Vec<u8>]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (i, child) in children.iter().enumerate() {
-        if i + 1 < children.len() {
-            out.push(0xff);
-        }
-        out.extend_from_slice(child);
-    }
-    out
-}
-
-/// A synthetic digest, distinct from every committed one.
-fn synthetic_digest(seed: u8) -> [u8; 32] {
-    [seed; 32]
-}
+// `OtsError` stays imported here: the code-distinctness row below reads
+// `OtsError::DigestMismatch.code()`. The writer that used to live in this
+// section is now `anchor::testing::ots_writer` (**A82**).
+use crate::anchor::ots::OtsError;
 
 /// Evaluate one `.ots` with no online evidence.
 fn ots_offline(bytes: &[u8], digest: &[u8; 32], upgrade: Option<OtsUpgrade>) -> AnchorOutcome {
@@ -637,56 +518,97 @@ fn the_proven_time_is_read_from_the_agreed_header() {
     );
 }
 
-/// **O6, and the precondition D56 does not state: it is reachable only when
-/// the ops do *not* commit the embedded header.**
+/// **O6 as amended by D93 §5 — a self-consistent forgery that agreed online
+/// evidence refutes is `invalid`, not `attested`.**
 ///
-/// Found by writing the row above and watching it fail. O4 precedes O6, and
-/// O4's guard is `header_commits` — so an artifact whose ops **do** commit an
-/// embedded header that agreed online evidence then refutes never reaches O6.
-/// It renders `attested`, with the refutation carried as an A39 anomaly.
+/// This row previously asserted the opposite — it was named
+/// *a\_self\_consistent\_forgery\_refuted\_online\_**is\_attested**\_with\_the\_refutation\_recorded*,
+/// and the name was accurate: it was **pinning the defect**. (Written without
+/// backticks deliberately — Q69's doc-pointer check treats a backticked
+/// test name as a live pointer, and this one names nothing.) As D56 §5 first
+/// wrote the rule order, O4
+/// returned on `upgrade.is_some() && header_commits` with `agreed` nowhere in
+/// its guard, so O6 and O7 could only ever produce a verdict when the ops did
+/// *not* commit the header — which is exactly when O8 already convicts the
+/// artifact offline, with no online evidence needed. The online gate refuted
+/// nothing it did not already have. Five statements contradicted that order,
+/// four of them inside D56 (§3, §5's own summary table, §1's ruling that
+/// MVP-SPEC.md lines 108/168 win, and A18's own Accept row 2); D93 §4 rules on
+/// them and D93 §5 gives O4 a guard rather than a position.
 ///
-/// That is D56 §4 working exactly as argued rather than a hole: *"the ceiling
-/// an attacker can reach on its own is `attested`, which requires only mining
-/// a minimal-difficulty header with the right merkle root — and `attested` is
-/// **already** designed to be forgeable-but-not-headline-eligible offline"*.
-/// A self-consistent forgery is not headline-eligible, proves no time, and now
-/// carries the online refutation in its record.
+/// The base is `committed_single_branch`, and both halves of that name are the
+/// point: an *uncommitted* forgery renders `invalid` offline whatever the
+/// evidence says, and a *pending sibling* makes O5 fire first.
 ///
-/// **This is a trap for A21 beyond the single-branch one D56 §4 records**: the
-/// `anchor-forged-header` row pins `verdict:invalid`, so its fixture must be
-/// one whose ops do **not** commit the substituted header — which is what
-/// substituting a header into an honest artifact naturally produces, and what
-/// forging the whole artifact naturally does not.
+/// What makes it fail — all three redden this row:
+///
+/// 1. **Restoring D56 §5's original order** (drop `!refuted_online` from O4):
+///    renders `attested`. That is the fault this row exists for.
+/// 2. **Dropping the online evidence** from the exercise: renders `attested`,
+///    which is why the withheld-evidence direction is asserted here too — the
+///    online gate has to be threaded and not decoration.
+/// 3. **Weakening O3's guard to a merkle-root comparison**: renders `proven`,
+///    which is the promotion hole D56 §9's retired `nTime` row was reaching
+///    for (D93 §8).
 #[test]
-fn a_self_consistent_forgery_refuted_online_is_attested_with_the_refutation_recorded() {
-    let upgrade = committing_upgrade();
-    let root = derived_root(ATTESTED_HEIGHT);
-    let refuting = header_with(&root, HEADER_NTIME + 3600);
+fn a_committed_forgery_refuted_online_is_invalid() {
+    let (digest, bytes, upgrade) = committed_single_branch(0xe1, ATTESTED_HEIGHT);
+    let embedded = *upgrade.block_header();
 
-    let self_consistent = ots_online(
-        UPGRADED,
-        &DIGEST_UPGRADED,
+    // Anti-vacuity, over one artifact and in both directions: the base really
+    // is committed **and** promotable, so `invalid` below is the online gate
+    // firing rather than the fixture being broken.
+    let proven = ots_online(
+        &bytes,
+        &digest,
         Some(upgrade.clone()),
-        &evidence_header(ATTESTED_HEIGHT, refuting),
+        &evidence_header(ATTESTED_HEIGHT, embedded),
     );
-    assert_eq!(state_of(&self_consistent), AnchorState::Attested);
-    assert!(!self_consistent.verdict().is_headline_eligible());
-    assert_eq!(self_consistent.verdict().verified_time_unix(), None);
     assert_eq!(
-        anomaly_codes(&self_consistent),
-        vec![OTS_ONLINE_HEADER_MISMATCH_CODE],
-        "the online refutation must survive best-evidence-wins"
+        state_of(&proven),
+        AnchorState::Proven,
+        "the base must be committed and promotable, or this row pins nothing"
     );
 
-    // The reachable O6 shape: the ops do not commit the embedded header, and
-    // there is no pending branch to win under O5.
-    let digest = synthetic_digest(0xe1);
-    let substituted = container(&digest, &bitcoin(ATTESTED_HEIGHT));
-    let outcome = ots_online(
-        &substituted,
+    // …and with the evidence withheld it is `attested`. Same bytes, one input
+    // removed, a different answer.
+    let withheld = ots_offline(&bytes, &digest, Some(upgrade.clone()));
+    assert_eq!(state_of(&withheld), AnchorState::Attested);
+    assert!(withheld.suppressed().is_empty());
+
+    // The rule under test: one agreed header that is not the embedded one.
+    let refuting = header_with(&digest, HEADER_NTIME + 3600);
+    assert_eq!(
+        refuting[..68],
+        embedded[..68],
+        "the refuting header differs in nTime alone, so only O3's whole-header \
+         equality separates them"
+    );
+    let refuted = ots_online(
+        &bytes,
         &digest,
         Some(upgrade),
         &evidence_header(ATTESTED_HEIGHT, refuting),
+    );
+    assert_eq!(state_of(&refuted), AnchorState::Invalid);
+    assert_eq!(code_of(&refuted), Some(OTS_ONLINE_HEADER_MISMATCH_CODE));
+    assert_eq!(refuted.verdict().verified_time_unix(), None);
+    assert!(!refuted.verdict().is_headline_eligible());
+    assert!(
+        refuted.suppressed().is_empty(),
+        "the refutation is the verdict here, not a suppressed anomaly"
+    );
+
+    // **O6 over O8, unchanged by D93.** The *uncommitted* forgery — the only
+    // shape the pre-D93 machine could refute — still reports the online code
+    // rather than the structural one.
+    let (other, substituted, _) = committed_single_branch(0xe2, ATTESTED_HEIGHT);
+    let honest_root = header_with(&derived_root(ATTESTED_HEIGHT), HEADER_NTIME + 3600);
+    let outcome = ots_online(
+        &substituted,
+        &other,
+        Some(committing_upgrade()),
+        &evidence_header(ATTESTED_HEIGHT, honest_root),
     );
     assert_eq!(state_of(&outcome), AnchorState::Invalid);
     assert_eq!(
@@ -695,6 +617,129 @@ fn a_self_consistent_forgery_refuted_online_is_attested_with_the_refutation_reco
         "an agreed online refutation beats the offline structural one (O6 over O8)"
     );
     assert_eq!(outcome.verdict().verified_time_unix(), None);
+}
+
+/// **D56 §4 survives D93 §5 — O5 keeps its precedence over O6 and O7.**
+///
+/// A `committed` artifact that agreed evidence refutes renders `pending`, not
+/// `invalid`, when it also carries an evaluable pending branch: the pending
+/// branch is the strongest unrefuted claim, and the `.sealproof` bundle is
+/// **unsigned**, so refutation-wins would hand any relay a
+/// downgrade-to-forgery-accusation primitive. The refutation is carried as the
+/// A39 suppressed entry rather than acted on.
+///
+/// This is the case D93's amendment moves from `attested` to `pending`, and
+/// it is the *only* place best-evidence-wins still discards a genuine online
+/// refutation. Before the amendment this artifact rendered `attested` — a
+/// strictly stronger claim than the evidence supports.
+///
+/// What makes it fail: lifting O6/O7 above O5 as well as above O4, which
+/// renders `invalid` and reinstates the relay primitive D56 §4 exists to
+/// close.
+#[test]
+fn a_pending_branch_is_not_demoted_by_an_online_refutation() {
+    let upgrade = committing_upgrade();
+    let refuting = header_with(&derived_root(ATTESTED_HEIGHT), HEADER_NTIME + 3600);
+    let outcome = ots_online(
+        UPGRADED,
+        &DIGEST_UPGRADED,
+        Some(upgrade.clone()),
+        &evidence_header(ATTESTED_HEIGHT, refuting),
+    );
+    assert_eq!(state_of(&outcome), AnchorState::Pending);
+    assert_eq!(
+        anomaly_codes(&outcome),
+        vec![OTS_ONLINE_HEADER_MISMATCH_CODE],
+        "the online refutation must survive best-evidence-wins"
+    );
+    assert_eq!(outcome.verdict().verified_time_unix(), None);
+    assert!(!outcome.verdict().is_headline_eligible());
+
+    // The fixture is committed **and** carries an evaluable pending branch —
+    // both, or this row is about some other rule. Two evaluations of the same
+    // bytes say so.
+    assert_eq!(
+        state_of(&ots_offline(UPGRADED, &DIGEST_UPGRADED, Some(upgrade))),
+        AnchorState::Attested,
+        "committed: with no evidence O4 fires"
+    );
+    assert_eq!(
+        state_of(&ots_offline(UPGRADED, &DIGEST_UPGRADED, None)),
+        AnchorState::Pending,
+        "and an evaluable pending branch exists"
+    );
+}
+
+/// **D93 §5's A39 consequence, asserted rather than argued.** Under the
+/// amended guard O4 can carry **no** suppressed anomaly: `refutation` is
+/// `Some` only for O6 (excluded by `!refuted_online`), O7 (likewise) or O8
+/// (excluded by `committed`).
+///
+/// What makes it fail: restoring D56 §5's original order. O4 then fires on a
+/// committed artifact that agreed evidence refutes, carrying that refutation
+/// as a recorded-and-ignored anomaly — which is the one case D93 removed, and
+/// the shape in which the defect was invisible for a whole wave.
+///
+/// The sweep is anti-vacuous in both directions: it asserts it saw an
+/// `attested` outcome at all, and that the same sweep *can* observe a
+/// non-empty suppressed list (the O5 rows do).
+#[test]
+fn an_attested_ots_never_carries_a_suppressed_anomaly() {
+    let (single, single_bytes, single_upgrade) = committed_single_branch(0xe3, ATTESTED_HEIGHT);
+    let refuting = header_with(&single, HEADER_NTIME + 3600);
+    let absent = OnlineEvidence::new().with_block(ATTESTED_HEIGHT, OnlineBlockResult::NoSuchBlock);
+    let honest = header_with(&derived_root(ATTESTED_HEIGHT), HEADER_NTIME);
+
+    let cases: Vec<AnchorOutcome> = vec![
+        // committed, no evidence -> attested
+        ots_offline(&single_bytes, &single, Some(single_upgrade.clone())),
+        // committed, refuting header -> invalid (was: attested + anomaly)
+        ots_online(
+            &single_bytes,
+            &single,
+            Some(single_upgrade.clone()),
+            &evidence_header(ATTESTED_HEIGHT, refuting),
+        ),
+        // committed, agreed absence -> invalid (was: attested + anomaly)
+        ots_online(&single_bytes, &single, Some(single_upgrade), &absent),
+        // committed with a pending sibling, refuted -> pending + anomaly
+        ots_online(
+            UPGRADED,
+            &DIGEST_UPGRADED,
+            Some(committing_upgrade()),
+            &evidence_header(ATTESTED_HEIGHT, header_with(&single, HEADER_NTIME)),
+        ),
+        // uncommitted with a pending sibling -> pending + anomaly
+        ots_offline(MERGED_A, &DIGEST_A, Some(committing_upgrade())),
+        // the real upgraded fixture, honest and offline -> attested
+        ots_offline(UPGRADED, &DIGEST_UPGRADED, Some(committing_upgrade())),
+        // …and online, agreeing -> proven
+        ots_online(
+            UPGRADED,
+            &DIGEST_UPGRADED,
+            Some(committing_upgrade()),
+            &evidence_header(ATTESTED_HEIGHT, honest),
+        ),
+    ];
+
+    for outcome in &cases {
+        if state_of(outcome) == AnchorState::Attested {
+            assert!(
+                outcome.suppressed().is_empty(),
+                "O4 carried {:?}",
+                anomaly_codes(outcome)
+            );
+        }
+    }
+    assert!(
+        cases.iter().any(|o| state_of(o) == AnchorState::Attested),
+        "the sweep must reach O4 at all"
+    );
+    assert!(
+        cases.iter().any(|o| !o.suppressed().is_empty()),
+        "the sweep must be able to see a non-empty suppressed list, or the \
+         assertion above is vacuous"
+    );
 }
 
 /// **O3's conjunction.** An agreed header the ops do not commit does not
@@ -726,26 +771,97 @@ fn online_evidence_that_does_not_commit_the_ops_root_does_not_promote() {
     );
 }
 
-/// **O7.** Two endpoints agreeing that the height holds no block is agreed
-/// evidence refuting the artifact, not the absence of evidence.
+/// **O7, over the fixture that can actually witness it (D93 §3/§7).** An
+/// `.ots` whose ops commit its embedded header, at a height both endpoints
+/// agree holds no block, is `invalid`.
 ///
-/// What makes it fail: collapsing `NoSuchBlock` into "no entry". An `.ots`
-/// claiming a height beyond the chain tip would then render `attested` for
-/// ever.
+/// This is the committed twin, and D93 §3 is why it had to be written: the
+/// `!committed` row below carried this rule's doc comment for a whole wave
+/// while being unable to see it. Under the original rule order O4 returned
+/// before the refutation block ever ran whenever the ops committed the header,
+/// so `NoSuchBlock` was **not** collapsed into "no evidence" — it was simply
+/// never reached, and an `.ots` claiming a height beyond the chain tip
+/// rendered `attested` for ever, which is the defect D56 §3 states in those
+/// words as the reason this rule exists.
+///
+/// The `attested`-for-ever defect is made visible rather than described: the
+/// same bytes with the evidence withheld render `attested`, and **nothing
+/// offline can ever refute them** — the ops do commit the header, so O8 has
+/// nothing to say. Only the online gate can, and only if it is reachable.
+///
+/// What makes it fail: collapsing `NoSuchBlock` into "no entry" (renders
+/// `attested`), or reverting D93's guard on O4 (also `attested`).
 #[test]
-fn agreed_absence_of_the_block_is_invalid() {
-    let upgrade = committing_upgrade();
-    let online = OnlineEvidence::new().with_block(ATTESTED_HEIGHT, OnlineBlockResult::NoSuchBlock);
-    // Strip the pending branches so nothing better than O7 applies: the real
-    // fixture's two pending attestations would otherwise win under O5, which
-    // is itself the A21 trap D56 §4 records.
-    let bytes = container(
-        &synthetic_digest(0x21),
-        &fork(&[bitcoin(ATTESTED_HEIGHT), bitcoin(ATTESTED_HEIGHT + 1)]),
+fn agreed_absence_of_the_block_is_invalid_when_the_ops_commit_the_header() {
+    let (digest, bytes, upgrade) = committed_single_branch(0x22, BEYOND_CHAIN_TIP);
+
+    // The offline half of the defect, measured: this artifact is `attested`
+    // with no online evidence and there is no offline rule that can refute it.
+    let withheld = ots_offline(&bytes, &digest, Some(upgrade.clone()));
+    assert_eq!(
+        state_of(&withheld),
+        AnchorState::Attested,
+        "the ops commit the header, so O8 has nothing to say about it"
     );
-    let outcome = ots_online(&bytes, &synthetic_digest(0x21), Some(upgrade), &online);
+    assert!(withheld.suppressed().is_empty());
+
+    let online = OnlineEvidence::new().with_block(BEYOND_CHAIN_TIP, OnlineBlockResult::NoSuchBlock);
+    let outcome = ots_online(&bytes, &digest, Some(upgrade), &online);
     assert_eq!(state_of(&outcome), AnchorState::Invalid);
     assert_eq!(code_of(&outcome), Some(OTS_ONLINE_BLOCK_ABSENT_CODE));
+    assert_eq!(outcome.verdict().verified_time_unix(), None);
+    assert!(!outcome.verdict().is_headline_eligible());
+}
+
+/// **O7 over O8**, which is all this row has ever measured.
+///
+/// Kept, renamed and re-scoped by D93 §7. It was committed under the
+/// unqualified name *agreed\_absence\_of\_the\_block\_is\_invalid*, carrying the
+/// doc comment *"What makes it fail: collapsing `NoSuchBlock` into 'no entry'.
+/// An `.ots` claiming a height beyond the chain tip would then render
+/// `attested` for ever"* — and it **could not see that defect**, because its
+/// fixture is not committed:
+/// with zero ops every branch commitment is the stamped digest, while
+/// `committing_upgrade()`'s header carries the real ops-derived root of the
+/// `LARGE_TEST` capture. O8 convicts these same bytes on its own. It is the
+/// eighth instrument this project has caught naming a defect in prose and
+/// being structurally blind to it, and the committed twin above is the row
+/// that is not.
+///
+/// The precondition is now **asserted rather than assumed**, so nobody can
+/// re-read this row as the witness for O7: the same bytes with no online
+/// evidence render `invalid` with O8's code.
+///
+/// What makes it fail: putting O8 above O7 in [`ots_refutation`]. The row then
+/// reports `anchor-ots-header-uncommitted` and the ordering claim is gone.
+#[test]
+fn agreed_absence_of_the_block_beats_the_uncommitted_header() {
+    let digest = synthetic_digest(0x21);
+    // Strip the pending branches so nothing better applies: the real fixture's
+    // two pending attestations would otherwise win under O5, which is itself
+    // the A21 trap D56 §4 records.
+    let bytes = container(
+        &digest,
+        &fork(&[bitcoin(ATTESTED_HEIGHT), bitcoin(ATTESTED_HEIGHT + 1)]),
+    );
+
+    // The precondition, measured: O8 alone already convicts this artifact.
+    let offline = ots_offline(&bytes, &digest, Some(committing_upgrade()));
+    assert_eq!(state_of(&offline), AnchorState::Invalid);
+    assert_eq!(
+        code_of(&offline),
+        Some(EmbeddedHeader::UNCOMMITTED_CODE),
+        "this fixture is NOT committed, which is why it cannot witness O7"
+    );
+
+    let online = OnlineEvidence::new().with_block(ATTESTED_HEIGHT, OnlineBlockResult::NoSuchBlock);
+    let outcome = ots_online(&bytes, &digest, Some(committing_upgrade()), &online);
+    assert_eq!(state_of(&outcome), AnchorState::Invalid);
+    assert_eq!(
+        code_of(&outcome),
+        Some(OTS_ONLINE_BLOCK_ABSENT_CODE),
+        "the agreed online refutation is reported, not the structural one"
+    );
     assert_eq!(outcome.verdict().verified_time_unix(), None);
 }
 
@@ -1426,6 +1542,16 @@ fn two_proven_anchors_from_one_tsa_are_one_identity() {
 /// The artifact must be headline-eligible or the row is vacuous: a duplicated
 /// `pending` pair contributes zero identities either way, which would let a
 /// broken implementation pass.
+///
+/// # This row is insensitive to D92 and must never be cited as its witness
+///
+/// The two artifacts are **byte-identical**, so it asserts `1` under the
+/// calendar key, the block key and the chain key alike. It excludes exactly
+/// one of D92 §4's four candidates — *"no identity for OTS"* — and nothing
+/// else. For a whole task it was the only OTS-side identity row in the tree,
+/// which is how A40's OTS half shipped unpinned. The rows that carry the
+/// falsifiability are [`two_bitcoin_heights_are_one_identity`] and
+/// [`disjoint_calendars_at_one_height_are_one_identity`] (D92 §9 T1/T2).
 #[test]
 fn a_duplicate_ots_counts_one_identity_and_still_verifies() {
     let upgrade = committing_upgrade();
@@ -1504,6 +1630,502 @@ fn claimed_identities_contribute_nothing() {
     );
     assert_eq!(state_of(&verdicts.outcomes()[0]), AnchorState::Invalid);
     assert_eq!(verdicts.distinct_verified_identities(), 0);
+}
+
+// ── D92 — the OTS half is keyed on Bitcoin, the chain ───────────────────
+
+/// Two `proven` OTS anchors at **different real Bitcoin heights** are **one**
+/// identity (**D92 §9 T1**).
+///
+/// Both upgrade groups are built from the committed `LARGE_TEST` capture,
+/// which really does carry ops-derived merkle roots at 449399 *and* 449397, so
+/// no block is invented. Two heights of one chain share every failure mode
+/// they have — one proof-of-work regime, one reorg, one must-agree esplora
+/// pair — so they are one identity and two data points, and joint failure is
+/// exactly what an independence count denies.
+///
+/// Anti-vacuity is asserted **first and in two directions**: both anchors are
+/// `proven` (a `pending` pair would count zero identities either way), and
+/// their two `source` strings differ, so the heights genuinely are two.
+///
+/// What makes it fail: re-keying on the block —
+/// `AnchorIdentity::BitcoinBlock { height: u.block_height() }` — which turns
+/// the 1 into a 2. D92 §3 measured that on real material: the 2026-08-03
+/// cycle put one digest's three calendars in three different blocks, so the
+/// block key scores an honest single seal as **3**.
+#[test]
+fn two_bitcoin_heights_are_one_identity() {
+    let first = committing_upgrade_at(ATTESTED_HEIGHT);
+    let second = committing_upgrade_at(SECOND_ATTESTED_HEIGHT);
+    let online = OnlineEvidence::new()
+        .with_block(
+            ATTESTED_HEIGHT,
+            OnlineBlockResult::Header(*first.block_header()),
+        )
+        .with_block(
+            SECOND_ATTESTED_HEIGHT,
+            OnlineBlockResult::Header(*second.block_header()),
+        );
+
+    let anchors = [
+        ots_anchor(UPGRADED, Some(first)),
+        ots_anchor(UPGRADED, Some(second)),
+    ];
+    let verdicts = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&anchors, &[], None),
+        &DIGEST_UPGRADED,
+        &online,
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+
+    assert!(
+        verdicts
+            .outcomes()
+            .iter()
+            .all(|o| state_of(o) == AnchorState::Proven),
+        "both must be headline-eligible, or the identity count is vacuously 0"
+    );
+    assert_eq!(verdicts.aggregate().headline_eligible_count(), 2);
+    let sources: BTreeSet<String> = verdicts
+        .outcomes()
+        .iter()
+        .filter_map(|o| o.verdict().source().map(|s| s.identity().to_owned()))
+        .collect();
+    assert_eq!(
+        sources.len(),
+        2,
+        "two different blocks, or this compares a thing with itself: {sources:?}"
+    );
+
+    assert_eq!(verdicts.distinct_verified_identities(), 1);
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Ots), 1);
+}
+
+/// Two `proven` OTS anchors at **one height through disjoint calendar sets**
+/// are **one** identity (**D92 §9 T2**) — the recorded A67 risk, exactly.
+///
+/// This is the row the pre-D92 code fails. Under the calendar key the two
+/// artifacts are `{alice}` and `{bob}`, two distinct identities from one
+/// mechanism; and because that key is set-valued, `{alice}` and
+/// `{alice, bob}` would be two identities *sharing a member*, which
+/// independence counting cannot represent at all.
+///
+/// The disjointness is **witnessed rather than asserted**: the same two byte
+/// strings evaluated with no upgrade group render `pending` and produce two
+/// different `source` strings, so the calendar sets really are two.
+///
+/// What makes it fail: restoring `AnchorIdentity::OtsCalendars(calendars_of(&artifact))`
+/// at the O3 arm — the 1 becomes 2.
+#[test]
+fn disjoint_calendars_at_one_height_are_one_identity() {
+    const ALICE: &str = "https://alice.btc.calendar.opentimestamps.org";
+    const BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
+
+    // Stamped over the same digest the real capture uses, so this bundle and
+    // the ones below can share one `anchor_digest`. With no ops the branch
+    // commitment *is* that digest, so a header carrying it commits.
+    let through = |uri: &str| {
+        container(
+            &DIGEST_UPGRADED,
+            &fork(&[pending(uri), bitcoin(SYNTHETIC_HEIGHT)]),
+        )
+    };
+    let alice = through(ALICE);
+    let bob = through(BOB);
+    let upgrade = OtsUpgrade::new(
+        SYNTHETIC_HEIGHT,
+        header_with(&DIGEST_UPGRADED, HEADER_NTIME),
+        FETCH_DATE,
+    );
+
+    // The calendars really are disjoint: the same bytes without an upgrade
+    // group are `pending` and name two different calendars.
+    let unupgraded = [ots_anchor(&alice, None), ots_anchor(&bob, None)];
+    let pendings = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&unupgraded, &[], None),
+        &DIGEST_UPGRADED,
+        &OnlineEvidence::new(),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    assert!(
+        pendings
+            .outcomes()
+            .iter()
+            .all(|o| state_of(o) == AnchorState::Pending)
+    );
+    let calendars: BTreeSet<String> = pendings
+        .outcomes()
+        .iter()
+        .filter_map(|o| o.verdict().source().map(|s| s.identity().to_owned()))
+        .collect();
+    assert_eq!(
+        calendars,
+        BTreeSet::from([ALICE.to_owned(), BOB.to_owned()]),
+        "the two calendar sets must be disjoint, or this row pins nothing"
+    );
+    assert_eq!(
+        pendings.distinct_verified_identities(),
+        0,
+        "and a pending anchor contributes no identity at all"
+    );
+
+    // …and upgraded, at one height, they are one identity.
+    let anchors = [
+        ots_anchor(&alice, Some(upgrade.clone())),
+        ots_anchor(&bob, Some(upgrade.clone())),
+    ];
+    let verdicts = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&anchors, &[], None),
+        &DIGEST_UPGRADED,
+        &evidence_header(SYNTHETIC_HEIGHT, *upgrade.block_header()),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    assert!(
+        verdicts
+            .outcomes()
+            .iter()
+            .all(|o| state_of(o) == AnchorState::Proven),
+        "both must be headline-eligible, or the identity count is vacuously 0"
+    );
+    assert_eq!(verdicts.aggregate().headline_eligible_count(), 2);
+    assert_eq!(verdicts.distinct_verified_identities(), 1);
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Ots), 1);
+}
+
+/// An `attested` OTS anchor contributes **no** identity (**D92 §9 T3**) — the
+/// first OTS-side witness for the eligibility filter.
+///
+/// Until this row the filter at `AnchorOutcome::new` was falsifiable **only
+/// through the TSA path** (`claimed_identities_contribute_nothing`), so an
+/// OTS-specific bypass was invisible. `attested` deliberately still *passes*
+/// `Some(BitcoinChain)` into the constructor, so the filter stays the single
+/// enforcement point rather than being duplicated at the call site — which is
+/// precisely why it needs a witness on this side.
+///
+/// What makes it fail:
+///
+/// 1. deleting `.filter(|_| verdict.is_headline_eligible())` — caught here and
+///    by the TSA-path row;
+/// 2. the OTS-specific bypass
+///    `verdict.is_headline_eligible() || verdict.kind() == AnchorKind::Ots` —
+///    **only this row catches it.**
+#[test]
+fn an_attested_ots_contributes_no_identity() {
+    let outcome = ots_offline(UPGRADED, &DIGEST_UPGRADED, Some(committing_upgrade()));
+    assert_eq!(
+        state_of(&outcome),
+        AnchorState::Attested,
+        "the fixture must be `attested`, or the row is about some other state"
+    );
+    assert_eq!(outcome.identity(), None);
+
+    // In a bundle beside one `proven` TSA the total is 1, not 2.
+    let otss = [ots_anchor(UPGRADED, Some(committing_upgrade()))];
+    let tsas = [tsa_anchor(DIGICERT)];
+    let verdicts = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&otss, &tsas, None),
+        &D60_STAMPED,
+        &OnlineEvidence::new(),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    assert_eq!(state_of(&verdicts.outcomes()[1]), AnchorState::Proven);
+    assert_eq!(verdicts.distinct_verified_identities(), 1);
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Ots), 0);
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Tsa), 1);
+}
+
+/// A lone `proven` OTS establishes **one** identity and is not UNANCHORED
+/// (**D92 §9 T4**), and `count == 0` ⟺ `is_unanchored()` over every bundle
+/// shape this module builds.
+///
+/// That equivalence is why *"no identity for OTS at all"* was rejected: under
+/// it a bundle whose only headline-eligible anchor is a `proven` OTS reports
+/// one headline-eligible anchor and **zero** verified identities — a verifier
+/// saying "nothing was verified" about something it just verified. Under-
+/// counting is safe; a false statement is not a weak one.
+///
+/// What makes it fail: passing `None` at the O3 arm — the 1 becomes 0 and the
+/// equivalence breaks in the same step.
+#[test]
+fn a_lone_proven_ots_establishes_one_identity() {
+    let (digest, bytes, upgrade) = committed_single_branch(0xd4, SYNTHETIC_HEIGHT);
+    let online = evidence_header(SYNTHETIC_HEIGHT, *upgrade.block_header());
+    let anchors = [ots_anchor(&bytes, Some(upgrade))];
+    let lone = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&anchors, &[], None),
+        &digest,
+        &online,
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    assert_eq!(state_of(&lone.outcomes()[0]), AnchorState::Proven);
+    assert_eq!(lone.aggregate().headline_eligible_count(), 1);
+    assert_eq!(lone.distinct_verified_identities(), 1);
+    assert!(!lone.aggregate().is_unanchored());
+
+    // The invariant, over both sides of it.
+    let pending_only = [ots_anchor(MERGED_A, None)];
+    let unanchored = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&pending_only, &[], None),
+        &DIGEST_A,
+        &OnlineEvidence::new(),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    let tsas = [tsa_anchor(DIGICERT)];
+    let tsa_only = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&[], &tsas, None),
+        &D60_STAMPED,
+        &OnlineEvidence::new(),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    let empty = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&[], &[], None),
+        &D60_STAMPED,
+        &OnlineEvidence::new(),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+
+    let all = [&lone, &unanchored, &tsa_only, &empty];
+    for verdicts in all {
+        assert_eq!(
+            verdicts.distinct_verified_identities() == 0,
+            verdicts.aggregate().is_unanchored(),
+            "count/UNANCHORED disagree"
+        );
+    }
+    assert!(all.iter().any(|v| v.aggregate().is_unanchored()));
+    assert!(all.iter().any(|v| !v.aggregate().is_unanchored()));
+}
+
+/// A `proven` TSA plus a `proven` OTS is **two** independent identities
+/// (**D92 §9 T5**) — asserted by matching **one of each enum arm**, never by
+/// cardinality alone.
+///
+/// The `.ots` is minted over `D60_STAMPED` so one `anchor_digest` serves both
+/// artifacts; with no ops the branch commitment is that digest, so the
+/// embedded header commits it.
+///
+/// What makes it fail: the lazy implementation that expresses the OTS identity
+/// as `TsaSigner { subject_dn_der: b"bitcoin".to_vec() }` instead of adding an
+/// arm. The **count is still 2**, so a cardinality-only row stays green; the
+/// pattern assertion is what fires.
+#[test]
+fn a_tsa_and_an_ots_are_two_independent_identities() {
+    let bytes = container(&D60_STAMPED, &bitcoin(SYNTHETIC_HEIGHT));
+    let upgrade = OtsUpgrade::new(
+        SYNTHETIC_HEIGHT,
+        header_with(&D60_STAMPED, HEADER_NTIME),
+        FETCH_DATE,
+    );
+    let online = evidence_header(SYNTHETIC_HEIGHT, *upgrade.block_header());
+
+    let otss = [ots_anchor(&bytes, Some(upgrade))];
+    let tsas = [tsa_anchor(DIGICERT)];
+    let verdicts = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&otss, &tsas, None),
+        &D60_STAMPED,
+        &online,
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+
+    assert!(
+        verdicts
+            .outcomes()
+            .iter()
+            .all(|o| state_of(o) == AnchorState::Proven),
+        "both must be headline-eligible, or the count is vacuous"
+    );
+    assert_eq!(verdicts.distinct_verified_identities(), 2);
+
+    let identities: Vec<&AnchorIdentity> = verdicts.verified_identities().into_iter().collect();
+    assert_eq!(
+        identities
+            .iter()
+            .filter(|identity| matches!(identity, AnchorIdentity::BitcoinChain))
+            .count(),
+        1,
+        "one Bitcoin identity, by arm: {identities:?}"
+    );
+    assert_eq!(
+        identities
+            .iter()
+            .filter(|identity| matches!(identity, AnchorIdentity::TsaSigner { .. }))
+            .count(),
+        1,
+        "one TSA identity, by arm: {identities:?}"
+    );
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Ots), 1);
+    assert_eq!(verdicts.distinct_verified_identities_of(AnchorKind::Tsa), 1);
+}
+
+/// The whole OTS mechanism contributes **at most one** identity, over every
+/// combination of this module's `proven` OTS fixtures (**D92 §9 T6**), and the
+/// total matches D92 §5.4's closed form.
+///
+/// Four anchors: the two real Bitcoin heights of T1 and the two disjoint
+/// calendars of T2, all stamped over one digest so they share one bundle. All
+/// fifteen non-empty subsets are exercised, with and without a `proven` TSA
+/// beside them — 30 bundles, no combination reaching 2.
+///
+/// What makes it fail: either T1's fault (re-key on the block) or T2's
+/// (restore the calendar key). Some combination then reports 2, and the closed
+/// form stops holding at the same moment.
+#[test]
+fn the_ots_contribution_is_never_more_than_one() {
+    let first = committing_upgrade_at(ATTESTED_HEIGHT);
+    let second = committing_upgrade_at(SECOND_ATTESTED_HEIGHT);
+    let synthetic = OtsUpgrade::new(
+        SYNTHETIC_HEIGHT,
+        header_with(&DIGEST_UPGRADED, HEADER_NTIME),
+        FETCH_DATE,
+    );
+    let through = |uri: &str| {
+        container(
+            &DIGEST_UPGRADED,
+            &fork(&[pending(uri), bitcoin(SYNTHETIC_HEIGHT)]),
+        )
+    };
+    let alice = through("https://alice.btc.calendar.opentimestamps.org");
+    let bob = through("https://btc.calendar.catallaxy.com");
+
+    let online = OnlineEvidence::new()
+        .with_block(
+            ATTESTED_HEIGHT,
+            OnlineBlockResult::Header(*first.block_header()),
+        )
+        .with_block(
+            SECOND_ATTESTED_HEIGHT,
+            OnlineBlockResult::Header(*second.block_header()),
+        )
+        .with_block(
+            SYNTHETIC_HEIGHT,
+            OnlineBlockResult::Header(*synthetic.block_header()),
+        );
+
+    let catalogue: [(&[u8], OtsUpgrade); 4] = [
+        (UPGRADED, first),
+        (UPGRADED, second),
+        (&alice, synthetic.clone()),
+        (&bob, synthetic),
+    ];
+
+    let mut saw_two_ots_anchors = false;
+    for mask in 1_u8..16 {
+        let otss: Vec<OtsAnchor> = catalogue
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, (bytes, upgrade))| ots_anchor(bytes, Some(upgrade.clone())))
+            .collect();
+        saw_two_ots_anchors |= otss.len() >= 2;
+
+        for tsas in [Vec::new(), vec![tsa_anchor(DIGICERT)]] {
+            // The real TSA capture is stamped over a different digest from the
+            // OTS fixtures, so it renders `invalid` here and contributes
+            // nothing. That is worth having in the sweep rather than avoiding:
+            // the closed form must hold with a present-but-non-contributing
+            // artifact of the other kind, and the second half of this row
+            // exercises a TSA term that is not zero.
+            let with_tsa = !tsas.is_empty();
+            let verdicts = evaluate_anchors(
+                &AnchorArtifacts::from_parts(&otss, &tsas, None),
+                &DIGEST_UPGRADED,
+                &online,
+                AFTER_CAPTURE,
+                TsaRootStore::pinned(),
+            );
+            if with_tsa {
+                assert_eq!(
+                    verdicts.distinct_verified_identities_of(AnchorKind::Tsa),
+                    0,
+                    "mask {mask:#06b}: an `invalid` TSA artifact contributes nothing"
+                );
+            }
+
+            assert!(
+                verdicts
+                    .outcomes()
+                    .iter()
+                    .filter(|o| o.verdict().kind() == AnchorKind::Ots)
+                    .all(|o| state_of(o) == AnchorState::Proven),
+                "mask {mask:#06b}: every OTS anchor must be `proven`, or the \
+                 subset is vacuous"
+            );
+
+            let ots = verdicts.distinct_verified_identities_of(AnchorKind::Ots);
+            assert!(ots <= 1, "mask {mask:#06b}: OTS contributed {ots}");
+
+            // D92 §5.4, verbatim.
+            let any_eligible_ots = verdicts.outcomes().iter().any(|o| {
+                o.verdict().kind() == AnchorKind::Ots && o.verdict().is_headline_eligible()
+            });
+            assert_eq!(
+                verdicts.distinct_verified_identities(),
+                verdicts.distinct_verified_identities_of(AnchorKind::Tsa)
+                    + usize::from(any_eligible_ots),
+                "mask {mask:#06b}: the closed form"
+            );
+        }
+    }
+    assert!(
+        saw_two_ots_anchors,
+        "the sweep must reach bundles with more than one OTS anchor"
+    );
+
+    // The mixed case, with **both** terms of the closed form non-zero: two
+    // distinct real TSAs and one `proven` OTS, all over one digest. Without
+    // this the sweep above only ever measures `0 + {0,1}`, and a `+ 0`
+    // implementation of the TSA term would survive it.
+    let bytes = container(&D60_STAMPED, &bitcoin(SYNTHETIC_HEIGHT));
+    let upgrade = OtsUpgrade::new(
+        SYNTHETIC_HEIGHT,
+        header_with(&D60_STAMPED, HEADER_NTIME),
+        FETCH_DATE,
+    );
+    let otss = [ots_anchor(&bytes, Some(upgrade.clone()))];
+    // FreeTSA and DigiCert are two TSAs; Sectigo and Entrust are one, so the
+    // three tokens establish three identities, not four.
+    let tsas = [
+        tsa_anchor(FREETSA),
+        tsa_anchor(DIGICERT),
+        tsa_anchor(SECTIGO),
+        tsa_anchor(ENTRUST),
+    ];
+    let mixed = evaluate_anchors(
+        &AnchorArtifacts::from_parts(&otss, &tsas, None),
+        &D60_STAMPED,
+        &evidence_header(SYNTHETIC_HEIGHT, *upgrade.block_header()),
+        AFTER_CAPTURE,
+        TsaRootStore::pinned(),
+    );
+    assert!(
+        mixed
+            .outcomes()
+            .iter()
+            .all(|o| state_of(o) == AnchorState::Proven),
+        "all five artifacts must be `proven`, or the mixed row is vacuous"
+    );
+    assert_eq!(mixed.aggregate().headline_eligible_count(), 5);
+    assert_eq!(mixed.distinct_verified_identities_of(AnchorKind::Ots), 1);
+    assert_eq!(
+        mixed.distinct_verified_identities_of(AnchorKind::Tsa),
+        3,
+        "four tokens, three TSAs"
+    );
+    assert_eq!(
+        mixed.distinct_verified_identities(),
+        4,
+        "3 TSA identities + 1 for the whole OTS mechanism (D92 §5.4)"
+    );
+    assert!(mixed.distinct_verified_identities() < mixed.outcomes().len());
 }
 
 /// The identity count is a function of the identities, not of the artifact

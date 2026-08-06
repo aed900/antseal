@@ -90,6 +90,16 @@ use super::rfc3161::{ID_CT_TST_INFO, MessageImprint};
 use super::roots::{PinnedRoot, TsaRootStore};
 use super::tsa::ID_KP_TIME_STAMPING;
 
+/// The minimal `.ots` writer (**A82**) — the shapes no captured artifact
+/// contains, mintable from the tamper matrix and from integration targets.
+///
+/// It lives here for the same reason [`MockTsa`] does: under one gate, in the
+/// one crate that may declare the D60 pins, reachable from `cfg(test)` (so it
+/// is inside the `wasm32-core-tests` `--lib` lane) and from `test-util` (so it
+/// is inside `crates/antseal-core/tests/`), and absent from every production
+/// build.
+pub mod ots_writer;
+
 /// `id-ecPublicKey` (RFC 5480 §2.1.1).
 const ID_EC_PUBLIC_KEY: ObjectIdentifier = rfc5912::ID_EC_PUBLIC_KEY;
 /// `secp384r1` (RFC 5480 §2.1.1.1).

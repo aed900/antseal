@@ -1336,3 +1336,14 @@ Exact line to add to Q65's Accept:
   - §0 is deleted in the same change that commits the script, never before.
   - The script runs the protocol A25 executed, against real endpoints, and is excluded from every gating lane (Q16's policy holds: it must be un-runnable under `ANTSEAL_NO_REAL_ANCHOR_NETWORK`).
   - Real-endpoint execution requires express maintainer consent in-session; the runbook says so.
+
+### Q101 — The doc-pointer sweep does not cover the documents that cite tests most
+- Milestone: M2
+- Size: S
+- Deps: Q69 (the sweep), Q70 (which widens it to other crates)
+- Discovered by: **the core lane** (2026-08-06).
+- Do: Q69's dangling-pointer sweep covers `crates/antseal-core/src/` and `tests/`. It caught two dead test names the A80 lane wrote and **missed the one that landed in `docs/decisions/D56-…` §9**, because decision docs are outside its scope. Decision documents cite test names routinely — D56 §9 alone specifies ~22 — and a renamed test leaves them silently wrong for ever, which is precisely the "recorded claim the code does not implement" class this project's reviews keep finding. Widen the sweep to `docs/decisions/` and `tasks/`, or rule explicitly that prose there is not a pointer and mark it so.
+- Accept:
+  - The sweep is red on a planted dangling test name in a decision doc, green when it resolves — both executed.
+  - If the ruling is "not a pointer", the convention is stated in the decisions README and the existing citations are left alone deliberately rather than by omission.
+- Notes: the D56 §9 pointer this found was repaired by hand at integration; the point of the task is that nothing would have caught the next one.

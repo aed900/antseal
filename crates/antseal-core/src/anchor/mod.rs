@@ -46,16 +46,22 @@
 //!   D57's rulings P1/P2/P3.
 //! - [`fuzz_entry`] (task **A5**, run by **A23**) — the fuzz driver, kept in
 //!   the crate so the ordinary suite compiles and exercises it.
-//! - [`verdicts`] (tasks **A18**, **A19**, **A39**, **A40**) — the per-anchor
-//!   verdict state machine over D53's `T1–T3` and D56's `O1–O9`, the receipt's
-//!   separate supporting-evidence class, the suppressed-anomaly list
+//! - [`verdicts`] (tasks **A18**, **A19**, **A39**, **A40**, **A67**, **A80**)
+//!   — the per-anchor verdict state machine over D53's `T1–T3` and D56's
+//!   `O1–O9` (with D56 §5's rule order as amended by **D93 §5**: O4 is
+//!   guarded by the online refutations rather than sitting above them), the
+//!   receipt's separate supporting-evidence class, the suppressed-anomaly list
 //!   best-evidence-wins would otherwise discard, and anchor identity counted
-//!   from verified identities rather than from array length.
-//! - `testing` (task **A59**, completing **A24**) — the signing mock TSA and
-//!   its test CA, compiled only under `test`/`test-util`. It lives here rather
-//!   than in a crate of its own because A30(c) makes `antseal-core` the sole
-//!   declaration site of the seven D60 pins, and `cargo metadata --no-deps`
-//!   sees dev edges too; the module's own docs carry the argument.
+//!   from verified identities rather than from array length — one identity arm
+//!   per independent *mechanism*, so a headline-eligible `.ots` contributes
+//!   Bitcoin-the-chain and not its calendars (**D92**).
+//! - `testing` (tasks **A59** completing **A24**, and **A82**) — the signing
+//!   mock TSA and its test CA, plus the synthetic `.ots` writer for the shapes
+//!   no capture contains, compiled only under `test`/`test-util`. It lives
+//!   here rather than in a crate of its own because A30(c) makes
+//!   `antseal-core` the sole declaration site of the seven D60 pins, and
+//!   `cargo metadata --no-deps` sees dev edges too; the module's own docs
+//!   carry the argument.
 
 pub mod alg;
 pub mod caps;

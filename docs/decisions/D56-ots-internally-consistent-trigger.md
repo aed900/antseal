@@ -578,7 +578,21 @@ recorded pending and upgraded fixtures). All run native **and**
 > refutation.
 | `online_evidence_that_does_not_commit_the_ops_root_does_not_promote` | O3's conjunction | Checking only `h == u.block_header` and skipping `header_commits`; the artifact would reach `Proven` on a real block unrelated to the seal. |
 | `a_mismatched_online_header_is_invalid` | O6 | The register's losing option (`internally-consistent-only`); also `MATRIX.json` row `anchor-forged-header`. |
-| `agreed_absence_of_the_block_is_invalid` | O7 | Collapsing `NoSuchBlock` into "no evidence" — the artifact would render `attested` for ever on a claimed height beyond the chain tip. |
+| `agreed_absence_of_the_block_is_invalid_when_the_ops_commit_the_header` | O7 | Collapsing `NoSuchBlock` into "no evidence" — the artifact would render `attested` for ever on a claimed height beyond the chain tip. |
+| `agreed_absence_of_the_block_beats_the_uncommitted_header` | O7 over O8 | Ordering O8 above O7, which would report the weaker offline finding for an artifact the chain itself refutes. |
+
+> **Amendment 2, 2026-08-06 (D93 §13.4, extended at integration).** This row
+> was one test named `agreed_absence_of_the_block_is_invalid`, and **it could
+> not see the defect its own description names.** Its fixture is `!committed`,
+> so it reached `Invalid` through O8 — offline — and stayed **green** under a
+> plant that reverted D93's O4 guard, the very change that makes an `.ots` at
+> a nonexistent height render `attested` for ever. It was not wholly blind: it
+> does redden under a literal `NoSuchBlock` collapse and under O8-above-O7,
+> which is the *ordering* claim. So it is split in two — the committed twin
+> carries the rule, the renamed original carries the ordering — and both names
+> above are live. A test that reaches its state through an earlier rule than
+> the one it is named for is this project's eighth such instrument; **A83**
+> audits the rest of this section for the same shape.
 | `an_embedded_header_for_an_unattested_height_is_invalid` | O8, second shape | An O8 predicate written as "the root disagrees" rather than "the header is not committed": with **no** Bitcoin branch at the recorded height there is no root to disagree, and the artifact would fall through to O9 and render `internally-consistent-only`. |
 | `an_upgrade_group_over_a_pending_only_ots_is_pending_not_invalid` | O5 over O8 | Reordering O8 above O5. `docs/format/registry-v1.md` §7.8 makes this artifact **well-formed v1 by decision**, and it is the shape a sealer produces mid-upgrade; rendering it `invalid` would accuse an honest bundle. |
 | `a_bitcoin_branch_without_an_upgrade_group_is_internally_consistent_only` | The converse shape (§5) | Promoting to `attested` on the ops alone, with no embedded header — which is the offline forgeable time the online gate exists to prevent, reached by a *different* route than the one line 108 closes. |
