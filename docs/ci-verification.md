@@ -1551,3 +1551,64 @@ document's rule about lanes.
 red on A100 and the heavy tier on Q113 — both recorded, neither blessed away.
 Judge by per-job conclusions, never by annotation glyphs: the planted-fault
 self-tests emit failure-styled annotations from **succeeding** steps.
+
+## The push of 2026-08-06 (waves 6–7), and a verdict that arrived late
+
+`99556ab..d82f72e`, fast-forward, waves 6 and 7 both aboard.
+
+**For several hours this head had no remote verdict at all, and two runs
+existed that must not be mistaken for one.** The distinction is the whole
+point of this document, so it is recorded rather than tidied away:
+
+- **No run was created for `d82f72e` at push time.** GitHub Actions was in a
+  confirmed `major_outage` (githubstatus, active critical incident:
+  *"Capacity remains constrained and jobs may still be delayed or fail"*).
+  A push that triggers nothing leaves the head **unverified** — it does not
+  leave it green.
+- **Run 31117310646 at `99556ab` is not a code verdict.** Its six failures
+  and seven cancellations all log `Failed to resolve action download info.
+  Error: Service Unavailable`: the runners never compiled anything. Reading
+  that run by its conclusions would have reported this milestone as breaking
+  six lanes it never reached. **An infrastructure failure and a test failure
+  are the same red glyph** — the log, not the glyph, says which one it is.
+
+**Run 31127730409 at `d82f72e` (event `push`, queued 20:36Z) is the real
+verdict.** The runners compiled and executed, so it may be judged by its
+conclusions. **18 of 19 jobs green; `fuzz-smoke` is the single red.**
+
+Green includes every lane wave 7 touched — `tamper-matrix`, `wasm32-core`,
+`wasm32-core-tests`, `wasm-bitmatch`, `golden-vectors`, `vector-freeze`,
+`format-freeze`, `traceability`, `cross-check`,
+`cross-os-{linux,macos,windows}`, `test`, `clippy`, `fmt`, `audit-deny`,
+`secret-guard`, `core-dep-graph`. The M2 tamper matrix and the wasm32 lanes
+are therefore now **remotely executed**, not merely locally green, which is
+the standard this document holds them to.
+
+**The one red is A100, and it reproduced rather than regressed.** The
+`anchor_ots` target panicked in `assert_within_budget`: *"peak single
+allocation 5120 B for a 744 B input (cap 4840 B = len x 1 + 4096)"*. The
+first witness (run 31086210534) was a **248-byte** input found in 3140 execs;
+this one is a **744-byte** input found at **exec #476** under a different
+libFuzzer seed. Different length, different seed, different exec count —
+**identical 5120 B peak.** The relative cap moved (4344 B → 4840 B) and the
+allocation did not, which is evidence the peak is a fixed step rather than a
+function of input length; where that step is reached the guard fails an input
+**iff `len < 1024`**. That is a fact for the ruling to use, not a licence to
+patch: A100 stays open and red on purpose.
+
+**What this run does not settle, and a correction to how that was phrased.**
+Only the `ci` workflow ran for this sha. It is tempting to record that as
+"the heavy tier did not run this time" — but that understates it. The heavy
+tier is **not a remote job at all**: `heavy-features` exists only in
+`scripts/local-gate.sh`, which shells out to `scripts/gate-features.sh
+--heavy`, and **no workflow in `.github/workflows/` invokes either script**.
+`ci.yml` defines 17 jobs (19 contexts, `cross-os` being a 3-way matrix) and
+none of them is it; consistent with wave 5's finding that required CI passes
+no `--features`.
+
+So **Q113 cannot be confirmed or cleared by any remote run at any head**, and
+no future green `ci` should be read as having touched it. Its standing is
+exactly what it was: a finding whose only evidence is local, on a tier this
+document's own rule says is therefore not remotely verified. Q113 is not the
+weaker case here — **the heavy tier is the blind spot**, and the gap is in
+the workflow set, not in the run.
