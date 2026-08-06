@@ -77,13 +77,29 @@ fn vector_empty_anchor_bundle_verifies_unanchored() {
     );
 }
 
-/// The populated-anchor golden vector at M0/M1: artifacts are embedded
-/// (2 OTS + 2 TSA) but the anchor stage parses no artifact byte yet, so
-/// every slot reports `absent` — all-`absent` anchors, and the aggregate
-/// is still UNANCHORED with no headline time (bogus times cannot leak
-/// in; A18 populates real states at M2).
+/// The populated-anchor golden vector, **through R12's wired stage**: four
+/// artifacts are embedded (2 OTS + 2 TSA), each a schema-opaque placeholder
+/// the anchor stage cannot parse, so each renders `invalid` in its own slot
+/// (D84 F3) and the aggregate is still UNANCHORED with no headline time.
+///
+/// # What moved at R12, and why this row is stronger for it
+///
+/// Until R12 this asserted `absent` on all four and was a statement about a
+/// *stub*. It is now a statement about the machine, and a differential one:
+/// the bundle records four **different** sealer-claimed statuses —
+/// `attested`, `pending`, `proven` and `valid-at-stamping-cert-since-expired`
+/// (`test_util::bundle_fixtures`, the `EveryKind` set) — and the report
+/// renders one answer for all four. A stage that believed the bundle's own
+/// `status` field would produce four different states here and would be
+/// caught by this row alone.
+///
+/// It is also the instrument D94 §4 did not count. That record concluded that
+/// nothing in the tree observed *verdicts* rather than the accept/reject bit,
+/// and named A21 rows 1–2 as the first that would; this row observes report
+/// states, and it went red at R12 exactly as an M0-inertness claim should.
+/// See D94's dated corrections and R71.
 #[test]
-fn vector_every_anchor_kind_bundle_is_all_absent_and_unanchored_at_m1() {
+fn vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2() {
     use antseal_core::verify::AnchorState;
 
     let bytes = committed_bundle_bytes("every-anchor-kind-no-receipt");
@@ -95,12 +111,23 @@ fn vector_every_anchor_kind_bundle_is_all_absent_and_unanchored_at_m1() {
         report
             .anchors
             .iter()
-            .all(|slot| slot.state == AnchorState::Absent),
-        "M0/M1 anchor stage reports absent per embedded artifact"
+            .all(|slot| slot.state == AnchorState::Invalid),
+        "an artifact the stage will not finish reading renders `invalid` (D84 F3); got {:?}",
+        report
+            .anchors
+            .iter()
+            .map(|slot| slot.state)
+            .collect::<Vec<_>>()
     );
 
+    // D84 F2 at the bundle surface: four refuted anchors, and the bundle
+    // still verified — the `expect` above is the assertion.
     let aggregate = aggregate_anchors(&report.anchors);
     assert!(aggregate.is_unanchored());
     assert_eq!(aggregate.total_anchors(), 4);
-    assert_eq!(aggregate.headline_time_unix(), None);
+    assert_eq!(
+        aggregate.headline_time_unix(),
+        None,
+        "a refuted anchor contributed a headline time"
+    );
 }

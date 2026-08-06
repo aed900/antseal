@@ -352,9 +352,35 @@ pub struct AnchorResult {
     /// M0/M1 leave it `None` throughout: the pipeline parses no artifact byte
     /// and deliberately copies no bundle-recorded anchor metadata.
     pub source: Option<String>,
-    /// Fetch date recorded in the bundle for this artifact
-    /// (sealer-recorded metadata; rendered with the anchor per
-    /// MVP-SPEC.md line 127+), verbatim string form.
+    /// The capture instant the **sealer** recorded for this artifact —
+    /// registry §7.9 key 3 (TSA, `req`) and §7.8 key 4 (OTS, inside the D79
+    /// upgrade group, hence `None` on an un-upgraded `.ots`).
+    ///
+    /// **Sealer-written and bound by nothing**: the bundle is unsigned and
+    /// `anchor_digest` covers the manifest envelope, not the anchor
+    /// sections. Nothing may ever compare it to anything — D59 §6(a) makes
+    /// that a normative prohibition in *any* direction, off a measurement of
+    /// a capture machine 129 s slow.
+    ///
+    /// # Rendering (D95, format-permanent for report v1)
+    ///
+    /// Rendered in **every** state that emits a slot, `invalid` included,
+    /// with **no state condition**: the field's trustworthiness does not vary
+    /// with the verdict, so a state gate would publish the false implicature
+    /// that a visible date had been corroborated by the state beside it.
+    /// The form is `u64::to_string()` — **decimal POSIX seconds**, no
+    /// separator, no timezone, no date form — the same spelling
+    /// [`WorkMetadata::claimed_time_informational_only`] froze at Q14 over
+    /// the same kind of value.
+    ///
+    /// The honesty obligation that creates is discharged by a **label**
+    /// (R18's wording set, in the `claimed_time` register of MVP-SPEC.md
+    /// line 137), never by conditional presence. Until R18 lands, the label
+    /// is the sibling [`AnchorResult::state`] and nothing else.
+    ///
+    /// MVP-SPEC.md names fetch dates at lines 108 and 114 only, both as
+    /// *bundle content*; there is no spec line requiring this rendering, and
+    /// this doc said otherwise until 2026-08-06 (**R73**).
     pub fetch_date: Option<String>,
 }
 
@@ -362,13 +388,48 @@ pub struct AnchorResult {
 /// never headline-eligible (MVP-SPEC.md line 110: "supporting evidence —
 /// no independently proven time").
 ///
-/// R12 (M2) adds the receipt arm when a bundle opts the Arbitrum receipt
-/// in; until then the slot reports none — a pre-Q14 extension per D29.
+/// R12 (M2) added the [`ArbitrumReceipt`](Self::ArbitrumReceipt) arm: a
+/// bundle that opted the receipt in renders it **here**, and nowhere else.
+///
+/// # This enum is where A19 stops being a convention
+///
+/// [`AnchorKind`] has no receipt variant and [`AnchorResult`] is only ever
+/// built from an [`AnchorVerdict`](crate::anchor::model::AnchorVerdict), so
+/// the receipt has no route into `anchors` to begin with. What this type adds
+/// is the other direction: the arm it *does* have carries **no time field and
+/// no state field** — not a null one, none — so "supporting evidence, no
+/// independently proven time" is a property of the shape rather than of a
+/// renderer remembering it. `verified_time_unix` cannot be read off a receipt
+/// because there is nothing to read.
+///
+/// The two recorded values are the ones registry §7.10 already calls
+/// display-only and never verdict-bearing. The advisory two-RPC confirmation
+/// (A17/D55) is deliberately **absent**: it is an overlay on an overlay, it
+/// moves nothing, and `verify_bundle` performs no online step at all.
+///
+/// # Adding this arm moved no pinned byte
+///
+/// All 21 R9 report vectors carry `"supporting_evidence":"none"` — no
+/// committed vector opts a receipt in — and a unit variant's serialization is
+/// unchanged by the existence of a sibling. Q14 froze report **v1**'s field
+/// list (D29 rule 1); this adds a *value*, not a field, and the slot is
+/// present in every report either way (D29 rule 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SupportingEvidenceResult {
     /// No supporting evidence embedded (also the M0 stage stub).
     None,
+    /// The bundle carries an Arbitrum payment receipt (**A19**).
+    ///
+    /// No on-chain datum contains `anchor_digest`, so this proves payment
+    /// and existence-by-block, never *this* work's time.
+    ArbitrumReceipt {
+        /// The recorded Arbitrum block number — display-only, unverified in
+        /// v1 (registry §7.10 key 1).
+        block_number: u64,
+        /// How many transaction hashes the receipt records.
+        transaction_count: u64,
+    },
 }
 
 /// The redaction/reveal-set data: which bytes of which files were
@@ -527,6 +588,39 @@ mod tests {
             serde_json::to_string(&AnchorKind::Ots).expect("kind serializes"),
             "\"ots\""
         );
+    }
+
+    /// **A19 through the report's own bytes** (R12).
+    ///
+    /// Two claims, and the second is the one that has to be checked on the
+    /// *serialized form* rather than on the type: the receipt's rendering
+    /// contains no time and no state. A future field named `verified_time_unix`
+    /// or `state` on this arm — the natural way to "make the receipt render
+    /// like the others" — fails here before it reaches a renderer.
+    ///
+    /// The `"none"` half is pinned in the row above; this pins the arm that
+    /// exists alongside it, so adding the variant cannot have changed what a
+    /// receipt-free report says.
+    #[test]
+    fn the_receipt_arm_carries_no_time_and_no_state() {
+        let json = serde_json::to_string(&SupportingEvidenceResult::ArbitrumReceipt {
+            block_number: 271_828_182,
+            transaction_count: 2,
+        })
+        .expect("slot serializes");
+        assert_eq!(
+            json,
+            r#"{"arbitrum-receipt":{"block_number":271828182,"transaction_count":2}}"#
+        );
+        for forbidden in [
+            "time", "state", "proven", "anchor", "verified", "genTime", "gen_time",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "the receipt's rendering names `{forbidden}` — MVP-SPEC.md line 110 gives it \
+                 no independently proven time, and A19 makes that structural"
+            );
+        }
     }
 
     /// `wire_name()` is what `serde` actually emits, for every state.

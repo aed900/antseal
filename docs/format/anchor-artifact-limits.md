@@ -83,14 +83,19 @@ release not to reject what a past release accepted; no released verifier has
 ever rendered a verdict that depends on artifact internals, and none can
 before M2:
 
-- The M0 verifier does not look inside an anchor artifact at all. Every
-  anchor in an M0 bundle renders `absent`; the artifact bytes are carried
-  and never parsed. R12 replaces that stub at M2.
-- This is pinned on disk **as an equality, not an intention**:
-  `crates/antseal-core/tests/verify_fuzz.rs::m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`
-  — a test written to go red when R12 lands, with the instruction to invert
-  it (`docs/security-assumptions.md`, "The M0 authentication boundary,
-  measured").
+- The M0 verifier did not look inside an anchor artifact at all. Every
+  anchor in a bundle verified by the M0 verifier rendered `absent`; the
+  artifact bytes were carried and never parsed. R12 replaced that stub at
+  M2, so this clause is historical.
+- What is pinned on disk **as an equality** is narrower than this document
+  once claimed:
+  `crates/antseal-core/tests/verify_fuzz.rs::anchor_artifact_bytes_never_change_the_bundles_accept_reject_outcome`
+  pins rule **F2** and only F2 — no anchor byte moves `verify_bundle`'s
+  accept/reject outcome — which is permanent, and the test is the standing
+  guard for it. It never pinned that no verdict depends on artifact
+  internals, and the former instruction to "invert it at R12" was wrong
+  (**D94** §4; `docs/security-assumptions.md`, "The M0 authentication
+  boundary, measured").
 - No bundle carrying a real artifact can exist before M2. M1 ships
   zero-anchor seals via `--no-anchor`; the OTS calendar client and the
   RFC 3161 request path are M2. The first `.ots` and the first TSA token are
@@ -128,7 +133,8 @@ read the same sentences the gate does.
   recorded real artifacts (MVP-SPEC.md lines 153 and 155 place them there),
   and are **not** an exception to line 123 — under F1–F3 no released
   verifier ever rendered a verdict that depends on them, because M0/M1
-  render every anchor `absent` (R12 replaces that stub at M2).
+  rendered every anchor `absent` (R12 replaced that stub at M2, and this
+  row is the historical statement it was always meant to be).
 - [ ] **Report-version evolution is not blocked by this freeze.** The Q14
   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
   D29 records that adding fields after the freeze requires a version bump,

@@ -152,6 +152,7 @@
   - **Exactly one** of the 26 `REPORT_DIGEST_BY_SHAPE` rows moves (`multi-file-anchored/mixed`) and **exactly one** of the 21 report cases moves (case 19). A second moving row is a D84 **F2 breach** — fix the implementation, do not re-pin it. This is the only test of F2's blast radius the tree has, and D84's Consequences item 6 asked for it on 2026-07-28 and it was never applied (D94)
   - **Zero bundle digests move.** `bundle_len` / `bundle_sha256` / `revealed_unit_ids` byte-identical on all 21 cases — that is the measurement distinguishing a verdict event from a format event (D94)
   - **STOP if the re-emitted case populates `fetch_date` or `source`** on an `invalid` anchor: whether an anchor the verifier has refuted may still render sealer-recorded metadata is **unruled**, and registry §6.1 distrusts those fields while D8 removed the TSA `source` string on exactly that ground (D94)
+- Notes (landing, 2026-08-06): **the STOP fired.** The re-emit populated `fetch_date` on the two TSA slots and `source` on none — `evaluate_tsa_artifact` binds `fetch_date` *before* T1/T2, so an unparseable token carries it into the `invalid` arm, while both `invalid` arms pass `None` for source because nothing parsed far enough to claim one. **D95** ruled it RENDER, unconditionally and with no state gate; the fixture's `.ots` renders none only because it carries no D79 upgrade group, which is availability and not policy. Measured outcome: **1 of 21 report cases moved, 1 of 26 R30 rows moved, 1 of 13 freeze digests moved, 0 bundle digests moved**; `report_len` 1141 → 1160 with every one of the 19 bytes accounted for (+3 state, +16 two dates). D94's step 0 predicted two red places and there were **five**; two more went red after the emit (**R75**). `vector-freeze.sh` refused the update D94 called REQUIRED, because the only enforcement mechanism implemented the two-class world Ruling 4 replaced (**Q114**). Discovered R71–R75, Q114.
 
 ### R13 — Implement the bundle builder (pure assembly) in `antseal-core`
 - Milestone: M3
@@ -736,3 +737,48 @@
 - Discovered by: **the D94 planner** (2026-08-06).
 - Do: D53 §4a rules `absent` is the **kind-level** answer — what the evaluator returns for an anchor kind with no artifact — and R12 emits no slot for it. If no bundle can now produce an `absent` slot in a report, then every test asserting one is vacuous and the state's presence in report v1 needs re-reading against D53 §4a. Establish which it is.
 - Accept: either a committed bundle produces an `absent` slot and a test pins it, or the unreachability is recorded with D53 §4a re-read and the vacuous assertions removed.
+
+### R71 — D94 §4's "nothing measures P2" was too strong; one instrument did, and it went red
+- Milestone: M2
+- Size: XS
+- Deps: R12
+- Discovered by: **measurement during R12's landing** (2026-08-06) — not by a planner.
+- Problem: D94 §4 concluded that the tree had **no** instrument observing whether a verdict depends on anchor artifact internals (*"nothing in the tree pins that, and nothing ever did"*), and named A21 rows 1–2 as the first that would. Applying R12 turned `tests/anchor_aggregate.rs::vector_every_anchor_kind_bundle_is_all_absent_and_unanchored_at_m1` red: it reads report **states** rather than the accept/reject bit, so it observed exactly the transition D94 said nothing observed. D94's step 0 also predicted *"exactly two red places"*; the measured number was **five**.
+- Do: record the correction in D84 §2's dated-corrections and in D95 §6 (done at landing); the row itself is re-pointed to the M2 truth as `vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2`, where it is stronger than before — the fixture records four **different** sealer-claimed statuses and the report renders one answer for all four, so a stage that believed the bundle's `status` field is caught by this row alone.
+- Accept: no document still says nothing measured P2; the count of R12-red instruments recorded anywhere is the measured five, not two.
+
+### R72 — `fetch_date` moves no other field of any anchor slot (D95 rider c)
+- Milestone: M2
+- Size: S
+- Deps: R12 (D95)
+- Discovered by: **the D95 RENDER planner** (2026-08-06).
+- Problem: D95 rules that `fetch_date` renders in every state, and its whole safety argument is that nothing ever *reads* it — D59 §6(a) makes comparing it a normative prohibition, off a measured 129 s clock skew. That was true by **inspection** only, and inspection is precisely what D94 §4 caught out five times over.
+- Do: a differential row — two bundles identical but for the recorded fetch date produce anchor slots equal in every field except `fetch_date` itself, with an anti-vacuity count so a knob that reaches nothing cannot pass. An implementer who adds the forbidden `gen_time <= fetch_date` check turns it red immediately.
+- Accept: the row exists in the `--lib` tests so the wasm32 lane runs it (A90); it fails if the comparison is added; it fails if the knob stops reaching the artifacts. **Landed 2026-08-06** as `verify::pipeline::tests::the_recorded_fetch_date_moves_no_other_field_of_any_anchor_slot`; its own anti-vacuity guard caught the first draft, which asserted movement on slots structurally unable to carry a date.
+
+### R73 — The report's sealer-claim surface is documented inconsistently
+- Milestone: M2
+- Size: S
+- Deps: D95
+- Discovered by: **the D95 planners** (2026-08-06).
+- Problem: three separate defects in one surface. (1) `AnchorResult::fetch_date`'s doc cited *"MVP-SPEC.md line 127+"* for a rendering requirement that passage does not contain — `fetch date` appears at lines 108 and 114 only, both as bundle content (**fixed at landing**). (2) `WorkMetadata`'s doc calls the group *"Work-level metadata as verified from the bundle"* while three of its five children are sealer claims: `claimed_time_informational_only` carries its marker in the field name, but `title` carries no caveat at all and `app_version`'s *"informational only"* note lives one layer down in `manifest/body.rs` and never reaches the report. (3) `FileReveal::total_size` and `UnrevealedFilePlaceholder::size` are manifest-declared figures, and for a wholly unrevealed file nothing can contradict the latter, yet its doc calls it *"the only datum a placeholder exposes"* without saying whose datum it is.
+- Do: give every sealer-recorded report field the same caveat in its own doc, and correct `WorkMetadata`'s group doc so it does not over-claim for three of five children. `AnchorVerdict`'s byte-exact `invalid`-slot pin used `"fetch_date":"2026-08-02"`, a shape the emitter can never produce (it renders decimal POSIX seconds) — **fixed at landing** to `"1785000100"`.
+- Accept: no report field's doc claims verification the pipeline does not perform; the one committed byte-exact example of a rendered fetch date agrees with the one real producer.
+
+### R74 — R18 gains the `fetch_date` label row, and the claimed/verified marker gets a home (D95 rider a)
+- Milestone: M3
+- Size: S
+- Deps: R18; D95
+- Discovered by: **the D95 planners** (2026-08-06).
+- Problem: D95's ruling is *render + label*, and the label is owed. Worse, the tree's existing "render as claimed" obligation — D53 §4 and `report.rs`'s `source` doc, in the imperative — is **mechanized nowhere and unreachable by its named consumer**: `AnchorVerdict::to_anchor_result` collapses `AnchorSource::{Verified, Claimed}` through `identity()`, `is_verified` has three repo-wide hits all definition-or-test, and R22 hands the verifier page only the report's serialized bytes. The pin that looks like it covers this reads `"source":"claimed-tsa"`, where `claimed-tsa` is the fixture's own identity string and not a marker.
+- Do: add R18's `fetch_date` row (rendered subordinate to the state, labelled sealer-recorded and not verified, in the `claimed_time` register of MVP-SPEC line 137), and decide where the claimed/verified marker lives. A sixth `AnchorResult` field is a `REPORT_VERSION` event D53 §6 forbids casually; R18 embedding final display strings is what R22 already says the page receives, so the obligation is dischargeable at M3 **without** a version bump.
+- Accept: the wording set covers `fetch_date`; a claimed source is distinguishable from a verified one by something a page can act on; no document still states the obligation without a mechanism.
+
+### R75 — Re-author `anchor_verdict_report_freeze.rs` for the post-R12 truth
+- Milestone: M2
+- Size: S
+- Deps: R12 (D95 §6)
+- Discovered by: **the D95 RENDER planner** (2026-08-06).
+- Problem: two instruments in a file D94 never opened go red **after** the emit rather than before it — they read the committed document, not a recomputed report — and both named the wrong cause. `the_pinned_report_vectors_still_carry_only_absent_anchor_slots` called a changed state *"a REPORT_VERSION event, not a lane change"*, which D94 Ruling 1 overruled and which is the **sixth** copy of D84 §7's stale report-v2 claim, in a **fourth** file that D94 §9a's three-file amendment does not reach. `no_non_absent_state_or_diagnostic_appears_in_the_pinned_bytes` guards its own vacuity on `saw_absent`, which after the re-emit fires with *"the needle shape is wrong and the six assertions above are vacuous"* — but the needle is right and `absent` has legitimately left the file for good (D53 §4a), so an implementer following the message would weaken the guard.
+- Do: assert the post-R12 truth with messages naming the right cause; keep what D53 §6 actually froze, which is the shape (one populated array, three slots, five fields, no diagnostic).
+- Accept: **landed 2026-08-06.** Both renamed; the state assertions read `invalid`; the two TSA slots pin the rendered fetch date and the `.ots` slot pins its absence with the reason; `NON_ABSENT_STATES` became `STATES_NO_PINNED_REPORT_MAY_CARRY` with `invalid` removed and the reason recorded; the anti-vacuity witness is `invalid` with a note explaining why it moved.

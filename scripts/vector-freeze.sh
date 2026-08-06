@@ -34,20 +34,108 @@
 # Once Q14 sets `#! status frozen` it REFUSES to modify or drop an entry:
 # additions are then the only legal change.
 #
+# --verdict-event <Dnn> is the ONE exception, and it is checked, not trusted.
+#
+# D94 minted a third class of moved pin. A `report` vector's bytes are a
+# *function of the verifier*, which is not frozen and keeps changing through
+# M2/M3/M4 — so "the bytes moved" and "the format moved" are the same
+# statement for every other kind and are NOT the same statement here. D94
+# Ruling 4 says the three classes are told apart **mechanically, not
+# editorially**, and this is where "mechanically" has to live: a flag that
+# merely asserted the classification would be the editorial version with an
+# extra step. So the flag only unlocks the check below, which re-derives the
+# classification from the diff against `HEAD` and refuses if it does not hold:
+#
+#   * only a `report/` kind vector may move at all (every other kind pins
+#     format artifacts, where a moved byte really is a moved format);
+#   * `bundle_len`, `bundle_sha256` and `revealed_unit_ids` byte-identical on
+#     every case — the same inputs, so what moved is what the verifier SAYS
+#     about them (this is the sentence that distinguishes it from a FIXTURE
+#     EVENT);
+#   * `report_version` unchanged on every case;
+#   * at least one case unchanged — a FORMAT EVENT moves all of them at once,
+#     which is what R32 measured when report_version 0 -> 1 rewrote all 21.
+#
+# First use: R12 (D94), which moved 1 of 21 cases and 0 bundle digests.
+#
 # Doc: testdata/vectors/README.md (contract), testdata/README.md (retention).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 MODE="check"
+VERDICT_EVENT=""
 case "${1:-}" in
   "")           MODE="check" ;;
   --self-test)  MODE="self-test" ;;
   --update)     MODE="update" ;;
-  *) echo "usage: $0 [--self-test | --update]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--self-test | --update [--verdict-event <Dnn>]]" >&2; exit 2 ;;
 esac
+if [ "${MODE}" = "update" ] && [ "${2:-}" = "--verdict-event" ]; then
+  VERDICT_EVENT="${3:-}"
+  case "${VERDICT_EVENT}" in
+    D[0-9]*) ;;
+    *) echo "usage: --verdict-event needs the deciding record, e.g. D94" >&2; exit 2 ;;
+  esac
+fi
 
 VECTORS="testdata/vectors"
+# Is this file's move a VERDICT EVENT? Re-derived from the diff against HEAD,
+# never taken on the flag's word. Prints the four numbers D94's commit-message
+# rule requires, so the audit record is produced by the check rather than typed
+# by the person the check is guarding against.
+verdict_event_ok() {
+  python3 - "$1" <<'PY'
+import json, subprocess, sys
+
+path = sys.argv[1]
+rel = path[2:] if path.startswith("./") else path
+
+def fail(msg):
+    print(f"::error::not a verdict event: {msg}")
+    sys.exit(1)
+
+if "/report/" not in f"/{rel}":
+    fail(f"`{rel}` is not a `report` kind vector. Only a report's bytes are a function "
+         "of the verifier; every other kind pins format artifacts, where a moved byte "
+         "IS a moved format (D94 §2a)")
+
+try:
+    before = json.loads(subprocess.run(["git", "show", f"HEAD:{rel}"],
+                                       capture_output=True, check=True).stdout)
+except subprocess.CalledProcessError:
+    fail(f"`{rel}` is not at HEAD, so there is nothing to classify against")
+after = json.loads(open(rel, "rb").read())
+
+b, a = before["expect"]["cases"], after["expect"]["cases"]
+if len(b) != len(a):
+    fail(f"the case count moved ({len(b)} -> {len(a)}); a verdict event re-values "
+         "existing cases and adds none")
+
+moved = []
+for i, (x, y) in enumerate(zip(b, a)):
+    for k in ("bundle_len", "bundle_sha256", "revealed_unit_ids"):
+        if x.get(k) != y.get(k):
+            fail(f"case {i} moved `{k}` — the INPUT changed, which makes this a FIXTURE "
+                 "EVENT. It moves frozen bundle/manifest vectors too and needs its own "
+                 "decision (D94 §5)")
+    if x.get("report", {}).get("report_version") != y.get("report", {}).get("report_version"):
+        fail(f"case {i} moved `report_version` — that is a FORMAT EVENT and needs the "
+             "R32 coupled-edit procedure, not this flag")
+    if x != y:
+        moved.append(i)
+
+if not moved:
+    fail("no case moved, so the digest changed for some reason this check cannot see")
+if len(moved) == len(a):
+    fail(f"all {len(a)} cases moved. A format event moves every case at once (R32 "
+         "measured exactly that at report_version 0 -> 1); a verdict event does not")
+
+print(f"    {len(moved)} of {len(a)} report cases moved (cases {moved}); "
+      f"0 bundle digests moved; report_version unchanged")
+PY
+}
+
 MANIFEST="FROZEN.sha256"
 # F10's per-version roster. An auxiliary, not a vector: it is the list *of*
 # the frozen set and changes whenever a vector lands, so freezing it would
@@ -172,8 +260,18 @@ update)
         [ -z "${line}" ] && continue
         if ! grep -Fqx -- "${line}" <<<"${new}"; then
           path="${line#*  }"
+          if [ -n "${VERDICT_EVENT}" ] && verdict_event_ok "${dir}/${path}"; then
+            echo "  ${version}: \`${path}\` moves as a VERDICT EVENT (${VERDICT_EVENT}) — checked, not asserted"
+            continue
+          fi
           echo "::error::${manifest} is FROZEN: \`${path}\` would be modified or dropped."
-          echo "::error::After Q14 the only legal change is an addition; a byte change needs a new format version."
+          echo "::error::A moved pin has three causes (D94 §2a) and only one is legal here:"
+          echo "::error::  FORMAT EVENT  — the D29 surface moved. Needs a report-version bump, not this script."
+          echo "::error::  VERDICT EVENT — the same inputs now verify to a different value under an unchanged"
+          echo "::error::                  format. Legal after the freeze: re-run with --verdict-event <Dnn>,"
+          echo "::error::                  which re-derives the classification from the diff and refuses if it"
+          echo "::error::                  does not hold. Only \`report/\` vectors can be one."
+          echo "::error::  FIXTURE EVENT — the input bundle changed (\`bundle_sha256\` moved). Needs its own decision."
           exit 1
         fi
       done <<< "${old}"
@@ -195,7 +293,8 @@ update)
 
   if [ "${changed}" -eq 1 ]; then
     echo "vector-freeze --update: manifests rewritten. A changed (not added) digest is a"
-    echo "format event: record the justification in the commit message (testdata/README.md)."
+    echo "FORMAT or VERDICT event and never a silent one: name the class and its deciding"
+    echo "record in the commit message (D94 §2a; testdata/README.md)."
   fi
   ;;
 

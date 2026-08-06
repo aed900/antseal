@@ -507,3 +507,16 @@
 - A: pre-pay anchor-gate step (≥1-TSA-or-abort, `--force-degraded`) invoked by the pipeline with a stub/skip interface for M1; Arbitrum RPC receipt client (`eth_getTransactionReceipt`) if open decision 2 lands in `antseal-anchor`.
 - R: M0 library verification entry (structural/commitment/signature checks incl. absent-anchor → UNANCHORED verdict) callable by the M1 E2E; M3 storage-linkage and `verify --live` orchestration consuming S4's address recomputation and S15's persistence primitive; M3 `reveal` fetching missing ciphertexts via `get_data`.
 - Q: CI jobs hosting the devnet E2E suites (S16 default, S17–S19 gated/scheduled); M4 release gate (Sepolia E2E, mainnet smoke seal, disk-loss restore drill) reusing S14/S19 capability; threat-model doc absorbing storage-side notes (journal-loss abandonment, wallet linkability of receipts).
+
+### S38 — `incomplete_works()` fails the whole enumeration when one work vanishes mid-scan
+- Milestone: M2
+- Size: S
+- Deps: S10
+- Discovered by: **the wave-6 local gate** (2026-08-06), which reddened `antseal-cli`'s `incomplete_works_are_enumerable_with_their_state` under full-workspace load. The test passes 4/4 when its binary runs alone and 3/3 in isolation, so the first reading is "flaky" — it is not.
+- Problem: `VaultJournal::incomplete_works` (`crates/antseal-cli/src/pipeline/vault_journal.rs:323-332`) is `list_works()?` followed by `self.state(&seal_id)?` per entry. That is a **TOCTOU**: a work removed between the listing and its state read makes `state()` return `WorkNotFound`, and the `?` fails the **entire** enumeration rather than skipping the one entry. The gate's failure is exactly that — `enumerate: WorkNotFound` — surfaced because all 17 tests in `seal_journal.rs` share one on-disk vault through a `OnceLock` while libtest runs them on multiple threads. The harness comment *"tests own disjoint works"* is true of the seal ids and irrelevant to this function, which scans the whole store.
+- Why it is not only a test defect: this is the resume-candidate listing. A second `antseal` process finalizing or abandoning a work — or a user deleting one — while `status`/`resume` enumerates would hard-fail the listing instead of omitting the work that is legitimately gone. S11 already treats a work disappearing as an ordinary outcome, not an error.
+- Do: decide **skip vs fail** and record it (a disappearing work is not the same as a corrupt one, and S11's abandon path is the precedent for treating it as ordinary), then make the enumeration total with respect to concurrent removal. Separately, give the test binary either a per-test vault or an enumeration-safe fixture, so a store-wide read is not racing its siblings.
+- Accept:
+  - Removing a work concurrently with `incomplete_works()` yields a listing without it, never an error — asserted by a test that performs the removal mid-scan rather than by hoping for the race.
+  - The `seal_journal.rs` suite is green under `--test-threads` pressure, and a planted mid-scan removal is what reddens the new row.
+- Notes: **pre-existing, not introduced by R12** — wave 6 touched no `antseal-cli` code, and the test passes in isolation on the same tree. Load-sensitive: a 2-core machine running the whole workspace is what exposed it.

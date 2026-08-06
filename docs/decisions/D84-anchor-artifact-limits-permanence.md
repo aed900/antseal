@@ -81,17 +81,25 @@ Line 123 binds a future release not to reject what a past release accepted.
 For that to be at risk, some released verifier must have **rendered a verdict
 that depends on artifact internals**. None ever has, and none can before M2:
 
-1. **The M0 verifier does not look inside an anchor artifact at all.** R12's
-   task text is explicit — it "replace[s] the M0 `absent` stub". Every anchor
-   in an M0 bundle renders `absent`; the artifact bytes are carried and
-   never parsed.
-2. **This is asserted on disk, as an equality, not an intention.** R10's
-   sweep measured the M0 authentication boundary and pinned the anchor
-   artifacts as inert in
-   `crates/antseal-core/tests/verify_fuzz.rs::m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`
-   — a test written to go red when R12 lands, with the instruction to invert
-   it (`docs/security-assumptions.md`, "The M0 authentication boundary,
-   measured").
+1. **The M0 verifier did not look inside an anchor artifact at all.** R12's
+   task text was explicit — it "replace[s] the M0 `absent` stub". Every
+   anchor in a bundle verified by the M0 verifier rendered `absent`; the
+   artifact bytes were carried and never parsed. R12 landed at M2 and ended
+   that; this clause is historical, and its permanence argument does not
+   depend on it staying true. (Corrected 2026-08-06 — see §8.)
+2. **What is asserted on disk, as an equality, is narrower than this
+   record originally claimed.**
+   `crates/antseal-core/tests/verify_fuzz.rs::anchor_artifact_bytes_never_change_the_bundles_accept_reject_outcome`
+   — R10's sweep, re-titled at R12 — pins rule **F2** and only F2: no anchor
+   byte moves `verify_bundle`'s accept/reject outcome. That is permanent and
+   the test is the standing guard for it. It does **not** pin that no verdict
+   depends on artifact internals; nothing did until R12, and this record
+   previously described it as "written to go red when R12 lands, with the
+   instruction to invert it", which was wrong in both halves (**D94** §4:
+   inverting it would assert what F2 forbids). The verdict-level successors
+   are A21 rows 1–2 against A25's real material, and — measured at R12 —
+   `tests/anchor_aggregate.rs::vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2`,
+   which observes report *states* and did go red (**R71**).
 3. **No bundle carrying a real artifact can exist before M2.** M1 (line 154)
    ships zero-anchor seals via `--no-anchor`; the OTS calendar client and the
    RFC 3161 request path are M2 (line 155). The first `.ots` and the first
@@ -241,7 +249,8 @@ checklist; A27 mirrors the same text so A5/A11 read the same sentences.
 >   recorded real artifacts (MVP-SPEC.md lines 153 and 155 place them there),
 >   and are **not** an exception to line 123 — under F1–F3 no released
 >   verifier ever rendered a verdict that depends on them, because M0/M1
->   render every anchor `absent` (R12 replaces that stub at M2).
+>   rendered every anchor `absent` (R12 replaced that stub at M2, and this
+>   row is the historical statement it was always meant to be).
 > - [ ] **Report-version evolution is not blocked by this freeze.** The Q14
 >   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
 >   D29 records that adding fields after the freeze requires a version bump,

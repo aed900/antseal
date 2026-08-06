@@ -334,23 +334,37 @@ fn the_unauthenticated_region_at_m0_is_exactly_the_storage_record() {
     }
 }
 
-/// The **anchor artifacts** are the other inert region at M0 — and unlike
-/// the storage record they are inert only *for now*.
+/// **D84 rule F2, as an equality**: no anchor artifact byte changes the
+/// bundle's accept/reject outcome. Permanent, not a milestone marker.
 ///
-/// The pipeline's anchor stage is an M0 stub that emits one `absent` slot
-/// per embedded artifact; R12 replaces it at M2, and A18 owns the verdict
-/// states. So today an anchor artifact's bytes can be rewritten and the
-/// bundle still verifies, which is correct at M0 and must **stop** being
-/// correct once R12 lands.
+/// # This test was mis-described for nine days, in five places
 ///
-/// This test is therefore written to go red at exactly that moment: when
-/// the anchor stage starts verifying artifacts, the assertion below fails
-/// and whoever lands R12 inverts it. That is the intended lifecycle, not a
-/// fragile test — the one-off sweep measured 67 such bytes across the three
-/// fixture artifacts, and leaving them silently unasserted is how a
-/// milestone boundary gets forgotten.
+/// It was introduced as *"written to go red when R12 lands, with the
+/// instruction to invert it"*, and D84 §2, `docs/format/anchor-artifact-limits.md`,
+/// `docs/security-assumptions.md`, the Q14 gate plan's row N1 and
+/// `GraftAnchors` all repeated that claim. It was wrong in both halves, and
+/// **D94** §4 is the record that caught it:
+///
+/// - It cannot go red at R12. [`drive`] keeps only `verify_bundle`'s
+///   accept/reject bit ([`Outcome`] has two variants and the report is
+///   discarded), and F2 guarantees that bit never moves for any anchor
+///   reason — at M2 or ever. R12 landed; this stayed green, correctly.
+/// - It must not be inverted. The inversion would assert `Rejected` after an
+///   anchor byte flip, which is precisely what F2 forbids — R12 would have
+///   to be implemented *wrongly* to satisfy it.
+///
+/// Two propositions were conflated. *No anchor byte changes accept/reject*
+/// (true forever, this test) and *no verdict depends on artifact internals*
+/// (true at M0 only, ended by R12). The second is measured by
+/// `tests/anchor_aggregate.rs::vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2`,
+/// which did go red at R12, and by A21 rows 1–2 against A25's real material,
+/// where a flipped byte moves `proven` → `invalid` rather than
+/// `invalid` → `invalid`. Retitled by **R67**.
+///
+/// The one-off R10 sweep measured 67 such bytes across the three fixture
+/// artifacts; this row keeps the OTS 21 of them asserted.
 #[test]
-fn m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage() {
+fn anchor_artifact_bytes_never_change_the_bundles_accept_reject_outcome() {
     let anchored = seed_corpus()
         .into_iter()
         .find(|(name, _)| *name == "valid-multi-file-anchored")
@@ -365,8 +379,9 @@ fn m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage() {
         assert_eq!(
             drive(&mutated),
             Outcome::Verified,
-            "an OTS artifact byte became verdict-bearing. If R12 has landed, this test has done \
-             its job: invert it, and give the anchor stage its own tamper rows (A21)."
+            "an OTS artifact byte changed the bundle's accept/reject outcome — a D84 rule F2 \
+             breach. F2 says a failing anchor renders `invalid` in its own slot and changes \
+             nothing else; fix the anchor stage, do NOT invert this assertion (D94 §4)."
         );
     }
 }

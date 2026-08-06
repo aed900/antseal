@@ -456,13 +456,22 @@ asserted as an *equality* rather than as an intention:
 - the storage record is M3 linkage, and MVP-SPEC.md line 119 makes storage
   the product's bonus rather than its proof — R20 renders it as a layer
   without letting it gate a verdict;
-- the anchor artifacts are inert only until **R12** wires the anchor stage
-  at M2. That one is a moving boundary, so the test that pins it is written
-  to go red when R12 lands, with the instruction to invert it.
+- the anchor-artifact region is **not** a moving boundary, and the sweep
+  that measured it does not move either. What it pins is D84 rule **F2** —
+  no anchor byte changes `verify_bundle`'s accept/reject outcome — which F2
+  makes permanent. R12 wired the anchor stage at M2 and the equality stayed
+  green, exactly as it should have: R12 changes what an anchor *renders*,
+  never whether the bundle verifies. This entry previously said the test was
+  "written to go red when R12 lands, with the instruction to invert it";
+  that was wrong in both halves and inverting it would have asserted what F2
+  forbids (**D94** §4, **R67**). Verdict-level coverage — that anchor
+  internals reach the rendered state at all — is A21 rows 1–2 against A25's
+  real material, plus
+  `tests/anchor_aggregate.rs::vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2`.
 
 Enforcement: `crates/antseal-core/tests/verify_fuzz.rs`
 (`the_unauthenticated_region_at_m0_is_exactly_the_storage_record`,
-`m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`). A
+`anchor_artifact_bytes_never_change_the_bundles_accept_reject_outcome`). A
 crash-free fuzz run says nothing about this; the equality does.
 
 **Secret residue in dropped hashers (D88).** Enabling `sha2`'s non-default

@@ -1131,7 +1131,7 @@ mod tests {
     /// an `attested` anchor's `verified_time_unix` is `None`, always.
     #[test]
     fn an_attested_verdict_never_carries_a_verified_time() {
-        let attested = AnchorVerdict::attested(AnchorKind::Ots, None, Some("2026-08-02".into()));
+        let attested = AnchorVerdict::attested(AnchorKind::Ots, None, Some("1785000100".into()));
         assert_eq!(attested.state(), AnchorState::Attested);
         assert_eq!(attested.verified_time_unix(), None);
         assert!(!attested.is_headline_eligible());
@@ -1212,7 +1212,12 @@ mod tests {
             AnchorKind::Tsa,
             AnchorDiagnostic::new(CODE),
             Some("claimed-tsa".into()),
-            Some("2026-08-02".into()),
+            // Decimal POSIX seconds — the ONLY shape the emitter produces
+            // (`verdicts.rs` renders the wire `uint` through `to_string()`).
+            // This literal read `"2026-08-02"` until 2026-08-06, so the tree's
+            // one byte-exact example of a rendered fetch date disagreed with
+            // its one real producer about the field's format (D95 / R73).
+            Some("1785000100".into()),
         );
         assert_eq!(
             verdict.diagnostic().map(AnchorDiagnostic::code),
@@ -1234,7 +1239,7 @@ mod tests {
         // is caught by the three edits `REPORT_VERSION`'s doc comment lists.
         assert_eq!(
             json,
-            r#"{"kind":"tsa","state":"invalid","verified_time_unix":null,"source":"claimed-tsa","fetch_date":"2026-08-02"}"#
+            r#"{"kind":"tsa","state":"invalid","verified_time_unix":null,"source":"claimed-tsa","fetch_date":"1785000100"}"#
         );
     }
 

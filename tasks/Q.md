@@ -198,7 +198,8 @@ The two copies are drift-checked by
   recorded real artifacts (MVP-SPEC.md lines 153 and 155 place them there),
   and are **not** an exception to line 123 — under F1–F3 no released
   verifier ever rendered a verdict that depends on them, because M0/M1
-  render every anchor `absent` (R12 replaces that stub at M2).
+  rendered every anchor `absent` (R12 replaced that stub at M2, and this
+  row is the historical statement it was always meant to be).
 - [x] **Report-version evolution is not blocked by this freeze.** The Q14
   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
   D29 records that adding fields after the freeze requires a version bump,
@@ -1415,3 +1416,13 @@ Exact line to add to Q65's Accept:
   - `cargo test -p antseal-cli --test machine_mode` and the same with `--features ant-backend` are **both** green, and both are run by a lane.
   - Changing either message reddens the corresponding fixture — planted and executed in both feature sets, since a fixture that only one build checks is half a fixture.
 - Notes: the `seal` variant's text is now also **stale under the feature** — it says connecting the command "lands with U13", and U22 has since wired it. Whichever option is taken, that sentence needs rewriting; it is the kind of message that ages into a false statement precisely because no green run ever renders it.
+
+### Q114 — `vector-freeze.sh` only knew two of D94's three classes, and refused the one D94 authorised
+- Milestone: M2
+- Size: S
+- Deps: D94; R12
+- Discovered by: **executing D94 §4 step 5** (2026-08-06). D94 wrote *"`./scripts/vector-freeze.sh --update` — REQUIRED. Exactly one digest line moves"* and the script refused outright: *"After Q14 the only legal change is an addition; a byte change needs a new format version."*
+- Problem: D94 Ruling 4 created the VERDICT EVENT class and said the three classes are told apart **mechanically, not editorially** — but the only mechanism in the tree implemented the two-class world the ruling replaced. A record that authorises something its own enforcement refuses is a record the next lane works around, and the obvious workaround (hand-editing `FROZEN.sha256`) discards the ceremony D94 §2a explicitly kept.
+- Do: add `--verdict-event <Dnn>`, and make it **checked rather than trusted** — a flag that merely asserted the classification would be the editorial version with an extra step. The flag unlocks a check that re-derives the class from the diff against `HEAD` and refuses if it does not hold: only a `report/` kind vector may move; `bundle_len`/`bundle_sha256`/`revealed_unit_ids` byte-identical on every case (else FIXTURE EVENT); `report_version` unchanged (else FORMAT EVENT); at least one case unchanged (a format event moves all of them, which is what R32 measured at `report_version` 0 → 1). The check prints the four numbers D94's commit-message rule requires, so the audit record is produced by the guard rather than typed by the person it guards against.
+- Accept: **landed 2026-08-06.** Default `--update` still refuses a frozen byte change with the three-class explanation. The guard was shown red on all three wrong classifications before being trusted to permit the right one — a moved `bundle_sha256`, all 21 cases moved, and a non-`report` vector each refused with their own cause. R12's real update printed *"1 of 21 report cases moved (cases [19]); 0 bundle digests moved; report_version unchanged"*.
+- Notes: Q107 owns the same vocabulary on the **documentation** side (`testdata/vectors/README.md`'s "What changes at Q14" table and Q27's policy); this is its enforcement counterpart, and the two must not disagree. The script's closing line said *"a changed (not added) digest is a format event"* — corrected in the same edit, since it was a seventh copy of the two-class claim.

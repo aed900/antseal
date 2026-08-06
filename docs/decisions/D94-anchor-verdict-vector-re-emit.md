@@ -564,6 +564,49 @@ tree that can observe an anchor byte changing a verdict."*
   either bind it to a real assertion or delete it. Start from the five sites
   in §9b — they are one claim, copied.
 
+## 11a. Dated corrections — what executing this record measured (2026-08-06)
+
+R12 landed the same day this record was written. Four of its claims did not
+survive the execution, and they are corrected here rather than in the reader's
+head.
+
+1. **§4's "nothing measures P2" was too strong.** This record concluded that
+   no instrument in the tree observed whether a verdict depends on artifact
+   internals, and named A21 rows 1–2 as the first that would.
+   `tests/anchor_aggregate.rs::vector_every_anchor_kind_bundle_is_all_absent_and_unanchored_at_m1`
+   reads report **states** rather than the accept/reject bit, and went red at
+   R12 exactly as an M0-inertness claim should. The §4 finding stands for the
+   instrument it was about; the generalisation does not. **R71.**
+2. **§10 step 0's "exactly two red places" was five.** The two named, plus the
+   vector runner reaching the same document through a second binary, plus a
+   doc-pointer lint catching a line-wrapped identifier **inside the held-aside
+   R12 patch**, plus item 1. And **two more went red after step 2** rather than
+   before it — `anchor_verdict_report_freeze.rs` reads the committed document,
+   not a recomputed report, so the emit is what reddens it. Both named the
+   wrong cause, and one is the **sixth** copy of D84 §7's stale report-v2
+   claim, in a **fourth** file that §9a's three-file amendment does not reach.
+   **R75.**
+3. **§10 step 5 called `./scripts/vector-freeze.sh --update` REQUIRED, and the
+   script refused it.** Ruling 4 says the three classes are told apart
+   mechanically, not editorially — but the only mechanism in the tree
+   implemented the two-class world the ruling replaced. Fixed by teaching the
+   script the class as a **checked** flag that re-derives the classification
+   from the diff rather than trusting an assertion. **Q114.**
+4. **§6's unresolved question was resolved, and its lean was overturned.** The
+   STOP fired on `fetch_date` alone; `source` is `null` on all three slots
+   because both `invalid` arms pass `None`. **D95** rules RENDER,
+   unconditionally and with no state gate — §6's reading of registry §6.1 as
+   an authority for suppression does not survive: §6.1's rule is *do not
+   consume, MAY display as a sealer-asserted claim*, and it says it about
+   `anchor_status`, the sealer's own competing verdict claim.
+
+What did survive, unchanged: Ruling 1 (re-emit, not report v2), Ruling 2
+(`"invalid"` is correct and the synthetic bytes stay), Ruling 2a's byte
+prediction for the state half (+3), Ruling 3's "exactly one of 26 R30 rows may
+move" — which passed and is the only test of F2's blast radius the tree has —
+and Ruling 4's three-class vocabulary, which is now enforced as well as
+written.
+
 ## 12. Residual risks and revisit triggers
 
 - **The re-emit is authorised on an unread patch.** R12's implementation was

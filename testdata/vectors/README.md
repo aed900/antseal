@@ -413,10 +413,40 @@ committed vector. Today `v1` uses 590 280 B, 28.15 % of its budget.
 | | now (`status pre-freeze`) | after Q14 (`status frozen`) |
 | --- | --- | --- |
 | Add a vector | append its manifest line (`--update`) | same — additions stay legal forever |
-| Change a vector's bytes | allowed as a **recorded, justified** regeneration: re-run `--update`, review the digest diff, state why in the commit | **refused.** A byte change is a format event needing a new format version |
+| Change a vector's bytes | allowed as a **recorded, justified** regeneration: re-run `--update`, review the digest diff, state why in the commit | **refused by default**, and the refusal names which of the three causes below applies. Exactly one is legal after the freeze |
 | Delete a vector | refused | refused |
 | Add a kind | record it as `#! kind` | new kinds land under a new format version |
 | `#! pending` entries | may exist; each names its owning task | **must be empty** — that is Q14's gate condition, and the checker refuses `status frozen` while any remain |
+
+### The three causes of a moved pin (D94 §2a, added 2026-08-06)
+
+The row above once read *"a byte change is a format event needing a new
+format version"*, and for twelve of the thirteen frozen vectors that is
+exactly right: they pin **format artifacts** — manifest bytes, bundle bytes,
+commitments — where *the bytes moved* and *the format moved* are the same
+statement. The `report` kind broke that identity the moment it landed. Its
+pinned bytes are a **function of the verifier**, which is not frozen and by
+design keeps changing through M2, M3 and M4.
+
+So a moved pin has three causes, and a commit that moves one must name which.
+They are told apart **mechanically, not editorially**:
+
+| Class | What moved | How it is recognised | Cost |
+| --- | --- | --- | --- |
+| **FORMAT EVENT** | the D29 surface: a field added/removed/reordered, an encoding or enum spelling changed | **every** case moves at once, or `report_version` moved. R32 measured exactly this when `report_version` 0 → 1 rewrote all 21 | a report-version bump + R32's coupled-edit procedure. Not this script |
+| **VERDICT EVENT** | the same inputs now verify to a different **value** in an existing field of an existing type | `bundle_len`, `bundle_sha256` and `revealed_unit_ids` unmoved on every case; `report_version` unmoved; some but not all cases moved | `--update --verdict-event <Dnn>` + a justified commit. **No version bump.** Legal after the freeze |
+| **FIXTURE EVENT** | the **input bundle** changed, so `bundle_sha256` moves | any bundle digest moved | the largest — it moves frozen `bundle`/`manifest` vectors too, and over a frozen `v1` vector it needs its own decision |
+
+`scripts/vector-freeze.sh --verdict-event` **re-derives** the classification
+from the diff against `HEAD` and refuses if it does not hold; the flag unlocks
+the check, it does not assert the answer. Only a `report/` kind vector can be
+a verdict event at all. **R12 (D94/D95) was the first**: 1 of 21 report cases
+moved, 0 bundle digests moved.
+
+A VERDICT EVENT is legal after the freeze because line 123's promise is that
+v1 reports stay **verifiable**, not that the verifier stops learning. The
+containment is the discriminator above, not the adjective — see Q107 for the
+same text in Q27's format-stability policy.
 
 Q6 built the mechanism and the current manifest; **Q14 executes the
 freeze** by landing the outstanding `#! pending` vectors and setting

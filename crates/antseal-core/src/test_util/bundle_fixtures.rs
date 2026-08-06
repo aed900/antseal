@@ -2281,7 +2281,7 @@ mod tests {
         ),
         (
             "multi-file-anchored/mixed",
-            "90d663bd64a988b2453d9f736e5bc740fc093a28d3115fb111160c09617e5b2d",
+            "e450be7356404a79b8bd90733c17821f063879004f399bf734a97174137bff8e",
         ),
         (
             "ed25519-only-policy/full",
@@ -2364,10 +2364,15 @@ mod tests {
                 actual,
                 expected,
                 "shape `{name}`: the canonical report bytes are not the pinned ones \
-                 ({} B). Native and wasm32 both check this number, so exactly one of two \
-                 things happened: the report byte format changed (re-pin deliberately — it \
-                 is a format event), or this target diverged from the other (MVP-SPEC.md \
-                 lines 167/169)",
+                 ({} B). Native and wasm32 both check this number, so one of THREE things \
+                 happened and the re-pin must name which (D94 §2a): the report byte format \
+                 changed (a FORMAT EVENT — every shape moves, and it costs a \
+                 `REPORT_VERSION` bump); the verifier now computes a different VALUE for \
+                 this shape under an unchanged format (a VERDICT EVENT — re-pin, no version \
+                 bump, and R12 was the first); or this target diverged from the other \
+                 (MVP-SPEC.md lines 167/169). If more shapes moved than the change \
+                 accounts for, suspect a D84 rule F2 breach and fix the code rather than \
+                 the table — this is the only test of F2's blast radius the tree has",
                 bytes.len()
             );
             seen += 1;

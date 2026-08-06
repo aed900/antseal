@@ -21,7 +21,7 @@
 //! | 3 | [`Units`] | [`verify_revealed_unit`] per revealed unit, in manifest unit order: decrypt → padding → `true_length` → content binding | R2 |
 //! | 4 | [`Files`] | [`check_file_stages`]: reveal-shape classification, partial-reveal isolation, full-reveal cross-checks, raw-mirror binding | R4 |
 //! | 5 | [`Signatures`] | [`sig_policy::verify_body`] over the **received** body bytes: present-set == policy-set, then each algorithm | C14 |
-//! | 6 | [`Anchors`] | M0 stub: one `absent` slot per embedded artifact (R12 replaces it at M2) | A18/R12 |
+//! | 6 | [`Anchors`] | [`evaluate_anchors`] over every embedded artifact, against `anchor_digest`; receipt to the supporting-evidence slot | A18/R12 |
 //!
 //! Three orderings inside that table are load-bearing and are pinned by
 //! tests in this module (`stage_order_*`):
@@ -67,15 +67,30 @@
 //!   (R20) and must never gate the evidence verdict — "storage is the
 //!   product's bonus, not its proof". The report slot stays
 //!   [`StorageLinkageResult::NotEvaluated`].
-//! - **Anchor verification.** At M0 the anchor stage tolerates and reports
-//!   [`AnchorState::Absent`] per embedded artifact; A18's state machine
-//!   plugs in at M2 through R12. No artifact byte is parsed here, and no
-//!   bundle-recorded anchor metadata is copied into the report: a TSA
-//!   `source` string is explicitly "never verdict-bearing"
-//!   ([`TsaAnchor::source`]), and rendering a `fetch_date` would require
-//!   choosing a date format — a format-permanent decision R12/A18 owns.
-//!   An empty anchor list therefore yields an empty `anchors` list, which is
-//!   the M0 empty-anchor requirement (line 153).
+//! - **Online anchor evidence.** Stage 6 runs A18's machine *offline*: core
+//!   fetches nothing and `verify_bundle` is handed nothing fetched, so an
+//!   upgraded `.ots` renders `attested` and never the `--online`-only
+//!   `proven` (D56 §3, and [`VerifyOptions`] on why the evidence is not a
+//!   field here). That is a deliberate ceiling on this entry point, not a
+//!   gap in the machine.
+//! - **Trusting bundle-recorded anchor metadata.** No `source` string is
+//!   ever copied out of the bundle: the wire carries none for either kind
+//!   (D8 §1), and every identity the report renders is one the anchor stage
+//!   derived from artifact bytes it parsed itself. `fetch_date` *is*
+//!   sealer-recorded, and **D95** rules that it renders in every state that
+//!   emits a slot — `invalid` included, with no state gate, as decimal
+//!   POSIX seconds. Three authorities, not an assertion: registry §6.1
+//!   grants display of a sealer claim (it says so about `anchor_status`,
+//!   the sealer's own competing verdict); `claimed_time_informational_only`
+//!   froze the identical construction in the v1 report bytes at Q14; and
+//!   D59 §6(a) forbids *comparing* the value, which is where its hazard
+//!   actually lives. Suppressing it on `invalid` would encode a
+//!   verification distinction that does not exist.
+//! - **Failing the bundle over an anchor.** D84 rule F2: an artifact that
+//!   does not verify renders `invalid` in **its own slot** and changes
+//!   nothing else — not the manifest verdict, not the evidence layer, not
+//!   another anchor. The anchor stage returns no `Result`, which is that
+//!   rule spelled as a type.
 //! - **Re-encoding anything.** `work_id` and the signature stage both read
 //!   the manifest body bytes *as received*
 //!   ([`Manifest::body_bytes`](crate::manifest::Manifest::body_bytes),
@@ -101,11 +116,13 @@
 //! [`Signatures`]: VerifyStage::Signatures
 //! [`Anchors`]: VerifyStage::Anchors
 //! [`SealProof::decode`]: crate::bundle::SealProof::decode
-//! [`TsaAnchor::source`]: crate::bundle::TsaAnchor::source
 //! [`sig_policy::verify_body`]: crate::crypto::sig_policy::verify_body
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::anchor::model::{AnchorArtifacts, OnlineEvidence};
+use crate::anchor::roots::TsaRootStore;
+use crate::anchor::verdicts::evaluate_anchors;
 use crate::bundle::{BundleV1, CoveredReveal, NonCoveredReveal, SealProof};
 use crate::content::fine_tree::{FineRoot, RangeProofView, WireNode, verify_range};
 use crate::content::unit::ByteRange as ContentByteRange;
@@ -117,7 +134,7 @@ use crate::crypto::sig_policy::{PolicyLabel, SigPolicy, verify_body};
 use crate::crypto::unit_aead::Nonce24 as AeadNonce;
 use crate::manifest::body::{CanonMode, FineTree, ManifestBodyV1, UnitEntry as ManifestUnitEntry};
 use crate::manifest::registry::UnitKind as ManifestUnitKind;
-use crate::manifest::work_id;
+use crate::manifest::{anchor_digest, work_id};
 
 use super::coherence::check_coherence;
 use super::coherence::{CoherenceBundleView, CoherenceUnit, RevealSection, RevealedUnitRef};
@@ -128,10 +145,9 @@ use super::file_stages::{
     check_file_stages, participates_in_concat, resolve_raw_mirror,
 };
 use super::report::{
-    AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
-    REPORT_VERSION, RawMirrorReveal, RevealSet, SignatureScheme, StorageLinkageResult,
-    SupportingEvidenceResult, UnitSpan, UnrevealedFilePlaceholder, VerificationReport,
-    WorkMetadata,
+    AnchorResult, Digest32, EvidenceLayerResult, FileReveal, REPORT_VERSION, RawMirrorReveal,
+    RevealSet, SignatureScheme, StorageLinkageResult, SupportingEvidenceResult, UnitSpan,
+    UnrevealedFilePlaceholder, VerificationReport, WorkMetadata,
 };
 use super::structural::{
     BundleView, DisclosedField, FileEntry as StructuralFileEntry, ManifestView, TouchedFile,
@@ -158,7 +174,7 @@ pub enum VerifyStage {
     Files,
     /// Stage 5 — C14's `sig_policy` + signature verification.
     Signatures,
-    /// Stage 6 — the anchor stage (M0: `absent` per artifact).
+    /// Stage 6 — A18's per-anchor verdict machine, wired by R12.
     Anchors,
 }
 
@@ -199,22 +215,94 @@ impl core::fmt::Display for VerifyStage {
 
 /// Options for a verification run.
 ///
-/// Empty at M0 by design: everything the evidence layer needs is inside the
-/// bundle, which is the point of a self-contained `.sealproof`. The
-/// parameter exists in the signature D27 fixed so that later stages —
-/// R12's anchor policy, R20's storage linkage, R21's `--live` — can be
-/// switched on without a breaking change. `#[non_exhaustive]`, so adding a
-/// field later stays non-breaking for callers that build it with
-/// [`Default`].
+/// Empty at M0 by design: everything the *evidence layer* needs is inside the
+/// bundle, which is the point of a self-contained `.sealproof`. The parameter
+/// exists in the signature D27 fixed so that later stages — R12's anchor
+/// policy, R20's storage linkage, R21's `--live` — can be switched on without
+/// a breaking change. `#[non_exhaustive]`, so adding a field stays
+/// non-breaking for callers that build it with [`Default`].
+///
+/// # Why the anchor stage needed the first two fields (R12)
+///
+/// R12's task text says only *"invoke A's state machine"*, and A18's machine
+/// takes two inputs a **pure, clock-free** pipeline cannot invent:
+///
+/// - **`verify_at_unix`.** `antseal-core` reads no clock at all
+///   ([`anchor::chain`](crate::anchor::chain) module docs), so verification
+///   time is the caller's. It is [`Option`] rather than required because
+///   D53 §5b makes it **one-sided**: it separates `proven` from
+///   `valid-at-stamping-cert-since-expired` and can never produce a failure,
+///   so a caller with no clock loses one distinction and no safety. `None`
+///   evaluates as `0` — the "no expiry claim" end of that one-sided test,
+///   which is also the value
+///   `chain::tests::verify_at_before_gentime_is_still_proven` already pins
+///   as never producing a failure.
+/// - **`tsa_roots`.** T3 validates against a *pinned* store. It defaults to
+///   [`TsaRootStore::pinned`] and is overridable because A7's injection API
+///   is what makes the untrusted-root row buildable at all. Overriding is
+///   safe by construction rather than by policy:
+///   [`TsaRootStore::from_static`] is `test`/`test-util`-gated, so outside a
+///   test build [`TsaRootStore::pinned`] is the only value that exists to
+///   pass.
+///
+/// # What is deliberately *not* here
+///
+/// [`OnlineEvidence`] — the `--online` overlay. `verify_bundle` performs no
+/// online step and receives no online result, so every OTS anchor it renders
+/// is the offline verdict (`pending`/`attested`/…). D56 §3 already requires
+/// the offline verdict to be the cryptographic one and the overlay to be
+/// distinct from it; carrying evidence here would need a borrowed field and
+/// would put a network-shaped input in the type every WASM caller builds. The
+/// host-supplied route is R16/R21/R22's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct VerifyOptions {}
+pub struct VerifyOptions {
+    /// The caller's verification time, POSIX seconds. See the type docs.
+    verify_at_unix: Option<u64>,
+    /// The TSA root store T3 validates against; `None` is
+    /// [`TsaRootStore::pinned`].
+    tsa_roots: Option<&'static TsaRootStore>,
+}
 
 impl VerifyOptions {
-    /// The M0 options: nothing selected.
+    /// The default options: no verification time, the pinned root store.
     #[must_use]
     pub const fn new() -> Self {
-        Self {}
+        Self {
+            verify_at_unix: None,
+            tsa_roots: None,
+        }
+    }
+
+    /// Set the verification time (POSIX seconds) the anchor stage evaluates
+    /// certificate expiry against.
+    #[must_use]
+    pub const fn with_verify_at_unix(mut self, verify_at_unix: u64) -> Self {
+        self.verify_at_unix = Some(verify_at_unix);
+        self
+    }
+
+    /// Evaluate TSA chains against `roots` instead of
+    /// [`TsaRootStore::pinned`].
+    #[must_use]
+    pub const fn with_tsa_roots(mut self, roots: &'static TsaRootStore) -> Self {
+        self.tsa_roots = Some(roots);
+        self
+    }
+
+    /// The verification time, or `None` if the caller supplied no clock.
+    #[must_use]
+    pub const fn verify_at_unix(&self) -> Option<u64> {
+        self.verify_at_unix
+    }
+
+    /// The root store to validate against — the pinned one unless overridden.
+    #[must_use]
+    pub const fn tsa_roots(&self) -> &'static TsaRootStore {
+        match self.tsa_roots {
+            Some(roots) => roots,
+            None => TsaRootStore::pinned(),
+        }
     }
 }
 
@@ -341,7 +429,7 @@ impl MirrorCandidate for UnitRow<'_> {
 /// The single implementation behind both D27 entry points.
 fn run(
     input: &[u8],
-    _options: &VerifyOptions,
+    options: &VerifyOptions,
     mode: Mode,
 ) -> Result<VerificationReport, VerifyFailures> {
     // ── Stage 1: decode ────────────────────────────────────────────────
@@ -429,8 +517,8 @@ fn run(
     // ── Stage 5: sig_policy + signatures (C14) ─────────────────────────
     let scheme = check_signatures(&proof)?;
 
-    // ── Stage 6: anchors (M0 stub) ─────────────────────────────────────
-    let anchors = anchor_stubs(bundle);
+    // ── Stage 6: anchors (A18 via R12) ─────────────────────────────────
+    let (anchors, supporting_evidence) = anchor_stage(&proof, options);
 
     Ok(VerificationReport {
         report_version: REPORT_VERSION,
@@ -452,7 +540,7 @@ fn run(
         },
         storage_linkage: StorageLinkageResult::NotEvaluated,
         anchors,
-        supporting_evidence: SupportingEvidenceResult::None,
+        supporting_evidence,
         reveal: reveal_set(body, bundle, &rows, &revealed_ids, &summaries)?,
     })
 }
@@ -931,26 +1019,73 @@ fn alg_material(map: &crate::manifest::SigAlgMap) -> Vec<(SigAlg, Vec<u8>)> {
 // stage 6
 // ---------------------------------------------------------------------------
 
-/// The M0 anchor stage: one `absent` slot per embedded artifact, OTS
-/// section first (bundle section-key order), no artifact byte parsed and no
-/// bundle-recorded metadata copied (module docs).
-fn anchor_stubs(bundle: &BundleV1<'_>) -> Vec<AnchorResult> {
-    fn stub(kind: AnchorKind) -> AnchorResult {
-        AnchorResult {
-            kind,
-            state: AnchorState::Absent,
-            verified_time_unix: None,
-            source: None,
-            fetch_date: None,
-        }
-    }
+/// The anchor stage — **R12**: A18's state machine over every embedded
+/// artifact, projected into the report's anchor slots.
+///
+/// # The digest is recomputed, never read
+///
+/// Every A18 rule is *about this seal*, and the thing that makes it so is
+/// `anchor_digest` = SHA-256 over the **full embedded manifest envelope,
+/// signatures included** ([`manifest::anchor_digest`], F7) — not `work_id`,
+/// which covers the body only. It is recomputed here from
+/// [`SealProof::anchor_digest_preimage`], which is a sub-slice of the
+/// caller's own input (the zero-copy seam F13 asserts), so the bundle cannot
+/// state its own anchor identity: a `.ots` or a token stamped over anything
+/// else renders `invalid` with its own code rather than being believed.
+///
+/// # The receipt leaves by a different door
+///
+/// [`AnchorVerdicts::outcomes`] does not contain the receipt and
+/// [`AnchorKind`] has no variant for it, so the `anchors` half of this
+/// function **cannot** emit one; the receipt reaches the report only through
+/// the second element of the returned pair, as a
+/// [`SupportingEvidenceResult`] that carries no state and no time (A19).
+///
+/// # `absent` is not a slot
+///
+/// D53 §4a: [`AnchorState::Absent`] is the answer to a question about an
+/// anchor **kind** the bundle does not carry, never about an artifact, and
+/// R12 emits no slot for it. [`AnchorVerdicts::project_anchor_results`] is
+/// where that filter lives, which is why a bundle with no anchors still
+/// serializes the pinned `"anchors":[]`.
+///
+/// Slot order is `.ots` artifacts then TSA artifacts, each in wire order —
+/// the M0 stub's order, matched deliberately by A18 so the projection lands
+/// where the report already put things.
+///
+/// [`AnchorKind`]: super::report::AnchorKind
+/// [`AnchorState::Absent`]: super::report::AnchorState::Absent
+/// [`manifest::anchor_digest`]: crate::manifest::anchor_digest
+/// [`SealProof::anchor_digest_preimage`]: crate::bundle::SealProof::anchor_digest_preimage
+fn anchor_stage(
+    proof: &SealProof<'_>,
+    options: &VerifyOptions,
+) -> (Vec<AnchorResult>, SupportingEvidenceResult) {
+    let bundle = proof.bundle();
+    let digest = *anchor_digest(proof.anchor_digest_preimage()).as_bytes();
+    let artifacts = AnchorArtifacts::from_bundle(bundle);
 
-    bundle
-        .ots_anchors()
-        .iter()
-        .map(|_| stub(AnchorKind::Ots))
-        .chain(bundle.tsa_anchors().iter().map(|_| stub(AnchorKind::Tsa)))
-        .collect()
+    // Core never fetches, and `verify_bundle` is given nothing to have
+    // fetched: the offline verdict is the whole of what this entry point can
+    // say (see [`VerifyOptions`]).
+    let verdicts = evaluate_anchors(
+        &artifacts,
+        &digest,
+        &OnlineEvidence::new(),
+        options.verify_at_unix().unwrap_or(0),
+        options.tsa_roots(),
+    );
+
+    let supporting = verdicts
+        .receipt()
+        .map_or(SupportingEvidenceResult::None, |receipt| {
+            SupportingEvidenceResult::ArbitrumReceipt {
+                block_number: receipt.block_number(),
+                transaction_count: u64::try_from(receipt.transaction_count()).unwrap_or(u64::MAX),
+            }
+        });
+
+    (verdicts.project_anchor_results(), supporting)
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,8 +1230,9 @@ mod tests {
 
     use super::*;
     use crate::bundle::{
-        BundleParts, CoverEntry as BundleCoverEntry, FullReveal, OpaqueBytes, PathNode,
-        StorageRecord, TouchedFile as BundleTouchedFile, encode_bundle,
+        AnchorStatus, BundleParts, CoverEntry as BundleCoverEntry, FullReveal, OpaqueBytes,
+        OtsAnchor, OtsUpgrade, PathNode, ReceiptRecord, StorageRecord,
+        TouchedFile as BundleTouchedFile, TsaAnchor, encode_bundle,
     };
     use crate::canon::{TextMode, UNICODE_17_0_0, canonicalize_v};
     use crate::content::fine_tree::{prove_range, rebuild_fine_root};
@@ -1111,6 +1247,7 @@ mod tests {
         ByteRange, ContentAddress, FileEntry, Nonce24 as ManifestNonce, UnitEntry, encode_body,
     };
     use crate::manifest::{SigAlgMap, SigMaterial, encode_envelope};
+    use crate::verify::report::{AnchorKind, AnchorState};
 
     // -----------------------------------------------------------------
     // the R5 smoke fixture
@@ -1231,7 +1368,214 @@ mod tests {
         break_tiling: bool,
         /// Flip a byte of the Ed25519 signature.
         corrupt_signature: bool,
+        /// Anchor artifacts to embed, each minted over **this fixture's own**
+        /// `anchor_digest` (R12). Default is the M0 shape: no anchor
+        /// sections at all, so every pre-R12 test is byte-unchanged.
+        anchors: AnchorPlan,
+        /// The sealer-recorded fetch date every embedded artifact carries;
+        /// `None` is [`FIXTURE_FETCH_DATE`]. A knob rather than a constant
+        /// only so D95's rider-(c) equality has a second value to move —
+        /// nothing else may branch on this (D59 §6(a)).
+        fetch_date: Option<u64>,
     }
+
+    /// The fetch date every fixture artifact records unless a row moves it.
+    const FIXTURE_FETCH_DATE: u64 = crate::anchor::testing::ots_writer::FETCH_DATE;
+
+    /// Which anchor artifacts a fixture embeds (**R12**).
+    ///
+    /// Every shape is minted over the fixture's real `anchor_digest`, which
+    /// is only knowable after the manifest envelope is encoded — so these are
+    /// *plans*, resolved in [`fixture`] once the digest exists. That
+    /// ordering is the point: an anchor artifact that could be built without
+    /// the digest would not be about this seal.
+    #[derive(Debug, Clone, Default)]
+    struct AnchorPlan {
+        ots: Vec<OtsShape>,
+        tsa: Vec<TsaShape>,
+        receipt: bool,
+    }
+
+    /// The `.ots` shapes D56's rules distinguish, named by the state each
+    /// reaches offline.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum OtsShape {
+        /// One pending calendar attestation — rule O5 → `pending`.
+        Pending,
+        /// Single-branch, ops-committing, header embedded — rule O4 →
+        /// `attested`. Never `proven` here: that needs online evidence and
+        /// `verify_bundle` is given none.
+        CommittedUpgrade,
+        /// Well-formed and committing, but its one branch ends in an
+        /// attestation type this verifier does not implement — rule O9 →
+        /// `internally-consistent-only`.
+        Unevaluable,
+        /// Stamped over `work_id` instead of `anchor_digest`. Rule O1 →
+        /// `invalid`, and the shape that makes R12's digest choice
+        /// observable rather than merely documented.
+        StampedOverWorkId,
+    }
+
+    /// The TSA shapes, likewise.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum TsaShape {
+        /// A mock-CA token over this bundle's `anchor_digest`, with the
+        /// signer certificate's validity window around `genTime`.
+        Mock,
+        /// The same, with the signer certificate already expired by the
+        /// window's end — the `valid_at` lever for D53's C1/C2 split.
+        MockShortLived,
+        /// Bytes that are not a `TimeStampResp` at all — `invalid`.
+        Garbage,
+    }
+
+    /// The mock TSA's `genTime`, and a verification time on either side of
+    /// [`SHORT_LIVED`]'s `notAfter`.
+    const MOCK_GEN_TIME: u64 = crate::anchor::testing::DEFAULT_GEN_TIME;
+    /// A signer window that has already closed by [`AFTER_EXPIRY`].
+    const SHORT_LIVED: (u64, u64) = (MOCK_GEN_TIME - 1_000, MOCK_GEN_TIME + 1_000);
+    /// A verification time inside every mock window.
+    const BEFORE_EXPIRY: u64 = MOCK_GEN_TIME + 10;
+    /// A verification time after [`SHORT_LIVED`] closed.
+    const AFTER_EXPIRY: u64 = MOCK_GEN_TIME + 100_000;
+
+    /// The mock CA, built once: minting certificates and signing P-384 is the
+    /// most expensive thing in this module and every row wants the same CA.
+    fn mock_tsa(short_lived: bool) -> &'static crate::anchor::testing::MockTsa {
+        use crate::anchor::testing::{MockTsa, MockTsaConfig};
+        use std::sync::OnceLock;
+
+        static LONG: OnceLock<MockTsa> = OnceLock::new();
+        static SHORT: OnceLock<MockTsa> = OnceLock::new();
+        let (cell, validity) = if short_lived {
+            (&SHORT, SHORT_LIVED)
+        } else {
+            (&LONG, (MOCK_GEN_TIME - 1_000, MOCK_GEN_TIME + 1_000_000))
+        };
+        cell.get_or_init(|| {
+            MockTsa::new(MockTsaConfig {
+                signer_validity: validity,
+                ..MockTsaConfig::default()
+            })
+            .expect("the mock CA mints")
+        })
+    }
+
+    /// A `'static` store trusting both mock CAs and nothing else.
+    ///
+    /// `'static` because [`VerifyOptions::with_tsa_roots`] takes one, which is
+    /// what keeps the option type `Copy` and lifetime-free for every real
+    /// caller — and a real caller has only [`TsaRootStore::pinned`] to pass,
+    /// because [`TsaRootStore::from_static`] is `test`/`test-util`-gated.
+    fn mock_roots() -> &'static TsaRootStore {
+        use std::sync::OnceLock;
+        static STORE: OnceLock<TsaRootStore> = OnceLock::new();
+        STORE.get_or_init(|| {
+            let roots = vec![mock_tsa(false).pinned_root(), mock_tsa(true).pinned_root()];
+            TsaRootStore::from_static(Box::leak(roots.into_boxed_slice()))
+        })
+    }
+
+    /// Resolve an [`AnchorPlan`] against the digests only the built manifest
+    /// can supply.
+    fn build_anchors(
+        plan: &AnchorPlan,
+        anchor_digest: &[u8; 32],
+        work_id_bytes: &[u8; 32],
+        fetch_date: u64,
+    ) -> (Vec<OtsAnchor>, Vec<TsaAnchor>, Option<ReceiptRecord>) {
+        use crate::anchor::testing::ots_writer::{
+            HEADER_NTIME, bitcoin, container, header_with, pending, unknown,
+        };
+
+        let height = 700_007u64;
+        let ots = plan
+            .ots
+            .iter()
+            .map(|shape| match shape {
+                OtsShape::Pending => OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(container(
+                        anchor_digest,
+                        &pending("https://calendar.example"),
+                    )),
+                    None,
+                )
+                .expect("pending ots anchor"),
+                OtsShape::CommittedUpgrade => OtsAnchor::new(
+                    AnchorStatus::Attested,
+                    OpaqueBytes::from_vec(container(anchor_digest, &bitcoin(height))),
+                    // With zero ops the branch commitment *is* the stamped
+                    // digest, so a header carrying it at bytes 36..68 is
+                    // committed by the ops (`ots_writer::committed_single_
+                    // branch`, whose digest is synthetic and therefore not
+                    // usable for a real bundle).
+                    Some(OtsUpgrade::new(
+                        height,
+                        header_with(anchor_digest, HEADER_NTIME),
+                        fetch_date,
+                    )),
+                )
+                .expect("upgraded ots anchor"),
+                OtsShape::Unevaluable => OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(container(anchor_digest, &unknown())),
+                    None,
+                )
+                .expect("unevaluable ots anchor"),
+                OtsShape::StampedOverWorkId => OtsAnchor::new(
+                    AnchorStatus::Pending,
+                    OpaqueBytes::from_vec(container(
+                        work_id_bytes,
+                        &pending("https://calendar.example"),
+                    )),
+                    None,
+                )
+                .expect("wrong-digest ots anchor"),
+            })
+            .collect();
+
+        let tsa = plan
+            .tsa
+            .iter()
+            .map(|shape| {
+                let token = match shape {
+                    TsaShape::Mock => mock_tsa(false)
+                        .issue(anchor_digest, None)
+                        .expect("the mock signs"),
+                    TsaShape::MockShortLived => mock_tsa(true)
+                        .issue(anchor_digest, None)
+                        .expect("the mock signs"),
+                    TsaShape::Garbage => b"not a TimeStampResp".to_vec(),
+                };
+                // The bundle-recorded `status` is the sealer's claim and
+                // is never verdict-bearing (D8 §1); the anchor stage derives
+                // its own state from the token bytes. One value for every
+                // shape is what keeps that visible.
+                TsaAnchor::new(
+                    AnchorStatus::Proven,
+                    OpaqueBytes::from_vec(token),
+                    Vec::new(),
+                    fetch_date,
+                )
+                .expect("tsa anchor")
+            })
+            .collect();
+
+        let receipt = plan.receipt.then(|| {
+            ReceiptRecord::new(
+                vec![[0xB1; 32], [0xB2; 32]],
+                RECEIPT_BLOCK,
+                OpaqueBytes::from_vec(b"fixture receipt payload".to_vec()),
+            )
+            .expect("receipt record")
+        });
+
+        (ots, tsa, receipt)
+    }
+
+    /// The Arbitrum block number the fixture receipt records.
+    const RECEIPT_BLOCK: u64 = 271_828_182;
 
     /// One unit as the fixture builds it.
     struct PlannedUnit {
@@ -1565,6 +1909,16 @@ mod tests {
             ));
         }
 
+        // R12: the artifacts are minted over the digests the encoded manifest
+        // *has*, not over a constant — which is why this happens here and not
+        // in `Tweak`.
+        let (ots_anchors, tsa_anchors, receipt) = build_anchors(
+            &tweak.anchors,
+            anchor_digest(&manifest_bytes).as_bytes(),
+            work_id(&body_bytes).as_bytes(),
+            tweak.fetch_date.unwrap_or(FIXTURE_FETCH_DATE),
+        );
+
         let bundle = BundleV1::new(BundleParts {
             manifest: &manifest_bytes,
             storage_record: StorageRecord::new(
@@ -1572,9 +1926,9 @@ mod tests {
                 ManifestNonce::from_bytes([0x78; 24]),
                 Key32::from_bytes([0x79; 32]),
             ),
-            ots_anchors: Vec::new(),
-            tsa_anchors: Vec::new(),
-            receipt: None,
+            ots_anchors,
+            tsa_anchors,
+            receipt,
             covered_reveals,
             noncovered_reveals,
             touched_files,
@@ -2078,11 +2432,29 @@ mod tests {
         }
     }
 
-    /// The options type is inert at M0 but present in the signature D27
-    /// fixed, so later stages can be switched on without a break.
+    /// [`Default`] and [`VerifyOptions::new`] agree, and the defaults are the
+    /// conservative ones: no caller-supplied clock, and the **pinned** root
+    /// store rather than whatever was last injected.
+    ///
+    /// The second half became load-bearing at R12: `tsa_roots` defaults
+    /// through a `match` rather than a stored value, so a bug that made the
+    /// override sticky — or that defaulted to an empty store, under which
+    /// every token would render `internally-consistent-only` and no test
+    /// asserting a *failure* would notice — shows up here.
     #[test]
-    fn default_options_are_the_m0_options() {
+    fn default_options_are_the_conservative_ones() {
         assert_eq!(VerifyOptions::default(), VerifyOptions::new());
+        assert_eq!(VerifyOptions::new().verify_at_unix(), None);
+        assert!(std::ptr::eq(
+            VerifyOptions::new().tsa_roots(),
+            TsaRootStore::pinned()
+        ));
+        assert_eq!(
+            VerifyOptions::new()
+                .with_verify_at_unix(1_785_000_000)
+                .verify_at_unix(),
+            Some(1_785_000_000)
+        );
     }
 
     // -----------------------------------------------------------------
@@ -2465,5 +2837,402 @@ mod tests {
                 .expect_err("a two-mirror manifest must not verify");
             assert_eq!(failure.code(), "manifest-multiple-raw-mirrors");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // R12: the anchor stage, wired
+    // -----------------------------------------------------------------
+    //
+    // These are **in-module** tests rather than an integration target, and
+    // the reason is A90's ruling: the `wasm32-core-tests` lane runs this
+    // crate's `--lib` tests, and every file under `crates/antseal-core/
+    // tests/` is a separate crate that never executes there. A verdict row
+    // that lives only there satisfies a wasm32 Accept row *in appearance
+    // only*. A18 and A43 already run their rows this way.
+    //
+    // Every row below is a **differential**: the same fixture with one input
+    // changed, asserted to produce two different answers. A single-state
+    // assertion over a fixture would stay green under an anchor stage that
+    // returned that state unconditionally, which is exactly the shape the M0
+    // stub had.
+
+    /// The plan builder, so a row reads as its shape list.
+    fn anchored(ots: &[OtsShape], tsa: &[TsaShape], receipt: bool) -> Tweak {
+        Tweak {
+            anchors: AnchorPlan {
+                ots: ots.to_vec(),
+                tsa: tsa.to_vec(),
+                receipt,
+            },
+            ..Tweak::default()
+        }
+    }
+
+    /// Verify with the mock root store and an explicit verification time.
+    fn report_at(tweak: &Tweak, verify_at: u64) -> VerificationReport {
+        verify_bundle(
+            &fixture(tweak),
+            &VerifyOptions::new()
+                .with_verify_at_unix(verify_at)
+                .with_tsa_roots(mock_roots()),
+        )
+        .expect("an anchored fixture still verifies")
+    }
+
+    fn states(report: &VerificationReport) -> Vec<(AnchorKind, AnchorState)> {
+        report
+            .anchors
+            .iter()
+            .map(|slot| (slot.kind, slot.state))
+            .collect()
+    }
+
+    /// **R12 Accept row 1.** Every state the offline stage can reach lands in
+    /// its own slot, in `.ots`-then-TSA wire order.
+    ///
+    /// Six of the seven, in one bundle plus one clock change. The seventh,
+    /// `absent`, is a *kind-level* answer that emits no slot at all (D53 §4a)
+    /// and is pinned by [`an_anchorless_bundle_emits_no_slots`] below —
+    /// asserting it here would need a slot that must not exist.
+    ///
+    /// `proven` for the `.ots` is deliberately unreachable: it requires online
+    /// evidence and `verify_bundle` is handed none (see [`VerifyOptions`]).
+    /// The upgraded artifact therefore renders `attested`, which is D56 §3's
+    /// rule — a cryptographic verdict does not move with network weather.
+    #[test]
+    fn every_offline_reachable_anchor_state_lands_in_its_own_slot() {
+        let tweak = anchored(
+            &[
+                OtsShape::Pending,
+                OtsShape::CommittedUpgrade,
+                OtsShape::Unevaluable,
+                OtsShape::StampedOverWorkId,
+            ],
+            &[TsaShape::Mock, TsaShape::MockShortLived, TsaShape::Garbage],
+            false,
+        );
+
+        use AnchorKind::{Ots, Tsa};
+        use AnchorState::{
+            Attested, InternallyConsistentOnly, Invalid, Pending, Proven,
+            ValidAtStampingCertSinceExpired,
+        };
+
+        assert_eq!(
+            states(&report_at(&tweak, BEFORE_EXPIRY)),
+            vec![
+                (Ots, Pending),
+                (Ots, Attested),
+                (Ots, InternallyConsistentOnly),
+                (Ots, Invalid),
+                (Tsa, Proven),
+                (Tsa, Proven),
+                (Tsa, Invalid),
+            ],
+            "the anchor stage's slots are not A18's verdicts in wire order"
+        );
+
+        // The clock moves exactly one slot — D53's C1/C2 split — which is
+        // both the sixth state and the proof that `verify_at` is threaded
+        // through rather than defaulted somewhere inside.
+        assert_eq!(
+            states(&report_at(&tweak, AFTER_EXPIRY))[5],
+            (Tsa, ValidAtStampingCertSinceExpired),
+            "`verify_at_unix` is not reaching the chain validator"
+        );
+
+        // …and the store is threaded too: against the *pinned* roots the
+        // mock CA is not trusted, and D53's C6 is what a token that reaches
+        // no pinned root renders.
+        let pinned = verify_bundle(
+            &fixture(&tweak),
+            &VerifyOptions::new().with_verify_at_unix(BEFORE_EXPIRY),
+        )
+        .expect("the bundle still verifies against the pinned store");
+        assert_eq!(
+            states(&pinned)[4],
+            (Tsa, InternallyConsistentOnly),
+            "`with_tsa_roots` is not reaching the chain validator"
+        );
+    }
+
+    /// **R12's own load-bearing choice**: the digest is
+    /// `SHA-256(manifest envelope)` — signatures included — and not `work_id`.
+    ///
+    /// A differential over two `.ots` artifacts in **one** bundle that differ
+    /// in nothing but the digest they stamp. Implementing the stage against
+    /// `work_id(body)` — the other 32-byte identity in scope, one line away in
+    /// the same function — swaps the two answers, so this row is what makes
+    /// F7's distinction observable at the pipeline surface instead of only in
+    /// `manifest::ids`.
+    #[test]
+    fn the_stage_evaluates_against_the_envelope_digest_not_work_id() {
+        let report = report_at(
+            &anchored(
+                &[OtsShape::Pending, OtsShape::StampedOverWorkId],
+                &[],
+                false,
+            ),
+            BEFORE_EXPIRY,
+        );
+        assert_eq!(
+            states(&report),
+            vec![
+                (AnchorKind::Ots, AnchorState::Pending),
+                (AnchorKind::Ots, AnchorState::Invalid),
+            ],
+            "the two artifacts differ only in which identity they stamp; if both \
+             render the same state the stage is not checking the digest at all, and \
+             if they are swapped it is checking `work_id`"
+        );
+
+        // Anti-vacuity: the two digests really are different values, so the
+        // row above cannot be passing because they coincide.
+        let bytes = fixture(&anchored(&[], &[], false));
+        let proof = SealProof::decode(&bytes).expect("the fixture decodes");
+        assert_ne!(
+            anchor_digest(proof.anchor_digest_preimage()).as_bytes(),
+            work_id(proof.manifest().body_bytes()).as_bytes(),
+        );
+    }
+
+    /// **R12 Accept row 3.** A receipt populates the supporting-evidence slot
+    /// and changes **no** anchor slot.
+    ///
+    /// The differential is the receipt flag alone: everything else in the two
+    /// bundles is byte-identical, so "the anchor slots are unaffected" is a
+    /// measurement rather than a claim.
+    #[test]
+    fn a_receipt_fills_the_supporting_slot_and_no_anchor_slot() {
+        let without = report_at(
+            &anchored(&[OtsShape::Pending], &[TsaShape::Mock], false),
+            BEFORE_EXPIRY,
+        );
+        let with = report_at(
+            &anchored(&[OtsShape::Pending], &[TsaShape::Mock], true),
+            BEFORE_EXPIRY,
+        );
+
+        assert_eq!(without.supporting_evidence, SupportingEvidenceResult::None);
+        assert_eq!(
+            with.supporting_evidence,
+            SupportingEvidenceResult::ArbitrumReceipt {
+                block_number: RECEIPT_BLOCK,
+                transaction_count: 2,
+            }
+        );
+        assert_eq!(
+            with.anchors, without.anchors,
+            "opting a receipt in moved an anchor slot — the receipt is not an anchor \
+             (MVP-SPEC.md line 110; A19)"
+        );
+
+        // A19 structurally: the receipt reaches the report through a type
+        // with no `AnchorState`, so no `AnchorKind` can name it and the slot
+        // count is unmoved.
+        assert_eq!(with.anchors.len(), 2);
+    }
+
+    /// **D84 rule F2, at the pipeline surface.** An anchor that fails renders
+    /// `invalid` in its own slot and changes nothing else — not the evidence
+    /// layer, not the reveal set, not the work metadata, not another anchor.
+    ///
+    /// Measured against an anchorless control, field by field, because
+    /// "the bundle still verifies" alone would hold for a stage that failed
+    /// every anchor.
+    #[test]
+    fn a_failing_anchor_changes_nothing_but_its_own_slot() {
+        let control = report_at(&anchored(&[], &[], false), BEFORE_EXPIRY);
+        let anchored_report = report_at(
+            &anchored(
+                &[OtsShape::StampedOverWorkId, OtsShape::Pending],
+                &[TsaShape::Garbage],
+                false,
+            ),
+            BEFORE_EXPIRY,
+        );
+
+        assert!(control.anchors.is_empty());
+        assert_eq!(
+            states(&anchored_report),
+            vec![
+                (AnchorKind::Ots, AnchorState::Invalid),
+                (AnchorKind::Ots, AnchorState::Pending),
+                (AnchorKind::Tsa, AnchorState::Invalid),
+            ],
+            "a failing artifact took its siblings down with it"
+        );
+
+        assert_eq!(anchored_report.evidence, control.evidence);
+        assert_eq!(anchored_report.reveal, control.reveal);
+        assert_eq!(anchored_report.work.work_id, control.work.work_id);
+        assert_eq!(anchored_report.work.title, control.work.title);
+        assert_eq!(
+            anchored_report.work.signature_scheme,
+            control.work.signature_scheme
+        );
+        assert_eq!(anchored_report.storage_linkage, control.storage_linkage);
+        assert_eq!(
+            anchored_report.supporting_evidence,
+            control.supporting_evidence
+        );
+    }
+
+    /// **D53 §4a.** `absent` is the answer about an anchor *kind* the bundle
+    /// does not carry, and R12 emits no slot for it — which is also what
+    /// keeps the 20 pinned R9 vectors' `"anchors":[]` where it is.
+    ///
+    /// The wrong implementation is the M0 stub's converse: emitting an
+    /// `absent` slot per *missing kind* would put two entries here.
+    #[test]
+    fn an_anchorless_bundle_emits_no_slots() {
+        let report = report_at(&anchored(&[], &[], false), BEFORE_EXPIRY);
+        assert!(
+            report.anchors.is_empty(),
+            "an anchorless bundle produced {} slot(s); `absent` is a kind-level \
+             answer with no slot (D53 §4a)",
+            report.anchors.len()
+        );
+        let json = String::from_utf8(report.to_canonical_json().expect("D29 encoding"))
+            .expect("the D29 encoding is UTF-8");
+        assert!(json.contains(r#""anchors":[],"supporting_evidence":"none""#));
+    }
+
+    /// The metadata half of R12's `Do`: verified time, source and fetch date
+    /// reach the slots, and the *only* source strings that appear are ones the
+    /// stage derived from artifact bytes it parsed itself.
+    ///
+    /// The bundle records `AnchorStatus::Proven` on every TSA anchor and a
+    /// `fetch_date`, so a stage that copied the sealer's claim would look
+    /// identical on state — and is caught here, because the garbage token
+    /// renders `invalid` while claiming `proven`.
+    #[test]
+    fn slot_metadata_comes_from_the_artifact_never_from_the_bundles_claim() {
+        let report = report_at(
+            &anchored(
+                &[OtsShape::CommittedUpgrade],
+                &[TsaShape::Mock, TsaShape::Garbage],
+                false,
+            ),
+            BEFORE_EXPIRY,
+        );
+
+        // The `.ots`: no verified time offline (a lone header's
+        // proof-of-work is self-referential), a block source, a fetch date.
+        let ots = &report.anchors[0];
+        assert_eq!(ots.state, AnchorState::Attested);
+        assert_eq!(ots.verified_time_unix, None);
+        assert_eq!(ots.source.as_deref(), Some("bitcoin-block-700007"));
+        assert!(ots.fetch_date.is_some());
+
+        // The good token: `genTime` as the verified time, and a signer
+        // identity read out of the certificate the path validated.
+        let good = &report.anchors[1];
+        assert_eq!(good.state, AnchorState::Proven);
+        assert_eq!(good.verified_time_unix, Some(MOCK_GEN_TIME as i64));
+        assert!(
+            good.source
+                .as_deref()
+                .is_some_and(|s| s.contains("antseal mock TSA")),
+            "the TSA source is not the validated signer's subject: {:?}",
+            good.source
+        );
+
+        // The garbage token: nothing was parsed far enough to claim a
+        // source, and the bundle's own `status: proven` claim is not it.
+        let bad = &report.anchors[2];
+        assert_eq!(bad.state, AnchorState::Invalid);
+        assert_eq!(bad.verified_time_unix, None);
+        assert_eq!(
+            bad.source, None,
+            "an unparseable token contributed a source string — the only place one \
+             could have come from is the bundle, and D8 §1 removed that field"
+        );
+        // …and the one field that *is* copied from the bundle's claim, in the
+        // test named for it. **D95**: it renders on `invalid` too, because the
+        // field is bound by nothing in *every* state, so a state gate would
+        // claim a corroboration that never happened. Asserting the value —
+        // not merely `is_some()` — is what makes this a pin rather than a
+        // shrug: the rendering is decimal POSIX seconds, format-permanent.
+        assert_eq!(
+            bad.fetch_date.as_deref(),
+            Some(FIXTURE_FETCH_DATE.to_string()).as_deref(),
+            "a refuted anchor's sealer-recorded fetch date is not rendered as the wire \
+             `uint` in decimal POSIX seconds (D95)"
+        );
+    }
+
+    /// **D95 rider (c), and the measure that makes the ruling safe.**
+    ///
+    /// `fetch_date` is rendered but must never be *read*: D59 §6(a) forbids
+    /// comparing it to anything, in any direction. That was true only by
+    /// inspection — and inspection is exactly what D94 §4 caught out five
+    /// times over. This makes it an equality.
+    ///
+    /// Two bundles identical but for the recorded fetch date must produce
+    /// anchor slots equal in every field **except** `fetch_date` itself. An
+    /// implementer who adds the forbidden `gen_time <= fetch_date` check —
+    /// the natural, tempting, and normatively prohibited one — turns this red
+    /// immediately, because the two runs would disagree on `state`.
+    ///
+    /// Modelled on D59's `nonce_is_inert_when_none_is_supplied`.
+    #[test]
+    fn the_recorded_fetch_date_moves_no_other_field_of_any_anchor_slot() {
+        let shapes = &[
+            OtsShape::Pending,
+            OtsShape::CommittedUpgrade,
+            OtsShape::StampedOverWorkId,
+        ];
+        let tsa = &[TsaShape::Mock, TsaShape::MockShortLived, TsaShape::Garbage];
+
+        let baseline = report_at(&anchored(shapes, tsa, false), BEFORE_EXPIRY);
+        let moved = report_at(
+            &Tweak {
+                fetch_date: Some(FIXTURE_FETCH_DATE + 86_400 * 365),
+                ..anchored(shapes, tsa, false)
+            },
+            BEFORE_EXPIRY,
+        );
+
+        assert_eq!(
+            baseline.anchors.len(),
+            moved.anchors.len(),
+            "the fetch date changed the slot count"
+        );
+        let mut really_moved = 0_usize;
+        for (before, after) in baseline.anchors.iter().zip(&moved.anchors) {
+            // A slot that carries no fetch date cannot demonstrate anything —
+            // an `.ots` without a D79 upgrade group has none to move, which is
+            // availability, not policy (D95 §1). Count the ones that can, and
+            // require below that some did.
+            match (&before.fetch_date, &after.fetch_date) {
+                (Some(b), Some(a)) => {
+                    assert_ne!(b, a, "the knob did not reach this slot's fetch date");
+                    really_moved += 1;
+                }
+                (None, None) => {}
+                (b, a) => panic!(
+                    "moving the recorded fetch date made a slot's fetch date appear or \
+                     vanish: {b:?} -> {a:?}"
+                ),
+            }
+            assert_eq!(
+                (before.kind, before.state, before.verified_time_unix),
+                (after.kind, after.state, after.verified_time_unix),
+                "moving the sealer's recorded fetch date moved a verdict field — D59 \
+                 §6(a) forbids reading this value in any direction"
+            );
+            assert_eq!(
+                before.source, after.source,
+                "moving the sealer's recorded fetch date moved the derived source"
+            );
+        }
+        // Anti-vacuity: if the knob reached nothing, the loop above compared a
+        // fixture with itself and would stay green under any implementation.
+        assert!(
+            really_moved >= 2,
+            "only {really_moved} slot(s) saw the fetch date move; this row needs the \
+             three TSA slots plus the upgraded `.ots` to carry one"
+        );
     }
 }

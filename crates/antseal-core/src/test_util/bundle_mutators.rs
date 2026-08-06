@@ -287,12 +287,18 @@ pub enum Recombination {
     GraftFullReveals,
     /// The donor's anchor artifacts and receipt.
     ///
-    /// Expected to still **verify** at M0: the anchor stage is a stub that
-    /// emits one `absent` slot per embedded artifact and R12 replaces it at
-    /// M2, so an artifact's *provenance* is not yet verdict-bearing. That
-    /// makes this the section-level twin of R10's
-    /// `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`, and
-    /// it is written to go red at the same moment.
+    /// Expected to still **verify**, at M0 and permanently: D84 rule F2 says
+    /// an anchor that does not verify renders `invalid` in its own slot and
+    /// changes nothing else — never the bundle's accept/reject outcome. A
+    /// grafted artifact is one that fails against this bundle's
+    /// `anchor_digest`, so post-R12 it renders `invalid` and the bundle still
+    /// verifies. That makes this the section-level twin of R10's
+    /// `anchor_artifact_bytes_never_change_the_bundles_accept_reject_outcome`,
+    /// and like it this is an F2 guard rather than a milestone marker: it was
+    /// once documented as "written to go red at the same moment" as R12, and
+    /// that was wrong in both halves (**D94** §4, **R67**). What a graft does
+    /// move post-R12 is the rendered *state*, which this mutator does not
+    /// observe — `drive` keeps only the accept/reject bit.
     ///
     /// **There is deliberately no storage-record graft.** R6 gives every
     /// fixture the *same* constant storage record, so grafting one across

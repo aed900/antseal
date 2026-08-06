@@ -134,7 +134,7 @@ const CASES: &[(&str, &str)] = &[
     ),
     (
         "multi-file-anchored/mixed",
-        "the populated anchor section: one OTS and two TSA artifacts, each an absent M0 slot (MVP-SPEC.md line 153)",
+        "the populated anchor section: one OTS and two TSA artifacts, each a schema-opaque placeholder the M2 anchor stage cannot parse, so each renders `invalid` in its own slot while the bundle still verifies (D84 F2/F3) — and the two TSA slots render the sealer-recorded fetch date, which is not a function of the verdict (D95). Real anchor material is A22's `anchor` vector kind, never this one (MVP-SPEC.md line 153)",
     ),
     (
         "ed25519-only-policy/full",
@@ -183,9 +183,19 @@ fn vector_report_document_regenerates() {
         "the committed verification-report vector no longer matches what antseal-core \
          computes.\n\
          First difference: {}\n\
-         If this is a deliberate change to the report byte format it is a FORMAT EVENT \
-         (docs/decisions/D29-report-byte-format.md, testdata/vectors/README.md): \
-         re-emit with `cargo test -p antseal-core --features test-util --test \
+         A moved report pin has exactly THREE causes and the commit must name which \
+         (D94 §2a). Tell them apart mechanically, not editorially:\n\
+         • FORMAT EVENT — a field added/removed/reordered, an encoding or enum spelling \
+         changed, `report_version` bumped. Moves ALL 21 cases. Costs a report-version \
+         bump and R32's coupled-edit procedure (docs/decisions/D29-report-byte-format.md).\n\
+         • VERDICT EVENT — the same bundle now verifies to a different VALUE in an \
+         existing field of an existing type. Never moves `bundle_len`/`bundle_sha256`. \
+         Costs a re-emit + `--update` + a justified commit, and NO version bump \
+         (docs/decisions/D94-anchor-verdict-vector-re-emit.md; R12 was the first).\n\
+         • FIXTURE EVENT — the input bundle changed, so `bundle_sha256` moves. The \
+         largest: it moves frozen bundle/manifest vectors too, and over a frozen v1 \
+         vector it needs its own decision.\n\
+         Re-emit with `cargo test -p antseal-core --features test-util --test \
          report_vectors -- --ignored emit_report_vector_document`, re-run \
          `scripts/vector-freeze.sh --update`, and justify the digest diff in the commit.",
         first_difference("expect", &recomputed, committed)
