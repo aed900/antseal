@@ -256,9 +256,12 @@ fn seal_over_backend(
         // `pay`, and the pipeline arms it with the drawn `seal_id` through
         // the session's journal. `seal_session.rs`'s scan is what keeps a
         // future edit from minting a second one here.
-        let backend =
-            SealBackend::connect(&net_config, &key, session.receipts() as Arc<dyn ReceiptSink>)
-                .await?;
+        let backend = SealBackend::connect(
+            &net_config,
+            &key,
+            session.receipts() as Arc<dyn ReceiptSink>,
+        )
+        .await?;
         run_seal(
             &backend,
             &session,
