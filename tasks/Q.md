@@ -202,9 +202,12 @@ The two copies are drift-checked by
 - [x] **Report-version evolution is not blocked by this freeze.** The Q14
   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
   D29 records that adding fields after the freeze requires a version bump,
-  not that no bump may occur. M2's anchor stage will populate anchor states
-  that report v1 does not carry and will therefore ship report **v2**; that
-  is ordinary versioned evolution under line 123, whose promise is that v1
+  not that no bump may occur. M2's anchor stage populates anchor states that
+  report v1 **already carries** — `AnchorState::ALL` is all seven at the
+  freeze — so R12 moves recomputed verdicts, not format surface, and
+  `REPORT_VERSION` stays 1 (**D94**: a VERDICT EVENT re-emits the frozen
+  vector under the full ceremony and bumps nothing). A bump remains
+  available for a genuine field addition; line 123's promise is that v1
   reports remain verifiable, not that v1 is the last version.
 
 <!-- FREEZE-BOUNDARY:END -->
@@ -1347,3 +1350,31 @@ Exact line to add to Q65's Accept:
   - The sweep is red on a planted dangling test name in a decision doc, green when it resolves — both executed.
   - If the ruling is "not a pointer", the convention is stated in the decisions README and the existing citations are left alone deliberately rather than by omission.
 - Notes: the D56 §9 pointer this found was repaired by hand at integration; the point of the task is that nothing would have caught the next one.
+
+### Q107 — Name the three kinds of pinned-artifact change
+- Milestone: M2
+- Size: XS
+- Deps: R12 (D94)
+- Do: the tree has words for *format event* and for *target divergence*, and none for the case D94 ruled on — a **verdict event**, where a recomputed value moves under a format that did not change. Add the three-class vocabulary (FORMAT / VERDICT / FIXTURE) to `testdata/vectors/README.md` and to Q27's procedure, with D94's four distinguishing measurements: how many vector cases moved, how many in-tree pins moved, how many freeze digests moved, and how many **bundle** digests moved — the last being the one that separates a verdict event from a format event.
+- Accept: a future re-emit is classified by running the four measurements, not by argument; the vocabulary is identical in both files.
+
+### Q108 — A vector's `pins` prose is compared only against the const that generated it
+- Milestone: M2
+- Size: S
+- Deps: R12 (D94)
+- Do: `report_vectors.rs`'s regeneration test compares the committed document against what the code computes — but a case's `pins` sentence lives in `inputs`, which the comparison never reaches, and the only thing it is checked against is the same const that produced it. So a description can be **green on both sides and false**, in a frozen file, for ever. `"each an absent M0 slot"` is about to become exactly that. Either derive the prose from the data it describes, or assert it against the data.
+- Accept: a planted false `pins` sentence turns the lane red; the existing sentences are re-checked against their cases rather than assumed.
+
+### Q109 — A22's anchor vectors have two specified homes and only one of them is frozen
+- Milestone: M2
+- Size: S
+- Deps: before A22 (D94)
+- Do: A22's Accept says vectors land under `testdata/anchors/` **and** that they are retained forever in CI per the format-stability policy, verified bit-identically on wasm32. Those properties belong to the reserved `anchor` **vector kind** under `testdata/vectors/`, not to `testdata/anchors/` — which is A25's capture area and is covered by no freeze, no retention rule and no wasm parity lane. Three of A22's four Accept rows depend on the distinction. Rule which home A22 uses before it starts.
+- Accept: the ruling is in A22's entry before A22 begins; if the vector kind is chosen, its append is legal-forever and needs no re-emit of R9's document.
+
+### Q110 — Sweep for prose that predicts a future test failure
+- Milestone: M2
+- Size: S
+- Deps: R67 (D94)
+- Do: five committed places asserted that one named test would go red when R12 landed. All five were wrong simultaneously, because nothing compares a prediction to the thing predicted. Sweep the tree for the pattern — *"this will fail when X lands"*, *"invert this at X"*, *"X replaces this stub"* — and for each either bind it to a mechanism that fires, or delete it. A prediction nothing checks is a claim that ages into a lie, which is this project's dominant defect class stated in the future tense.
+- Accept: every surviving prediction names the task that will falsify it and is reachable from that task's entry; the sweep is repeatable as a script or recorded as a one-off with its date.

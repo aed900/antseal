@@ -245,9 +245,12 @@ checklist; A27 mirrors the same text so A5/A11 read the same sentences.
 > - [ ] **Report-version evolution is not blocked by this freeze.** The Q14
 >   freeze fixes report **v1** (`REPORT_VERSION = 1`, per R32 and D29 §8).
 >   D29 records that adding fields after the freeze requires a version bump,
->   not that no bump may occur. M2's anchor stage will populate anchor states
->   that report v1 does not carry and will therefore ship report **v2**; that
->   is ordinary versioned evolution under line 123, whose promise is that v1
+>   not that no bump may occur. M2's anchor stage populates anchor states that
+>   report v1 **already carries** — `AnchorState::ALL` is all seven at the
+>   freeze — so R12 moves recomputed verdicts, not format surface, and
+>   `REPORT_VERSION` stays 1 (**D94**: a VERDICT EVENT re-emits the frozen
+>   vector under the full ceremony and bumps nothing). A bump remains
+>   available for a genuine field addition; line 123's promise is that v1
 >   reports remain verifiable, not that v1 is the last version.
 
 The second row exists because "all M0 golden vectors committed and frozen" is

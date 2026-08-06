@@ -144,11 +144,14 @@
 - Size: S
 - Deps: R5; A: per-anchor offline state machine + per-anchor verified time + artifact/fetch-date metadata, WASM-safe in `antseal-core` (A18)
 - Spec: Anchoring (lines 106–110); M2 milestone (line 155); Reveal bundle — evidence layer step order (line 118)
-- Do: Replace the M0 `absent` stub: for each anchor artifact in the bundle, invoke A's state machine against `anchor_digest` (recomputed over the full embedded manifest bytes, signatures included) and store the resulting state, verified time, and metadata in the report's anchor slots. A's M2 anchor tamper rows execute through `verify_bundle` via this stage; the Arbitrum receipt artifact is routed to the report's separate supporting-evidence slot, never into the anchor set.
+- Do: Replace the M0 `absent` stub: for each anchor artifact in the bundle, invoke A's state machine against `anchor_digest` (recomputed over the full embedded manifest bytes, signatures included) and store the resulting state, verified time, and metadata in the report's anchor slots. A's M2 anchor tamper rows execute through `verify_bundle` via this stage; the Arbitrum receipt artifact is routed to the report's separate supporting-evidence slot, never into the anchor set. **Re-emit obligation, added 2026-08-06 (D94)** — this entry did not mention a frozen vector at all, so a lane meets two red pinned assertions with no instruction. Wiring the stage moves `cases[19].report.anchors[0].state` from `absent` to `invalid` in the **frozen** `testdata/vectors/v1/report/verification-reports.json`, and moves the R30 in-tree digest for `multi-file-anchored/mixed`. Both are correct and both must be re-emitted under D94 §4's nine-step procedure — a **verdict event**, not a format event: `REPORT_VERSION` stays 1 because report v1 already carries all seven states. **Do NOT invert `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage`** — five committed places instruct you to, and all five are wrong: it observes only `verify_bundle`'s accept/reject bit, which D84's rule F2 guarantees never moves, so it stays green through any correct implementation of R12. R67 retires it properly.
 - Accept:
   - Bundles carrying each of the 7 states produce reports with that state populated (fixtures from A)
   - A's anchor tamper rows (wrong-digest `.ots`/TSA, untrusted root, forged header, expired-at-vs-after-genTime, BER-where-DER) fail distinctly through `verify_bundle`
   - Receipt present → supporting-evidence slot populated, anchor slots unaffected; wasm32 build still passes
+  - **Exactly one** of the 26 `REPORT_DIGEST_BY_SHAPE` rows moves (`multi-file-anchored/mixed`) and **exactly one** of the 21 report cases moves (case 19). A second moving row is a D84 **F2 breach** — fix the implementation, do not re-pin it. This is the only test of F2's blast radius the tree has, and D84's Consequences item 6 asked for it on 2026-07-28 and it was never applied (D94)
+  - **Zero bundle digests move.** `bundle_len` / `bundle_sha256` / `revealed_unit_ids` byte-identical on all 21 cases — that is the measurement distinguishing a verdict event from a format event (D94)
+  - **STOP if the re-emitted case populates `fetch_date` or `source`** on an `invalid` anchor: whether an anchor the verifier has refuted may still render sealer-recorded metadata is **unruled**, and registry §6.1 distrusts those fields while D8 removed the TSA `source` string on exactly that ground (D94)
 
 ### R13 — Implement the bundle builder (pure assembly) in `antseal-core`
 - Milestone: M3
@@ -697,3 +700,39 @@
   - The advisory lines never appear in the headline, and never change the state string (test over a fixture with anomalies on a headline-eligible anchor).
   - Positioning review: no "forged", no "notary", no unqualified accusation — the artifact may be an honest bundle a relay appended to.
 - Notes: the fix that removes the asymmetry is a `report_version: 2` field, which is a deliberate format event (see `report.rs`'s `REPORT_VERSION` doc for the coupled-edit list). Do not take it as a side effect of this task.
+
+### R67 — Retire the M0 anchor-inertness equality; it was never able to report red
+- Milestone: M2
+- Size: S
+- Deps: R12 (D94)
+- Discovered by: **the D94 planner** (2026-08-06).
+- Problem: `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage` is named in **five** committed places — D84 §2, `docs/security-assumptions.md`, the Q14 freeze-gate plan's row N1 (which calls it *"the row's own load-bearing evidence … it pins, as an equality, that no verdict depends on artifact internals"*), `bundle_mutators.rs`'s `GraftAnchors`, and the test itself — as the test **written to go red when R12 lands, with the instruction to invert it**. It cannot. Its whole assertion is `assert_eq!(drive(&mutated), Outcome::Verified)`, and `drive` discards the report and returns one bit: did the bundle verify. D84's own rule **F2** guarantees that bit never moves. Two propositions were conflated: *P1, no anchor byte changes accept/reject* (true forever, and what the test measures) and *P2, no verdict depends on artifact internals* (M0-only, and measured by nothing, ever).
+- Do: keep the test and **re-title it as the permanent F2 guard**. Do not invert it — F2 forbids what the inversion would assert, and with the fixture's synthetic bytes every flip yields `invalid` either way, so no report-level assertion is satisfiable there. Correct all five sites so none still predicts a red that cannot happen. P2's successor is A21 rows 1–2 against A25's real material.
+- Accept:
+  - The test's name and doc state what it measures (F2, the accept/reject bit) and what it does not (any verdict value).
+  - All five sites agree, checked by grep rather than by memory; none still says "invert at R12".
+  - A planted F2 breach — an anchor byte that changes accept/reject — turns it red.
+
+### R68 — The report-pin assertions offer two causes and the true one is a third
+- Milestone: M2
+- Size: XS
+- Deps: R12 (D94)
+- Discovered by: **the D94 planner** (2026-08-06).
+- Do: both pinned-report assertions tell the reader that *"exactly one of two things happened: the report byte format changed … or this target diverged from the other"*. When R12 lands, neither is true: the format is frozen and unchanged, the targets agree, and a **recomputed verdict** moved. A message that enumerates causes and omits the real one sends the next reader to the wrong remedy — re-pinning as a format event, or hunting a divergence that is not there. Add the third class.
+- Accept: both messages name FORMAT / VERDICT / FIXTURE events and point at D94; the vocabulary matches Q107's.
+
+### R69 — A new report value landed post-freeze with nothing red
+- Milestone: M2
+- Size: S
+- Deps: R12
+- Discovered by: **the D94 planner** (2026-08-06).
+- Do: R12 adds `SupportingEvidenceResult::ArbitrumReceipt` — a **new value in report v1's value space, after the freeze** — and no vector exercises it, while the slot's doc comment still calls it *"a pre-Q14 extension per D29"*. Nothing goes red if it is wrong. Commit a vector that opts a receipt in, and correct the doc comment.
+- Accept: a committed case renders the receipt arm; deleting the arm or changing its fields reddens it; the doc comment describes what shipped.
+
+### R70 — Is `AnchorState::Absent` reachable at all after R12?
+- Milestone: M2
+- Size: XS
+- Deps: R12
+- Discovered by: **the D94 planner** (2026-08-06).
+- Do: D53 §4a rules `absent` is the **kind-level** answer — what the evaluator returns for an anchor kind with no artifact — and R12 emits no slot for it. If no bundle can now produce an `absent` slot in a report, then every test asserting one is vacuous and the state's presence in report v1 needs re-reading against D53 §4a. Establish which it is.
+- Accept: either a committed bundle produces an `absent` slot and a test pins it, or the unreachability is recorded with D53 §4a re-read and the vacuous assertions removed.
