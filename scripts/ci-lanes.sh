@@ -190,7 +190,7 @@ lane_dep_graph() {
     grep -nE '^[[:space:]]*(ant-core|ant-protocol|alloy|bytes)[[:space:].]' crates/*/Cargo.toml 2>/dev/null || true
     return 1
   fi
-  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(grep -c .)" <<<"$stack_edges"
+  printf 'OK: all %s declared payment-stack edge(s) belong to antseal-net or devnet-launcher.\n' "$(grep -c . <<<"$stack_edges")"
 
   # ── S4/Q74: what this rule proves, and what it cannot ───────────────────
   #
@@ -488,7 +488,7 @@ env_logger v0.10.2'
   # the parse broke rather than the graph being clean.
   if ! grep -qxF 'antseal-core' <<<"$core_names" ; then
     printf '::error::dep-graph: the parsed package set does not contain `antseal-core` itself, so `cargo tree` failed or its output shape changed — every verdict here would be vacuous. Parsed %s name(s)\n' \
-      "$(grep -c .)" <<<"$core_names"
+      "$(grep -c . <<<"$core_names")"
     return 1
   fi
   core_unknown="$(comm -23 <(printf '%s\n' "$core_names") <(printf '%s\n' "$core_reviewed" | strip_reviewed))"
@@ -505,7 +505,7 @@ env_logger v0.10.2'
     return 1
   fi
   printf 'OK: antseal-core normal graph is exactly the %s reviewed package(s). NOTE: this is a "nothing entered unreviewed" proof, NOT an I/O-freedom proof — see the scope note in this function.\n' \
-    "$(grep -c .)" <<<"$core_names"
+    "$(grep -c . <<<"$core_names")"
 
   # ── S6: ant-core adapter containment ────────────────────────────────────
   # Two rules from the S6 accept rows:
@@ -1046,7 +1046,7 @@ cron_days() {
 # day-of-WEEK schedule.
 cron_runs_per_month_x100() {
   local days; days="$(cron_days "$1")" || { printf '%s\n' "$days"; return 1; }
-  local n; n="$(grep -c .)" <<<"$days"
+  local n; n="$(grep -c . <<<"$days")"
   printf '%s\n' "$(( (5200 * n + 6) / 12 ))"
 }
 
@@ -1152,7 +1152,7 @@ lane_fuzz_budget() {
     return 1
   fi
   cron="$(sed -nE 's/^[[:space:]]*-[[:space:]]*cron:[[:space:]]*"([^"]+)".*/\1/p' "$wf")"
-  n="$(grep -c .)" <<<"$cron"
+  n="$(grep -c . <<<"$cron")"
   if [ "$n" -ne 1 ]; then
     printf '::error::fuzz-budget: found %s `cron:` line(s) in fuzz-nightly.yml, expected exactly 1. A second schedule multiplies the bill and this reader would price only one\n' "$n"
     return 1

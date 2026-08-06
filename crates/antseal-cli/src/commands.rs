@@ -210,7 +210,11 @@ fn seal_over_backend(
     // The network definition BEFORE the passphrase: a devnet with no
     // exported environment cannot be sealed to, and finding that out
     // after typing a passphrase is the rudeness U20 named.
-    let config = NetworkConfig::select(plan.network, devnet_env().as_ref()).map_err(|e| {
+    // Named distinctly from the `config: &crate::config::Config` parameter above.
+    // It was `config` and SHADOWED the parameter, which silently pointed U22's
+    // `AnchorStageConfig::from_config` at the wrong type — a tier-2-only compile
+    // error no default-features gate could see (Q112).
+    let net_config = NetworkConfig::select(plan.network, devnet_env().as_ref()).map_err(|e| {
         CliError::Usage {
             message: format!(
                 "{e} — export ANTSEAL_DEVNET_ENV pointing at a running devnet's .devnet/env \
@@ -253,7 +257,8 @@ fn seal_over_backend(
         // the session's journal. `seal_session.rs`'s scan is what keeps a
         // future edit from minting a second one here.
         let backend =
-            SealBackend::connect(&config, &key, session.receipts() as Arc<dyn ReceiptSink>).await?;
+            SealBackend::connect(&net_config, &key, session.receipts() as Arc<dyn ReceiptSink>)
+                .await?;
         run_seal(
             &backend,
             &session,

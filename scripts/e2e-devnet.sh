@@ -180,7 +180,7 @@ run_gate() {
     return 1
   fi
   local n_run
-  n_run="$(grep -c .)" <<<"$PLAN_RUN"
+  n_run="$(grep -c . <<<"$PLAN_RUN")"
   [ "$plan_only" -eq 1 ] && { verdict "$n_run" "" "0" "(plan only — nothing executed)"; return $?; }
 
   # Nothing to run means nothing to boot: a 14-node devnet spun up for an

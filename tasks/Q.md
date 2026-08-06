@@ -1390,3 +1390,28 @@ Exact line to add to Q65's Accept:
   - The lint is red on a planted `printf '%s' "$var" | grep -q x` and green on the converted form; both directions executed.
   - The lint's own payload-size blindness is stated: it forbids the shape rather than trying to judge whether a given payload is large enough to race, because that judgement is exactly what was wrong before.
 - Notes: this is the third CI defect this project has had, and like the other two it was in shell rather than in Rust. Unlike them it was in a *committed script*, so Q43's rule ("call a committed script, don't inline YAML") did not protect against it — worth recording, because Q43 is cited as though it closes this class.
+
+### Q112 — The tier-2 compile gate does not trigger on the files that hold tier-2 code
+- Milestone: M2
+- Size: S
+- Deps: Q84 (which fixed this for `backend.rs`), D89 (which established the argument)
+- Discovered by: **the full local gate** (2026-08-06), on the second attempt — the first gate run of the wave classified this lane **n/a**.
+- Problem: U22 landed a change that **does not compile under `--features ant-backend`**, and every gate that ran was green. `commands.rs`'s `seal_over_backend` takes `config: &crate::config::Config` and then binds `let config = NetworkConfig::select(...)`, **shadowing the parameter**; U22 added `AnchorStageConfig::from_config(config)` below that, which therefore received a `NetworkConfig`. Rust caught it instantly — under the feature. Nothing ran under the feature: required CI is `--workspace --locked` with no `--features` (D89's finding, verbatim), and `scripts/gate-features.sh`'s `HEAVY_TRIGGER_PATHS` names neither `crates/antseal-cli/src/commands.rs` nor `crates/antseal-cli/src/seal_run.rs`, so a wave that edited both was classified *"no storage-touching path changed"*. Q84 added `backend.rs` to those paths for exactly this reason; `commands.rs` is its sibling and holds the other half of the `#[cfg(feature = "ant-backend")]` surface.
+- Do: add `crates/antseal-cli/src/commands.rs` and `crates/antseal-cli/src/seal_run.rs` to `HEAVY_TRIGGER_PATHS`, with the light→heavy classification measured before and after the way Q84 did it. Then consider the deeper fix: the trigger list is a hand-maintained denylist-by-omission, and the property that actually matters is *"this file contains `#[cfg(feature = ...)]` code for a gated feature"*, which is derivable. A derived list cannot go stale when a new file grows a `cfg`.
+- Accept:
+  - A change touching only `commands.rs` classifies **heavy**; the pre-change classification (**light**) is recorded alongside, so the fix is a measurement rather than a claim.
+  - The shadowing defect is a regression test or a lint: `cargo clippy -- -W clippy::shadow_unrelated` on this crate, or a targeted test, so a re-shadow does not silently retype an argument again.
+  - If the derived-list option is taken, a planted new gated file is picked up without editing the list.
+- Notes: three separate mechanisms were supposed to prevent exactly this — D89's coverage argument, Q84's trigger paths, and the heavy tier itself — and it still shipped, because each was scoped to the file that was in front of it at the time.
+
+### Q113 — The machine-interface snapshot cannot be green under both feature sets
+- Milestone: M2
+- Size: S
+- Deps: Q112 (which is why nobody saw it)
+- Discovered by: **the full local gate** (2026-08-06), running the heavy tier for the first time in the wave.
+- Problem: `crates/antseal-cli/tests/snapshots/json-envelopes.txt` pins the `--json` error envelopes. Two of them — `seal` and `restore` — render `backend::unavailable`'s message, which differs **by `cfg` on purpose**: without the feature it says *"this build has no storage backend compiled in"*, with it *"has a storage backend compiled in but this command is not yet wired to it"*. Only the default-features variant is committed, so `cargo test -p antseal-cli --features ant-backend --test machine_mode` fails on drift **by construction**, and blessing it under the feature breaks the default build instead. **Verified pre-existing**: the cfg-dependent message is present at the wave-4 head, so this has been true for as long as the heavy tier has existed — it was simply never run (Q112).
+- Do: pick one. (a) Commit a per-feature fixture and have the harness select by `cfg`, which keeps both texts pinned and is the honest option since both are user-visible. (b) Normalise the cfg-dependent clause in the harness before comparison, which keeps one fixture but stops pinning the very text that differs. (a) is preferred unless the second text is judged not worth pinning, in which case say so.
+- Accept:
+  - `cargo test -p antseal-cli --test machine_mode` and the same with `--features ant-backend` are **both** green, and both are run by a lane.
+  - Changing either message reddens the corresponding fixture — planted and executed in both feature sets, since a fixture that only one build checks is half a fixture.
+- Notes: the `seal` variant's text is now also **stale under the feature** — it says connecting the command "lands with U13", and U22 has since wired it. Whichever option is taken, that sentence needs rewriting; it is the kind of message that ages into a false statement precisely because no green run ever renders it.
