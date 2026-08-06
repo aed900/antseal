@@ -167,6 +167,44 @@ Two things this policy deliberately does **not** rely on:
   them (they cost seconds); they cannot see a feature-gated path that stopped
   building.
 
+### No real anchor network in tests (Q16)
+
+**No automated test in this workspace may contact a real anchor endpoint** —
+no TSA, no OpenTimestamps calendar, no esplora, no Arbitrum RPC. These are
+other people's rate-limited services (SwissSign ~10/day, Sectigo ~15 s
+spacing, `zeitstempel.dfn.de` non-commercial only), and a per-PR lane firing
+on every push is an abuse problem before it is a flakiness problem.
+
+This is **enforced**, not requested. `antseal_anchor::http::offline` refuses
+any endpoint that is not a loopback IP literal from inside the HTTP
+substrate, before DNS. Two arms:
+
+- in `antseal-anchor`'s own unit tests the compiler arms it and there is **no
+  off switch**;
+- everywhere else — notably `antseal-cli/tests/*.rs`, which link the crate's
+  ordinary build — `ANTSEAL_NO_REAL_ANCHOR_NETWORK` arms it. Every workflow
+  sets it at workflow level and `scripts/local-gate.sh` exports it;
+  `scripts/ci-lanes.sh anchor-net-policy` is red if either stops.
+
+Practical consequences:
+
+- **Drive stubs, not endpoints.** `antseal_anchor::testing::stub` binds
+  `127.0.0.1:0` and `testing::replay` serves committed captures. A test that
+  reaches a production default URL now fails with `RealNetworkDenied`
+  naming the endpoint — that is the gate working, not a broken test.
+- **Adding a URL to an existing endpoint constant** needs nothing: the gate's
+  walk covers it by value.
+- **Adding a new URL-valued `pub const`** turns the lane red until it is named
+  in `crates/antseal-anchor/src/http/offline.rs`'s `every_default_endpoint()`.
+- **Adding a second HTTP client** anywhere in the workspace is refused: it
+  would route around the gate, and no other lane would see it.
+- **Need a real run?** It is a maintainer protocol, never a test and never
+  `#[ignore]`d: [docs/anchors/real-smoke-runbook.md](docs/anchors/real-smoke-runbook.md).
+  Consent, rate-limit spacing and fixture recording are all mandatory there.
+
+Policy in full:
+[docs/testing/anchor-ci-policy.md](docs/testing/anchor-ci-policy.md).
+
 ### Devnet E2E gate (D52)
 
 The M1 storage E2E does **not** run as a per-PR CI job. Decision
@@ -253,6 +291,10 @@ materialises, and then only for the scheduled slot.
 - [ ] **Storage-touching change?** (the path list under "Devnet E2E gate")
       Then `./scripts/e2e-devnet.sh` green locally and its evidence line
       recorded. `PENDING` is not a pass
+- [ ] **Anchor-touching change?** `./scripts/ci-lanes.sh anchor-net-policy`
+      green (seconds, no cargo) — no test reaches a real TSA, calendar,
+      esplora or Arbitrum RPC, and the arming is still in place
+      ([docs/testing/anchor-ci-policy.md](docs/testing/anchor-ci-policy.md))
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
 - [ ] `cargo deny --locked check advisories bans sources` green with the

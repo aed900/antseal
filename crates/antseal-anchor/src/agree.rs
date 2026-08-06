@@ -147,6 +147,7 @@ fn http_endpoint(error: &AnchorHttpError) -> &str {
         | AnchorHttpError::Redirected { endpoint, .. }
         | AnchorHttpError::OversizeBody { endpoint, .. }
         | AnchorHttpError::MalformedResponse { endpoint, .. }
+        | AnchorHttpError::RealNetworkDenied { endpoint, .. }
         | AnchorHttpError::Transport { endpoint, .. } => endpoint,
     }
 }

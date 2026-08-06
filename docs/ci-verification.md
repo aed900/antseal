@@ -1383,3 +1383,110 @@ occurrence, no grace) from an **infrastructure red** (no reproducer —
 D52's tracking-note convention, two consecutive block wave starts). It is a
 committed script rather than inline YAML because Q43's `check-ci-shell.py`
 refuses a `run:` block that carries logic, and is right to.
+
+---
+
+# Q16 — the no-real-anchor-network policy (2026-08-06)
+
+## The context set does not change: still 19
+
+**Recounted from `.github/workflows/ci.yml`, not read from this file.** 17
+jobs; `cross-os` is a 3-way matrix (`linux`/`macos`/`windows`), every other
+job is one context: **19**. Q16 adds **no job**. The branch-protection
+payload and Q56's generated context list are untouched.
+
+(Recounting rather than trusting is the standing instruction for this
+document, which has declared the context set repeatedly and has not always
+agreed with itself. The list, for the next recount to compare against:
+`fmt`, `clippy`, `test`, `wasm32-core`, `wasm32-core-tests`, `core-dep-graph`,
+`cross-os-linux`, `cross-os-macos`, `cross-os-windows`, `golden-vectors`,
+`cross-check`, `vector-freeze`, `format-freeze`, `wasm-bitmatch`,
+`tamper-matrix`, `fuzz-smoke`, `audit-deny`, `secret-guard`, `traceability`.)
+
+## What CI ran for the anchor surface before, and what changed
+
+**Before: all of it, already.** `test` runs `cargo test --workspace --locked`
+and D90 deliberately left `antseal-anchor` **ungated** — no feature hides its
+network half — precisely so that A3/A10/A13/A16/A17's local-stub tests are
+compiled by a default-features-only lane. The 189 anchor unit tests, the
+`antseal-core` anchor suites and `antseal-cli`'s anchor integration targets
+were all running. Q16's row does not need a new lane and did not get one; a
+job would have cost a 20th required context for coverage that existed.
+
+**What was missing was the policy half.** "No test contacts a real endpoint"
+was prose in five files, each arguing it held *by construction* because the
+stubs bind `127.0.0.1:0`. That argument is about the stubs, not the tests,
+and the tree carries the counterexample: `ots/engine.rs`'s
+`upgrade_pending_with` seam records a suite that drove the production upgrade
+path with the committed `.ots` artifact — whose pending URIs are the real
+calendar hostnames — and **contacted live calendars on every run while every
+assertion passed**.
+
+**After:** the policy is enforced at runtime by
+`crates/antseal-anchor/src/http/offline.rs` inside `HttpClient::attempt`, and
+its out-of-Rust half by `scripts/ci-lanes.sh anchor-net-policy`, which rides
+as a **step of the existing `traceability` job** — Python only, no cargo, no
+network — exactly as `ci-shell` and `fuzz-budget` do.
+
+## Minute cost
+
+**Effectively zero, and no new job.** The added step is one `python3`
+invocation over committed text: it reads 4 workflow files, 6 manifests,
+`scripts/local-gate.sh` and antseal-anchor's sources, with six in-memory
+planted faults first. Measured locally on this 2-core host over three runs:
+**0.13 s / 0.10 s / 0.10 s** wall, self-test included.
+`traceability` needs no toolchain and no cache, so the step adds no
+setup. The `test` lane gains 5 unit tests and one integration target whose
+parent spawns three short child processes; on a 2-core host
+`cargo test -p antseal-anchor` went from **189 tests / 9.69 s** before to
+**194 + 1 tests / 9.90–10.67 s** across four runs — inside this host's own
+run-to-run spread, so the honest statement is "no measurable cost", not a
+delta.
+
+Against the standing budget picture (Q78/Q81 — 19 required contexts,
+`cross-os-macos` billing 10×, the scheduled fuzz lane at 23 % of the
+allowance after its cadence change), this is not a material addition and
+required no re-derivation of the fuzz budget.
+
+## Red-lane evidence (test-of-the-test)
+
+Every check below was executed in its **red** direction. The two faults that
+would otherwise have made a real request were run inside `unshare -rn`, so
+the planted-unguarded run could not reach a real endpoint even in principle —
+which is also what makes its failure message the proof.
+
+| planted fault | result | what it said |
+| --- | --- | --- |
+| gate's `cfg(test)` arm returns `None` | **RED** | `https://freetsa.org/tsr produced Transport { … "failed to lookup address information" } instead of RealNetworkDenied — this call reached the network stack` |
+| loopback carve-out deleted (gate denies everything) | **RED** | `a loopback IP literal is exempt and must still be dialled: RealNetworkDenied { endpoint: "http://127.0.0.1:40035", … }` — plus ~60 stub-driven tests across `esplora`, `arbitrum::confirm`, `http`, `tsa` |
+| gate's environment arm returns `None` | **RED** | `assertion left == right failed: the gate did NOT fire in the armed arm` |
+| R1 workflow arming deleted from `ci.yml` | **RED** | `ci.yml does not set ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1" in its workflow-level env: block` |
+| R1 `local-gate.sh` export deleted | **RED** | `the local gate is the venue a contributor actually runs; unarmed, it is the one place an integration test can still reach a real TSA` |
+| R2 second client, `[dev-dependencies.reqwest]` | **RED** | `a second client bypasses the gate entirely and no other lane would see it` |
+| R2 renamed client, `{ package = "isahc" }` | **RED** | as above, via the rename spelling |
+| R2 `ureq` declared outside `antseal-anchor` | **RED** | `only antseal-anchor (and the root [workspace.dependencies] pin) may` |
+| R3 new URL constant the gate test never names | **RED** | `BACKUP_TSA_URLS … is outside the walk that proves every default endpoint is refused` |
+
+**Two defects were found by these instruments in the instruments
+themselves**, which is the reason for running them:
+
+1. R3's anti-vacuity guard fired on its first execution: the detector found
+   **zero** URL constants in a tree that has six, because a line-based
+   comment stripper split `"https://…"` on its own `//`. Had the guard not
+   been there, R3 would have been permanently, silently vacuous.
+2. R2's self-test caught R2 checking only `crate = "…"`, so
+   `[dev-dependencies.reqwest]` — a perfectly ordinary Cargo spelling —
+   walked straight through. All three spellings are now checked.
+
+## What is NOT proven here
+
+The step has **never run on the remote**. It is a script call exercised
+locally by `scripts/local-gate.sh` (`anchor-net` lane), which is what Q43's
+rule asks for, but this document's own standing warning applies: a lane that
+has never executed remotely is not evidence, however long it has been
+committed.
+
+`ANTSEAL_NO_REAL_ANCHOR_NETWORK` being *honoured* by a GitHub runner is not
+in doubt (it is an ordinary environment variable), but the arming reaching
+every job through workflow-level `env:` inheritance has been read, not
+observed.

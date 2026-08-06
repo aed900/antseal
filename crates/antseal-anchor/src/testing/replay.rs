@@ -18,7 +18,11 @@
 //!
 //! That is what makes the CI lane evidence rather than theatre, and it is why
 //! the fixtures are committed rather than fetched: **CI contacts nothing**
-//! (Q16), and a loopback listener cannot.
+//! (Q16). Since 2026-08-06 that is enforced rather than asserted —
+//! [`crate::http::offline`] refuses any non-loopback endpoint from inside the
+//! substrate, so a test that reached for the live calendar these captures came
+//! from would fail instead of quietly succeeding. Re-capturing them is
+//! `docs/anchors/real-smoke-runbook.md`, never a test.
 //!
 //! # The signing half, and where it went (A59, 2026-08-05)
 //!

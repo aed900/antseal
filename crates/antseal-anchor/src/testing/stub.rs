@@ -13,9 +13,13 @@
 //!   scripted, differing replies, one of them dropping the connection;
 //! - A10 needs an **oversized** reply to exercise A28's cap.
 //!
-//! A raw listener writes the bytes. It also satisfies Q16's
-//! no-real-endpoints-in-CI policy *by construction*: it binds
-//! `127.0.0.1:0`, and a loopback listener cannot reach a real endpoint.
+//! A raw listener writes the bytes. It also *cooperates with* Q16's
+//! no-real-endpoints-in-CI policy: it binds `127.0.0.1:0`, and a loopback
+//! listener cannot reach a real endpoint — which is exactly why
+//! [`crate::http::offline`]'s carve-out is loopback IP literals, so the
+//! whole stub-driven suite is unaffected by the gate. What this module does
+//! **not** do is enforce the policy: it constrains the tests that use it and
+//! says nothing about the ones that do not. The enforcement is the gate.
 //!
 //! Every connection is served **in a thread of its own** — see [`serve`] for
 //! the test that could not fail before that was true — and the reply for a

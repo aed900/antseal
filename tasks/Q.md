@@ -1292,3 +1292,47 @@ Exact line to add to Q65's Accept:
 - Do: Add the `project_added[]` entry for `anchor-ots-online-block-absent` with the D93 §12 justification (line 168 names it nowhere; its only instrument was measured blind). Re-run the combined distinctness sweep.
 - Accept: the sweep is green with the new key; a planted duplicate of an existing key goes red naming both rows.
 - Notes: registry-side only — A81 builds the fixture. Ordered before A81 for the same reason Q76 was ordered before A21.
+
+### Q96 — No lane builds the documentation
+- Milestone: M2
+- Size: S
+- Deps: Q1
+- Discovered by: **the Q16 lane** (2026-08-06).
+- Do: `cargo rustdoc -p antseal-anchor` emits **3 unresolved intra-doc links** and 9 warnings, all pre-existing and all invisible because no CI lane and no local lane builds docs. This codebase navigates by intra-doc link — the review culture leans on rustdoc cross-references as the record of why a thing is the way it is — so a broken link is a broken record, not a cosmetic warning. Add a docs lane (`cargo doc --workspace --no-deps` with `-D rustdoc::broken_intra_doc_links`) and fix the three.
+- Accept:
+  - The lane is red on the current tree before the three are fixed, and green after — both states recorded.
+  - A planted broken link (`[`no::such::item`]`) turns it red naming the file.
+  - Minute cost measured and stated; if it is material against the allowance Q78 tracks, say so rather than landing it quietly.
+
+### Q97 — The no-real-network gate covers anchor traffic only
+- Milestone: M2
+- Size: S
+- Deps: Q16
+- Discovered by: **the Q16 lane** (2026-08-06).
+- Do: Q16's gate sits in `antseal-anchor`'s `HttpClient::attempt`, which is the whole of anchor network I/O. `antseal-net`'s `ant-backend` path (ant-core / evmlib) has **no equivalent chokepoint**, and the devnet gate is loopback **by convention, not by enforcement**. Decide whether the same treatment applies there: either find the one dial site and gate it, or record why the convention suffices — with the reason, not the assertion.
+- Accept:
+  - Either a gate exists with both directions executed, or a recorded decision says why not and names what would detect a violation instead.
+  - If gated, a planted real-endpoint call from a `cfg(test)` build in `antseal-net` is refused before DNS.
+- Notes: the honest asymmetry is that `ant-backend` is feature-gated and not in the default CI graph, which is a real mitigation — but "not compiled by the required lane" is exactly the coverage argument D89 and D90 both had to overturn.
+
+### Q98 — Make the HTTP-client rule an allowlist, not a denylist
+- Milestone: M2
+- Size: S
+- Deps: Q16, adjacent to Q74
+- Discovered by: **the Q16 lane** (2026-08-06).
+- Do: `scripts/check-anchor-net.py`'s R2 rule names HTTP-client crates to forbid. That is the same shape D90 §5 already recorded as insufficient for `dep-graph` — a denylist's green verdict means *"none of the named offenders is present"*, never *"nothing here opens a socket"*, and `libc`, `regex` and `env_logger` all pass the existing one. Replace it with a positive rule: the set of crates permitted to open sockets, asserted by set equality, with the same scope comment Q74/Q83 carry.
+- Accept:
+  - A crate that opens sockets and is on no denylist (the case a denylist cannot catch) is caught — planted and executed.
+  - Set equality against a reviewed list, with a stated scope note that green is not a purity proof.
+- Notes: Q74 owns the same conversion for `core-dep-graph`. If Q74 lands first this reduces to reusing its mechanism; the two should not grow two different allowlist implementations.
+
+### Q99 — Commit the real-smoke runbook's script half and delete its §0
+- Milestone: M2
+- Size: S
+- Deps: Q16, U22, A25
+- Discovered by: **the Q16 lane** (2026-08-06).
+- Do: `docs/anchors/real-smoke-runbook.md` §0 records that the protocol is **not executable end-to-end today**, because the CLI still cannot anchor. When U22 wires the gate into `seal` and A25 executes the protocol, commit the script half the runbook describes and delete §0. A caveat section that outlives its cause is how a document starts lying.
+- Accept:
+  - §0 is deleted in the same change that commits the script, never before.
+  - The script runs the protocol A25 executed, against real endpoints, and is excluded from every gating lane (Q16's policy holds: it must be un-runnable under `ANTSEAL_NO_REAL_ANCHOR_NETWORK`).
+  - Real-endpoint execution requires express maintainer consent in-session; the runbook says so.

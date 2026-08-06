@@ -99,6 +99,12 @@ pub fn classify(error: &AnchorHttpError, idempotency: Idempotency) -> RetryVerdi
         | AnchorHttpError::TlsRequired { .. }
         | AnchorHttpError::Redirected { .. }
         | AnchorHttpError::OversizeBody { .. }
+        // Q16's gate. Deterministic *and* the most important arm to get
+        // right: a `Retry` here would turn one refused request into three,
+        // which is the rate-limit abuse the policy exists to prevent — and
+        // it would do so on exactly the endpoints (SwissSign ~10/day,
+        // Sectigo ~15 s spacing) least able to absorb it.
+        | AnchorHttpError::RealNetworkDenied { .. }
         | AnchorHttpError::MalformedResponse { .. } => RetryVerdict::Stop,
 
         // Pre-send: DNS, TCP and TLS all failed before a request byte was
@@ -191,6 +197,17 @@ mod tests {
                 AnchorHttpError::MalformedResponse {
                     endpoint: endpoint("http://e.example"),
                     detail: "bad chunked framing".into(),
+                },
+                Stop,
+                Stop,
+            ),
+            // Q16's gate. Not in D90 §6.3 (it postdates it) and added here
+            // because this table is the wildcard-free enumeration that keeps
+            // a new variant from inheriting a retry policy by accident.
+            (
+                AnchorHttpError::RealNetworkDenied {
+                    endpoint: endpoint("https://freetsa.org/tsr"),
+                    reason: crate::http::offline::REASON_TEST_BUILD,
                 },
                 Stop,
                 Stop,

@@ -79,6 +79,7 @@
 //!   results to WASM-safe core through A2's `OnlineEvidence`.
 
 pub mod endpoint;
+pub mod offline;
 pub mod retry;
 
 use std::io::Read as _;
@@ -614,6 +615,23 @@ pub enum AnchorHttpError {
         /// The underlying reason.
         detail: String,
     },
+    /// Refused by the no-real-anchor-network policy (task **Q16**) before
+    /// any address was resolved. **No socket was opened.**
+    ///
+    /// Only a loopback IP literal may be dialled while the gate is armed;
+    /// see [`offline`] for the two arms and
+    /// `docs/testing/anchor-ci-policy.md` for the policy this enforces.
+    #[error(
+        "{endpoint}: refused by the no-real-anchor-network policy ({reason}); \
+         only loopback IP literals may be dialled here — see \
+         docs/testing/anchor-ci-policy.md"
+    )]
+    RealNetworkDenied {
+        /// The endpoint URL that was refused.
+        endpoint: String,
+        /// Which arm of [`offline::decide`] armed the gate.
+        reason: &'static str,
+    },
     /// Any other transport failure. Treated as *ambiguous* by the retry
     /// classifier — it is D90's "any other `Error::Io`" row.
     #[error("{endpoint}: transport failure: {detail}")]
@@ -736,6 +754,23 @@ impl HttpClient {
         attempt: u32,
     ) -> Result<HttpResponse, AnchorHttpError> {
         let url = request.endpoint.url();
+
+        // Q16's no-real-anchor-network gate. It sits HERE — in the one
+        // function of this workspace that hands a URL to `ureq` — rather
+        // than in `send`, so that any future caller of `attempt` inherits it
+        // without having to remember to. Refusal precedes resolution, so an
+        // armed gate emits no DNS query, no TCP connection and no TLS
+        // handshake. `offline` explains why the `cfg(test)` arm has no off
+        // switch.
+        if !request.endpoint.is_loopback_literal()
+            && let Some(reason) = offline::deny_reason()
+        {
+            return Err(AnchorHttpError::RealNetworkDenied {
+                endpoint: url.to_owned(),
+                reason,
+            });
+        }
+
         let sent = match request.method {
             HttpMethod::Get => {
                 let mut builder = self.agent.get(url);

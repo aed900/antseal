@@ -34,6 +34,18 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Q16 — the no-real-anchor-network policy, ARMED here rather than stated in
+  # a doc. Workflow-level so EVERY job inherits it, including jobs added
+  # later that nobody remembers to arm. It makes
+  # `antseal_anchor::http::HttpClient` refuse any endpoint that is not a
+  # loopback IP literal, so a test that reaches for a real TSA, OTS calendar,
+  # esplora or Arbitrum RPC fails instead of hammering a rate-limited
+  # third-party service (MVP-SPEC.md line 189). The `cfg(test)` half needs no
+  # variable and cannot be switched off at all; this covers the integration-
+  # test binaries it structurally cannot reach. Asserted by
+  # `scripts/ci-lanes.sh anchor-net-policy` — an arming nothing checks is an
+  # arming that silently disappears. Policy: docs/testing/anchor-ci-policy.md
+  ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
 
 jobs:
   advisory-weekly:

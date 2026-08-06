@@ -28,6 +28,11 @@
 #   audit-deny        cargo-deny advisories/bans/sources
 #   fuzz-budget       self-test, then the scheduled fuzz lane's monthly
 #                     minute cost against its named ceiling (D61)
+#   anchor-net-policy self-test, then Q16's no-real-anchor-network policy:
+#                     the environment arm is armed in every workflow and in
+#                     the local gate, exactly one HTTP client is declared and
+#                     only by antseal-anchor, and every URL-valued constant
+#                     is covered by the gate's endpoint walk
 #
 # Exit: 0 pass · 1 failure. Every lane is runnable locally; the ones that
 # need a pinned external tool say which and how (audit-deny).
@@ -54,7 +59,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -835,6 +840,27 @@ lane_ci_shell() {
   python3 scripts/check-ci-shell.py
 }
 
+# Q16: the STATIC half of the no-real-anchor-network policy.
+#
+# The enforcing half is a runtime gate in the anchor HTTP substrate
+# (`crates/antseal-anchor/src/http/offline.rs`), executed by the `test` lane
+# — this lane does not repeat it. It checks the three things a runtime gate
+# cannot see about itself: that its environment arm is actually armed in
+# every venue, that no second HTTP client exists to route around it, and that
+# no endpoint constant has appeared outside the walk that proves the refusal.
+#
+# Python-only, no cargo, no network, so it rides in the `traceability` job
+# beside `ci-shell` and `fuzz-budget` rather than costing a new
+# required-status context (the set stays at 19). Its own six planted faults
+# run first, every run.
+lane_anchor_net_policy() {
+  if ! python3 scripts/check-anchor-net.py --self-test; then
+    printf '::error::check-anchor-net self-test FAILED — the policy check stayed green over a planted fault, so a green run below would prove nothing\n'
+    return 1
+  fi
+  python3 scripts/check-anchor-net.py
+}
+
 # Q2: vault-export / wallet-key signature guard.
 #
 # The detection patterns are spelled with character classes so they cannot
@@ -1246,5 +1272,6 @@ case "${1:-}" in
   secret-guard)     lane_secret_guard ;;
   audit-deny)       lane_audit_deny ;;
   fuzz-budget)      lane_fuzz_budget ;;
+  anchor-net-policy) lane_anchor_net_policy ;;
   *) die "usage: scripts/ci-lanes.sh <$(printf '%s' "$LANES" | tr ' ' '|')> | --list | --self-test" ;;
 esac

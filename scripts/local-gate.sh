@@ -44,6 +44,17 @@ run() {
 # ant-core/EVM edge, exactly like `antseal-net/test-util` beside it.
 GATE_LIGHT_FEATURES='antseal-anchor/test-util,antseal-core/test-util,antseal-core/test-vectors,antseal-net/test-util'
 
+# Q16 — the no-real-anchor-network policy, armed for every lane below exactly
+# as `.github/workflows/*.yml` arm it workflow-wide. Without this line the
+# local gate would be the one venue where an integration test can reach a real
+# TSA or OTS calendar, which is the venue a contributor actually runs. The
+# `cfg(test)` half of the gate needs no variable and cannot be disabled; this
+# covers the integration-test binaries (`antseal-cli/tests/*.rs`) that link
+# antseal-anchor's ordinary build, where `cfg(test)` is false.
+# `scripts/ci-lanes.sh anchor-net-policy` fails if this export goes missing.
+# Policy and the A25 escape hatch: docs/testing/anchor-ci-policy.md.
+export ANTSEAL_NO_REAL_ANCHOR_NETWORK=1
+
 echo "gate: $(git rev-parse --short HEAD) — $(git log -1 --format=%s | cut -c1-60)"
 run fmt    cargo fmt --all -- --check
 run clippy cargo clippy --workspace --all-targets --features "$GATE_LIGHT_FEATURES" --locked -- -D warnings
@@ -75,6 +86,16 @@ run format-freeze scripts/format-freeze.sh
 # remote is not evidence, and neither is one that never runs locally.
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
+
+# Q16 — the no-real-anchor-network policy's static half (self-tests first,
+# six planted faults). Reads committed files only, so it costs a fraction of
+# a second. It is here because the arming it guards is a line in a YAML
+# `env:` block and a line in THIS file: both are exactly the kind of thing a
+# reformat drops without any test noticing, and the consequence is a test
+# suite quietly stamping a rate-limited third-party TSA on every run — which
+# this project has already done once (crates/antseal-anchor/src/ots/engine.rs,
+# the `upgrade_pending_with` seam).
+run anchor-net scripts/ci-lanes.sh anchor-net-policy
 
 # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its named
 # 700-minute ceiling. Reads committed sources only (no cargo, no network), so
