@@ -241,12 +241,95 @@ pub fn assert_within_budget_scaled(
     budget: Budget,
     peak_factor: usize,
 ) {
-    let single_cap = input_len.saturating_mul(peak_factor).saturating_add(SLACK);
+    assert_within_budget_full(what, input_len, budget, peak_factor, 0);
+}
+
+/// [`assert_within_budget`] with a **rule 6 structural exemption** (D102 §3.3).
+///
+/// # What this is not
+///
+/// It is not a widening of the clamp rule, and it is not an exception granted
+/// to the party the guard caught. [`MAX_CLAMPED_ELEMENT_BYTES`] is untouched,
+/// F30's finding is untouched, and every site the clamp rule was ever about
+/// keeps the sharp 1× bound. What changes is that the rule stops being applied
+/// to a site it was never about.
+///
+/// D10 §4's clamp — *"every pre-allocation is clamped to `min(claimed_length,
+/// remaining_input)`"*, justified by *"every element of a definite-length
+/// array costs at least one wire byte"* — is a rule about **length headers**.
+/// A container bounded instead by a **count limit** has no claimed length to
+/// clamp against: the `.ots` parser's work stack is bounded by
+/// `MAX_OTS_DEPTH`, its attestation list by `MAX_OTS_ATTESTATIONS`, and the
+/// RFC 3161 path's certificate bag by `MAX_CHAIN_CERTS`. For those, one input
+/// byte buys `size_of::<Element>()` reserved bytes by arithmetic, on legal
+/// input, and **no parser change alters that** (D102 §4.3 measured the one
+/// candidate change and it does not save the rule). They are governed by D58
+/// §10.3 **rule 6** instead, which requires their cost to be derived from the
+/// limit constants and `size_of` — which is what `exemption` must be, computed
+/// by `antseal_core` and passed in here rather than restated.
+///
+/// # Why an inequality, when the unit test asserts equality
+///
+/// `Vec` growth from capacity 4 by doubling is a `RawVec` implementation
+/// detail, not a language guarantee. An equality here would flake the day the
+/// growth policy changed — and **a flaky guard gets switched off**, which is
+/// worse than no guard and is the failure mode D102 exists to prevent. The
+/// equality lives in `crates/antseal-core/tests/anchor_ots_alloc.rs`, on the
+/// exactly-pinned stable toolchain, where a growth-policy change arrives as a
+/// reviewed toolchain bump with a red test attached.
+///
+/// # What is still caught
+///
+/// `exemption` is a **function of the input**, never a constant: at an 80-byte
+/// input the `.ots` exemption is 11 264 B and at 1 145 B it is 53 248 B, so an
+/// input that never goes deep gets almost none of it. Both D58 crashers stay
+/// fully visible — a regression reintroducing `vec![0; attacker_varint]` at
+/// the 80-byte §3.1 input, or the unbounded hexlify chain at the 102-byte
+/// §3.2 one, is red; so is a regression capped at `MAX_OTS_VALUE_BYTES`
+/// (32 768 B) at either length. The honest cost, stated rather than buried: at
+/// an 80-byte input the window a hostile allocation can hide in widens from
+/// 4 176 B to 11 264 B. Closing that further needs **per-site attribution**,
+/// which a `#[global_allocator]` cannot give.
+///
+/// # Panics
+///
+/// On a violation, as [`assert_within_budget`].
+pub fn assert_within_budget_structural(
+    what: &str,
+    input_len: usize,
+    budget: Budget,
+    exemption: usize,
+) {
+    assert_within_budget_full(
+        what,
+        input_len,
+        budget,
+        MAX_CLAMPED_ELEMENT_BYTES,
+        exemption,
+    );
+}
+
+/// The one body all three entry points share.
+///
+/// # Panics
+///
+/// On a violation, as [`assert_within_budget`].
+fn assert_within_budget_full(
+    what: &str,
+    input_len: usize,
+    budget: Budget,
+    peak_factor: usize,
+    exemption: usize,
+) {
+    let clamp_cap = input_len.saturating_mul(peak_factor).saturating_add(SLACK);
+    let single_cap = clamp_cap.max(exemption);
     assert!(
         budget.peak_single <= single_cap,
         "{what}: peak single allocation {} B for a {input_len} B input (cap {single_cap} B = \
-         len x {peak_factor} + {SLACK}) — D10 §4's clamp rule says a hostile length head \
-         can never drive an allocation larger than the input that claimed it",
+         max(len x {peak_factor} + {SLACK}, structural {exemption})) — D10 §4's clamp rule says \
+         a hostile length head can never drive an allocation larger than the input that claimed \
+         it, and D58 §10.3 rule 6 says a count-bounded container may cost no more than the \
+         derivation from its own limit constant",
         budget.peak_single
     );
     let total_cap = input_len.saturating_mul(TOTAL_FACTOR).saturating_add(SLACK);
@@ -357,6 +440,117 @@ mod tests {
             );
         });
         assert!(violated.is_err());
+    }
+
+    /// **D102 §3.3 property 3, executed.** The rule 6 exemption is a scoping
+    /// of the guard, not a widening of it: the class this target was built to
+    /// catch stays fully visible at the exact input lengths D58 measured.
+    ///
+    /// What makes it fail: an exemption that stops being a function of the
+    /// input, or one large enough to swallow a `MAX_OTS_VALUE_BYTES`-capped
+    /// regression — the shape option (B) would have produced, and the reason
+    /// D102 §4.2 calls it the worst option on the table.
+    #[test]
+    fn the_structural_exemption_still_refuses_both_d58_crashers() {
+        use antseal_core::anchor::ots::ots_structural_alloc_bytes;
+
+        // D58 §3.1's 80-byte `.ots` and §3.2's 102-byte one. The exemption
+        // each is granted is a property of its length alone.
+        for (len, exemption) in [(80_usize, 11_264_usize), (102, 11_264)] {
+            assert_eq!(
+                ots_structural_alloc_bytes(len),
+                exemption,
+                "the exemption at {len} B moved"
+            );
+
+            // §3.1's actual allocation: 549 755 813 887 B from four bytes.
+            let crasher = std::panic::catch_unwind(|| {
+                assert_within_budget_structural(
+                    "D58 §3.1",
+                    len,
+                    Budget {
+                        peak_single: 549_755_813_887,
+                        total: 549_755_813_887,
+                    },
+                    exemption,
+                );
+            });
+            assert!(crasher.is_err(), "the D58 crasher class is no longer red");
+
+            // A regression merely capped at `MAX_OTS_VALUE_BYTES` — the
+            // budget A100's `Do` leaned toward — is red too, at both lengths.
+            let capped = std::panic::catch_unwind(|| {
+                assert_within_budget_structural(
+                    "MAX_OTS_VALUE_BYTES-capped regression",
+                    len,
+                    Budget {
+                        peak_single: 32_768,
+                        total: 32_768,
+                    },
+                    exemption,
+                );
+            });
+            assert!(
+                capped.is_err(),
+                "a 32 768 B allocation from {len} B of input must not fit \
+                 inside the exemption, or rule 6 has become the flat constant \
+                 D102 §4.2 refutes"
+            );
+        }
+
+        // …and the 142-byte structural witness, which is red under the
+        // unscoped rule and green under this one. Both directions, because a
+        // guard that cannot fail and a guard that cannot pass are the same
+        // defect wearing different signs.
+        let witness_peak = Budget {
+            peak_single: 5_120,
+            total: 12_417,
+        };
+        let unscoped = std::panic::catch_unwind(|| {
+            assert_within_budget("A100's 142 B witness, unscoped", 142, witness_peak);
+        });
+        assert!(
+            unscoped.is_err(),
+            "the witness must violate the pre-D102 guard, or it witnesses nothing"
+        );
+        assert_within_budget_structural(
+            "A100's 142 B witness, rule 6",
+            142,
+            witness_peak,
+            ots_structural_alloc_bytes(142),
+        );
+    }
+
+    /// The DER path's exemption, which is scoped **before** its target has
+    /// ever gone red (D102 §6).
+    ///
+    /// What makes it fail: `MAX_CHAIN_CERTS` or `size_of::<Certificate>()`
+    /// moving without the derivation moving with it.
+    #[test]
+    fn the_der_exemption_is_derived_and_input_shaped() {
+        use antseal_core::anchor::caps::{TSA_STRUCTURAL_ALLOC_BYTES, tsa_structural_alloc_bytes};
+
+        // A one-byte token can reserve at most one of each container.
+        assert!(tsa_structural_alloc_bytes(1) < TSA_STRUCTURAL_ALLOC_BYTES / 8);
+        // Past the largest count limit the exemption is flat, by construction.
+        assert_eq!(
+            tsa_structural_alloc_bytes(64),
+            TSA_STRUCTURAL_ALLOC_BYTES,
+            "the exemption must saturate at exactly the derived constant"
+        );
+        // And a gigabyte from a kilobyte is still red.
+        let hostile = std::panic::catch_unwind(|| {
+            assert_within_budget_structural(
+                "a believed length head",
+                1_024,
+                Budget {
+                    peak_single: 1 << 30,
+                    total: 1 << 30,
+                },
+                tsa_structural_alloc_bytes(1_024),
+            );
+        });
+        assert!(hostile.is_err());
     }
 
     #[test]

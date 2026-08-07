@@ -439,9 +439,11 @@ pub fn run_with(ctx: &HookContext<'_>) -> HookPass {
         let (stored, work) = match pending_work(&store, seal_id) {
             Ok(pair) => pair,
             Err(error) => {
-                // R6: `NewerRecord` on the plan or the anchor record, a
-                // missing manifest (so no `anchor_digest` exists), a decode
-                // refusal from `AnchorArtifact::decode`, tamper.
+                // R6: `NewerRecord` on the plan record, an enumeration
+                // failure, tamper. **Not** an `AnchorArtifact::decode`
+                // refusal any more — D100 R5 makes that a per-slot datum, so
+                // it arrives through the `None` arm below with the rest of
+                // the work still readable.
                 pass.skipped += 1;
                 tracing::debug!(
                     work = %hex_seal(seal_id),
@@ -452,10 +454,18 @@ pub fn run_with(ctx: &HookContext<'_>) -> HookPass {
             }
         };
         let Some(work) = work else {
+            // Three reasons reach here and D99 R6 lists all three as skips:
+            // no OTS artifact at all, no readable one (every `ots-pending`
+            // record damaged), and no recoverable `anchor_digest` because the
+            // journaled manifest is gone. Named together rather than under
+            // the first one's sentence, which would be false for the other
+            // two.
             pass.skipped += 1;
             tracing::debug!(
                 work = %hex_seal(seal_id),
-                "skipped: no OTS artifact to upgrade"
+                damaged_slots = stored.damaged().len(),
+                "skipped: nothing pollable — no readable OTS artifact, or no anchor digest to \
+                 poll it against"
             );
             continue;
         };

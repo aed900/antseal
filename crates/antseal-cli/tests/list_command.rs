@@ -552,6 +552,13 @@ struct AnchorFixture {
     /// Whether the journaled plan record survives, i.e. whether
     /// `anchor_digest` is recoverable at all.
     keep_plan: bool,
+    /// A `tsa-1` slot holding bytes the **record codec** refuses (U65).
+    ///
+    /// Sealed by the real record cipher, so the AEAD opens and the refusal is
+    /// a CBOR schema refusal on plaintext — the population D100 §1.5 puts on
+    /// the far side of the AEAD boundary. A corrupt-ciphertext fixture would
+    /// exercise the other population, which still exits 12 and must.
+    damaged: bool,
     consent_offset: u64,
 }
 
@@ -567,6 +574,7 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: true,
             work_id: Some(0xB1),
             keep_plan: true,
+            damaged: false,
             consent_offset: 600,
         },
         AnchorFixture {
@@ -579,6 +587,7 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: true,
             work_id: Some(0xB2),
             keep_plan: true,
+            damaged: false,
             consent_offset: 500,
         },
         AnchorFixture {
@@ -591,6 +600,7 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: false,
             work_id: Some(0xB3),
             keep_plan: true,
+            damaged: false,
             consent_offset: 400,
         },
         AnchorFixture {
@@ -603,6 +613,7 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: true,
             work_id: Some(0xB4),
             keep_plan: true,
+            damaged: false,
             consent_offset: 300,
         },
         AnchorFixture {
@@ -615,6 +626,7 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: true,
             work_id: None,
             keep_plan: true,
+            damaged: false,
             consent_offset: 200,
         },
         AnchorFixture {
@@ -627,7 +639,30 @@ fn anchor_fixtures() -> Vec<AnchorFixture> {
             ots: true,
             work_id: Some(0xB6),
             keep_plan: false,
+            damaged: false,
             consent_offset: 100,
+        },
+        // **U65**, the defect this fixture exists for: one slot whose record
+        // will not decode. Before D100 this one work made `list` refuse the
+        // **entire vault** at exit 12 with the passphrase sentence, so the
+        // five rows above it could not be rendered at all.
+        //
+        // It keeps a verified TSA token beside the damaged slot deliberately:
+        // the nag class stays `anchored` (R4 — the damage is orthogonal and
+        // does not suppress a true statement), so this row also proves the
+        // damage is visible on a work that `nag` alone would call clean.
+        AnchorFixture {
+            tag: 0x17,
+            title: "one anchor record that will not decode",
+            state: SealState::Complete,
+            unanchored: false,
+            degraded: false,
+            tsa: Some(TSA_PINNED),
+            ots: true,
+            work_id: Some(0xB7),
+            keep_plan: true,
+            damaged: true,
+            consent_offset: 50,
         },
     ]
 }
@@ -730,6 +765,19 @@ fn anchor_fixture_vault() -> IsolatedVault {
                 token,
             );
         }
+        if f.damaged {
+            // Through the store's own writer, so the AEAD is genuine and it
+            // is the *record codec* that refuses the plaintext — the arm a
+            // corrupt-ciphertext fixture would never reach.
+            store
+                .put_anchor(
+                    &id,
+                    &tsa_slot(1),
+                    b"not an anchor-artifact record",
+                    &mut rng,
+                )
+                .expect("put damaged anchor");
+        }
         if !f.keep_plan {
             assert!(
                 store
@@ -783,7 +831,7 @@ fn row_titled<'a>(listing: &'a WorkListing, title: &str) -> &'a WorkRow {
 fn the_anchor_fixture_matrix_renders_three_classes_distinctly() {
     let vault = anchor_fixture_vault();
     let listing = listing(&vault);
-    assert_eq!(listing.works.len(), 6);
+    assert_eq!(listing.works.len(), 7);
 
     let verified = row_titled(&listing, "tsa token, verified");
     assert_eq!(verified.nag, Some(NagState::Anchored));
@@ -830,6 +878,71 @@ fn the_anchor_fixture_matrix_renders_three_classes_distinctly() {
 
     assert_eq!(listing.counts().pending_anchor_nags, 3);
     assert_eq!(listing.counts().unanchored, 1);
+    assert_eq!(
+        listing.counts().damaged_anchors,
+        1,
+        "a fourth orthogonal predicate, counted in works like the two above it"
+    );
+}
+
+/// **U65, the defect, closed** (D100 R3): one anchor record that will not
+/// decode is a datum on its own row, and the rest of the vault still lists.
+///
+/// The before is what makes this row worth reading: this exact vault used to
+/// produce **no rows at all** and `error: vault authentication failed: wrong
+/// passphrase, or the vault store or header has been modified or corrupted`
+/// at exit 12 — for a CBOR schema refusal on plaintext the AEAD had already
+/// accepted, on a work whose other anchors were fine.
+#[test]
+fn one_undecodable_anchor_record_is_a_row_and_not_a_refusal() {
+    let vault = anchor_fixture_vault();
+    let listing = listing(&vault);
+
+    // 1. The whole vault still lists. This is the clause of U65's Accept that
+    //    option (a) — a better sentence on the same total refusal — would not
+    //    have satisfied, and it is the one the register calls the defect.
+    assert_eq!(listing.works.len(), 7);
+    assert!(
+        listing
+            .works
+            .iter()
+            .any(|row| row.title.as_deref() == Some("tsa token, verified")),
+        "the works behind the damaged one are the point"
+    );
+
+    let row = row_titled(&listing, "one anchor record that will not decode");
+
+    // 2. The damage is on the row, per slot, with a machine-branchable
+    //    reason and the decoder's own message verbatim (R1, R10.5).
+    assert_eq!(row.damaged_anchors.slots.len(), 1);
+    let damaged = &row.damaged_anchors.slots[0];
+    assert_eq!(damaged.slot, tsa_slot(1));
+    assert_eq!(damaged.reason.name(), "undecodable");
+    assert_eq!(
+        damaged.reason.detail(),
+        "journal record is not canonical CBOR"
+    );
+    assert_eq!(damaged.reason.format_version(), None);
+
+    // 3. …and it says *how much*, which is the whole reason per-record
+    //    isolation beat a per-work badge (D100 §2(b)): three slots, one bad.
+    assert_eq!(row.damaged_anchors.total_slots, 3);
+
+    // 4. The nag class is **orthogonal** and is not suppressed (R4). This
+    //    work does hold a headline-eligible anchor, so `anchored` is true —
+    //    and a consumer branching on `nag` alone would call it clean, which
+    //    is exactly why the damage is its own column and not a fourth
+    //    meaning of `null`.
+    assert_eq!(row.nag, Some(NagState::Anchored));
+    assert!(!row.nags());
+    assert_eq!(row.nag_name(), Some("anchored"));
+
+    // 5. Every healthy row carries an **empty** array rather than an absent
+    //    one — the honesty guarantee, because a key that only appeared on
+    //    damage would leave a damaged work looking exactly like a clean one.
+    let clean = row_titled(&listing, "degraded, only pending ots");
+    assert!(clean.damaged_anchors.is_intact());
+    assert_eq!(clean.damaged_anchors.total_slots, 1);
 }
 
 /// A work whose journaled manifest is gone cannot have its artifacts
@@ -863,6 +976,12 @@ fn the_nag_appears_in_the_human_report() {
     assert!(rendered.contains("no work id yet — finish this seal first"));
     // The UNANCHORED row is labelled and not nagged.
     assert!(rendered.contains("complete UNANCHORED"));
+    // **U65/D100 R3**: the damage block, and the summary's third clause.
+    assert!(rendered.contains(&format!(
+        "  anchors: 1 of 3 slot(s) unreadable — {}: journal record is not canonical CBOR",
+        tsa_slot(1)
+    )));
+    assert!(rendered.contains("1 with unreadable anchors"));
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/snapshots/list-anchor-nags.txt");
@@ -922,6 +1041,30 @@ fn the_nag_is_a_structured_field_in_the_json_document() {
     let unclassified = by_title("artifacts, journaled manifest gone");
     assert!(unclassified["nag"].is_null());
     assert!(unclassified["pending_anchors"].is_null());
+    assert_eq!(
+        unclassified["damaged_anchors"],
+        serde_json::json!([]),
+        "unclassifiable and damaged are two facts; this row has the first and not the second"
+    );
+
+    // **U65/D100 R3/R9**: the four keys, all present, and the count a CI job
+    // tests instead of an exit code.
+    let damaged = by_title("one anchor record that will not decode");
+    assert_eq!(
+        damaged["damaged_anchors"],
+        serde_json::json!([{
+            "slot": tsa_slot(1),
+            "reason": "undecodable",
+            "detail": "journal record is not canonical CBOR",
+            "format_version": null,
+        }])
+    );
+    assert_eq!(
+        damaged["nag"],
+        serde_json::json!("anchored"),
+        "the nag is orthogonal and is not suppressed by the damage (R4)"
+    );
+    assert_eq!(doc["counts"]["damaged_anchors"], serde_json::json!(1));
 
     assert_eq!(doc["counts"]["pending_anchor_nags"], serde_json::json!(3));
     assert_eq!(

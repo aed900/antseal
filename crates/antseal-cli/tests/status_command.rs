@@ -40,7 +40,7 @@ use antseal_anchor::testing::replay::{CalendarBehaviour, calendar};
 use antseal_anchor::testing::stub::{StubMatch, StubReply, StubScript, StubServer};
 use antseal_cli::pipeline::journal::{SealJournal, SealPlan, SealState, WorkIdentity};
 use antseal_cli::pipeline::{
-    AnchorArtifact, ArtifactKind, OTS_SLOT, StoredAnchors, VaultJournal, tsa_slot,
+    AnchorArtifact, ArtifactKind, OTS_SLOT, PLAN_ENTRY, StoredAnchors, VaultJournal, tsa_slot,
 };
 use antseal_cli::status::{
     RECEIPT_CLASS, StatusContext, UNANCHORED_NOTE, WorkStatus, pending_work, persist_upgrades,
@@ -51,7 +51,7 @@ use antseal_core::anchor::testing::{MockTsa, MockTsaConfig, ots_writer};
 use antseal_core::bundle::schema::OtsUpgrade;
 use antseal_core::crypto::secrets::{MasterSecret, SealId};
 use antseal_core::manifest::anchor_digest;
-use antseal_core::verify::report::AnchorState;
+use antseal_core::verify::report::{AnchorKind, AnchorState};
 use common::IsolatedVault;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -390,6 +390,106 @@ fn fixture_vault() -> IsolatedVault {
         }
         journal
             .record_outcome(&id, Some(work_id(f.tag)), Some(4_200_000_000_000_000_000))
+            .expect("outcome");
+    }
+    vault
+}
+
+/// **D100 R6**'s vault: one work whose journaled manifest is gone, and one
+/// holding an anchor record the codec refuses.
+///
+/// Deliberately its own vault rather than two more `fixtures()` rows: those
+/// five are the committed `status-report.txt` snapshot, and D100 changes what
+/// `status` does with damage rather than what it says about healthy anchors.
+///
+/// Tag `0x11` is the state D100 §1.2 found `list` and `status` **contradicting
+/// each other** on, in production, each documenting its own answer as
+/// obviously correct: a work holding anchor artifacts with no journaled
+/// manifest listed as a soft *"anchors: unclassified"* row at exit 0 and
+/// exited **12** accusing the passphrase under `status`.
+fn damaged_vault() -> IsolatedVault {
+    let vault = IsolatedVault::create("status-d100");
+    let unlocked = vault.unlock();
+    let mut rng = ChaCha20Rng::from_seed([0x33; 32]);
+    let store = WorkStore::new(&unlocked);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let mut slot_rng = ChaCha20Rng::from_seed([0x34; 32]);
+    let (current, _) = signers();
+
+    for (tag, title, keep_plan) in [
+        (0x11u8, "artifacts, journaled manifest gone", false),
+        (0x12u8, "one anchor record that will not decode", true),
+    ] {
+        let w = MasterSecret::from_bytes([tag; 32]);
+        let id = seal_id(tag);
+        journal
+            .begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id: id,
+                network: "arbitrum-one".to_owned(),
+                unanchored: false,
+                degraded: false,
+                input_paths_as_given: vec!["notes.txt".to_owned()],
+                input_paths_absolute: vec!["/w/notes.txt".to_owned()],
+                shaping: SealShapingFlags {
+                    title: Some(title.to_owned()),
+                    split_blank_lines: false,
+                    force_text: false,
+                    no_fine_tree: Vec::new(),
+                    no_anchor: false,
+                    force_degraded: false,
+                },
+            })
+            .expect("begin");
+        journal
+            .put_plan(
+                &id,
+                &SealPlan {
+                    unit_count: 1,
+                    manifest_bytes: Some(manifest()),
+                },
+            )
+            .expect("plan");
+        for step in [
+            SealState::Anchored,
+            SealState::Paid,
+            SealState::Finalizing,
+            SealState::Complete,
+        ] {
+            journal.set_state(&id, step).expect("advance");
+        }
+        store
+            .put_anchor(
+                &id,
+                &tsa_slot(0),
+                &tsa_artifact(&current, "https://tsa.example/tsr")
+                    .encode()
+                    .expect("encode"),
+                &mut slot_rng,
+            )
+            .expect("put anchor");
+        if !keep_plan {
+            assert!(
+                store
+                    .delete_journal_entry(&id, PLAN_ENTRY)
+                    .expect("delete plan"),
+                "the plan record was there to delete"
+            );
+        } else {
+            // Sealed by the real record cipher, so the AEAD opens and it is
+            // the *record codec* that refuses the plaintext — the population
+            // D100 §1.5 puts above the AEAD boundary.
+            store
+                .put_anchor(
+                    &id,
+                    OTS_SLOT,
+                    b"not an anchor-artifact record",
+                    &mut slot_rng,
+                )
+                .expect("put damaged anchor");
+        }
+        journal
+            .record_outcome(&id, Some(work_id(tag)), Some(4_200_000_000_000_000_000))
             .expect("outcome");
     }
     vault
@@ -789,7 +889,8 @@ fn upgrade_transitions_a_pending_anchor_to_attested_and_persists_it() {
 
     // D97 R4: the read-modify-write kept the *submission's* capture date in
     // key 2, which is a different fact from the header's.
-    let stored = StoredAnchors::read(&store, &id).expect("read");
+    let stored_stored = StoredAnchors::read(&store, &id).expect("read");
+    let stored = stored_stored.require_intact().expect("read");
     let (_, artifact) = stored.ots_entry(0).expect("the OTS slot");
     assert_eq!(artifact.fetch_date, FETCH_DATE, "key 2 is carried across");
     assert_eq!(
@@ -840,7 +941,8 @@ fn a_repeated_upgrade_run_is_a_no_op_and_the_stored_artifact_is_byte_stable() {
     }
     let unlocked = vault.unlock();
     let store = WorkStore::new(&unlocked);
-    let before = StoredAnchors::read(&store, &id).expect("read");
+    let stored_before = StoredAnchors::read(&store, &id).expect("read");
+    let before = stored_before.require_intact().expect("read");
     let (_, before_artifact) = before.ots_entry(0).expect("the OTS slot");
     let pinned = before_artifact.clone();
 
@@ -877,7 +979,8 @@ fn a_repeated_upgrade_run_is_a_no_op_and_the_stored_artifact_is_byte_stable() {
 
         // The row the fix is *for*: the record on disk is unchanged, byte for
         // byte, across repeated runs.
-        let after = StoredAnchors::read(&store, &id).expect("read");
+        let stored_after = StoredAnchors::read(&store, &id).expect("read");
+        let after = stored_after.require_intact().expect("read");
         let (_, after_artifact) = after.ots_entry(0).expect("the OTS slot");
         assert_eq!(
             after_artifact.bytes.len(),
@@ -949,7 +1052,9 @@ fn a_transition_whose_slot_moved_is_declined_rather_than_written() {
         "and the discard is counted, not silent"
     );
 
-    let after = StoredAnchors::read(&store, &id).expect("read");
+    let stored_after = StoredAnchors::read(&store, &id).expect("read");
+
+    let after = stored_after.require_intact().expect("read");
     let (_, artifact) = after.ots_entry(0).expect("the OTS slot");
     assert_eq!(
         *artifact, replacement,
@@ -975,4 +1080,163 @@ fn an_unanchored_work_has_no_pending_work_to_poll() {
     let (stored, work) = pending_work(&store, &seal_id(0x04)).expect("read");
     assert!(stored.is_empty());
     assert!(work.is_none(), "no OTS artifact means nothing to upgrade");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D100 R6: damage is data here too, and at exit 0
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D100 §1.2, closed**: a work holding anchor artifacts with no journaled
+/// manifest is rendered, not refused.
+///
+/// Before this, `status` answered exit **12** and *"wrong passphrase, or the
+/// vault store or header has been modified or corrupted"* — on a vault whose
+/// passphrase it had already proven, a work the user had named by id, and a
+/// meta record it had already read — while `list` rendered the *identical*
+/// state as a soft row at exit 0. Two committed authorities, days apart,
+/// each documenting itself as obviously right and neither citing the other.
+/// The divergence is closed in `list`'s favour and both now say the same
+/// sentence.
+#[test]
+fn a_work_with_anchors_and_no_manifest_is_rendered_rather_than_refused() {
+    let vault = damaged_vault();
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // 1. It does not error at all — which is the whole change.
+    let status = WorkStatus::gather(&store, &seal_id(0x11), ctx())
+        .expect("a work with no manifest is reported, not refused");
+
+    // 2. No verdict is stated, because none can be: every A18 evaluator takes
+    //    an `anchor_digest` and there is none to give it.
+    assert!(status.anchors.is_empty());
+    assert_eq!(status.unclassifiable.len(), 1);
+    assert_eq!(status.unclassifiable[0].slot, tsa_slot(0));
+    assert_eq!(status.unclassifiable[0].kind, AnchorKind::Tsa);
+    assert!(status.damaged.is_empty(), "no *record* here is damaged");
+
+    // 3. …and it must not claim the TSA kind is `absent`, which would make a
+    //    work holding a token look like a `--no-anchor` seal.
+    assert!(
+        !status.absent.iter().any(|v| v.kind() == AnchorKind::Tsa),
+        "a slot that exists is never absent, whatever can be said about it"
+    );
+
+    let rendered = status.render().join("\n");
+    assert!(rendered.contains("(unclassified)"));
+    assert!(
+        rendered.contains(antseal_cli::status::UNCLASSIFIED_NOTE),
+        "the sentence is `list`'s own, verbatim; rendered:\n{rendered}"
+    );
+
+    let doc = status.json();
+    assert_eq!(
+        doc["unclassifiable"],
+        serde_json::json!([{ "slot": tsa_slot(0), "kind": "tsa" }])
+    );
+    assert_eq!(doc["damaged_anchors"], serde_json::json!([]));
+}
+
+/// **D100 R6**: an anchor record the codec refuses is a per-slot row, outside
+/// the frozen seven, at exit 0.
+///
+/// D99 R6 assigned `status <work-id>` the **loud** report of a corrupt or
+/// future-versioned anchor record — *"that is a command the user ran about
+/// that work"* — and that assignment had never been executable, because the
+/// command answered it by accusing the passphrase. It is executable now.
+#[test]
+fn a_damaged_anchor_record_is_a_row_not_a_refusal() {
+    let vault = damaged_vault();
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    let status = WorkStatus::gather(&store, &seal_id(0x12), ctx())
+        .expect("a damaged record is reported, not refused");
+
+    // The good slot still produces a verdict — the survivors and the damage,
+    // together, which is what the reporting door is for.
+    assert_eq!(status.anchors.len(), 1);
+    assert_eq!(status.anchors[0].slot, tsa_slot(0));
+    assert!(status.unclassifiable.is_empty());
+
+    assert_eq!(status.damaged.len(), 1);
+    assert_eq!(status.damaged[0].slot, OTS_SLOT);
+    assert_eq!(status.damaged[0].reason.name(), "undecodable");
+    assert_eq!(
+        status.damaged[0].reason.detail(),
+        "journal record is not canonical CBOR",
+        "the decoder's own message, verbatim (R10.5)"
+    );
+
+    // **The honesty rule**: the record's `kind` is at key 0 *inside* the
+    // record that will not open, so the kind is unknowable — but the slot
+    // *name* gives a family, and `status` must not answer `absent` for it.
+    // Claiming `ots absent` here would make this work look cleaner than a
+    // healthy one, which is the exact failure D100 removes.
+    assert!(
+        !status.absent.iter().any(|v| v.kind() == AnchorKind::Ots),
+        "the damaged slot is an `ots-pending` slot; `absent` would be a lie"
+    );
+
+    let rendered = status.render().join("\n");
+    assert!(rendered.contains("(record unreadable)"));
+    assert!(rendered.contains("undecodable"));
+    assert!(rendered.contains("this record is malformed"));
+    assert!(
+        rendered.contains("2 anchor artifact(s)"),
+        "the count includes the damaged slot, or the damage disappears into a smaller \
+         number; rendered:\n{rendered}"
+    );
+
+    // The four keys of R3, spelled exactly as `list` spells them.
+    let doc = status.json();
+    assert_eq!(
+        doc["damaged_anchors"],
+        serde_json::json!([{
+            "slot": OTS_SLOT,
+            "reason": "undecodable",
+            "detail": "journal record is not canonical CBOR",
+            "format_version": null,
+        }])
+    );
+    assert_eq!(doc["unclassifiable"], serde_json::json!([]));
+}
+
+/// **D100 §1.3, the measurement that killed the error class**: the same damage
+/// one layer down already rendered at exit 0, and now both layers do.
+///
+/// `.ots` **bytes** that do not parse render `invalid` (D98's cross-walk); the
+/// CBOR **record** wrapping them used to render exit 12 and *"wrong
+/// passphrase"*. One layer of wrapping apart, with no severity difference
+/// between them and no way for a user to perceive where the boundary fell.
+#[test]
+fn the_record_and_the_bytes_it_wraps_are_reported_at_the_same_severity() {
+    let unreadable_bytes = {
+        let vault = fixture_vault();
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        // Work 3's TSA slot holds `b"not a TimeStampResp"`: the record opens,
+        // the artifact does not parse.
+        let status = status_of(&store, 0x03);
+        status
+            .anchors
+            .iter()
+            .find(|row| row.slot == tsa_slot(0))
+            .expect("the TSA row")
+            .verdict
+            .state()
+            .wire_name()
+    };
+    assert_eq!(unreadable_bytes, "invalid");
+
+    // …and the record wrapping such bytes is now reported, rather than
+    // refusing the command that was asked about the work.
+    let vault = damaged_vault();
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+    assert!(
+        WorkStatus::gather(&store, &seal_id(0x12), ctx()).is_ok(),
+        "both sides of one wrapper must be reportable, or the user sees a boundary that \
+         carries no difference in severity"
+    );
 }

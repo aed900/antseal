@@ -11,22 +11,39 @@ captured. It is the `LARGE_TEST` constant from
 Bitcoin blocks **449397** and **449399** (≈ January 2017), extracted verbatim
 from the crate source and written out as the bytes it already was.
 
-It is here because **no real upgraded `.ots` of this project's own exists
-yet**. A25's OTS cycle is wall-clock-bound — a calendar aggregates
-submissions, commits the aggregate root to Bitcoin, and only then can a
-timestamp be upgraded from `pending` to a Bitcoin attestation. The pending
-half was captured 2026-08-02T19:16Z (`../CAPTURE.log`,
-`../OTS-BOOTSTRAP.md`); the upgraded half cannot be captured before
-**2026-08-04**. A11 and A12 land before that date and need a real Bitcoin
-attestation to execute, so this stands in.
+It is here because, **when it was written on 2026-08-02, no real upgraded
+`.ots` of this project's own existed**. A25's OTS cycle is wall-clock-bound —
+a calendar aggregates submissions, commits the aggregate root to Bitcoin, and
+only then can a timestamp be upgraded from `pending` to a Bitcoin
+attestation. The pending half was captured 2026-08-02T19:16Z
+(`../CAPTURE.log`, `../OTS-BOOTSTRAP.md`), and A11 and A12 landed before the
+upgraded half could exist, so this stood in.
+
+**Corrected 2026-08-07.** The paragraph above said the upgraded half "cannot
+be captured before **2026-08-04**" and that no real upgraded `.ots` existed —
+and it stayed on disk saying so for four days after both claims died. **The
+six files sitting in this very directory falsify it**: `{A,B}-{alice,bob,
+catallaxy}.upgrade`, captured **2026-08-03T09:03Z**, all `200`, each carrying
+a real Bitcoin attestation (`UPGRADE-CAPTURE.log`). The wait was **13 h 47 m**,
+not the ~48 h this file assumed. Since **2026-08-07** the mainnet headers for
+the three attesting blocks — 960767, 960768, 960771 — are captured too
+(`../../A25-upgrade-headers/`), which closes the gap §"What it does **not**
+establish" below is about. Read that section with this correction in hand: it
+is still accurate about *this* file, and no longer accurate about the tree.
 
 **Four rows of the F4 registry (`docs/format/anchor-artifact-limits.md` §5)
 are bootstrapped from this file and say so in their `measured against` cell:**
 `MAX_OTS_OPS`, `MAX_OTS_DEPTH`, `MAX_OTS_ATTESTATIONS` and
-`MAX_OTS_OPERAND_BYTES`/`MAX_OTS_VALUE_BYTES`. **A25 must re-measure them
-against the real fixture and append.** The values do not change — F4 forbids
+`MAX_OTS_OPERAND_BYTES`/`MAX_OTS_VALUE_BYTES`. They **must be re-measured
+against the real fixture and appended.** The values do not change — F4 forbids
 lowering and no margin is close — but the provenance cell must stop citing a
 third-party crate's test constant.
+
+*Attribution corrected 2026-08-07: this said "**A25** must re-measure them",
+as `docs/format/anchor-artifact-limits.md:251,258` still does. The task is
+**A48(a)**, which was written for exactly this and lists A25 only as a
+dependency. That dependency is discharged — the six real upgraded `.ots` beside
+this file have existed since 2026-08-03.*
 
 ## What it is, measured
 
@@ -68,7 +85,16 @@ roots above are the values the ops derive; verifying that they are the
 `merkle_root` field of the real blocks 449397/449399, in that byte order,
 needs a fetched mainnet header, and A12's `Do` asks for exactly that pin
 *"by a real upgraded fixture"*. That is **A25's**, with the rest of the
-re-measurement. What A11/A12 establish offline is structural: each Bitcoin
+re-measurement. **Status 2026-08-07: the header half of that pin now exists,
+the derivation half does not.** `../../A25-upgrade-headers/` carries the
+80-byte headers for 960767/960768/960771 — the blocks the six `.upgrade`
+files beside this one attest, not 449397/449399 — each verified offline by
+`double-SHA256(header) == claimed block hash`. Comparing the `merkle_root`
+those headers carry at bytes `36..68` against the root the `.upgrade` ops
+derive is the step that actually pins the byte order, and it has **not** been
+performed; it is **A48(b)**'s, and A48(b)'s last missing input was that header
+fetch. Until the comparison is made, no file in this tree pins the order
+empirically, and the only guard remains the structural one below. What A11/A12 establish offline is structural: each Bitcoin
 attestation here is reached through a chain of 32-byte `append`/`prepend`
 siblings each followed by `08 08` — double SHA-256 — which is Bitcoin's own
 merkle algorithm operating on internal-order hashes, the order the header

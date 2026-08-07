@@ -118,11 +118,49 @@
 //! A18's seven names computed per artifact); `list`'s job is the nag. The
 //! class is in the `--json` row for machines either way.
 //!
-//! Note also that A15 folds an **unreadable** `.ots` into `AttestedOnly`
-//! (`work_status` drops `Unreadable` artifacts before testing for pending
-//! ones, then falls through), so that state means *"attested, or
-//! unparseable"*. Rendering the word "attested" off it would publish the
-//! conflation; `list` does not.
+//! A15 used to fold an **unreadable** `.ots` into `AttestedOnly` — a state
+//! whose own doc says *"every OTS anchor is already attested"* — so that
+//! state meant *"attested, or unparseable"* and `list` refused to render the
+//! word "attested" off it. **A102 is fixed** (D100 R7): the fifth state
+//! [`NagState::Unreadable`] carries that case under its own name, and its
+//! `nags()` stays `false` because the two-line PENDING block it would
+//! otherwise print reads `ANCHORS PENDING: 0` and instructs `--upgrade`,
+//! which cannot help bytes nothing can parse. A102's Accept row asked for
+//! the literal word *"nags"* and was wrong about the boolean; it needed the
+//! name.
+//!
+//! # A slot whose record will not open (U65, ruled by D100)
+//!
+//! One undecodable anchor record used to make `list` refuse the **entire
+//! vault** — exit 12, *"wrong passphrase, or the vault store or header has
+//! been modified or corrupted"* — for a CBOR schema refusal on plaintext the
+//! AEAD had already accepted, with not one row emitted in either mode. It is
+//! now a **datum**: [`WorkRow::damaged_anchors`], a summary clause, a
+//! `--json` array and a `counts.damaged_anchors`, at **exit 0**.
+//!
+//! Three things make that safe rather than merely kinder:
+//!
+//! - **The split is exactly at the AEAD boundary.** A genuine authentication
+//!   failure is `CipherError::AuthFailure` → `CliError::VaultAuthFailure`
+//!   *directly* and never through `JournalError`, so the two populations do
+//!   not share a producer and no unauthenticated caller can observe the
+//!   distinction. U6's *"insofar as distinguishing them is safe"* is
+//!   preserved, and codes 18 and 19 are the committed precedents for carving
+//!   a distinguishable condition out of 12.
+//! - **No `ErrorClass` is minted and no exit code moves.** `status` already
+//!   renders the identical damage one layer down at exit 0 — an `.ots` whose
+//!   *bytes* do not parse renders `invalid` — so a new class would put exit 0
+//!   and exit N on two sides of a boundary the user cannot see.
+//! - **The damage is not evidence**, so it gets no [`NagState`] and no
+//!   `AnchorState`: a verdict cannot be stated without naming a mechanism,
+//!   and the mechanism lives at key 0 *inside* the record that will not open.
+//!
+//! The cost, recorded rather than hidden: `list` exits 0 even on a vault
+//! every one of whose works is unreadable. The rows say why and `--json`
+//! counts it, and a script that must fail on vault damage tests
+//! `.counts.damaged_anchors > 0`, which is strictly more expressive than one
+//! exit code because it separates *upgrade antseal* from *your vault is
+//! damaged* from *another antseal is running*.
 
 use antseal_anchor::ots::{NagState, PendingWork, StoredOtsAnchor, StoredTsaAnchor, work_status};
 use antseal_core::anchor::model::TsaArtifactView;
@@ -132,7 +170,9 @@ use antseal_core::crypto::secrets::SealId;
 use antseal_core::manifest::anchor_digest;
 
 use crate::error::CliError;
-use crate::pipeline::anchors::{AnchorArtifact, StoredAnchors};
+use crate::pipeline::anchors::{
+    AnchorArtifact, DamageReason, DamagedSlot, StoredAnchors, damaged_slot_json,
+};
 use crate::pipeline::journal::{JournalError, SealState, recorded_plan, recorded_state};
 use crate::vault::store::{SealShapingFlags, WorkState, WorkStore};
 
@@ -239,6 +279,14 @@ pub struct WorkRow {
     /// `Some(0)` and `None` are different facts. `Some(0)` means *counted,
     /// and there are none*; `None` means **not computable** — see
     /// [`Self::nag`].
+    ///
+    /// Summed over the artifacts that **decoded**, which is the only set
+    /// there is anything to count in: a slot whose record will not open
+    /// contributes no attestations because none can be read out of it. That
+    /// is why [`Self::damaged_anchors`] is unconditional — a work with one
+    /// damaged `ots-pending` slot and nothing else honestly reports
+    /// `Some(0)` here, and only the damage array distinguishes it from a
+    /// work that genuinely has nothing pending.
     pub pending_anchors: Option<u64>,
     /// Whether this work should be nagged about, and why not when it
     /// should not be (D98 rider 3b).
@@ -253,6 +301,57 @@ pub struct WorkRow {
     /// that refuses to run is the one thing a user on a damaged vault
     /// cannot work around.
     pub nag: Option<NagState>,
+    /// The anchor slots of this work whose record could not be interpreted
+    /// (**D100 R3**), and how many slots it holds in total.
+    ///
+    /// **Orthogonal to [`Self::nag`], and deliberately not folded into it**
+    /// (R4). A work with a verified TSA token and one damaged slot renders
+    /// `nag: "anchored"` — which is *true*, because it does hold a
+    /// headline-eligible anchor — and this array is what stops that being
+    /// read as the whole story. Suppressing `nag` to `None` on damage is
+    /// refused: `None` already means *"no recoverable `anchor_digest`"*, and
+    /// putting a second fact in one null is A102's disease one level up.
+    ///
+    /// The one case where the two are **not** orthogonal is a work whose
+    /// only slots are damaged; that is [`NagState::Unreadable`]'s, decided in
+    /// A15 rather than here (R7.3).
+    pub damaged_anchors: AnchorDamage,
+}
+
+/// What one work's anchor slots could not be read, and out of how many.
+///
+/// The count is the whole reason per-record isolation beat a per-work badge:
+/// a badge produced by catching an error at the work boundary can say
+/// *damaged* and cannot say *1 of 4*, so on a work with three good anchors
+/// and one bad slot it over-claims, and on a one-slot work it under-claims by
+/// looking like the same event (D100 §2(b)).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AnchorDamage {
+    /// One entry per unreadable slot, in the order the reader found them.
+    /// **Empty, never absent**, for a healthy work.
+    pub slots: Vec<DamagedSlot>,
+    /// Every anchor slot this work holds, damaged included.
+    pub total_slots: usize,
+}
+
+impl AnchorDamage {
+    /// Whether every slot of this work read cleanly.
+    #[must_use]
+    pub fn is_intact(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// The highest record-format version any `newer-record` slot names.
+    ///
+    /// `None` when no slot is one. Deterministic over a mixed set, which a
+    /// per-slot version in one sentence would not be.
+    #[must_use]
+    pub fn newest_record_version(&self) -> Option<u64> {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.reason.format_version())
+            .max()
+    }
 }
 
 impl WorkRow {
@@ -285,19 +384,14 @@ impl WorkRow {
     /// The nag class's kebab identifier for `--json`, or `None` when the
     /// class could not be computed ([`Self::nag`]).
     ///
-    /// The table lives here rather than on [`NagState`] because the enum is
-    /// `antseal-anchor`'s and `list` is the renderer; it is written
-    /// wildcard-free so a fifth state fails compilation at this line
-    /// instead of acquiring a wrong name in a `_` arm.
+    /// **A103**: the table used to live here, wildcard-free, so that a fifth
+    /// state failed compilation at this line rather than acquiring a wrong
+    /// name in a `_` arm. That forcing is preserved and has simply moved to
+    /// the enum it is about — [`NagState::name`] is the wildcard-free match
+    /// now, and there is one table for one taxonomy instead of two.
     #[must_use]
-    pub const fn nag_name(&self) -> Option<&'static str> {
-        match self.nag {
-            Some(NagState::Anchored) => Some("anchored"),
-            Some(NagState::OnlyPendingOts) => Some("only-pending-ots"),
-            Some(NagState::AttestedOnly) => Some("attested-only"),
-            Some(NagState::Unanchored) => Some("unanchored"),
-            None => None,
-        }
+    pub fn nag_name(&self) -> Option<&'static str> {
+        self.nag.map(NagState::name)
     }
 
     /// Whether `list` shows the nag marker for this row.
@@ -356,10 +450,22 @@ impl WorkListing {
     ///
     /// # Errors
     ///
-    /// Store-level failures, as their CLI classes. A record that cannot be
-    /// read is *not* softened into a row: an unreadable work record means
-    /// a damaged or tampered vault, which `list` reports as such rather
-    /// than rendering a partial picture that looks complete.
+    /// Store-level failures, as their CLI classes — the **enumeration** and
+    /// **authentication** classes, and nothing else on the anchor path.
+    ///
+    /// An anchor *record* that cannot be read is **not** one of them any
+    /// more (**D100 R3**). It used to be, and the paragraph that said so
+    /// contradicted this module twenty lines further down (§1.2): a work
+    /// holding anchor artifacts with no journaled manifest has always
+    /// rendered here as a soft *"anchors: unclassified"* row at exit 0,
+    /// documented as obviously right, while a work holding an artifact whose
+    /// CBOR would not decode refused the **entire vault** with *"wrong
+    /// passphrase, or the vault store or header has been modified or
+    /// corrupted"*. Two rules, one module, neither citing the other. The
+    /// damage is now a per-row datum with its own reason, `list` exits 0,
+    /// and the honesty burden sits on [`WorkRow::damaged_anchors`], the
+    /// summary line and the machine document — where it can carry detail an
+    /// exit code cannot.
     pub fn gather(store: &WorkStore<'_>) -> Result<Self, CliError> {
         let mut works = Vec::new();
         for seal_id in store.list_works().map_err(CliError::from)? {
@@ -368,12 +474,13 @@ impl WorkListing {
             // failure (module docs).
             let fine_state =
                 recorded_state(store, &seal_id).map_err(|err: JournalError| CliError::from(err))?;
-            // U25's column. Same discipline as the two reads above: an
-            // artifact that cannot be decoded fails the listing rather
-            // than being softened into a row, because a work rendered
-            // "no anchors" when its slot is unreadable is the one wrong
-            // answer a nag must never give.
-            let nag = anchor_nag(store, &seal_id, record.work_id, NAG_VERIFY_AT_UNIX)
+            // U25's column, and D100's. A slot that cannot be decoded is a
+            // datum on this row, not a refusal of the listing: the wrong
+            // answer a nag must never give is "no anchors" for a work whose
+            // slot is unreadable, and that is closed by
+            // `NagState::Unreadable` (R7) rather than by refusing to print.
+            // What still fails here is the enumeration and the AEAD.
+            let read = anchor_nag(store, &seal_id, record.work_id, NAG_VERIFY_AT_UNIX)
                 .map_err(|err: JournalError| CliError::from(err))?;
             let state = record.state;
             let resume = match state {
@@ -407,8 +514,9 @@ impl WorkListing {
                 degraded: record.degraded,
                 cost_atto: record.cost_atto,
                 resume,
-                pending_anchors: nag.as_ref().map(|read| read.pending),
-                nag: nag.map(|read| read.nag),
+                pending_anchors: read.nag.as_ref().map(|nag| nag.pending),
+                nag: read.nag.map(|nag| nag.nag),
+                damaged_anchors: read.damaged,
             });
         }
         works.sort_by(|a, b| {
@@ -442,6 +550,12 @@ impl WorkListing {
             if row.nags() {
                 counts.pending_anchor_nags += 1;
             }
+            // Works, not slots — matching how `unanchored` and
+            // `pending_anchor_nags` already count, so the three clauses of
+            // the summary line are three counts of one thing (D100 R3).
+            if !row.damaged_anchors.is_intact() {
+                counts.damaged_anchors += 1;
+            }
         }
         counts
     }
@@ -464,6 +578,11 @@ impl WorkListing {
                 "abandoned": counts.abandoned,
                 "unanchored": counts.unanchored,
                 "pending_anchor_nags": counts.pending_anchor_nags,
+                // D100 R9: what a script gets instead of an exit code, and
+                // strictly more expressive than one — it distinguishes
+                // "upgrade antseal" from "your vault is damaged" from
+                // "something else is running", and names the works.
+                "damaged_anchors": counts.damaged_anchors,
             },
         })
     }
@@ -513,6 +632,12 @@ impl WorkListing {
                 counts.pending_anchor_nags
             ));
         }
+        if counts.damaged_anchors > 0 {
+            notes.push(format!(
+                "{} with unreadable anchors",
+                counts.damaged_anchors
+            ));
+        }
         out.push(format!(
             "{} work(s): {} complete, {} incomplete, {} abandoned{}.",
             counts.total,
@@ -540,34 +665,148 @@ impl WorkListing {
 /// written for the third-party verifier page (R18 owns re-aligning the
 /// two at M3).
 fn nag_lines(row: &WorkRow) -> Vec<String> {
+    // The damage block comes first and is **unconditional on damage**
+    // (D100 R3) — this is the honesty guarantee, because `NagState::Anchored`
+    // and `AttestedOnly` print nothing at all, so without it a damaged work
+    // would be visually identical to a clean one.
+    let mut lines = damage_lines(row);
     if row.nag.is_none() {
-        return vec![
+        lines.push(
             "  anchors: unclassified — this work holds anchor artifacts but its journaled \
              manifest is gone, so what they attest to cannot be recovered"
                 .to_owned(),
-        ];
+        );
+        return lines;
+    }
+    if row.nag == Some(NagState::Unreadable) && lines.is_empty() {
+        // R7.4: `Unreadable` reached without any *record* damage — the slots
+        // opened and the artifact **bytes** inside them do not parse against
+        // what this work sealed. There is no slot-level reason to print, so
+        // the state is named once, with the command that can say more.
+        // `--upgrade` is deliberately absent: it cannot help bytes nothing
+        // can parse, and unsatisfiable advice is what R7 refused.
+        lines.push(
+            "  anchors: unreadable — this work holds anchor artifacts that do not parse against \
+             what it sealed, so none of them proves a time"
+                .to_owned(),
+        );
+        lines.push(status_hint(row, ""));
+        return lines;
     }
     if !row.nags() {
-        return Vec::new();
+        // Every non-nagging class prints nothing *of its own*. The damage
+        // block above is not one of them, and for `NagState::Unreadable` —
+        // whose `nags()` is false — it is the entire rendering, which is
+        // what makes R3's "the damage block replaces the nag block" literal
+        // in the case it was written about.
+        return lines;
     }
     let count = row.pending_anchors.unwrap_or_default();
-    let mut lines = vec![format!(
+    lines.push(format!(
         "  ANCHORS PENDING: {count} calendar attestation(s) not yet confirmed by Bitcoin, and \
          nothing else here proves a time independently"
-    )];
-    // A work that never reached `record_outcome` has no work id, and
-    // `status` takes one (`cli.rs`'s `WORK-ID`). Printing the hint with a
-    // hole in it would be worse than saying which step comes first.
+    ));
+    lines.push(status_hint(row, " --upgrade"));
+    lines
+}
+
+/// The `run antseal status …` line, with whatever flags the caller's advice
+/// actually needs.
+///
+/// A work that never reached `record_outcome` has no work id, and `status`
+/// takes one (`cli.rs`'s `WORK-ID`). Printing the hint with a hole in it
+/// would be worse than saying which step comes first.
+fn status_hint(row: &WorkRow, flags: &str) -> String {
     match row.work_id.as_ref() {
-        Some(work_id) => lines.push(format!(
-            "  run antseal status {} --upgrade",
+        Some(work_id) => format!(
+            "  run antseal status {}{flags}",
             crate::pipeline::hex32(work_id)
-        )),
-        None => lines.push(
-            "  no work id yet — finish this seal first, then run antseal status <id> --upgrade"
-                .to_owned(),
+        ),
+        None => format!(
+            "  no work id yet — finish this seal first, then run antseal status <id>{flags}"
         ),
     }
+}
+
+/// The damaged-slot block for one row: nothing at all when every slot read.
+///
+/// One block per **reason present**, in a fixed order, because R1's three
+/// reasons demand three different next steps and only one of them is anybody's
+/// fault. A single merged sentence would have to pick one of the three, and
+/// picking wrong is how *"upgrade antseal"* becomes *"your vault is damaged"*.
+fn damage_lines(row: &WorkRow) -> Vec<String> {
+    let damage = &row.damaged_anchors;
+    if damage.is_intact() {
+        return Vec::new();
+    }
+    let total = damage.total_slots;
+    let mut lines = Vec::new();
+
+    // Partitioned by a **wildcard-free match**, not by comparing
+    // `reason.name()` to a literal: a fourth reason must be given a
+    // rendering at this line rather than falling into no group and silently
+    // printing nothing at all. That is the same failure D100 R10.4 plants a
+    // fault for one layer up — a state that exists, has a name, compiles
+    // clean, and is never produced.
+    let mut undecodable: Vec<&DamagedSlot> = Vec::new();
+    let mut newer: Vec<&DamagedSlot> = Vec::new();
+    let mut moved: Vec<&DamagedSlot> = Vec::new();
+    for slot in &damage.slots {
+        match &slot.reason {
+            DamageReason::Undecodable { .. } => undecodable.push(slot),
+            DamageReason::NewerRecord { .. } => newer.push(slot),
+            DamageReason::SlotMoved => moved.push(slot),
+        }
+    }
+
+    if !undecodable.is_empty() {
+        let detail = undecodable
+            .iter()
+            .map(|slot| format!("{}: {}", slot.slot, slot.reason.detail()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "  anchors: {} of {total} slot(s) unreadable — {detail}",
+            undecodable.len()
+        ));
+        lines.push(format!(
+            "{}; the other anchors are counted as if they were absent",
+            status_hint(row, "")
+        ));
+    }
+
+    if !newer.is_empty() {
+        let version = damage.newest_record_version().unwrap_or_default();
+        let slots = newer
+            .iter()
+            .map(|slot| slot.slot.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "  anchors: {} of {total} slot(s) written by a newer antseal (record format v{version}) \
+             — {slots}",
+            newer.len()
+        ));
+        lines.push(
+            "  upgrade antseal to read them; the others are counted as if they were absent"
+                .to_owned(),
+        );
+    }
+
+    if !moved.is_empty() {
+        let slots = moved
+            .iter()
+            .map(|slot| slot.slot.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "  anchors: {} slot(s) changed while being read — {slots} (another antseal may be \
+             running)",
+            moved.len()
+        ));
+        lines.push("  re-run antseal list".to_owned());
+    }
+
     lines
 }
 
@@ -580,50 +819,82 @@ struct NagRead {
     pending: u64,
 }
 
-/// Read one work's anchor set and classify it (**U25**).
+/// One work's whole anchor answer: the nag, and the damage beside it.
 ///
-/// `Ok(None)` means *unclassifiable*: artifacts exist but the
+/// Two facts and two fields, not one field carrying both — `nag: None`
+/// already means *"no recoverable `anchor_digest`"*, and a work can be
+/// unclassifiable **and** damaged at once (R4).
+struct AnchorRead {
+    /// `None` when the class could not be computed at all.
+    nag: Option<NagRead>,
+    /// The slots that would not read, and the slot total.
+    damaged: AnchorDamage,
+}
+
+/// Read one work's anchor set and classify it (**U25**, **D100 R3**).
+///
+/// `nag: None` means *unclassifiable*: artifacts exist but the
 /// `anchor_digest` they commit cannot be recovered, so neither A15's rule
 /// nor A18's evaluator can be run over them. See [`WorkRow::nag`] for why
-/// that is rendered rather than failed.
+/// that is rendered rather than failed — and note that the damage half is
+/// filled in either way, because a work can be both.
 ///
 /// # Errors
 ///
 /// Whatever [`StoredAnchors::read`] and
-/// [`recorded_plan`](crate::pipeline::journal::recorded_plan) raise —
-/// store-level failures, [`JournalError::NewerRecord`] for a record from a
-/// newer antseal, and [`JournalError::Corrupt`] for a malformed one. None
-/// is softened.
+/// [`recorded_plan`](crate::pipeline::journal::recorded_plan) raise. For the
+/// anchor set that is the enumeration and cipher-layer classes only: a
+/// per-record schema refusal or a `NewerRecord` **arrives as data** here
+/// (R5), because the split is at the AEAD boundary and nothing on the far
+/// side of it is observable to a caller who has not already demonstrated the
+/// passphrase.
 fn anchor_nag(
     store: &WorkStore<'_>,
     seal_id: &SealId,
     work_id: Option<[u8; 32]>,
     verify_at_unix: u64,
-) -> Result<Option<NagRead>, JournalError> {
+) -> Result<AnchorRead, JournalError> {
     let anchors = StoredAnchors::read(store, seal_id)?;
-    // No artifacts is a complete answer on its own, and it is the only
+    // `list` is a reporter, so it takes the reporting door and receives the
+    // damage whether it asked for it or not.
+    let (intact, damaged_slots) = anchors.intact_and_damaged();
+    let damaged = AnchorDamage {
+        slots: damaged_slots.to_vec(),
+        total_slots: anchors.total_slots(),
+    };
+    // No slots at all is a complete answer on its own, and it is the only
     // branch that needs no digest — which is why it comes first rather
-    // than falling out of the classifier with a fabricated one.
+    // than falling out of the classifier with a fabricated one. A work whose
+    // every slot is damaged does **not** take it: it has anchors, it just
+    // cannot read them, and calling that UNANCHORED is the lie R7 closes.
     if anchors.is_empty() {
-        return Ok(Some(NagRead {
-            nag: NagState::Unanchored,
-            pending: 0,
-        }));
+        return Ok(AnchorRead {
+            nag: Some(NagRead {
+                nag: NagState::Unanchored,
+                pending: 0,
+            }),
+            damaged,
+        });
     }
     // `anchor_digest` is SHA-256 of the plaintext manifest envelope and is
     // not on `WorkRecord`; the journaled plan is where the bytes are, and
     // S29 keeps that record across `vault import` (module docs).
     let Some(manifest_bytes) = recorded_plan(store, seal_id)?.and_then(|plan| plan.manifest_bytes)
     else {
-        return Ok(None);
+        return Ok(AnchorRead { nag: None, damaged });
     };
-    Ok(Some(classify_anchors(
-        anchors.ots(),
-        anchors.tsa(),
+    let nag = classify_anchors(
+        intact.ots(),
+        intact.tsa(),
+        damaged.slots.len(),
         anchor_digest(&manifest_bytes).as_bytes(),
         work_id.unwrap_or_default(),
         verify_at_unix,
-    )))
+    );
+    Ok(AnchorRead {
+        nag: Some(nag),
+        damaged,
+    })
 }
 
 /// Run A15's per-work nag rule over one work's decoded artifacts.
@@ -642,6 +913,7 @@ fn anchor_nag(
 fn classify_anchors(
     ots: &[(String, AnchorArtifact)],
     tsa: &[(String, AnchorArtifact)],
+    unreadable_records: usize,
     anchor_digest: &[u8; 32],
     work_id: [u8; 32],
     verify_at_unix: u64,
@@ -649,6 +921,11 @@ fn classify_anchors(
     let work = PendingWork {
         work_id,
         anchor_digest: *anchor_digest,
+        // D100 R7.3: the damaged slots never became artifacts, so A15 cannot
+        // see them in `ots`/`tsa` and must be told the count. Deciding
+        // `Unreadable` here instead would be a second nag rule in the CLI —
+        // the shape D98 rejected its option (c) for.
+        unreadable_records,
         ots: ots
             .iter()
             .map(|(_, artifact)| StoredOtsAnchor {
@@ -726,6 +1003,11 @@ pub struct ListingCounts {
     /// orthogonal to every count above. **Not** the same set as
     /// `unanchored`: that one is the `--no-anchor` flag (module docs).
     pub pending_anchor_nags: usize,
+    /// Works holding at least one anchor slot whose record could not be
+    /// interpreted (**D100 R3/R9**). A fourth orthogonal predicate, counted
+    /// in **works** like the two above it, and the number a CI job tests
+    /// instead of an exit code.
+    pub damaged_anchors: usize,
 }
 
 fn row_json(row: &WorkRow) -> serde_json::Value {
@@ -749,6 +1031,19 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
         // anchor class could not be computed (see `WorkRow::nag`).
         "pending_anchors": row.pending_anchors,
         "nag": row.nag_name(),
+        // D100 R3. **Empty, never `null`**, for a healthy work — deliberately,
+        // because `null` would re-create the `Some(0)`/`None` ambiguity U25 had
+        // to disambiguate at cost, and there is no not-computable case here:
+        // collecting the damaged set is what the reader now does. Present
+        // unconditionally for the same reason the human block is (R3): a key
+        // that only appeared on damage would leave a damaged work looking
+        // exactly like a clean one under `anchored`/`attested-only`.
+        "damaged_anchors": row
+            .damaged_anchors
+            .slots
+            .iter()
+            .map(damaged_slot_json)
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -947,6 +1242,7 @@ mod tests {
         let read = classify_anchors(
             &ots(OTS_PENDING),
             &tsa(TSA_PINNED),
+            0,
             &fixture_digest(),
             [0xA1; 32],
             NAG_VERIFY_AT_UNIX,
@@ -966,6 +1262,7 @@ mod tests {
         let read = classify_anchors(
             &ots(OTS_PENDING),
             &[],
+            0,
             &fixture_digest(),
             [0xA2; 32],
             NAG_VERIFY_AT_UNIX,
@@ -980,7 +1277,14 @@ mod tests {
     /// not the `None` that means "could not tell".
     #[test]
     fn a_work_with_no_artifacts_is_unanchored_and_never_pending() {
-        let read = classify_anchors(&[], &[], &fixture_digest(), [0xA3; 32], NAG_VERIFY_AT_UNIX);
+        let read = classify_anchors(
+            &[],
+            &[],
+            0,
+            &fixture_digest(),
+            [0xA3; 32],
+            NAG_VERIFY_AT_UNIX,
+        );
         assert_eq!(read.nag, NagState::Unanchored);
         assert!(!read.nag.nags());
         assert_eq!(read.pending, 0);
@@ -1011,6 +1315,7 @@ mod tests {
         let read = classify_anchors(
             &ots(OTS_PENDING),
             &tsa(TSA_UNPINNED),
+            0,
             &fixture_digest(),
             [0xA4; 32],
             NAG_VERIFY_AT_UNIX,
@@ -1036,6 +1341,7 @@ mod tests {
                 classify_anchors(
                     &ots(OTS_PENDING),
                     &tsa(TSA_PINNED),
+                    0,
                     &fixture_digest(),
                     [0xA5; 32],
                     verify_at,
@@ -1048,6 +1354,7 @@ mod tests {
                 classify_anchors(
                     &ots(OTS_PENDING),
                     &tsa(TSA_UNPINNED),
+                    0,
                     &fixture_digest(),
                     [0xA5; 32],
                     verify_at,
@@ -1059,51 +1366,106 @@ mod tests {
         }
     }
 
-    /// **Recorded, not endorsed.** A15 drops `Unreadable` artifacts before
-    /// testing for pending ones and then falls through to `AttestedOnly`,
-    /// so an `.ots` that does not parse against this work's
-    /// `anchor_digest` lands in the state whose doc says *"every OTS
-    /// anchor is already attested"* — and stops nagging. `list` therefore
-    /// never renders the word "attested" off that state (module docs).
-    /// This pins the behaviour so a fix upstream shows up as a diff here.
+    /// **A102, fixed** (D100 R7). A15 used to drop `Unreadable` artifacts
+    /// before testing for pending ones and then fall through to
+    /// `AttestedOnly`, so an `.ots` that does not parse against this work's
+    /// `anchor_digest` landed in the state whose doc says *"every OTS anchor
+    /// is already attested"* — a state `list` could never render the word
+    /// "attested" off without publishing the conflation.
+    ///
+    /// It now lands in `Unreadable`, which is the **name** A102 needed. The
+    /// boolean is unchanged and deliberately so: `nags()` stays `false`,
+    /// because the block it drives would read `ANCHORS PENDING: 0` and
+    /// instruct `--upgrade`, which cannot help bytes nothing can parse. This
+    /// row was renamed rather than deleted, per A102's own Accept.
     #[test]
-    fn an_unreadable_ots_is_folded_into_attested_only_and_stops_nagging() {
+    fn an_unreadable_ots_has_its_own_class_and_still_does_not_nag() {
         let read = classify_anchors(
             &ots(OTS_FOREIGN),
             &[],
+            0,
             &fixture_digest(),
             [0xA6; 32],
             NAG_VERIFY_AT_UNIX,
         );
-        assert_eq!(read.nag, NagState::AttestedOnly);
-        assert!(!read.nag.nags(), "A15's rule, recorded rather than agreed");
+        assert_eq!(read.nag, NagState::Unreadable);
+        assert!(
+            !read.nag.nags(),
+            "the state changed; the unsatisfiable nag it would have printed is still refused"
+        );
         assert_eq!(read.pending, 0);
     }
 
+    /// **D100 R7.3, through `list`'s own seam**: a record the vault codec
+    /// refused never becomes an artifact, so the count is how A15 learns it
+    /// exists — and a work with nothing but damaged slots must not classify
+    /// `unanchored`, which would say *"no anchors at all"* about a work that
+    /// has anchors it cannot read.
+    #[test]
+    fn a_work_whose_only_slots_are_damaged_is_unreadable_not_unanchored() {
+        let read = classify_anchors(
+            &[],
+            &[],
+            1,
+            &fixture_digest(),
+            [0xA7; 32],
+            NAG_VERIFY_AT_UNIX,
+        );
+        assert_eq!(read.nag, NagState::Unreadable);
+        assert!(!read.nag.nags());
+        assert_eq!(read.pending, 0);
+
+        // The instrument check: the identical call with nothing damaged is
+        // the UNANCHORED work, so the row above is testing the count and not
+        // the empty slices.
+        let empty = classify_anchors(
+            &[],
+            &[],
+            0,
+            &fixture_digest(),
+            [0xA7; 32],
+            NAG_VERIFY_AT_UNIX,
+        );
+        assert_eq!(empty.nag, NagState::Unanchored);
+    }
+
     /// Every class has its own kebab spelling, and an unclassified row has
-    /// none — four states plus the absent one, all distinct.
+    /// none — every state plus the absent one, all distinct.
+    ///
+    /// **Rewritten over [`NagState::ALL`]** (D100 R8). It used to enumerate a
+    /// hand-written five-element array, which is a shape that **passes while
+    /// under-covering**: a sixth state does not redden it, it simply is not
+    /// asked about. `nag_name`'s wildcard-free match used to force the
+    /// production edit and this row would then have gone green at 5-of-6.
+    /// Driven off the enum, its length cannot disagree with the enum's.
     #[test]
     fn each_nag_class_has_its_own_name() {
-        let names: Vec<Option<&'static str>> = [
-            Some(NagState::Anchored),
-            Some(NagState::OnlyPendingOts),
-            Some(NagState::AttestedOnly),
-            Some(NagState::Unanchored),
-            None,
-        ]
-        .into_iter()
-        .map(|nag| row_with(nag).nag_name())
-        .collect();
+        let names: Vec<Option<&'static str>> = NagState::ALL
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .map(|nag| row_with(nag).nag_name())
+            .collect();
         assert_eq!(
             names,
             vec![
                 Some("anchored"),
                 Some("only-pending-ots"),
+                Some("unreadable"),
                 Some("attested-only"),
                 Some("unanchored"),
                 None,
             ]
         );
+        assert_eq!(
+            names.len(),
+            NagState::ALL.len() + 1,
+            "the covered set is the enum's own, plus the unclassified row"
+        );
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "two rows share one spelling");
     }
 
     /// The nag block is two lines and names the command, and an
@@ -1126,7 +1488,11 @@ mod tests {
         row.work_id = None;
         assert!(nag_lines(&row)[1].contains("no work id yet"));
 
-        // Every non-nagging class renders nothing at all.
+        // The silent classes render nothing at all — and this list is written
+        // out rather than derived from `NagState::ALL` on purpose: it is a
+        // claim about *which* states are silent, and `NagState::Unreadable`
+        // is deliberately not one of them (R7.4). A sixth state joins one
+        // list or the other by a decision, never by a default.
         for nag in [
             NagState::Anchored,
             NagState::AttestedOnly,
@@ -1134,9 +1500,159 @@ mod tests {
         ] {
             assert!(nag_lines(&row_with(Some(nag))).is_empty(), "{nag:?}");
         }
+        assert!(
+            !nag_lines(&row_with(Some(NagState::Unreadable))).is_empty(),
+            "`Unreadable` does not nag, but it is not silent either — it is the one class \
+             whose whole purpose is to stop a row saying nothing about anchors nothing can \
+             read (D100 R7.4)"
+        );
+        assert_eq!(
+            NagState::ALL.len(),
+            4 + 1,
+            "three silent, one nagging, one that renders without nagging — a sixth state \
+             must be sorted into one of the three groups above, and this length is what \
+             stops it being forgotten"
+        );
         let unclassified = nag_lines(&row_with(None));
         assert_eq!(unclassified.len(), 1);
         assert!(unclassified[0].contains("unclassified"));
+    }
+
+    /// **D100 R3**: the damage block is two lines, names the slot, carries
+    /// the decoder's message, says how much, and gives a **satisfiable** next
+    /// step — one per reason, because the three reasons imply three different
+    /// actions and only one of them is the user's fault.
+    #[test]
+    fn the_damage_block_names_the_slot_the_count_and_a_satisfiable_next_step() {
+        let undecodable = row_damaged(
+            Some(NagState::Anchored),
+            DamageReason::Undecodable {
+                detail: "anchor slot family disagrees with the record kind",
+            },
+            3,
+        );
+        let lines = nag_lines(&undecodable);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            "  anchors: 1 of 3 slot(s) unreadable — tsa-1: anchor slot family disagrees with \
+             the record kind"
+        );
+        assert!(lines[1].contains(&format!("run antseal status {}", "a1".repeat(32))));
+        assert!(
+            !lines[1].contains("--upgrade"),
+            "`--upgrade` cannot help a record nothing can open; unsatisfiable advice is what \
+             R7 refused"
+        );
+
+        // "upgrade antseal" is a different sentence and is not the user's
+        // fault, so it must not be reached through the malformed wording.
+        let newer = nag_lines(&row_damaged(
+            Some(NagState::Anchored),
+            DamageReason::NewerRecord { found: 3 },
+            3,
+        ));
+        assert_eq!(newer.len(), 2);
+        assert!(newer[0].contains("written by a newer antseal (record format v3)"));
+        assert!(newer[1].contains("upgrade antseal to read them"));
+        assert!(!newer[0].contains("unreadable"));
+
+        // …and a slot that moved is not damage at all: `list` takes no lock,
+        // so a concurrent seal makes it expected.
+        let moved = nag_lines(&row_damaged(
+            Some(NagState::Anchored),
+            DamageReason::SlotMoved,
+            3,
+        ));
+        assert_eq!(moved.len(), 2);
+        assert!(moved[0].contains("changed while being read"));
+        assert!(moved[0].contains("another antseal may be running"));
+        assert_eq!(moved[1], "  re-run antseal list");
+        assert!(
+            !moved[0].contains("unreadable") && !moved[0].contains("newer"),
+            "rendering a healthy mid-seal vault as damaged would be a new false accusation \
+             replacing the old one"
+        );
+    }
+
+    /// **D100 R3, the honesty guarantee**: the block is unconditional on
+    /// damage.
+    ///
+    /// `NagState::Anchored` and `AttestedOnly` print nothing at all, so a
+    /// block that only appeared when the row *also* nagged would leave a
+    /// damaged work visually identical to a clean one — which is the failure
+    /// the whole decision exists to remove. And a row that both nags and is
+    /// damaged prints **both**, because `--upgrade` genuinely can help the
+    /// pending half (R7.2's "satisfiable advice wins").
+    #[test]
+    fn the_damage_block_is_unconditional_and_does_not_swallow_a_satisfiable_nag() {
+        for nag in [NagState::Anchored, NagState::AttestedOnly] {
+            let row = row_damaged(Some(nag), DamageReason::Undecodable { detail: "junk" }, 2);
+            assert!(
+                nag_lines(&row_with(Some(nag))).is_empty(),
+                "the premise: {nag:?} renders nothing of its own"
+            );
+            assert_eq!(
+                nag_lines(&row).len(),
+                2,
+                "{nag:?} plus damage must not render as {nag:?} alone"
+            );
+        }
+
+        let mut mixed = row_damaged(
+            Some(NagState::OnlyPendingOts),
+            DamageReason::Undecodable { detail: "junk" },
+            2,
+        );
+        mixed.pending_anchors = Some(3);
+        let lines = nag_lines(&mixed);
+        assert_eq!(lines.len(), 4, "the damage block AND the pending block");
+        assert!(lines[0].contains("1 of 2 slot(s) unreadable"));
+        assert!(lines[2].contains("ANCHORS PENDING: 3"));
+        assert!(lines[3].ends_with("--upgrade"));
+
+        // An unclassifiable row can be damaged too — two facts, two lines.
+        let unclassified = row_damaged(None, DamageReason::SlotMoved, 2);
+        let lines = nag_lines(&unclassified);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].contains("unclassified"));
+    }
+
+    /// **R7.4**: `Unreadable` reached with no *record* damage still renders,
+    /// and names a command that can actually say more.
+    ///
+    /// This is the hole the damage block alone would leave: the artifact
+    /// bytes do not parse, the record opened fine, so there is no damaged
+    /// slot to describe — and before D100 the row printed nothing at all
+    /// while calling itself `attested-only`.
+    #[test]
+    fn an_unreadable_row_with_no_record_damage_still_says_so() {
+        let row = {
+            let mut row = row_with(Some(NagState::Unreadable));
+            row.work_id = Some([0xA1; 32]);
+            row
+        };
+        let lines = nag_lines(&row);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("anchors: unreadable"));
+        assert!(lines[0].contains("do not parse against what it sealed"));
+        assert_eq!(
+            lines[1],
+            format!("  run antseal status {}", "a1".repeat(32)),
+            "satisfiable: `status` renders it as `invalid`, which is a real answer"
+        );
+        assert!(!lines[1].contains("--upgrade"));
+
+        // And when the damage IS in the records, that block speaks instead —
+        // it has a slot name and a reason, which this one cannot have.
+        let damaged = row_damaged(
+            Some(NagState::Unreadable),
+            DamageReason::Undecodable { detail: "junk" },
+            1,
+        );
+        let lines = nag_lines(&damaged);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("1 of 1 slot(s) unreadable — tsa-1: junk"));
     }
 
     /// A bare row carrying one nag class, for the rendering assertions.
@@ -1155,7 +1671,22 @@ mod tests {
             resume: None,
             pending_anchors: nag.map(|_| 0),
             nag,
+            damaged_anchors: AnchorDamage::default(),
         }
+    }
+
+    /// A row carrying one damaged slot, for the D100 rendering assertions.
+    fn row_damaged(nag: Option<NagState>, reason: DamageReason, total_slots: usize) -> WorkRow {
+        let mut row = row_with(nag);
+        row.work_id = Some([0xA1; 32]);
+        row.damaged_anchors = AnchorDamage {
+            slots: vec![DamagedSlot {
+                slot: "tsa-1".to_owned(),
+                reason,
+            }],
+            total_slots,
+        };
+        row
     }
 
     fn shaping() -> SealShapingFlags {

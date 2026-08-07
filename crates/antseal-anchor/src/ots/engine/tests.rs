@@ -55,6 +55,7 @@ fn work_with(artifact: &[u8]) -> PendingWork {
             upgrade: None,
         }],
         tsa: Vec::new(),
+        unreadable_records: 0,
     }
 }
 
@@ -79,6 +80,7 @@ fn no_failure_mode_produces_an_error_the_host_command_could_inherit() {
                 upgrade: None,
             }],
             tsa: Vec::new(),
+            unreadable_records: 0,
         },
         // A well-formed artifact under the wrong digest.
         PendingWork {
@@ -89,6 +91,7 @@ fn no_failure_mode_produces_an_error_the_host_command_could_inherit() {
                 upgrade: None,
             }],
             tsa: Vec::new(),
+            unreadable_records: 0,
         },
         // A real artifact whose calendars are unreachable at their real,
         // allowlisted hostnames — no network is available in a test process,
@@ -100,6 +103,7 @@ fn no_failure_mode_produces_an_error_the_host_command_could_inherit() {
             anchor_digest: fixtures::DIGEST_A,
             ots: Vec::new(),
             tsa: Vec::new(),
+            unreadable_records: 0,
         },
     ];
 
@@ -247,6 +251,7 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
             upgrade: None,
         }],
         tsa: Vec::new(),
+        unreadable_records: 0,
     });
     assert_eq!(
         no_header.ots[0].state,
@@ -270,6 +275,7 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
             )),
         }],
         tsa: Vec::new(),
+        unreadable_records: 0,
     });
     assert_eq!(with_header.ots[0].state, OtsAnchorState::Attested);
     assert_eq!(with_header.ots[0].fetch_date, Some(1_754_211_818));
@@ -422,6 +428,7 @@ fn an_artifact_naming_a_hostile_calendar_is_refused_without_a_request() {
                 upgrade: None,
             }],
             tsa: Vec::new(),
+            unreadable_records: 0,
         }],
         &[],
         UpgradeBudget::interactive(),
@@ -497,13 +504,13 @@ fn tsa(verified: bool) -> StoredTsaAnchor {
     }
 }
 
-/// U25's fixture matrix, as four distinct states.
+/// U25's fixture matrix, as distinct states.
 ///
-/// The four are not a boolean with decoration: "no nag" has three different
+/// They are not a boolean with decoration: "no nag" has four different
 /// meanings here, and rendering them identically is exactly how an UNANCHORED
 /// work comes to look merely pending.
 #[test]
-fn the_nag_matrix_distinguishes_all_four_states() {
+fn the_nag_matrix_distinguishes_its_states() {
     // A verified TSA token: headline-eligible offline, nothing to chase.
     let anchored = work_status(&PendingWork {
         work_id: [1; 32],
@@ -513,6 +520,7 @@ fn the_nag_matrix_distinguishes_all_four_states() {
             upgrade: None,
         }],
         tsa: vec![tsa(true)],
+        unreadable_records: 0,
     });
     assert_eq!(anchored.nag, NagState::Anchored);
     assert!(!anchored.nag.nags());
@@ -531,6 +539,7 @@ fn the_nag_matrix_distinguishes_all_four_states() {
         anchor_digest: fixtures::DIGEST_A,
         ots: Vec::new(),
         tsa: Vec::new(),
+        unreadable_records: 0,
     });
     assert_eq!(unanchored.nag, NagState::Unanchored);
     assert!(!unanchored.nag.nags());
@@ -545,6 +554,7 @@ fn the_nag_matrix_distinguishes_all_four_states() {
             upgrade: None,
         }],
         tsa: vec![tsa(false)],
+        unreadable_records: 0,
     });
     assert_eq!(unverified.nag, NagState::OnlyPendingOts);
 }
@@ -552,6 +562,15 @@ fn the_nag_matrix_distinguishes_all_four_states() {
 /// An artifact that does not parse is `Unreadable` and does not silently
 /// present as pending — and it cannot produce a nag that `--upgrade` could
 /// never satisfy.
+///
+/// The fifth state is what let the other three assertions keep their meaning:
+/// `nags()` stays false, so the unsatisfiable nag this test refuses is still
+/// refused — what changed is only that the state no longer borrows the name of
+/// a good outcome (D100 R7.1). A102's Accept row asked for a work whose only
+/// anchor is unreadable to *"nag"*, and that literal reading is what this test
+/// was right to refuse: `nags()` drives the two-line `ANCHORS PENDING: 0` /
+/// `--upgrade` block, whose count would be a lie and whose instruction cannot
+/// help bytes nothing can parse. A102 needed the **name**.
 #[test]
 fn an_unreadable_artifact_is_reported_as_such() {
     let status = work_status(&PendingWork {
@@ -562,11 +581,164 @@ fn an_unreadable_artifact_is_reported_as_such() {
             upgrade: None,
         }],
         tsa: Vec::new(),
+        unreadable_records: 0,
     });
     assert_eq!(status.ots[0].state, OtsAnchorState::Unreadable);
     assert!(status.ots[0].pending_uris.is_empty());
-    assert_eq!(status.nag, NagState::AttestedOnly);
+    assert_eq!(status.nag, NagState::Unreadable);
     assert!(!status.nag.nags());
+}
+
+/// **D100 R7.3**: a record the *vault codec* refused never reaches
+/// [`PendingWork::ots`], so a work whose only slots are damaged would classify
+/// `Unanchored` — *"no anchors at all"* — without the count.
+///
+/// Both halves are asserted, because they are two different inputs to one
+/// condition: the unparseable `.ots` above arrives as an artifact, and this one
+/// arrives as a number.
+#[test]
+fn a_record_the_vault_codec_refused_is_not_an_unanchored_work() {
+    let damaged_only = work_status(&PendingWork {
+        work_id: [6; 32],
+        anchor_digest: fixtures::DIGEST_A,
+        ots: Vec::new(),
+        tsa: Vec::new(),
+        unreadable_records: 1,
+    });
+    assert_eq!(
+        damaged_only.nag,
+        NagState::Unreadable,
+        "a work with one undecodable record has anchors; it does not have none"
+    );
+    assert!(!damaged_only.nag.nags());
+
+    // …and it does not over-claim damage over a work that still holds a
+    // headline-eligible anchor, nor steal a satisfiable `--upgrade` hint from
+    // one that still has something pending (R7.2's placement argument).
+    let with_token = work_status(&PendingWork {
+        work_id: [7; 32],
+        anchor_digest: fixtures::DIGEST_A,
+        ots: Vec::new(),
+        tsa: vec![tsa(true)],
+        unreadable_records: 1,
+    });
+    assert_eq!(with_token.nag, NagState::Anchored);
+
+    let with_pending = work_status(&PendingWork {
+        work_id: [8; 32],
+        anchor_digest: fixtures::DIGEST_A,
+        ots: vec![StoredOtsAnchor {
+            artifact: fixtures::MERGED_A.to_vec(),
+            upgrade: None,
+        }],
+        tsa: Vec::new(),
+        unreadable_records: 1,
+    });
+    assert_eq!(with_pending.nag, NagState::OnlyPendingOts);
+    assert!(with_pending.nag.nags());
+}
+
+/// **D100 R8 / A103**: every state has its own kebab name, and the set is the
+/// enum's own rather than a hand-copied array.
+#[test]
+fn every_nag_state_has_its_own_name() {
+    let names: Vec<&'static str> = NagState::ALL.iter().map(|state| state.name()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "anchored",
+            "only-pending-ots",
+            "unreadable",
+            "attested-only",
+            "unanchored",
+        ]
+    );
+    let mut unique = names.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), names.len(), "two states share a name");
+    // `ALL` is the enum, not a copy of it: a variant added without a row here
+    // would make this length disagree with the array literal's, and the array
+    // literal is what the compiler checks against the declared length.
+    assert_eq!(NagState::ALL.len(), 5);
+}
+
+/// **D100 R10.4 — the reachability row nothing else provides.**
+///
+/// `work_status`'s classifier is an `if`/`else` chain, not a `match`, so a
+/// variant can exist, have a name, be enumerated in [`NagState::ALL`], compile
+/// clean and **never be constructed**. Naming a state is not the same as
+/// producing one, and only this asserts the second.
+///
+/// Proven red the way A104 says a new suite has to be: delete R7.2's
+/// `has_unreadable` branch and `Unreadable` becomes unreachable while every
+/// other row in this file — including `every_nag_state_has_its_own_name` — stays
+/// green.
+#[test]
+fn every_nag_state_is_actually_produced_by_the_classifier() {
+    let junk = || StoredOtsAnchor {
+        artifact: b"junk".to_vec(),
+        upgrade: None,
+    };
+    let merged = || StoredOtsAnchor {
+        artifact: fixtures::MERGED_A.to_vec(),
+        upgrade: None,
+    };
+
+    let rows: Vec<PendingWork> = vec![
+        // Anchored: a verified token.
+        PendingWork {
+            work_id: [0x10; 32],
+            anchor_digest: fixtures::DIGEST_A,
+            ots: Vec::new(),
+            tsa: vec![tsa(true)],
+            unreadable_records: 0,
+        },
+        // OnlyPendingOts: one pending `.ots`, nothing stronger.
+        PendingWork {
+            work_id: [0x11; 32],
+            anchor_digest: fixtures::DIGEST_A,
+            ots: vec![merged()],
+            tsa: Vec::new(),
+            unreadable_records: 0,
+        },
+        // Unreadable: bytes that do not parse, and nothing else.
+        PendingWork {
+            work_id: [0x12; 32],
+            anchor_digest: fixtures::DIGEST_A,
+            ots: vec![junk()],
+            tsa: Vec::new(),
+            unreadable_records: 0,
+        },
+        // AttestedOnly: an anchor exists, nothing is pending, nothing is
+        // unreadable — a stored token that did not verify against today's
+        // root store, and no `.ots` beside it.
+        PendingWork {
+            work_id: [0x13; 32],
+            anchor_digest: fixtures::DIGEST_A,
+            ots: Vec::new(),
+            tsa: vec![tsa(false)],
+            unreadable_records: 0,
+        },
+        // Unanchored: nothing at all.
+        PendingWork {
+            work_id: [0x14; 32],
+            anchor_digest: fixtures::DIGEST_A,
+            ots: Vec::new(),
+            tsa: Vec::new(),
+            unreadable_records: 0,
+        },
+    ];
+
+    let produced: Vec<NagState> = rows.iter().map(|work| work_status(work).nag).collect();
+    for state in NagState::ALL {
+        assert!(
+            produced.contains(&state),
+            "no fixture row produces {state:?} — the classifier's if/else chain gives no \
+             compiler help, so a named-but-unreachable state is exactly what this row exists \
+             to catch"
+        );
+    }
 }
 
 /// The status backend is pure: no clock, no network, no vault. Called twice on

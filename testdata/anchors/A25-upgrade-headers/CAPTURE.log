@@ -1,0 +1,30 @@
+# A25 day-3 mainnet block header capture (wave 9)
+#
+# Maintainer authorisation for this capture was given in-session on
+# 2026-08-07: express confirmation to fetch Bitcoin mainnet block
+# headers for heights 960767/960768/960771 from blockstream.info and
+# mempool.space. Reads only - no submission, no account, no
+# credentials, no digest sent. Public block data in both directions.
+#
+# Why these three heights: they are the attestations carried by the
+# six committed 2026-08-03 upgrade responses in ../A25-bootstrap/
+# upgraded/ - alice=960767, bob=960768, catallaxy=960771. Until now
+# the only committed esplora headers were for height 800000, so the
+# project could not promote its OWN upgraded .ots to proven.
+#
+# Two endpoints per height: A16's must-agree rule is byte-identity
+# over the header, and an esplora header is a consensus object.
+utc_start=2026-08-07T10:36:32Z
+height url=https://blockstream.info/api/block-height/960767 http=200 bytes=64 sha256=fa9818b58afcb159f581475628a28f1fbddef50678065428552986e7788f5ebc utc=2026-08-07T10:36:42Z
+header url=https://blockstream.info/api/block/00000000000000000000553c93eb174557abe089e9c59a7e8f3eb7d116eb803e/header http=200 bytes=160 sha256=4c30cf73a2e103e5324514d2b102aa10612caf1c1cc039783c5553a185cff59a utc=2026-08-07T10:36:49Z
+height url=https://mempool.space/api/block-height/960767 http=200 bytes=64 sha256=fa9818b58afcb159f581475628a28f1fbddef50678065428552986e7788f5ebc utc=2026-08-07T10:36:53Z
+header url=https://mempool.space/api/block/00000000000000000000553c93eb174557abe089e9c59a7e8f3eb7d116eb803e/header http=200 bytes=160 sha256=4c30cf73a2e103e5324514d2b102aa10612caf1c1cc039783c5553a185cff59a utc=2026-08-07T10:36:57Z
+height url=https://blockstream.info/api/block-height/960768 http=200 bytes=64 sha256=07aca3c162dd7690a3d82b0df14b77d952958b51507c6baaefebfe51abef7a66 utc=2026-08-07T10:37:00Z
+header url=https://blockstream.info/api/block/00000000000000000001f1433efdac61c438f857b0da7ce972ba1b47b7e14936/header http=200 bytes=160 sha256=a3fdac6bf83b92e9258f52518776e17f45e915182dc589837777721c3bf1c8f0 utc=2026-08-07T10:37:07Z
+height url=https://mempool.space/api/block-height/960768 http=200 bytes=64 sha256=07aca3c162dd7690a3d82b0df14b77d952958b51507c6baaefebfe51abef7a66 utc=2026-08-07T10:37:13Z
+header url=https://mempool.space/api/block/00000000000000000001f1433efdac61c438f857b0da7ce972ba1b47b7e14936/header http=200 bytes=160 sha256=a3fdac6bf83b92e9258f52518776e17f45e915182dc589837777721c3bf1c8f0 utc=2026-08-07T10:37:16Z
+height url=https://blockstream.info/api/block-height/960771 http=200 bytes=64 sha256=a0d9027bbd63ba8fec529c2553a667bf0f3b14ae16e8b81d76ffbbcf8d5a4621 utc=2026-08-07T10:37:20Z
+header url=https://blockstream.info/api/block/00000000000000000001211cb8c0d4512a4c2d60450b9c2d8c9d03866046a4be/header http=200 bytes=160 sha256=d23e8fadc9414d5508b806bab6a2c76310376461a22d07a126ddecd00b24119d utc=2026-08-07T10:37:24Z
+height url=https://mempool.space/api/block-height/960771 http=200 bytes=64 sha256=a0d9027bbd63ba8fec529c2553a667bf0f3b14ae16e8b81d76ffbbcf8d5a4621 utc=2026-08-07T10:37:27Z
+header url=https://mempool.space/api/block/00000000000000000001211cb8c0d4512a4c2d60450b9c2d8c9d03866046a4be/header http=200 bytes=160 sha256=d23e8fadc9414d5508b806bab6a2c76310376461a22d07a126ddecd00b24119d utc=2026-08-07T10:37:30Z
+utc_end=2026-08-07T10:37:34Z

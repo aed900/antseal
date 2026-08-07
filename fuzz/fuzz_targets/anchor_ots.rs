@@ -26,10 +26,22 @@
 //!   `anchor-`: the `.ots` codec has its own namespace under D91 §6.1, and
 //!   an escape into a neighbouring one would mean a rejection is being
 //!   reported as the wrong *kind* of failure.
-//! - **no allocation beyond the F11 budget.** This is the assertion that
-//!   would have caught D58 §3.1 directly — `vec![0; n]` for an attacker's
-//!   `n` is a peak single allocation unrelated to the input length, which
-//!   is exactly what `assert_within_budget` bounds.
+//! - **no allocation beyond the F11 budget, as D58 §10.3 rule 6 scopes it.**
+//!   This is the assertion that would have caught D58 §3.1 directly —
+//!   `vec![0; n]` for an attacker's `n` is a peak single allocation unrelated
+//!   to the input length, which is exactly what `assert_within_budget_*`
+//!   bounds. **Amended by D102 (task A100).** The default budget is D10 §4's
+//!   clamp rule, which is a rule about **length headers**; this parser's peak
+//!   is `walk.rest`, an iterative work stack **count-bounded** by
+//!   `MAX_OTS_DEPTH` with no length header to clamp against. That is a third
+//!   class, it had never been written down, and applying the clamp constant to
+//!   it was `assert_within_budget`'s default argument reaching a call site
+//!   nobody checked when this target was added. The exemption below is
+//!   `ots_structural_alloc_bytes`, derived in `antseal-core` from the limit
+//!   constants and `size_of` — never restated here, per rule 6 clause (a) —
+//!   and it is a **function of the input**, so an artifact that never goes
+//!   deep gets almost none of it. Both D58 crashers stay fully visible; see
+//!   `assert_within_budget_structural`'s docs for the measured argument.
 //! - **the release/debug divergence of §3.3 cannot hide**, because the fuzz
 //!   profile sets `debug-assertions = true` and `overflow-checks = true` on
 //!   an optimised build (`fuzz/Cargo.toml`): a masked shift or a wrapping
@@ -52,7 +64,8 @@
 use libfuzzer_sys::fuzz_target;
 
 use antseal_core::anchor::fuzz_entry::drive_ots;
-use antseal_fuzz::{Counting, assert_within_budget, measure, selftest_tripwire};
+use antseal_core::anchor::ots::ots_structural_alloc_bytes;
+use antseal_fuzz::{Counting, assert_within_budget_structural, measure, selftest_tripwire};
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
@@ -70,5 +83,10 @@ fuzz_target!(|data: &[u8]| {
         );
     }
 
-    assert_within_budget("anchor::ots::parse_ots", data.len(), budget);
+    assert_within_budget_structural(
+        "anchor::ots::parse_ots",
+        data.len(),
+        budget,
+        ots_structural_alloc_bytes(data.len()),
+    );
 });

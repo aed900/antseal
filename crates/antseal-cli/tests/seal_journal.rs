@@ -833,7 +833,8 @@ fn anchor_slots_written_by_the_seal_path_round_trip_through_the_shared_reader() 
 
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    let anchors = StoredAnchors::read(&store, &seal_id).expect("read anchors");
+    let stored_anchors = StoredAnchors::read(&store, &seal_id).expect("read anchors");
+    let anchors = stored_anchors.require_intact().expect("read anchors");
     assert_eq!(anchors.all(), written.as_slice(), "record and slot both");
     assert_eq!(anchors.ots().len(), 1);
     assert_eq!(anchors.tsa().len(), 2);
@@ -886,7 +887,9 @@ fn the_reader_repairs_the_lexical_slot_order_a_real_listing_produces() {
         "the bug the reader owes a repair for: {listed:?}"
     );
 
-    let anchors = StoredAnchors::read(&store, &seal_id).expect("read anchors");
+    let stored_anchors = StoredAnchors::read(&store, &seal_id).expect("read anchors");
+
+    let anchors = stored_anchors.require_intact().expect("read anchors");
     let order: Vec<&str> = anchors
         .all()
         .iter()
@@ -929,7 +932,11 @@ fn a_work_with_no_anchor_directory_reads_as_empty_not_as_a_failure() {
 
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    let anchors = StoredAnchors::read(&store, &seal_id).expect("no anchors is not a failure");
+    let stored_anchors =
+        StoredAnchors::read(&store, &seal_id).expect("no anchors is not a failure");
+    let anchors = stored_anchors
+        .require_intact()
+        .expect("no anchors is not a failure");
     assert!(anchors.is_empty());
     assert_eq!(anchors.len(), 0);
 }
@@ -941,8 +948,14 @@ fn a_work_with_no_anchor_directory_reads_as_empty_not_as_a_failure() {
 /// only one of them is the user's fault. The record below is substituted on
 /// disk through the store's own writer, so it is a genuine future record
 /// inside a genuine AEAD rather than a decoder called directly.
+///
+/// Re-pointed at the **evidence door** by D100 R10.1, with every assertion
+/// standing verbatim — `ErrorClass::VaultNewerVersion` included. That is the
+/// check that R2's restructure is a relocation of a policy and not a change
+/// to one: D100 R1 keeps `NewerRecord` a distinct damage reason, so this row
+/// constrains the design rather than fighting it.
 #[test]
-fn a_newer_anchor_record_refuses_by_name_through_the_reader() {
+fn a_newer_anchor_record_refuses_by_name_through_the_evidence_door() {
     let seal_id = fixture_seal_id(0x43);
     let future_version = u64::from(antseal_cli::pipeline::SEAL_JOURNAL_VERSION) + 1;
     let body = encode_item(|e| e.map(|m| m.entry(0, |e| e.u64(0)))).expect("encodes");
@@ -963,25 +976,37 @@ fn a_newer_anchor_record_refuses_by_name_through_the_reader() {
 
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    match StoredAnchors::read(&store, &seal_id) {
+    let stored = StoredAnchors::read(&store, &seal_id).expect("the read itself succeeds");
+    match stored.require_intact() {
         Err(JournalError::NewerRecord { found }) => assert_eq!(found, future_version),
         other => panic!("a newer record must refuse as newer, got {other:?}"),
     }
     // And it keeps the class the whole way to the exit code, rather than
     // collapsing into the vault-auth sentence.
-    let err: CliError = StoredAnchors::read(&store, &seal_id)
-        .expect_err("newer")
-        .into();
+    let err: CliError = stored.require_intact().expect_err("newer").into();
     assert_eq!(err.class(), ErrorClass::VaultNewerVersion);
+
+    // **D100 R1**: through the reporting door the same record is a datum
+    // whose reason is `newer-record` and not `undecodable` — the distinction
+    // "upgrade antseal" rests on, carried all the way to `--json`.
+    let (intact, damaged) = stored.intact_and_damaged();
+    assert!(intact.is_empty());
+    assert_eq!(damaged.len(), 1);
+    assert_eq!(damaged[0].slot, OTS_SLOT);
+    assert_eq!(damaged[0].reason.name(), "newer-record");
+    assert_eq!(damaged[0].reason.format_version(), Some(future_version));
 }
 
-/// One unreadable slot means the whole read fails — never a partial picture.
+/// One unreadable slot means the **evidence door** refuses — never a partial
+/// picture through it.
 ///
 /// A caller handed nine of ten artifacts would render a verdict about
-/// evidence it does not have. Same discipline as `list_works`/`list_anchors`/
-/// `WorkListing::gather`.
+/// evidence it does not have. D100 R2 keeps that rule and makes it a type:
+/// the refusal moved from `read` to `require_intact`, the error is
+/// byte-identical, and the assertion below is unchanged from before D100.
+/// Its counterpart is the row after this one, which takes the other door.
 #[test]
-fn one_unreadable_slot_fails_the_whole_read() {
+fn one_unreadable_slot_refuses_at_the_evidence_door() {
     let seal_id = fixture_seal_id(0x44);
     with_journal(|journal| {
         journal.begin(&identity(seal_id)).expect("begin");
@@ -1005,12 +1030,34 @@ fn one_unreadable_slot_fails_the_whole_read() {
 
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    match StoredAnchors::read(&store, &seal_id) {
+    let stored = StoredAnchors::read(&store, &seal_id).expect("the read itself succeeds");
+    match stored.require_intact() {
         Err(JournalError::Corrupt { detail }) => {
             assert_eq!(detail, "anchor slot family disagrees with the record kind");
         }
         other => panic!("a partial picture was returned: {other:?}"),
     }
+
+    // **D100 R2, the counterpart**: the reporting door hands back the
+    // survivor *and* the damage, together — which is the whole reason `list`
+    // can now say "1 of 2" rather than "damaged" (§2(b)).
+    let (intact, damaged) = stored.intact_and_damaged();
+    assert_eq!(
+        intact.len(),
+        1,
+        "the good OTS slot survives the bad TSA one"
+    );
+    assert_eq!(intact.ots_slot(0), Some(OTS_SLOT));
+    assert_eq!(stored.total_slots(), 2);
+    assert_eq!(damaged.len(), 1);
+    assert_eq!(damaged[0].slot, tsa_slot(0));
+    assert_eq!(damaged[0].reason.name(), "undecodable");
+    assert_eq!(
+        damaged[0].reason.detail(),
+        "anchor slot family disagrees with the record kind",
+        "the damaged slot carries the decoder's own message, verbatim (R10.5)"
+    );
+    assert_eq!(damaged[0].reason.format_version(), None);
 }
 
 /// **D97 §3 + D99 R10: the upgrade lands in one record, through one write.**
@@ -1053,7 +1100,8 @@ fn applying_an_upgrade_replaces_one_record_and_keeps_the_submission_fetch_date()
 
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    let anchors = StoredAnchors::read(&store, &seal_id).expect("read");
+    let stored_anchors = StoredAnchors::read(&store, &seal_id).expect("read");
+    let anchors = stored_anchors.require_intact().expect("read");
     // R10: the slot comes from the ordered list this very read produced,
     // never from a fresh listing.
     let (slot, read_prior) = anchors
@@ -1068,7 +1116,8 @@ fn applying_an_upgrade_replaces_one_record_and_keeps_the_submission_fetch_date()
     // Re-open: the write is on disk, not in a cache.
     let vault = shared_vault().unlock();
     let store = WorkStore::new(&vault);
-    let after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let stored_after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let after = stored_after.require_intact().expect("read back");
 
     // The slot SET is unchanged — D97 R7's whole point. An `ots-upgrade`
     // slot would have published the anchor state to anyone with filesystem
@@ -1143,7 +1192,8 @@ fn an_upgrade_with_no_group_is_refused_and_writes_nothing() {
     }
 
     // Nothing was written: the pending artifact is exactly as it was.
-    let after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let stored_after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let after = stored_after.require_intact().expect("read back");
     assert_eq!(after.ots(), &[(OTS_SLOT.to_owned(), prior)]);
 }
 
@@ -1203,12 +1253,14 @@ fn an_upgrade_computed_against_a_stale_record_is_discarded_not_written() {
 
     // The fresh record survives untouched — in particular it did NOT acquire
     // the stale transition's group, which is the state that renders `invalid`.
-    let after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let stored_after = StoredAnchors::read(&store, &seal_id).expect("read back");
+    let after = stored_after.require_intact().expect("read back");
     assert_eq!(after.ots(), &[(OTS_SLOT.to_owned(), fresh)]);
 
     // And re-reading first makes the same transition applicable again, so the
     // refusal is a discard-and-recompute rather than a dead end.
-    let current = StoredAnchors::read(&store, &seal_id).expect("read");
+    let stored_current = StoredAnchors::read(&store, &seal_id).expect("read");
+    let current = stored_current.require_intact().expect("read");
     let (slot, prior) = current.ots_entry(0).expect("one OTS anchor");
     apply_upgrade(&store, &seal_id, slot, prior, &applied, &mut write_rng)
         .expect("the recomputed transition applies");

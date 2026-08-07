@@ -170,6 +170,8 @@ fn unanchored_status() -> WorkStatus {
         state: WorkState::Complete,
         degraded: false,
         anchors: Vec::new(),
+        unclassifiable: Vec::new(),
+        damaged: Vec::new(),
         absent: vec![
             AnchorVerdict::absent(AnchorKind::Ots),
             AnchorVerdict::absent(AnchorKind::Tsa),

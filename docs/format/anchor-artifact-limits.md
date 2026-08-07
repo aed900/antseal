@@ -216,16 +216,16 @@ A28 fill it at M2 — **and A42**, added 2026-08-03: D54 §7 rules a registry ro
 for `MAX_OTS_CALENDAR_RESPONSE_BYTES` and this list of owners predates that
 decision. Nothing outside those four may.
 
-| limit | owner | initial value | date set | measured against (A25 fixture path) | margin | lowered |
-| --- | --- | --- | --- | --- | --- | --- |
-| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (100 ops; **bootstrap** measurement taken on the rust-opentimestamps `LARGE_TEST` mainnet proof, blocks 449397/449399, pending A25's two-day cycle) | 40.96x | never |
-| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (depth **67**; bootstrap measurement as above) | 15.28x | never |
-| `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width 3) | 21.33x | never |
-| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (3) and `.../upgraded/rust-opentimestamps-LARGE_TEST.ots` (4, the binding one; bootstrap measurement as above) | 64.00x | never |
-| `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (174 B coinbase-prefix operand; bootstrap measurement as above) | 94.16x | never |
-| `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (210 B running value; bootstrap measurement as above) | 156.04x | never |
-| `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (46 B pending payload); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never |
-| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (220 B — the largest of 18 real calendar **submit** responses measured for D54 §8b). The **upgrade** response is larger, carrying a Bitcoin merkle path, and has not been measured: A25's day-2 run must record it and append the second margin here (D54 §6.1) | 298.0x (submit; upgrade **not yet measured**) | never |
+| limit | owner | initial value | date set | measured against (A25 fixture path) | margin | lowered | structural cost (D102) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (100 ops; **bootstrap** measurement taken on the rust-opentimestamps `LARGE_TEST` mainnet proof, blocks 449397/449399, pending A25's two-day cycle) | 40.96x | never | **none** — bounds work, not a container |
+| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (depth **67**; bootstrap measurement as above) | 15.28x | never | **40 960 B** = `next_pow2(1_024) x size_of::<Frame>()` (40 B, x86-64) — the parser's `walk.rest`; **3.91 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width 3) | 21.33x | never | **none** — a per-node counter, no container |
+| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (3) and `.../upgraded/rust-opentimestamps-LARGE_TEST.ots` (4, the binding one; bootstrap measurement as above) | 64.00x | never | **12 288 B** = `next_pow2(256) x size_of::<OtsAttestation>()` (48 B, x86-64); **1.17 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (174 B coinbase-prefix operand; bootstrap measurement as above) | 94.16x | never | **none** — a length header; D58 §10.3 rule 4's clamp governs it |
+| `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (210 B running value; bootstrap measurement as above) | 156.04x | never | **none** — rule 4; `exec::apply` allocates the running value after checking it (32 B on the A100 path) |
+| `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (46 B pending payload); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never | **none** — a length header; rule 4 |
+| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (220 B — the largest of 18 real calendar **submit** responses measured for D54 §8b). The **upgrade** response is larger, carrying a Bitcoin merkle path, and has not been measured: A25's day-2 run must record it and append the second margin here (D54 §6.1) | 298.0x (submit; upgrade **not yet measured**) | never | **none** — a receive-side byte cap, not a count limit |
 
 **A note on the row above, because the next reader will assume one number
 serves both.** `MAX_OTS_CALENDAR_RESPONSE_BYTES` bounds **one HTTP reply from
@@ -272,6 +272,61 @@ hanging off a node, not a node of its own. Both values were confirmed by an
 independently written length-respecting scanner as well as by the parser.
 The direction is safe (the margin grows, 14.84x → 15.28x) and F4 forbids
 lowering, so nothing moves; the cell records what was measured.
+
+### 5a. The `structural cost` column, and the precondition it attaches to F4
+
+**Added 2026-08-07 by [D102](../decisions/D102-parser-structural-allocation-cost.md)
+(task A100), which amends D58 §10.3 with a sixth rule.**
+
+A limit that bounds a **count** rather than a **length header** is not
+governed by the clamp discipline every other allocation in this codebase
+obeys. `walk.rest` — the `.ots` parser's iterative work stack — is bounded by
+`MAX_OTS_DEPTH` and by nothing else, has no claimed length to clamp against,
+and therefore costs `next_power_of_two(limit) x size_of::<Element>()` bytes
+whatever the input's length is. That cost had never been computed. Measured,
+it is **40 960 B of bookkeeping from a 1 145-byte legal artifact** — 35.77x
+the input — and `crates/antseal-core/src/anchor/ots/tests.rs`'s
+`parser_is_iterative_at_max_depth` has been building exactly that input and
+asserting it parses, green and silent, since A11 landed.
+
+> **Raise precondition (D58 §10.3 rule 6 clause (c)).** A raise of a **count**
+> limit under F4 is refused unless the summed structural cost of every
+> count-bounded container live in one parse stays `<= MAX_OTS_BYTES` (D10 row
+> 16) for `.ots`, and `<= MAX_TSA_TOKEN_BYTES` (row 17) for the RFC 3161 path.
+> The argument for a raise past that line must be made **on memory**, in a
+> decision record — not on *"it only costs a `Vec` entry"*, which is the
+> sentence that made this defect possible and which D102 §5 corrects in D58
+> §9.2.
+
+**This is an operating condition on a raise, not a change to F4's text.** F4
+still reads exactly as §1 states it and as D84 §4 states it; the rules
+themselves are untouched, byte for byte, and the copy in §1 is therefore not
+re-cut. What the precondition uses is F4's own closing instruction — *"record
+every limit's value and every change in the registry A27 creates"* — which is
+this table.
+
+**Where the cost is enforced, and why not here.** The numbers in the column
+are **derived in code**, never transcribed: clause (a) forbids a literal,
+because a number typed by hand is a number that survives a raise.
+
+| clause | where | what fails if it is broken |
+| --- | --- | --- |
+| (a) derived from the limits and `size_of` | `anchor/ots/limits.rs`, `anchor/caps.rs` | nothing — it is the source |
+| (b) asserted at equality against a measured peak | `crates/antseal-core/tests/anchor_ots_alloc.rs`; `anchor::caps::tests` | `cargo test` |
+| (c) `<= MAX_OTS_BYTES` / `<= MAX_TSA_TOKEN_BYTES` | a `const` assertion beside each constant | **`cargo build`**, on every lane and on `wasm32` |
+
+Clause (c) is a `const` assertion deliberately: a raise that breaks it stops
+the build for every contributor, with no lane to rerun and no budget to
+adjust. Measured headroom on `MAX_OTS_DEPTH` (D102 §3.2): 4 096 green,
+16 384 green and the last one, 32 768 red, 65 536 red at 2.51x.
+
+**Two rows this table still owes.** The A5/D60 limits — `MAX_CHAIN_CERTS`,
+`MAX_CHAIN_CERT_BYTES`, `MAX_SIGNED_ATTRS` — have **no rows here at all**,
+although `anchor/caps.rs`'s module docs say they belong here and D60 §6 sets
+them. That gap predates D102 and D102 does not close it; the DER path's
+structural cost (**7 488 B**, and note that its certificate-bag reservation is
+`8 x 512 = 4 096 B`, *exactly* the fuzz guard's fixed slack) is derived and
+asserted in `anchor/caps.rs` in the meantime. **A5 owes the rows.**
 
 **Update rule.** One row per artifact-internal limit and per receive-side
 cap, added when the limit is first set, never deleted. `lowered` starts at

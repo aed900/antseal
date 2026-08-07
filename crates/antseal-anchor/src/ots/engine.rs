@@ -79,6 +79,17 @@ pub struct PendingWork {
     pub ots: Vec<StoredOtsAnchor>,
     /// The stored TSA captures, in vault order.
     pub tsa: Vec<StoredTsaAnchor>,
+    /// How many anchor slots this work holds whose **record** could not be
+    /// interpreted at all — so neither their bytes nor even their kind
+    /// reached this type (D100 R7.3).
+    ///
+    /// Zero for every healthy work, and the reason it lives here rather
+    /// than being decided by the renderer: A15 owns the per-work nag
+    /// (D98), and a work whose *only* slots are damaged would otherwise
+    /// classify [`NagState::Unanchored`] — *"no anchors at all"* — which is
+    /// a lie about a work that has anchors it cannot read. Deciding that in
+    /// `list` instead would be a second nag rule in the CLI.
+    pub unreadable_records: usize,
 }
 
 /// One stored OTS artifact.
@@ -601,8 +612,8 @@ pub struct OtsAnchorStatus {
 
 /// Whether a work should be nagged about, and why not when it should not be.
 ///
-/// The four states are U25's fixture matrix, and they are four rather than a
-/// boolean because "no nag" has three different meanings and rendering them
+/// The five states are U25's fixture matrix, and they are five rather than a
+/// boolean because "no nag" has four different meanings and rendering them
 /// identically is how an UNANCHORED work comes to look merely pending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NagState {
@@ -612,6 +623,18 @@ pub enum NagState {
     /// No headline-eligible anchor, and ≥1 OTS anchor still pending. **Nag**:
     /// `antseal status <id> --upgrade` can change this.
     OnlyPendingOts,
+    /// No headline-eligible anchor, nothing pending, and everything this work
+    /// holds is unreadable — either an `.ots` that does not parse against its
+    /// `anchor_digest` or a record the vault codec refuses outright
+    /// ([`PendingWork::unreadable_records`]).
+    ///
+    /// **Does not nag** ([`Self::nags`] is `false`), and that is the whole
+    /// point of the state rather than an oversight: `nags()` drives the
+    /// two-line PENDING block, whose count would read `0` and whose
+    /// instruction (`--upgrade`) cannot help an artifact nothing can parse.
+    /// The state exists so the row stops borrowing the name of a good
+    /// outcome — A102 needed the **name**, not the boolean (D100 R7.1).
+    Unreadable,
     /// No headline-eligible anchor and no pending OTS either — every OTS
     /// anchor is already attested. `--upgrade` cannot help; `--online`
     /// verification can.
@@ -622,10 +645,53 @@ pub enum NagState {
 }
 
 impl NagState {
+    /// Every state, in classifier order.
+    ///
+    /// The `ErrorClass::ALL` pattern: an enumeration test written over a
+    /// hand-copied array passes while covering one state fewer than exists,
+    /// which is exactly what `each_nag_class_has_its_own_name` did before
+    /// D100 R8. A test written over this cannot (its length is the enum's).
+    pub const ALL: [Self; 5] = [
+        Self::Anchored,
+        Self::OnlyPendingOts,
+        Self::Unreadable,
+        Self::AttestedOnly,
+        Self::Unanchored,
+    ];
+
     /// Whether `list` shows the nag marker.
+    ///
+    /// Deliberately **not** `matches!(self, Self::OnlyPendingOts)` any more:
+    /// that shape defaults a new variant to "does not nag" silently, and
+    /// D100 §1.7 measured it as the hole that let a fifth state be named and
+    /// never have its rendering decided. Written wildcard-free so the choice
+    /// is forced at this line.
     #[must_use]
     pub const fn nags(self) -> bool {
-        matches!(self, Self::OnlyPendingOts)
+        match self {
+            Self::OnlyPendingOts => true,
+            Self::Anchored | Self::Unreadable | Self::AttestedOnly | Self::Unanchored => false,
+        }
+    }
+
+    /// The stable kebab identifier for `--json` (**A103**).
+    ///
+    /// One table for one taxonomy: `list` used to carry a second copy of
+    /// this on `WorkRow::nag_name`, which is two places for one set of
+    /// names. Written wildcard-free so a sixth state fails compilation here
+    /// instead of acquiring a wrong name in a `_` arm — the forcing that
+    /// used to live in the CLI, moved to the enum it is about.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Anchored => "anchored",
+            Self::OnlyPendingOts => "only-pending-ots",
+            // Matches `OtsAnchorState::Unreadable`, which is the state it is
+            // derived from — one word for one condition across both layers.
+            Self::Unreadable => "unreadable",
+            Self::AttestedOnly => "attested-only",
+            Self::Unanchored => "unanchored",
+        }
     }
 }
 
@@ -655,12 +721,30 @@ pub fn work_status(work: &PendingWork) -> WorkAnchorStatus {
     let has_pending = ots.iter().any(|status| {
         !status.pending_uris.is_empty() && status.state != OtsAnchorState::Unreadable
     });
-    let has_any_anchor = !work.ots.is_empty() || !work.tsa.is_empty();
+    // Two sources for one condition: an `.ots` whose bytes do not parse
+    // against this work's digest, and a vault record the codec would not open
+    // at all (D100 R7.3). The second never reaches `work.ots`, which is why
+    // it has to be counted separately rather than inferred from it.
+    let has_unreadable = ots
+        .iter()
+        .any(|status| status.state == OtsAnchorState::Unreadable)
+        || work.unreadable_records > 0;
+    let has_any_anchor =
+        !work.ots.is_empty() || !work.tsa.is_empty() || work.unreadable_records > 0;
 
+    // The order is an argument, not a preference (D100 R7.2). Below
+    // `has_verified_tsa`, because a work with a verified token genuinely
+    // holds a headline-eligible anchor and calling it unreadable would
+    // over-claim damage. Below `has_pending`, because `--upgrade` can still
+    // help the pending half of a mixed work and satisfiable advice wins.
+    // Above `has_any_anchor`, because that fall-through — "attested, or
+    // unparseable" — is A102's entire complaint.
     let nag = if has_verified_tsa {
         NagState::Anchored
     } else if has_pending {
         NagState::OnlyPendingOts
+    } else if has_unreadable {
+        NagState::Unreadable
     } else if has_any_anchor {
         NagState::AttestedOnly
     } else {

@@ -33,8 +33,9 @@ pub mod seal;
 pub mod vault_journal;
 
 pub use anchors::{
-    AnchorArtifact, AnchorEndpointOutcome, AnchorSummary, ArtifactKind, OTS_SLOT, StoredAnchors,
-    apply_upgrade, artifacts_of, tsa_slot,
+    AnchorArtifact, AnchorEndpointOutcome, AnchorSummary, ArtifactKind, DamageReason, DamagedSlot,
+    IntactAnchors, OTS_SLOT, StoredAnchors, apply_upgrade, artifacts_of, damaged_slot_json,
+    tsa_slot,
 };
 pub use consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
 pub use error::{Barrier, BarrierHook, NoBarriers, SealError};

@@ -46,6 +46,41 @@ path: `crates/antseal-core/tests/codec_fuzz.rs` and
   thing on hand-picked hostile inputs, to every input libFuzzer can
   invent — and **the generalization immediately corrected the claim**; see
   below. (The peak factor was 256 between the finding and F30's fix.)
+- **…except for a *count-bounded* container, which has its own derived bound**
+  (added 2026-08-07 by
+  [D102](../decisions/D102-parser-structural-allocation-cost.md), task A100).
+  The peak bound above states D10 §4's clamp rule, which is a rule about
+  **length headers**: *"every element of a definite-length array costs at
+  least one wire byte"*. A container bounded instead by a **count limit** has
+  no claimed length to clamp against, and one input byte buys
+  `size_of::<Element>()` reserved bytes rather than one — by arithmetic, on
+  legal input, with no parser change able to alter it. The two anchor targets
+  therefore assert
+
+  ```
+  peak_single ≤ max( 1 · len(input) + 4 KiB , structural(len) )
+  ```
+
+  where `structural` is derived in `antseal-core` from the limit constants and
+  `size_of` (`ots_structural_alloc_bytes`, `tsa_structural_alloc_bytes`) and is
+  a **function of the input**, not a constant — every frame and every
+  attestation costs at least one wire byte, so an artifact that never goes deep
+  gets almost none of it. `MAX_CLAMPED_ELEMENT_BYTES` is **unchanged at 1** and
+  every site the clamp rule was ever about keeps the sharp bound; what changed
+  is that it stopped being applied to a site it was never about. The four
+  remaining targets are untouched.
+
+  The honest cost, stated rather than buried: at an 80-byte `.ots` input the
+  window a hostile allocation can hide in widens from 4 176 B to 11 264 B, and
+  it is widest — 53 248 B — for inputs at or above `MAX_OTS_DEPTH` bytes.
+  Closing that further needs **per-site attribution**, which a
+  `#[global_allocator]` cannot give; it is registered, not done. What the
+  change buys instead is three places the guard is now **strictly stronger**:
+  a `const` assertion that fails `cargo build` if a raised count limit
+  outgrows `MAX_OTS_BYTES`; an input-derived exemption, so a *new* allocation
+  site in either parser is red on its first input; and an equality assertion
+  (`crates/antseal-core/tests/anchor_ots_alloc.rs`) on a cost that was green
+  and silent before.
 - **No hang.** `-timeout=25` — a single input taking longer is a finding.
   libFuzzer's default (1200 s) would let a quadratic parser look merely
   slow.
@@ -244,6 +279,23 @@ that stand between a user and an adversary's `.sealproof`.
    - A **round-trip violation** is a *format* bug — the decoder and encoder
      disagree about what a document means — and is therefore also a
      format-freeze event (Q14/Q27). Escalate rather than patching quietly.
+
+   > **This step is not amended by D102, and the exception it granted is not
+   > a precedent for softening it.** A100 was an allocation-budget violation
+   > that reproduced on the stable toolchain, and it was still a **harness**
+   > finding rather than a parser bug — a route step 2 did not anticipate.
+   > The reasoning, in full at D102 §3.3: step 3 presupposes that the budget
+   > states a property the parser is supposed to have, and
+   > `MAX_CLAMPED_ELEMENT_BYTES`' own doc comment says which property — *"one
+   > input byte buys at most one reserved byte."* For a count-bounded work
+   > stack one input byte buys forty, and **no reachable parser change makes
+   > it one** (§4.3 measured the only candidate). The work stack was never a
+   > member of the class that constant is about; applying it there was a
+   > default argument reaching an unchecked call site. **Anything that is a
+   > member of the class is still a parser bug, and step 3 still says so.**
+   > The test of whether a future claim of this kind is honest is D102's own:
+   > the fix must leave the guard **strictly stronger somewhere**, not merely
+   > weaker here.
 4. **Retain the input.** Either as a committed seed (add it to the generator
    so it is regenerated, never dropped in by hand) or, when it maps onto a
    distinct rejection class, as a row in `testdata/tamper/` under the Q7
@@ -353,5 +405,10 @@ this is a new personal disclosure — and OSS-Fuzz publishes issues on a
 - `antseal_core::test_util::codec_fuzz` — F17's engine and the round-trip law
 - `antseal_core::test_util::bundle_mutators` — R10's mutation engine
 - `docs/decisions/D10-parser-caps.md` §4 — the clamp rule the budget asserts
+- `docs/decisions/D102-parser-structural-allocation-cost.md` — the class the
+  clamp rule was **not** about, and the derived bound the two anchor targets
+  assert instead (D58 §10.3 rule 6)
+- `crates/antseal-core/tests/anchor_ots_alloc.rs` — rule 6 clause (b): the same
+  costs at **equality**, on the pinned stable toolchain
 - `docs/testing/error-code-contract.md` — the codes a rejection reports
 - `testdata/fuzz-seeds/MANIFEST.json` — the committed corpora, machine-readable

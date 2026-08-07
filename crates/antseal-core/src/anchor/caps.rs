@@ -94,6 +94,94 @@ pub const MAX_CHAIN_CERT_BYTES: u32 = 16_384;
 /// `tests/anchor_caps.rs::signed_attr_count_cap_is_reachable` reaches it.
 pub const MAX_SIGNED_ATTRS: usize = 16;
 
+// ── rule 6: structural allocation cost (D102 §3.1, applied here by §6) ────
+//
+// The DER target has never gone red. **That is not evidence** — `anchor_ots`
+// was green until its *first remote execution*, which found A100's
+// disagreement in 3 140 execs — and the only difference between the two
+// targets is that one count limit is 1 024 and the other is 8. Three orders
+// of magnitude, not a difference in kind, and `MAX_CHAIN_CERTS` is raise-only
+// under F4 exactly as `MAX_OTS_DEPTH` is. D102 §6 therefore rules that this
+// path takes the derivation **now, while it is still green**.
+
+/// Bytes one certificate carried out of a token's bag occupies.
+///
+/// Measured by the compiler from `x509_cert::Certificate`, never transcribed
+/// (rule 6 clause (a)) — it is a foreign type on a pre-1.0 pin, so a version
+/// bump may move it and the cost must move with it.
+pub const CHAIN_CERTIFICATE_BYTES: usize = core::mem::size_of::<x509_cert::Certificate>();
+
+/// Bytes one retained DER copy's *handle* occupies in `chain_certificates`'
+/// second vector. The bytes it points at are bounded by
+/// [`MAX_CHAIN_CERT_BYTES`] and are a length-driven allocation, i.e. rule 4's,
+/// not this rule's.
+pub const CHAIN_CERT_DER_HANDLE_BYTES: usize = core::mem::size_of::<Vec<u8>>();
+
+/// Bytes one node of A9's bounded path search occupies.
+pub const CHAIN_PATH_NODE_BYTES: usize = core::mem::size_of::<super::chain::Node<'static>>();
+
+/// Most nodes `PathBuilder::new` can reserve: the signer, plus everything the
+/// token's bag contributes, plus the bundle's `intermediates` field.
+pub const MAX_PATH_NODES: usize =
+    MAX_CHAIN_CERTS + crate::codec::caps::MAX_INTERMEDIATE_COUNT as usize + 1;
+
+/// Rule 6's **structural allocation cost** for the RFC 3161 / CMS / X.509
+/// path: every count-bounded container live in one `verify_token`.
+///
+/// Three sites, all `Vec::with_capacity(count)` **after** the count is
+/// checked, so each reserves its capacity exactly and none regrows:
+///
+/// | site | count bound | element |
+/// | --- | --- | --- |
+/// | `tsa::chain_certificates` `certs` | [`MAX_CHAIN_CERTS`] | [`CHAIN_CERTIFICATE_BYTES`] |
+/// | `tsa::chain_certificates` `ders` | [`MAX_CHAIN_CERTS`] | [`CHAIN_CERT_DER_HANDLE_BYTES`] |
+/// | `chain::PathBuilder::new` `nodes` | [`MAX_PATH_NODES`] | [`CHAIN_PATH_NODE_BYTES`] |
+///
+/// **[`MAX_SIGNED_ATTRS`] is deliberately absent, and that is a measured
+/// finding rather than an omission.** D102 §6 names it alongside the other
+/// two, but antseal reserves nothing from it: `signed_attrs` arrives already
+/// decoded inside `SignerInfo` and the count check at `tsa.rs` rejects
+/// *afterwards*, so the only allocation the attribute set drives belongs to
+/// `der`'s decoder and is bounded by the input, which is rule 4's business.
+/// Raising `MAX_SIGNED_ATTRS` therefore costs no structural bytes — but
+/// [`tests::the_der_structural_cost_is_the_one_measured_today`] pins this
+/// constant at equality, so *adding* a container under that limit reddens a
+/// test on the day it is added, which is the day it matters.
+pub const TSA_STRUCTURAL_ALLOC_BYTES: usize = MAX_CHAIN_CERTS
+    * (CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES)
+    + MAX_PATH_NODES * CHAIN_PATH_NODE_BYTES;
+
+/// **Rule 6 clause (c)** for the DER path, against
+/// [`crate::codec::caps::MAX_TSA_TOKEN_BYTES`] (D10 row 17, also 1 MiB).
+///
+/// Same mechanism and same reason as the `.ots` side: a raise of
+/// [`MAX_CHAIN_CERTS`] that outgrows the token byte cap fails `cargo build`,
+/// on every lane and on `wasm32`, rather than reddening something rerunnable.
+const _: () = assert!(
+    TSA_STRUCTURAL_ALLOC_BYTES as u64 <= crate::codec::caps::MAX_TSA_TOKEN_BYTES,
+    "D58 §10.3 rule 6 clause (c): the RFC 3161 path's count-bounded \
+     containers now reserve more than MAX_TSA_TOKEN_BYTES. A count limit was \
+     raised without arguing its structural cost in memory — re-argue it \
+     (D102 §3.2, §6) rather than relaxing this assertion."
+);
+
+/// Rule 6's cost for one **`input_len`-byte** token, which is what an
+/// allocation guard may exempt.
+///
+/// A function of the input, not the flat constant, for the reason D102 §3.3
+/// gives: a constant exemption is a window a hostile allocation can hide in
+/// regardless of how few bytes bought it. Every certificate in the bag and
+/// every bundle intermediate costs at least one wire byte, so the `min` is
+/// sound and a short token gets almost no exemption.
+///
+/// Consumed by `fuzz/fuzz_targets/anchor_token.rs`, so the derivation exists
+/// exactly once.
+#[must_use]
+pub fn tsa_structural_alloc_bytes(input_len: usize) -> usize {
+    input_len.min(MAX_CHAIN_CERTS) * (CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES)
+        + input_len.min(MAX_PATH_NODES) * CHAIN_PATH_NODE_BYTES
+}
+
 // The A28-shaped derived constraint (D60 §6 b3): a certificate accepted out
 // of a token must afterwards be embeddable in a `.sealproof` as an
 // intermediate, or the seal anchors and then cannot be revealed. Asserted at
@@ -133,5 +221,97 @@ mod tests {
     #[test]
     fn chain_cert_bytes_is_strictly_below_the_bundle_field_cap() {
         assert!(u64::from(MAX_CHAIN_CERT_BYTES) < crate::codec::caps::MAX_CERT_BYTES);
+    }
+
+    /// **Rule 6 clause (b) for the DER path** (D102 §6).
+    ///
+    /// The `.ots` side asserts its derived cost against a measured allocator
+    /// peak, because there its containers *are* the peak. Here they are not:
+    /// the whole structural cost fits inside the fuzz guard's 4 KiB `SLACK`,
+    /// so no input makes it the peak and there is nothing to measure it
+    /// against. D102 §6 rules that this is *"a measured finding … committed
+    /// **as an equality assertion**, because that assertion is what goes red
+    /// the day someone adds a container or raises a count — which is the day
+    /// it matters. An unmeasured 'it's fine' is what this whole record is
+    /// about."*
+    ///
+    /// What makes it fail: adding a fourth count-bounded container, raising
+    /// `MAX_CHAIN_CERTS` or `MAX_INTERMEDIATE_COUNT`, or an `x509-cert` /
+    /// `der` bump that moves `size_of::<Certificate>()`. Every one of those is
+    /// a reviewed event, and every one of them should re-read this number.
+    #[test]
+    fn the_der_structural_cost_is_the_one_measured_today() {
+        assert_eq!(
+            CHAIN_CERTIFICATE_BYTES, 512,
+            "size_of::<x509_cert::Certificate>() moved — re-measure \
+             TSA_STRUCTURAL_ALLOC_BYTES and this row together"
+        );
+        assert_eq!(CHAIN_CERT_DER_HANDLE_BYTES, 24);
+        assert_eq!(CHAIN_PATH_NODE_BYTES, 128);
+        assert_eq!(MAX_PATH_NODES, 25);
+        assert_eq!(
+            TSA_STRUCTURAL_ALLOC_BYTES,
+            8 * (512 + 24) + 25 * 128,
+            "the derivation and its measured value have parted"
+        );
+        assert_eq!(TSA_STRUCTURAL_ALLOC_BYTES, 7_488);
+    }
+
+    /// The DER path's structural cost is **small**, and that is the finding —
+    /// not a reason to skip asserting it.
+    ///
+    /// `anchor_ots` and `anchor_token` share an entry point and a default
+    /// budget; the only difference between them is that one count limit is
+    /// 1 024 and the other is 8. This row records where the second one sits
+    /// relative to the fuzz guard's fixed slack, so a raise that moves it past
+    /// that line is visible as a changed verdict here rather than as a fuzz
+    /// red weeks later.
+    #[test]
+    fn the_der_structural_cost_relative_to_the_guards_fixed_slack() {
+        const FUZZ_SLACK: usize = 4 * 1024;
+
+        // D102 §6 anticipated that the whole derivation might *"come out small
+        // enough to fit inside `SLACK`"*, in which case the exemption would be
+        // inert. **It does not.** The overshoot is stated as a number rather
+        // than as an inequality so that a shrink is as visible as a growth.
+        assert_eq!(
+            TSA_STRUCTURAL_ALLOC_BYTES - FUZZ_SLACK,
+            3_392,
+            "the DER path's structural cost has moved relative to the guard's \
+             fixed slack — re-record the measurement, in either direction"
+        );
+
+        // **The finding, and it is sharper than D102 §6 stated it.** The
+        // single largest of the three reservations is `chain_certificates`'
+        // `certs`, and it is *exactly* `SLACK`:
+        //
+        //     MAX_CHAIN_CERTS x size_of::<Certificate>() = 8 x 512 = 4 096
+        //
+        // The guard's cap is `len x 1 + SLACK`, so this reservation clears it
+        // by a margin of **`len` bytes — zero at the boundary**. The bag's
+        // count is `set.0.len()`, which counts every `CertificateChoices`
+        // entry including a tiny `[3] other`, so a few hundred bytes of token
+        // reserves the full 4 096 B. `anchor_token` has never gone red on the
+        // exact arithmetic that made `anchor_ots` red four times, and the
+        // reason is a **tie**: not a margin, not a design, a tie. Raise
+        // `MAX_CHAIN_CERTS` to 9, or let an `x509-cert` bump add one word to
+        // `Certificate`, and the same A100 defect arrives on the DER path.
+        //
+        // This assertion is the thing that says so before CI does.
+        assert_eq!(
+            MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES,
+            FUZZ_SLACK,
+            "the certificate-bag reservation has moved off its exact tie with \
+             the fuzz guard's SLACK. If it grew, `anchor_token` is now the \
+             `anchor_ots` of A100 and the scoped budget is what stands between \
+             it and a red lane; if it shrank, say so here. Either way this is \
+             a measurement to re-record, not a number to update silently"
+        );
+
+        // …and still two orders of magnitude under clause (c)'s ceiling.
+        assert!(
+            (TSA_STRUCTURAL_ALLOC_BYTES as u64) * 100 < crate::codec::caps::MAX_TSA_TOKEN_BYTES,
+            "clause (c)'s headroom on the DER path has fallen below 100x"
+        );
     }
 }

@@ -26,4 +26,9 @@ b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6  complete
   artifacts, journaled manifest gone   2027-01-01 00:01:40 UTC   arbitrum-one
   cost: 11 atto-ANT
   anchors: unclassified — this work holds anchor artifacts but its journaled manifest is gone, so what they attest to cannot be recovered
-6 work(s): 5 complete, 1 incomplete, 0 abandoned (1 UNANCHORED, 3 waiting on pending anchors).
+b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7  complete
+  one anchor record that will not decode   2027-01-01 00:00:50 UTC   arbitrum-one
+  cost: 11 atto-ANT
+  anchors: 1 of 3 slot(s) unreadable — tsa-1: journal record is not canonical CBOR
+  run antseal status b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7; the other anchors are counted as if they were absent
+7 work(s): 6 complete, 1 incomplete, 0 abandoned (1 UNANCHORED, 3 waiting on pending anchors, 1 with unreadable anchors).

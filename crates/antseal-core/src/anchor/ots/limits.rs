@@ -39,6 +39,32 @@
 //! and native and `wasm32` behave identically at depth. Pinning the crate
 //! would have made 255 the permanent ceiling under F4 — a number chosen in
 //! 2023 by someone bounding their own stack.
+//!
+//! **Corrected 2026-08-07 by D102 §5**
+//! (`docs/decisions/D102-parser-structural-allocation-cost.md`). The paragraph
+//! above used to end
+//! *"which is why it can be generous"*, and D58 §9.2 said the same. The clause
+//! is true and the inference was not: **nobody ever costed the `Vec` entry.**
+//! One is [`OTS_FRAME_BYTES`] wide, so 1 024 of them is
+//! [`OTS_STRUCTURAL_WORK_STACK_BYTES`] — reached from a **1 145-byte** legal
+//! artifact that `super::tests::parser_is_iterative_at_max_depth` requires to
+//! parse. Generous is still the right call (D102 §5 declines to lower the
+//! limit), but the next raiser inherits the arithmetic below rather than a
+//! reassurance.
+//!
+//! # Structural allocation cost (D58 §10.3 rule 6, added by D102)
+//!
+//! Rule 6 governs a container bounded by a **count limit** rather than by a
+//! length header, which is the class D10 §4's clamp rule was never about.
+//! There are two in this parser — the work stack under [`MAX_OTS_DEPTH`] and
+//! the attestation list under [`MAX_OTS_ATTESTATIONS`] — and their cost is
+//! derived here, from the limit constants and `size_of`, per clause (a).
+//! Clause (b)'s equality assertions live in
+//! `crates/antseal-core/tests/anchor_ots_alloc.rs`; clause (c) is the `const`
+//! assertion below, so a raise that outgrows [`MAX_OTS_BYTES`] fails
+//! `cargo build` on every lane rather than reddening one that can be rerun.
+//!
+//! [`MAX_OTS_BYTES`]: crate::codec::caps::MAX_OTS_BYTES
 
 /// Total op steps across every branch (D58 §9.2).
 ///
@@ -109,6 +135,98 @@ pub const MAX_OTS_VALUE_BYTES: u32 = 32_768;
 /// 549 755 813 887-byte allocation and an uncatchable `SIGABRT`.
 pub const MAX_OTS_ATTESTATION_PAYLOAD_BYTES: u32 = 8_192;
 
+// ── rule 6: structural allocation cost (D102 §3.1) ───────────────────────
+
+/// Bytes one work-stack entry occupies — `size_of::<Frame>()`, measured by
+/// the compiler and never transcribed (rule 6 clause (a)).
+///
+/// **40** on x86-64 and **24** on `wasm32-unknown-unknown`, both measured;
+/// the difference is `Option<Vec<u8>>`'s pointer width. Every consumer below
+/// derives from this rather than from either number, which is what makes
+/// D102's kill criterion 5 — *"`size_of::<Frame>()` moves on a supported
+/// target and the derived cost is not recomputed"* — impossible rather than
+/// merely unlikely.
+pub const OTS_FRAME_BYTES: usize = core::mem::size_of::<super::parse::Frame>();
+
+/// Bytes one collected attestation occupies — `size_of::<OtsAttestation>()`.
+///
+/// **48** on x86-64 and **32** on `wasm32-unknown-unknown`, both measured.
+/// Together with [`OTS_FRAME_BYTES`] that puts the whole structural cost at
+/// **32 768 B in the verifier page**, against 53 248 B natively — the browser
+/// tab, which is the tightest ceiling this parser runs under, is also the
+/// cheapest place it runs.
+pub const OTS_ATTESTATION_BYTES: usize = core::mem::size_of::<super::OtsAttestation>();
+
+/// Peak bytes the parser's work stack can reserve in one allocation.
+///
+/// `walk.rest` holds the root-to-current path, so `rest.len()` **is** the
+/// current depth and [`MAX_OTS_DEPTH`] is its only bound. `Vec` grows by
+/// doubling from capacity 4, so the largest single reservation is the first
+/// power of two at or above the limit.
+pub const OTS_STRUCTURAL_WORK_STACK_BYTES: usize =
+    (MAX_OTS_DEPTH as usize).next_power_of_two() * OTS_FRAME_BYTES;
+
+/// The same for the attestation list, bounded by [`MAX_OTS_ATTESTATIONS`].
+///
+/// **Reachable, and not merely on paper** (D102 §1.3): an open-fork spine
+/// leaves every ancestor genuinely open, so 129 attestations — and this
+/// allocation, not the work stack — is the measured peak of a 1 869-byte
+/// input.
+pub const OTS_STRUCTURAL_ATTESTATION_BYTES: usize =
+    (MAX_OTS_ATTESTATIONS as usize).next_power_of_two() * OTS_ATTESTATION_BYTES;
+
+/// Every count-bounded container live in one parse, summed — rule 6's
+/// **structural allocation cost** for this parser.
+pub const OTS_STRUCTURAL_ALLOC_BYTES: usize =
+    OTS_STRUCTURAL_WORK_STACK_BYTES + OTS_STRUCTURAL_ATTESTATION_BYTES;
+
+/// **Rule 6 clause (c)**, as a build-stopping assertion rather than a test.
+///
+/// A raise of a count limit under F4 must keep the parser's structural
+/// bookkeeping under the artifact byte cap this verifier has already
+/// committed to holding ([`crate::codec::caps::MAX_OTS_BYTES`], D10 row 16 —
+/// frozen v1 surface, consumed by name, costing zero new constants). Written
+/// as a `const` for the reason `fuzz_entry.rs`'s start-digest-offset assert
+/// is: *"the build stops here rather than the target quietly losing its
+/// coverage."* A raise that breaks it fails `cargo build` on every lane, on
+/// `wasm32`, for every contributor — there is no lane to rerun and no budget
+/// to adjust.
+///
+/// Measured headroom at 40 B per frame (D102 §3.2): 1 024 → 5.08 % of the
+/// cap, 4 096 → green, 16 384 → green and the last one, 32 768 → **red**,
+/// 65 536 → red at 2.51×.
+const _: () = assert!(
+    OTS_STRUCTURAL_ALLOC_BYTES as u64 <= crate::codec::caps::MAX_OTS_BYTES,
+    "D58 §10.3 rule 6 clause (c): the .ots parser's count-bounded containers \
+     now reserve more than MAX_OTS_BYTES. A count limit was raised without \
+     arguing its structural cost in memory — re-argue it (D102 §3.2) rather \
+     than relaxing this assertion."
+);
+
+/// Rule 6's cost for one **`input_len`-byte** input, which is what an
+/// allocation guard may exempt.
+///
+/// Not the flat [`OTS_STRUCTURAL_ALLOC_BYTES`]: a constant exemption is the
+/// shape D102 §4.2 refutes, because it would hide the entire D58 §3.1/§3.2
+/// class the fuzz target exists to catch. The bound is a **function of the
+/// input**, and it is sound for one arithmetic reason — **every frame and
+/// every attestation costs at least one wire byte** (a bare `0x08`, a bare
+/// `0x00`), so `rest.len() ≤ ops ≤ input_len` and
+/// `attestations.len() ≤ input_len`. An input that never goes deep gets
+/// almost no exemption.
+///
+/// Consumed by `fuzz/fuzz_targets/anchor_ots.rs` and by
+/// `crates/antseal-core/tests/anchor_ots_alloc.rs`, so the derivation exists
+/// exactly once.
+#[must_use]
+pub fn ots_structural_alloc_bytes(input_len: usize) -> usize {
+    let frames = input_len.min(MAX_OTS_DEPTH as usize).next_power_of_two();
+    let attestations = input_len
+        .min(MAX_OTS_ATTESTATIONS as usize)
+        .next_power_of_two();
+    frames * OTS_FRAME_BYTES + attestations * OTS_ATTESTATION_BYTES
+}
+
 /// Every (b)-class limit, paired with the name its F4 registry row carries.
 ///
 /// One list, so the registry cross-check and the byte-cap-duplication check
@@ -160,6 +278,51 @@ mod tests {
         assert_eq!(ALL.len(), 7, "D58 §9.1 sets seven — update deliberately");
     }
 
+    /// **Rule 6's registry column, cross-checked like the values are.**
+    ///
+    /// D102 gave every §5 row a `structural cost` cell. A documented number
+    /// nothing checks is the F19 → F14 failure this whole document exists to
+    /// prevent, and the two cells that carry a *number* are exactly the two
+    /// that move when a count limit is raised — so they are pinned to the
+    /// derivation rather than to a literal.
+    ///
+    /// `include_str!` for the same reason the row above uses it: the
+    /// `wasm32-core-tests` lane has no filesystem. The **byte counts** are
+    /// checked only on 64-bit, because `Frame` is narrower on `wasm32` and the
+    /// registry records the x86-64 measurement it says it records; the
+    /// **formula**, which is the part that must not drift, is checked
+    /// everywhere.
+    #[test]
+    fn the_structural_cost_column_states_the_derivation_and_its_value() {
+        const REGISTRY: &str = include_str!("../../../../../docs/format/anchor-artifact-limits.md");
+
+        for formula in [
+            "`next_pow2(1_024) x size_of::<Frame>()`",
+            "`next_pow2(256) x size_of::<OtsAttestation>()`",
+        ] {
+            assert!(
+                REGISTRY.contains(formula),
+                "the F4 registry's structural-cost cell no longer states {formula} — \
+                 clause (a) says the cost is derived, and the row must say from what"
+            );
+        }
+
+        if core::mem::size_of::<usize>() == 8 {
+            for (what, bytes) in [
+                ("walk.rest", OTS_STRUCTURAL_WORK_STACK_BYTES),
+                ("attestations", OTS_STRUCTURAL_ATTESTATION_BYTES),
+            ] {
+                let needle = format!("**{}**", format_spaced(bytes));
+                assert!(
+                    REGISTRY.contains(&needle),
+                    "the F4 registry has no structural-cost cell reading {needle:?} for \
+                     {what} — the derived cost and its registry row have drifted, which \
+                     is the one thing D102's column exists to make impossible"
+                );
+            }
+        }
+    }
+
     /// D58 renders the values with `_` group separators; the registry rows
     /// are pasted verbatim from §9.5, so the cross-check must compare the
     /// same rendering rather than a bare integer.
@@ -172,6 +335,23 @@ mod tests {
             }
             out.push(ch);
         }
+        out
+    }
+
+    /// The registry renders byte counts with a space thousands separator
+    /// (`40 960 B`), which is the document's own convention and not this
+    /// module's; matching it is what makes the cross-check a string the
+    /// reader can see rather than a number they must recompute.
+    fn format_spaced(value: usize) -> String {
+        let digits = value.to_string();
+        let mut out = String::new();
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(' ');
+            }
+            out.push(ch);
+        }
+        out.push_str(" B");
         out
     }
 

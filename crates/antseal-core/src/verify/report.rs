@@ -116,7 +116,10 @@ pub struct ReportEncodeError(#[source] serde_json::Error);
 pub struct VerificationReport {
     /// Report-serialization version ([`REPORT_VERSION`]).
     pub report_version: u32,
-    /// Work-level metadata as verified from the bundle.
+    /// Work-level metadata read from the manifest embedded in the bundle
+    /// — one field of which this crate verified, and five of which it
+    /// reproduced. See [`WorkMetadata`]; this line claimed all six were
+    /// verified until R73.
     pub work: WorkMetadata,
     /// Evidence-layer outcome (MVP-SPEC.md line 118) — the layer that
     /// alone carries the evidentiary verdict.
@@ -154,19 +157,75 @@ impl VerificationReport {
     }
 }
 
-/// Work-level metadata, verified from the manifest embedded in the
-/// bundle (MVP-SPEC.md line 98).
+/// Work-level metadata read from the manifest embedded in the bundle
+/// (MVP-SPEC.md line 98).
+///
+/// # Six fields; one of them is a verifier statement
+///
+/// This doc said *"verified from the manifest"* and the field that holds
+/// it said *"as verified from the bundle"* until R73 measured the group:
+/// of the six children, exactly one is a verified statement **about the
+/// work**.
+///
+/// - [`WorkMetadata::work_id`] is **recomputed**, not read.
+/// - [`WorkMetadata::format_version`] is **decoder-enforced**: a body
+///   declaring any other version never reaches a report.
+/// - [`WorkMetadata::title`], [`WorkMetadata::app_version`] and
+///   [`WorkMetadata::claimed_time_informational_only`] are the sealer's
+///   own text, reproduced verbatim and checked against nothing.
+/// - [`WorkMetadata::signature_scheme`] is a stage that has not run
+///   (`NotEvaluated` until C14), so it asserts nothing in either
+///   direction.
+///
+/// Every one of these lives inside the body that `work_id` digests, so
+/// none can be edited without moving the work identity. That binds their
+/// **integrity**, never their **truth**: a sealer may write any title,
+/// build string or claimed time and seal it perfectly consistently.
+/// [`WorkMetadata::claimed_time_informational_only`] carries the caveat
+/// in its own field name and is the pattern the others were brought up
+/// to (R73) — no field's doc here may claim a check the pipeline does
+/// not perform.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkMetadata {
-    /// `work_id = SHA-256(body)`, recomputed by the verifier over the
-    /// embedded body bytes as received (MVP-SPEC.md line 75).
+    /// `work_id = SHA-256(body)`, **recomputed** by the verifier over the
+    /// embedded body bytes as received (MVP-SPEC.md line 75) — never
+    /// copied out of a field the sealer wrote.
+    ///
+    /// The one value in this group a recipient can act on, and it acts by
+    /// comparison: a work id obtained independently of the bundle either
+    /// equals this one or does not, and a substituted body does not
+    /// survive that. On its own, recomputing a digest over bytes the
+    /// bundle supplied proves only self-consistency — the comparison is
+    /// where the evidence is.
     pub work_id: Digest32,
-    /// Sealer-chosen title (embedded in the plaintext manifest; visible
-    /// to every bundle recipient by design).
+    /// Sealer-chosen title, reproduced verbatim from the plaintext
+    /// manifest (visible to every bundle recipient by design).
+    ///
+    /// **A sealer claim — nothing verifies it.** No stage compares it to
+    /// the revealed content, and a work may be titled anything its sealer
+    /// likes. Editing it moves [`WorkMetadata::work_id`], which binds the
+    /// string to the work identity but says nothing about whether it
+    /// describes the work.
     pub title: String,
-    /// Manifest/bundle **format** version the bundle declares.
+    /// Manifest/bundle **format** version.
+    ///
+    /// The one field here the decoder *enforced* rather than reproduced:
+    /// a body declaring anything but `FORMAT_VERSION_V1` is rejected with
+    /// `ManifestError::UnsupportedFormatVersion` before any report exists
+    /// (`crates/antseal-core/src/manifest/body.rs:1298`), and the value
+    /// rendered here is that accepted constant (`body.rs:1180`) rather
+    /// than the bundle's own bytes. It therefore cannot disagree with
+    /// what this build parsed — but it is a statement about the parse,
+    /// not about the work.
     pub format_version: u32,
     /// Sealer **app** version recorded in the manifest body.
+    ///
+    /// **A sealer claim — informational only, never verdict-bearing**
+    /// (MVP-SPEC.md line 98). The producing build is unattested: any
+    /// sealer may write any string here and nothing downstream reads it.
+    /// That note existed only on the accessor
+    /// (`crates/antseal-core/src/manifest/body.rs:1184`) and did not
+    /// reach the report until R73 put it here.
     pub app_version: String,
     /// The sealer-asserted claimed time, verbatim from the manifest.
     ///
@@ -179,6 +238,15 @@ pub struct WorkMetadata {
     /// Signature-scheme label slot (MVP-SPEC.md line 97: verdicts label
     /// "hybrid (PQ)" vs "Ed25519-only"). C14 supplies the datum at
     /// integration; [`SignatureScheme::NotEvaluated`] until then.
+    ///
+    /// **Not-evaluated is neither a claim nor a verdict**: the stage has
+    /// not run, so this says nothing in either direction about the
+    /// bundle's signatures, and a renderer must not let it read as
+    /// "unsigned" or as "signatures failed". Once C14 lands it becomes a
+    /// genuine verifier statement — the label of a `sig_policy` whose
+    /// signatures were checked and passed — which is precisely why
+    /// [`SignatureScheme::Other`] exists rather than collapsing into
+    /// [`SignatureScheme::NotEvaluated`].
     pub signature_scheme: SignatureScheme,
 }
 
@@ -463,6 +531,19 @@ pub struct FileReveal {
     /// The file's total size in its commitment domain (canonical bytes
     /// for text, raw bytes for binary — the tiling domain,
     /// MVP-SPEC.md line 98). The anti-out-of-context denominator.
+    ///
+    /// **A manifest-declared figure** — the sealer's datum, structurally
+    /// constrained but never independently measured. `check_tiling`
+    /// (`crates/antseal-core/src/verify/structural.rs:307`) requires the
+    /// file's non-mirror units to be sorted, non-overlapping, and to
+    /// exactly tile `[0, total_size)`, so the number cannot disagree with
+    /// the manifest's own unit table; and every span in
+    /// [`FileReveal::revealed_spans`] opened against its commitment, so
+    /// those ranges are backed by bytes the verifier has actually seen.
+    /// Neither check reaches the unrevealed remainder: a self-consistent
+    /// overstatement there is contradicted by nothing in the bundle.
+    /// Render it as declared — it is the denominator a reader needs, not
+    /// a figure the verifier vouches for.
     pub total_size: u64,
     /// Whether every non-mirror unit of the file is revealed (R4's
     /// classification; mirrors ride along only in this state).
@@ -521,7 +602,15 @@ pub struct UnrevealedFilePlaceholder {
     /// "file #N" rendering).
     pub file_id: u64,
     /// Total size in the file's commitment domain — the only datum a
-    /// placeholder exposes.
+    /// placeholder exposes, and the **sealer's** datum.
+    ///
+    /// Weaker than [`FileReveal::total_size`], which at least has opened
+    /// units under part of it: a wholly unrevealed file has no opened
+    /// unit at all, so agreement with the manifest's own unit table
+    /// (`check_tiling`,
+    /// `crates/antseal-core/src/verify/structural.rs:307`) is the *only*
+    /// constraint on this number, and nothing outside the manifest can
+    /// contradict it. Render it as declared, never as measured.
     pub size: u64,
 }
 

@@ -693,6 +693,14 @@ fn fixture_status() -> antseal_cli::status::WorkStatus {
                 ),
             },
         ],
+        // **D100 R6/§9(v)**: the two damage arrays of the `status` document,
+        // spelled exactly as `list` spells its own — one fact, one shape,
+        // across both commands. Present and empty on a healthy work: a key
+        // that only appeared on damage would leave a damaged work looking
+        // exactly like a clean one, and this is the registered document a
+        // consumer branches on.
+        unclassifiable: Vec::new(),
+        damaged: Vec::new(),
         absent: Vec::new(),
         receipt: Some(ReceiptRow {
             transactions: 1,
@@ -702,19 +710,29 @@ fn fixture_status() -> antseal_cli::status::WorkStatus {
     }
 }
 
-/// A two-row listing covering the shapes a consumer must handle: a
-/// finished work with a cost, and an unfinished one carrying the D45
-/// resume hint and the D37 clock.
+/// A three-row listing covering the shapes a consumer must handle: a
+/// finished work with a cost, an unfinished one carrying the D45 resume hint
+/// and the D37 clock, and one holding an anchor slot that will not read.
 ///
-/// U25's slot is no longer reserved, so both rows carry a real
+/// U25's slot is no longer reserved, so every row carries a real
 /// `(pending_anchors, nag)` pair rather than the two `null`s no gathered
 /// listing produces: row 1 is the nagging class (pending OTS, nothing else
 /// proving a time), row 2 the `--no-anchor` one, whose count is a counted
 /// zero and not an absent measurement. `None` on both fields means "not
 /// computable" and is exercised by `list`'s own suite, not here.
+///
+/// **Row 3 is D100 R10.3's**, and the reason it is spelled out here rather
+/// than left to `list`'s suite is that this fixture hand-builds `WorkRow`
+/// literals and **never calls `gather`** — so no behavioural change can reach
+/// it. A new field makes it **fail to compile**, which forces an edit and
+/// asserts nothing; without a row that actually carries damage,
+/// `damaged_anchors` would ship unsnapshotted in the one document that is the
+/// registered machine contract. It carries all three of R1's reasons, because
+/// the reason is the field a consumer branches on.
 fn fixture_listing() -> antseal_cli::listing::WorkListing {
     use antseal_anchor::ots::NagState;
-    use antseal_cli::listing::{ResumeClock, ResumeHint, WorkListing, WorkRow};
+    use antseal_cli::listing::{AnchorDamage, ResumeClock, ResumeHint, WorkListing, WorkRow};
+    use antseal_cli::pipeline::anchors::{DamageReason, DamagedSlot};
     use antseal_cli::pipeline::journal::SealState;
     use antseal_cli::vault::store::WorkState;
     use antseal_core::crypto::secrets::SealId;
@@ -735,6 +753,7 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 resume: None,
                 pending_anchors: Some(2),
                 nag: Some(NagState::OnlyPendingOts),
+                damaged_anchors: AnchorDamage::default(),
             },
             WorkRow {
                 work_id: Some([0xA4; 32]),
@@ -753,6 +772,47 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 }),
                 pending_anchors: Some(0),
                 nag: Some(NagState::Unanchored),
+                damaged_anchors: AnchorDamage::default(),
+            },
+            WorkRow {
+                work_id: Some([0xA7; 32]),
+                seal_id: SealId::from_bytes([0xE7; 16]),
+                title: Some("damaged anchors".to_owned()),
+                sealed_at_unix_secs: Some(1_798_761_600),
+                network: "arbitrum-one".to_owned(),
+                state: WorkState::Complete,
+                fine_state: Some(SealState::Complete),
+                unanchored: false,
+                degraded: false,
+                cost_atto: Some(2_000_000_000_000_000_000),
+                resume: None,
+                // The nag class is **orthogonal** to the damage and is not
+                // suppressed by it (D100 R4): this work does hold a
+                // headline-eligible anchor, so `anchored` is true, and the
+                // damaged array is what stops it being read as the whole
+                // story. A consumer that branched on `nag` alone would call
+                // this work clean.
+                pending_anchors: Some(0),
+                nag: Some(NagState::Anchored),
+                damaged_anchors: AnchorDamage {
+                    slots: vec![
+                        DamagedSlot {
+                            slot: "tsa-1".to_owned(),
+                            reason: DamageReason::Undecodable {
+                                detail: "anchor slot family disagrees with the record kind",
+                            },
+                        },
+                        DamagedSlot {
+                            slot: "tsa-2".to_owned(),
+                            reason: DamageReason::NewerRecord { found: 3 },
+                        },
+                        DamagedSlot {
+                            slot: "tsa-3".to_owned(),
+                            reason: DamageReason::SlotMoved,
+                        },
+                    ],
+                    total_slots: 4,
+                },
             },
         ],
     }

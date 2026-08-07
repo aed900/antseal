@@ -752,6 +752,38 @@ structural argument gives ~110–134 for the deepest imaginable honest branch;
 can be generous, and why the crate's stack-bound 255 (§3.5) is not
 inherited.
 
+> **Corrected 2026-08-07 by [D102](D102-parser-structural-allocation-cost.md)
+> §5 (task A100). The clause above is true and the inference from it is not.**
+> *"Depth costs a `Vec` entry, not a stack frame — which is why it can be
+> generous"* asserts a cost this record never computed. **A `Vec` entry is
+> 40 bytes** (`size_of::<Frame>()`, measured, x86-64), the entries are
+> count-bounded by this limit and by nothing else, and `Vec` doubles from
+> capacity 4 — so the work stack reserves
+> `next_power_of_two(1_024) × 40 = **40 960 B**`. Reached from a **1 145-byte**
+> artifact that §11's own `parser_is_iterative_at_max_depth` requires to parse:
+> **35.77× the input**, from bytes a counterparty supplied, in a parser that
+> ships to a browser tab. The limit was set at 1 024 on the strength of a cost
+> nobody computed, and four `fuzz-smoke` runs on the same 5 120 B allocation
+> were the first thing to ask what it was.
+>
+> **The value does not move.** D102 §5 declines to lower it on the merits —
+> 256 would be ~2× the structural derivation above, inside the range where a
+> real calendar topology change costs a format event, and D84 §6's guidance is
+> *"guessing high is free, guessing low is a compatibility break"*. The
+> 30 720 B bought back was never the problem; the problem was that nothing
+> measured it and nothing bounded its growth, and §10.3's new **rule 6** fixes
+> both without spending the one irreversible move the freeze allows. (D102 §5
+> also records, because it expires: F4's monotonicity is scoped to *after
+> M2's first release*, so lowering was legal on this date and will not stay
+> so. Anyone who later wishes it had been lowered must answer that question
+> first, and the answer gets harder every day.)
+>
+> **What the sentence should have said**, and what the next raiser inherits:
+> depth costs a `Vec` entry **of 40 bytes**, 1 024 of them cost 40 960 B —
+> 3.91 % of `MAX_OTS_BYTES` — and rule 6 clause (c) refuses any raise whose
+> structural cost passes that cap. Measured: 4 096 green, 16 384 green and the
+> last one, 32 768 red, 65 536 red at 2.51×.
+
 **`MAX_OTS_BRANCH_WIDTH = 64`** — children of one fork node. A13 emits one
 branch per calendar; each upgrade adds one more under that calendar. So
 honest width ≈ 2 × calendars. 64 admits 32 fully upgraded calendars against
@@ -979,6 +1011,67 @@ Rules that are not limits and must be implemented as written:
    `MAX_OTS_OPS`, of `0xff` at `MAX_OTS_BRANCH_WIDTH`, of `0x00`-attestations
    at `MAX_OTS_ATTESTATIONS` — so work is bounded by the limits, not by the
    caller's diligence.
+
+> **Amended 2026-08-07 by [D102](D102-parser-structural-allocation-cost.md)
+> (task A100): rule 4 is scoped, and a sixth rule is added.** `fuzz-smoke` was
+> red for four consecutive CI runs on four different inputs — 248, 744, 988 and
+> 638 bytes, every one under 1 024 B and every one peaking at **exactly
+> 5 120 B** while the guard's relative cap moved four times. The allocation is
+> `walk.rest`, this section's own rule-1 work stack: `Frame` is **40 bytes**
+> (measured, x86-64), `Vec` doubles from capacity 4, and the 65th push
+> reserves `128 x 40`. **It is bounded by a count, not by a length header**,
+> so rule 4 — *"never allocate from a length header before checking it"*, and
+> D10 §4's clamp behind it — never governed it. Nothing did. That third class
+> had never been written down and A100 is the first thing to touch it.
+>
+> **Rule 4 gains one scoping clause and no change of content:** *"…applies
+> unchanged **to every allocation driven by a length header**. Count-bounded
+> containers are rule 6's."*
+>
+> **Rule 6, verbatim (D102 §3.1):**
+>
+> > **6. A container bounded by a *count limit* is not governed by the clamp
+> > rule, and its cost must be derived, bounded and asserted.** Rule 4's clamp
+> > discipline governs allocations driven by a **length header** in the input.
+> > A container whose length is bounded instead by one of §9.1's count limits —
+> > `walk.rest` by `MAX_OTS_DEPTH`, `attestations` by `MAX_OTS_ATTESTATIONS` —
+> > has no claimed length to clamp against and is governed by this rule
+> > instead. Its **structural allocation cost** is
+> >
+> > ```text
+> > next_power_of_two(LIMIT) × size_of::<Element>()
+> > ```
+> >
+> > summed over every such container live in one parse. That cost must be:
+> >
+> > - **(a) derived in code from the limit constants and `size_of`, never
+> >   written as a literal.** A number typed by hand is a number that survives
+> >   a raise.
+> > - **(b) asserted at equality against the measured peak**, on the pinned
+> >   stable toolchain, for at least one input that reaches each limit and for
+> >   the real A25 artifact.
+> > - **(c) `≤ MAX_OTS_BYTES`.** A raise under F4 that breaks this is refused
+> >   until it is argued on memory rather than on "it only costs a `Vec`
+> >   entry".
+>
+> **Rule 6 is written at the anchor-stage level, not the `.ots` level.** The
+> RFC 3161 path has the same class of site — `tsa.rs`'s `chain_certificates`
+> reserves `MAX_CHAIN_CERTS` certificates *after* checking the count — and
+> D102 §6 rules that it takes the derivation now, while its target is still
+> green, against `MAX_TSA_TOKEN_BYTES` (D10 row 17). Measured there:
+> **7 488 B**, of which the certificate-bag reservation alone is
+> `8 × size_of::<Certificate>() = 4 096 B` — *exactly* the fuzz guard's fixed
+> slack, so that target has never been red by a **tie** rather than by a
+> margin.
+>
+> **In the tree:** clause (a) is `OTS_STRUCTURAL_ALLOC_BYTES` and its
+> neighbours in `anchor/ots/limits.rs` (and `TSA_STRUCTURAL_ALLOC_BYTES` in
+> `anchor/caps.rs`); clause (b) is
+> `crates/antseal-core/tests/anchor_ots_alloc.rs` and `anchor::caps::tests`;
+> clause (c) is a `const` assertion beside each constant, so a raise that
+> breaks it fails **`cargo build`** rather than a lane someone can rerun.
+> Rules 1–3 and 5 are untouched, `MAX_OTS_DEPTH` is **not lowered** (D102 §5),
+> and the frozen check order above is unchanged in every particular.
 
 ### 10.4 Error codes
 

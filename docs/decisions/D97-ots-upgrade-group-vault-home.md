@@ -154,6 +154,34 @@ record type, it is a second codec in the same area with its own version
 question. The strict-unknown-**kind** rule bites (a) exactly as hard as the
 strict-unknown-**key** rule bites (b). (a)'s headline advantage is not real.
 
+> **Rider — D100 (2026-08-07): K1 is weakened in one leg and survives.**
+> D100 removes the **false-tamper** half of K1's first leg: under its R5,
+> `corrupt("unregistered anchor-artifact kind")` is no longer routed to
+> `CliError::VaultAuthFailure` at all. It becomes a **damaged-slot datum**
+> with an honest sentence, at exit 0, so tag 2 would no longer produce *"wrong
+> passphrase, or the vault store or header has been modified or corrupted"*.
+>
+> **D97's ruling is unchanged, and K1 survives on its other leg.** Three
+> things carry it. First, K1 was never the decisive kill and this document
+> says so itself — the status paragraph names **K2** (the ordinary resume path
+> manufacturing a false `invalid`/`anchor-ots-header-uncommitted` on an honest
+> work) as decisive, and K2, **K3** (crash-window order sensitivity) and
+> **K4** (two falsified doc comments) are untouched by D100. Second, K1's
+> headline claim stands in full: (a) still *relocates* the schema change onto
+> `from_wire` rather than avoiding one, and its second leg — *"if it is a new
+> record type, it is a second codec in the same area with its own version
+> question"* — D100 does not touch. What D100 removes is only that the
+> relocation produces a **lie**; it still produces a schema change. Third,
+> §2(b)'s kill is likewise weakened in severity and intact in direction: under
+> D100 a keys-at-v1 record makes an older build say *"this record is
+> malformed"* rather than *"wrong passphrase"* — better, but still not
+> *"upgrade antseal"*. The version field remains the only thing that produces
+> the right sentence, which is exactly what (b) was killed for not having.
+>
+> Recorded here rather than left to be re-derived: an unrecorded weakening of
+> a committed kill criterion is how a settled decision gets re-opened by
+> accident.
+
 **K2 — the ordinary resume path manufactures a false `invalid`.** This is
 U49's twin, and it is worse than U49. A work killed at `Staged` already has
 its anchor slots filled (`journal.rs:812-816`), and resume re-runs the gate

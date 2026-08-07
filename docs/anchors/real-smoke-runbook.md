@@ -13,22 +13,52 @@ and never a test.
 
 ## 0. Status — what is executable today
 
-**The protocol below is not yet executable end-to-end.** Two halves are
-missing and this document does not pretend otherwise:
+**The protocol below is not yet executable end-to-end.** This section names
+only blockers that are live today, and each bullet is retired the day its
+cause dies — one was retired on 2026-08-07, below.
 
-- **U22** has not wired the anchor gate into the product: `seal_run.rs` still
-  passes `&NoAnchorGate`, so the shipped CLI cannot perform a real anchor
-  submit. Until it does, §2 and §3 have no command to run.
-- **A25** owns the capture script and the fixture commits. `scripts/` carries
-  no `anchor-smoke` entry point yet.
+- **`scripts/` carries no `anchor-smoke` entry point.** A25 owns the capture
+  script; Q99 owns deleting this section in the same change that commits it.
+  The protocol has now been executed three times *without* it, by hand and
+  one request at a time, which is precisely the repeatability the script is
+  for.
+- **`antseal verify --online` is an M3 stub.** The flag is declared
+  (`crates/antseal-cli/src/cli.rs:164-178`), but `crates/antseal-cli/src/run.rs:50`
+  maps `Command::Verify` to `Milestone::M3` and `run.rs:60` returns
+  `CliError::NotImplemented`, so §3.1 step 4's promotion to `proven` has no
+  command to run from the shipped CLI. Its **inputs** are no longer missing:
+  the three mainnet headers that promotion needs were captured 2026-08-07
+  (`testdata/anchors/A25-upgrade-headers/`).
 
-What *has* been executed is the bootstrap capture, and it is on disk:
-`testdata/anchors/A25-bootstrap/` (six pending calendar timestamps over two
-committed golden-vector digests, their day-2 upgrades, nine live TSA
-request/response pairs, five root certificates with provenance) and
-`testdata/anchors/A16-A17-live/` (esplora and Arbitrum RPC pairs). Each
-carries a `CAPTURE.log` recording URL, status, byte count, SHA-256 and UTC
-instant per request. Those captures are what the offline suite replays.
+**Retired 2026-08-07 — and the retirement is the point of Q99.** Until this
+edit §0 asserted that *"**U22** has not wired the anchor gate into the
+product: `seal_run.rs` still passes `&NoAnchorGate`"*, concluding that "§2
+and §3 have no command to run". U22 landed **2026-08-06**:
+`crates/antseal-cli/src/seal_run.rs:410-412` now reads *"Before U22 this was
+`&NoAnchorGate`"*. The conclusion was never true of §3 in any case — all
+three capture campaigns were driven by hand against real endpoints, two of
+them before U22 existed, under §1's consent rule rather than under any CLI.
+Q99 exists because *"a caveat section that outlives its cause is how a
+document starts lying"*, and the caveat that outlived its cause was in the
+document Q99 guards. Q99's Accept row forbids **deleting** §0 before the
+script lands; it does not license leaving a dead bullet inside it, and this
+correction is the reading to follow.
+
+What *has* been executed is on disk under `testdata/anchors/`, in three
+campaigns, each carrying a `CAPTURE.log` (see §4 for what those logs do and
+do not record):
+
+- **`A25-bootstrap/`** — 2026-08-02, upgraded 2026-08-03: six pending
+  calendar timestamps over two committed golden-vector digests, their day-2
+  upgrades, nine live TSA request/response pairs, five root certificates with
+  provenance.
+- **`A16-A17-live/`** — 2026-08-03: the esplora must-agree pair over block
+  800000, and the Arbitrum RPC pairs on both mainnet and Sepolia.
+- **`A25-upgrade-headers/`** — 2026-08-07: the 80-byte mainnet headers for
+  blocks **960767/960768/960771**, which are the blocks the day-2 upgrades
+  actually attest, from both esplora endpoints.
+
+Those captures are what the offline suite replays.
 
 This runbook exists now, ahead of its script, for the reason F19 and A27
 exist ahead of theirs: a protocol that lives only in a task entry is a
@@ -49,6 +79,14 @@ authorisation for real-endpoint submission was given in-session on
 2026-08-02 (reads **and** submissions to public TSAs and OTS calendars,
 throwaway test digests only)"* — and that is the form to reproduce.
 
+A **read-only** campaign records the same form and says so explicitly, so
+the absence of a submission is on the record rather than inferred. The
+2026-08-07 header capture is the worked example
+(`testdata/anchors/A25-upgrade-headers/CAPTURE.log:3-7`): it names the
+heights, the two endpoints, and *"Reads only — no submission, no account, no
+credentials, no digest sent."* A read-only run still needs its own consent;
+being read-only is not an exemption.
+
 Two standing constraints on what may be sent:
 
 - **Only throwaway or already-public digests.** The bootstrap stamped two
@@ -60,17 +98,28 @@ Two standing constraints on what may be sent:
 
 ## 2. Respect the rate limits — they are the reason this is not a lane
 
-Space requests deliberately. These are the recorded constraints; treat them
-as hard:
+Space requests deliberately. Treat every row below as hard — but note which
+are **measured** and which are **published by the operator and never tested
+here**. The bootstrap issued one request per endpoint spaced ≥ 3 s, so
+Sectigo's spacing and SwissSign's quota "were not approached"
+(`testdata/anchors/A25-bootstrap/D60-CAPTURE.log:47-49`): this project has not
+measured them and must not present them as if it had.
 
-| service | endpoint | constraint |
-| --- | --- | --- |
-| FreeTSA | `https://freetsa.org/tsr` | default TSA (MVP-SPEC.md line 109); ECDSA P-384 |
-| DigiCert | `http://timestamp.digicert.com` | default TSA; **port 443 refuses connections** — plain HTTP is required, not a shortcut (D90 §6.6) |
-| SwissSign | alternate | **~10 requests/day** |
-| Sectigo | alternate | **~15 s minimum spacing** |
-| DFN | `zeitstempel.dfn.de` | **non-commercial use only** |
-| OTS calendars | `DEFAULT_OTS_CALENDARS` | free shared public infrastructure |
+| service | endpoint | constraint | source |
+| --- | --- | --- | --- |
+| FreeTSA | `https://freetsa.org/tsr` | default TSA (MVP-SPEC.md line 109); ECDSA P-384 | measured |
+| DigiCert | `http://timestamp.digicert.com` | default TSA; **port 443 refuses connections** — plain HTTP is required, not a shortcut | measured (D90 §6.6) |
+| SwissSign | alternate | **~10 requests/day** | published |
+| Sectigo | alternate | **~15 s minimum spacing** | published |
+| DFN | `zeitstempel.dfn.de` | **non-commercial use only** | published (terms) |
+| OTS calendars | `DEFAULT_OTS_CALENDARS` | free shared public infrastructure | — |
+
+`timestamp.entrust.net` and `timestamp.sectigo.com` are **one TSA behind two
+names**: the same signer certificate signs both captures — issuer `CN=Sectigo
+Public Time Stamping CA R41`, serial `0xE74EF255B0504FFADBA6DFF7FC8BA315`
+(`testdata/anchors/A25-bootstrap/D60-CAPTURE.log:51-54`). Sectigo's spacing
+constraint therefore applies across **both** names, and stamping both is not
+two independent anchors.
 
 Run the whole protocol **once** per capture campaign. If a step fails,
 diagnose from the log before re-firing; a retry loop against a TSA is the
@@ -88,17 +137,36 @@ and the code disagree, the code is right and this table is stale.
 1. **Submit.** `POST <calendar>/digest`, body = the **32 raw digest bytes**,
    `Accept: application/vnd.opentimestamps.v1`. Store each reply verbatim as
    the pending capture.
-2. **Wait.** The calendar aggregates and commits its aggregate root to
-   Bitcoin. **Do not plan on a fixed interval and do not record one as
-   authoritative**: the bootstrap's day-2 poll succeeded after **13 h 47 m**,
-   not the ~48 h its own first draft asserted. Planning at 48 h is prudent;
-   writing 48 h down as *the* figure teaches the tree a number the network
-   does not owe it.
+2. **Wait — on the calendar, not on Bitcoin.** These are two different
+   latencies and the tree measured only one of them for four days. Both are
+   now measured, and they differ by an order of magnitude:
+   - **Bitcoin confirmed within the hour.** The blocks carrying the
+     bootstrap's attestations are 960767 / 960768 / 960771, and their `nTime`
+     fields read 2026-08-02T20:15:46Z, 20:27:11Z and 20:59:44Z — **59 to 103
+     minutes** after the 19:16Z submission. Read from the committed header
+     bytes (`testdata/anchors/A25-upgrade-headers/`), not from an endpoint's
+     JSON.
+   - **The calendar served the upgrade 13 h 47 m after submission**, at
+     2026-08-03T09:03Z. That gap is the calendar's aggregation-and-serving
+     cadence, and it — not the block interval — is the figure to quote for
+     "how long until an anchor is provable".
+
+   **Do not plan on a fixed interval and do not record one as authoritative.**
+   `OTS-BOOTSTRAP.md` already corrected its own ~48 h draft down to 13 h 47 m;
+   the header capture shows even that figure is not Bitcoin's. Planning at
+   48 h is prudent; writing any single number down as *the* figure teaches
+   the tree a number the network does not owe it — least of all the block
+   interval, which is the one that looks like an answer and is not.
 3. **Upgrade.** `GET <calendar>/timestamp/<commitment-hex>` — a **GET**, not
    a POST (`python-opentimestamps/opentimestamps/calendar.py` issues a GET,
    and that is what the capture log records).
 4. Verify the upgraded artifact reaches `attested` **offline**, then promote
-   to `proven` with `--online` against the esplora pair.
+   to `proven` with `--online` against the esplora pair. The headers for the
+   bootstrap's own three attesting blocks are captured
+   (`testdata/anchors/A25-upgrade-headers/`), each verified offline by
+   `double-SHA256(header) == claimed block hash`, so this step's *evidence*
+   is now reproducible with no network at all — only its CLI half is still
+   §0's second blocker.
 
 Three calendar behaviours the bootstrap measured, all of which the capture
 must preserve because A14's classifier is graded on them:
@@ -137,6 +205,12 @@ alternates table. Endpoint rot is the expected outcome of this run, not an
 anomaly — the bootstrap found one of four default calendars dead on its first
 attempt.
 
+**"Hand to Q26" is not yet a place.** Q26 is an M4 task and its document does
+not exist; `docs/anchors/` holds only this runbook and
+[`root-store-update.md`](root-store-update.md). Until it does, findings live
+in the campaign logs and are cited from there — see A25's Notes in
+`../../tasks/A.md` for the standing list of what Q26 will owe a row.
+
 ## 4. Recording the run
 
 Per campaign, under `testdata/anchors/<task>-<purpose>/`:
@@ -146,6 +220,20 @@ Per campaign, under `testdata/anchors/<task>-<purpose>/`:
   per request — plus the §1 consent record;
 - a short `README.md` stating what was submitted, what was found, and what is
   now **unreproducible**.
+
+**Three of the five logs on disk meet the middle bullet in full**
+(`A25-bootstrap/CAPTURE.log`, `.../upgraded/UPGRADE-CAPTURE.log`,
+`A25-upgrade-headers/CAPTURE.log` — 8, 9 and 12 requests, each with all four
+fields). The other two do not, and the gap is recorded rather than quietly
+tolerated: `A25-bootstrap/D60-CAPTURE.log` gives a per-request table with URL,
+status, byte count and UTC but **no per-file SHA-256**, and
+`A16-A17-live/CAPTURE.log` gives statuses and byte counts with **no SHA-256
+and no per-request UTC at all** — only `utc_start`/`utc_end`. Both predate
+this document. The SHA-256 is the field whose absence bites: it is what lets a
+later reader confirm the committed file is the byte string the endpoint
+actually returned, and without it "verbatim" rests on the capturer's word.
+A capture script must emit all four per request, and should refuse to finish
+otherwise.
 
 That last point is not bookkeeping. A pending `.ots` capture can never be
 re-taken: once a commitment is upgraded, those calendars will never serve the

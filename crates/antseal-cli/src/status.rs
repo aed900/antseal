@@ -14,8 +14,9 @@
 //! - **A18** answers *"what state is this artifact in?"* — per artifact, in
 //!   the seven frozen [`AnchorState`] names. That is what `status` renders.
 //! - **A15**'s `work_status` answers *"should I nag about this work?"* — per
-//!   work, four `NagState`s. `list` renders that (U25). `OtsAnchorState` is
-//!   not user-visible vocabulary and appears nowhere here.
+//!   work, by `NagState`. `list` renders that (U25). `OtsAnchorState` is
+//!   not user-visible vocabulary and appears nowhere here (five `NagState`s
+//!   since D100 R7).
 //!
 //! Neither is projected into the other. A named projection table — the third
 //! option D98 rejected — is the **only** design that guarantees `status` and
@@ -92,7 +93,10 @@ use antseal_core::verify::report::{AnchorKind, AnchorState};
 use rand_core::TryCryptoRng;
 
 use crate::error::CliError;
-use crate::pipeline::anchors::{AnchorArtifact, ArtifactKind, StoredAnchors, apply_upgrade};
+use crate::pipeline::anchors::{
+    AnchorArtifact, ArtifactKind, DamageReason, DamagedSlot, StoredAnchors, apply_upgrade,
+    damaged_slot_json,
+};
 use crate::pipeline::journal::{JournalError, recorded_plan};
 use crate::pipeline::receipt_sink::recorded_receipt;
 use crate::vault::store::{WorkState, WorkStore};
@@ -114,6 +118,14 @@ pub const RECEIPT_CLASS: &str = "supporting evidence — no independently proven
 /// What a work with zero headline-eligible anchors says (MVP-SPEC.md line
 /// 137, verbatim).
 pub const UNANCHORED_NOTE: &str = "UNANCHORED — integrity and signature only, no provable time";
+
+/// What a work holding artifacts but no journaled manifest says (**D100 R6**).
+///
+/// The same fact `list` renders as *"anchors: unclassified"* at exit 0
+/// (`listing.rs`), in the same words, because the two commands answering one
+/// vault state differently is the divergence D100 §1.2 found and closed.
+pub const UNCLASSIFIED_NOTE: &str = "this work holds anchor artifacts but its journaled manifest \
+                                     is gone, so what they attest to cannot be recovered";
 
 /// The pending-anchor hint, in the second person (D98 rider 5).
 ///
@@ -255,7 +267,28 @@ pub struct WorkStatus {
     /// Sealed with `--force-degraded`.
     pub degraded: bool,
     /// One row per stored artifact, OTS first then TSA by slot index.
+    ///
+    /// Empty when this work's `anchor_digest` cannot be recovered — see
+    /// [`Self::unclassifiable`], which then holds the same slots.
     pub anchors: Vec<AnchorRow>,
+    /// Slots holding an artifact that decoded, and about which no verdict can
+    /// be stated because this work's journaled manifest is gone (**D100 R6**).
+    ///
+    /// Every A18 evaluator takes an `anchor_digest`, which is `SHA-256` of
+    /// that manifest, so there is nothing to evaluate against. `status` used
+    /// to refuse the whole work here with exit 12 and *"wrong passphrase"*
+    /// while `list` rendered the identical state as a soft row at exit 0
+    /// (D100 §1.2) — two commands, two answers, neither citing the other.
+    /// The divergence is closed in `list`'s favour.
+    pub unclassifiable: Vec<UnclassifiableRow>,
+    /// Slots whose record could not be interpreted at all (**D100 R1/R6**).
+    ///
+    /// Rendered **outside** A18's frozen seven-state vocabulary, and D100
+    /// §1.4 is why it must be: no verdict can be stated without naming a
+    /// mechanism, and the mechanism is at key 0 inside the record that will
+    /// not open. So this is a fact about the vault, not evidence about a
+    /// time, and it gets a field rather than a verdict or an exit code.
+    pub damaged: Vec<DamagedSlot>,
     /// One kind-level `absent` verdict per [`AnchorKind`] this work holds no
     /// artifact of. Asked for explicitly, because R70 keeps `absent` out of
     /// the outcome list entirely — iterating [`Self::anchors`] over a
@@ -270,13 +303,18 @@ pub struct WorkStatus {
 impl WorkStatus {
     /// Read one work and evaluate every anchor it holds.
     ///
+    /// **Damage is data here, not an error** (D100 R6). A slot whose record
+    /// will not decode becomes a [`Self::damaged`] row, and a work whose
+    /// journaled manifest is gone becomes [`Self::unclassifiable`] rows —
+    /// both at exit 0, which is what `status` already does for an `.ots`
+    /// whose *bytes* do not parse (that renders `invalid`, D98's cross-walk).
+    /// One layer of wrapping apart, the exit codes used to be 0 and 12.
+    ///
     /// # Errors
     ///
-    /// Store- and journal-level failures as their CLI classes, and
-    /// [`JournalError::Corrupt`] for a work that holds anchor artifacts but
-    /// no journaled manifest — the one inconsistency this reader cannot
-    /// render around, because `anchor_digest` is derived from the manifest
-    /// and every evaluator requires it.
+    /// Store- and journal-level failures as their CLI classes — the
+    /// enumeration and cipher-layer classes [`StoredAnchors::read`] still
+    /// raises, and nothing else.
     pub fn gather(
         store: &WorkStore<'_>,
         seal_id: &SealId,
@@ -284,22 +322,60 @@ impl WorkStatus {
     ) -> Result<Self, CliError> {
         let record = store.load_meta(seal_id).map_err(CliError::from)?;
         let stored = StoredAnchors::read(store, seal_id).map_err(CliError::from)?;
+        // The reporting door: `status` is the command D99 R6 assigns the loud
+        // per-work report to, so it receives the damage whether or not it
+        // remembered to ask.
+        let (intact, damaged) = stored.intact_and_damaged();
         let digest = anchor_digest_of(store, seal_id, &stored)?;
 
-        let mut anchors = Vec::with_capacity(stored.len());
-        for (slot, artifact) in stored.all() {
-            anchors.push(AnchorRow {
-                slot: slot.clone(),
-                verdict: evaluate(artifact, &digest, ctx),
-            });
+        let mut anchors = Vec::new();
+        let mut unclassifiable = Vec::new();
+        match digest {
+            Some(digest) => {
+                anchors.reserve(intact.len());
+                for (slot, artifact) in intact.all() {
+                    anchors.push(AnchorRow {
+                        slot: slot.clone(),
+                        verdict: evaluate(artifact, &digest, ctx),
+                    });
+                }
+            }
+            None => {
+                unclassifiable = intact
+                    .all()
+                    .iter()
+                    .map(|(slot, artifact)| UnclassifiableRow {
+                        slot: slot.clone(),
+                        kind: anchor_kind_of(artifact.kind),
+                    })
+                    .collect();
+            }
         }
 
         // R70's kind-level answer, asked for by name. The list is over
         // `AnchorKind`'s own variants rather than over the slots, so a kind
         // with no artifact is a rendered fact and not a silence.
+        //
+        // D100: a slot this read could not interpret is **not** evidence that
+        // its kind is absent. The record's `kind` is at key 0 inside it, so a
+        // damaged slot's kind is unknowable and only its *name* gives a
+        // family — and a name outside both families could have held either.
+        // Claiming `absent` over one would make a damaged work look cleaner
+        // than a healthy one, which is the exact honesty failure this
+        // decision exists to remove.
+        let damaged_kinds: Vec<Option<AnchorKind>> = damaged
+            .iter()
+            .map(|slot| slot.slot_kind().map(anchor_kind_of))
+            .collect();
         let absent = [AnchorKind::Ots, AnchorKind::Tsa]
             .into_iter()
             .filter(|kind| !anchors.iter().any(|row| row.verdict.kind() == *kind))
+            .filter(|kind| !unclassifiable.iter().any(|row| row.kind == *kind))
+            .filter(|kind| {
+                !damaged_kinds
+                    .iter()
+                    .any(|damaged| damaged.is_none_or(|damaged| damaged == *kind))
+            })
             .map(AnchorVerdict::absent)
             .collect();
 
@@ -327,6 +403,8 @@ impl WorkStatus {
             state: record.state,
             degraded: record.degraded,
             anchors,
+            unclassifiable,
+            damaged: damaged.to_vec(),
             absent,
             receipt,
             upgrade: None,
@@ -407,9 +485,14 @@ impl WorkStatus {
             )),
             None => out.push(format!("  {UNANCHORED_NOTE}")),
         }
+        // The total counts every slot, damaged and unclassifiable included:
+        // a work with three slots one of which will not open holds three
+        // anchor artifacts, and reporting two would make the damage
+        // disappear into a smaller number. Identical to the old sentence
+        // whenever nothing is damaged.
         out.push(format!(
             "  {} anchor artifact(s); {} can carry the headline time",
-            self.anchors.len(),
+            self.anchors.len() + self.unclassifiable.len() + self.damaged.len(),
             self.headline_eligible()
         ));
 
@@ -422,6 +505,32 @@ impl WorkStatus {
             ));
             out.extend(verdict_detail(&row.verdict, &id));
         }
+        for row in &self.unclassifiable {
+            // D100 R6: an artifact whose meaning cannot be recovered. It is
+            // rendered as a slot and a kind with **no state word**, because
+            // the seven states are verdicts about evidence and no verdict can
+            // be run without an `anchor_digest`.
+            out.push(format!(
+                "  {}   {}   (unclassified)",
+                row.slot,
+                kind_name(row.kind)
+            ));
+        }
+        if !self.unclassifiable.is_empty() {
+            out.push(format!("      {UNCLASSIFIED_NOTE}"));
+        }
+
+        for slot in &self.damaged {
+            // D100 R6: one row per damaged slot, outside the frozen seven —
+            // the slot name, the reason, and the decoder's own detail.
+            out.push(format!(
+                "  {}   (record unreadable)   {}",
+                slot.slot,
+                slot.reason.name()
+            ));
+            out.push(format!("      {}", damage_sentence(&slot.reason)));
+        }
+
         for verdict in &self.absent {
             // R70: rendered from its own kind-level verdict, never from an
             // empty outcome list. `absent` carries nothing else by
@@ -506,6 +615,20 @@ impl WorkStatus {
                 value["slot"] = serde_json::json!(row.slot);
                 value
             }).collect::<Vec<_>>(),
+            // D100 R6. Both arrays are **empty, never `null`**, for a healthy
+            // work — deliberately, and R3 gives the reason: a `null` would
+            // re-create the `Some(0)`/`None` ambiguity U25 had to
+            // disambiguate at cost, and there is no not-computable case here.
+            // Unconditional for the same reason `list`'s block is: a damaged
+            // slot that only appeared when damage existed would leave a
+            // damaged work indistinguishable from a clean one.
+            "unclassifiable": self.unclassifiable.iter().map(|row| serde_json::json!({
+                "slot": row.slot,
+                "kind": kind_name(row.kind),
+            })).collect::<Vec<_>>(),
+            // The four keys of D100 R3, spelled exactly as `list` spells
+            // them: one fact, one shape, across both commands.
+            "damaged_anchors": self.damaged.iter().map(damaged_slot_json).collect::<Vec<_>>(),
             "absent": self.absent.iter().map(verdict_json).collect::<Vec<_>>(),
             "receipt": self.receipt.as_ref().map(|receipt| serde_json::json!({
                 "class": RECEIPT_CLASS,
@@ -686,8 +809,16 @@ impl UpgradeConfig {
 /// built** — and D97 R10 requires the apply site to resolve that index
 /// against the same ordered list rather than by re-listing the directory.
 ///
-/// The [`PendingWork`] is `None` when the work holds no OTS artifact: there is
-/// nothing to poll, which is a state and not a failure.
+/// The [`PendingWork`] is `None` when the work holds no readable OTS artifact,
+/// and when its `anchor_digest` cannot be recovered: there is nothing to poll,
+/// which is a state and not a failure. Both are D99 R6 **skip** rows for the
+/// U24 hook, and under D100 they arrive as `None` rather than as an error —
+/// the same skip, reached without manufacturing a refusal.
+///
+/// A damaged slot narrows the skip from the whole work to the slot (D100
+/// §2(c)): the readable `.ots` of a work whose `tsa-3` will not decode is
+/// still polled, and the damaged slot is simply not one of the things being
+/// upgraded.
 ///
 /// # Errors
 ///
@@ -698,10 +829,15 @@ pub fn pending_work(
 ) -> Result<(StoredAnchors, Option<PendingWork>), CliError> {
     let record = store.load_meta(seal_id).map_err(CliError::from)?;
     let stored = StoredAnchors::read(store, seal_id).map_err(CliError::from)?;
-    if stored.ots().is_empty() {
+    let (intact, damaged) = stored.intact_and_damaged();
+    if intact.ots().is_empty() {
         return Ok((stored, None));
     }
-    let anchor_digest = anchor_digest_of(store, seal_id, &stored)?;
+    // No manifest, no digest, nothing to poll against. D99 R6's own skip row,
+    // and no longer an exit-12 refusal manufactured to produce it.
+    let Some(anchor_digest) = anchor_digest_of(store, seal_id, &stored)? else {
+        return Ok((stored, None));
+    };
     let work = PendingWork {
         // `AppliedUpgrade` echoes this back and nothing on this path reads
         // it: the transition is resolved to a slot positionally (D97 R10)
@@ -710,7 +846,7 @@ pub fn pending_work(
         // work id is how it was resolved.
         work_id: record.work_id.unwrap_or([0; 32]),
         anchor_digest,
-        ots: stored
+        ots: intact
             .ots()
             .iter()
             .map(|(_, artifact)| StoredOtsAnchor {
@@ -718,7 +854,7 @@ pub fn pending_work(
                 upgrade: artifact.upgrade.clone(),
             })
             .collect(),
-        tsa: stored
+        tsa: intact
             .tsa()
             .iter()
             .map(|(_, artifact)| StoredTsaAnchor {
@@ -731,6 +867,7 @@ pub fn pending_work(
                 fetch_date: artifact.fetch_date,
             })
             .collect(),
+        unreadable_records: damaged.len(),
     };
     Ok((stored, Some(work)))
 }
@@ -803,8 +940,17 @@ pub fn persist_upgrades<R: TryCryptoRng + ?Sized>(
     rng: &mut R,
 ) -> Result<UpgradeOutcome, CliError> {
     let mut outcome = UpgradeOutcome::of_report(report);
+    // The reporting door with its second element deliberately dropped, and
+    // R2's residual states this shape is greppable on purpose. It is the
+    // right door here because this is not a renderer: it writes **one named
+    // slot**, and D97 R10 requires the index to resolve against the same
+    // ordered list `pending_work` built the polled `PendingWork` from — which
+    // is the intact list, damage or no damage. `require_intact()` would
+    // refuse a write that was already computed and is already safe, and the
+    // per-slot compare-and-set in `apply_upgrade` is what makes it so.
+    let (intact, _damaged) = stored.intact_and_damaged();
     for applied in &report.upgraded {
-        let Some((slot, prior)) = stored.ots_entry(applied.anchor_index) else {
+        let Some((slot, prior)) = intact.ots_entry(applied.anchor_index) else {
             // The report named an anchor this work does not have. A caller
             // bug, surfaced rather than indexed past.
             return Err(CliError::Internal {
@@ -841,25 +987,81 @@ pub fn persist_upgrades<R: TryCryptoRng + ?Sized>(
 /// scoped to journal entries `>= UNIT_ENTRY_BASE`, so entries 0–2 are always
 /// exported (D98 gap 3).
 ///
-/// A work with **no** anchors needs no digest, and returning a zero here is
+/// # Why this reports rather than refuses (**D100 R6**)
+///
+/// A work with **no** anchors needs no digest, and `Some([0; 32])` is
 /// harmless because nothing consumes it: the caller has nothing to evaluate.
-/// A work *with* anchors and no manifest is an inconsistency this reader
-/// refuses rather than papers over.
+/// A work *with* anchors and no manifest used to be *"an inconsistency this
+/// reader refuses rather than papers over"* — a refusal that reached the user
+/// as exit 12 and *"wrong passphrase"* on a vault whose passphrase had
+/// already been proven, on a work they had named by id.
+///
+/// It refuses no longer, and the reason is not kindness: `list` renders the
+/// **identical** vault state as a soft row at exit 0 and documents that
+/// choice as obviously right (*"a listing that refuses to run is the one
+/// thing a user on a damaged vault cannot work around"*), while this reader
+/// documented the opposite as obviously right. Two committed authorities,
+/// days apart, neither citing the other (D100 §1.2). The divergence is closed
+/// in `list`'s favour, and `None` here is what carries it: no verdict can be
+/// stated, so `status` states none and says why.
+///
+/// # Errors
+///
+/// Journal-level failures reading the plan record. Never the absence of one.
 fn anchor_digest_of(
     store: &WorkStore<'_>,
     seal_id: &SealId,
     stored: &StoredAnchors,
-) -> Result<[u8; 32], CliError> {
+) -> Result<Option<[u8; 32]>, CliError> {
     let manifest = recorded_plan(store, seal_id)
         .map_err(CliError::from)?
         .and_then(|plan| plan.manifest_bytes);
     match manifest {
-        Some(bytes) => Ok(anchor_digest(&bytes).into_bytes()),
-        None if stored.is_empty() => Ok([0; 32]),
-        None => Err(CliError::from(JournalError::Corrupt {
-            detail: "this work holds anchor artifacts but no journaled manifest to derive their \
-                     anchor digest from",
-        })),
+        Some(bytes) => Ok(Some(anchor_digest(&bytes).into_bytes())),
+        None if stored.is_empty() => Ok(Some([0; 32])),
+        None => Ok(None),
+    }
+}
+
+/// One stored artifact `status` can name but cannot state a verdict about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnclassifiableRow {
+    /// The slot it sits in.
+    pub slot: String,
+    /// Which mechanism it is — known here, unlike for a damaged slot, because
+    /// the record itself opened.
+    pub kind: AnchorKind,
+}
+
+/// The report-level kind one vault-level artifact kind is.
+///
+/// Exhaustive, so a third mechanism has to name itself here too — the same
+/// discipline [`kind_name`] holds.
+const fn anchor_kind_of(kind: ArtifactKind) -> AnchorKind {
+    match kind {
+        ArtifactKind::OtsPending => AnchorKind::Ots,
+        ArtifactKind::TsaToken => AnchorKind::Tsa,
+    }
+}
+
+/// The sentence one damage reason gets, and the next step it implies.
+///
+/// Three, because *"upgrade antseal"*, *"your vault is damaged"* and
+/// *"another antseal is running"* are three different sentences and only one
+/// of them is the user's fault (D100 R1). The `detail` is the decoder's own
+/// `&'static str` — a failure-class summary whose type forbids record bytes,
+/// so publishing it is safe by construction.
+fn damage_sentence(reason: &DamageReason) -> String {
+    match reason {
+        DamageReason::Undecodable { detail } => {
+            format!("this record is malformed ({detail}); inspect it or restore from a backup")
+        }
+        DamageReason::NewerRecord { found } => format!(
+            "written by a newer antseal (record format v{found}); upgrade antseal to read it"
+        ),
+        DamageReason::SlotMoved => {
+            "changed while it was being read (another antseal may be running); re-run".to_owned()
+        }
     }
 }
 

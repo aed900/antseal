@@ -502,15 +502,135 @@ impl SlotFamily {
     }
 }
 
-/// Every anchor artifact one work holds, decoded once, in the order the
-/// upgrade engine indexes them (**U47**).
+/// Why one anchor slot could not be interpreted (**D100 R1**).
 ///
-/// # One reader, because two decoders of one versioned record drift
+/// Three, not one, because they demand three different actions and only one
+/// of them is anybody's fault. Collapsing them is the defect one level down:
+/// [`Self::NewerRecord`] means *upgrade antseal*, [`Self::Undecodable`] means
+/// *your vault is damaged*, and [`Self::SlotMoved`] means *another antseal is
+/// running* — which is not damage at all, because `list` takes no lock by
+/// design and a concurrent `seal` makes it expected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DamageReason {
+    /// The record's bytes will not parse into an [`AnchorArtifact`] — a
+    /// malformed CBOR shape, an unregistered kind, an unknown key, a partial
+    /// D79 upgrade group, a slot name outside both families, or a record
+    /// whose kind disagrees with its slot's family.
+    ///
+    /// `detail` is the decoder's own `&'static str`, verbatim. Publishing it
+    /// is safe **by construction, not by review**:
+    /// [`JournalError::Corrupt`]'s own field doc is *"Failure-class summary —
+    /// never record bytes"*, so no record content and no secret can reach it
+    /// (project rule 6, satisfied by the type).
+    Undecodable {
+        /// The failure class, as the decoder spelled it.
+        detail: &'static str,
+    },
+    /// The record's envelope names a journal version this build does not
+    /// implement.
+    NewerRecord {
+        /// The version found on disk.
+        found: u64,
+    },
+    /// The slot vanished between the listing and the read.
+    SlotMoved,
+}
+
+impl DamageReason {
+    /// The stable kebab identifier for `--json` (D100 R3), wildcard-free so a
+    /// fourth reason has to name itself here.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Undecodable { .. } => "undecodable",
+            Self::NewerRecord { .. } => "newer-record",
+            Self::SlotMoved => "slot-moved",
+        }
+    }
+
+    /// The failure class summary a renderer shows beside the slot.
+    #[must_use]
+    pub const fn detail(&self) -> &'static str {
+        match self {
+            Self::Undecodable { detail } => detail,
+            Self::NewerRecord { .. } => "this record was written by a newer antseal",
+            Self::SlotMoved => "this anchor slot changed while it was being read",
+        }
+    }
+
+    /// The record format version, for [`Self::NewerRecord`] only.
+    #[must_use]
+    pub const fn format_version(&self) -> Option<u64> {
+        match self {
+            Self::NewerRecord { found } => Some(*found),
+            Self::Undecodable { .. } | Self::SlotMoved => None,
+        }
+    }
+
+    /// The error this damage **used** to be, byte-for-byte.
+    ///
+    /// [`StoredAnchors::require_intact`] is the whole-fail door, and the
+    /// thing that makes it a door rather than a new policy is that it raises
+    /// exactly what `read` raised before D100. Every message and every
+    /// [`ErrorClass`](crate::error::ErrorClass) is preserved here, which is
+    /// why R11 step 2's refactor could be checked by *"no assertion text
+    /// moves"*.
+    fn into_error(self) -> JournalError {
+        match self {
+            Self::Undecodable { detail } => JournalError::Corrupt { detail },
+            Self::NewerRecord { found } => JournalError::NewerRecord { found },
+            Self::SlotMoved => corrupt("an anchor slot vanished between listing and reading"),
+        }
+    }
+}
+
+/// One anchor slot whose record could not be interpreted, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DamagedSlot {
+    /// The slot name, verbatim. Outside the AEAD already (D42 is untouched
+    /// by publishing it), and the only handle a user has on the damage.
+    pub slot: String,
+    /// Which of R1's three this is.
+    pub reason: DamageReason,
+}
+
+/// One damaged slot as `--json` spells it (**D100 R3**).
 ///
-/// `status`, the U24 hook and `reveal` all need these bytes back. This is the
-/// only path that decodes them, and [`apply_upgrade`] is the only path that
-/// writes them — so the read and the write of a versioned record are each in
-/// exactly one place.
+/// Four keys, all **always present**: `slot`, `reason` ∈
+/// `{undecodable, newer-record, slot-moved}`, `detail`, and `format_version`
+/// — non-null only for `newer-record`.
+///
+/// It lives here rather than in either renderer because `list` and `status`
+/// both emit it, and one fact spelled two ways in one machine document is
+/// A103's defect at the document level (D100 §9(v)).
+#[must_use]
+pub fn damaged_slot_json(damaged: &DamagedSlot) -> serde_json::Value {
+    serde_json::json!({
+        "slot": damaged.slot,
+        "reason": damaged.reason.name(),
+        "detail": damaged.reason.detail(),
+        "format_version": damaged.reason.format_version(),
+    })
+}
+
+impl DamagedSlot {
+    /// The kind the slot **name** implies, or `None` when the name itself is
+    /// outside both families.
+    ///
+    /// Deliberately weaker than a verdict, and D100 §1.4 is why: the
+    /// artifact's `kind` lives at key 0 **inside** the record, so a damaged
+    /// slot's kind is unknowable. The name gives a family and nothing more —
+    /// and `assemble` proves the name can be outside both families too. Its
+    /// one use is negative: a caller must not claim a kind is *absent* while
+    /// holding a damaged slot that could have been one.
+    #[must_use]
+    pub fn slot_kind(&self) -> Option<ArtifactKind> {
+        SlotFamily::parse(&self.slot).map(SlotFamily::kind)
+    }
+}
+
+/// The artifacts of one work that **did** decode — the evidence half of
+/// [`StoredAnchors`], reachable only through one of its two named doors.
 ///
 /// # The order is not the directory order
 ///
@@ -522,82 +642,14 @@ impl SlotFamily {
 /// This type therefore re-sorts numerically — OTS first, then TSA by parsed
 /// index — and that ordering is what [`Self::ots_slot`] resolves against, in
 /// the same pass, never by re-listing the directory (R10).
-///
-/// # A decode failure fails the whole read
-///
-/// Never a partial picture: one unreadable slot means the work's anchor set
-/// is unknown, and a caller handed nine of ten artifacts would render a
-/// verdict about evidence it does not have. Same discipline as
-/// `list_works`/`list_anchors`/`WorkListing::gather`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct StoredAnchors {
+pub struct IntactAnchors {
     /// Ordered OTS-then-TSA; the OTS entries are the first `ots_len`.
     slots: Vec<(String, AnchorArtifact)>,
     ots_len: usize,
 }
 
-impl StoredAnchors {
-    /// Read and decode every anchor slot of one work.
-    ///
-    /// A work with no `anchors/` directory yields an empty set — a state,
-    /// not a failure: `--no-anchor` seals and works killed before the anchor
-    /// gate both have one.
-    ///
-    /// # Errors
-    ///
-    /// [`JournalError::NewerRecord`] — propagated **distinctly** from
-    /// [`JournalError::Corrupt`], because "upgrade antseal" and "your vault
-    /// is damaged" are different sentences and only one of them is the user's
-    /// fault. [`JournalError::Corrupt`] for a malformed record, a slot name
-    /// outside the two families, a record whose kind disagrees with its
-    /// slot's family, or a slot that vanished between the listing and the
-    /// read. Store-level failures otherwise.
-    pub fn read(store: &WorkStore<'_>, seal_id: &SealId) -> Result<Self, JournalError> {
-        let mut records = Vec::new();
-        for slot in store.list_anchors(seal_id)? {
-            let bytes = store
-                .get_anchor(seal_id, &slot)?
-                .ok_or_else(|| corrupt("an anchor slot vanished between listing and reading"))?;
-            let artifact = AnchorArtifact::decode(bytes.as_bytes())?;
-            records.push((slot, artifact));
-        }
-        Self::assemble(records)
-    }
-
-    /// Order and cross-check already-decoded records.
-    ///
-    /// Split out from [`Self::read`] so the ordering and family rules are
-    /// testable without an Argon2id vault per case; it is private, so `read`
-    /// remains the only way in and U47's "one reader" holds.
-    fn assemble(records: Vec<(String, AnchorArtifact)>) -> Result<Self, JournalError> {
-        let mut keyed = Vec::with_capacity(records.len());
-        for (slot, artifact) in records {
-            let family = SlotFamily::parse(&slot)
-                .ok_or_else(|| corrupt("anchor slot name belongs to no known artifact family"))?;
-            // The slot name lives outside the AEAD and the kind lives inside
-            // it; U9's identity AAD stops a record being replayed into a
-            // different slot, but nothing stops a *writer* putting the wrong
-            // family in. Cheap to check, and it is the difference between a
-            // TSA token counted as an OTS anchor and a refusal.
-            if artifact.kind != family.kind() {
-                return Err(corrupt("anchor slot family disagrees with the record kind"));
-            }
-            keyed.push((family, slot, artifact));
-        }
-        keyed.sort_by_key(|(family, _, _)| *family);
-        let ots_len = keyed
-            .iter()
-            .filter(|(family, _, _)| matches!(family, SlotFamily::Ots))
-            .count();
-        Ok(Self {
-            slots: keyed
-                .into_iter()
-                .map(|(_, slot, artifact)| (slot, artifact))
-                .collect(),
-            ots_len,
-        })
-    }
-
+impl IntactAnchors {
     /// Every artifact with its slot name, OTS first then TSA by index.
     #[must_use]
     pub fn all(&self) -> &[(String, AnchorArtifact)] {
@@ -637,16 +689,226 @@ impl StoredAnchors {
             .map(|(slot, artifact)| (slot.as_str(), artifact))
     }
 
-    /// Whether this work holds no anchor artifacts at all.
+    /// Whether this work holds no *readable* anchor artifacts.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
 
-    /// How many artifacts, across both families.
+    /// How many readable artifacts, across both families.
     #[must_use]
     pub fn len(&self) -> usize {
         self.slots.len()
+    }
+}
+
+/// Every anchor slot one work holds: the artifacts that decoded, and the
+/// slots that did not (**U47**, restructured by **D100 R2**).
+///
+/// # One reader, because two decoders of one versioned record drift
+///
+/// `status`, the U24 hook and `reveal` all need these bytes back. This is the
+/// only path that decodes them, and [`apply_upgrade`] is the only path that
+/// writes them — so the read and the write of a versioned record are each in
+/// exactly one place. D100 adds a second **policy**, not a second codec:
+/// there is still exactly one call to [`AnchorArtifact::decode`] in the
+/// workspace.
+///
+/// # A decode failure is a value, and the whole-fail rule has a door
+///
+/// The hazard the old rule named is real — *a caller handed nine of ten
+/// artifacts would render a verdict about evidence it does not have* — and it
+/// is honoured **more strongly** than before, because it used to be a comment
+/// and is now a type. The artifacts live on [`IntactAnchors`], and there are
+/// exactly two ways to reach one:
+///
+/// - [`Self::require_intact`] — the **evidence** door. Refuses if anything is
+///   damaged, with precisely the error the whole read used to raise. This is
+///   what `apply_upgrade`'s callers and (at M3) `reveal` take: a bundle built
+///   from a partial anchor set would be a claim about evidence its builder
+///   never saw.
+/// - [`Self::intact_and_damaged`] — the **reporting** door. Hands back the
+///   survivors *and* the damage together, so a renderer receives the damage
+///   whether it asked for it or not. `list`, `status` and the U24 hook take
+///   this one, and no fourth production file may (the S36-shaped scan in this
+///   module's tests is what enforces it).
+///
+/// # Where the line is, and why it is the AEAD
+///
+/// [`Self::read`]'s signature is unchanged and it still fails — on
+/// **enumeration** and on **authentication**, never on a per-record schema
+/// refusal (R5):
+///
+/// - everything `list_anchors` raises (I/O, `AlienEntry`, `InvalidSlotName`)
+///   is an enumeration failure: if the listing is untrustworthy you do not
+///   know what you are missing, and a partial picture is dishonest by
+///   construction. Same rule as `list_works`;
+/// - everything `get_anchor` raises from the **cipher** layer
+///   (`CipherError::AuthFailure`, `BlobTooShort`) stays one code. **That is
+///   the line that keeps U6 whole.** Below the AEAD, one sentence; above it,
+///   where no unauthenticated caller can observe the distinction, the truth.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StoredAnchors {
+    intact: IntactAnchors,
+    /// In the order the two passes found them: decode refusals in
+    /// `list_anchors`' lexical order, then family refusals in the same order
+    /// (see [`Self::require_intact`]).
+    damaged: Vec<DamagedSlot>,
+}
+
+impl StoredAnchors {
+    /// Read and decode every anchor slot of one work.
+    ///
+    /// A work with no `anchors/` directory yields an empty set — a state,
+    /// not a failure: `--no-anchor` seals and works killed before the anchor
+    /// gate both have one. A slot whose record will not decode is **not** a
+    /// failure either: it is collected into [`Self::damaged`].
+    ///
+    /// # Errors
+    ///
+    /// Enumeration failures from `list_anchors` and cipher-layer failures
+    /// from `get_anchor` — the two classes on the far side of the line in
+    /// this type's docs. [`JournalError::Encode`] and the transition
+    /// variants cannot be produced by a decode and are propagated rather
+    /// than reclassified, so a bug in this module never becomes a damaged
+    /// slot.
+    pub fn read(store: &WorkStore<'_>, seal_id: &SealId) -> Result<Self, JournalError> {
+        let mut records = Vec::new();
+        let mut damaged = Vec::new();
+        for slot in store.list_anchors(seal_id)? {
+            let Some(bytes) = store.get_anchor(seal_id, &slot)? else {
+                damaged.push(DamagedSlot {
+                    slot,
+                    reason: DamageReason::SlotMoved,
+                });
+                continue;
+            };
+            match AnchorArtifact::decode(bytes.as_bytes()) {
+                Ok(artifact) => records.push((slot, artifact)),
+                Err(JournalError::Corrupt { detail }) => damaged.push(DamagedSlot {
+                    slot,
+                    reason: DamageReason::Undecodable { detail },
+                }),
+                Err(JournalError::NewerRecord { found }) => damaged.push(DamagedSlot {
+                    slot,
+                    reason: DamageReason::NewerRecord { found },
+                }),
+                // Not a schema refusal, so not this work's damage: an
+                // encode or a transition error arriving here is a bug in
+                // this module and is surfaced as one.
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(Self::assemble(records, damaged))
+    }
+
+    /// Order and cross-check already-decoded records.
+    ///
+    /// Split out from [`Self::read`] so the ordering and family rules are
+    /// testable without an Argon2id vault per case; it is private, so `read`
+    /// remains the only way in and U47's "one reader" holds.
+    ///
+    /// `damaged` is the decode pass's own findings, and family refusals are
+    /// **appended** to it rather than interleaved — which is what preserves
+    /// the diagnosis [`Self::require_intact`] gives on a vault damaged in
+    /// both ways at once (D100 §8's named drift risk).
+    fn assemble(records: Vec<(String, AnchorArtifact)>, mut damaged: Vec<DamagedSlot>) -> Self {
+        let mut keyed = Vec::with_capacity(records.len());
+        for (slot, artifact) in records {
+            let Some(family) = SlotFamily::parse(&slot) else {
+                damaged.push(DamagedSlot {
+                    slot,
+                    reason: DamageReason::Undecodable {
+                        detail: "anchor slot name belongs to no known artifact family",
+                    },
+                });
+                continue;
+            };
+            // The slot name lives outside the AEAD and the kind lives inside
+            // it; U9's identity AAD stops a record being replayed into a
+            // different slot, but nothing stops a *writer* putting the wrong
+            // family in. Cheap to check, and it is the difference between a
+            // TSA token counted as an OTS anchor and a refusal.
+            if artifact.kind != family.kind() {
+                damaged.push(DamagedSlot {
+                    slot,
+                    reason: DamageReason::Undecodable {
+                        detail: "anchor slot family disagrees with the record kind",
+                    },
+                });
+                continue;
+            }
+            keyed.push((family, slot, artifact));
+        }
+        keyed.sort_by_key(|(family, _, _)| *family);
+        let ots_len = keyed
+            .iter()
+            .filter(|(family, _, _)| matches!(family, SlotFamily::Ots))
+            .count();
+        Self {
+            intact: IntactAnchors {
+                slots: keyed
+                    .into_iter()
+                    .map(|(_, slot, artifact)| (slot, artifact))
+                    .collect(),
+                ots_len,
+            },
+            damaged,
+        }
+    }
+
+    /// Every slot this read could not interpret, in the order it found them.
+    #[must_use]
+    pub fn damaged(&self) -> &[DamagedSlot] {
+        &self.damaged
+    }
+
+    /// **The evidence door**: the artifacts, or a refusal naming the first
+    /// slot that is not one.
+    ///
+    /// # Errors
+    ///
+    /// The first damaged slot's own error, which is byte-for-byte what
+    /// [`Self::read`] raised before D100: [`JournalError::NewerRecord`]
+    /// propagated **distinctly** from [`JournalError::Corrupt`], because
+    /// "upgrade antseal" and "your vault is damaged" are different sentences
+    /// and only one of them is the user's fault.
+    pub fn require_intact(&self) -> Result<&IntactAnchors, JournalError> {
+        match self.damaged.first() {
+            Some(first) => Err(first.reason.clone().into_error()),
+            None => Ok(&self.intact),
+        }
+    }
+
+    /// **The reporting door**: the survivors and the damage, together.
+    ///
+    /// A caller can still drop the second element with an explicit `_`. That
+    /// is greppable and reviewable, unlike an absent call, and it is what the
+    /// S36-shaped scan in this module's tests checks: only `listing.rs`,
+    /// `status.rs` and `upgrade_hook.rs` may name this.
+    #[must_use]
+    pub fn intact_and_damaged(&self) -> (&IntactAnchors, &[DamagedSlot]) {
+        (&self.intact, &self.damaged)
+    }
+
+    /// How many anchor slots this work holds in total, damaged included.
+    ///
+    /// The count `list` renders *"N of M slots unreadable"* from, and the
+    /// reason per-record isolation beats a per-work badge: a badge produced
+    /// by catching an error at the work boundary can say *damaged* and cannot
+    /// say *1 of 4* (D100 §2(b)).
+    #[must_use]
+    pub fn total_slots(&self) -> usize {
+        self.intact.len() + self.damaged.len()
+    }
+
+    /// Whether this work holds no anchor slots at all — damaged included.
+    ///
+    /// A `--no-anchor` seal and a work whose every slot is damaged are
+    /// different facts, and this is the one that means *nothing is there*.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.total_slots() == 0
     }
 }
 

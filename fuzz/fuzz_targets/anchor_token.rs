@@ -21,7 +21,23 @@
 //! - **every failure is a typed `anchor-` error**, never a generic one and
 //!   never a borrowed prefix (D91 §6.1).
 //! - **no allocation beyond the F11 budget** — a 1 MiB token must not induce
-//!   a gigabyte, which is the shape a believed length head takes.
+//!   a gigabyte, which is the shape a believed length head takes. Scoped by
+//!   D58 §10.3 **rule 6** (D102 §6), and scoped **before this target ever went
+//!   red**, which is the point: `anchor_ots` was green too, until its first
+//!   remote execution found A100 in 3 140 execs. This path has the same class
+//!   of site — `chain_certificates` reserves `MAX_CHAIN_CERTS` certificates
+//!   *after* checking the count, with no length header to clamp against — and
+//!   the only difference is that its count limit is **8** rather than 1 024.
+//!   Measured (`anchor::caps::tests`), that reservation is
+//!   `8 × size_of::<Certificate>() = 4 096 B`, which is **exactly** the
+//!   guard's `SLACK`: the margin by which this target clears the unscoped
+//!   budget is `len` bytes, i.e. zero at the boundary. It has never been red
+//!   because of a tie, not because of a design.
+//!
+//!   `tsa_structural_alloc_bytes` is derived in `antseal-core` from
+//!   `MAX_CHAIN_CERTS`, `MAX_INTERMEDIATE_COUNT` and `size_of` (rule 6 clause
+//!   (a)) and is asserted at equality there (clause (b)); clause (c) holds it
+//!   under `MAX_TSA_TOKEN_BYTES` as a `const`.
 //!
 //! Both the bundle path (`expected_nonce = None`) and the capture path
 //! (`Some`, attacker-chosen) are driven, alternating on the input's first
@@ -37,8 +53,9 @@
 
 use libfuzzer_sys::fuzz_target;
 
+use antseal_core::anchor::caps::tsa_structural_alloc_bytes;
 use antseal_core::anchor::fuzz_entry::{drive_anchor_token, drive_anchor_token_with_nonce};
-use antseal_fuzz::{Counting, assert_within_budget, measure, selftest_tripwire};
+use antseal_fuzz::{Counting, assert_within_budget_structural, measure, selftest_tripwire};
 
 #[global_allocator]
 static ALLOC: Counting = Counting;
@@ -68,5 +85,10 @@ fuzz_target!(|data: &[u8]| {
         );
     }
 
-    assert_within_budget("anchor::tsa::verify_token", data.len(), budget);
+    assert_within_budget_structural(
+        "anchor::tsa::verify_token",
+        data.len(),
+        budget,
+        tsa_structural_alloc_bytes(data.len()),
+    );
 });

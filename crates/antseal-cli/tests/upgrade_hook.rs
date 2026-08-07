@@ -127,22 +127,21 @@ enum Shape {
     Incomplete,
 }
 
-impl Shape {
-    /// Whether a work of this shape can sit in a vault the *other* commands
-    /// still render.
-    ///
-    /// [`Shape::UndecodableAnchor`] cannot, and the reason is worth stating
-    /// because it is not this hook's doing: `StoredAnchors::read` fails the
-    /// whole read on one bad record — deliberately, so no caller renders a
-    /// verdict about evidence it does not have — and `JournalError::Corrupt`
-    /// maps to `CliError::VaultAuthFailure`, so **`list` exits 12 for the
-    /// whole vault**. The spawned rows below therefore use a vault without
-    /// one: they are about the hook's placement, and a fixture that made the
-    /// host command fail for unrelated reasons would prove nothing about it.
-    const fn renderable(self) -> bool {
-        !matches!(self, Self::UndecodableAnchor)
-    }
-}
+// **D100 R10.2**: `Shape::renderable` used to live here, and its death is the
+// acceptance criterion for that decision.
+//
+// It existed for one reason, stated in its own doc: `StoredAnchors::read`
+// failed the whole read on one bad record and `JournalError::Corrupt` mapped
+// to `CliError::VaultAuthFailure`, so **`list` exited 12 for the whole
+// vault** — and the spawned rows below, which drive the real binary, had to
+// be given a vault with the undecodable fixture removed. That is a test-suite
+// workaround for a product defect (U65), and it routed *around* the defect
+// rather than recording it.
+//
+// The four rows that used it are now on the full `fixture_vault`, and this is
+// the load-bearing part: removing the exclusion does **not** redden them, it
+// makes them **vacuous** — they would keep passing over a vault one work
+// smaller. Re-pointing them is a required step and not a consequence.
 
 struct Fixture {
     tag: u8,
@@ -188,18 +187,13 @@ fn complete_tags() -> Vec<u8> {
         .collect()
 }
 
-/// Every fixture shape — the vault the in-process rows drive.
+/// Every fixture shape — the vault **every** row drives, in-process and
+/// spawned alike (D100 R10.2).
 fn fixture_vault(tag: &str) -> IsolatedVault {
-    build_vault(tag, false)
+    build_vault(tag)
 }
 
-/// The shapes a vault can hold and still be listable — the vault the spawned
-/// rows drive. See [`Shape::renderable`].
-fn renderable_vault(tag: &str) -> IsolatedVault {
-    build_vault(tag, true)
-}
-
-fn build_vault(tag: &str, renderable_only: bool) -> IsolatedVault {
+fn build_vault(tag: &str) -> IsolatedVault {
     let vault = IsolatedVault::create(tag);
     let unlocked = vault.unlock();
     let mut rng = ChaCha20Rng::from_seed([0x24; 32]);
@@ -208,9 +202,6 @@ fn build_vault(tag: &str, renderable_only: bool) -> IsolatedVault {
     let mut slot_rng = ChaCha20Rng::from_seed([0x25; 32]);
 
     for f in fixtures() {
-        if renderable_only && !f.shape.renderable() {
-            continue;
-        }
         let w = MasterSecret::from_bytes([f.tag; 32]);
         let id = seal_id(f.tag);
         journal
@@ -453,7 +444,8 @@ fn an_armed_pass_upgrades_a_pending_anchor_and_persists_the_group() {
 
     let reread = vault.unlock();
     let store = WorkStore::new(&reread);
-    let stored = StoredAnchors::read(&store, &id).expect("read");
+    let stored_stored = StoredAnchors::read(&store, &id).expect("read");
+    let stored = stored_stored.require_intact().expect("read");
     let (_, artifact) = stored.ots_entry(0).expect("the OTS slot");
     let group = artifact
         .upgrade
@@ -528,7 +520,8 @@ fn an_incomplete_work_is_never_a_candidate() {
 
     // …and its anchor slot is exactly as it was.
     let store = WorkStore::new(&unlocked);
-    let stored = StoredAnchors::read(&store, &seal_id(0x03)).expect("read");
+    let stored_stored = StoredAnchors::read(&store, &seal_id(0x03)).expect("read");
+    let stored = stored_stored.require_intact().expect("read");
     let (_, artifact) = stored.ots_entry(0).expect("the OTS slot");
     assert_eq!(artifact.bytes, pending_ots());
     assert!(artifact.upgrade.is_none());
@@ -767,7 +760,7 @@ impl Drop for TestDir {
 #[test]
 fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
     let dir = TestDir::new("enumerate");
-    let vault = renderable_vault("hook-enumerate");
+    let vault = fixture_vault("hook-enumerate");
 
     // `(command, arms, why)` — indexed by `ALL_COMMAND_NAMES`/`MINIMAL_ARGV`,
     // which the machine registry already asserts are 1:1 and in order.
@@ -915,7 +908,7 @@ fn a_vault_less_verify_touches_no_vault_and_does_no_hook_work() {
 #[test]
 fn the_hook_runs_on_a_real_invocation_without_touching_stdout() {
     let dir = TestDir::new("stdout");
-    let vault = renderable_vault("hook-stdout");
+    let vault = fixture_vault("hook-stdout");
     let root = vault.layout.root();
     let args = ["--json", "--passphrase-fd", "0", "list"];
 
@@ -968,7 +961,7 @@ fn the_hook_runs_on_a_real_invocation_without_touching_stdout() {
 #[test]
 fn a_hook_that_cannot_start_leaves_the_command_untouched() {
     let dir = TestDir::new("bad-endpoints");
-    let vault = renderable_vault("hook-bad-endpoints");
+    let vault = fixture_vault("hook-bad-endpoints");
     let root = vault.layout.root();
     let args = ["--json", "--passphrase-fd", "0", "list"];
 
@@ -1019,7 +1012,7 @@ fn a_hook_that_cannot_start_leaves_the_command_untouched() {
 #[test]
 fn a_pass_with_nothing_dialable_costs_no_budget() {
     let dir = TestDir::new("latency");
-    let vault = renderable_vault("hook-latency");
+    let vault = fixture_vault("hook-latency");
     let root = vault.layout.root();
     let args = ["--passphrase-fd", "0", "list"];
 

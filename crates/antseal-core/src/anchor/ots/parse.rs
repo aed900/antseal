@@ -35,6 +35,25 @@
 //! is why D58 §10.3 rule 5 can say `parse_ots` needs no total-size cap of its
 //! own: work is bounded by the limits, not by the caller's diligence.
 //!
+//! # The frames themselves cost bytes, and that cost is bounded too (D102)
+//!
+//! The paragraph above bounds the *values* the frames hold and says nothing
+//! about the frames. That omission is the whole of **A100**: `walk.rest` grows
+//! one [`Frame`] at a time at the `push` below, `Vec` doubles from capacity 4,
+//! and the 65th push therefore allocates
+//! `128 × size_of::<Frame>()` — the constant `fuzz-smoke` reported four times
+//! and no rule in the tree could explain. It is **count-bounded** by
+//! `MAX_OTS_DEPTH`, not length-bounded by anything, so D10 §4's clamp — a rule
+//! about **length headers** — never governed it.
+//!
+//! D58 §10.3 **rule 6** (added by D102 §3.1) now does, and both this container
+//! and `attestations` are costed by name in [`super::limits`]:
+//! [`super::limits::OTS_STRUCTURAL_ALLOC_BYTES`] is derived from the limit
+//! constants and `size_of`, asserted at equality by
+//! `crates/antseal-core/tests/anchor_ots_alloc.rs`, and held under
+//! `MAX_OTS_BYTES` by a `const` assertion so a raise that breaks the bound
+//! fails `cargo build`.
+//!
 //! # CPU, bounded by the same two constants
 //!
 //! D58 states the memory argument and not this one, so it is written out
@@ -215,7 +234,14 @@ impl<'a> Reader<'a> {
 // ── the work stack ───────────────────────────────────────────────────────
 
 /// One node of the op DAG, live only while it is on the current path.
-struct Frame {
+///
+/// `pub(super)` for its **size** and nothing else: [`super::limits`] derives
+/// the work stack's structural allocation cost as
+/// `next_power_of_two(MAX_OTS_DEPTH) × size_of::<Frame>()` (D58 §10.3 rule 6,
+/// added by D102 §3.1), and clause (a) of that rule requires the derivation to
+/// be taken from `size_of` rather than written as a literal. Nothing outside
+/// this module constructs or reads one.
+pub(super) struct Frame {
     /// The running value at this node. `None` once the path has crossed a
     /// registered-but-unimplemented op (D58 §9.4).
     value: Option<Vec<u8>>,

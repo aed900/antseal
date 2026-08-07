@@ -584,7 +584,13 @@ fn invalid(
 }
 
 /// A node in the search: the signer, or one supplied certificate.
-struct Node<'a> {
+///
+/// `pub(super)` for its **size** and nothing else: [`super::caps`] derives the
+/// DER path's structural allocation cost from `size_of::<Node>()` under D58
+/// §10.3 rule 6, whose clause (a) requires the derivation to come from
+/// `size_of` rather than from a transcribed number (D102 §6). Every field
+/// stays private and nothing outside this module constructs one.
+pub(super) struct Node<'a> {
     cert: &'a Certificate,
     /// DER of the certificate's `subject`, cached — this is compared once per
     /// candidate link and re-encoding it each time dominated the profile.
