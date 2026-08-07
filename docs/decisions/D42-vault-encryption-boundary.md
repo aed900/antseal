@@ -88,7 +88,24 @@ prompt-free — tasks/U.md:357, and U24's own Accept asserts "vault-less
 `verify` performs no vault access and no prompt", tasks/U.md:295). Every
 other command a vault owner runs — `init`, `seal`, `list`, `show`,
 `status`, `restore`, `reveal`, `vault export|import` (tasks/U.md:13) —
-unlocks by need. So "every CLI invocation attempts upgrades"
+unlocks by need.
+
+> **Corrected 2026-08-07 (D99 §6), and this paragraph over-counted by two.**
+> The **rule** above — the hook runs iff the host command already holds an
+> unlocked vault handle — is untouched and was implemented exactly as
+> written. What is wrong is this enumeration: `verify` is **not** the only
+> command that never arms the hook. `init` **creates** a vault rather than
+> unlocking one, and `vault import` **writes** one; measured at U24's
+> landing, neither holds an `UnlockedVault` at the dispatch layer, so
+> neither arms. Three commands are therefore documented non-armers, not one.
+>
+> This matters because the paragraph reads as a coverage argument — *"only
+> one case degrades"* — and a coverage argument built on a miscount invites
+> the next lane to treat an unarmed command as a bug. U24's rewritten
+> Accept row 4 asserts the real partition per subcommand over the binary's
+> own debug trace, in **both** directions, which is what the original row
+> (factually unsatisfiable — no point that sees every subcommand holds a
+> vault) could never have done. So "every CLI invocation attempts upgrades"
 (MVP-SPEC.md:35) degrades in exactly one case: an owner running bare
 `verify` on their own machine gets no upgrade pass. That user's pending
 anchors still advance on their next `list`/`show`/`status`/`seal`, and
