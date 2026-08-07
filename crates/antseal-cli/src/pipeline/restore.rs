@@ -495,33 +495,48 @@ pub struct RestoreEngine<'i, 'v, B> {
     store: &'i WorkStore<'v>,
 }
 
+/// Resolve a printed work id (64 lowercase hex, D29/D48 §1) to the vault's
+/// store key.
+///
+/// Exact match only: a prefix match would be a second, silently ambiguous
+/// naming scheme over the one artifact users copy and paste.
+///
+/// Free-standing rather than a method because it needs no backend, and
+/// every command that names a work must resolve it the same way — `status`
+/// (U23) reaches no network at all and cannot build a [`RestoreEngine`] to
+/// borrow the rule from. One resolver, two callers.
+///
+/// # Errors
+///
+/// [`RestoreError::NotAWorkId`] for anything that is not 64 hex characters;
+/// [`RestoreError::WorkNotFound`] when no work carries it.
+pub fn resolve_work_id(store: &WorkStore<'_>, work_id: &str) -> Result<SealId, RestoreError> {
+    let wanted = parse_hex32(work_id).ok_or_else(|| RestoreError::NotAWorkId {
+        given: work_id.to_owned(),
+    })?;
+    for seal_id in store.list_works()? {
+        let record = store.load_meta(&seal_id)?;
+        if record.work_id == Some(wanted) {
+            return Ok(seal_id);
+        }
+    }
+    Err(RestoreError::WorkNotFound)
+}
+
 impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
     /// Assemble the engine over a backend and an unlocked vault's store.
     pub fn new(backend: &'i B, store: &'i WorkStore<'v>) -> Self {
         Self { backend, store }
     }
 
-    /// Resolve a printed work id (64 lowercase hex, D29/D48 §1) to the
-    /// vault's store key.
-    ///
-    /// Exact match only: a prefix match would be a second, silently
-    /// ambiguous naming scheme over the one artifact users copy and paste.
+    /// Resolve a printed work id — [`resolve_work_id`], as a method on the
+    /// engine that already holds the store.
     ///
     /// # Errors
     ///
-    /// [`RestoreError::NotAWorkId`] for anything that is not 64 hex
-    /// characters; [`RestoreError::WorkNotFound`] when no work carries it.
+    /// As [`resolve_work_id`].
     pub fn resolve_work_id(&self, work_id: &str) -> Result<SealId, RestoreError> {
-        let wanted = parse_hex32(work_id).ok_or_else(|| RestoreError::NotAWorkId {
-            given: work_id.to_owned(),
-        })?;
-        for seal_id in self.store.list_works()? {
-            let record = self.store.load_meta(&seal_id)?;
-            if record.work_id == Some(wanted) {
-                return Ok(seal_id);
-            }
-        }
-        Err(RestoreError::WorkNotFound)
+        resolve_work_id(self.store, work_id)
     }
 
     /// Restore one work: fetch, decrypt, verify, and hand back the exact

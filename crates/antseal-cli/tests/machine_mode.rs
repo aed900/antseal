@@ -5,9 +5,11 @@
 //!
 //! NON-SECRET: fixture passphrases and paths only.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command as Process, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use antseal_cli::machine::{ALL_COMMAND_NAMES, MINIMAL_ARGV, all_specs};
@@ -58,7 +60,7 @@ struct Captured {
 /// test fails loudly — abort-not-HANG is the assertion, so the harness
 /// must be able to lose.
 fn spawn_watched(vault_dir: &Path, args: &[&str]) -> Captured {
-    let mut child = Process::new(env!("CARGO_BIN_EXE_antseal"))
+    let mut child = spawn::antseal()
         .args(args)
         .env("ANTSEAL_DIR", vault_dir)
         .stdin(Stdio::null())
@@ -119,12 +121,17 @@ fn fixture_vault(dir: &TestDir) -> PathBuf {
 
 /// What each command must do TODAY in machine mode with no channels
 /// supplied: the typed abort class (stub commands: not-implemented;
-/// export and `list`: passphrase-unavailable — they must unlock the
-/// fixture vault and machine mode never prompts; import over the fixture
-/// vault: the refusal → consent-not-obtained). Extends as handlers land.
+/// export, `list` and `status`: passphrase-unavailable — they must unlock
+/// the fixture vault and machine mode never prompts; import over the
+/// fixture vault: the refusal → consent-not-obtained). Extends as handlers
+/// land.
 fn expected_class(name: &str) -> (i32, &'static str) {
     match name {
-        "vault export" | "list" => (11, "passphrase-unavailable"),
+        // U23's handler joined this arm rather than gaining one of its
+        // own: `status` reads the vault and nothing else, so it stops
+        // exactly where `list` and `vault export` stop, for the reason
+        // they stop there.
+        "vault export" | "list" | "status" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
         // U11's handler refuses over the fixture vault, absolutely and
         // before it would ask for anything (D39 Decision 4) — so the
@@ -216,7 +223,7 @@ fn success_envelope_carries_the_registered_result_shape() {
     let vault_root = fixture_vault(&dir);
     let backup = dir.0.join("backup.sealvault");
 
-    let mut child = Process::new(env!("CARGO_BIN_EXE_antseal"))
+    let mut child = spawn::antseal()
         .args([
             "--json",
             "vault",
@@ -335,9 +342,12 @@ fn render_fixture() -> String {
             // (U36's, shared) — rendered by the real producer rather than
             // hand-copied, per U19's rule.
             "seal" => antseal_cli::backend::unavailable("seal"),
-            "status" => CliError::NotImplemented {
-                command: "status",
-                milestone: Milestone::M2,
+            // U23's handler is complete. Like `list`, it must unlock the
+            // vault, so in machine mode without a channel that is exactly
+            // where it stops — rendered by the real producer rather than
+            // hand-copied (U19's rule).
+            "status" => CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::NoChannel,
             },
             _ => CliError::NotImplemented {
                 command: match name {
@@ -365,6 +375,15 @@ fn render_fixture() -> String {
     out.push_str(&format!(
         "[list] result\n{}\n",
         success_envelope("list", "arbitrum-one", fixture_listing().json())
+    ));
+    // U23's, rendered by `WorkStatus::json` — the real producer. The
+    // registered document is the shape a consumer branches on: a per-anchor
+    // `state` from A18's seven frozen names, `headline_eligible` beside it,
+    // the source's verified/claimed bit, and the receipt in its **own**
+    // field rather than as an anchor (D98 rider 4).
+    out.push_str(&format!(
+        "[status] result\n{}\n",
+        success_envelope("status", "arbitrum-one", fixture_status().json())
     ));
     // U13's, rendered by `SealReport::json` — the real producer, so the
     // registered document cannot drift from the command's own output.
@@ -634,10 +653,67 @@ fn fixture_init_report() -> antseal_cli::init::InitReport {
     }
 }
 
+/// The `status` result document: one work carrying both an OTS anchor that
+/// cannot yet prove a time and a TSA anchor that can, plus the receipt.
+///
+/// Hand-built rather than gathered from a vault, because this suite is about
+/// the **envelope** and an Argon2id derivation per fixture would buy nothing.
+/// Every value below is a real one — the states come from A18's frozen set
+/// and the source strings are the shapes the evaluators actually produce.
+fn fixture_status() -> antseal_cli::status::WorkStatus {
+    use antseal_cli::status::{AnchorRow, ReceiptRow, WorkStatus};
+    use antseal_cli::vault::store::WorkState;
+    use antseal_core::anchor::model::AnchorVerdict;
+    use antseal_core::crypto::secrets::SealId;
+    use antseal_core::verify::report::AnchorKind;
+
+    WorkStatus {
+        work_id: Some([0xA1; 32]),
+        seal_id: SealId::from_bytes([0xE1; 16]),
+        title: Some("thesis draft".to_owned()),
+        network: "arbitrum-one".to_owned(),
+        state: WorkState::Complete,
+        degraded: false,
+        anchors: vec![
+            AnchorRow {
+                slot: "ots-pending".to_owned(),
+                verdict: AnchorVerdict::pending(
+                    AnchorKind::Ots,
+                    Some("https://calendar.example/alice".to_owned()),
+                    None,
+                ),
+            },
+            AnchorRow {
+                slot: "tsa-0".to_owned(),
+                verdict: AnchorVerdict::proven(
+                    AnchorKind::Tsa,
+                    1_785_000_000,
+                    Some("CN=antseal mock TSA signer,O=antseal fixtures".to_owned()),
+                    Some("1785600000".to_owned()),
+                ),
+            },
+        ],
+        absent: Vec::new(),
+        receipt: Some(ReceiptRow {
+            transactions: 1,
+            block_numbers: vec![377_262_147],
+        }),
+        upgrade: None,
+    }
+}
+
 /// A two-row listing covering the shapes a consumer must handle: a
 /// finished work with a cost, and an unfinished one carrying the D45
-/// resume hint, the D37 clock, and U25's reserved slot.
+/// resume hint and the D37 clock.
+///
+/// U25's slot is no longer reserved, so both rows carry a real
+/// `(pending_anchors, nag)` pair rather than the two `null`s no gathered
+/// listing produces: row 1 is the nagging class (pending OTS, nothing else
+/// proving a time), row 2 the `--no-anchor` one, whose count is a counted
+/// zero and not an absent measurement. `None` on both fields means "not
+/// computable" and is exercised by `list`'s own suite, not here.
 fn fixture_listing() -> antseal_cli::listing::WorkListing {
+    use antseal_anchor::ots::NagState;
     use antseal_cli::listing::{ResumeClock, ResumeHint, WorkListing, WorkRow};
     use antseal_cli::pipeline::journal::SealState;
     use antseal_cli::vault::store::WorkState;
@@ -657,7 +733,8 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 degraded: false,
                 cost_atto: Some(4_200_000_000_000_000_000),
                 resume: None,
-                pending_anchors: None,
+                pending_anchors: Some(2),
+                nag: Some(NagState::OnlyPendingOts),
             },
             WorkRow {
                 work_id: Some([0xA4; 32]),
@@ -674,7 +751,8 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                     invocation: "antseal seal big.bin --no-anchor --network devnet".to_owned(),
                     clock: ResumeClock::TimeBoxed,
                 }),
-                pending_anchors: None,
+                pending_anchors: Some(0),
+                nag: Some(NagState::Unanchored),
             },
         ],
     }

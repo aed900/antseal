@@ -15,10 +15,12 @@
 //!
 //! NON-SECRET: every W/key/passphrase here is a documented fixture.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command as Process, Stdio};
+use std::process::Stdio;
 
 use antseal_cli::cli::Cli;
 use antseal_cli::error::{CliError, ErrorClass};
@@ -589,7 +591,7 @@ fn spawn_antseal(
     args: &[&str],
     stdin_bytes: Option<&[u8]>,
 ) -> std::process::Output {
-    let mut cmd = Process::new(env!("CARGO_BIN_EXE_antseal"));
+    let mut cmd = spawn::antseal();
     cmd.args(args)
         .env("ANTSEAL_DIR", vault_dir)
         .stdout(Stdio::piped())

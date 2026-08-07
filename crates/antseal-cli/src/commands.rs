@@ -25,10 +25,11 @@ use crate::cli::GlobalArgs;
 use crate::error::{CliError, PassphraseFailure};
 use crate::passphrase::{PassphrasePurpose, obtain_passphrase};
 use crate::rng::OsEntropy;
+use crate::upgrade_hook::VaultSlot;
 use crate::vault::export::{EXPORT_FILE_EXTENSION, export_vault, import_vault};
 use crate::vault::layout::{BesideFile, VaultLayout};
 use crate::vault::lock::VaultLock;
-use crate::vault::session::unlock_vault;
+use crate::vault::session::unlock_for_command;
 use crate::vault::store::WorkStore;
 
 /// A successfully-handled command: the machine-result document (printed
@@ -94,7 +95,15 @@ fn open_layout() -> Result<VaultLayout, CliError> {
 /// decision — the D39 order, the D40 KDF question, the D44 import
 /// classes, the D51 machine-mode rule — lives in [`crate::init::run_init`]
 /// so it is drivable in-process without a pty.
-pub(crate) fn init(globals: &GlobalArgs, args: &crate::cli::InitArgs) -> Result<Outcome, CliError> {
+pub(crate) fn init(
+    globals: &GlobalArgs,
+    args: &crate::cli::InitArgs,
+    // D99 R2 / D42's corrected consequence: `init` does NOT arm. `run_init`
+    // consumes the `UnlockedVault` `create_vault` produced and drops it
+    // inside, so this handler holds no handle at the dispatch layer — and a
+    // vault created moments ago has nothing to upgrade anyway.
+    _slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
     let ui = Ui { json: globals.json };
     let layout = VaultLayout::resolve().map_err(|e| CliError::Usage {
         message: e.to_string(),
@@ -143,7 +152,11 @@ pub(crate) fn init(globals: &GlobalArgs, args: &crate::cli::InitArgs) -> Result<
 /// reaches its seam first because it has no argument validation to do —
 /// the shared rule is "the cheapest thing that can say no goes first",
 /// not "the seam goes first".)
-pub(crate) fn seal(globals: &GlobalArgs, args: &crate::cli::SealArgs) -> Result<Outcome, CliError> {
+pub(crate) fn seal(
+    globals: &GlobalArgs,
+    args: &crate::cli::SealArgs,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
     // Loaded ONCE here and used for both answers it holds: the effective
     // network, and U26's TSA-list override for the anchor stage. Loading it
     // twice would be two chances for one invocation to run on two configs.
@@ -157,7 +170,7 @@ pub(crate) fn seal(globals: &GlobalArgs, args: &crate::cli::SealArgs) -> Result<
         source,
     })?;
     let plan = crate::seal_plan::build_plan(args, network, &cwd)?;
-    seal_over_backend(globals, &plan, &config)
+    seal_over_backend(globals, &plan, &config, slot)
 }
 
 // `effective_network(globals)` used to sit here, loading the config a
@@ -175,6 +188,9 @@ fn seal_over_backend(
     _globals: &GlobalArgs,
     _plan: &crate::seal_plan::SealPlan,
     _config: &crate::config::Config,
+    // The vault is never opened on this build, so nothing is ever armed —
+    // which is the honest reading of D42's rule and not an exemption from it.
+    _slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
     Err(crate::backend::unavailable("seal"))
 }
@@ -191,6 +207,7 @@ fn seal_over_backend(
     globals: &GlobalArgs,
     plan: &crate::seal_plan::SealPlan,
     config: &crate::config::Config,
+    slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
     use std::sync::Arc;
 
@@ -229,9 +246,11 @@ fn seal_over_backend(
     // command, and a paying command that built a bare journal would put the
     // tree back where it was before S31 — the capture hook fires, nothing
     // durable happens, and a crash between sub-batch txs buys the landed
-    // sub-batches a second time. The session is taken by value, so this is
-    // still the one `UnlockedVault` and the one `VaultKey` in the process.
-    let session = SealSession::open(unlock_vault(&layout, &passphrase)?);
+    // sub-batches a second time. The session takes an `Arc` share rather than
+    // the value (D99 R2 — `unlock_for_command` keeps one for the hook), and
+    // `UnlockedVault` is still `!Clone`, so this is still the one
+    // `UnlockedVault` and the one `VaultKey` in the process.
+    let session = SealSession::open(unlock_for_command(&layout, &passphrase, slot)?);
     let handle = load_wallet_key(session.vault())?.ok_or_else(|| CliError::Usage {
         message: "this vault holds no wallet key, so it cannot pay for a seal — it was \
                   created by an older build, or the wallet record was removed. Restore from a \
@@ -302,11 +321,11 @@ fn devnet_env() -> Option<antseal_net::DevnetEnv> {
 /// looks wrong into the one command that hangs. The cost is that a listing
 /// taken during a seal may show that work mid-transition — which is
 /// exactly what it is.
-pub(crate) fn list(globals: &GlobalArgs) -> Result<Outcome, CliError> {
+pub(crate) fn list(globals: &GlobalArgs, slot: &VaultSlot) -> Result<Outcome, CliError> {
     let ui = Ui { json: globals.json };
     let layout = open_layout()?;
     let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
-    let vault = unlock_vault(&layout, &passphrase)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
 
     let listing = crate::listing::WorkListing::gather(&WorkStore::new(&vault))?;
     for line in listing.render() {
@@ -314,6 +333,72 @@ pub(crate) fn list(globals: &GlobalArgs) -> Result<Outcome, CliError> {
     }
     Ok(Outcome {
         json: listing.json(),
+    })
+}
+
+/// `status <WORK-ID> [--upgrade]` (U23; the evaluation and rendering are
+/// [`crate::status`], the ruling is D98).
+///
+/// Read-only by default and — like `list` — deliberately **not** under the
+/// U5 single-writer lock: the command you reach for when something looks
+/// wrong must not be the command that hangs behind a running seal.
+///
+/// `--upgrade` writes, and its lock discipline is D99 R3's: poll unlocked
+/// (the lock exists to serialize writers, and holding it for a calendar
+/// round-trip would block every concurrent `seal` for up to two minutes),
+/// then take it only when there is something to persist. The window that
+/// opens is closed by `apply_upgrade`'s compare-and-set, not by hope.
+///
+/// The clock is read **once** and used for both jobs (D98 rider 2c): the
+/// verification time every anchor is evaluated at, and — through the engine's
+/// parameter — the `fetch_date` a recorded upgrade group carries (D97 R5). A
+/// second read could straddle a certificate expiry inside one output.
+pub(crate) fn status(
+    globals: &GlobalArgs,
+    work_id: &str,
+    upgrade: bool,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
+    let store = WorkStore::new(&vault);
+
+    let now = now_unix_secs();
+    let seal_id = crate::pipeline::restore::resolve_work_id(&store, work_id)?;
+
+    let mut applied = None;
+    if upgrade {
+        let config = crate::config::load()?;
+        let upgrade_config = crate::status::UpgradeConfig::from_config(&config);
+        let (stored, report) =
+            crate::status::poll_upgrades(&store, &seal_id, &upgrade_config, now)?;
+        applied = Some(if report.is_empty() {
+            crate::status::UpgradeOutcome::of_report(&report)
+        } else {
+            let _lock = VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile))
+                .map_err(CliError::from)?;
+            crate::status::persist_upgrades(&store, &seal_id, &stored, &report, &mut OsEntropy)?
+        });
+    }
+
+    // Gathered *after* the write, so one `--upgrade` run renders the state it
+    // just produced rather than the state it started from — which is also
+    // what makes U23's "a re-run shows the new state" a check of durability
+    // rather than of ordering.
+    let mut status = crate::status::WorkStatus::gather(
+        &store,
+        &seal_id,
+        crate::status::StatusContext::new(now),
+    )?;
+    status.upgrade = applied;
+
+    for line in status.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome {
+        json: status.json(),
     })
 }
 
@@ -327,13 +412,21 @@ pub(crate) fn restore(
     _globals: &GlobalArgs,
     _work_id: &str,
     _output: Option<&Path>,
+    // U20's live path unlocks through `unlock_for_command` like every other
+    // vault-holding command; this build refuses at the backend seam first, so
+    // nothing is ever armed.
+    _slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
     Err(crate::backend::unavailable("restore"))
 }
 
 /// `vault export [FILE]` (U12; format and engine in
 /// [`crate::vault::export`]).
-pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<Outcome, CliError> {
+pub(crate) fn vault_export(
+    globals: &GlobalArgs,
+    file: Option<&Path>,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
     let ui = Ui { json: globals.json };
     let layout = open_layout()?;
 
@@ -345,7 +438,7 @@ pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<
     let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
     // The unlock IS the passphrase proof D47 requires before that same
     // passphrase becomes the backup's only key.
-    let vault = unlock_vault(&layout, &passphrase)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
 
     let out_path = match file {
         Some(path) => path.to_path_buf(),
@@ -381,7 +474,16 @@ pub(crate) fn vault_export(globals: &GlobalArgs, file: Option<&Path>) -> Result<
 }
 
 /// `vault import <FILE>` (U12).
-pub(crate) fn vault_import(globals: &GlobalArgs, file: &Path) -> Result<Outcome, CliError> {
+pub(crate) fn vault_import(
+    globals: &GlobalArgs,
+    file: &Path,
+    // D99 R2 / D42's corrected consequence: `vault import` does NOT arm.
+    // Its only unlock is the self-verification inside `import_vault`, which
+    // never leaves that function — so there is no handle here to move up, and
+    // manufacturing one would cost a second ~1 s Argon2id derivation for a
+    // vault the user's next command will unlock properly.
+    _slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
     let ui = Ui { json: globals.json };
     let layout = VaultLayout::resolve().map_err(|e| CliError::Usage {
         message: e.to_string(),
@@ -420,7 +522,10 @@ pub(crate) fn vault_import(globals: &GlobalArgs, file: &Path) -> Result<Outcome,
     })
 }
 
-fn now_unix_secs() -> u64 {
+/// This invocation's clock read, POSIX seconds UTC. Shared with U24's hook,
+/// which reads it once for its own pass (the rotation seed and the
+/// `fetch_date` a recorded upgrade group carries).
+pub(crate) fn now_unix_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

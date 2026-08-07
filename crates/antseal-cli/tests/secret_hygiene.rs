@@ -37,6 +37,8 @@
 //! NON-SECRET: every sentinel here is a documented fixture (project rule
 //! 6) — deliberately shaped so that a real value could never equal it.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -366,7 +368,7 @@ impl Drop for SentinelVault {
 // ─────────────────────────────────────────────────────────────────────
 
 fn bin() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_antseal"));
+    let mut cmd = spawn::antseal();
     // A clean slate: nothing the developer's shell exports may seed a
     // false pass (or a false fail).
     cmd.env_remove("RUST_LOG");
@@ -463,7 +465,7 @@ impl HeldChild {
     /// names the binary we spawned", and failing to reach that state is a
     /// loud panic rather than a silent empty read.
     fn read_proc(&self, what: &str) -> Vec<u8> {
-        let exe = env!("CARGO_BIN_EXE_antseal");
+        let exe = spawn::antseal_exe();
         for _ in 0..500 {
             if String::from_utf8_lossy(&self.read_proc_raw("cmdline")).contains(exe) {
                 return self.read_proc_raw(what);

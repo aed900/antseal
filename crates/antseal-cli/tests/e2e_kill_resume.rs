@@ -613,7 +613,7 @@ fn child_seals_through_the_cli_path(
     let plan = cli_plan(&workdir);
     // The command layer's one construction: unlock straight into a session,
     // which mints the sink beside the vault.
-    let session = SealSession::open(unlock_at(root));
+    let session = SealSession::open(Arc::new(unlock_at(root)));
     let durable = scenario == SCENARIO_CLI_MID_PAY_DURABLE;
 
     let mut journal_rng =
@@ -1398,7 +1398,7 @@ fn case1d_the_cli_path_pays_each_sub_batch_once_across_a_mid_pay_sigkill() {
     // The resume is a SECOND `antseal seal` over the same arguments: D45
     // detection has to recognise it, and `run_seal` has to route it into
     // the paying resume rather than a fresh seal.
-    let session = SealSession::open(unlock_at(&root));
+    let session = SealSession::open(Arc::new(unlock_at(&root)));
     let plan = cli_plan(&workdir);
     let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-journal"));
     let mut seal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-seal"));
@@ -1576,7 +1576,7 @@ fn case1d_the_cli_path_without_the_session_sink_re_pays_the_landed_sub_batches()
     );
 
     // The resume is correctly wired; it simply has nothing to resume *from*.
-    let session = SealSession::open(unlock_at(&root));
+    let session = SealSession::open(Arc::new(unlock_at(&root)));
     let plan = cli_plan(&workdir);
     let mut journal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-lossy-journal"));
     let mut seal_rng = ChaCha20Rng::from_seed(run_seed("s36-case1d-lossy-seal"));

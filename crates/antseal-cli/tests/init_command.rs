@@ -12,9 +12,10 @@
 //! (project rule 6) — except the two *public curve constants* (scalar 1
 //! and the group order), which are not key material in any sense.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::Command as Process;
 
 use antseal_cli::cli::{InitArgs, InitProvided, KdfChoice, WalletSource, WrapChoice};
 use antseal_cli::error::{CliError, ErrorClass};
@@ -169,7 +170,7 @@ struct Spawned {
 
 fn spawn(vault_root: &Path, args: &[&str], stdin_bytes: &[u8]) -> Spawned {
     use std::io::Write as _;
-    let mut child = Process::new(env!("CARGO_BIN_EXE_antseal"))
+    let mut child = spawn::antseal()
         .args(args)
         .env("ANTSEAL_DIR", vault_root)
         .env_remove("RUST_LOG")

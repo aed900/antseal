@@ -14,8 +14,11 @@
 //! fixture (project rule 6).
 
 mod common;
+#[path = "common/spawn.rs"]
+mod spawn;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
@@ -160,7 +163,7 @@ fn a_scripted_seal_completes_prints_work_id_and_cost_and_persists_the_record() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-happy");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let result = block_on(run_seal(
         &backend,
@@ -229,7 +232,7 @@ fn declining_aborts_before_any_payment_and_leaves_the_work_resumable() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-declined");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let err = block_on(run_seal(
         &backend,
@@ -276,7 +279,7 @@ fn machine_mode_without_yes_aborts_with_the_consent_class_and_never_prompts() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-machine");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let err = block_on(run_seal(
         &backend,
@@ -325,7 +328,7 @@ fn the_two_shortfalls_are_distinct_and_nothing_is_paid() {
 
         let backend = MockBackend::new().with_balances(balances);
         let vault = IsolatedVault::create("seal-short");
-        let unlocked = SealSession::open(vault.unlock());
+        let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
         let err = block_on(run_seal(
             &backend,
@@ -363,7 +366,7 @@ fn re_running_the_same_command_resumes_rather_than_starting_a_second_work() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-resume");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     // Run 1: declined at the gate. The work is staged and resumable.
     block_on(run_seal(
@@ -429,7 +432,7 @@ fn a_pre_pay_resume_renders_the_plan_and_the_consent_screen_in_one_pass() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-mergedrender");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     // Run 1: declined at the gate, so the work is staged and pre-pay —
     // and its next resume still has the anchor step ahead of it.
@@ -496,7 +499,7 @@ fn a_near_miss_refuses_with_its_own_class_before_anything_is_staged() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nearmiss");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     // Leave an incomplete work behind.
     block_on(run_seal(
@@ -602,7 +605,7 @@ fn no_anchor_on_arbitrum_one_is_refused_at_the_cli_layer_and_at_the_library_laye
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-mainnet");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     let err = block_on(run_seal(
         &backend,
         &unlocked,
@@ -670,7 +673,7 @@ fn a_dry_run_quotes_reports_and_mutates_nothing() {
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-dryrun");
     let before = vault.fingerprint();
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let result = block_on(run_seal(
         &backend,
@@ -724,7 +727,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-dryresume");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     // Leave a resumable work behind (declined at the gate).
     let plan = work
@@ -751,7 +754,7 @@ fn a_dry_run_over_a_resumable_work_shows_the_plan_and_spends_nothing() {
     let fingerprint_before = vault.fingerprint();
 
     // Now the identical invocation with --dry-run. It exact-matches.
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     let rehearsal = work
         .plan(&["a.txt", "--no-anchor", "--dry-run", "--yes"])
         .expect("plan validates");
@@ -834,7 +837,7 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
             ant_atto: ant,
             gas_wei: gas,
         });
-        let unlocked = SealSession::open(vault.unlock());
+        let unlocked = SealSession::open(Arc::new(vault.unlock()));
         let err = block_on(run_seal(
             &backend,
             &unlocked,
@@ -882,7 +885,7 @@ fn a_dry_run_with_yes_and_force_degraded_still_does_nothing() {
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-drycombo");
     let before = vault.fingerprint();
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let result = block_on(run_seal(
         &backend,
@@ -948,7 +951,7 @@ fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it()
     work.file("a.txt", b"content").file("b.txt", b"more");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nag");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
 
     let first = work
         .plan(&["a.txt", "--no-anchor", "--yes"])
@@ -1038,7 +1041,7 @@ fn vault_with_a_declined_work(tag: &str) -> (IsolatedVault, Work, SealId) {
         .expect("plan validates");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create(tag);
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     block_on(run_seal(
         &backend,
         &unlocked,
@@ -1184,7 +1187,7 @@ fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
         .expect("plan validates");
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("abandon-complete");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     let result = block_on(run_seal(
         &backend,
         &unlocked,
@@ -1293,7 +1296,7 @@ fn the_seal_warnings_reach_the_pre_consent_screen_and_the_json_document() {
 
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-warnings");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     let result = block_on(run_seal(
         &backend,
         &unlocked,
@@ -1358,7 +1361,7 @@ fn the_seal_warnings_reach_the_pre_consent_screen_and_the_json_document() {
 // ─────────────────────────────────────────────────────────────────────
 
 fn antseal_bin() -> std::process::Command {
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_antseal"));
+    let mut cmd = spawn::antseal();
     cmd.env_remove("RUST_LOG");
     cmd
 }
@@ -1529,7 +1532,7 @@ fn no_fine_tree_matches_are_recorded_per_file() {
     // matches on it (a re-run without the flag is a flag mismatch).
     let backend = MockBackend::new().with_balances(funded());
     let vault = IsolatedVault::create("seal-nft");
-    let unlocked = SealSession::open(vault.unlock());
+    let unlocked = SealSession::open(Arc::new(vault.unlock()));
     let result = block_on(run_seal(
         &backend,
         &unlocked,

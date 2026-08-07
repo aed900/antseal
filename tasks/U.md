@@ -424,9 +424,9 @@
 - Do: Implement `status`: load the work's anchor artifacts, evaluate each anchor's current state via A (offline evaluation; states worded consistently with R's taxonomy), and render per-anchor status plus the Arbitrum receipt as "supporting evidence — no independently proven time". `--upgrade` drives A's OTS calendar polling to completion where possible, persisting upgraded `.ots` (with embedded header + fetch date) back into the record store. Pending anchors render with the "not yet independently provable" hint.
 - Accept:
   - fixture works covering `pending`, `attested`, `proven`(TSA), degraded, and UNANCHORED render distinct snapshot-tested output; receipt never rendered as an anchor
-  - `--upgrade` against A's mock calendar transitions pending → attested and persists the upgraded `.ots` (re-run shows the new state)
+  - `--upgrade` against A's mock calendar transitions pending → attested and persists the upgraded `.ots` (re-run shows the new state) — **[2026-08-06, AMENDED by D99 R5]** this row is **executable only from D99 R5**: `upgrade_pending_with` and `UpgradeTarget::loopback_for_tests` move from `#[cfg(test)] pub(crate)` to `feature = "test-util"`, because A42's allowlist requires `https` + a bare host + no port and can therefore never admit a loopback stub through the real constructor. Before R5 the transition had no venue at all; the row read as satisfiable and was not.
   - `--json` fixture registered (machine-readable per-anchor states)
-- Notes: State names come from A18 at M2; when R18 freezes the authoritative wording at M3, re-align `status` output (alignment check, not an ordering dep).
+- Notes: State names come from A18 at M2; when R18 freezes the authoritative wording at M3, re-align `status` output (alignment check, not an ordering dep). — **[2026-08-06 CORRECTION, recorded by D98]** the first Accept row above **mixes three vocabularies**, and they are not interchangeable: `pending` and `attested` are `AnchorState`s, `degraded` is `WorkRecord.degraded`, and UNANCHORED is rider 3c's three-way ambiguity (the `--no-anchor` shaping flag, `NagState::Unanchored`, and MVP-SPEC.md line 137's "zero headline-eligible anchors" are three different predicates that disagree on one work — see **Q120**). The row's intent stands and the text is left as written; what it must **not** be read as is a single taxonomy. D98 also records that this entry implies A18's evaluator is reached the bundle way — it is reached **per artifact**, through the public `evaluate_ots_artifact` / `evaluate_tsa_artifact` over `*ArtifactView::from_parts`, which take no `AnchorStatus`, so `status` fabricates nothing.
 
 ### U24 — Wire opportunistic OTS upgrade hook into every CLI invocation
 - Milestone: M2
@@ -435,10 +435,10 @@
 - Spec: Core user flows 2 (line 35); Anchoring (line 108); Risks (line 182)
 - Do: Add a shared hook in the command dispatch path so **every** invocation opportunistically attempts pending OTS upgrades for all works: enumerate pending `.ots`, call A's engine with a short time budget, persist any upgrades, and never fail or delay the primary command on hook errors (silent-degrade, debug-level trace only). Locked-vault behavior is **decided — D42's positive rule (2026-08-01)**: the hook runs **iff the host command already holds an unlocked vault handle** (anchor artifacts live inside the AEAD, so there is nothing to upgrade without one); on a locked or absent vault it is a **silent no-op — never a prompt, and it never creates `~/.antseal`**. Hook output (if any) goes to stderr and never corrupts `--json` stdout.
 - Accept:
-  - running unrelated commands (`list`, `show`) upgrades a pending fixture via mock-A and persists it; primary command output unchanged
+  - ~~running unrelated commands (`list`, `show`) upgrades a pending fixture via mock-A and persists it; primary command output unchanged~~ — **REWRITTEN 2026-08-06 by D99 §6.** The original named the **wrong mechanism**: `list` does not take the vault lock, and D99 R3 keeps it that way — the **hook** takes it, late, only when it has a transition to write, declining silently when contended. Replaced by: an **invocation** of a vault-holding command (`list` at M2; `show`/`status` as they land) upgrades a pending fixture via a `127.0.0.1:0` calendar stub and persists it, **after** the command's own handler has returned. `list` still takes no lock (`commands.rs:297-305` stands, subject to Q117's wording fix). Primary command output and exit code unchanged, asserted by byte-comparing stdout.
   - hook failure (mock network error) leaves the primary command's exit code and output untouched
   - vault-less `verify` performs no vault access, no prompt, and creates no `~/.antseal` (asserted); a command that did not itself unlock performs no hook work (D42 rule tested both ways)
-  - hook lives in the shared dispatch path — a test enumerates subcommands and asserts each passes through it
+  - ~~hook lives in the shared dispatch path — a test enumerates subcommands and asserts each passes through it~~ — **REWRITTEN 2026-08-06 by D99 §6.** The original was **factually unsatisfiable**: neither point that sees all subcommands holds a vault (`run::run` takes `&Cli`, every handler unlocks for itself, and `UnlockedVault` is deliberately `!Clone`), so a hook placed at either could not satisfy D42's rule at all — the row asked for a test of an arrangement that cannot exist (D99 §1.1). Replaced by: the hook is invoked from **exactly one place** — `main_entry`, after the exit code is a value and every byte of output is written (D99 R1) — and a test enumerates `machine::ALL_COMMAND_NAMES` against the **real binary** with `RUST_LOG=antseal_cli::upgrade_hook=debug`, asserting the hook's trace appears for every subcommand: in its *armed* form for the commands that unlocked, its *not-armed* form for the rest. That proves D42's rule in **both** directions, per command, and about the shipped dispatch path rather than a library path — more than the original row asked for.
 
 ### U25 — Add pending-anchor nags to `list`
 - Milestone: M2
@@ -657,8 +657,11 @@
 - Size: S
 - Deps: U22, A13
 - Discovered by: **the U22 lane** (2026-08-06).
-- Do: the OTS slot record's `fetch_date` comes from `SystemTime::now()` inside the pipeline; `with_fetch_date` reaches TSA captures only. A record whose bytes change every run cannot be a golden vector, which A22 will want. Thread the stage's pinned date through, or record A2's per-calendar `submitted_date` instead.
+- Do: the OTS slot record's `fetch_date` comes from `SystemTime::now()` inside the pipeline; `with_fetch_date` reaches TSA captures only. A record whose bytes change every run cannot be a golden vector, which A22 will want. ~~Thread the stage's pinned date through, or record A2's per-calendar `submitted_date` instead.~~ — **NARROWED 2026-08-06 by D97 R5:** thread the stage's pinned date through, and **only** that. `ctx.anchors.fetch_date` already exists and already reaches the gate, and `artifacts_of` already takes the date as a parameter; only the resume path passes a clock read instead. Recording `OtsCalendarSubmission::submitted_date` in its place is **rejected** — it lives on `OtsCaptureRecord`, which has no artifact field at all (D97 §2(d); the type's own disposition is **U55**).
 - Accept: two runs over identical inputs with a pinned date produce byte-identical OTS slot records; the pinning is asserted, not merely available.
+- Notes:
+  - **[2026-08-06, D97 R5] Partially discharged, and what remains is sharper than what this entry recorded.** The upgrade write pins its own date from the parameter (`applied.upgrade.fetch_date()`, never a clock), so after D97 **one record carries two fetch dates**: key 6, the upgrade's, pinnable; key 2, the original submission's, still `resume.rs:404`'s `SystemTime::now()`. That is a *worse* inconsistency than one unpinnable date, not a better one, and it now sits inside a single record that a golden vector would have to cover whole. **U48 blocks A22's OTS-slot vector.**
+  - **[2026-08-07, the U23 lane] There is a live honesty gap until this lands.** `status` renders **no OTS capture date at all** today: `evaluate_ots_artifact` derives the verdict's date from the **upgrade group** (key 6, pinned by D97 R5), so key 2 — the unpinnable one — never reaches the render. D95 rules a sealer-recorded `fetch_date` *"rendered unconditionally"*; on the OTS side that is true of the upgrade's date and false of the capture's, and it stays false until this task threads the pinned date into key 2. Small, but D95's sentence should not be read as describing the product until then.
 
 ### U49 — A re-run gate leaves slots from two different submissions
 - Milestone: M2
@@ -667,6 +670,7 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: a resume killed at `Staged` re-runs the anchor gate and writes `tsa-<n>` **by index without clearing the area**. If attempt 1 verified two TSAs and attempt 2 verified one, `tsa-1` survives from the abandoned attempt beside an overwritten `tsa-0` — the slot set is then a mixture of two submissions, and nothing says so. Clear the area before re-submitting, or key slots by endpoint rather than by index.
 - Accept: the kill-then-resume matrix covers a **narrowing** second attempt (2 tokens → 1) and asserts the resulting slot set contains no artifact from the abandoned attempt; the fault is planted by restoring index-overwrite and proven red.
+- Notes: **[2026-08-06, D97 R11] The OTS twin of this defect does not exist — and that is a consequence of a decision, not of the code.** Under D97's one-record ruling a resume overwrites the whole `ots-pending` record, upgrade group included, so no mixture of two submissions is representable on the OTS side, and this entry's remedy stays free to choose *either* of its two options for the `tsa-<n>` family. **Under the rejected two-slot design it would have existed**: an `ots-upgrade` record surviving from an earlier hook would have been orphaned by keying slots by endpoint, so only *"clear the area"* would have worked. Recorded as a counterfactual so that a later reversal of D97 does not silently re-impose a constraint this entry no longer states. What a resume still discards is a different loss — a completed attestation whose replacement submission carries a new, un-re-pollable commitment — and that is **U57**, not this.
 
 ### U50 — `seal --json`'s anchors object has no stated contract
 - Milestone: M2
@@ -691,3 +695,114 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: `AnchorStageConfig::from_config` passes `None` for calendars. When U44 lands the `[anchors] ots_calendars` key, a user setting it will be silently ignored unless that second argument is wired in the same change. A config key that parses and does nothing is worse than one that does not exist.
 - Accept: a configured calendar list reaches the stage, asserted on the stub's request counters the way U26's TSA list is; the empty/absent case still yields D54's defaults.
+
+### U53 — The `--upgrade` write path's kill-and-resume matrix
+- Milestone: M2
+- Size: S
+- Deps: U23, U47; D97
+- Discovered by: **D97 §2 K2/K3** (2026-08-06).
+- Do: D97's ruling makes the torn state — an upgraded artifact whose group did not land, or a group whose artifact did not — unrepresentable *by construction*, because one record is one `put_anchor` and `put_anchor` is temp + fsync + rename. That claim is worth exactly as much as the test that plants the fault against it. Kill between the read and the write, and after the write, over the `--upgrade` path U23 drives; assert the record comes back wholly old or wholly new, never mixed. Plant the fault by restoring the **two-write** representation the ruling rejected (write the artifact, then the group) and prove the matrix goes red naming `internally-consistent-only` — the state D97 §1.2 measures as un-nagged and structurally unrescuable, which is why a silent tear here is worse than a loud one.
+- Accept: the planted two-write fault reddens; the honest path never produces `OtsAnchorState::AttestedHeaderMissing`; native only — this is CLI-side, so the wasm32 half of the usual matrix does not apply.
+
+### U54 — `open_envelope` throws away the version it just validated
+- Milestone: M2
+- Size: XS
+- Deps: D97 R8
+- Discovered by: **D97 §1.3** (2026-08-06).
+- Do: `open_envelope` returns only the body, so no decoder below it can branch on the version it just checked. That is safe today, and it is safe by luck of shape rather than by construction: every journal schema change so far has been additive-optional, so v1 bytes read correctly under the v2 parser (absent keys 4/5/6 mean `None`, which is the correct v1 semantics). The guard is a **ceiling, not a dispatch** — the first non-additive change feeds v1 bytes to a parser that cannot tell it is looking at them. Return `(version, body)`, or a small `Versioned<'_>`, and have each decoder state in one line why it accepts every version at or below the constant.
+- Accept: a v1 record and a v2 record are distinguishable at the decoder; the four existing decoders compile with their behaviour unchanged.
+- Notes: D97 §7 names this task's trigger — the next journal schema change. If that change is not additive-optional, U54 lands first, or a second bump is as invisible as the first nearly was.
+
+### U55 — `OtsCaptureRecord` has no production caller
+- Milestone: M2
+- Size: XS
+- Deps: none
+- Discovered by: **D97 §2(d)** (2026-08-06).
+- Do: `antseal_core::anchor::model::OtsCaptureRecord` is `{anchor_digest, calendars, upgrade}` and has **zero production callers workspace-wide** — it is constructed only by `model.rs`'s own test module. D97 ruled it is *not* the home for the upgrade group (it has no artifact field at all, so adopting it would mean a second record beside `ots-pending` and would inherit that option's kills wholesale), but the type survives the ruling with its `upgrade` field intact, which leaves a third home standing for a fact that now has a settled one. Decide: give it a caller, or delete it. A caller is available if the type is wanted — the per-calendar `submitted_date` is the one datum nothing else records; if it is not wanted, fold `OtsCalendarSubmission` into whatever does record submissions.
+- Accept: either a production caller exists, or the type is gone and A2's `Do` row is amended to say why.
+
+### U56 — Nothing asserts the `put_anchor` call-site count, which is the whole atomicity argument
+- Milestone: M2
+- Size: XS
+- Deps: U23, U47; D97 R3, D99 R10
+- Discovered by: **D97 R3** (2026-08-06); its count corrected by **the D97 foundation lane** (2026-08-07).
+- Do: D97's single-write-site rule is what turns D79's *"together or not at all"* from a property of a comment into a property of the filesystem — and it is currently a comment. **D97 R3's "exactly two `put_anchor` call sites" is factually wrong, and was wrong before this wave began:** there are **four textual sites** — the seal/resume loop, `apply_upgrade`, the trait forwarder at `vault_journal.rs:299`, and the D47 import at `vault/export.rs:1146`. The landed test asserts the classified four-element set. What must stay true is the **semantic** rule: exactly two *authoring* sites, the two that decide what an anchor record contains; the forwarder and the importer carry bytes someone else authored. Keep the classified assertion honest as the file set moves.
+- Accept: adding a third **authoring** call site reddens the test by name; adding a forwarder-class site forces a deliberate classification rather than passing silently. A test that merely counted would have been wrong on the day it was written, which is the fact this entry inherits.
+
+### U57 — A resume discards a completed OTS upgrade, and the replacement is not re-pollable
+- Milestone: M2
+- Size: S
+- Deps: U22, U24, U47; D45, D97
+- Discovered by: **D97 §2 K2** (2026-08-06).
+- Do: the resume gate rewrites `ots-pending` from a **fresh** submission, and `put_anchor`'s stated justification for that overwrite — *"nothing downstream has read them yet"* — is false once U24's hook exists, because the hook advances anchor slots on every invocation, for any work, independent of seal state. So a resume throws away a Bitcoin attestation the hook already obtained; and because the replacement submission carries a **new** commitment, the discarded work is not re-pollable at all — it is a fresh multi-hour wait rather than a resumed one. Decide whether the hook skips works below `SealState::Paid` (their anchors are provisional and the gate will re-run them anyway), or whether the resume gate reuses an existing verified submission instead of re-submitting. Either answer is a rule; the current behaviour is neither, and D97 deliberately left it open.
+- Accept: the kill-then-resume matrix covers a work whose OTS anchor was upgraded between the kill and the resume and asserts the chosen rule; the opposite behaviour is planted and proven red.
+- Notes: D97 rules only that the overwrite is *clean* under one record — whole record, group included, no mixed state reachable. It does not rule the policy. D97 §6 amendment 8 rewrites the `put_anchor` doc comment that carried the false premise; this entry owns what that rewrite leaves open.
+
+### U58 — Three stale "an imported complete work carries no journal entries" claims, now load-bearing
+- Milestone: M2
+- Size: XS
+- Deps: none; S29 (which falsified them)
+- Discovered by: **D98 gap 3** and **D99 §1.6** (2026-08-06) — two lanes found the same defect independently, and the two rows are merged here.
+- Do: `listing.rs:12-18`, `journal.rs:973-975` and `export.rs:515-516` all state that a `vault import`ed **complete** work carries no journal entries at all, on the grounds that U12 applies D43 §3's cache exclusion to the whole journal area. S29 falsified that on 2026-08-02: the export skips only `entry >= UNIT_ENTRY_BASE`, so entries 0 (state), 1 (plan) and 2 (manifest blob) survive import. The third copy sits **inside the very file whose write path implements the opposite**. TODO.md's U19 row carries the same sentence, so there are four sites. **This is no longer cosmetic.** U24's hook recovers `anchor_digest` from journal entry 1, and U25's nag depends on that recovery working — the surviving entries are exactly what makes a restored vault nag correctly. A doc that says the opposite is the one a future lane will "fix" the code to match. Correct all four, keeping `list`'s coarse-mirror fallback (still right defensively, and pre-S29 exports exist in principle) but stating the real reason for it, and settle whether the fallback is still reachable now that entry 0 survives.
+- Accept: no doc claims the exclusion covers entries 0–2; the S29 amendment is cited at each site; the fallback's reachability is asserted, or its removal is recorded.
+- Notes: D99 §9 files its half of this as **Q117**; the ids were reconciled at bookkeeping (three lanes allocated from overlapping blocks and none of the rows had been registered yet). A reader arriving from D99's Q117 or D98's U58 wants this entry. **One of the four sites is already flagged in place, not silently wrong**: the U25 lane left a dated marker at `listing.rs:20-27` — *"The paragraph above is stale and is U58's to correct, not U25's"* — citing S29, the surviving entries 0/1/2, and the fact that the anchor nag recovers `anchor_digest` from the plan record and therefore works on a restored vault. That marker also **raises the question this entry must settle**, in sharper form than the `Do` row states it: with entry 0 surviving, `list`'s stated *reason* for the coarse-mirror fallback is itself now unclear, so the fallback needs its reachability decided rather than just its prose corrected.
+
+### U59 — The hook re-polls routes whose state cannot change
+- Milestone: M2
+- Size: S
+- Deps: U24; D99 R9
+- Discovered by: **D99 §1.6** (2026-08-06); scope widened by **the U24 lane** (2026-08-07).
+- Do: two route classes cost a poll on every invocation and can never repay it. (1) `UpgradePoll::is_repollable()` is `false` for `NotFound` — *"the calendar does not know this commitment — it will never upgrade"* — and nothing persists that fact. (2) An **already-merged** route is the same shape from the other end: A104's `already_merged` stops the artifact growing, but it **cannot be evaluated before the poll**, because it needs the body the poll returns. So a fully upgraded vault burns its whole 4-poll budget every invocation, for ever, and gets nothing. D99 R9's rotation spreads the waste across the work list rather than removing it — it bounds *starvation*, not *cost*. Decide whether a remembered per-route state is worth a vault write: it is a write on every invocation, which means the lock on every invocation, which is exactly what D99 R3 spends its effort avoiding — so "no, and here is why" is a legitimate answer, provided it is the recorded one.
+- Accept: either the memory exists and a `NotFound` or already-merged route is polled at most once per calendar per work, or the decision not to have one is recorded with its reason in `ots/engine.rs`'s module docs.
+- Notes: D99 §9 files this as **U57**; reconciled to U59 at bookkeeping. D99 §8 lists the un-widened half as a standing residual risk (*"starvation is bounded, not removed"*) with this task as its trigger.
+
+### U60 — No way to turn the opportunistic hook off
+- Milestone: M2
+- Size: XS
+- Deps: U24, U4
+- Discovered by: **D99 R8** (2026-08-06).
+- Do: the hook adds up to `budget.total` plus one in-flight call to every vault-holding invocation's **exit**, in every mode. The post-output placement is what makes that invisible to a human, and it buys a program nothing: a script's `$(antseal list --json)` waits for process exit regardless. U1's canonical CLI surface is frozen, so no flag is available. Add an `[anchors] opportunistic_upgrades = false` key through U4's override-slot mechanism, validated at load the way `tsa_urls` is, defaulting to on. **A config key, not an env var** — D41's channel discipline puts operator preferences in config.
+- Accept: the key parses, defaults to on, is honoured by the hook, and appears in the config documentation; the hook's debug trace names the key when it is what suppressed the pass.
+- Notes: measured rather than feared, and the measurement cuts both ways. On a four-work vault the U24 lane measured median exit latency at **1378 ms with the hook against 1377 ms without** (nine runs each) — a delta inside noise, because the ~1.35 s Argon2id unlock dominates. The ~6 s figure is the **budget ceiling**, which an invocation reaches only when polls actually go out; that is the case a scripted consumer hits and cannot opt out of. **The measurement's conditions matter and are now recorded** (they were left unstated when this entry was first written): those nine runs exercised the **A42-refused path** — the stored artifact's upgrade URI was refused by the allowlist, so no request was issued and no socket opened. The 1 ms delta is therefore the cost of *deciding not to poll*, not the cost of polling, and it is the right figure for the common case of a vault whose works are already attested. It is **not** evidence about the ceiling, and no offline measurement can be: with the Q16 gate armed a poll is refused before DNS, so a test suite can never observe the case this task exists to let a user switch off. D99 §9 files this as **U58**; reconciled to U60 at bookkeeping.
+
+### U61 — `WorkStore::list_anchors` sorts lexically, and only one of its two consumers repairs it
+- Milestone: M2
+- Size: XS
+- Deps: U9, U47
+- Discovered by: **the D97 foundation lane** (2026-08-07), while landing U47.
+- Do: `WorkStore::list_anchors` sorts slot names **lexically** (`store.rs:744`), so `tsa-10` precedes `tsa-2`, and every caller inherits that order. U47's `StoredAnchors` repairs it for anchor readers — but `vault/export.rs:793-800` walks `list_anchors` → `get_anchor` directly and gets the lexical order raw. It is harmless today because export re-keys by slot **name** rather than by position; the defect is that the repair now lives in **one of two consumers**, and the one without it is the one that decides what a `.sealvault` contains. Either push numeric ordering into `list_anchors` so no consumer can inherit the wrong one, or document at the sort that the order is lexical and that a positional consumer owes itself a re-sort. Do not leave the repair implicit in one reader.
+- Accept: a work with enough TSA slots to reach `tsa-10` orders correctly at every consumer whose correctness depends on position, and the consumer that does not depend on position says so at its call site; whichever route, the property is asserted rather than inferred from today's slot counts.
+
+### U62 — `list` performs a full CMS verification per stored TSA token
+- Milestone: M2
+- Size: S
+- Deps: U25; D98, D60
+- Discovered by: **the U25 lane** (2026-08-07), by measurement.
+- Do: D98's ruling is that the nag **re-derives** headline eligibility rather than trusting the seal-time `verified` bit, and the reason is stronger than the hand-edit argument: the seal-time invariant is **stale by construction, no attacker needed**. A capture was verified against the root store *of its day*; headline eligibility is a claim about the store *now*. A root-store bump silently turns a stored token into `internally-consistent-only` while the stored bit keeps saying `true` — so the nag goes quiet on exactly the work that just lost its only strong anchor. Correct and necessary; the price is one full CMS verification plus path build **per stored TSA token**, measured at **14.8–21.9 ms each** in a debug build, and `list` is the command a user runs to see *everything*. Keep the re-derivation and make it cheaper. Two shapes are available: short-circuit the per-work loop once one token is headline-eligible (the nag predicate needs existence, not a census), or cache a **re-derivable** verdict keyed on the root-store version, so a bump invalidates the cache by construction rather than by someone remembering to.
+- Accept: a vault whose works each hold several tokens costs measurably less than today, measured on the same host before and after; the committed `D60-tsa-globalsign-resp.tsr` fixture — whose root sits deliberately outside store v1 — still renders `internally-consistent-only`, so the optimisation cannot have quietly reintroduced the stale-bit shortcut.
+- Notes: the nag predicate is **invariant under `verify_at`** — measured over five real captures × `{0, capture + 1 day, 2060}`, because `verify_at` is one-sided (D53 5(b)) and separates only `proven` from `valid-at-stamping-cert-since-expired`, both of which are headline-eligible. That is why `list` passes a constant and reads **no clock**. Any cache must not become the place a clock creeps back in.
+
+### U63 — `WorkRow` is a public struct with public fields and no `#[non_exhaustive]`
+- Milestone: M2
+- Size: XS
+- Deps: U19, U25
+- Discovered by: **the U25 lane** (2026-08-07), which hit exactly this.
+- Do: `WorkRow` is `pub` with `pub` fields and carries no `#[non_exhaustive]`, so **every future column is a workspace-wide compile break** at every construction site. U25 added two fields (`pending_anchors`, now a real count, and `nag`) and paid it; M2's remaining `list` work will pay it again. Decide between `#[non_exhaustive]` plus a constructor or builder, and leaving the type as it is on the grounds that it is crate-internal in practice. This may warrant a decision rather than a patch — the same question applies to the other `--json`-shaped structs, and answering it once is cheaper than answering it once per struct and differently each time.
+- Accept: either the type can gain a field without touching its construction sites, or the reason it should not is recorded at the type.
+
+### U64 — Two spellings of one calendar-list policy
+- Milestone: M2
+- Size: XS
+- Deps: U23, U44; adjacent to U52
+- Discovered by: **the U23 lane** (2026-08-07).
+- Do: `UpgradeConfig::from_config` hardcodes `DEFAULT_OTS_CALENDARS` for the allowlist-widening parameter, while `AnchorStageConfig::from_config` passes `None` for the same list. Two constructors reading the same config and answering the same question differently is how the `[anchors] ots_calendars` key U44 will land comes to mean one thing at seal time and another at upgrade time. Give both sites one expression of the policy, and land it **with** U44/U52 rather than separately — a third spelling arriving in the same window is the failure mode this entry is trying to prevent.
+- Accept: a configured calendar list reaches both the anchor stage and the upgrade path, asserted at each; absent config yields D54's defaults at both.
+
+### U65 — One undecodable anchor record makes the whole vault unlistable, with a message that accuses the passphrase
+- Milestone: M2
+- Size: S
+- Deps: U19, U25, U47
+- Discovered by: **the U24 lane** (2026-08-07).
+- Do: `StoredAnchors::read` fails the **whole** read when one record does not decode — deliberately, because a partial anchor picture that looks complete is worse than none. But the failure travels: `JournalError::Corrupt` → `CliError::VaultAuthFailure` → exit 12, *"wrong passphrase, or the vault store or header has been modified or corrupted"*. So **one damaged slot in one work makes `list` refuse the entire vault**, and the diagnostic it refuses with names the passphrase and tamper — on a vault whose passphrase is fine and whose other works are intact. That is the same sentence D97 §2 rejected its option (a) for, arrived at from the other direction: there it was a decoder refusing an unregistered kind, here it is a reader refusing a damaged slot. U24's hook already does the right thing on the same input — per-work skip, debug level, never stdout (D99 R6). `list` does not. Decide `list`'s per-work failure policy and make it distinguishable from an authentication failure; the hook's shape is the obvious candidate, but `list`'s whole job is a complete picture, so a per-row damaged marker is the more honest form.
+- Accept: a vault with one undecodable anchor record still lists its other works; the damaged work is **visibly marked**, never silently dropped; the exit code and message are not `VaultAuthFailure`'s.
+- Notes: U19's execution note 6 ruled that a corrupt record is **not** softened into a row — `list` reports the damaged vault rather than rendering a partial picture that looks complete. That ruling and this entry can both hold: the question here is the **blast radius** and the **wording**, not whether a damaged work may pretend to be healthy. The tension is real and whoever decides this must name it rather than route around it.

@@ -1453,3 +1453,67 @@ Exact line to add to Q65's Accept:
 - Notes: Pre-existing; observed 2026-08-06 by A21's lane while running the
   wasm32 suite for the tamper rows, and unrelated to that work. Recorded by
   D96 §Discovered work.
+
+### Q116 — The `strict v1 schema` needles carry a version number
+- Milestone: M2
+- Size: XS
+- Deps: D97 R9
+- Discovered by: **D97 R9** (2026-08-06).
+- Problem: two committed assertions match error strings containing the literal `v1` — the anchor-record needle in `pipeline/anchors/tests.rs` and its twin at `journal.rs:401`. Every future `SEAL_JOURNAL_VERSION` bump silently invalidates them, and the cheapest repair on the day of the bump is to edit the needle, which is how an assertion quietly stops asserting anything. The counter-example is in the same file: `a_future_version_refuses_distinctly` needs no edit at a bump, because it is written **against the constant** — which is the shape the other two should have had.
+- Do: drop the version token from both messages, or assert them against the constant.
+- Accept: a bump requires no edit to either needle.
+- Notes: **partly discharged 2026-08-07** by the D97 foundation lane, which landed the journal-version bump: the anchor needle now reads `(strict schema)`. The `journal.rs:401` copy remains, and this row stays open for it — the half that was discharged is the half whose bump was already in flight, which is exactly the half a bump-driven repair would have caught anyway.
+
+### Q117 — `commands.rs`'s `list` rationale names a failure mode the lock cannot produce
+- Milestone: M2
+- Size: XS
+- Deps: none
+- Discovered by: **D99 §1.2** (2026-08-06).
+- Problem: `commands.rs:297-305` justifies `list`'s lock-free read by saying that taking the lock would make `list` *"the one command that hangs"*. `VaultLock::acquire` is a **try-lock**: under contention `list` would **fail** with `VaultLockHeld`, exit 15 — not hang. The conclusion is unchanged and D99 R3 reaffirms it (and after U24 it is the **hook**, not `list`, that takes the lock — late, and declining silently when contended), but the recorded rationale describes a mechanism the code does not have, and a future reader reasoning from it will reason wrongly about every other command's lock cost too.
+- Do: correct the sentence to name the real cost.
+- Accept: the doc names `VaultLockHeld`/exit 15; the decision to stay lock-free is unchanged.
+- Notes: D99 §9 files this as **Q118**; reconciled to Q117 at bookkeeping, where three lanes' overlapping id blocks were resolved.
+
+### Q118 — Routes to the binary that an enumeration rule cannot see
+- Milestone: M2
+- Size: S
+- Deps: Q16, U24; D99 R4, D99 §8
+- Discovered by: **the D99 R4 lane** (2026-08-07), while landing the rule the finding is about.
+- Problem: D99 R4.3 specifies a static rule — the only construction naming `CARGO_BIN_EXE_antseal` in the workspace lives in the spawn helper, and that helper sets `ANTSEAL_NO_REAL_ANCHOR_NETWORK`. Landing it found two routes to the shipped binary the rule **as specified** could not see.
+  - `e2e_restore.rs`'s `run_clean_machine` re-executes the test binary with `.env_clear()`, which strips the arming **even in CI**, and it never names `CARGO_BIN_EXE_antseal` at all — so the rule as written would have missed it entirely. It was fixed, and `env_clear()` became R4's **fourth arm**.
+  - `option_env!("CARGO_BIN_EXE_antseal")` is a second spelling of the same reach. The landed regex covers it, but **no test names it**, so that coverage is incidental rather than asserted, and the next edit to the regex can remove it without anything going red.
+  This is D99 §8's own revisit trigger arriving before the ink dried: the rule refuses the shapes it enumerates, and the venue that reaches the binary by a route nobody enumerated is precisely the one that matters. The premise is not hypothetical — the same lane measured that a bare `cargo test -p antseal-cli` **reached freetsa.org**, completing DNS, TCP and TLS and taking a real 403 from its nginx in 0.83 s.
+- Do: enumerate the property — *"this reaches the shipped binary"* — rather than the macro spelling. Add a planted-fault case for the `option_env!` form so its coverage is asserted, and decide whether an environment-clearing re-exec can be refused **structurally** rather than by a named arm; a fifth arm per newly discovered route is the shape this task exists to escape.
+- Accept:
+  - A planted `option_env!` construction reddens the rule by name, and a planted `env_clear()` without re-arming reddens; both directions executed, as R4's other arms already are.
+  - What the rule still cannot see is recorded beside it — D99 §8 already concedes that a new crate driving the hook by an unforeseen route is out of reach of a static check, and the runtime gate remains the only thing that fails a call.
+
+### Q119 — A `secret_hygiene.rs` flake that is not attributable
+- Milestone: M2
+- Size: XS
+- Deps: U21
+- Discovered by: **the D99 R4 lane** (2026-08-07).
+- Problem: `secret_hygiene.rs` failed once on its first run of the wave — 9 passed, 1 failed — and **could not be attributed**. A/B measured on this host: after the change, five further passes including runs under deliberate 2-core load; before the change, at `HEAD`, three of three under the same load. The suite polls `/proc` and is timing-sensitive, which is the mechanism a flake of this shape would have, but **the specific failing test was not identified**, so this row records an observation and not a diagnosis.
+- Do: make the `/proc` polling insensitive to scheduling, or make its failure name what it timed out waiting for, so that a second occurrence is attributable in one run instead of costing another A/B. A hygiene suite that flakes is worse than most flakes: its red means *"a secret escaped"*, and a reader who has seen it flake will discount the one time it is right.
+- Accept: the polling has a stated bound and a failure message naming the process and the field it was waiting on; a deliberately slowed child produces that message rather than a bare assertion failure.
+- Notes: not reproduced since. Recorded now so that a second occurrence is a second data point rather than another first one.
+
+### Q120 — D98 rider 3c is honoured by `status` and unenforced across surfaces
+- Milestone: M2
+- Size: S
+- Deps: U23, U25; D98 rider 3c
+- Discovered by: **the U23 lane** (2026-08-07).
+- Problem: D98 rider 3c names three predicates that share the word UNANCHORED and rules that they must not be collapsed — `WorkRow.unanchored` is the `--no-anchor` shaping flag, `NagState::Unanchored` means *"no anchors at all"*, and MVP-SPEC.md line 137's UNANCHORED means *"zero headline-eligible anchors"*. `status` computes the spec's version, as ruled. `list` badges off `WorkRow.unanchored`. The nag reads `NagState`. **U23's fixture work 3 makes the disagreement concrete**: one work, all three predicates answering differently, each correctly by its own definition. The ruling is honoured at the one surface that was being built and is enforced at none — nothing mechanically stops a fourth reader picking whichever predicate is nearest to hand, which is how the three become interchangeable in a reader's memory and then in the code.
+- Do: give the spec's predicate a name and a single home, so a surface that wants *"zero headline-eligible anchors"* cannot spell it as either of the other two by accident, and so the two that are **not** the spec's say what they are at their own definition.
+- Accept: each of the three predicates is reachable by a name that states which question it answers; a test pins work 3's three different answers, so a future collapse of any two of them reddens.
+- Notes: revisit trigger is **R18/R22** — M3's authoritative wording set is where this either becomes one word with three qualifiers or three words, and D98 already flags rider 1b's marker as owing the same surfaces.
+
+### Q121 — A test whose vehicle is "a still-unimplemented command" breaks every time a handler lands
+- Milestone: M2
+- Size: XS
+- Deps: U19, U23, U24; before U27
+- Discovered by: **the U24 lane** (2026-08-07), on this test's second migration.
+- Problem: `config_file.rs::binary_resolves_network_through_the_config` needs a command that reaches config resolution and then stops, so it picks one that is **still a stub** — and a stub is by definition the thing the next wave removes. It has now migrated twice: `list` → `status` at U19, `status` → `show` at U24. It will break again at U27, and the repair each time is to hunt for the next stub, which reproduces the defect rather than closing it.
+- Do: derive the vehicle instead of naming it — `machine::ALL_COMMAND_NAMES` minus the implemented set yields the current stub without a lane having to notice — or remove the vehicle question entirely by asserting the envelope's `network` field rather than pinning an exit code, since network resolution is what the test is about and the exit code is only how it currently observes it.
+- Accept: landing a handler for any command requires no edit to this test; the property it asserts — that config resolves the network before the command's own failure — is still red when that resolution is broken.
+- Notes: U19's execution note 8 recorded the same shape for four sibling suites (`cli_surface`, `exit_codes`, `config_file`, and `machine_mode`'s abort table each used `list` as their *"a stub command"* exemplar) and re-pointed each at a still-stubbed command — which re-armed the defect rather than disarming it. This is the instance that has been re-pointed twice since and is therefore the one worth giving a derived vehicle first.

@@ -6,8 +6,10 @@
 //!
 //! NON-SECRET: config text fixtures only.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::path::{Path, PathBuf};
-use std::process::{Command as Process, Stdio};
+use std::process::Stdio;
 
 use antseal_cli::cli::Network;
 use antseal_cli::config::{Config, effective_network, initial_config_text, load_from, parse};
@@ -325,7 +327,7 @@ frobnicate = "maybe"
 // ─────────────────────────────────────────────────────────────────────
 
 fn spawn(vault_dir: &Path, args: &[&str]) -> std::process::Output {
-    Process::new(env!("CARGO_BIN_EXE_antseal"))
+    spawn::antseal()
         .args(args)
         .env("ANTSEAL_DIR", vault_dir)
         .stdin(Stdio::null())
@@ -344,10 +346,14 @@ fn binary_resolves_network_through_the_config() {
     let layout = layout_with_config(&dir, Some("default_network = \"devnet\"\n"));
     let root = layout.root().to_path_buf();
 
-    // Config supplies the network (`status` is an M2 stub → error
-    // envelope, but the envelope's network field is the resolved one;
-    // `list` played this role until U19 gave it a real handler).
-    let out = spawn(&root, &["--json", "status", "w1"]);
+    // Config supplies the network. The vehicle has to be a command that is
+    // still a stub, so the exit code is the *envelope's* rather than a
+    // handler's: `list` played this role until U19 gave it a real handler and
+    // `status` until U23 gave it one — at which point this row started reading
+    // exit 2 (`Usage`: no vault at this layout) instead of 3. `show` is the
+    // next stub; when U27 lands, move this to whichever one is left and say so
+    // here.
+    let out = spawn(&root, &["--json", "show", "w1"]);
     assert_eq!(out.status.code(), Some(3));
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
@@ -361,7 +367,7 @@ fn binary_resolves_network_through_the_config() {
     // Explicit flag beats the config.
     let out = spawn(
         &root,
-        &["--json", "--network", "arbitrum-one", "status", "w1"],
+        &["--json", "--network", "arbitrum-one", "show", "w1"],
     );
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
@@ -378,7 +384,7 @@ fn binary_resolves_network_through_the_config() {
         "default_network = \"devnet\"\nshiny = \"yes\"\n",
     )
     .expect("rewrite config");
-    let out = spawn(&root, &["--json", "status", "w1"]);
+    let out = spawn(&root, &["--json", "show", "w1"]);
     assert_eq!(
         out.status.code(),
         Some(3),
@@ -393,13 +399,15 @@ fn binary_resolves_network_through_the_config() {
         "default_network = 42\n",
     )
     .expect("rewrite config");
-    let out = spawn(&root, &["--json", "status", "w1"]);
+    let out = spawn(&root, &["--json", "show", "w1"]);
     assert_eq!(out.status.code(), Some(17), "malformed-config code");
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
             .expect("one JSON document");
     assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
-    // Plain mode: same code, no stdout.
+    // Plain mode: same code, no stdout. Deliberately a command with a REAL
+    // handler, because a malformed config hard-fails before dispatch and this
+    // is where that is worth showing.
     let out = spawn(&root, &["status", "w1"]);
     assert_eq!(out.status.code(), Some(17));
     assert!(out.stdout.is_empty());

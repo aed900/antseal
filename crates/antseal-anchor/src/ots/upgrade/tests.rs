@@ -308,6 +308,90 @@ fn three_upgrades_accumulate_into_one_artifact() {
     assert_eq!(artifact.len(), 664 + 3 + 1_000 + 1_036 + 1_105);
 }
 
+/// [`already_merged`] recognises a repeat and **only** a repeat.
+///
+/// The three rows are the whole contract, over real captured bytes:
+///
+/// 1. before any merge, alice's upgrade is not present — so a first merge is
+///    never refused;
+/// 2. after merging it, it is — so a second run adds nothing;
+/// 3. after merging it, **bob's** body at bob's attestation is still not
+///    present. Row 3 is the one that matters most and the one an over-eager
+///    guard would fail: A14 deliberately lets a later calendar's attestation
+///    merge into an already-upgraded artifact without a second header fetch,
+///    so a guard keyed on *"this artifact is attested"* rather than on *"these
+///    exact bytes are already at this insertion point"* would silently discard
+///    real evidence for ever.
+#[test]
+fn a_repeat_upgrade_is_recognised_and_a_different_calendars_is_not() {
+    let alice_uri = "https://alice.btc.calendar.opentimestamps.org";
+    let bob_uri = "https://bob.btc.calendar.opentimestamps.org";
+    let reference = |artifact: &[u8], uri: &str| {
+        pending_refs(artifact, &fixtures::DIGEST_A)
+            .expect("parses")
+            .into_iter()
+            .find(|candidate| candidate.uri == uri)
+            .expect("still pending — the merge is a pure insertion")
+    };
+
+    let before = fixtures::MERGED_A.to_vec();
+    assert!(
+        !already_merged(
+            &before,
+            &reference(&before, alice_uri),
+            fixtures::UPGRADE_A_ALICE
+        ),
+        "row 1: nothing is merged yet, so nothing may be refused"
+    );
+
+    let merged = merge_upgrade(
+        &before,
+        &fixtures::DIGEST_A,
+        &reference(&before, alice_uri),
+        fixtures::UPGRADE_A_ALICE,
+    )
+    .expect("merges")
+    .artifact;
+
+    assert!(
+        already_merged(
+            &merged,
+            &reference(&merged, alice_uri),
+            fixtures::UPGRADE_A_ALICE
+        ),
+        "row 2: the same calendar answering with the same body is a repeat, and splicing it \
+         again would grow the artifact by one attestation per invocation"
+    );
+    assert!(
+        !already_merged(
+            &merged,
+            &reference(&merged, bob_uri),
+            fixtures::UPGRADE_A_BOB
+        ),
+        "row 3: a DIFFERENT calendar's attestation is new evidence and must still merge — this \
+         guard refuses repetition, never evidence"
+    );
+
+    // And the refusal is about the bytes, not about the calendar: alice
+    // answering with something else is not a repeat either.
+    let mut different = fixtures::UPGRADE_A_ALICE.to_vec();
+    different.push(0x00);
+    assert!(!already_merged(
+        &merged,
+        &reference(&merged, alice_uri),
+        &different
+    ));
+
+    // An empty body is `UpgradePoll::Empty`'s case and never reaches a merge;
+    // asserted anyway, because an empty needle would otherwise match the
+    // splice separator alone and report every pending attestation as merged.
+    assert!(!already_merged(
+        &merged,
+        &reference(&merged, alice_uri),
+        &[]
+    ));
+}
+
 /// An upgrade body spliced against the **wrong** pending attestation **merges
 /// cleanly**, and is stopped one step later by the header check.
 ///

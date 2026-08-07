@@ -39,6 +39,8 @@ pub mod seal_resume;
 pub mod seal_run;
 pub mod seal_session;
 pub mod seal_warnings;
+pub mod status;
+pub mod upgrade_hook;
 pub mod vault;
 
 use std::process::ExitCode;
@@ -48,8 +50,24 @@ use std::process::ExitCode;
 use antseal_core as _;
 
 /// Full CLI entry: parse, dispatch, and map every outcome to its
-/// documented exit code (the U2 table in [`error`]). Testable — it never
-/// calls `process::exit`.
+/// documented exit code (the U2 table in [`error`]).
+///
+/// **Testable through the binary, and only through the binary** (D99 R4.2).
+/// It never calls `process::exit`, which is what the original claim meant and
+/// which still holds — but that claim was always narrower than it read. This
+/// entry consumes the *process* environment (`config::load` →
+/// `VaultLayout::resolve`), so its behaviour is a property of the process it
+/// runs in, and it was only ever safely callable in-process for
+/// argv→exit-code mapping with no vault.
+///
+/// U24's opportunistic upgrade hook removes even that: the entry will dial
+/// OTS calendars after dispatch. A test **cannot** arm Q16's gate for its own
+/// process — `std::env::set_var` is `unsafe` in edition 2024 and
+/// `[workspace.lints.rust]` denies `unsafe_code` (both confirmed by
+/// compiling them) — so an in-process call cannot be made safe, only avoided.
+/// **No test source may call this function**; spawn the binary through
+/// `crates/antseal-cli/tests/common/spawn.rs`, which arms the gate.
+/// `scripts/check-anchor-net.py` R4 enforces both halves.
 ///
 /// The machine-output contract lives in [`machine`] (U3): under `--json`,
 /// stdout carries exactly one versioned envelope per invocation — success
@@ -114,7 +132,11 @@ where
     // flag > config > built-in default (U4's precedence rule).
     let network = config::effective_network(cli.globals.network, &config).as_str();
 
-    match run::run(&cli) {
+    // U24's slot (D99 R1/R2): owned here, threaded through dispatch, filled by
+    // whichever handler unlocks — through the one expression that both unlocks
+    // and arms, so no handler can hold a vault the hook never sees.
+    let vault_slot = upgrade_hook::VaultSlot::default();
+    let code = match run::run(&cli, &vault_slot) {
         Ok(outcome) => {
             if cli.globals.json {
                 println!(
@@ -125,7 +147,17 @@ where
             ExitCode::SUCCESS
         }
         Err(err) => fail(network, &err),
-    }
+    };
+    // D42 + A15 + D99 R1: after the answer, never before it — this is the only
+    // point that is post-output in *both* plain and `--json` mode; after the
+    // host command's `VaultLock` has been released, so the hook can take its
+    // own (the lock is a try-lock and would otherwise refuse itself); and after
+    // `code` is a value, so no hook outcome can reach the exit status. The
+    // pre-dispatch error returns above are deliberately untouched: no command
+    // was dispatched, no vault was held, so there is nothing to arm and nothing
+    // to upgrade.
+    upgrade_hook::run_after_output(&vault_slot, &config, network);
+    code
 }
 
 /// Install the process-global tracing subscriber: stderr only, env-filter

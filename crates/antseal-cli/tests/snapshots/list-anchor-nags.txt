@@ -1,0 +1,29 @@
+b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1  complete
+  tsa token, verified   2027-01-01 00:10:00 UTC   arbitrum-one
+  cost: 11 atto-ANT
+b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2  complete (degraded anchors)
+  degraded, only pending ots   2027-01-01 00:08:20 UTC   arbitrum-one
+  cost: 11 atto-ANT
+  ANCHORS PENDING: 3 calendar attestation(s) not yet confirmed by Bitcoin, and nothing else here proves a time independently
+  run antseal status b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2 --upgrade
+b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3  complete UNANCHORED
+  sealed with --no-anchor   2027-01-01 00:06:40 UTC   arbitrum-one
+  cost: 11 atto-ANT
+b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4  complete
+  token whose root left the store   2027-01-01 00:05:00 UTC   arbitrum-one
+  cost: 11 atto-ANT
+  ANCHORS PENDING: 3 calendar attestation(s) not yet confirmed by Bitcoin, and nothing else here proves a time independently
+  run antseal status b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4 --upgrade
+(no work id yet; seal e1151515151515151515151515151515)  incomplete
+  anchored, killed before finalize   2027-01-01 00:03:20 UTC   arbitrum-one
+  cost: 11 atto-ANT
+  ANCHORS PENDING: 3 calendar attestation(s) not yet confirmed by Bitcoin, and nothing else here proves a time independently
+  no work id yet — finish this seal first, then run antseal status <id> --upgrade
+  state: anchored
+  nothing was paid; the recorded quote is stale by design — resuming re-quotes at current prices and asks for consent again
+  resume with: antseal seal work.txt --title 'anchored, killed before finalize'
+b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6  complete
+  artifacts, journaled manifest gone   2027-01-01 00:01:40 UTC   arbitrum-one
+  cost: 11 atto-ANT
+  anchors: unclassified — this work holds anchor artifacts but its journaled manifest is gone, so what they attest to cannot be recovered
+6 work(s): 5 complete, 1 incomplete, 0 abandoned (1 UNANCHORED, 3 waiting on pending anchors).

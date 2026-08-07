@@ -50,6 +50,9 @@
 
 mod common;
 
+#[path = "common/spawn.rs"]
+mod spawn;
+
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -213,6 +216,16 @@ fn run_clean_machine(
             "--test-threads=1",
         ])
         .env_clear()
+        // Q16 / D99 R4.1. `env_clear()` is the ONE operation that defeats the
+        // environment arm of the no-real-anchor-network gate, and it defeats
+        // it even in CI, where the workflow arms the variable workflow-wide:
+        // the parent inherits it and this child is then handed an empty
+        // environment. Nothing else in the harness can notice — a disarmed
+        // gate reaches the network and every assertion still passes, which is
+        // Q16 §2's recorded failure exactly. So the clean machine is given the
+        // arming back explicitly, and `check-anchor-net.py` R4 refuses an
+        // `env_clear()` in a test source that does not re-arm.
+        .env(spawn::NO_REAL_ANCHOR_NETWORK, "1")
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join("config"))

@@ -1,0 +1,52 @@
+0101010101010101010101010101010101010101010101010101010101010101  complete
+  thesis draft   arbitrum-one
+  existed no later than 1785000000 (tsa, CN=antseal mock TSA signer,O=antseal fixtures)
+  2 anchor artifact(s); 1 can carry the headline time
+  ots-pending   ots   pending
+      not yet independently provable — run `antseal status 0101010101010101010101010101010101010101010101010101010101010101 --upgrade`
+      source: https://calendar.example/alice (claimed by the artifact — this run did not verify it)
+  tsa-0   tsa   proven
+      independently proven time: 1785000000
+      source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+      fetch date: 1785600000
+  receipt: supporting evidence — no independently proven time
+      paid in 1 transaction(s); Arbitrum block 377262147
+0202020202020202020202020202020202020202020202020202020202020202  complete
+  upgraded overnight   arbitrum-one
+  existed no later than 1785000000 (tsa, CN=antseal mock TSA signer,O=antseal fixtures)
+  2 anchor artifact(s); 1 can carry the headline time
+  ots-pending   ots   attested
+      a Bitcoin attestation is embedded, but an embedded header proves no time on its own — `antseal verify --online` is what promotes this to proven
+      source: bitcoin-block-700113 (claimed by the artifact — this run did not verify it)
+      fetch date: 1790000000
+  tsa-0   tsa   proven
+      independently proven time: 1785000000
+      source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+      fetch date: 1785600000
+0303030303030303030303030303030303030303030303030303030303030303  complete (degraded anchors — recorded at seal time)
+  degraded anchors   arbitrum-one
+  UNANCHORED — integrity and signature only, no provable time
+  2 anchor artifact(s); 0 can carry the headline time
+  ots-pending   ots   internally-consistent-only
+  tsa-0   tsa   invalid
+      fetch date: 1785600000
+      diagnostic: anchor-der-malformed
+0404040404040404040404040404040404040404040404040404040404040404  complete
+  dev smoke   arbitrum-one
+  UNANCHORED — integrity and signature only, no provable time
+  0 anchor artifact(s); 0 can carry the headline time
+  (no artifact)   ots   absent
+  (no artifact)   tsa   absent
+0505050505050505050505050505050505050505050505050505050505050505  complete
+  aging bundle   arbitrum-one
+  existed no later than 1780000000 (tsa, CN=antseal mock TSA signer,O=antseal fixtures)
+  2 anchor artifact(s); 2 can carry the headline time
+  tsa-0   tsa   proven
+      independently proven time: 1785000000
+      source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+      fetch date: 1785600000
+  tsa-1   tsa   valid-at-stamping-cert-since-expired
+      independently proven time: 1780000000
+      source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+      fetch date: 1785600000
+  (no artifact)   ots   absent

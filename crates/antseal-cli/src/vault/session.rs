@@ -38,6 +38,7 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 use antseal_core::crypto::secrets::SecretBuf;
 use rand_core::TryCryptoRng;
@@ -323,6 +324,46 @@ pub fn unlock_vault_with_keyfile(
     unlock_vault_impl(layout, passphrase, keyfile_path, KdfFailPoint::None)
 }
 
+/// **The only way a command may obtain an unlocked vault** (D99 R2): unlock,
+/// and arm U24's opportunistic upgrade hook with the same handle, in one
+/// expression.
+///
+/// D42's rule keys the hook on the dispatching command *already holding* an
+/// unlocked handle. No point in the tree sees both every subcommand and a
+/// vault — `run::run` takes a `&Cli`, every handler unlocks for itself, and
+/// [`UnlockedVault`] is deliberately `!Clone` — so the handle is moved up into
+/// a dispatcher-owned [`VaultSlot`] instead. Doing that as a separate step
+/// after the unlock would be a step a handler could forget, and a handler that
+/// forgot would be a command that silently skips the hook. Here it is not a
+/// step at all: there is one expression, and it does both.
+///
+/// The other half is a scan —
+/// `the_unlock_primitives_are_named_in_exactly_two_production_files` refuses
+/// [`unlock_vault`]/[`unlock_vault_with_keyfile`] in any production source but
+/// this one and `vault/export.rs` — so "a command that unlocked without
+/// arming" is not merely discouraged, it is unrepresentable without reddening
+/// a test that names the offending file.
+///
+/// `init` and `vault import` do **not** go through this, and that is a
+/// correction to D42 rather than a deviation from it: measured (D99 §1.1),
+/// neither holds a handle at the dispatch layer — `init` consumes the
+/// [`create_vault`] result inside `run_init`, and `vault import`'s only unlock
+/// is the self-verification inside `import_vault`. A fresh vault has nothing
+/// to upgrade, and arming after an import would mean either threading the slot
+/// through the import primitive's internals or paying a second ~1 s Argon2id
+/// derivation for a vault the user's next command will unlock properly.
+///
+/// # Errors
+///
+/// As [`unlock_vault`].
+pub(crate) fn unlock_for_command(
+    layout: &VaultLayout,
+    passphrase: &SecretBuf,
+    slot: &crate::upgrade_hook::VaultSlot,
+) -> Result<Arc<UnlockedVault>, CliError> {
+    Ok(slot.arm(Arc::new(unlock_vault(layout, passphrase)?)))
+}
+
 pub(crate) fn unlock_vault_impl(
     layout: &VaultLayout,
     passphrase: &SecretBuf,
@@ -511,6 +552,53 @@ mod tests {
         // succeeds — nothing was half-written.
         create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng)
             .expect("clean create after failure");
+    }
+
+    /// **D99 R2's scan.** The two unlock primitives are nameable in production
+    /// sources in exactly two places: here, where they are defined, and
+    /// `vault/export.rs`, whose import primitive unlocks the freshly-installed
+    /// vault to self-verify it.
+    ///
+    /// A third file is a **command that unlocked without arming U24's hook**.
+    /// That compiles, it runs, and it is silently wrong in the way D42's rule
+    /// is designed to make impossible: the command holds a vault, so the hook
+    /// is owed a pass, and it silently gets none. Nothing about it is a type
+    /// error, so it has to be a failing test — the same shape, and the same
+    /// reasoning, as S36's two scans one module over.
+    ///
+    /// Test modules are exempt by construction (`production_files_naming` cuts
+    /// each file at its first `#[cfg(test)]`), because the suites unlock
+    /// directly on purpose: a harness has no dispatcher and no slot, and a
+    /// rule that could not tell the two apart would be switched off the first
+    /// time it fired.
+    #[test]
+    fn the_unlock_primitives_are_named_in_exactly_two_production_files() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let expected = ["vault/export.rs".to_owned(), "vault/session.rs".to_owned()];
+        for needle in ["unlock_vault(", "unlock_vault_with_keyfile("] {
+            let (named, visited) = crate::seal_session::production_files_naming(&src, needle);
+            assert!(
+                visited > 20,
+                "the scan visited only {visited} source files — it is not looking where it thinks"
+            );
+            assert!(
+                named.iter().all(|file| expected.contains(file)),
+                "`{needle}` is named in a production source that is neither its definition nor \
+                 the import primitive: {named:?}. A command that calls it directly has unlocked \
+                 a vault WITHOUT arming U24's opportunistic upgrade hook — D42's rule says the \
+                 hook runs iff the dispatching command holds an unlocked handle, and this one \
+                 would hold one and never hand it up. Go through \
+                 `vault::session::unlock_for_command`, which unlocks and arms in one expression \
+                 (D99 R2)"
+            );
+        }
+        // Anti-vacuity: the definitions themselves must be found, or the scan
+        // is reporting a clean tree because it is looking at nothing.
+        let (named, _) = crate::seal_session::production_files_naming(&src, "unlock_vault(");
+        assert!(
+            named.contains(&"vault/session.rs".to_owned()),
+            "the scan did not even find the definition: {named:?}"
+        );
     }
 
     /// Simulated allocation failure at UNLOCK: same typed error, same

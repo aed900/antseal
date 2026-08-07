@@ -98,6 +98,32 @@ pub(super) fn decode_receipt(bytes: &[u8]) -> Result<PaymentReceipt, JournalErro
         .map_err(|_| super::journal::corrupt("journaled receipt carries an unsupported version"))
 }
 
+/// The journaled [`PaymentReceipt`], read straight from U9's store — the
+/// `recorded_state`/`recorded_plan` shape for the receipt slot (`status`,
+/// U23).
+///
+/// Same reason as [`recorded_plan`](super::journal::recorded_plan): a
+/// read-only command needs the record, not a `SealJournal`, and minting one
+/// would arm a receipt sink nobody writes through on a path that never pays.
+///
+/// `None` means *not paid yet* — the same state
+/// [`SealJournal::receipt`](super::journal::SealJournal::receipt) reports,
+/// and never an error.
+///
+/// # Errors
+///
+/// Store-level failures, and [`JournalError::Corrupt`] for a record that is
+/// present but unreadable.
+pub fn recorded_receipt(
+    store: &WorkStore<'_>,
+    seal_id: &SealId,
+) -> Result<Option<PaymentReceipt>, JournalError> {
+    match store.get_receipt(seal_id)? {
+        Some(bytes) => decode_receipt(bytes.as_bytes()).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Fold a freshly-paid receipt into records a previous invocation already
 /// bought and the network still honours.
 ///

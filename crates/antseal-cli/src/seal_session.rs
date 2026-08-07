@@ -24,9 +24,10 @@
 //!
 //! U36's answer to the same problem needed both halves, and so does this.
 //!
-//! 1. **The type.** [`SealSession::open`] takes the [`UnlockedVault`] **by
-//!    value**, so a session is the only handle to it afterwards, and mints
-//!    the one sink beside it. [`SealSession::journal`] is the only way to
+//! 1. **The type.** [`SealSession::open`] takes an `Arc<UnlockedVault>` and
+//!    mints the one sink beside it — since D99 R2 the caller's share comes
+//!    from `unlock_for_command`, the single expression that unlocks and arms
+//!    U24's hook. [`SealSession::journal`] is the only way to
 //!    get a journal out of a session, and it always attaches that sink.
 //!    [`run_seal`](crate::seal_run::run_seal) takes a `&SealSession` rather
 //!    than a `&UnlockedVault`, so the *paying* command has no expression
@@ -85,17 +86,24 @@ impl std::fmt::Debug for SealSession {
 }
 
 impl SealSession {
-    /// Take ownership of an unlocked vault and mint its receipt sink.
+    /// Take a share of an unlocked vault and mint its receipt sink.
     ///
-    /// **By value on purpose.** The caller unlocks once and gives the vault
-    /// up; from here on the only handle is this session's `Arc`.
+    /// **`Arc<UnlockedVault>` and not `UnlockedVault`** (D99 R2). This used to
+    /// take the vault by value and wrap it on the next line, which was the
+    /// right shape while `seal` was the only owner. It is not any more: every
+    /// vault-holding command now unlocks through
+    /// [`unlock_for_command`](crate::vault::session::unlock_for_command),
+    /// which unlocks, arms U24's hook and hands the caller an `Arc` — one
+    /// expression, so no handler can hold a vault it forgot to arm. Taking the
+    /// `Arc` here is what lets `seal` use that same expression as `list` and
+    /// `vault export` instead of a second one nobody scans.
+    ///
     /// `UnlockedVault` stays `!Clone`, so there is still exactly one
     /// `VaultKey` in the process and it still zeroizes on its single drop —
-    /// the `Arc` shares that one instance with the `'static` sink rather
-    /// than copying any secret material (S31's constraint, unchanged).
+    /// the `Arc`s share that one instance rather than copying any secret
+    /// material (S31's constraint, unchanged).
     #[must_use]
-    pub fn open(vault: UnlockedVault) -> Self {
-        let vault = Arc::new(vault);
+    pub fn open(vault: Arc<UnlockedVault>) -> Self {
         let receipts = VaultReceiptSink::new(Arc::clone(&vault));
         Self { vault, receipts }
     }
@@ -143,7 +151,7 @@ impl SealSession {
 /// names the offending file rather than a count. Pure and directory-taking
 /// so the scan itself can be proven red against a planted violation.
 #[cfg(test)]
-fn production_files_naming(dir: &std::path::Path, needle: &str) -> (Vec<String>, usize) {
+pub(crate) fn production_files_naming(dir: &std::path::Path, needle: &str) -> (Vec<String>, usize) {
     let mut named = Vec::new();
     let mut visited = 0usize;
     let mut stack = vec![dir.to_path_buf()];
@@ -226,7 +234,9 @@ mod tests {
         let layout = VaultLayout::at(dir.join("vault"));
         let mut rng = crate::rng::OsEntropy;
         create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng).expect("create");
-        let session = SealSession::open(unlock_vault(&layout, &passphrase()).expect("unlock"));
+        let session = SealSession::open(Arc::new(
+            unlock_vault(&layout, &passphrase()).expect("unlock"),
+        ));
 
         let seal_id = SealId::generate(&mut rng).expect("seal id");
         let w = MasterSecret::generate(&mut rng).expect("W");
@@ -274,19 +284,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The vault key's lifetime is unchanged by the pairing: the session
-    /// owns the only `UnlockedVault`, shares it with the `'static` sink, and
-    /// both die together when the command ends.
+    /// The vault key's lifetime is unchanged **by the pairing**: a session
+    /// holds one `Arc` and hands one to the `'static` sink, and both die
+    /// together when the command ends.
+    ///
+    /// # This is a claim about a session, not about the product (D99 §2.2)
+    ///
+    /// It used to say a third handle *"would mean something outlives the
+    /// command holding the vault key"*. Since U24 one does, on purpose:
+    /// `unlock_for_command` keeps a share in the dispatcher's `VaultSlot` so
+    /// the opportunistic upgrade hook can run after the handler has returned,
+    /// which makes the production count for `seal` **three**. That extension is
+    /// bounded by the hook's budget, it is still one `UnlockedVault` and one
+    /// `VaultKey` — the type is `!Clone` and zeroizes on its single drop — and
+    /// the key was alive for the whole command already. The assertion below
+    /// stays exactly as true as it ever was because it builds its session in
+    /// isolation; what changed is what it is evidence *of*, and saying so here
+    /// is cheaper than letting a future reader infer a guarantee the product
+    /// stopped giving.
     #[test]
     fn a_session_holds_exactly_two_handles_to_one_vault() {
         let dir = temp_dir("lifetime");
         let layout = VaultLayout::at(dir.join("vault"));
         let mut rng = crate::rng::OsEntropy;
         create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng).expect("create");
-        let session = SealSession::open(unlock_vault(&layout, &passphrase()).expect("unlock"));
+        let session = SealSession::open(Arc::new(
+            unlock_vault(&layout, &passphrase()).expect("unlock"),
+        ));
 
-        // The session's own `Arc` plus the sink's — no more. A third would
-        // mean something outlives the command holding the vault key.
+        // The session's own `Arc` plus the sink's — no more. A session built
+        // in isolation shares with nothing else; a *dispatched* command's
+        // session also shares with the hook's slot (see the doc above).
         assert_eq!(Arc::strong_count(&session.vault), 2);
         let handed_out = session.receipts();
         assert_eq!(

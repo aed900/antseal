@@ -94,7 +94,42 @@ use crate::vault::store::{ConsentRecord, SealShapingFlags, StoreError, WorkState
 /// Version of the journal record schema. Bumping it is a vault-format
 /// event: new record shapes, a migration story, and tests land together
 /// (the same discipline U9's `WORK_RECORD_VERSION` carries).
-pub const SEAL_JOURNAL_VERSION: u32 = 1;
+///
+/// # Scope, measured (D97 §1.3)
+///
+/// "Vault-format event" reads wider than it is, so the reach is stated
+/// rather than left to be inferred. This constant governs **four record
+/// classes in two files** — the ones that ride [`envelope`] /
+/// [`open_envelope`]: [`StagedBlob`], the state record, the plan record
+/// (all here), and [`AnchorArtifact`](super::anchors::AnchorArtifact)
+/// (`pipeline/anchors.rs`). It is **not**
+/// [`VAULT_FORMAT_VERSION`](crate::vault::header::VAULT_FORMAT_VERSION),
+/// and it is one of **six** independent version constants — the others
+/// being [`ENVELOPE_VERSION`](crate::machine::ENVELOPE_VERSION),
+/// `VAULT_FORMAT_VERSION`,
+/// [`WORK_RECORD_VERSION`](crate::vault::store::WORK_RECORD_VERSION),
+/// [`BOOKKEEPING_VERSION`](crate::vault::bookkeeping::BOOKKEEPING_VERSION)
+/// and
+/// [`EXPORT_FORMAT_VERSION`](crate::vault::export::EXPORT_FORMAT_VERSION),
+/// none derived from another. Bumping this one therefore invalidates
+/// neither the export format nor the meta, bookkeeping or receipt records;
+/// the receipt record rides `antseal_net`'s own
+/// `RECEIPT_JOURNAL_VERSION`, and the consent record is a sub-map of U9's
+/// meta record under `WORK_RECORD_VERSION`.
+///
+/// # v2 (D97): the OTS upgrade group
+///
+/// v2 adds optional keys 4/5/6 to the anchor-artifact record — D79's
+/// block height, 80-byte block header and header fetch date, carried in
+/// the existing `ots-pending` slot so that "recorded together or not at
+/// all" is a property of `put_anchor`'s atomic rename rather than of a
+/// comment. [`open_envelope`] deliberately discards the version, so v1
+/// bytes flow into the v2 parser with nothing to branch on; that is
+/// **safe here only because the added keys are optional and
+/// absent-means-`None`**, which is the correct v1 reading. A future
+/// non-additive change must make the version reachable at the decoder
+/// first (U54).
+pub const SEAL_JOURNAL_VERSION: u32 = 2;
 
 /// Journal entry key of the fine state record.
 pub const STATE_ENTRY: u64 = 0;
@@ -592,6 +627,38 @@ pub enum JournalError {
     #[error("unit id is too large to journal")]
     UnitIdOutOfRange,
 
+    /// The pipeline attempted an anchor write no record shape admits —
+    /// a bug class, not a user state, and refused *before* any byte
+    /// reaches the vault. D97 R6 is what it would be violating: an
+    /// upgraded `.ots` written without its header group is strictly worse
+    /// than the pending artifact it replaces, un-nagged and structurally
+    /// unrescuable, so the write is refused rather than half-done.
+    #[error("refused an illegal anchor write: {detail}")]
+    IllegalAnchorWrite {
+        /// Failure-class summary — never record bytes.
+        detail: &'static str,
+    },
+
+    /// The anchor slot moved between the read that computed an upgrade and
+    /// the write that would apply it, so **nothing was written** (D99 R3).
+    ///
+    /// The upgrade engine polls *unlocked* — the U5 single-writer lock is
+    /// never held across network I/O, because holding it for a calendar
+    /// round-trip would block every concurrent `seal` — so another process
+    /// may have rewritten `ots-pending` in the interval. Writing anyway
+    /// would pair a genuinely upgraded `.ots` with a **previous
+    /// submission's** artifact bytes: D97 §2 K2's false
+    /// `anchor-ots-header-uncommitted` verdict on an honest work, arriving
+    /// through a different door.
+    ///
+    /// **Every caller is expected to handle this.** It is a benign outcome,
+    /// not a fault: polls are idempotent, so the next invocation recomputes
+    /// the transition against the record that is actually there. It maps to
+    /// [`CliError::Internal`] precisely *because* reaching the top level
+    /// means a caller ignored a documented, expected outcome.
+    #[error("the anchor slot changed under a computed upgrade; nothing was written")]
+    AnchorSlotMoved,
+
     /// The staged bytes are unavailable — the abandon trigger (S11).
     #[error(transparent)]
     StagedBytes(#[from] StagedBytesUnavailable),
@@ -625,7 +692,11 @@ impl From<JournalError> for CliError {
             },
             JournalError::Encode
             | JournalError::IllegalTransition { .. }
-            | JournalError::UnitIdOutOfRange => CliError::Internal {
+            | JournalError::UnitIdOutOfRange
+            | JournalError::IllegalAnchorWrite { .. }
+            // Not internal in nature — internal by the fact of arriving
+            // here: D99 R3 makes it an outcome both callers must handle.
+            | JournalError::AnchorSlotMoved => CliError::Internal {
                 detail: err.to_string(),
             },
             JournalError::StagedBytes(reason) => reason.into(),
@@ -812,10 +883,31 @@ pub trait SealJournal {
     /// asserts exist, so writing them afterwards would leave a window where
     /// the state claims evidence the vault does not hold. A crash between
     /// the two leaves a `Staged` work whose slots are already filled, and
-    /// resume re-runs the gate and overwrites them — which is correct,
-    /// because nothing downstream has read them yet.
+    /// resume re-runs the gate and overwrites them.
+    ///
+    /// **That overwrite used to be justified here by "nothing downstream
+    /// has read them yet", and U24 falsifies it** (D97 §6.8): the upgrade
+    /// hook advances anchor slots on every invocation, for any work,
+    /// independent of seal state. What still holds is narrower and
+    /// structural — the write replaces the **whole record** atomically
+    /// (temp + fsync + rename), so no mixed state is reachable and D97's
+    /// one-record shape cannot leave an upgrade group beside a fresher
+    /// artifact. What a resume may still discard is a completed upgrade
+    /// another subsystem recorded; that is a policy question, not a
+    /// durability one, and it is U57's.
     ///
     /// Slot names come from [`super::anchors`], never from user input.
+    ///
+    /// **Two spellings, one rule** (D97 R3 as amended by D99 R10). An anchor
+    /// slot is written from exactly two places in this crate: the seal/resume
+    /// anchor loop through *this* method, and
+    /// [`super::anchors::apply_upgrade`] through
+    /// [`WorkStore::put_anchor`](crate::vault::store::WorkStore::put_anchor)
+    /// directly. The upgrade path cannot come through the journal — U24's
+    /// hook runs after dispatch with no journal in hand, and
+    /// `VaultJournal::new` is scan-restricted to `seal_session.rs` — so a
+    /// call-site count that greps only `journal.put_anchor` would miss half
+    /// the rule (U56).
     ///
     /// # Errors
     ///
@@ -986,6 +1078,35 @@ pub fn recorded_state(
 ) -> Result<Option<SealState>, JournalError> {
     match store.get_journal_entry(seal_id, STATE_ENTRY)? {
         Some(bytes) => decode_state(bytes.as_bytes()).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The journaled [`SealPlan`], read straight from U9's store — the
+/// [`recorded_state`] shape for entry [`PLAN_ENTRY`] (`status`, U23).
+///
+/// `status` needs `manifest_bytes` for one reason: `anchor_digest` is
+/// `SHA-256` of the manifest envelope and is **not** on `WorkRecord`, so
+/// evaluating a stored anchor at all means recovering it from here (D98
+/// gap 3, which measures that entries 0–2 survive `vault import` and that
+/// this recovery therefore works on a restored vault too). It reads a
+/// store rather than a [`SealJournal`] because a read-only command has no
+/// business minting one: `VaultJournal` carries D37's receipt sink and a
+/// state machine, and `status` writes neither.
+///
+/// `None` means the plan record is absent — a work killed before staging
+/// finished. A state, not a failure, exactly as for [`recorded_state`].
+///
+/// # Errors
+///
+/// Store-level failures, and [`JournalError::Corrupt`] for a record that
+/// is present but unreadable.
+pub fn recorded_plan(
+    store: &crate::vault::store::WorkStore<'_>,
+    seal_id: &SealId,
+) -> Result<Option<SealPlan>, JournalError> {
+    match store.get_journal_entry(seal_id, PLAN_ENTRY)? {
+        Some(bytes) => decode_plan(bytes.as_bytes()).map(|(_, plan)| Some(plan)),
         None => Ok(None),
     }
 }

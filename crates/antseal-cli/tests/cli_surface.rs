@@ -14,6 +14,8 @@
 //!
 //! Everything here is non-secret: argv fixtures and rendered help text.
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::process::Command as Process;
 
 use antseal_cli::cli::{Cli, Command, Network, SplitMode, VaultCommand, WalletSource};
@@ -430,19 +432,20 @@ fn vault_subcommands_parse() {
 // ─────────────────────────────────────────────────────────────────────
 
 fn antseal_bin() -> Process {
-    Process::new(env!("CARGO_BIN_EXE_antseal"))
+    spawn::antseal()
 }
 
 #[test]
 fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
-    // `status` (U23, M2) is the exemplar stub. The row has moved four
+    // `show` (U27, M3) is the exemplar stub. The row has moved five
     // times as handlers landed — `vault export|import` at U12,
-    // `list`/`restore` at U19/U20, `init` at U11, `seal` at U13 — and
-    // when U23 lands it moves to `show`. It must always point at a
-    // command that is *actually* still stubbed: an exemplar that quietly
-    // stopped exercising the stub path would pass for the wrong reason.
+    // `list`/`restore` at U19/U20, `init` at U11, `seal` at U13, and
+    // `status` at U23, which was the last **M2** stub and took the M2
+    // spelling with it. It must always point at a command that is
+    // *actually* still stubbed: an exemplar that quietly stopped
+    // exercising the stub path would pass for the wrong reason.
     let out = antseal_bin()
-        .args(["status", "w1"])
+        .args(["show", "w1"])
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");
@@ -454,7 +457,7 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not implemented until M2"),
+        stderr.contains("not implemented until M3"),
         "stub error names its milestone; stderr was {stderr:?}"
     );
     // RUST_LOG=debug: the dispatch trace event must land on stderr —
@@ -469,9 +472,9 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
 fn stub_milestones_are_named_per_command() {
     // Rows shrink as real handlers land (U1's arrival map): `vault
     // export|import` left this list at U12, `list` and `restore` at
-    // U19/U20.
+    // U19/U20, and `status` at U23 — which emptied the M2 row entirely,
+    // so every surviving stub names M3.
     for (args, milestone) in [
-        (vec!["status", "w1"], "M2"),
         (vec!["show", "w1"], "M3"),
         (vec!["reveal", "w1", "--all"], "M3"),
         (vec!["verify", "b.sealproof"], "M3"),
@@ -493,6 +496,10 @@ fn help_exits_zero_on_stdout_and_usage_error_exits_two_on_stderr() {
     assert!(!out.stdout.is_empty(), "help renders on stdout");
     assert!(out.stderr.is_empty(), "help writes nothing to stderr");
 
+    // `mainnet` is not a network this build knows, so this fails inside
+    // **clap**, before dispatch — which is why the subcommand named here is
+    // irrelevant and deliberately stayed `status` when U23 implemented it.
+    // Nothing runs, so no vault is opened and no passphrase is asked for.
     let out = antseal_bin()
         .args(["--network", "mainnet", "status", "w1"])
         .output()

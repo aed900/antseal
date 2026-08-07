@@ -19,9 +19,10 @@
 //! discipline the error type itself enforces by carrying no secret-typed
 //! fields (U21 starts here).
 
+#[path = "common/spawn.rs"]
+mod spawn;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::process::Command as Process;
 
 use antseal_cli::error::{
     CliError, ConsentOutcome, ErrorClass, Milestone, PassphraseFailure, ResumeSafetyReason,
@@ -153,13 +154,14 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 message: "--wallet import requires --wallet-key-fd in machine mode".into(),
             },
         ),
-        (
-            "not-implemented-m2",
-            CliError::NotImplemented {
-                command: "status",
-                milestone: Milestone::M2,
-            },
-        ),
+        // `not-implemented-m2` stood here until U23: `status` was the last
+        // M2 stub, and implementing it emptied the milestone. The row is
+        // gone rather than re-pointed, because no command in this build can
+        // produce it and a registered fixture that documents text nothing
+        // emits is worse than none (U19's rule). `Milestone::M2`'s `Display`
+        // stays covered by the type's own exhaustive match; the M1 arm has
+        // been in the same position since U13 and has never had a row.
+        //
         // `anchor-stage-unavailable` stood here from U13 to U22: the M1
         // refusal of every anchored seal. U22 wired the real stage, so the
         // variant and its row are gone — the anchored-seal refusal a user
@@ -539,14 +541,17 @@ fn json_error_object_carries_class_code_and_message() {
 
 #[test]
 fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
-    // `status` is the exemplar stub (M2); `list` played this role until
-    // U19 gave it a real handler.
-    let plain = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .args(["status", "w1"])
+    // `show` is the exemplar stub (M3); `list` played this role until U19
+    // gave it a real handler, and `status` until U23 gave it one. The
+    // exemplar must name a command that is genuinely still stubbed — the
+    // envelope shape asserted below is the *not-implemented* one, and a
+    // command with a handler would reach the vault instead.
+    let plain = spawn::antseal()
+        .args(["show", "w1"])
         .output()
         .expect("spawn antseal");
-    let json = Process::new(env!("CARGO_BIN_EXE_antseal"))
-        .args(["--json", "status", "w1"])
+    let json = spawn::antseal()
+        .args(["--json", "show", "w1"])
         .output()
         .expect("spawn antseal");
 
@@ -559,7 +564,7 @@ fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim_end_matches('\n')).expect("single JSON document");
     assert_eq!(doc["v"], serde_json::json!(1));
-    assert_eq!(doc["command"], serde_json::json!("status"));
+    assert_eq!(doc["command"], serde_json::json!("show"));
     assert_eq!(doc["ok"], serde_json::json!(false));
     assert_eq!(doc["error"]["class"], "not-implemented");
     assert_eq!(doc["error"]["exit_code"], serde_json::json!(3));

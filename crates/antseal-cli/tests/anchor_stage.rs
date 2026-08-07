@@ -24,8 +24,11 @@
 //! (project rule 6).
 
 mod common;
+#[path = "common/spawn.rs"]
+mod spawn;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use antseal_anchor::submit::AnchorEndpoints;
 use antseal_anchor::testing::replay::{
@@ -173,7 +176,7 @@ fn a_plain_seal_whose_tsas_all_fail_aborts_before_any_payment() {
     let mock = MockBackend::new().with_balances(funded());
     let backend = RecordingBackend::new(&mock);
     let vault = IsolatedVault::create("u22-abort");
-    let session = SealSession::open(vault.unlock());
+    let session = SealSession::open(Arc::new(vault.unlock()));
 
     let tsa = unhelpful_tsa();
     let err = block_on(run_seal(
@@ -242,7 +245,7 @@ fn one_verified_tsa_lets_the_seal_proceed_and_journals_its_artifacts() {
     let mock = MockBackend::new().with_balances(funded());
     let backend = RecordingBackend::new(&mock);
     let vault = IsolatedVault::create("u22-proceed");
-    let session = SealSession::open(vault.unlock());
+    let session = SealSession::open(Arc::new(vault.unlock()));
 
     let signer = MockTsa::granted().expect("the mock CA mints");
     let roots = signer.root_store();
@@ -377,7 +380,7 @@ fn force_degraded_with_zero_tokens_proceeds_with_the_snapshotted_warning() {
     let mock = MockBackend::new().with_balances(funded());
     let backend = RecordingBackend::new(&mock);
     let vault = IsolatedVault::create("u22-forced");
-    let session = SealSession::open(vault.unlock());
+    let session = SealSession::open(Arc::new(vault.unlock()));
 
     let tsa = unhelpful_tsa();
     let result = block_on(run_seal(
@@ -493,7 +496,7 @@ fn no_anchor_reaches_the_real_gate_and_still_submits_nothing() {
     let mock = MockBackend::new().with_balances(funded());
     let backend = RecordingBackend::new(&mock);
     let vault = IsolatedVault::create("u22-skip");
-    let session = SealSession::open(vault.unlock());
+    let session = SealSession::open(Arc::new(vault.unlock()));
 
     // A TSA and a calendar that would both answer, if anyone asked.
     let signer = MockTsa::granted().expect("the mock CA mints");
@@ -573,7 +576,7 @@ fn a_configured_tsa_list_is_what_the_stage_contacts() {
     let mock = MockBackend::new().with_balances(funded());
     let backend = RecordingBackend::new(&mock);
     let vault = IsolatedVault::create("u26-custom");
-    let session = SealSession::open(vault.unlock());
+    let session = SealSession::open(Arc::new(vault.unlock()));
 
     let first = unhelpful_tsa();
     let second = unhelpful_tsa();
@@ -699,7 +702,7 @@ fn a_malformed_configured_tsa_url_refuses_before_any_pipeline_work() {
     )
     .expect("write config");
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_antseal"))
+    let out = spawn::antseal()
         .env_remove("RUST_LOG")
         .env_remove("ANTSEAL_DIR")
         .current_dir(&work.dir)
@@ -782,11 +785,21 @@ fn the_tsa_list_is_narrowed_without_losing_plain_http() {
 /// The routes by which a test could obtain the built-in endpoint list.
 /// Forbidden in any suite, because there is no legitimate reason for a test
 /// to hold the production list at all.
-const DEFAULT_LIST_ROUTES: [&str; 4] = [
+///
+/// `HookContext::production` is here for the same reason and by name (D99
+/// R4.4): it is the one construction of U24's hook that may reach a real
+/// calendar, and the hook's URIs come out of a stored `.ots` rather than out
+/// of any source text — so nothing else in this file could ever see them.
+/// Every test builds its context over `127.0.0.1:0` stubs through
+/// `HookContext::with_poll`, exactly as `AnchorStageConfig` is built over
+/// stubs here, and for the reason `common/mod.rs` already records: a defaulted
+/// endpoint field is how a test reaches a live service by omission.
+const DEFAULT_LIST_ROUTES: [&str; 5] = [
     "DEFAULT_TSA_URLS",
     "AnchorEndpoints::defaults",
     "AnchorStageConfig::from_config",
     "effective_tsa_urls",
+    "HookContext::production",
 ];
 
 /// Live hosts. Forbidden **in a suite that builds an anchor stage** — the
@@ -821,6 +834,55 @@ fn no_test_source_names_a_live_anchor_endpoint() {
     assert!(
         offenders.is_empty(),
         "these test sources build an anchor stage AND name a live host (Q16): {offenders:?}"
+    );
+}
+
+/// **D99 R4.1's arm, asserted at runtime rather than only in a script.**
+///
+/// `scripts/check-anchor-net.py` R4 proves that every construction site goes
+/// through `spawn::antseal()` and that the helper's source names the
+/// variable. Both are *textual*. This asserts the property the text is a
+/// proxy for: the `Command` the helper hands back really carries the arming,
+/// so a future edit that keeps the literal in a comment — or sets it on a
+/// builder whose result is discarded — is caught by something that ran it.
+///
+/// Q16's gate cannot arm itself here: `cfg!(test)` is evaluated in
+/// antseal-anchor's own compilation, and this crate's integration tests link
+/// its ordinary build. Measured 2026-08-06 — a bare `cargo test -p
+/// antseal-cli` had `deny_reason() == None` and a probe request **reached
+/// freetsa.org** (a real 403 from its nginx, after real DNS, TCP and TLS).
+#[test]
+fn the_spawn_helper_arms_the_no_real_anchor_network_gate() {
+    let command = spawn::antseal();
+    let armed: Vec<_> = command
+        .get_envs()
+        .filter(|(key, _)| *key == std::ffi::OsStr::new(spawn::NO_REAL_ANCHOR_NETWORK))
+        .collect();
+    assert_eq!(
+        armed.len(),
+        1,
+        "`spawn::antseal()` must set {} exactly once; it set it {} time(s). Every spawned-binary \
+         suite in this crate is armed by this one line and by nothing else (D99 R4.1)",
+        spawn::NO_REAL_ANCHOR_NETWORK,
+        armed.len()
+    );
+    let (_, value) = armed[0];
+    // `offline::decide` fails closed — anything but a literal `0` arms it —
+    // so the assertion is that the value is not the ONE off switch, rather
+    // than that it is any particular string.
+    assert!(
+        value.is_some_and(|v| v != std::ffi::OsStr::new("0")),
+        "{} is set to {value:?}, which is the one sanctioned OFF switch (the A25 smoke \
+         runbook's escape hatch). The helper must arm the gate, not disarm it",
+        spawn::NO_REAL_ANCHOR_NETWORK
+    );
+    // The helper must point at the binary under test, not at a name resolved
+    // from PATH — a `PATH` lookup would run whatever `antseal` the developer
+    // has installed, against a vault fixture built by this tree.
+    assert_eq!(
+        command.get_program(),
+        std::ffi::OsStr::new(spawn::antseal_exe()),
+        "the helper must spawn CARGO_BIN_EXE_antseal, never a PATH lookup"
     );
 }
 

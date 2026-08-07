@@ -85,6 +85,25 @@ submission gate through the real pipeline and `cfg(test)` never reaches it.
 It **fails closed**: any value but a literal `0` arms the gate, so a typo
 over-protects.
 
+**Three venues arm it, not two** (D99 R4, 2026-08-06). The workflows and
+`scripts/local-gate.sh` arm a whole *run*; neither covers a bare
+`cargo test -p antseal-cli`, which is what a contributor actually types. That
+configuration was **measured** disarmed — `deny_reason() == None`, and a probe
+request compiled into `crates/antseal-cli/tests/` **reached freetsa.org**:
+real DNS, real TCP, real TLS, a real 403 from its nginx. The same probe with
+the variable set is refused in 0.00 s before any address is resolved. So the
+harness itself is the third venue: every construction of the `antseal` binary
+in this workspace's tests goes through
+`crates/antseal-cli/tests/common/spawn.rs`, which sets the variable, and
+`check-anchor-net.py` R4 refuses a construction anywhere else.
+
+A test **cannot** arm its own process, which is why the in-process CLI entry
+is banned outright rather than used carefully: `std::env::set_var` is `unsafe`
+in edition 2024 and `[workspace.lints.rust]` denies `unsafe_code` (both
+confirmed by compiling them), and it would be racy across libtest's threads
+even if it were not. `env_clear()` gets its own rule for the same reason in
+reverse — it is the one call that strips the arming even when CI supplied it.
+
 ### 3.2 The static half
 
 `scripts/check-anchor-net.py` checks the three things the runtime gate cannot
@@ -93,6 +112,16 @@ see about itself:
 - **R1 — the arming is armed.** Every committed workflow sets
   `ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"` at *workflow* level (so a job added
   later inherits it), and `scripts/local-gate.sh` exports it.
+- **R4 — the harness guarantees it too** (D99 R4.3). The third venue above:
+  the only read of `CARGO_BIN_EXE_antseal` in the workspace is inside
+  `crates/antseal-cli/tests/common/spawn.rs`; that helper sets the variable;
+  no test source calls `main_entry` in-process; and no test source calls
+  `env_clear()` without re-arming.
+- **R5 — `test-util` rides dev edges only** (D99 R5). `antseal-anchor`'s
+  `test-util` carries `upgrade_pending_with` and
+  `UpgradeTarget::loopback_for_tests`, which bypass A42's allowlist. No
+  workspace manifest may enable it on a normal-dependency edge, or through a
+  package feature that reaches one.
 - **R2 — exactly one HTTP client.** A second client anywhere in the workspace
   routes around the gate entirely, and no other lane would see it:
   `ci-lanes.sh dep-graph`'s forbidden-crate scan covers `antseal-core`'s

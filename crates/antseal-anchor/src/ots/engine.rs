@@ -61,8 +61,8 @@ use antseal_core::anchor::ots::{OtsAttestation, OtsError, parse_ots};
 use antseal_core::bundle::schema::OtsUpgrade;
 
 use super::upgrade::{
-    HeaderError, MergeError, PendingRef, UpgradePoll, UpgradeTarget, confirm_header, merge_upgrade,
-    pending_refs, poll_upgrade,
+    HeaderError, MergeError, PendingRef, UpgradePoll, UpgradeTarget, already_merged,
+    confirm_header, merge_upgrade, pending_refs, poll_upgrade,
 };
 use super::upgrade_uri::UpgradeUriRefusal;
 use crate::agree::EndpointPair;
@@ -193,6 +193,19 @@ pub enum UpgradeNote {
         /// Which rule it broke.
         source: UpgradeUriRefusal,
     },
+    /// The calendar answered with an attestation this artifact already
+    /// carries, so merging it would grow the file without adding evidence.
+    ///
+    /// The ordinary case once an anchor has upgraded, and **not** a problem: a
+    /// merge is a pure insertion, so the pending branch survives it and is
+    /// polled again next time. See
+    /// [`already_merged`](super::upgrade::already_merged) for why this guard
+    /// exists and why it compares bytes rather than attestation sets.
+    #[error("{uri}: this calendar's attestation is already merged into the stored artifact")]
+    AlreadyMerged {
+        /// The calendar polled.
+        uri: String,
+    },
     /// The stored artifact does not parse, so it has no pending attestations
     /// this engine can address.
     #[error("the stored artifact does not parse: {0}")]
@@ -264,11 +277,11 @@ pub fn upgrade_pending(
 
 /// [`upgrade_pending`] with the allowlist step supplied by the caller.
 ///
-/// **`pub(crate)` and `cfg(test)`, and it must stay that way.** A42's
-/// allowlist requires `https`, a bare host and no port, so a loopback stub can
-/// never be admitted through the real constructor — which is correct, and
-/// which also means the engine's poll → merge → header path cannot be driven
-/// end to end against A24's stubs without this seam.
+/// **A test seam, and never anything else.** A42's allowlist requires
+/// `https`, a bare host and no port, so a loopback stub can never be admitted
+/// through the real constructor — which is correct, and which also means the
+/// engine's poll → merge → header path cannot be driven end to end against
+/// A24's stubs without this seam.
 ///
 /// The alternative that was tried first was worse and is worth recording: the
 /// tests drove the real path with the committed artifact, whose pending URIs
@@ -277,8 +290,40 @@ pub fn upgrade_pending(
 /// passed every assertion, because the outcome is the same whether the
 /// endpoint answers or not. A test that reaches the internet to prove a
 /// timeout is not a test of the timeout.
-#[cfg(test)]
-pub(crate) fn upgrade_pending_with(
+///
+/// # Why this widened from `#[cfg(test)] pub(crate)` to `test-util` + `pub`
+///
+/// D99 R5. U23's `status --upgrade` and U24's opportunistic hook both have
+/// Accept rows requiring a pending → attested transition driven end to end,
+/// and both live in `antseal-cli`. Under `#[cfg(test)]` this function does not
+/// exist outside this crate's own compilation, and — by the paragraph above —
+/// there is no other route: `from_pending_uri` can never admit a stub. So
+/// those rows were **unexecutable by any means** until this gate changed.
+///
+/// **Measured safe, not assumed safe** (D99 §1.4, re-measured on
+/// 2026-08-06). `cargo build -p antseal-cli` compiles this crate with
+/// `--cfg 'feature="default"'` and nothing else, so under a product build this
+/// item is not dead-code-eliminated — it is never parsed into the crate at
+/// all. `cargo test -p antseal-cli` compiles it with `--cfg
+/// 'feature="default"' --cfg 'feature="test-util"'`, and the two resulting
+/// `target/debug/antseal` binaries differ by md5sum because cargo hard-link-
+/// swaps them. `cargo tree -p antseal-cli -e features` shows
+/// `antseal-anchor feature "test-util"` only under `[dev-dependencies]`, which
+/// `scripts/check-anchor-net.py` R5 now enforces for every workspace manifest.
+///
+/// **A42 is not weakened.** Its invariant is a property of the *resolver*, not
+/// of the target type: no poll is issued against a URI read out of a stored
+/// artifact without `classify_upgrade_uri` having run. The production resolver
+/// is untouched — [`upgrade_pending`] still closes over
+/// [`UpgradeTarget::from_pending_uri`]. What this seam admits is a resolver
+/// the *caller* supplies, and the caller is a test.
+///
+/// The residual — that a `test-util` build contains a bypass, and that the
+/// `antseal` binary produced *during* `cargo test` is such a build — is closed
+/// by `the_test_seam_has_no_production_call_sites`, which is proven red
+/// against a planted call.
+#[cfg(any(test, feature = "test-util"))]
+pub fn upgrade_pending_with(
     client: &HttpClient,
     pair: &EndpointPair,
     works: &[PendingWork],
@@ -289,7 +334,10 @@ pub(crate) fn upgrade_pending_with(
     run(client, pair, works, budget, fetch_date, resolve)
 }
 
-#[cfg(not(test))]
+/// The product build's private twin. Identical body; the only difference is
+/// that nothing outside this module can name it, so [`upgrade_pending`]'s
+/// allowlist step is not a parameter anybody can supply.
+#[cfg(not(any(test, feature = "test-util")))]
 fn upgrade_pending_with(
     client: &HttpClient,
     pair: &EndpointPair,
@@ -433,6 +481,21 @@ fn upgrade_one_anchor(
             continue;
         };
 
+        // Repetition, refused. The pending branch survives every merge by
+        // design, so this attestation is polled again on the next pass and the
+        // calendar answers with the same bytes; splicing them a second time
+        // adds no evidence and grows the stored artifact by one attestation
+        // per run. Before U24 that cost one `status --upgrade`; the hook makes
+        // it per **invocation**, for every work, for the life of the vault.
+        // Checked against `current` rather than `pending`, because an earlier
+        // merge in this same loop has already moved the offsets.
+        if already_merged(&artifact, &current, &body) {
+            report.notes.push(UpgradeNote::AlreadyMerged {
+                uri: pending.uri.clone(),
+            });
+            continue;
+        }
+
         let merged = match merge_upgrade(&artifact, &work.anchor_digest, &current, &body) {
             Ok(merged) => merged,
             Err(source) => {
@@ -508,9 +571,16 @@ pub enum OtsAnchorState {
     /// At least one Bitcoin attestation, with the header group recorded.
     Attested,
     /// A Bitcoin attestation but no recorded header group — the state a
-    /// header fetch that failed after a merge would leave behind, which the
-    /// atomic recording rule makes unreachable from this engine. Reported
-    /// rather than assumed away, because a vault is editable by its owner.
+    /// header fetch that failed after a merge would leave behind.
+    ///
+    /// D97 made this unreachable from the whole **write path**, not merely
+    /// from this engine: the artifact and its header group are keys of one
+    /// record written by one `put_anchor`, so the filesystem's atomicity —
+    /// not a convention anyone must remember — is what excludes the pair
+    /// coming apart. It was a two-slot design that would have made this
+    /// state ordinary, which is one of the four grounds D97 rejected it on.
+    /// Still reported rather than assumed away, because a vault is editable
+    /// by its owner.
     AttestedHeaderMissing,
     /// The artifact does not parse against this work's `anchor_digest`.
     Unreadable,

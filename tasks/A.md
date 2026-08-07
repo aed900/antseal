@@ -1081,3 +1081,41 @@
   led+oCY=
   ```
 - Notes: the guard did exactly its job. This is the first defect the M2 fuzz targets have returned, and it arrived on the target's **first remote run** — which is the standing lesson that a lane never executed on the remote is not evidence, restated for fuzzing.
+
+### A101 — TSA intermediates are never captured, and the M3 bundle inherits it
+- Milestone: M3
+- Size: S
+- Deps: A10; D98
+- Discovered by: **D98** (2026-08-06), in its residual-risk review.
+- Problem: nothing in `antseal-cli` has ever populated `TsaAnchor::intermediates`, so antseal's own bundles will carry `[]`. That is harmless today, and harmless **by luck rather than by design**: all four pinned-root TSAs — FreeTSA, DigiCert, DFN and Sectigo — self-carry their chains, so `validate_token_chain` pools the token's own bag and reaches `proven` with an empty intermediates list. The error direction is monotone under-claiming, which is why it has never surfaced as a wrong verdict. The cost lands where it is hardest to see: not on `status`, which re-verifies locally, but on **third-party verifiers**, for whom a future TSA whose token does not ship its chain silently costs `proven` on every bundle that names it.
+- Do: either store the responder's certificate bag at capture time, or record the reliance on self-carrying tokens as a decision with a test that fails when a configured endpoint stops self-carrying.
+- Accept: either the capture path stores the bag, or the reliance is recorded and a configured endpoint that stops self-carrying reddens a named test.
+- Notes: D98's revisit trigger is adding a TSA endpoint, or any root-store bump — the two events that can change the answer without anything in this repository changing.
+
+### A102 — An unreadable `.ots` is folded into `AttestedOnly`, which does not nag
+- Milestone: M2
+- Size: S
+- Deps: A15; U25
+- Discovered by: **the U25 lane** (2026-08-07).
+- Problem: `work_status` drops `Unreadable` artifacts **before** it tests for pending ones, then falls through — so a work whose only anchor is a corrupt or foreign `.ots` classifies as `NagState::AttestedOnly`, whose meaning is *"every OTS anchor is already attested"*, and `nags()` is therefore false. The work with no usable evidence at all goes **silent**, under a name that asserts its evidence is good. That is the same failure shape D97 §1.2 measured for the groupless upgrade: the machine goes quiet exactly when the news is worst. The behaviour is pinned as landed by `an_unreadable_ots_is_folded_into_attested_only_and_stops_nagging`, and it is why `list` refuses to render the word "attested" off that state at all.
+- Do: give the state a home that tells the truth — a fifth `NagState`, or an `Unreadable` arm on the existing four that nags. Either way the classification must stop borrowing the name of a good outcome for a bad one; a taxonomy that has nowhere to put a bad input will put it somewhere reassuring.
+- Accept: a work whose only anchor is unreadable nags, and renders under a name that does not claim attestation; the existing pin is **updated** in the same change rather than deleted, so the old behaviour stays visible as the thing that was fixed.
+
+### A103 — `NagState` has no `name()`, so its kebab table lives in the CLI
+- Milestone: M2
+- Size: XS
+- Deps: A15, U25; D98 rider 3b
+- Discovered by: **the U25 lane** (2026-08-07).
+- Problem: D98 rider 3b puts `NagState`'s kebab name into `list`'s `--json` output, and `NagState` has no `name()` — so the table (`anchored` / `only-pending-ots` / `attested-only` / `unanchored`) now lives in `listing.rs`, in a different crate from the enum it names. That is a **second table for one taxonomy**, which is precisely the shape D98 rejected its option (c) for: a projection maintained beside a definition desynchronises silently, because nothing compares them. Option (c) was killed at the level of *states*; this is the same defect at the level of *names*, and it is smaller only because a wrong name is easier to notice than a wrong verdict.
+- Do: put `name()` on the enum in `antseal-anchor`, beside the variants, and have `listing.rs` call it. A new variant then cannot reach the JSON without being given a name.
+- Accept: adding a `NagState` variant without giving it a name is a compile error, not a silently wrong string; `listing.rs` holds no spelling of any variant.
+
+### A104 — A repeated upgrade re-splices the same attestation and grows the stored `.ots`
+- Milestone: M2
+- Size: S
+- Deps: A14, A15; U23, U24
+- Discovered by: **the U23 lane** (2026-08-07); fixed by **the U24 lane** the same day, because U24's hook is what turned it from a slow leak into a per-invocation one.
+- Problem: a repeated `--upgrade` re-spliced the same attestation and grew the stored `.ots` **monotonically**, bounded only by `MAX_OTS_BYTES` (1 MiB). The mechanism, end to end: `splice_sibling_before` is a **pure insertion**, so the pending branch survives the merge; the next run's `pending_refs` therefore finds the same attestation again; `added_bitcoin` is a **multiset** difference (`upgrade.rs:413-432`), so the duplicate counts as *added* and `changed` goes true; and because `upgrade.is_some()` by then, `confirm_header` is skipped, so the old group is re-recorded beside a grown artifact. Nothing renders wrong — the state stays `attested` throughout — the artifact simply gains one spliced attestation per run. U24's hook would have made that **per invocation, on every work**, which is why the fix could not wait.
+- Do: **the first proposed cut was wrong, and was not decidable from the artifact.** U23 suggested skipping the merge when the artifact is "already attested at all". `OtsArtifact` is a flat attestation list with **no parent links**, and a real upgrade body carries ops, so the Bitcoin attestation derives a *different* value from the pending commitment it descends from — the coarse test cannot even be evaluated. Worse, it is actively wrong: A14 deliberately permits a **second calendar's** attestation to merge later without a second header fetch, so "already attested" would discard real evidence for ever. It was planted as a fault and refuted by its first row.
+- Accept: **DONE 2026-08-07 (U24 lane).** The landed fix keys on the **splice itself** rather than on the artifact's state: `splice_sibling_before` emits `0xff ‖ body` immediately before the attestation, so a repeat is that literal prefix and nothing else. `ots/upgrade.rs::already_merged(stored, target, body)` tests for exactly that, called in `upgrade_one_anchor` between `current_ref` and `merge_upgrade` — checked against `current`, because an earlier merge in the same loop has already moved the offsets — and emits `UpgradeNote::AlreadyMerged`. **A calendar answering with a different body still merges**: the rule refuses repetition, never evidence. Three unit rows over the real `MERGED_A` / `UPGRADE_A_ALICE` / `UPGRADE_A_BOB` fixtures; the characterisation test written at discovery turned green.
+- Notes: the transferable lesson is the one the refuted cut teaches — a de-duplication rule must be keyed on the **operation that would be repeated**, not on the state that operation produces, because the state is reachable by other routes and those routes are the evidence the rule was meant to preserve. U59 records what this fix cannot reach: `already_merged` needs the poll's body, so it stops the growth without stopping the poll.

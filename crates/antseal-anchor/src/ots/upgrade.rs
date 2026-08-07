@@ -67,7 +67,7 @@ use antseal_core::bundle::schema::OtsUpgrade;
 use antseal_core::codec::caps::MAX_OTS_BYTES;
 
 use super::calendars::{OTS_ACCEPT_HEADER, OTS_UPGRADE_PATH_PREFIX, join};
-use super::container::{ContainerError, locate_pending, splice_sibling_before};
+use super::container::{ContainerError, TAG_FORK, locate_pending, splice_sibling_before};
 use super::upgrade_uri::{UpgradeUriRefusal, classify_upgrade_uri};
 use crate::agree::{Agreement, EndpointPair};
 use crate::esplora::{BlockHeader, fetch_agreed_header};
@@ -119,17 +119,38 @@ impl UpgradeTarget {
         &self.base
     }
 
-    /// A target pointing at a loopback stub, for this crate's own tests only.
+    /// A target pointing at a loopback stub, **for tests only**.
     ///
-    /// `#[cfg(test)]`, not a feature: A42's allowlist requires `https`, a bare
-    /// host and no port, so a `http://127.0.0.1:<port>` stub can never be
-    /// admitted through the real constructor — and it must not become
-    /// admissible, since that carve-out would be reachable from a stored
-    /// artifact. Keeping the escape hatch inside `cfg(test)` means it does not
-    /// exist in any build that ships, and the refusal path is itself tested
-    /// through the real constructor.
-    #[cfg(test)]
-    pub(crate) fn loopback_for_tests(base: &str) -> Self {
+    /// A42's allowlist requires `https`, a bare host and no port, so a
+    /// `http://127.0.0.1:<port>` stub can never be admitted through the real
+    /// constructor — and it must not become admissible, since that carve-out
+    /// would be reachable from a stored artifact an attacker with disk access
+    /// can edit. The escape hatch is therefore a separate constructor whose
+    /// name is its own documentation, rather than a relaxation of
+    /// [`Self::from_pending_uri`], and the refusal path stays tested through
+    /// the real constructor.
+    ///
+    /// # Why this widened from `#[cfg(test)] pub(crate)` to `test-util` + `pub`
+    ///
+    /// D99 R5, and for the same reason as
+    /// [`upgrade_pending_with`](crate::ots::engine::upgrade_pending_with),
+    /// which see for the measurement: U23's and U24's Accept rows require a
+    /// pending → attested transition driven from `antseal-cli`, and under
+    /// `#[cfg(test)]` neither this constructor nor that seam exists outside
+    /// this crate's own compilation. The two move together because either one
+    /// alone leaves the transition undrivable.
+    ///
+    /// **This does not enter a shipped binary** (measured, D99 §1.4 and
+    /// re-measured 2026-08-06): `cargo build -p antseal-cli` compiles this
+    /// crate with `--cfg 'feature="default"'` only, so the item is not
+    /// stripped from the product build — it never exists in it.
+    /// `scripts/check-anchor-net.py` R5 keeps `test-util` off every
+    /// normal-dependency edge in the workspace, which is what makes that
+    /// measurement a standing property rather than a snapshot, and
+    /// `the_test_seam_has_no_production_call_sites` proves no production
+    /// source calls it.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn loopback_for_tests(base: &str) -> Self {
         Self {
             base: base.to_owned(),
         }
@@ -365,6 +386,64 @@ pub fn merge_upgrade(
         artifact: merged,
         added,
     })
+}
+
+/// Whether `body` is **already** spliced beside the pending attestation
+/// `target` names — so merging it again would add no evidence and only bytes.
+///
+/// # The defect this exists to stop, and why it is a byte compare
+///
+/// [`merge_upgrade`] is a *pure insertion*: [`splice_sibling_before`] adds a
+/// sibling and removes nothing, so a merged artifact still carries the pending
+/// attestation it was merged beside. That is correct — it is why a real merged
+/// `.ots` still names its calendars and stays re-pollable for the ones that
+/// have not caught up. The consequence is that the next run's [`pending_refs`]
+/// finds the same attestation, the calendar answers with the same body, and
+/// [`added_bitcoin`] is a **multiset** difference, so the identical attestation
+/// counts as *added*: the merge succeeds, a transition is produced, and the
+/// stored artifact grows by one attestation every time — bounded only by
+/// `MAX_OTS_BYTES`. Until U24 that cost a user one `status --upgrade`; the
+/// opportunistic hook runs on **every** CLI invocation, which turns it into
+/// unbounded growth for the life of the vault.
+///
+/// **The decidable property is the splice, not the attestation set.** *"This
+/// commitment is already attested"* cannot be answered from
+/// [`OtsArtifact`]: it is a flat attestation list with no parent links, and a
+/// real upgrade body carries ops, so the Bitcoin attestation it adds derives a
+/// value different from the pending commitment it descends from. The coarser
+/// question — *"does this artifact carry any Bitcoin attestation?"* — is
+/// answerable and is the **wrong** cut: A14 deliberately lets a second
+/// calendar's attestation merge afterwards without a second header fetch, and
+/// refusing that would discard real evidence. What is both exact and cheap is
+/// whether the bytes this merge would insert are already at the insertion
+/// point: the splice emits `0xff ‖ body` immediately before the attestation,
+/// so a repeat is visible as that literal prefix and nothing else is.
+///
+/// A calendar answering with a **different** body — a longer proof, a second
+/// block — is therefore still merged. This refuses repetition, never new
+/// evidence.
+///
+/// `false` when the attestation cannot be located at all: that refusal is
+/// [`merge_upgrade`]'s to make, with its own [`ContainerError`], and this
+/// predicate does not pre-empt it.
+#[must_use]
+pub fn already_merged(stored: &[u8], target: &PendingRef, body: &[u8]) -> bool {
+    // An empty body is [`UpgradePoll::Empty`]'s case and never reaches a
+    // merge; said here anyway, because an empty needle would match the
+    // separator alone and report every pending attestation as merged.
+    if body.is_empty() {
+        return false;
+    }
+    let Ok(offset) = locate_pending(stored, &target.uri, target.occurrence, target.siblings) else {
+        return false;
+    };
+    // `offset` is where `0x00 ‖ tag ‖ payload` begins; a previous splice put
+    // `0xff ‖ body` immediately before it. `checked_sub` is what makes an
+    // empty or over-long body a plain `false` rather than a panic.
+    let Some(start) = offset.checked_sub(body.len() + 1) else {
+        return false;
+    };
+    stored[start] == TAG_FORK && &stored[start + 1..offset] == body
 }
 
 /// Is every attestation of `before` still present in `after`, with

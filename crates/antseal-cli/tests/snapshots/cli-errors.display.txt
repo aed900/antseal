@@ -2,8 +2,6 @@
   internal error: journal write returned an impossible state (this is a bug in antseal — please report it)
 [usage] class=usage code=2
   usage error: --wallet import requires --wallet-key-fd in machine mode
-[not-implemented-m2] class=not-implemented code=3
-  `antseal status` is not implemented until M2: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
 [not-implemented-m3] class=not-implemented code=3
   `antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
 [io-error] class=io-error code=4

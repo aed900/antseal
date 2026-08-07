@@ -590,3 +590,232 @@ fn the_opportunistic_budget_matches_the_substrate_profile() {
         crate::ots::DEFAULT_OTS_CALENDARS.len()
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// D99 R5: the test seam has no production call sites
+// ─────────────────────────────────────────────────────────────────────
+
+/// Production files under `dir` (recursively) that **call** `needle`.
+///
+/// The S36 shape (`seal_session.rs::production_files_naming`), sharpened in
+/// two ways this crate needs and that one did not:
+///
+/// 1. **Calls, not mentions.** `engine.rs` legitimately *defines*
+///    `upgrade_pending_with` twice and names it throughout its docs, so a
+///    scan that matched the bare identifier would report the definition site
+///    as its own violation and would have to be given an exemption — and an
+///    exemption is how a rule stops being one. Lines that open a comment and
+///    lines carrying `fn <needle>` are therefore skipped, and the needle must
+///    be followed by `(`.
+/// 2. **This crate puts its unit tests in `foo/tests.rs`**, not only in
+///    inline `#[cfg(test)] mod tests { … }`. Both conventions are live
+///    (`nonce.rs` is inline, `ots/engine.rs` is external), so the cut has to
+///    handle both: whole files named `tests.rs` are excluded, and inside the
+///    rest the scan stops at the first line that is exactly `#[cfg(test)]`.
+///    `testing.rs` and `testing/` are excluded for the same reason — they are
+///    `#[cfg(any(test, feature = "test-util"))]` at the `lib.rs` declaration
+///    and so are not production either.
+///
+/// Returned paths are relative to `dir` and sorted, so a failure names the
+/// file. Pure and directory-taking so the scan can be proven red.
+fn production_call_sites(dir: &std::path::Path, needle: &str) -> (Vec<String>, usize) {
+    let mut named = Vec::new();
+    let mut visited = 0usize;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if path.is_dir() {
+                if name != "testing" {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|ext| ext != "rs")
+                || name == "tests.rs"
+                || name == "testing.rs"
+            {
+                continue;
+            }
+            visited += 1;
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let call = format!("{needle}(");
+            let definition = format!("fn {needle}");
+            let hit = text
+                .lines()
+                // The gate for an external test module. Matched on the
+                // trimmed WHOLE line, never with `str::find` over the file:
+                // this crate's doc comments quote `#[cfg(test)]` as prose,
+                // and a substring cut would truncate `upgrade.rs` at its own
+                // documentation.
+                .take_while(|line| line.trim() != "#[cfg(test)]")
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| line.contains(&call) && !line.contains(&definition));
+            if hit {
+                named.push(
+                    path.strip_prefix(dir)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    named.sort();
+    (named, visited)
+}
+
+fn anchor_src() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// `antseal-cli`'s production sources, reached across the workspace because
+/// that is the crate the seam was widened *for* and therefore the crate most
+/// likely to reach for it by accident.
+fn cli_src() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../antseal-cli/src")
+}
+
+/// **D99 R5's guard rail.** Neither half of the test seam is reachable from a
+/// normal build of either crate that can name it.
+///
+/// # What this catches that the compiler does not
+///
+/// It is tempting to think the compiler already covers this — a production
+/// call to `loopback_for_tests` from `antseal-cli/src` does fail
+/// `cargo build`, because that build links the `["default"]` rlib where the
+/// item does not exist. But cargo unifies features per invocation, so the
+/// same call **compiles green under `cargo test`**, where `antseal-cli`'s dev
+/// edge has already switched `test-util` on for the whole build unit
+/// (measured, D99 §1.4). The failure mode is therefore: green for the
+/// developer, green for CI's `test` job, red only in the job that builds the
+/// product. This scan moves that verdict into the lane where somebody is
+/// looking.
+///
+/// `upgrade_pending_with` has exactly one permitted production caller —
+/// [`upgrade_pending`], which supplies A42's real resolver and is the whole
+/// reason the seam is shaped as a parameter rather than a `cfg`. A second
+/// file naming it is a production path that chose its own allowlist.
+#[test]
+fn the_test_seam_has_no_production_call_sites() {
+    let (named, visited) = production_call_sites(&anchor_src(), "upgrade_pending_with");
+    assert!(
+        visited > 15,
+        "the scan visited only {visited} anchor sources — it is not looking where it thinks"
+    );
+    assert_eq!(
+        named,
+        vec!["ots/engine.rs".to_owned()],
+        "`upgrade_pending_with` takes A42's allowlist step as a PARAMETER. Its one production \
+         caller is `upgrade_pending`, which passes `UpgradeTarget::from_pending_uri`; any other \
+         production caller is a path that polls a URI read out of an attacker-writable stored \
+         artifact with an allowlist of its own choosing (D99 R5, A42)"
+    );
+
+    for (label, dir) in [("antseal-anchor", anchor_src()), ("antseal-cli", cli_src())] {
+        let (named, visited) = production_call_sites(&dir, "loopback_for_tests");
+        assert!(
+            visited > 15,
+            "{label}: the scan visited only {visited} sources"
+        );
+        assert!(
+            named.is_empty(),
+            "{label}: `UpgradeTarget::loopback_for_tests` mints a target over an ARBITRARY base, \
+             bypassing A42's https/bare-host/no-port allowlist entirely. It exists so a test can \
+             reach a 127.0.0.1 stub and for no other reason; these production files call it: \
+             {named:?}"
+        );
+    }
+
+    // The CLI side of the engine seam, asserted separately so a failure says
+    // which crate reached for it.
+    let (named, _) = production_call_sites(&cli_src(), "upgrade_pending_with");
+    assert!(
+        named.is_empty(),
+        "antseal-cli production code calls `upgrade_pending_with`. The CLI needs NO feature and \
+         no seam: `upgrade_pending` is the production entry point (D99 R5). This compiles under \
+         `cargo test` and breaks `cargo build`: {named:?}"
+    );
+}
+
+/// **The scan proven red**, in all three directions it has to work in: it
+/// must catch a planted call, ignore the definition it would otherwise report
+/// as its own violation, and ignore a call that lives in a test module under
+/// either of this workspace's two conventions.
+#[test]
+fn the_seam_scan_reports_a_planted_call_and_ignores_definitions_and_tests() {
+    let dir = std::env::temp_dir().join(format!(
+        "antseal-d99r5-scan-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(dir.join("nested")).expect("mk nested");
+    std::fs::create_dir_all(dir.join("testing")).expect("mk testing");
+
+    // The violation: a production file driving the seam with its own resolver.
+    std::fs::write(
+        dir.join("nested/hurried_hook.rs"),
+        "fn hook() { let r = upgrade_pending_with(c, p, w, b, d, &mine); }\n",
+    )
+    .expect("write");
+    // Clean: the definition site, plus a doc comment naming the call shape.
+    // This is the case that forced the `fn`/comment filters — without them
+    // `engine.rs` reports itself and the rule needs an exemption.
+    std::fs::write(
+        dir.join("clean_definition.rs"),
+        "/// See `upgrade_pending_with(client, …)` for the seam.\n\
+         pub fn upgrade_pending_with(c: u8) -> u8 { c }\n",
+    )
+    .expect("write");
+    // Clean: an INLINE test module (the `nonce.rs` convention).
+    std::fs::write(
+        dir.join("clean_inline_tests.rs"),
+        "fn prod() {}\n#[cfg(test)]\nmod tests {\n let r = upgrade_pending_with(a, b);\n}\n",
+    )
+    .expect("write");
+    // Clean: an EXTERNAL test module (the `ots/engine.rs` convention). The
+    // gate is in the parent file, so the scan can only tell by the filename.
+    std::fs::write(
+        dir.join("nested/tests.rs"),
+        "let r = upgrade_pending_with(a, b);\n",
+    )
+    .expect("write");
+    // Clean: the `test-util` module, which is not production either.
+    std::fs::write(
+        dir.join("testing/replay.rs"),
+        "let t = UpgradeTarget::loopback_for_tests(&url);\n",
+    )
+    .expect("write");
+    // Not Rust: never read at all.
+    std::fs::write(dir.join("notes.md"), "upgrade_pending_with(\n").expect("write");
+
+    let (named, visited) = production_call_sites(&dir, "upgrade_pending_with");
+    assert_eq!(
+        visited, 3,
+        "three production .rs files: the .md, the tests.rs and the testing/ file are not among \
+         them"
+    );
+    assert_eq!(
+        named,
+        vec!["nested/hurried_hook.rs".to_owned()],
+        "the scan must catch the planted call, must not report the definition site, and must \
+         leave both test-module conventions alone"
+    );
+
+    let (named, _) = production_call_sites(&dir, "loopback_for_tests");
+    assert!(
+        named.is_empty(),
+        "the only `loopback_for_tests` here is inside `testing/`, which is not production: \
+         {named:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

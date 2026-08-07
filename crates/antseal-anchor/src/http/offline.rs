@@ -66,6 +66,19 @@
 //! `scripts/ci-lanes.sh anchor-net-policy` fails if either stops doing so,
 //! because an unarmed arm is exactly as good as no arm.
 //!
+//! **Those two venues arm a whole run, and neither of them is what a
+//! contributor types.** A bare `cargo test -p antseal-cli` inherits nothing,
+//! and was measured (2026-08-06, D99 §1.3) to run with this gate **disarmed**:
+//! `deny_reason()` returned [`None`], and a probe compiled into that crate's
+//! tests reached `freetsa.org` for real — DNS, TCP, TLS and a 403 from its
+//! nginx. The third venue therefore lives in the harness:
+//! `crates/antseal-cli/tests/common/spawn.rs` is the only place in the
+//! workspace that constructs the `antseal` binary, and it sets the variable.
+//! `scripts/check-anchor-net.py` R4 refuses a construction anywhere else, an
+//! in-process `main_entry` call (a test cannot arm its own process —
+//! `set_var` is `unsafe` in edition 2024 and `unsafe_code` is denied), and an
+//! `env_clear()` that does not re-arm.
+//!
 //! It **fails closed**: any value other than `0` arms it, so
 //! `ANTSEAL_NO_REAL_ANCHOR_NETWORK=ture` is a typo that over-protects
 //! rather than one that silently opens the network.
