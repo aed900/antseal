@@ -239,22 +239,48 @@ mod tests {
     /// `MAX_CHAIN_CERTS` or `MAX_INTERMEDIATE_COUNT`, or an `x509-cert` /
     /// `der` bump that moves `size_of::<Certificate>()`. Every one of those is
     /// a reviewed event, and every one of them should re-read this number.
+    /// **Pointer width, corrected 2026-08-08.** As first written this row
+    /// asserted the literals unconditionally and **failed the
+    /// `wasm32-core-tests` lane**: `size_of::<x509_cert::Certificate>()` is
+    /// **376** on `wasm32-unknown-unknown` against 512 on x86-64. That is not
+    /// the event this row exists to catch. It conflated *"a crate bump moved
+    /// the layout"* — reviewed, and the whole point — with *"we are on 32-bit
+    /// pointers"*, which is neither a defect nor reviewable.
+    ///
+    /// So it now splits the way the `.ots` side already did (`limits.rs`,
+    /// `the_structural_cost_column_states_the_derivation_and_its_value`): the
+    /// **derivation** is asserted everywhere, from the constants rather than
+    /// from literals, because that is the part that must not drift; the
+    /// **measured byte counts** are asserted on 64-bit only, because the
+    /// registry records the x86-64 measurement it says it records.
+    ///
+    /// It also cost this project a CI red on a lane the local gate cannot
+    /// see — `scripts/local-gate.sh` *builds* for wasm32 but does not *run*
+    /// the wasm32 tests.
     #[test]
     fn the_der_structural_cost_is_the_one_measured_today() {
-        assert_eq!(
-            CHAIN_CERTIFICATE_BYTES, 512,
-            "size_of::<x509_cert::Certificate>() moved — re-measure \
-             TSA_STRUCTURAL_ALLOC_BYTES and this row together"
-        );
-        assert_eq!(CHAIN_CERT_DER_HANDLE_BYTES, 24);
-        assert_eq!(CHAIN_PATH_NODE_BYTES, 128);
-        assert_eq!(MAX_PATH_NODES, 25);
+        // Everywhere: the formula. A fourth container, or a raised count,
+        // parts these two and reddens on every target including wasm32.
         assert_eq!(
             TSA_STRUCTURAL_ALLOC_BYTES,
-            8 * (512 + 24) + 25 * 128,
+            MAX_CHAIN_CERTS * (CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES)
+                + MAX_PATH_NODES * CHAIN_PATH_NODE_BYTES,
             "the derivation and its measured value have parted"
         );
-        assert_eq!(TSA_STRUCTURAL_ALLOC_BYTES, 7_488);
+        // Everywhere: a count limit, not a layout — no pointer width in it.
+        assert_eq!(MAX_PATH_NODES, 25);
+
+        // 64-bit only: the measured layout this record was written against.
+        if core::mem::size_of::<usize>() == 8 {
+            assert_eq!(
+                CHAIN_CERTIFICATE_BYTES, 512,
+                "size_of::<x509_cert::Certificate>() moved — re-measure \
+                 TSA_STRUCTURAL_ALLOC_BYTES and this row together"
+            );
+            assert_eq!(CHAIN_CERT_DER_HANDLE_BYTES, 24);
+            assert_eq!(CHAIN_PATH_NODE_BYTES, 128);
+            assert_eq!(TSA_STRUCTURAL_ALLOC_BYTES, 7_488);
+        }
     }
 
     /// The DER path's structural cost is **small**, and that is the finding —
@@ -274,12 +300,28 @@ mod tests {
         // enough to fit inside `SLACK`"*, in which case the exemption would be
         // inert. **It does not.** The overshoot is stated as a number rather
         // than as an inequality so that a shrink is as visible as a growth.
-        assert_eq!(
-            TSA_STRUCTURAL_ALLOC_BYTES - FUZZ_SLACK,
-            3_392,
-            "the DER path's structural cost has moved relative to the guard's \
-             fixed slack — re-record the measurement, in either direction"
-        );
+        //
+        // 64-bit only, and the `saturating_sub` is not defensive padding: on a
+        // 32-bit target the whole derivation *can* land under `SLACK`, and a
+        // bare `-` would underflow-panic before the assertion could say so.
+        if core::mem::size_of::<usize>() == 8 {
+            assert_eq!(
+                TSA_STRUCTURAL_ALLOC_BYTES - FUZZ_SLACK,
+                3_392,
+                "the DER path's structural cost has moved relative to the guard's \
+                 fixed slack — re-record the measurement, in either direction"
+            );
+        } else {
+            // wasm32 is narrower throughout, so the overshoot is smaller. The
+            // property that must survive is that clause (c) still binds, which
+            // the unconditional assertion at the end of this test states.
+            assert!(
+                TSA_STRUCTURAL_ALLOC_BYTES.saturating_sub(FUZZ_SLACK) < 3_392,
+                "the 32-bit derivation is no longer narrower than the 64-bit one \
+                 ({TSA_STRUCTURAL_ALLOC_BYTES} B) — that inverts the assumption \
+                 this split was written on"
+            );
+        }
 
         // **The finding, and it is sharper than D102 §6 stated it.** The
         // single largest of the three reservations is `chain_certificates`'
@@ -298,15 +340,32 @@ mod tests {
         // `Certificate`, and the same A100 defect arrives on the DER path.
         //
         // This assertion is the thing that says so before CI does.
-        assert_eq!(
-            MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES,
-            FUZZ_SLACK,
-            "the certificate-bag reservation has moved off its exact tie with \
-             the fuzz guard's SLACK. If it grew, `anchor_token` is now the \
-             `anchor_ots` of A100 and the scoped budget is what stands between \
-             it and a red lane; if it shrank, say so here. Either way this is \
-             a measurement to re-record, not a number to update silently"
-        );
+        //
+        // **The tie is a 64-bit fact**, corrected 2026-08-08 after this row
+        // reddened `wasm32-core-tests`: there `size_of::<Certificate>()` is
+        // 376, so the same product is `8 x 376 = 3 008` and the reservation
+        // clears `SLACK` by nearly a kilobyte. The browser tab — the tightest
+        // ceiling this parser actually runs under — is the target with the
+        // *most* headroom. The tie belongs to the host that fuzzes, not to the
+        // format, and that is worth knowing rather than asserting away.
+        let cert_bag = MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES;
+        if core::mem::size_of::<usize>() == 8 {
+            assert_eq!(
+                cert_bag, FUZZ_SLACK,
+                "the certificate-bag reservation has moved off its exact tie with \
+                 the fuzz guard's SLACK. If it grew, `anchor_token` is now the \
+                 `anchor_ots` of A100 and the scoped budget is what stands between \
+                 it and a red lane; if it shrank, say so here. Either way this is \
+                 a measurement to re-record, not a number to update silently"
+            );
+        } else {
+            assert!(
+                cert_bag < FUZZ_SLACK,
+                "the 32-bit certificate bag ({cert_bag} B) has reached the fuzz \
+                 guard's SLACK. wasm32 was the target with headroom; if it no \
+                 longer is, the DER path is one raise from A100 on every target"
+            );
+        }
 
         // …and still two orders of magnitude under clause (c)'s ceiling.
         assert!(
