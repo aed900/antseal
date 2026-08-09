@@ -946,16 +946,28 @@ def _rel(path: pathlib.Path) -> str:
 
 def self_test(cbor2, report) -> int:
     """Mutate a real committed case in memory; require each mutation to be caught."""
+    # Both selectors below MUST use the same in-scope predicate as `run_check`
+    # (`isinstance(..., dict)`, not `"diagnostic" in c`) or the self-test picks
+    # a document the checker never checks. They diverged once: the bare form
+    # here survived the 2026-08-09 narrowing of `run_check` and immediately
+    # selected `anchor/anchor.json`, which sorts before `bundle/` and carries a
+    # `diagnostic` that is a verdict code rather than a layer mapping. The
+    # result was `StopIteration` on the `*_bytes` lookup below -- a CI red on a
+    # green `--check`, because `--check` and `--self-test` are separate steps
+    # and only the second one selects.
+    def _in_scope(case: dict) -> bool:
+        return isinstance(case.get("diagnostic"), dict)
+
     path = next(
         p
         for p in discover()
         if any(
-            "diagnostic" in c
+            _in_scope(c)
             for c in json.loads(p.read_text(encoding="utf-8")).get("expect", {}).get("cases", [])
         )
     )
     vector = json.loads(path.read_text(encoding="utf-8"))
-    case = next(c for c in vector["expect"]["cases"] if "diagnostic" in c)
+    case = next(c for c in vector["expect"]["cases"] if _in_scope(c))
     field = next(k for k in case if k.endswith("_bytes"))
     raw = bytes.fromhex(case[field])
 
