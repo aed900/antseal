@@ -213,3 +213,42 @@ requires the Python checker's `MAX_JSON_SAFE_INT` to equal the Rust
 constant, and requires this document, the vector README and the
 `vectors_cbor_diag` module to keep pointing at each other. A change to one
 side that forgets the other goes red.
+
+### 8.1 Scope is sniffed, not declared — and it has been wrong in both directions
+
+A vector enters the CBOR cross-check when its `expect.cases[]` carry a
+**diagnostic sidecar**: a mapping from layer name to that layer's rendering.
+There is no kind allow-list, which is deliberate — a future CBOR-committing
+kind is covered the day it lands, provided it commits a sidecar.
+
+The cost is that scope is inferred from a *field name*, and that inference has
+now failed twice over:
+
+- **False negative** (known since this checker was written): a kind that
+  commits format CBOR and no sidecar is silently out of scope, and the test
+  cannot distinguish it from a kind that commits no CBOR at all.
+- **False positive** (found by the gate on 2026-08-09, when A22 landed): the
+  `anchor` kind commits no CBOR, but its cases carry a field also called
+  `diagnostic` — `AnchorDiagnostic` rendered as a code string or `null`
+  (D101 §3.5), not a layer mapping. Every anchor case was pulled into scope
+  and then failed for having no `*_bytes` field. Two vocabularies, one word.
+
+The immediate repair narrowed the test from `"diagnostic" in case` to
+`isinstance(case.get("diagnostic"), dict)` — the weakest predicate under which
+`check_case` is defined at all, since it goes on to index
+`case["diagnostic"][layer]`. That was verified a no-op for every pre-existing
+kind: only `bundle` and `manifest` carry the field, and every one of their
+cases is dict-valued.
+
+It is a repair and not a fix. A future kind whose `diagnostic` *is* a mapping
+of something else would be pulled straight back in. The durable answer is a
+**registry-level flag on the kind**, declaring whether it commits format CBOR,
+so scope is stated rather than guessed. The registry already exists and is
+already cross-checked — `FROZEN.sha256`'s `#! kind` directives are asserted
+equal to `KNOWN_KINDS` by `vector_freeze.rs` — so the flag has a home. Tracked
+as **Q130**.
+
+Worth recording *how* this was found, because no lane-local check could have:
+A22's lane verified `scripts/cross-check.sh`'s generator half and never
+reached this checker, which is Python and reads the committed documents rather
+than the Rust. Only the full gate run saw it.

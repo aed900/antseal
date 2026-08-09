@@ -39,6 +39,26 @@ The **pending** bodies in `A25-bootstrap/` are the irreplaceable ones: those
 six commitments will never serve a pending body again, and a fresh stamp
 would be a different and later timestamp.
 
+## Captures quoted by a frozen golden vector (D101 RULING 6c)
+
+Since **A22** (2026-08-09) some files here are quoted verbatim, as hex, inside
+`testdata/vectors/v1/anchor/anchor.json`: the two `D60-tsa-{freetsa,digicert}-resp.tsr`
+tokens, `merged-A.ots`, `merged-B.ots`, the three `upgraded/A-*.upgrade`
+bodies, and `A25-upgrade-headers/esplora-*-header-960767.txt`.
+
+**Those captures are retained.** The vector is the authoritative copy and is
+frozen; this directory is its provenance of record. Deleting a quoted capture
+does not break CI — deliberately, because a standing equality test between a
+frozen file and an unfrozen one is a lane whose red the frozen side is
+forbidden to fix (D101 RULING 6b). It breaks the **audit trail**, which is
+worse because it is silent.
+
+The vector names each source path verbatim in `inputs.cases[].provenance`, and
+`testdata/vectors/v1/anchor/gen_vectors.py --check` re-derives the quoted bytes
+from this directory on the `cross-check` lane — so a moved or edited capture is
+visible there, as a re-derivation mismatch, rather than as a permanently red
+required lane.
+
 Anchor fixtures contain real *public* cryptographic material (certificates,
 tokens, calendar proofs, block headers) — permitted; the secret-material
 convention (`../README.md`) bars only private/secret material. Every digest

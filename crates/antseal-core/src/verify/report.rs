@@ -294,9 +294,38 @@ pub struct EvidenceLayerResult {
 /// Storage-linkage-layer result slot (MVP-SPEC.md line 119), rendered
 /// distinctly from the evidence layer and never gating it.
 ///
-/// R20 (M3) adds the evaluated arm (per-blob offline address
-/// recomputation results); until then the slot reports not-evaluated —
-/// a pre-Q14 extension per D29.
+/// The slot has one variant and reports not-evaluated in every report
+/// emitted to date. **Not-evaluated is neither a claim nor a verdict**:
+/// the stage has not run, so this says nothing in either direction about
+/// where the work is stored — and nothing here ever gates the evidence
+/// layer, because "storage is the product's bonus, not its proof".
+///
+/// # Adding an arm here is a value addition, not a field addition
+///
+/// This doc said the slot was "a pre-Q14 extension per D29" until
+/// **D105**. Q14 executed on 2026-07-28, so it was false when read and
+/// false when written down: there is no open pre-freeze window.
+///
+/// What is true is that the freeze does not close this enum. D29 rule 1
+/// fixes the declaration order of the report's **struct** fields; a new
+/// enum *variant* moves no struct's field list, and `storage_linkage`
+/// serializes in every report either way (D29 rule 4). So an arm added
+/// here is a VALUE ADDITION and `REPORT_VERSION` stays `1` — the same
+/// class, and the same reasoning, as
+/// [`SupportingEvidenceResult::ArbitrumReceipt`].
+///
+/// D29's Consequences bullet names "R20's storage-linkage arm" as a
+/// pre-Q14 *field* addition. That was a guess about an undesigned task,
+/// and the same bullet's other guess — "R12's anchor detail" — was
+/// measured wrong when R12 landed (D94 §2). D105 rules the test that
+/// decides it: **a report change is a value addition iff no struct
+/// report v1 could already serialize gains, loses or reorders a field.**
+/// An arm that instead adds a field to this or any other frozen struct
+/// is a FORMAT EVENT and costs a report-version bump.
+///
+/// Whatever lands here must arrive with a committed assertion that
+/// renders it inside a whole canonical report — D105 ruling 4; the
+/// receipt arm did not, and that is the whole of why R69 exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageLinkageResult {
@@ -475,13 +504,27 @@ pub struct AnchorResult {
 /// (A17/D55) is deliberately **absent**: it is an overlay on an overlay, it
 /// moves nothing, and `verify_bundle` performs no online step at all.
 ///
-/// # Adding this arm moved no pinned byte
+/// # Adding this arm moved no pinned byte — a format signal, not a coverage one
 ///
 /// All 21 R9 report vectors carry `"supporting_evidence":"none"` — no
 /// committed vector opts a receipt in — and a unit variant's serialization is
-/// unchanged by the existence of a sibling. Q14 froze report **v1**'s field
-/// list (D29 rule 1); this adds a *value*, not a field, and the slot is
-/// present in every report either way (D29 rule 4).
+/// unchanged by the existence of a sibling. Q14 froze the declaration order of
+/// report **v1**'s **struct** fields (D29 rule 1); this adds a *value*, not a
+/// field, and the slot is present in every report either way (D29 rule 4).
+/// D105 states the test both slots are ruled by, so the rule has one home
+/// rather than two paraphrases.
+///
+/// The heading above says two things at once, and R12 wrote down only the
+/// first. Zero moved pins is a **correct format signal** — a format event
+/// moves all 21 report cases and all 26 `REPORT_DIGEST_BY_SHAPE` rows (R32
+/// measured exactly that at `report_version` 0 → 1), so zero is affirmative
+/// evidence this was not one. It is also an **empty coverage signal**, because
+/// a value nothing renders moves zero pins too; the tree has no second signal,
+/// which is why this arm shipped with nothing red and nothing wrong (D105
+/// §4.3). The coverage half is discharged separately, by the receipt-bearing
+/// twin of D29's fixed-fixture snapshot in `verify/mod.rs`
+/// (`EXPECTED_CANONICAL_JSON_WITH_RECEIPT`), which is the only artifact in the
+/// tree that renders this arm inside a whole canonical report — R69.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SupportingEvidenceResult {
@@ -499,6 +542,22 @@ pub enum SupportingEvidenceResult {
         transaction_count: u64,
     },
 }
+
+/// The one `block_number` every test that renders the receipt arm uses.
+///
+/// Two assertions pin this arm and they live in different modules: the
+/// standalone spelling test below, and the whole-report snapshot
+/// `EXPECTED_CANONICAL_JSON_WITH_RECEIPT` in `verify/mod.rs`. Sharing the
+/// operand is what makes them move **together** — with two hand-copied
+/// literals a future edit could re-pin one and leave the other green while
+/// the two disagreed about what "the receipt fixture" is (D105 §5.3).
+#[cfg(test)]
+pub(crate) const RECEIPT_FIXTURE_BLOCK_NUMBER: u64 = 271_828_182;
+
+/// The one `transaction_count` every test that renders the receipt arm uses;
+/// see [`RECEIPT_FIXTURE_BLOCK_NUMBER`].
+#[cfg(test)]
+pub(crate) const RECEIPT_FIXTURE_TRANSACTION_COUNT: u64 = 2;
 
 /// The redaction/reveal-set data: which bytes of which files were
 /// revealed, and what remains hidden — with position and total size
@@ -690,11 +749,17 @@ mod tests {
     /// The `"none"` half is pinned in the row above; this pins the arm that
     /// exists alongside it, so adding the variant cannot have changed what a
     /// receipt-free report says.
+    ///
+    /// This is the **standalone** pin: it can never show the
+    /// `"supporting_evidence":` key, the object sitting where a string sat, or
+    /// the sibling ordering D29 rule 1 is about. Those need a whole-report
+    /// literal, and that is `EXPECTED_CANONICAL_JSON_WITH_RECEIPT` in
+    /// `verify/mod.rs` — built on the same two operands (D105 §5.3).
     #[test]
     fn the_receipt_arm_carries_no_time_and_no_state() {
         let json = serde_json::to_string(&SupportingEvidenceResult::ArbitrumReceipt {
-            block_number: 271_828_182,
-            transaction_count: 2,
+            block_number: RECEIPT_FIXTURE_BLOCK_NUMBER,
+            transaction_count: RECEIPT_FIXTURE_TRANSACTION_COUNT,
         })
         .expect("slot serializes");
         assert_eq!(

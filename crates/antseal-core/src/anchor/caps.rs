@@ -254,9 +254,15 @@ mod tests {
     /// **measured byte counts** are asserted on 64-bit only, because the
     /// registry records the x86-64 measurement it says it records.
     ///
-    /// It also cost this project a CI red on a lane the local gate cannot
-    /// see — `scripts/local-gate.sh` *builds* for wasm32 but does not *run*
-    /// the wasm32 tests.
+    /// It also cost this project a CI red on a lane the local gate could not
+    /// see: `scripts/local-gate.sh`'s `wasm32` lane was a `cargo build`, and
+    /// its name did not say so. **Closed by Q125** — that lane is now
+    /// `wasm32-build`, and a second lane, `wasm32-tests`, runs
+    /// `scripts/wasm-tests.sh --check` (which *executes* this test on
+    /// `wasm32-unknown-unknown`) whenever the diff touches anything that can
+    /// move wasm32 behaviour. A change to THIS file selects it — the trigger's
+    /// positive self-test arm is pinned to this path by name for exactly that
+    /// reason. Force it with `ANTSEAL_GATE_WASM=1`.
     #[test]
     fn the_der_structural_cost_is_the_one_measured_today() {
         // Everywhere: the formula. A fourth container, or a raised count,

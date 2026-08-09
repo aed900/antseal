@@ -80,22 +80,48 @@ const MIN_UNDERSCORES: usize = 4;
 
 /// Pointers that deliberately do not resolve in this tree.
 ///
-/// Exactly two kinds of entry are legitimate, and each must say which it is:
+/// Exactly three kinds of entry are legitimate, and each must say which it is:
 ///
 /// - a **forward reference** to a test a named task will land — the entry
 ///   names that task, so the allowlist cannot outlive it silently;
 /// - an **external reference** to another project's test — the entry names
-///   that project.
+///   that project;
+/// - a **cross-crate reference** to a test in a sibling crate of this
+///   workspace — the entry names the crate and the file:line, so the claim
+///   stays checkable by hand while the sweep is crate-scoped. This kind
+///   exists because the Scope note above is real: the sweep covers this
+///   crate only, and widening it is **Q70**. Such an entry is *born stale* by
+///   design — when Q70 lands the pointer resolves and
+///   [`no_allowlist_entry_is_stale`] fails, which is the intended way it gets
+///   deleted. Added 2026-08-09 for A22, the first pointer this repo has had
+///   from one crate's test docs at another crate's test.
 ///
-/// Anything else is a dangling pointer wearing a disguise.
+/// Anything else is a dangling pointer wearing a disguise. Note the one
+/// disguise this file cannot catch: dropping the backticks stops a claim
+/// being a pointer at all while leaving it reading exactly like evidence.
+/// Removing backticks to silence this test is therefore the one repair that
+/// is never correct.
 /// [`no_allowlist_entry_is_stale`] deletes the incentive to leave entries
 /// behind: an entry that starts resolving fails the suite.
-const ALLOWED: &[(&str, &str)] = &[(
-    "tests/x25519.rs",
-    "external reference: the pinned `ed25519-dalek`'s own test file, cited as \
-     provenance for the RFC 8032 §7.1 seeds — not a file of ours and never \
-     will be",
-)];
+const ALLOWED: &[(&str, &str)] = &[
+    (
+        "tests/x25519.rs",
+        "external reference: the pinned `ed25519-dalek`'s own test file, cited as \
+         provenance for the RFC 8032 §7.1 seeds — not a file of ours and never \
+         will be",
+    ),
+    (
+        "the_three_way_splice_reaches_the_committed_vector_digest",
+        "cross-crate reference: lives in the antseal-anchor crate at \
+         src/ots/upgrade/tests.rs:636, cited by tests/anchor_vectors.rs as the \
+         cross-check that runs the shipped `merge_upgrade` over the same archive \
+         bytes to the same SHA-256 the A22 vector carries (D103 RULING 2a). It \
+         cannot resolve here because this sweep is scoped to this crate; \
+         widening it is Q70, and when Q70 lands this entry starts resolving and \
+         no_allowlist_entry_is_stale will fail until it is deleted. The pointer \
+         is real and was verified by hand on 2026-08-09",
+    ),
+];
 
 /// The one file the sweep skips: this one, which must quote example pointers
 /// — including deliberately dangling ones, in the rule fixture — to define

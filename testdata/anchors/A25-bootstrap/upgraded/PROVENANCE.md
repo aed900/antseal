@@ -102,6 +102,86 @@ stores. The implementation performs **no** reversal, and
 `anchor::ots::header::tests::a_byte_reversed_merkle_root_does_not_match`
 goes red if one is added.
 
+## The three-way splice these bodies derive (A22, D103 RULING 3b)
+
+Written by **A22**, owned by **A25**. The six `*.upgrade` files here are
+calendar **response bodies**, not `.ots` containers — no magic, no header, no
+digest — so no upgraded `.ots` over this project's own digest exists as a file
+anywhere in the tree. `testdata/vectors/v1/anchor/` needs one, and derives it.
+
+**The rule.** `merge_upgrade`'s entire byte effect is a splice
+(`crates/antseal-anchor/src/ots/container.rs:252-268`):
+
+```text
+out = file[..offset] ‖ 0xff ‖ body ‖ file[offset..]
+```
+
+at an `offset` found by a literal byte search for the pending attestation's
+wire encoding (`:211-237`), whose occurrence count must equal the parser's.
+No hash, no key, no judgement.
+
+**The order is part of the ruling** (D103 §4.2): `pending_refs`' document
+order over the **current** stored artifact at each step, re-located each time.
+For `merged-A.ots` that is alice → bob → catallaxy. A different order produces
+different bytes.
+
+| step | bytes | ops | depth | attestations |
+| --- | --- | --- | --- | --- |
+| `../merged-A.ots` | 664 | 34 | 12 | 3 |
+| `+ A-alice.upgrade` | 1 665 | 101 | 79 | 4 |
+| `+ A-bob.upgrade` | 2 702 | 171 | 80 | 5 |
+| `+ A-catallaxy.upgrade` | **3 808** | **244** | **85** | **6** |
+
+`sha256 = c2bf8b2c22055061f7105c357459969d4bb62d397f95001a70f570fed88e0c68`
+
+The digest-B walk is the same shape: **3 773 B**, 242 ops, depth 83,
+`sha256 = 759adb377136d97099695cd6f727c9c85b8578b97e8c3f31ee61072ec1d156f8`.
+
+**Where the bytes live.** In `testdata/vectors/v1/anchor/anchor.json`, as
+cases 4, 5 and 6, and **not** as a file here: it is derived, and D101
+RULING 6 already settles authority — the vector copy is authoritative, this
+directory is provenance, and a third unfrozen copy of derived bytes would be a
+copy with no rule attached to it (D103 RULING 3a).
+
+**Two producers, one number.** `testdata/vectors/v1/anchor/gen_vectors.py`
+performs the splice in Python, and
+`crates/antseal-anchor/src/ots/upgrade/tests.rs::the_three_way_splice_reaches_the_committed_vector_digest`
+runs the *shipped* `merge_upgrade` over the same inputs and asserts the same
+SHA-256 and the same four intermediate byte counts (D103 RULING 2a).
+
+**The attested heights are 960767 / 960768 / 960771** — alice, bob and
+catallaxy respectively, one artifact carrying three Bitcoin branches at three
+heights, which is what three operators on independent aggregation schedules
+looks like.
+
+### The byte-order comparison above **has now been performed**
+
+The section before this one reads *"Comparing the `merkle_root` those headers
+carry at bytes `36..68` against the root the `.upgrade` ops derive is the step
+that actually pins the byte order, and it has **not** been performed"*. As of
+2026-08-09 it has, for all three heights, with no byte reversal:
+
+| height | ops-derived root | `header[36..68]` | match |
+| --- | --- | --- | --- |
+| 960767 | `74ce7464…ab53233a` | `74ce7464…ab53233a` | yes |
+| 960768 | `a921c752…14798ae5` | `a921c752…14798ae5` | yes |
+| 960771 | `d303b654…92b537a7` | `d303b654…92b537a7` | yes |
+
+Each header was re-verified offline first
+(`double-SHA256(header)`, reversed, equals the committed
+`../../A25-upgrade-headers/esplora-*-height-<h>.txt`), and both endpoint
+captures are byte-identical.
+
+It is now pinned **empirically and in CI**, not merely measured once: the
+`anchor` vector's case 4 renders `attested` and case 5 renders `proven`, and
+both require `check_embedded_header` to return `Committed`, which is exactly
+this comparison. A reversal would move those two verdicts and turn the
+`golden-vectors`, `vector-freeze` and `wasm-bitmatch` lanes red together.
+
+**This does not close A48(b)**, which owns the pin and its own accept wording;
+it records that A48(b)'s last missing input is no longer missing and that the
+comparison it describes now has a committed, frozen witness.
+
 ## Licensing
 
 `opentimestamps` 0.2.0 is `MIT OR Apache-2.0`. What is reproduced here is a

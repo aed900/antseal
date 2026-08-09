@@ -49,8 +49,17 @@
 //! number of OTS calendar attestations this work is still waiting on. The
 //! **class** rides beside it in [`WorkRow::nag`], because a count cannot
 //! carry one — D98 rider 3b, and [`NagState`]'s own doc says why (*"'no
-//! nag' has three different meanings and rendering them identically is how
+//! nag' has four different meanings and rendering them identically is how
 //! an UNANCHORED work comes to look merely pending"*).
+//!
+//! **The quoted count was `three` here and in D98 rider 3b, and both were
+//! right when written**: D100 R7 added `NagState::Unreadable`, a fifth
+//! variant that does not nag, taking the non-nagging count from three to
+//! four — so the sentence being quoted now reads *four*. Corrected here
+//! rather than in the decision record, which is immutable (Q122 is the open
+//! question about dated corrections). The count is pinned by a test —
+//! `status_command.rs`'s Q120 suite — so the next variant reddens instead
+//! of quietly falsifying this paragraph a second time.
 //!
 //! Adding `nag` to the `--json` row is permitted now: **D65 is not in
 //! force.** It has no `docs/decisions/D65-*.md`, its register row is
@@ -259,7 +268,18 @@ pub struct WorkRow {
     /// The fine state (S10's journal tag), when the journal still carries
     /// it.
     pub fine_state: Option<SealState>,
-    /// Sealed with `--no-anchor`: the UNANCHORED class.
+    /// Answers exactly one question: **was this seal made with
+    /// `--no-anchor`?** A shaping input recorded at seal time
+    /// (`pipeline/seal.rs`, from `request.no_anchor`), copied here and never
+    /// recomputed — so it stays true for a `--no-anchor` work no matter what
+    /// its vault later holds.
+    ///
+    /// It is **not** MVP-SPEC.md line 137's UNANCHORED (*zero
+    /// headline-eligible anchors*, which is `WorkStatus::is_unanchored`) and
+    /// **not** [`NagState::Unanchored`] (*no anchor records at all*). D98
+    /// rider 3c forbids collapsing any two of the three, and
+    /// `status_command.rs` pins a table of works on which they disagree
+    /// (Q120). [`WorkRow::badge`] renders this one, and only this one.
     pub unanchored: bool,
     /// Sealed with `--force-degraded`.
     pub degraded: bool,

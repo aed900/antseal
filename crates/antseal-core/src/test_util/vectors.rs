@@ -71,6 +71,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     super::vectors_manifest::KIND,
     super::vectors_bundle::KIND,
     super::vectors_storage_address::KIND,
+    super::vectors_anchor::KIND,
 ];
 
 /// Domain prefix of the **recomputed-artifact digest** ([`VectorSummary::
@@ -268,6 +269,11 @@ pub fn execute_vector_bytes(
             envelope.expect,
             envelope.description,
         ),
+        // A22's recorded TSA tokens and `.ots` artifacts -> the per-anchor
+        // verdict object (D101 §3.5 as amended by D103 §6).
+        super::vectors_anchor::KIND => {
+            super::vectors_anchor::execute(envelope.inputs, envelope.expect, envelope.description)
+        }
         other => Err(VectorError::UnknownKind(other.to_owned())),
     }
 }

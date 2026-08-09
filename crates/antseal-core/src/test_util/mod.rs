@@ -214,6 +214,7 @@ pub mod tamper_rows_structural;
 #[cfg(feature = "test-util")]
 pub mod tamper_rows_version;
 pub mod vectors;
+pub mod vectors_anchor;
 pub mod vectors_bundle;
 pub mod vectors_cbor_diag;
 pub mod vectors_content_model;

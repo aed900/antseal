@@ -6,6 +6,13 @@
   "note": "The per-version vector roster (F10). Machine-readable; consumed by crates/antseal-core/tests/vector_index.rs. Contract + registration procedure: ../README.md, section 'The per-version index'. This file is an AUXILIARY: it is not itself a golden vector and is not frozen by FROZEN.sha256 — it is the roster, FROZEN.sha256 is the freeze.",
   "vectors": [
     {
+      "slug": "anchor-verdicts",
+      "path": "anchor/anchor.json",
+      "kind": "anchor",
+      "task": "A22",
+      "pins": "anchor kind: the whole per-anchor verdict object — state, headline eligibility, verified time, source identity, fetch date, diagnostic code, identity discriminant, the A39 suppressed-anomaly list and the R12 report slot — for seven cases over four recorded artifacts at a fixed verify_at of 1786100000 against TsaRootStore::pinned(). Two real RFC 3161 tokens (FreeTSA ECDSA P-384, DigiCert RSA) both proven; the un-upgraded merged-A.ots pending; the SAME three-way merged+upgraded .ots bytes (3808 B, derived from committed calendar responses by gen_vectors.py, sha256 c2bf8b2c22055061f7105c357459969d4bb62d397f95001a70f570fed88e0c68) rendering attested offline, proven with bitcoin-chain identity under an agreed matching header, and pending with a suppressed anchor-ots-online-block-absent anomaly under an agreed no-such-block; and merged-B.ots under this document's anchor_digest rendering invalid. The 4/5 pair is D92's missing OTS-side witness for A40's eligibility filter; case 6 is the first committed witness for D56 section 4's anti-downgrade rule and the only non-empty suppressed list in the tree; case 7 pins the top-level anchor_digest and promotes D56 section 9's sharpest defect from the tamper matrix's same-verdict wasm32 tier to a byte-identical one. This object IS the Q5 native<->wasm32 bit-match surface, which is the M2 exit criterion (MVP-SPEC.md lines 108-110, 127-135, 169)"
+    },
+    {
       "slug": "bundle-empty-anchor",
       "path": "bundle/bundle.json",
       "kind": "bundle",

@@ -70,7 +70,9 @@ ALLOWED_INLINE: dict[str, str] = {
         "single command, no logic. Local lane: scripts/local-gate.sh `test` (which is stricter: "
         "--all-features).",
     "cargo build -p antseal-core --target wasm32-unknown-unknown --locked":
-        "single command, no logic. Local lane: scripts/local-gate.sh `wasm32`.",
+        "single command, no logic. Local lane: scripts/local-gate.sh `wasm32-build` "
+        "(renamed from `wasm32` at Q125 — it is a build, and the name said otherwise; "
+        "the EXECUTING lane is `wasm32-tests`, which shells out to scripts/wasm-tests.sh).",
     "pip install --require-hashes -r requirements-crosscheck.txt":
         "pinned, hash-checked tool install. Local equivalent: scripts/cross-check.sh --setup.",
     "cargo install cargo-fuzz --version 0.13.2 --locked":

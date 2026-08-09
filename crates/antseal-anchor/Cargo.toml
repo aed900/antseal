@@ -61,6 +61,13 @@ ureq.workspace = true
 # test build is unchanged, and no D60 pin is declared here — A30(c)'s owner
 # set stays `antseal-core` alone.
 antseal-core = { workspace = true, features = ["test-util"] }
+# The SHA-256 of a merged artifact, for D103 RULING 2a's cross-check: the
+# shipped `merge_upgrade` run over the committed archive bodies must reach the
+# same digest the `anchor` golden vector carries for the same artifact (A14;
+# `ots::upgrade::tests::the_three_way_splice_reaches_the_committed_vector_digest`).
+# A DEV edge only, and it adds ZERO packages: `sha2` is already in the normal
+# `--workspace` graph through `antseal-core`, on the same exact workspace pin.
+sha2.workspace = true
 
 [lints]
 workspace = true

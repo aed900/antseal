@@ -599,6 +599,90 @@ fn only_one_of_three_attestations_commits_the_single_embedded_header() {
     );
 }
 
+/// **D103 RULING 2a** — the shipped `merge_upgrade`, run over the same
+/// committed inputs, reaches the same SHA-256 the `anchor` golden vector
+/// carries for that artifact.
+///
+/// # What this is, and what it deliberately is not
+///
+/// `testdata/vectors/v1/anchor/anchor.json` cases 4-6 carry a three-way
+/// merged+upgraded `.ots` that **is not a file on disk**: it is derived, by
+/// `testdata/vectors/v1/anchor/gen_vectors.py`, from `merged-A.ots` plus the
+/// three committed `A-*.upgrade` bodies. That generator is a *derivation
+/// record*, not a cross-check (D101 §7.3, D103 §3.2) — so on its own the
+/// frozen bytes would rest on one implementation of the splice.
+///
+/// This test is the second one. It names no vector file, reads no frozen
+/// path, and does not compare an archive against a freeze; it compares **two
+/// independently written computations against one committed number**. A13's
+/// own precedent, in its words: *"assembling from the three real replies
+/// reproduces the committed `merged-A.ots` — two independent pieces of code
+/// from the same inputs."*
+///
+/// It is therefore **not** D101 RULING 6b's refused standing archive-equality
+/// lane, whose red is only ever fixable on the unfrozen side. If
+/// `merge_upgrade`'s splice rule ever legitimately changes, this is *code*
+/// and is edited — with the frozen vector's own change following through its
+/// own procedure.
+///
+/// # The order is part of the ruling
+///
+/// `pending_refs`' document order over the **current** stored artifact at each
+/// step, re-located each time: alice -> bob -> catallaxy (D103 RULING 3,
+/// §4.2). A different order produces different bytes, so the intermediate
+/// sizes are asserted too — they are what says the walk went through the
+/// states D103 measured and not merely to a coincidental total.
+#[test]
+fn the_three_way_splice_reaches_the_committed_vector_digest() {
+    use sha2::{Digest as _, Sha256};
+
+    /// The digest `anchor.json` carries as `expect.cases[].artifact_sha256`
+    /// for `ots-upgraded-offline`, `ots-upgraded-online-proven` and
+    /// `ots-upgraded-online-block-absent` — one number, two producers.
+    const COMMITTED_SHA256: &str =
+        "c2bf8b2c22055061f7105c357459969d4bb62d397f95001a70f570fed88e0c68";
+
+    let mut artifact = fixtures::MERGED_A.to_vec();
+    let mut sizes = vec![artifact.len()];
+    for (uri, body) in [
+        (
+            "https://alice.btc.calendar.opentimestamps.org",
+            fixtures::UPGRADE_A_ALICE,
+        ),
+        (
+            "https://bob.btc.calendar.opentimestamps.org",
+            fixtures::UPGRADE_A_BOB,
+        ),
+        (
+            "https://btc.calendar.catallaxy.com",
+            fixtures::UPGRADE_A_CATALLAXY,
+        ),
+    ] {
+        let references = pending_refs(&artifact, &fixtures::DIGEST_A).expect("parses");
+        let target = references
+            .iter()
+            .find(|reference| reference.uri == uri)
+            .expect("pending");
+        artifact = merge_upgrade(&artifact, &fixtures::DIGEST_A, target, body)
+            .expect("merges")
+            .artifact;
+        sizes.push(artifact.len());
+    }
+
+    assert_eq!(
+        sizes,
+        vec![664, 1665, 2702, 3808],
+        "the splice did not pass through the states D103 §1.2 measured"
+    );
+    let digest = Sha256::digest(&artifact);
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(
+        hex, COMMITTED_SHA256,
+        "the shipped merge_upgrade and the vector's generator disagree about the \
+         three-way splice"
+    );
+}
+
 /// A body that is not a timestamp at all is refused by the re-validation, and
 /// the stored bytes are untouched.
 #[test]

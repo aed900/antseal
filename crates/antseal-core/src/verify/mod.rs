@@ -233,6 +233,38 @@ mod tests {
         }
     }
 
+    /// [`fully_populated_report`] with the receipt arm rendered, and
+    /// **differing from it in nothing else** (R69, D105 ruling 4).
+    ///
+    /// `SupportingEvidenceResult::ArbitrumReceipt` landed at R12 with a
+    /// standalone spelling pin (`report.rs`) and no whole-report artifact —
+    /// pinned or otherwise — that contained it. A standalone pin cannot show
+    /// the `"supporting_evidence":` key, the object sitting where a string
+    /// sat, or the sibling ordering `anchors → supporting_evidence → reveal`
+    /// that D29 rule 1 is about; only a composed literal shows those.
+    ///
+    /// Built by struct update from the control so the difference is
+    /// *structurally* one field rather than a promise: the two snapshots are a
+    /// differential pair, and
+    /// `receipt_snapshot_differs_from_the_control_only_at_supporting_evidence`
+    /// holds them to it. The control keeps rendering
+    /// `"supporting_evidence":"none"` in composition — that is worth pinning
+    /// on its own account, and it is what this twin is differential against,
+    /// so **do not mutate the control into a receipt-bearing one**.
+    ///
+    /// The operands are `report.rs`'s, deliberately shared rather than
+    /// re-typed, so the standalone pin and this one cannot be satisfied
+    /// separately.
+    fn fully_populated_report_with_receipt() -> VerificationReport {
+        VerificationReport {
+            supporting_evidence: SupportingEvidenceResult::ArbitrumReceipt {
+                block_number: report::RECEIPT_FIXTURE_BLOCK_NUMBER,
+                transaction_count: report::RECEIPT_FIXTURE_TRANSACTION_COUNT,
+            },
+            ..fully_populated_report()
+        }
+    }
+
     /// D29: two serializations — of the same instance and of two
     /// independently built equal reports — are byte-identical.
     #[test]
@@ -276,6 +308,62 @@ mod tests {
         );
     }
 
+    /// The same snapshot with the receipt arm rendered — the tree's only
+    /// artifact that shows `arbitrum-receipt` **in composition** (R69).
+    ///
+    /// What reddens it: deleting the arm (a compile error first), renaming
+    /// `block_number`/`transaction_count`, reordering them, changing the
+    /// enum's serde representation or its kebab-case spelling, and moving
+    /// `supporting_evidence` relative to its siblings. Like its control this
+    /// is a `#[cfg(test)]` unit test, so it runs on wasm32 too — where a
+    /// failure is a bare trap with no test name, and this native run is the
+    /// readable reproduction.
+    #[test]
+    fn snapshot_with_receipt_bytes_are_stable() {
+        let bytes = fully_populated_report_with_receipt()
+            .to_canonical_json()
+            .expect("report serializes");
+        let actual = String::from_utf8(bytes).expect("canonical JSON is UTF-8");
+        assert_eq!(
+            actual, EXPECTED_CANONICAL_JSON_WITH_RECEIPT,
+            "canonical report bytes drifted (receipt-bearing twin)"
+        );
+    }
+
+    /// The two snapshots are a **differential pair**: literal against literal,
+    /// with no serializer in the loop.
+    ///
+    /// This is the check that keeps the twin honest. `snapshot_bytes_...`
+    /// above compares a constant to whatever the code emits, and a lane that
+    /// re-pins it by pasting the new output satisfies it while learning
+    /// nothing — the exact failure mode a pin exists to prevent. Comparing the
+    /// two *constants* cannot be satisfied that way: it fails unless the only
+    /// difference between control and twin is the `supporting_evidence` value,
+    /// which is D105 §5.3's checkable prediction (+63 B: `"none"` is 6 bytes,
+    /// the rendered receipt is 69) and its kill criterion 3.
+    #[test]
+    fn receipt_snapshot_differs_from_the_control_only_at_supporting_evidence() {
+        let control_slot = r#""supporting_evidence":"none""#;
+        let receipt_slot = r#""supporting_evidence":{"arbitrum-receipt":{"block_number":271828182,"transaction_count":2}}"#;
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON.matches(control_slot).count(),
+            1,
+            "the control snapshot no longer renders exactly one `none` slot"
+        );
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON.replace(control_slot, receipt_slot),
+            EXPECTED_CANONICAL_JSON_WITH_RECEIPT,
+            "the twin differs from the control somewhere other than \
+             `supporting_evidence` — fix the fixture, not the constant \
+             (D105 kill criterion 3)"
+        );
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON_WITH_RECEIPT.len() - EXPECTED_CANONICAL_JSON.len(),
+            63,
+            "D105 §5.3 predicts +63 bytes at one value and nowhere else"
+        );
+    }
+
     /// The empty-anchor / UNANCHORED shape is representable from day one
     /// (MVP-SPEC.md line 153: empty-anchor vectors are an M0
     /// requirement; R17 aggregates UNANCHORED from zero
@@ -316,6 +404,21 @@ mod tests {
             .expect("canonical JSON is UTF-8");
         let report_debug = format!("{report:?}");
 
+        // The receipt-bearing twin sweeps alongside the control, so the arm
+        // is covered by project rule 6 from the moment it is rendered in
+        // composition rather than at whatever the next sweep turns out to be
+        // (R69). A receipt carries a block number and a transaction count and
+        // nothing else, but "the value cannot leak" is a property to assert,
+        // not to reason about once and forget.
+        let receipt_report = fully_populated_report_with_receipt();
+        let receipt_json = String::from_utf8(
+            receipt_report
+                .to_canonical_json()
+                .expect("report serializes"),
+        )
+        .expect("canonical JSON is UTF-8");
+        let receipt_debug = format!("{receipt_report:?}");
+
         let mut failures = VerifyFailures::new(VerifyError::UnitDecryptFailed { unit_id: 1 });
         for e in all_error_exemplars() {
             failures.push(e);
@@ -329,7 +432,9 @@ mod tests {
 
         for surface in [
             &json,
+            &receipt_json,
             &report_debug,
+            &receipt_debug,
             &failures_debug,
             &failures_display,
             &error_text,
@@ -345,15 +450,24 @@ mod tests {
         // The wire form must not even *name* secret-bearing concepts as
         // keys — a regression tripwire against someone adding a salt or
         // key field to the report model.
-        for forbidden in ["salt", "seed", "k_u", "k_m", "secret", "nonce"] {
-            assert!(
-                !json.contains(forbidden),
-                "serialized report contains forbidden substring {forbidden:?}"
-            );
+        for wire_form in [&json, &receipt_json] {
+            for forbidden in ["salt", "seed", "k_u", "k_m", "secret", "nonce"] {
+                assert!(
+                    !wire_form.contains(forbidden),
+                    "serialized report contains forbidden substring {forbidden:?}"
+                );
+            }
         }
     }
 
     /// Pinned canonical bytes of `fully_populated_report()` (see
     /// `snapshot_bytes_are_stable`).
     const EXPECTED_CANONICAL_JSON: &str = r#"{"report_version":1,"work":{"work_id":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","title":"Chapter 1 — \"draft\"","format_version":1,"app_version":"0.0.0-test","claimed_time_informational_only":"2026-07-27T00:00:00Z","signature_scheme":"hybrid-pq"},"evidence":{"passed":true,"units_verified":3},"storage_linkage":"not-evaluated","anchors":[{"kind":"tsa","state":"proven","verified_time_unix":1785000000,"source":"https://freetsa.org/tsr","fetch_date":"2026-07-27"},{"kind":"tsa","state":"valid-at-stamping-cert-since-expired","verified_time_unix":1785000600,"source":"http://timestamp.digicert.com","fetch_date":"2026-07-27"},{"kind":"ots","state":"attested","verified_time_unix":null,"source":"calendar.example","fetch_date":"2026-07-27"},{"kind":"ots","state":"pending","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"internally-consistent-only","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"ots","state":"invalid","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"absent","verified_time_unix":null,"source":null,"fetch_date":null}],"supporting_evidence":"none","reveal":{"files":[{"file_id":0,"path":"pitch/chapter-1.md","total_size":1024,"fully_revealed":false,"revealed_spans":[{"unit_id":1,"start":256,"end":640}],"unrevealed_spans":[{"unit_id":0,"start":0,"end":256},{"unit_id":2,"start":640,"end":1024}],"raw_mirror":null},{"file_id":1,"path":"notes.txt","total_size":300,"fully_revealed":true,"revealed_spans":[{"unit_id":3,"start":0,"end":300}],"unrevealed_spans":[],"raw_mirror":{"unit_id":4,"raw_size":305}}],"unrevealed_files":[{"file_id":2,"size":49152}]}}"#;
+
+    /// Pinned canonical bytes of `fully_populated_report_with_receipt()` (see
+    /// `snapshot_with_receipt_bytes_are_stable`). Identical to
+    /// [`EXPECTED_CANONICAL_JSON`] but for the `supporting_evidence` value —
+    /// asserted, not asserted-by-eye, in
+    /// `receipt_snapshot_differs_from_the_control_only_at_supporting_evidence`.
+    const EXPECTED_CANONICAL_JSON_WITH_RECEIPT: &str = r#"{"report_version":1,"work":{"work_id":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","title":"Chapter 1 — \"draft\"","format_version":1,"app_version":"0.0.0-test","claimed_time_informational_only":"2026-07-27T00:00:00Z","signature_scheme":"hybrid-pq"},"evidence":{"passed":true,"units_verified":3},"storage_linkage":"not-evaluated","anchors":[{"kind":"tsa","state":"proven","verified_time_unix":1785000000,"source":"https://freetsa.org/tsr","fetch_date":"2026-07-27"},{"kind":"tsa","state":"valid-at-stamping-cert-since-expired","verified_time_unix":1785000600,"source":"http://timestamp.digicert.com","fetch_date":"2026-07-27"},{"kind":"ots","state":"attested","verified_time_unix":null,"source":"calendar.example","fetch_date":"2026-07-27"},{"kind":"ots","state":"pending","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"internally-consistent-only","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"ots","state":"invalid","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"absent","verified_time_unix":null,"source":null,"fetch_date":null}],"supporting_evidence":{"arbitrum-receipt":{"block_number":271828182,"transaction_count":2}},"reveal":{"files":[{"file_id":0,"path":"pitch/chapter-1.md","total_size":1024,"fully_revealed":false,"revealed_spans":[{"unit_id":1,"start":256,"end":640}],"unrevealed_spans":[{"unit_id":0,"start":0,"end":256},{"unit_id":2,"start":640,"end":1024}],"raw_mirror":null},{"file_id":1,"path":"notes.txt","total_size":300,"fully_revealed":true,"revealed_spans":[{"unit_id":3,"start":0,"end":300}],"unrevealed_spans":[],"raw_mirror":{"unit_id":4,"raw_size":305}}],"unrevealed_files":[{"file_id":2,"size":49152}]}}"#;
 }

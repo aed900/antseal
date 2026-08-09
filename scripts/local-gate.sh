@@ -1,6 +1,57 @@
 #!/usr/bin/env bash
-# Local pre-merge gate — the same lanes CI enforces (CONTRIBUTING.md).
+# Local pre-merge gate — a SUBSET of what CI enforces (CONTRIBUTING.md).
 # Usage: scripts/local-gate.sh [path-to-repo-or-worktree]
+#
+# Q125 — THIS HEADER USED TO SAY "the same lanes CI enforces". It was not
+# true, and the sentence licensed a real misreading: `wasm32 PASS` was read as
+# "the wasm32 tests pass" when the lane was a `cargo build`, and the resulting
+# blind spot cost a CI red at `6f69e1a` (a 64-bit-only `size_of` assertion in
+# `antseal-core/src/anchor/caps.rs`). So, explicitly — what a green run of
+# THIS script does NOT tell you, as of 2026-08-09 (19 required contexts from
+# 17 jobs in `.github/workflows/ci.yml`):
+#
+#   cross-os-macos, cross-os-windows  no such host exists here. The Linux leg
+#                                     is covered in substance by `test`.
+#   wasm-bitmatch                     the OTHER wasm32-EXECUTION lane —
+#                                     `./scripts/wasm-bitmatch.sh`. Still not
+#                                     gated here; a manual CONTRIBUTING
+#                                     checkbox is all that stands behind it,
+#                                     which is Q125's own defect one file over.
+#                                     Cost is NOT the reason: measured
+#                                     2026-08-09 on this host at 53 s
+#                                     (--self-test) + 32 s (the lane) =
+#                                     1 min 25 s, cheaper than `wasm32-tests`.
+#                                     It is out because its TRIGGER differs:
+#                                     its `build.rs` walks
+#                                     `testdata/vectors/`, so a vectors-only
+#                                     change is the case CONTRIBUTING singles
+#                                     out for it and the case the list below
+#                                     deliberately does not match. Hanging it
+#                                     off `--needs-run` would put a lane in
+#                                     the gate that silently never fires for
+#                                     its most important input — a fresh
+#                                     instance of the defect this task closes.
+#                                     It needs its own `--needs-run` with its
+#                                     own planted change-sets. Follow-up.
+#   core-dep-graph                    `./scripts/ci-lanes.sh dep-graph`
+#   secret-guard                      `./scripts/ci-lanes.sh secret-guard`
+#   audit-deny                        `./scripts/ci-lanes.sh audit-deny`
+#                                     (needs the pinned cargo-deny)
+#   vector-freeze                     `./scripts/vector-freeze.sh`
+#   fuzz-smoke                        `./scripts/fuzz.sh` (nightly toolchain +
+#                                     pinned cargo-fuzz)
+#   golden-vectors, tamper-matrix     their SUITES run under `test`; their
+#                                     non-empty-selection counters do not —
+#                                     `./scripts/ci-lanes.sh <lane>`
+#   cross-check                       the `--self-test` half and
+#                                     `cbor-drift-guard` are CI-only; the
+#                                     lane below runs `--check` only
+#   wasm32-tests                      runs here only when the diff selects it
+#                                     (the lane below, and ANTSEAL_GATE_WASM)
+#
+# `./scripts/ci-lanes.sh --list` enumerates the lanes that script owns.
+# CONTRIBUTING's "PR checklist" says which of these to run by hand for which
+# kind of change.
 set -uo pipefail
 cd "${1:-$(git rev-parse --show-toplevel)}" || exit 1
 
@@ -59,7 +110,52 @@ echo "gate: $(git rev-parse --short HEAD) — $(git log -1 --format=%s | cut -c1
 run fmt    cargo fmt --all -- --check
 run clippy cargo clippy --workspace --all-targets --features "$GATE_LIGHT_FEATURES" --locked -- -D warnings
 run test   cargo test --workspace --features "$GATE_LIGHT_FEATURES" --locked
-run wasm32 cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+run wasm32-build cargo build -p antseal-core --target wasm32-unknown-unknown --locked
+
+# Q125 — the wasm32 EXECUTION lane, which is a different statement from the
+# `cargo build` directly above and now says so in its name. `wasm32-build`
+# proves antseal-core COMPILES for the verifier's target; only this lane
+# proves its unit tests PASS there, and the difference is not academic:
+# `size_of::<x509_cert::Certificate>()` is 376 on wasm32 against 512 on
+# x86-64, and two `caps.rs` equality rows asserting the 64-bit literals
+# unconditionally reddened CI's `wasm32-core-tests` at `6f69e1a` with this
+# gate green and a native `cargo test --workspace` green.
+#
+# On the `heavy-features` pattern below, for the same reason: it costs minutes
+# and only some changes can move what it measures. Measured 2026-08-09 on this
+# 2-core host: 3 min 42 s cold, then 2 min 46 s and 2 min 10 s warm — of which
+# 2 min 15 s is node EXECUTING the module (the compile is cached at 0.3 s), so
+# a warm target dir buys almost nothing. CI reports 2 min 40 s for the same
+# step (run 31255637376, same 2-core runner class — D52 §E2).
+# `scripts/wasm-tests.sh --needs-run` decides from the diff against `main`
+# (override with ANTSEAL_GATE_BASE) rather than from the developer's memory;
+# its trigger list has planted change-sets in both directions, pinned to the
+# 6f69e1a incident, under `wasm-tests.sh --self-test`. Exit 2 means it could
+# not decide, which is a visible SKIP with the reason, never a silent pass.
+# ANTSEAL_GATE_WASM=1/0 forces it on or off.
+#
+# THE SELF-TEST RUNS UNCONDITIONALLY, and that placement is the point rather
+# than habit: the trigger's own vacuity failure — a list that stops matching
+# `crates/antseal-core/` — makes the lane render `n/a` forever, and a
+# self-test guarded by the trigger would never run to say so. Ordered before
+# the trigger for the same reason `format-freeze` and `features` are: a green
+# verdict below means nothing until the guard has been shown able to go red.
+# It is cheap enough to be unconditional — measured 3.1 s total, of which the
+# R41 arm's throwaway wasm32 crate (fresh `mktemp -d`, so cold every run) is
+# ~3 s. It covers both halves: Q125's planted change-sets in both directions,
+# and R41's planted failing `#[test]` that the runner must NAME.
+run wasm32-selftest scripts/wasm-tests.sh --self-test
+
+wasm_why="$(scripts/wasm-tests.sh --needs-run 2>&1)"; wasm_rc=$?
+case "${ANTSEAL_GATE_WASM:-auto}" in
+  1) wasm_rc=0; wasm_why="forced by ANTSEAL_GATE_WASM=1" ;;
+  0) wasm_rc=1; wasm_why="suppressed by ANTSEAL_GATE_WASM=0" ;;
+esac
+case "$wasm_rc" in
+  0) run wasm32-tests scripts/wasm-tests.sh --check ;;
+  1) printf '  %-16s n/a   (%s)\n' wasm32-tests "$wasm_why" ;;
+  *) printf '  %-16s SKIP  (%s)\n' wasm32-tests "$wasm_why" ;;
+esac
 
 # S22 — the policy's own guard (seconds): every declared feature is on
 # exactly one tier, the HEAVY list still names features that exist, and the

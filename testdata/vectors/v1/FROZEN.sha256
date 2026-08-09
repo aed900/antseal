@@ -70,6 +70,26 @@
 # for): new `#! kind` line + new digest line; no existing digest moves.
 #! kind storage-address S4
 #
+# ADDED 2026-08-09 (A22), post-freeze: the `anchor` kind — the reservation
+# named at line 69 above, taken up. It pins the whole per-anchor verdict
+# object (state, headline eligibility, verified time, source, fetch date,
+# diagnostic, identity discriminant, the A39 suppressed list and the R12
+# report slot) for seven cases over four recorded artifacts, at a fixed
+# `verify_at` against `TsaRootStore::pinned()`. Same append path as S4
+# executed on 2026-08-01: new `#! kind` line + new digest line, no existing
+# digest moved, no existing vector touched.
+#
+# `anchor` is the SECOND kind whose bytes are a function of the VERIFIER
+# rather than of the format (D94 §2a). The D94 verdict-event escape in
+# `scripts/vector-freeze.sh` is scoped to `report/` **by path** and does not
+# reach it, so an `anchor` vector cannot legally move. The three events that
+# could ever require one — an A26 root REMOVAL, a signer-DN rendering
+# change, and a root append that gives a pinned token a second valid path —
+# are listed in D101 §4.3; each needs its own record, which is also where
+# `verdict_event_ok` would be extended. None is proposed, and the third is
+# measured absent (`chain.rs`'s five-token append test).
+#! kind anchor A22
+#
 # Must-exist vectors this version still owes before Q14 can freeze it.
 # Each names its owning task; Q14's gate condition is ZERO pending lines.
 #
@@ -103,6 +123,7 @@
 #
 # ── frozen digests ─────────────────────────────────────────────────────
 #
+c808381e16096f51a5d7195db9d6e5e6381dea00127d7987748c9b8064fe8ff0  anchor/anchor.json
 5144eb89ba017fad02d8a94cd3524101f7cd47bfd5e36a0f9d00d7deacabfde6  bundle/bundle.json
 528adac0854a801076f43b0d353f0572fc1b84f073f68d4b47e6847ad1dd908e  content-model/content-model.json
 fa7edc1cdc8de6efa6251e59c5ef1028c90af6327a68fc0f7ed0da8cbc4910c9  crypto/commitments.json

@@ -635,12 +635,29 @@ pub enum NagState {
     /// The state exists so the row stops borrowing the name of a good
     /// outcome — A102 needed the **name**, not the boolean (D100 R7.1).
     Unreadable,
-    /// No headline-eligible anchor and no pending OTS either — every OTS
-    /// anchor is already attested. `--upgrade` cannot help; `--online`
-    /// verification can.
+    /// No headline-eligible anchor, nothing pending, and nothing unreadable:
+    /// this work holds anchors that no clock will improve offline.
+    /// `--upgrade` cannot help.
+    ///
+    /// *"Every OTS anchor is already attested"* is the common case and not
+    /// the definition — this is the last fall-through before "no anchors at
+    /// all", so it also catches an `.ots` that parses but whose only
+    /// attestation is of a **type this verifier does not implement**, and a
+    /// work whose only anchors are TSA tokens that do not verify. `--online`
+    /// verification helps the attested case and not the other two.
     AttestedOnly,
-    /// No anchors at all: the `--no-anchor` seal. Rendered UNANCHORED, never
-    /// "pending".
+    /// **No anchor records at all**, whatever the seal's shaping flags said.
+    /// The `--no-anchor` seal reaches it; so does a `--force-degraded` seal
+    /// whose every anchor attempt failed, which was never given
+    /// `--no-anchor`. Rendered UNANCHORED, never "pending".
+    ///
+    /// **Not** `WorkRecord::unanchored` and **not** MVP-SPEC.md line 137's
+    /// UNANCHORED, and D98 rider 3c forbids collapsing any two of the three:
+    /// the first is the `--no-anchor` input recorded at seal time, the
+    /// second is *zero headline-eligible anchors* — which a work holding one
+    /// pending OTS satisfies while this variant does not apply to it at all.
+    /// `antseal-cli`'s `status_command.rs` pins a table of works on which
+    /// the three answer differently (Q120).
     Unanchored,
 }
 

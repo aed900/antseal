@@ -541,6 +541,80 @@ fn the_mldsa_wasm32_probe_verdict_still_has_its_evidence() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Q125 — the local gate can EXECUTE the wasm32 tests, not only build for wasm32
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The test above pins the CI half of the chain. This pins the LOCAL half,
+/// and it exists because the local half was missing and the cost was measured:
+/// at `6f69e1a` the gate's `wasm32` lane was `cargo build`, its name did not
+/// say so, `wasm32 PASS` was read as *"the wasm32 tests pass"*, and two
+/// `anchor/caps.rs` rows asserting `size_of::<x509_cert::Certificate>()`'s
+/// 64-bit value unconditionally (it is **376** on wasm32 against 512 on
+/// x86-64) reddened `wasm32-core-tests` with a green gate and a green native
+/// `cargo test --workspace` behind them.
+///
+/// Four links, because losing any one of them restores the gap and none is
+/// visible in a diff of Rust code. Each is anchored on the gate's EXECUTABLE
+/// form, not on a substring that its own explanatory comment would satisfy —
+/// a pin a comment can keep green is not a pin.
+///
+///   1. the executing lane is wired in. Delete it and the gate is back to
+///      compile-only, silently;
+///   2. its trigger is consulted, so the lane is diff-selected rather than
+///      running on a constant;
+///   3. the trigger's guard runs UNCONDITIONALLY. This is the vacuity link:
+///      a trigger that stops matching `crates/antseal-core/` renders `n/a`
+///      forever, and a self-test placed behind the trigger would never run
+///      to say so;
+///   4. the compile-only lane is named for what it does. `wasm32-build` is
+///      not cosmetic — the misreading that cost the CI red was of the NAME.
+///
+/// Deliberately NOT pinned here: the trigger's path list. That belongs to
+/// `wasm-tests.sh --self-test`, which plants change-sets in both directions
+/// (positive arm pinned to `anchor/caps.rs` by name, the incident file) and
+/// runs in CI's `wasm32-core-tests` job and in the gate on every run.
+/// Duplicating it as a string match would pin the list's spelling rather than
+/// its behaviour.
+#[test]
+fn the_local_gate_runs_the_wasm32_tests_and_not_only_the_wasm32_build() {
+    let gate = read("scripts/local-gate.sh");
+
+    for (needle, why) in [
+        (
+            "run wasm32-tests scripts/wasm-tests.sh --check",
+            "the gate no longer RUNS antseal-core's tests on wasm32, so it is back to \
+             compiling for the target and never executing there — Q125's defect \
+             verbatim, which cost a CI red at 6f69e1a",
+        ),
+        (
+            "scripts/wasm-tests.sh --needs-run",
+            "the gate no longer consults the trigger. Either the lane became \
+             unconditional — fine, delete this row and say so — or the trigger was \
+             dropped and the lane now runs on a constant",
+        ),
+        (
+            "run wasm32-selftest scripts/wasm-tests.sh --self-test",
+            "the trigger's guard no longer runs unconditionally. Behind the trigger it \
+             is worthless: a path list that stops matching crates/antseal-core/ makes \
+             the lane render `n/a` forever and takes its own self-test down with it",
+        ),
+        (
+            "run wasm32-build cargo build -p antseal-core --target wasm32-unknown-unknown",
+            "the compile-only lane is no longer named `wasm32-build`. The name IS the \
+             fix: at 6f69e1a a lane called `wasm32` printed PASS for a `cargo build` \
+             and was read as \"the wasm32 tests pass\"",
+        ),
+    ] {
+        assert!(
+            gate.contains(needle),
+            "scripts/local-gate.sh no longer contains `{needle}` — {why}. If the gate \
+             was deliberately restructured, re-point this row at whatever now carries \
+             the property; do not delete it."
+        );
+    }
+}
+
 /// Diagnostic: print what the two parsers actually see. Ignored by default —
 /// it asserts nothing, it is the thing you run when a pin test is red and you
 /// want to know whether the parser or the tree is wrong.

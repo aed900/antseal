@@ -223,7 +223,14 @@ pub struct RestoreReport {
     pub work_id: [u8; 32],
     /// The work's recorded network (canonical CLI spelling).
     pub network: String,
-    /// Sealed with `--no-anchor` (the UNANCHORED work class).
+    /// Sealed with `--no-anchor` — the shaping flag as recorded, copied
+    /// straight off the work record.
+    ///
+    /// Not *"the UNANCHORED work class"*, which is what this line used to
+    /// say: MVP-SPEC.md line 137's UNANCHORED is *zero headline-eligible
+    /// anchors* and is computed, not recorded (D98 rider 3c;
+    /// `WorkStatus::is_unanchored`). `restore` has no anchor evidence in
+    /// hand and must not imply it has.
     pub unanchored: bool,
     /// Where the manifest came from.
     pub manifest_source: ManifestSource,

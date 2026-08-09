@@ -1206,8 +1206,10 @@ network and no platform feature:
 - `scripts/ci-lanes.sh` + `scripts/check-ci-shell.py` (Q43) run the CI shell
   **locally, before a push** — which is how the malformed `tamper-matrix`
   counter was caught
-- `scripts/local-gate.sh` gates fmt/clippy/tests/wasm32/cross-check/
-  format-freeze before anything leaves the machine
+- `scripts/local-gate.sh` gates fmt/clippy/tests/`wasm32-build`/`wasm32-tests`
+  (diff-triggered — Q125)/cross-check/format-freeze before anything leaves the
+  machine. Its header enumerates the CI contexts it does **not** reproduce;
+  that list is the honest answer to "what can still break after a green gate"
 
 With a single maintainer pushing directly, protection would add little: it
 cannot block a push it never sees, and the payload's own

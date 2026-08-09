@@ -278,11 +278,15 @@ materialises, and then only for the scheduled slot.
 - [ ] `cargo build -p antseal-core --target wasm32-unknown-unknown` green —
       antseal-core stays WASM-safe (no I/O, async-runtime, or network
       crates in its normal dependency graph)
-- [ ] `cargo test -p antseal-core --lib --target wasm32-unknown-unknown
-      --locked` green (needs node ≥ 18) and
-      `./scripts/wasm-toolchain-audit.sh` green — antseal-core's unit tests
-      still **run** on the verifier's target and no unconfigured `getrandom`
-      entered a wasm32 graph ([docs/wasm-toolchain.md](docs/wasm-toolchain.md))
+- [ ] `./scripts/wasm-tests.sh --check` green (needs node ≥ 18) — antseal-core's
+      unit tests still **run** on the verifier's target, and no unconfigured
+      `getrandom` entered a wasm32 graph
+      ([docs/wasm-toolchain.md](docs/wasm-toolchain.md)). **Q125: the local
+      gate now runs this for you** as its `wasm32-tests` lane whenever the diff
+      touches anything that can move wasm32 behaviour — force it with
+      `ANTSEAL_GATE_WASM=1`, suppress it with `=0`. The gate's other wasm32
+      lane, `wasm32-build`, is a `cargo build` and proves nothing about
+      execution; that conflation cost a CI red at `6f69e1a`
 - [ ] `./scripts/wasm-bitmatch.sh` green — the WASM build still bit-matches
       native verification over every committed golden vector. **Any PR that
       adds a vector or touches a verification path must show this lane

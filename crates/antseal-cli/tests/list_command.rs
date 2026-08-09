@@ -9,11 +9,12 @@
 mod common;
 
 use antseal_anchor::ots::NagState;
-use antseal_cli::listing::{ResumeClock, WorkListing, WorkRow};
+use antseal_cli::listing::{NAG_VERIFY_AT_UNIX, ResumeClock, WorkListing, WorkRow};
 use antseal_cli::pipeline::journal::{SealJournal, SealState, WorkIdentity};
 use antseal_cli::pipeline::{
     AnchorArtifact, ArtifactKind, OTS_SLOT, PLAN_ENTRY, SealPlan, VaultJournal, tsa_slot,
 };
+use antseal_cli::status::{StatusContext, WorkStatus};
 use antseal_cli::vault::store::{
     ConsentChannel, ConsentRecord, SealShapingFlags, WorkState, WorkStore,
 };
@@ -874,7 +875,32 @@ fn the_anchor_fixture_matrix_renders_three_classes_distinctly() {
     // is false, A15's class is `only-pending-ots`, and the spec's
     // zero-headline-eligible sense is satisfied — which is exactly why
     // `list` prints none of the spec's UNANCHORED sentence off the flag.
+    //
+    // **Q120**: the third answer used to be prose only. The class is
+    // asserted above this comment and the flag on the line below it; the
+    // clause claiming a third was checked by nothing, so a collapse of the
+    // spec's predicate into either of the other two left this comment
+    // reading true and the suite green. It is now computed, at the same
+    // clock and against the same root store `list` itself used, so the two
+    // columns are comparable. The cross-surface *disagreement* matrix lives
+    // in `status_command.rs`, the one suite whose vault both surfaces read.
     assert!(!stale.unanchored);
+    let spec_unanchored = {
+        let unlocked = vault.unlock();
+        WorkStatus::gather(
+            &WorkStore::new(&unlocked),
+            &stale.seal_id,
+            StatusContext::new(NAG_VERIFY_AT_UNIX),
+        )
+        .expect("gather")
+        .is_unanchored()
+    };
+    assert!(
+        spec_unanchored,
+        "a token that chains to nothing pinned and an un-upgraded .ots are zero \
+         headline-eligible anchors between them — MVP-SPEC.md line 137's UNANCHORED, on a \
+         row whose `--no-anchor` flag is false"
+    );
 
     assert_eq!(listing.counts().pending_anchor_nags, 3);
     assert_eq!(listing.counts().unanchored, 1);

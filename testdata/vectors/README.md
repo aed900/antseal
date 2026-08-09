@@ -185,6 +185,7 @@ a vector. Per decision D31 it uses `cbor2` to **decode only**; the RFC 8949
 
 | `report` | M0 (R9) | `w`, `seal_id`, `seed` and `app_version` (R6's fixed fixture constants) + `cases`: per case the R6 `shapes::catalogue()` handle to build (`shape`) and one sentence saying which M0 row it discharges (`pins`) | `report_version` + per case `bundle_len`/`bundle_sha256` (the input bundle R6 builds), `revealed_unit_ids`, `report_len`, **`report_json`** (lowercase hex of `VerificationReport::to_canonical_json()` — the byte-exact D29 encoding and the native↔WASM bit-match medium) and `report` (the same bytes decoded, the order-insensitive review surface) | the **whole** `expect` object is recomputed — each shape rebuilt through R6 and run through `verify_bundle` — and compared as one value; then the assertions a value comparison cannot state: coverage of every M0 shape in `REQUIRED_SHAPES`, structural coverage (some case yields an empty anchor list, some other a populated one, some a committed placeholder), `evidence.passed` with `units_verified` equal to what the bundle revealed, byte-identical re-serialization (D27/D29), and a leak scan re-deriving every `k_u`/`unit_salt`/`path_salt`/`file_salt`/`s_root` of the work and requiring none in the pinned bytes. Format doc: `v1/report/README.md` |
 | `storage-address` | M1 (S4) | `pattern` (must be `"i-mod-251"`, the official BLAKE3 test-vector input pattern) + `cases`: per case a unique `name` and a `len` — inputs are **generative** so the 4 MiB ladder rungs never enter the committed file or D87's embedded budget | `max_chunk_size` (must equal the pinned constant) + `cases`: per case `name`, `len`, and either `address` (32-byte hex — BLAKE3-256 of the pattern bytes, the D32 rule) or `rejected: "exceeds-chunk-cap"` for over-cap lengths (no v1 address exists over the cap, D32 decision 5) | the **whole** `expect` recomputed from `inputs` through `storage::compute_storage_address` and compared as one value; then ladder coverage a value comparison cannot state: a 272-byte case (smallest padded-unit ciphertext), the exact `MAX_CHUNK_SIZE` cap edge, and at least one cap+1 rejection must all be present, and every rejection must come from the typed `ExceedsChunkCap` at exactly the input's length. Format doc: `v1/storage/README.md` |
+| `anchor` | M2 (A22) | `verify_at_unix` (a parameter, never a clock — A9), `anchor_digest` (32-byte hex; without it D56 section 9's *"an `.ots` for someone else's seal renders `proven`"* is live) + `cases`: per case a unique `name`, `kind` (`ots`\|`tsa`), `artifact_hex` (the recorded bytes — this is the first kind whose inputs are irreducibly literal foreign bytes, D101 section 7.1), `intermediates_hex`, `fetch_date_unix` (TSA; `null` on OTS, whose fetch date lives inside the D79 upgrade group), `upgrade` (OTS: `{block_height, block_header_hex, fetch_date_unix}` or `null`), `online` (`[]`, or `[{height, result: "header"\|"no-such-block", header_hex}]` — there is no failure variant, an unreachable or disagreeing probe is the *absence* of the entry, D56 section 3), and `provenance` (the `testdata/anchors/` path verbatim, or the derivation for the one artifact that is not a file). Every field is required on every case, `null`/`[]` included: "not applicable" and "forgotten" must not be the same absence | `verify_at_unix` (echo) + `cases`: per case `name`, `artifact_len` and `artifact_sha256` (self-binding, D101 section 7.2), `state` (the wire spelling of the seven frozen states), `headline_eligible` (a state name alone is blind to it), `verified_time_unix`, `source` (`{identity, verified}` or `null`), `fetch_date`, `diagnostic` (the code `to_anchor_result` **drops** — a vector is the only place it is pinned), `identity_kind` (`tsa-signer`\|`bitcoin-chain`\|`null` — the **discriminant only**; `subject_dn_der` is A72's to move, D101 RULING 2b), `suppressed` (A39 codes, empty never absent) and `report_slot` (R12's projection, so the two cannot drift). Explicitly NOT present: `root_store_version` (verdict provenance, not verdict content; it lives in `chain.rs` where a bump may legally move it) | the **whole** `expect` recomputed from `inputs` through `evaluate_ots_artifact`/`evaluate_tsa_artifact` against `TsaRootStore::pinned()` and compared as one value; then the coverage a value comparison cannot state: both artifact kinds present, both sides of `headline_eligible`, some OTS case carrying `identity_kind: "bitcoin-chain"` and some carrying `null` (D92's missing witness), A40's filter as a law over the document, every case emitting a report slot with none `absent` (a kind-level answer, unreachable per artifact — D53 section 4a), and `fetch_date` non-null exactly when `inputs` supply one (R72's pass-through). The executor may name **no** `anchor::testing` item: that module is `test-util`-gated and `wasm-bitmatch` takes `test-vectors`, so naming one is a *build break* on wasm32, not a red test. Format doc: `v1/anchor/README.md` |
 
 Reserved kind names for the formats that land next (**the envelope needs no
 change** — each kind defines its own `inputs`/`expect` objects; adding a
@@ -202,9 +203,13 @@ changes):
   `bundle` vector id); `expect` = the canonical verification-report bytes
   (hex of the D29 compact-JSON encoding) — the native↔WASM bit-match
   medium.
-- `anchor` (A, M2): recorded `.ots`/TSA-token fixtures with expected
-  per-anchor verdict states — slots in as a kind with no envelope change
-  (an explicit Q4 accept: M2 anchor vectors need no redesign).
+- `anchor` (A, M2): **landed 2026-08-09 (A22)** — see its row in the table
+  above and `v1/anchor/README.md`. This bullet previously read *"recorded
+  `.ots`/TSA-token fixtures with expected per-anchor verdict states — slots in
+  as a kind with no envelope change (an explicit Q4 accept: M2 anchor vectors
+  need no redesign)"*, and the reservation held exactly: the kind arrived as
+  one `KNOWN_KINDS` entry, one dispatch arm and one executor, with **no**
+  envelope change.
 
 ## Adding a vector (no harness change)
 
@@ -406,7 +411,7 @@ per `v<n>/` directory** (`*.json` less `INDEX.json`). It is per version on
 purpose — retention is per version, so a new version gets its own budget
 and never competes with an older one's. A breach fails the build; the fix
 is a reviewed raise in `build.rs` and D87, never deleting or shrinking a
-committed vector. Today `v1` uses 590 280 B, 28.15 % of its budget.
+committed vector. Today `v1` uses 695 365 B, 33.16 % of its budget.
 
 ### What changes at Q14
 
@@ -415,8 +420,15 @@ committed vector. Today `v1` uses 590 280 B, 28.15 % of its budget.
 | Add a vector | append its manifest line (`--update`) | same — additions stay legal forever |
 | Change a vector's bytes | allowed as a **recorded, justified** regeneration: re-run `--update`, review the digest diff, state why in the commit | **refused by default**, and the refusal names which of the three causes below applies. Exactly one is legal after the freeze |
 | Delete a vector | refused | refused |
-| Add a kind | record it as `#! kind` | new kinds land under a new format version |
+| Add a kind | record it as `#! kind` | same — a new kind is an **append**: one `#! kind <name> <task>` directive plus its vectors' digest lines; no existing digest moves and no existing vector is touched. A new **format** version is for a change to the format the vectors *pin*, never for a new kind — a vector's `format_version` names the format it pins, and the runner refuses a misfiled one (`FormatVersionMismatch`). Executed once: `storage-address` (S4, 2026-08-01); the M2 `anchor` kind (A22) is reserved for the same path by `FROZEN.sha256` |
 | `#! pending` entries | may exist; each names its owning task | **must be empty** — that is Q14's gate condition, and the checker refuses `status frozen` while any remain |
+
+The "Add a kind" row previously read *"new kinds land under a new format
+version"*. It was already false when written — the v1 freeze manifest reserves
+the `anchor` kind by name (`v1/FROZEN.sha256:66-71`) — and S4 landed a
+post-freeze kind against it on 2026-08-01. It also contradicted the "Add a
+vector" row directly above it, since a vector of a new kind is a vector.
+Corrected 2026-08-09 (Q124, ruling D101 §5).
 
 ### The three causes of a moved pin (D94 §2a, added 2026-08-06)
 

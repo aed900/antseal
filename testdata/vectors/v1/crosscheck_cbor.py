@@ -874,18 +874,39 @@ def run(cbor2, report) -> tuple[int, int, int, int]:
                 f"{path}: not a golden-vector envelope (schema={vector.get('schema')!r})"
             )
 
-        # A vector is in scope exactly when it commits a diagnostic sidecar.
-        # Driving on the sidecar rather than on a kind allow-list means any
-        # future CBOR-committing kind is covered the day it lands *provided it
-        # commits a sidecar*.
+        # A vector is in scope exactly when it commits a CBOR diagnostic
+        # sidecar -- a MAPPING from layer name to that layer's rendering, which
+        # is precisely what `check_case` then indexes as `case["diagnostic"]
+        # [layer]`. Driving on the sidecar rather than on a kind allow-list
+        # means any future CBOR-committing kind is covered the day it lands
+        # *provided it commits a sidecar*.
         #
-        # KNOWN LIMITATION, stated rather than hidden: a kind that commits
-        # format CBOR and NO sidecar is silently out of scope, and this line
-        # cannot tell that apart from a kind that commits no CBOR at all. The
-        # honest fix is a registry-level flag on the kind, which is a
-        # `KNOWN_KINDS` change and not this file's to make -- see
-        # docs/testing/cbor-cross-check.md §8.
-        subject = [c for c in vector.get("expect", {}).get("cases", []) if "diagnostic" in c]
+        # The mapping test is load-bearing and NOT a shape sniff: it is the
+        # weakest predicate under which the rest of this function is defined.
+        # It reads `isinstance(..., dict)` rather than `"diagnostic" in c`
+        # because the bare-membership form was FALSE-POSITIVE, and A22 proved
+        # it so on 2026-08-09. The `anchor` kind commits no CBOR at all, but
+        # its cases carry a field also called `diagnostic` -- `AnchorDiagnostic`
+        # rendered as a code string or null (D101 §3.5) -- so every anchor case
+        # was pulled into scope and then failed for having no `*_bytes` field.
+        # Two vocabularies, one word: here it is a CBOR rendering, there it is
+        # a verdict's error code.
+        #
+        # KNOWN LIMITATION, stated rather than hidden, and now known to run in
+        # BOTH directions. False negative: a kind that commits format CBOR and
+        # no sidecar is silently out of scope, and this line cannot tell that
+        # apart from a kind that commits no CBOR at all. False positive: a kind
+        # that commits no CBOR but happens to name a field `diagnostic` is only
+        # excluded because its value is not a mapping -- a future kind whose
+        # `diagnostic` *is* a mapping of something else would be pulled in
+        # again. The honest fix for both is a registry-level flag on the kind,
+        # which is a `KNOWN_KINDS` change and not this file's to make -- see
+        # docs/testing/cbor-cross-check.md §8, and Q130.
+        subject = [
+            c
+            for c in vector.get("expect", {}).get("cases", [])
+            if isinstance(c.get("diagnostic"), dict)
+        ]
         if not subject:
             report(
                 f"  --  {_rel(path)}: kind {vector['kind']!r}, no diagnostic sidecar "

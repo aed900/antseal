@@ -35,9 +35,13 @@ use antseal_anchor::http::{Endpoint, HttpClient, HttpPolicy, TlsPolicy};
 // read like a second production entry point.
 use antseal_anchor::ots::engine::upgrade_pending_with;
 use antseal_anchor::ots::upgrade_uri::UpgradeUriRefusal;
-use antseal_anchor::ots::{UpgradeBudget, UpgradeReport, UpgradeTarget};
+use antseal_anchor::ots::{NagState, UpgradeBudget, UpgradeReport, UpgradeTarget};
 use antseal_anchor::testing::replay::{CalendarBehaviour, calendar};
 use antseal_anchor::testing::stub::{StubMatch, StubReply, StubScript, StubServer};
+// Q120: the `list` half of the three-predicate matrix, read off the very
+// vault `status` is reporting on — the one comparison neither suite could
+// make while each owned its own fixture vault.
+use antseal_cli::listing::WorkListing;
 use antseal_cli::pipeline::journal::{SealJournal, SealPlan, SealState, WorkIdentity};
 use antseal_cli::pipeline::{
     AnchorArtifact, ArtifactKind, OTS_SLOT, PLAN_ENTRY, StoredAnchors, VaultJournal, tsa_slot,
@@ -45,6 +49,7 @@ use antseal_cli::pipeline::{
 use antseal_cli::status::{
     RECEIPT_CLASS, StatusContext, UNANCHORED_NOTE, WorkStatus, pending_work, persist_upgrades,
 };
+use antseal_cli::vault::session::UnlockedVault;
 use antseal_cli::vault::store::{ConsentChannel, ConsentRecord, SealShapingFlags, WorkStore};
 use antseal_core::anchor::roots::TsaRootStore;
 use antseal_core::anchor::testing::{MockTsa, MockTsaConfig, ots_writer};
@@ -1238,5 +1243,294 @@ fn the_record_and_the_bytes_it_wraps_are_reported_at_the_same_severity() {
         WorkStatus::gather(&store, &seal_id(0x12), ctx()).is_ok(),
         "both sides of one wrapper must be reportable, or the user sees a boundary that \
          carries no difference in severity"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Q120 / D98 rider 3c: three predicates share the word UNANCHORED, and
+// none of them may be computed from another
+// ─────────────────────────────────────────────────────────────────────
+
+/// A sixth work for [`fixture_vault`], journaled by the Q120 test alone.
+///
+/// Deliberately **not** added to [`fixtures`]: those five are U23's
+/// committed `status-report.txt` matrix, and this row is not about
+/// rendering.
+///
+/// It exists because **work 3 does not separate predicate (a) from predicate
+/// (b)** — measured below, its shaping flag is `false` and its nag class is
+/// `AttestedOnly`, so both answer *"not unanchored"*, and a rewrite of
+/// `WorkRow::unanchored` into `nag == NagState::Unanchored` would stay green
+/// on work 3 alone. This row is the one that disagrees.
+///
+/// Its shape is reachable, not contrived: `evaluate_seal_gate` returns
+/// `ProceedDegraded` from a `None` submission, so `--force-degraded` seals a
+/// work with **zero anchors of either kind** and `no_anchor` false. Every
+/// other field matches work 4, the `--no-anchor` seal, so the only thing
+/// that differs between the two rows is the question each predicate is
+/// answering.
+const DEGRADED_TO_NOTHING: u8 = 0x06;
+
+/// Journal [`DEGRADED_TO_NOTHING`] into an already-built fixture vault,
+/// through the same real journal API the rest of the suite uses.
+fn seal_a_degraded_work_with_no_anchors(unlocked: &UnlockedVault) {
+    let mut rng = ChaCha20Rng::from_seed([0x26; 32]);
+    let journal = VaultJournal::new(WorkStore::new(unlocked), &mut rng);
+    let w = MasterSecret::from_bytes([DEGRADED_TO_NOTHING; 32]);
+    let id = seal_id(DEGRADED_TO_NOTHING);
+    journal
+        .begin(&WorkIdentity {
+            w: w.secret_ref(),
+            seal_id: id,
+            network: "arbitrum-one".to_owned(),
+            unanchored: false,
+            degraded: true,
+            input_paths_as_given: vec!["notes.txt".to_owned()],
+            input_paths_absolute: vec!["/w/notes.txt".to_owned()],
+            shaping: SealShapingFlags {
+                title: Some("force-degraded, every anchor attempt failed".to_owned()),
+                split_blank_lines: false,
+                force_text: false,
+                no_fine_tree: Vec::new(),
+                no_anchor: false,
+                force_degraded: true,
+            },
+        })
+        .expect("begin");
+    journal
+        .put_plan(
+            &id,
+            &SealPlan {
+                unit_count: 1,
+                manifest_bytes: Some(manifest()),
+            },
+        )
+        .expect("plan");
+    for step in [
+        SealState::Anchored,
+        SealState::Paid,
+        SealState::Finalizing,
+        SealState::Complete,
+    ] {
+        journal.set_state(&id, step).expect("advance");
+    }
+    journal
+        .put_consent(
+            &id,
+            ConsentRecord {
+                total_ant_atto: 4_200_000_000_000_000_000,
+                gas_estimate_wei: 21_000,
+                consent_time_unix_secs: 1_798_761_600,
+                channel: ConsentChannel::YesFlag,
+            },
+        )
+        .expect("consent");
+    journal
+        .record_outcome(
+            &id,
+            Some(work_id(DEGRADED_TO_NOTHING)),
+            Some(4_200_000_000_000_000_000),
+        )
+        .expect("outcome");
+}
+
+/// The three questions the word UNANCHORED is used to answer, asked of one
+/// work.
+///
+/// One struct rather than three loose locals because what has to be asserted
+/// is the **relationship between the columns**, not any single value: a
+/// collapse is one predicate being computed from another, and that is only
+/// observable as two columns agreeing on *every* row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Vocabulary {
+    /// **(a) the shaping flag** — `WorkRow::unanchored`, answering *"was
+    /// this seal made with `--no-anchor`?"*. An input recorded at seal time
+    /// (`pipeline/seal.rs`, from `request.no_anchor`), never recomputed;
+    /// `list` badges off it and nothing else may.
+    made_with_no_anchor: bool,
+    /// **(b) the nag class** — `NagState`, answering *"what, if anything, is
+    /// there left to chase?"*. `NagState::Unanchored` is the fall-through of
+    /// `work_status`'s chain: this work holds no anchor records at all,
+    /// however it was sealed.
+    nag: Option<NagState>,
+    /// **(c) the spec's class** — `WorkStatus::is_unanchored`, answering
+    /// *"are there zero headline-eligible anchors?"* (MVP-SPEC.md line 137).
+    /// The only one of the three that may gate the loud UNANCHORED sentence.
+    zero_headline_eligible: bool,
+}
+
+/// One named column of the vocabulary table, rendered to a comparable
+/// string.
+///
+/// The rendering is what lets one loop hold a `bool` column against a
+/// five-valued one: the collapse check is about *distinguishing power* and
+/// nothing else about the values matters.
+type Column = (&'static str, fn(Vocabulary) -> String);
+
+fn vocabulary_of(store: &WorkStore<'_>, listing: &WorkListing, tag: u8) -> Vocabulary {
+    let id = seal_id(tag);
+    let row = listing
+        .works
+        .iter()
+        .find(|row| row.seal_id == id)
+        .unwrap_or_else(|| panic!("no `list` row for fixture work {tag:#04x}"));
+    Vocabulary {
+        made_with_no_anchor: row.unanchored,
+        nag: row.nag,
+        zero_headline_eligible: status_of(store, tag).is_unanchored(),
+    }
+}
+
+/// **Q120 / D98 rider 3c**: one vault, one work, three predicates that share
+/// the word UNANCHORED — and no two of them may be computed from each other.
+///
+/// The ruling is a prohibition, so a snapshot of three constants does not
+/// discharge it: constants stay green under exactly the rewrite the rider
+/// forbids as soon as somebody re-blesses them, and they never see a
+/// *negated* collapse at all. So the table below is only the first half. The
+/// second is the loop at the bottom, which asserts that **no column here is
+/// a function of another column** — the mechanical statement of "these are
+/// three questions", and the thing that reddens when two of them become one.
+///
+/// All four planted faults this test was built against are named in the
+/// Q120 entry; each reddened, and the two that survive a re-blessed table
+/// are caught only by that loop.
+///
+/// # Why the two surfaces are read at two different clocks
+///
+/// `status` is read at [`VERIFY_AT`] against the injected mock roots (that
+/// is its production shape, with the roots swapped per A6/A7); `list` reads
+/// its nag at `listing::NAG_VERIFY_AT_UNIX` against `TsaRootStore::pinned()`,
+/// which the mock CA is not in. That asymmetry is what a user actually sees,
+/// so it is what the table records — but it is **not** what makes work 3
+/// interesting. Work 3's TSA slot holds `b"not a TimeStampResp"` and its OTS
+/// holds an attestation type no verifier implements, so work 3's three
+/// answers differ under *any* root store and *any* clock. Rows 1, 2 and 5
+/// are here for coverage and do carry the root-store difference.
+#[test]
+fn the_three_unanchored_predicates_answer_three_questions_and_may_not_collapse() {
+    let vault = fixture_vault();
+    let unlocked = vault.unlock();
+    seal_a_degraded_work_with_no_anchors(&unlocked);
+    let store = WorkStore::new(&unlocked);
+    let listing = WorkListing::gather(&store).expect("gather");
+
+    let v = |a: bool, nag: NagState, c: bool| Vocabulary {
+        made_with_no_anchor: a,
+        nag: Some(nag),
+        zero_headline_eligible: c,
+    };
+    // | work | (a) `--no-anchor`? | (b) nag class | (c) zero headline-eligible? |
+    let table: [(u8, Vocabulary); 6] = [
+        (0x01, v(false, NagState::OnlyPendingOts, false)),
+        (0x02, v(false, NagState::AttestedOnly, false)),
+        // **The row D98 rider 3c is about.** Three questions, three answers,
+        // one work: it was not sealed with `--no-anchor`, it is not the
+        // "no anchors at all" class, and it nonetheless has zero
+        // headline-eligible anchors — so it is the spec's UNANCHORED and
+        // neither of the other two.
+        (0x03, v(false, NagState::AttestedOnly, true)),
+        (0x04, v(true, NagState::Unanchored, true)),
+        (0x05, v(false, NagState::AttestedOnly, false)),
+        (DEGRADED_TO_NOTHING, v(false, NagState::Unanchored, true)),
+    ];
+    let measured: Vec<(u8, Vocabulary)> = table
+        .iter()
+        .map(|(tag, _)| (*tag, vocabulary_of(&store, &listing, *tag)))
+        .collect();
+    assert_eq!(
+        measured,
+        table.to_vec(),
+        "the UNANCHORED vocabulary table moved; three predicates, one column each"
+    );
+
+    // Work 3, spelled out, because it is the row the ruling cites and a
+    // reader should not have to diff a table to find it.
+    let w3 = measured[2].1;
+    assert!(
+        !w3.made_with_no_anchor,
+        "(a) work 3 was sealed with anchors"
+    );
+    assert_eq!(
+        w3.nag,
+        Some(NagState::AttestedOnly),
+        "(b) work 3 holds anchors, so it is not the `no anchors at all` class"
+    );
+    assert!(
+        w3.zero_headline_eligible,
+        "(c) work 3's TSA is invalid and its OTS is internally-consistent-only, so the \
+         spec's UNANCHORED sentence is the true one for it"
+    );
+
+    // Read first, because it is the sharpest single diagnosis: the class
+    // column has stopped distinguishing the classes this vault holds.
+    // `NagState::ALL`'s length is the enum's, so this counts what exists
+    // rather than what someone copied into an array.
+    assert!(
+        NagState::ALL
+            .iter()
+            .filter(|state| measured.iter().any(|(_, v)| v.nag == Some(**state)))
+            .count()
+            >= 3,
+        "the nag column no longer separates the classes this vault holds:\n{measured:#?}"
+    );
+
+    // ── The prohibition itself ─────────────────────────────────────────
+    //
+    // **No column here may be a function of another column.** That is what
+    // a collapse *is* — one predicate rewritten to read another — and it is
+    // detected by finding two works that agree on the second and disagree
+    // on the first. Two properties this has and a table of constants does
+    // not:
+    //
+    // * It survives a re-bless. A lane that collapses two predicates and
+    //   then updates the table above to match leaves the table green and
+    //   this red, with a message naming the pair.
+    // * It catches a **negated** collapse. `is_unanchored()` rewritten as
+    //   `!row.unanchored` disagrees with the shaping flag on every row, so
+    //   a plain "these two differ somewhere" check would pass it; a
+    //   functional dependence does not care which way round the wire is
+    //   soldered.
+    //
+    // Rendering each column to a `String` is what lets one loop compare a
+    // `bool` column against a five-valued one: the assertion is about
+    // *distinguishing power*, and nothing else about the values matters.
+    let columns: [Column; 3] = [
+        ("(a) sealed with --no-anchor", |v| {
+            v.made_with_no_anchor.to_string()
+        }),
+        ("(b) the nag class", |v| format!("{:?}", v.nag)),
+        ("(c) zero headline-eligible anchors", |v| {
+            v.zero_headline_eligible.to_string()
+        }),
+    ];
+    for (i, (name_x, x)) in columns.iter().enumerate() {
+        for (j, (name_y, y)) in columns.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let separated = measured.iter().any(|(_, left)| {
+                measured
+                    .iter()
+                    .any(|(_, right)| y(*left) == y(*right) && x(*left) != x(*right))
+            });
+            assert!(
+                separated,
+                "COLLAPSE: over every work in this vault, {name_x} is a function of \
+                 {name_y} — so one could now be computed from the other and no reader \
+                 would be able to tell them apart. D98 rider 3c forbids exactly this. \
+                 The table:\n{measured:#?}"
+            );
+        }
+    }
+
+    // The count the module docs of `listing` and `NagState` both quote in
+    // prose. Pinned here so the sixth variant reddens a test instead of
+    // quietly falsifying two paragraphs, which is what D100 R7's fifth
+    // variant did to them (D98 rider 3b still reads `three`).
+    assert_eq!(
+        NagState::ALL.iter().filter(|state| !state.nags()).count(),
+        4,
+        "\"no nag\" has four different meanings; both doc comments say so in words"
     );
 }
