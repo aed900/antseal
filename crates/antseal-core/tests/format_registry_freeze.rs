@@ -47,8 +47,11 @@
 //! unbacked — and the mirror had silently drifted from its own source.
 //! This file now reads the document and compares its mechanical tables to
 //! the mirror: §7's map tables (keys, **names**, reserved bands and named
-//! slots), §6's enum tables, §2's fixed-length table, §11's cap table.
-//! Brittleness to formatting is a feature after the freeze: the normative
+//! slots), §7's per-field **type**, **presence**, `may be empty` **rule** and
+//! **tier** tags (D111 R2–R5), §6's enum tables, §2's fixed-length table,
+//! §11's cap table. The two surfaces' **prose** is compared to nothing, in
+//! either direction, by design — D111 R1 records the measurement that refused
+//! it. Brittleness to formatting is a feature after the freeze: the normative
 //! document should not be reformatted silently.
 //!
 //! # E — recorded non-assertions
@@ -1730,7 +1733,11 @@ fn report_anchor_state_matches_the_wire_anchor_status() {
 // why §14's claim was unbacked and why the mirror had drifted from its own
 // source (D8 §17 items 6, 7, 9). These assertions read the document and
 // compare its **mechanical tables** — the ones that are data rather than
-// prose — to the mirror.
+// prose — to the mirror. Four of them — `type`, `presence`, the
+// `may be empty` rule and the tier tags (D111 R2–R5) — pin per-field columns
+// that reached no assertion before, and the comment block introducing them
+// records why the two surfaces' **prose**, by contrast, is compared to
+// nothing in either direction and must stay that way.
 
 /// The normative document, read once per assertion.
 fn document() -> String {
@@ -1879,6 +1886,413 @@ fn the_document_map_tables_match_the_mirror() {
     assert_eq!(
         sections_checked, 14,
         "all fourteen registered maps must have a §7.x table"
+    );
+}
+
+/// One documented §7.x field beside the mirror object that claims to mirror
+/// it, as produced by [`map_rows_against_the_mirror`].
+///
+/// `section` rides along so a failure can cite the frozen registry **by
+/// section** — `registry §7.6 key 3` — which is this project's citation
+/// discipline for the two frozen wire documents: a line number into a frozen
+/// file rots at the next edit, and `scripts/check-traceability.py` rejects
+/// one.
+struct MapRow<'a> {
+    map: &'a str,
+    section: &'a str,
+    key: u64,
+    cells: Vec<&'a str>,
+    field: &'a Value,
+}
+
+/// Every (map, key) pair of §7.x, as the document's row beside the mirror's
+/// field.
+///
+/// Panics naming the pair if a documented key has no mirror field or the
+/// reverse. A silent skip is the one failure mode the assertions below cannot
+/// tolerate, because each of them certifies a **count**: a parse that quietly
+/// found nothing would pass every comparison it made and certify nothing.
+///
+/// Reserved *band* rows (keyed by a range) and *named* reserved slots (keyed
+/// by a number, but flagged in the presence cell) are not fields and are
+/// stepped over; both are already pinned in both directions by
+/// [`the_document_map_tables_match_the_mirror`]. The section each map lives
+/// in is read from the mirror's own `doc_section` pointer, exactly as that
+/// test does, so no fifteenth copy of the map⟷section mapping is introduced.
+fn map_rows_against_the_mirror<'a>(doc: &'a str, root: &'a Value) -> Vec<MapRow<'a>> {
+    const HEADER: &str = "| key | field | type | presence | len/shape |";
+
+    let mut rows = Vec::new();
+    for entry in as_array(get(root, "maps", "registry root"), "maps") {
+        let map = get_str(entry, "name", "maps");
+        let section = get_str(entry, "doc_section", map);
+
+        let mut documented: BTreeMap<u64, Vec<&str>> = BTreeMap::new();
+        for cells in table_under(doc, &format!("### {section} "), HEADER) {
+            assert_eq!(
+                cells.len(),
+                5,
+                "maps.{map}: registry §{section}'s rows have five columns after \
+                 the freeze (D8 §15)"
+            );
+            let Ok(key) = cells[0].parse::<u64>() else {
+                continue; // a reserved band row, keyed by a range
+            };
+            if cells[3].contains("reserved") {
+                continue; // a named reserved slot, not a field
+            }
+            assert!(
+                documented.insert(key, cells).is_none(),
+                "maps.{map}: registry §{section} documents key {key} twice"
+            );
+        }
+
+        for field in as_array(get(entry, "fields", map), map) {
+            let key = get_u64(field, "key", map);
+            let cells = documented.remove(&key).unwrap_or_else(|| {
+                panic!(
+                    "maps.{map}: the mirror carries a field at registry §{section} \
+                     key {key} and the document has no row for it"
+                )
+            });
+            rows.push(MapRow {
+                map,
+                section,
+                key,
+                cells,
+                field,
+            });
+        }
+
+        assert!(
+            documented.is_empty(),
+            "maps.{map}: registry §{section} documents keys {:?} that the mirror \
+             carries no field for",
+            documented.keys().collect::<Vec<_>>()
+        );
+    }
+    rows
+}
+
+/// The normalisation of a `presence` cell, shared by the presence and
+/// `may be empty` assertions so that the two cannot drift apart: emphasis and
+/// backticks removed, trimmed, lowercased.
+///
+/// Stripping `*` covers `**` in the same pass. The function is **total** —
+/// every cell yields a string — and it is the *caller* that decides an
+/// unrecognised result is a failure rather than a skip.
+fn normalised_presence(cell: &str) -> String {
+    cell.replace(['*', '`'], "").trim().to_lowercase()
+}
+
+/// The tier letters tagged in a `len/shape` cell: the set of `[P]`, `[X]` and
+/// `[R]` tokens it contains, which is exactly what `\[([PXR])\]` collects.
+///
+/// Hand-rolled because this crate carries no regex dependency and the pattern
+/// is three literal three-byte tokens. **Bracketed and case-sensitive**: a
+/// bare `P` and a lowercase `[p]` are prose, not tier tags, so rewriting the
+/// words around a tag can neither manufacture one nor destroy one.
+fn tier_tags(cell: &str) -> BTreeSet<&'static str> {
+    [("[P]", "P"), ("[X]", "X"), ("[R]", "R")]
+        .into_iter()
+        .filter(|(token, _)| cell.contains(token))
+        .map(|(_, letter)| letter)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// D — why the two surfaces' PROSE is compared to nothing, and what is
+//     compared instead (D111; Q131's Accept clause 2)
+// ---------------------------------------------------------------------------
+//
+// `registry-v1.md`'s `len/shape` cell (`cells[4]`) and `registry-v1.json`'s
+// `notes` field state overlapping facts in independent words, and **nothing
+// in this project compares them, in either direction, by design**.
+//
+// `622f5fe` §1 ruled the naive form out and the ruling stands:
+//
+//     "§2 groups fields by byte length and names them in prose while
+//      `scalars[]` names them by role with synthetic keys (`salt16`,
+//      `commit32`, `hash32`), so the two are not row-comparable and a
+//      substring match on the prose would pin editorial wording rather
+//      than format facts."
+//
+// D111 measured whether a CLOSED VOCABULARY escapes that ruling. It does
+// not — it renames it. Over the 68 (map, key) pairs, symmetric and
+// emphasis-stripped:
+//
+//   * `UNANCHORED` occurs in BOTH surfaces' prose at registry §7.6 key 3
+//     and nowhere else in either, so a term-presence rule is satisfied at
+//     all 68 keys by construction — INCLUDING at the one key whose two
+//     copies actually diverge. The check is green on its own motivating
+//     case.
+//   * the tier letters `[P]`/`[X]`/`[R]` are md-only at 25 of the (key,
+//     letter) pairs, because the mirror does not put tiers in prose: it
+//     has a `tier` field. A symmetric check reddens 25 times for zero
+//     defects.
+//   * `may be empty` appears in the mirror's `rule` field at 8 keys and in
+//     the `.md`'s PRESENCE cell at the same 8 — but in `cells[4]` at only
+//     2, so hunting the phrase in the prose cell misses three quarters of
+//     the sites where both surfaces actually state it.
+//   * `reserved` splits 1/1 on editorial cross-references, while the
+//     reserved FACT is already pinned both ways by
+//     `the_document_map_tables_match_the_mirror`.
+//
+// Root cause: the two cells are not the same field. The `.md` cell merges
+// byte length, shape pointer, tier tags, conditions and gloss; the mirror
+// splits those across `length`, `type`, `rule`, `tier` and `notes`. 66 of
+// 68 pairs differ literally, and at 5 scalar keys the `.md` cell is a bare
+// `32`/`16` against an EMPTY `notes`. Not comparable.
+//
+// WHAT COVERS THE GAP INSTEAD — this is the operative half of the refusal:
+//
+//   1. The four assertions below pin the mirror's `type`, `presence`,
+//      `rule` and `tier` against the document's own columns. D108 §3.1 C1
+//      names all four as format surface, and before D111 NOTHING in
+//      `crates/` read `tier` or `rule` at all.
+//   2. `format_freeze.rs`'s `every_erratum_quotes_its_frozen_sentence_verbatim`
+//      (D108 R4) pins the full text of any prose sentence known to be
+//      over-read — BOTH copies of registry §7.6 key 3's sentence are
+//      entries there today, byte-for-byte, one per surface.
+//   3. `FROZEN.sha256` covers every remaining prose byte. D108 §3.2: the
+//      prose is the ONLY content the digest alone covers, which is an
+//      argument for the digest and not against it.
+//
+// Do not add a prose comparison here. If a future divergence matters, it
+// is an erratum entry (2) or a registry-version event, never a substring
+// match.
+
+/// **D — §7's `type` column against the mirror's `type` field.**
+///
+/// Closed at five spellings — `bstr`, `uint`, `tstr`, `array`, `map` — the
+/// CBOR major types a decoder branches on. The registry is **frozen**, so the
+/// set of types across all 68 keys is format-permanent and a sixth spelling
+/// is a format-version event this must catch.
+///
+/// Compared **case-sensitively and byte-for-byte, with no emphasis
+/// stripping**: the type column is data and carries no emphasis today, so a
+/// `**bstr**` appearing in either surface is itself the drift.
+#[test]
+fn the_document_type_column_matches_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    let mut pairs_compared = 0usize;
+    let mut observed: BTreeMap<&str, usize> = BTreeMap::new();
+    for row in map_rows_against_the_mirror(&doc, &root) {
+        let documented = unticked(row.cells[2]).trim();
+        let mirrored = get_str(row.field, "type", row.map);
+        assert_eq!(
+            documented, mirrored,
+            "maps.{}: registry §{} key {}'s type column says `{documented}` and \
+             the mirror says `{mirrored}`",
+            row.map, row.section, row.key
+        );
+        *observed.entry(mirrored).or_default() += 1;
+        pairs_compared += 1;
+    }
+
+    // Anti-vacuity. A parse that silently found nothing would make every
+    // comparison above succeed by never running.
+    assert_eq!(
+        pairs_compared, 68,
+        "the fourteen §7.x tables carry 68 documented fields between them; a run \
+         that compares fewer has stopped parsing, not started passing"
+    );
+    assert_eq!(
+        observed,
+        BTreeMap::from([
+            ("array", 14),
+            ("bstr", 25),
+            ("map", 5),
+            ("tstr", 4),
+            ("uint", 20),
+        ]),
+        "the frozen registry's type vocabulary is closed at these five spellings \
+         with these multiplicities"
+    );
+}
+
+/// **D — §7's `presence` column against the mirror's `presence` field.**
+///
+/// Closed at two values: `required` — a decoder rejects a manifest or bundle
+/// missing it, 58 keys — and `optional`, where absence is legal, 10 keys. The
+/// mirror takes no third value across all 68 keys and the registry is frozen.
+///
+/// The `.md` writes far more than the bare word (`**opt — biconditional,
+/// [R]: …**`), so the document side is normalised by [`normalised_presence`]
+/// and matched on its leading `req`/`opt`. The normalisation is **total or
+/// the test fails**: a cell that reduces to neither is a hard panic naming
+/// the pair and the raw cell, never a silent skip. The mirror side is
+/// compared case-sensitively against the two literals.
+#[test]
+fn the_document_presence_column_matches_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    let mut required_seen = 0usize;
+    let mut optional_seen = 0usize;
+    for row in map_rows_against_the_mirror(&doc, &root) {
+        let normalised = normalised_presence(row.cells[3]);
+        let documented = if normalised.starts_with("req") {
+            required_seen += 1;
+            "required"
+        } else if normalised.starts_with("opt") {
+            optional_seen += 1;
+            "optional"
+        } else {
+            panic!(
+                "maps.{}: registry §{} key {}'s presence cell `{}` normalises to \
+                 `{normalised}`, which begins with neither `req` nor `opt` — this \
+                 normalisation is total or this test fails, and it never skips",
+                row.map, row.section, row.key, row.cells[3]
+            )
+        };
+        let mirrored = get_str(row.field, "presence", row.map);
+        assert_eq!(
+            documented, mirrored,
+            "maps.{}: registry §{} key {} is `{documented}` in the document and \
+             `{mirrored}` in the mirror",
+            row.map, row.section, row.key
+        );
+    }
+
+    // Anti-vacuity, as two independent floors rather than one total: a
+    // normalisation bug that collapsed every cell into a single branch would
+    // still satisfy a sum of 68.
+    assert_eq!(
+        required_seen, 58,
+        "the frozen registry requires 58 of its 68 documented fields"
+    );
+    assert_eq!(
+        optional_seen, 10,
+        "the frozen registry makes 10 of its 68 documented fields optional"
+    );
+    assert_eq!(
+        required_seen + optional_seen,
+        68,
+        "every documented field lands in exactly one of the two branches"
+    );
+}
+
+/// **D — the `may be empty` rule, as a set, in both directions.**
+///
+/// Load-bearing because it is the difference between *"a bundle with no
+/// anchors is UNANCHORED"* and *"a bundle with no anchors is a parse error"*:
+/// registry §7.6 keys 3/4 and 6–9 turn on it. It is the one term of Q131's
+/// proposed six that survives measurement, and the vocabulary closes at one
+/// because it is the only `rule` value that recurs as a bare closed phrase —
+/// every other is a per-key condition or a prose rationale.
+///
+/// Asserted as **set equality**, so a drop on either surface reddens and the
+/// failure names both one-sided differences.
+#[test]
+fn the_document_may_be_empty_rule_matches_the_mirror() {
+    const RULE: &str = "may be empty";
+    let doc = document();
+    let root = registry();
+
+    let mut from_document: BTreeSet<String> = BTreeSet::new();
+    let mut from_mirror: BTreeSet<String> = BTreeSet::new();
+    for row in map_rows_against_the_mirror(&doc, &root) {
+        let pair = format!(
+            "maps.{} key {} (registry §{})",
+            row.map, row.key, row.section
+        );
+        if normalised_presence(row.cells[3]).contains(RULE) {
+            from_document.insert(pair.clone());
+        }
+        if row
+            .field
+            .get("rule")
+            .and_then(Value::as_str)
+            .is_some_and(|rule| rule.trim().to_lowercase() == RULE)
+        {
+            from_mirror.insert(pair);
+        }
+    }
+
+    let document_only: Vec<&String> = from_document.difference(&from_mirror).collect();
+    let mirror_only: Vec<&String> = from_mirror.difference(&from_document).collect();
+    assert!(
+        document_only.is_empty() && mirror_only.is_empty(),
+        "the `{RULE}` rule must be stated on both surfaces or on neither — \
+         document-only: {document_only:?}; mirror-only: {mirror_only:?}"
+    );
+
+    // Anti-vacuity: two empty sets are equal, and would certify nothing.
+    assert_eq!(
+        from_document.len(),
+        8,
+        "the frozen registry states `{RULE}` at eight keys"
+    );
+}
+
+/// **D — §7's inline tier tags against the mirror's `tier` field.**
+///
+/// Closed at three letters, matched **only inside square brackets**: `[P]`
+/// decidable from the one entry being decoded, `[X]` decidable from the whole
+/// container, `[R]` post-decode (D78). `validation_tiers.tiers[]` declares
+/// exactly these three and is frozen.
+///
+/// **Recorded narrowing** (D8 §14's E-family discipline): the relation is
+/// **containment, not equality**, and deliberately one-directional. The `.md`
+/// tags *per clause* and only where a tier is load-bearing or surprising,
+/// while the mirror's `tier` is one value *per field*, so equality is false
+/// at 27 of 68 for three benign reasons — 21 keys the document simply leaves
+/// untagged, cells that carry three tags for three conditions, and one mirror
+/// field that puts its tier letter in its `rule` string. What is true, and
+/// what this asserts, is that where the document tags any tier and the mirror
+/// declares one, the mirror's is among the document's.
+///
+/// This reads the `len/shape` cell, and it is the only assertion that does —
+/// but it reads **only** the three bracket tokens, never the surrounding
+/// words. Rewrite every word of that cell and this does not move.
+#[test]
+fn the_document_tier_tags_are_consistent_with_the_mirror() {
+    let doc = document();
+    let root = registry();
+
+    let mut both_present = 0usize;
+    let mut skipped = 0usize;
+    for row in map_rows_against_the_mirror(&doc, &root) {
+        let tagged = tier_tags(row.cells[4]);
+        match (
+            tagged.is_empty(),
+            row.field.get("tier").and_then(Value::as_str),
+        ) {
+            (false, Some(mirrored)) => {
+                both_present += 1;
+                assert!(
+                    tagged.contains(mirrored),
+                    "maps.{}: registry §{} key {} tags {:?} in its len/shape cell \
+                     and the mirror declares tier `{mirrored}`, which is not among \
+                     them",
+                    row.map,
+                    row.section,
+                    row.key,
+                    tagged
+                );
+            }
+            // Either surface staying silent is legal; §7.3 key 6 is the one
+            // pair where the document tags and the mirror does not.
+            _ => skipped += 1,
+        }
+    }
+
+    // Anti-vacuity, and this assertion needs it most because it is the only
+    // guarded one: a regex that stops matching, a mirror that nulls its
+    // tiers, or a document whose tags are reformatted all leave every
+    // surviving comparison passing while the guard quietly swallows the pair.
+    assert_eq!(
+        both_present, 19,
+        "19 of the 68 keys are tagged in the document AND typed in the mirror; a \
+         shift means one side stopped being read, not that the two agree"
+    );
+    assert_eq!(
+        both_present + skipped,
+        68,
+        "every documented field is either compared or counted as skipped"
     );
 }
 

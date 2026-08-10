@@ -229,6 +229,33 @@ fn the_cbor2_pin_is_exact_and_dev_tool_only() {
     }
 }
 
+/// Scope is decided in exactly ONE place in the Python checker.
+///
+/// It was decided in two on 2026-08-09: `run` was narrowed to the mapping test
+/// and `self_test`'s copy was not, so `--self-test` went red against a green
+/// `--check` — CI runs them as separate steps and only the second one selects.
+/// The repair routed both through `scope_of`; this is what stops a third
+/// expression being written. A literal count, deliberately: it replaces a
+/// comment asking the next author to remember, which is what was there.
+///
+/// The literal is banned in prose too — paraphrase it if you need to discuss
+/// it, exactly as `the_cbor2_pin_is_exact_and_dev_tool_only` bans `dumps`.
+#[test]
+fn the_cbor_scope_predicate_is_written_exactly_once() {
+    const PREDICATE: &str = "isinstance(c.get(\"diagnostic\"), dict)";
+    let source = read("testdata/vectors/v1/crosscheck_cbor.py");
+    let found = source.matches(PREDICATE).count();
+    assert_eq!(
+        found, 1,
+        "testdata/vectors/v1/crosscheck_cbor.py contains {found} copies of the CBOR scope \
+         predicate `{PREDICATE}`; there must be exactly ONE, inside `scope_of`, which `run` \
+         and `self_test` both call. A scope rule written twice is a scope rule that will \
+         diverge — it did on 2026-08-09, and only CI saw it because `--check` and \
+         `--self-test` are separate steps and only the second one selects \
+         (docs/testing/cbor-cross-check.md §8.1, D112 R1)"
+    );
+}
+
 /// Tiny helper so an empty scrape fails as an empty scrape, not as a
 /// confusing equality assertion between two empty vectors.
 trait TapNonEmpty {

@@ -35,6 +35,16 @@
 //! than replacing it (MVP-SPEC.md line 123: every released version stays
 //! verifiable forever).
 //!
+//! The authority for byte-immutability is **Q14's own freeze act**, not
+//! MVP-SPEC.md line 123 (**Q132**). Line 123 is the *compatibility* rule and
+//! is conditioned on *released* — D104 §1.5 measures with three independent
+//! confirmations that nothing has been released — so citing it as the source
+//! of immutability hands a reader a conditional whose condition is false
+//! today, and with it the inference that the freeze is soft, which D108 §3
+//! spends a section refusing. Q14 is deliberately stronger than line 123
+//! requires; line 123 is what the freeze protects once a version ships, and
+//! is cited above and below only for that.
+//!
 //! # Discovery, so a v2 registry cannot land unfrozen
 //!
 //! The must-freeze set is not a hand-written list of two paths: it is every
@@ -157,9 +167,11 @@ fn check_dir(dir: &Path) -> Result<usize, Vec<String>> {
                     failures.push(format!(
                         "{origin}: frozen registry file `{}` CHANGED\n      pinned {}\n      \
                          actual {}\n    the wire registry IS format v1 — a byte change to it is \
-                         a format-version event, not an edit (MVP-SPEC.md line 123; procedure \
-                         Q27). If the change is editorial, it still needs a recorded, reviewed \
-                         re-bless via `scripts/format-freeze.sh --update`.",
+                         a format-version event, not an edit (authority: Q14's freeze act, \
+                         deliberately stronger than MVP-SPEC.md line 123, which is the \
+                         released-version COMPATIBILITY rule the freeze protects rather than \
+                         its source; procedure Q27). If the change is editorial, it still needs \
+                         a recorded, reviewed re-bless via `scripts/format-freeze.sh --update`.",
                         entry.path, entry.digest, actual
                     ));
                 }

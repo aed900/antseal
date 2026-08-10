@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Two checks live here, and they are the same shape: something written down in
+Five checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -12,6 +12,11 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         resolves to a record, a registered alternative home,
                         or an open register entry; and nothing cites the
                         frozen wire registry by line number (Q57, Q58).
+    --task-citations    Every task id cited in code, in a normative doc or in
+                        a gate script resolves to a row in TODO.md's register
+                        (Q85).
+    --task-entries      Every row in TODO.md has a detail entry in
+                        tasks/<domain>.md, and every entry has a row (Q85).
 
 Run with no arguments to run every check.
 
@@ -581,10 +586,404 @@ def check_decisions(failures: Failures) -> None:
         )
 
 
+# ── checks 4 and 5: task ids resolve, in both directions (Q85, ruled by D109) ─
+# Q85 asked for ONE check mirroring `check_decisions()` — "the same twenty lines
+# pointed at the other kind of pointer". D109 §1.4 refuses that on a
+# measurement: the D namespace is DENSE (D1–D108, zero holes) and the nine task
+# domains are 71 unallocated numbers wide inside `1..max`. `check_decisions()`'s
+# only bound, `n > max(allocated) → skip`, is therefore equivalent to "n is
+# allocated" for a dense namespace and is a 71-number-wide false-positive
+# surface for a sparse one — every unresolved hit this sweep returns lands in a
+# hole, which is the mechanism, not a coincidence.
+#
+# So: two checks, two flags. They share no code path beyond
+# `allocated_task_ids()`. The citation half reads TODO.md and the scan
+# surfaces; the entry half reads TODO.md and tasks/*.md and never touches the
+# scan surfaces. They are different questions with different inputs and — the
+# operative reason — different backlogs that must be able to fail
+# independently (D109 §3.1).
+
+TASK_DOMAINS = "PFCGSARUQ"
+
+# Where task citations are swept. Mirrors DECISION_SCAN and adds `scripts/`:
+# the gate is committed code and a dangling task pointer there is as normative
+# as one in `crates/`. docs/decisions/ is deliberately OUT — see D109 §3.3: a
+# decision record's job includes PROPOSING work the orchestrator may then
+# number, renumber or decline, and sweeping it fails 13 rows for ids that D92
+# and D93 merely proposed.
+TASK_SCAN = ["crates", "docs/format", "docs/testing", "scripts"]
+TASK_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
+
+# This file names task ids as literals in its registers and plants them in
+# `--self-test`. Sweeping it would report its own fixtures (D109 §3.3).
+TASK_SCAN_SELF = "scripts/check-traceability.py"
+
+# Both row shapes. `- ~~**P18**` carries NO checkbox: protocol rule 1 says a
+# retired task is struck, never deleted, so this shape is mandated and will
+# recur. A checkbox-only regex reports P18 as an entry with no row — the false
+# positive on the one row the protocol most wants preserved (D109 §1.2). The
+# "known standing offset" of one between the P domain's header count and a
+# grep is this regex bug, in every ad-hoc script that has measured the file.
+TASK_ROW = re.compile(r"^- (?:\[[ xX]\]|~~)\s*\*\*([" + TASK_DOMAINS + r"])(\d+)\*\*", re.M)
+
+# An entry is a level-3 heading, exactly. `tasks/Q.md`'s
+# `#### Q14 freeze checklist — normative rows` is a sub-heading OF the Q14
+# entry, not a second entry, and sub-headings are permitted: the level is the
+# whole discriminator.
+#
+# Measured correction to D109 §1.3, which says a detector keyed on `^#{2,4}`
+# reports Q14 twice. It does not — that line puts " freeze checklist " between
+# the id and the em-dash, so it fails this pattern at BOTH levels, and keying
+# on `^#{2,4}` leaves the tree green at an unchanged entry count. The
+# tolerance still has to be pinned, because a `#### ` sub-heading written in
+# the `<ID> — <title>` grammar would be double-counted; self-test case (i)
+# plants exactly that, and so bites where the tree's own sub-heading does not.
+TASK_ENTRY = re.compile(r"^### ([" + TASK_DOMAINS + r"])(\d+) — ")
+
+TASK_BARE = re.compile(r"\b([" + TASK_DOMAINS + r"])(\d{1,3})\b")
+TASK_MARKED = re.compile(
+    r"`([" + TASK_DOMAINS + r"])(\d{1,3})`|\*\*([" + TASK_DOMAINS + r"])(\d{1,3})\*\*"
+)
+
+# Tokens that match a task id and are not citations. Keyed by (id, PATH) so a
+# suppression in one file can never mute a real citation of the same id
+# elsewhere. A stale entry is itself a failure — see check_task_citations.
+#
+# The growth brake is the key: silencing a new false positive means naming the
+# exact file, which is reviewable in a diff in a way that adding a bare id is
+# not. `A71` was deliberately NOT put here — it is real, described,
+# unregistered work in a committed gate script, and registering it as noise
+# would make this check's first run certify a dangling pointer instead of
+# finding one (D109 §3.4). It got a row.
+TASK_ID_NOT_A_CITATION: dict[tuple[str, str], str] = {
+    ("R46", "crates/antseal-core/src/anchor/roots/mod.rs"):
+        "'Sectigo Public Time Stamping Root R46' — a CA subject DN. 46 is a "
+        "hole in R (R has 12), so no numeric bound can separate it.",
+    ("R46", "crates/antseal-core/src/anchor/roots/PROVENANCE.md"):
+        "Same DN, in the provenance table that records where the root came "
+        "from.",
+    ("Q72", "docs/testing/error-code-contract.md"):
+        "Mention, not use: :215-219 RECORDS that Q72 was never issued — "
+        "'Q72 is named by neither, so D60 points a reader at nothing' and "
+        "'A38 = Q80 = Q72 = the work this section is'. Failing on the "
+        "sentence that documents the defect is not the check working.",
+}
+
+# CLOSED 2026-08-10 (D109 §3.5). These 20 rows predate --task-entries. The date
+# is the lock: every value must carry BACKLOG_FROZEN_ON, so a 22nd entry cannot
+# be added without either dating it falsely in a diff or moving the constant,
+# which invalidates all 21 at once. It may only SHRINK. Drained by the two
+# follow-up rows D109 §8 (iii) and (iv) describe: the 12 open rows first,
+# because those are the live hazard, and the 8 done rows separately and later,
+# because they are archaeology.
+#
+# The 21 were MEASURED against the tree at the moment this constant was
+# written, not transcribed from the decision record — the two agree, and the
+# open/done split is the tree's, read from each row's own checkbox. One entry
+# is already known to be short-lived: Q130's `tasks/Q.md` entry lands later in
+# this same wave, and the staleness rule below will then fail until its line
+# here is deleted. That is the register working, not a defect.
+BACKLOG_FROZEN_ON = "2026-08-10"
+ROWS_PENDING_ENTRY: dict[str, tuple[str, str]] = {
+    # --- open rows: the live hazard, drained first ---
+    "A72":  (BACKLOG_FROZEN_ON, "open, M2 — TSA identity reconciliation"),
+    "A74":  (BACKLOG_FROZEN_ON, "open, M2 — MIN_VERIFIED_TSA_TOKENS doc claim"),
+    "A76":  (BACKLOG_FROZEN_ON, "open, M2 — recorded Bitcoin height is merge order"),
+    "A105": (BACKLOG_FROZEN_ON, "open, M2 — A25 Accept row 2"),
+    "A108": (BACKLOG_FROZEN_ON, "open, M2 — freeze-manifest events in A26's Do"),
+    "Q88":  (BACKLOG_FROZEN_ON, "open, M2 — two signers under one root"),
+    "Q89":  (BACKLOG_FROZEN_ON, "open, M2 — distinct calendars vs identities"),
+    "Q122": (BACKLOG_FROZEN_ON, "open, M2 — dated corrections to resolved decisions"),
+    "Q123": (BACKLOG_FROZEN_ON, "open, M2 — capture script provenance fields"),
+    "R60":  (BACKLOG_FROZEN_ON, "open — R54's load-sensitive linear-time guard"),
+    "R76":  (BACKLOG_FROZEN_ON, "open — AnchorResult::source doc mood"),
+    "U39":  (BACKLOG_FROZEN_ON, "open — no lane type-checks --features ant-backend"),
+    # --- done rows: archaeology, drained second ---
+    "Q124": (BACKLOG_FROZEN_ON, "done — vectors README post-Q14 sentence"),
+    "S27":  (BACKLOG_FROZEN_ON, "done — D37 per-sub-batch capture hook"),
+    "S29":  (BACKLOG_FROZEN_ON, "done — imported complete work unrestorable"),
+    "S34":  (BACKLOG_FROZEN_ON, "done — closed with U66 under D106"),
+    "U36":  (BACKLOG_FROZEN_ON, "done — CLI storage-backend construction seam"),
+    "U37":  (BACKLOG_FROZEN_ON, "done — init/consent gate in the default lane"),
+    "U38":  (BACKLOG_FROZEN_ON, "done — D39 flag-supplied value not re-asked"),
+    "U40":  (BACKLOG_FROZEN_ON, "done — durable receipt sink attached"),
+}
+
+
+def task_id_key(tid: str) -> tuple[str, int]:
+    """Sort key: A105 sorts after A71, which string order gets backwards."""
+    return (tid[0], int(tid[1:]))
+
+
+def task_rows() -> list[tuple[str, bool]]:
+    """Every row in TODO.md's register as `(id, is_struck)`, in file order.
+
+    A list rather than a set because the entry half's success line reports the
+    live/struck split, which is what proves the struck shape is parsed at all.
+    """
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    return [
+        (m.group(1) + m.group(2), m.group(0).startswith("- ~~"))
+        for m in TASK_ROW.finditer(todo)
+    ]
+
+
+def allocated_task_ids() -> dict[str, set[int]]:
+    """Every allocated task number, keyed by domain letter, from both shapes.
+
+    The bound for the citation half, exactly as `allocated_decision_ids()` is
+    for the decision half. The count is measured, never pinned: rows are added
+    mid-wave by design and a hardcoded total would be red for most of every
+    wave. What is guarded is only the vacuous case — see each caller.
+    """
+    allocated: dict[str, set[int]] = {}
+    for tid, _struck in task_rows():
+        allocated.setdefault(tid[0], set()).add(int(tid[1:]))
+    return allocated
+
+
+def task_id_ceiling(allocated: dict[str, set[int]]) -> dict[str, int]:
+    """The highest allocated number per domain — tier 1's upper bound."""
+    return {domain: max(numbers) for domain, numbers in allocated.items() if numbers}
+
+
+def task_detail_entries() -> dict[str, list[tuple[str, int]]]:
+    """Every `### <ID> — ` entry, as `id -> [(filename, line)]`.
+
+    A list, not a scalar, so a duplicate entry is reportable rather than
+    silently collapsed onto whichever copy was read last.
+    """
+    entries: dict[str, list[tuple[str, int]]] = {}
+    for path in sorted((ROOT / "tasks").glob("*.md")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            match = TASK_ENTRY.match(line)
+            if match:
+                entries.setdefault(match.group(1) + match.group(2), []).append(
+                    (path.name, number)
+                )
+    return entries
+
+
+def sweep_task_surfaces() -> tuple[dict[str, set[str]], dict[str, set[str]], int]:
+    r"""`(every occurrence, marked occurrences, files read)` over TASK_SCAN.
+
+    Both maps are `id -> {relative path}`. Marked hits are a strict subset of
+    all hits: a backtick and an asterisk are both non-word characters, so
+    TASK_BARE's `\b` matches inside `` `A71` `` and `**A71**` too. That is what
+    lets the register's staleness rule be keyed on the one map.
+    """
+    cited: dict[str, set[str]] = {}
+    marked: dict[str, set[str]] = {}
+    files = 0
+    for sub in TASK_SCAN:
+        base = ROOT / sub
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in TASK_SUFFIXES:
+                continue
+            if {"target", "node_modules", "__pycache__"} & set(path.parts):
+                continue
+            relative = str(path.relative_to(ROOT))
+            if relative == TASK_SCAN_SELF:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            files += 1
+            for domain, number in TASK_BARE.findall(text):
+                cited.setdefault(domain + number, set()).add(relative)
+            for tick_d, tick_n, bold_d, bold_n in TASK_MARKED.findall(text):
+                domain, number = (tick_d, tick_n) if tick_d else (bold_d, bold_n)
+                marked.setdefault(domain + number, set()).add(relative)
+    return cited, marked, files
+
+
+def check_task_citations(failures: Failures) -> None:
+    check = "task-citations"
+
+    allocated = allocated_task_ids()
+    if not allocated:
+        failures.add(check, "no task ids found in TODO.md's register — the bound is vacuous")
+        return
+    ceiling = task_id_ceiling(allocated)
+    cited, marked, n_files = sweep_task_surfaces()
+
+    for tid in sorted(cited, key=task_id_key):
+        domain, number = tid[0], int(tid[1:])
+        if number in allocated.get(domain, ()):
+            continue
+        if number < 1:
+            # The floor. No domain allocates 0, and `A0`/`C0`/`F0` in this tree
+            # are hex byte values in UTF-8 prose ("E0 requires A0..=BF next"),
+            # not labels — so one rule kills them and every future hex byte of
+            # that shape, where a register would name them one at a time.
+            continue
+
+        if number <= ceiling.get(domain, 0):
+            paths = sorted(cited[tid])
+            unsuppressed = [p for p in paths if (tid, p) not in TASK_ID_NOT_A_CITATION]
+            if not unsuppressed:
+                continue
+            where = ", ".join(unsuppressed[:3])
+            failures.add(
+                check,
+                f"{tid} is cited ({where}) but has no row in TODO.md's register. Either the "
+                f"id was minted in a brief and never registered — add the row and its "
+                f"tasks/{domain}.md entry — or the token is not a task citation at all, in "
+                f"which case register it in TASK_ID_NOT_A_CITATION keyed by (id, path) with "
+                f"the reason.",
+            )
+            continue
+
+        # Above the ceiling there is no allocation evidence at all, so the
+        # citation must assert itself typographically: only a MARKED occurrence
+        # counts — the id as the whole content of a backtick or bold span.
+        #
+        # The blind spot, named. A newly minted, unregistered id written BARE
+        # and above its domain's ceiling is not reported. This is deliberate:
+        # bare tokens above the ceiling are where every curve name (`P384`),
+        # integer width (`U256`) and codec discriminant (`F64`) in this tree
+        # lives, and widening the rule to bare would report all of them. What
+        # covers it instead: (i) ids are conventionally written marked here, so
+        # a real citation almost always is; (ii) the moment the domain's
+        # ceiling advances past that number for any reason, the citation drops
+        # into tier 1 and fires; (iii) `--task-entries` catches the same defect
+        # from the other side the instant a row is added. Widening this branch
+        # to bare occurrences turns the self-test's green case (d) red, which
+        # is what forces a re-decision rather than a quiet edit.
+        if tid not in marked:
+            continue
+        where = ", ".join(sorted(marked[tid])[:3])
+        failures.add(
+            check,
+            f"{tid} is cited in marked form ({where}) and is above domain {domain}'s "
+            f"highest allocated number ({ceiling.get(domain, 0)}), so no row for it can "
+            f"exist. That is what a freshly minted, never-registered id looks like. Add "
+            f"the row, or unmark the citation if it is not a task id.",
+        )
+
+    # A suppression is a claim about the tree, and it can rot in two
+    # directions: the token it names can leave, or the id can gain a row.
+    for (tid, path), reason in sorted(TASK_ID_NOT_A_CITATION.items()):
+        if path not in cited.get(tid, set()):
+            failures.add(
+                check,
+                f"TASK_ID_NOT_A_CITATION registers ({tid}, {path}) as not-a-citation "
+                f"({reason}) but no occurrence of {tid} was swept there. Remove it — a stale "
+                f"suppression is how a lint decays into a permanent mute.",
+            )
+        if int(tid[1:]) in allocated.get(tid[0], ()):
+            failures.add(
+                check,
+                f"TASK_ID_NOT_A_CITATION suppresses {tid} at {path}, but {tid} now has a row "
+                f"in TODO.md. The suppression asserts something false about an allocated id; "
+                f"remove it and let the citation resolve.",
+            )
+
+    if not failures:
+        resolved = [t for t in cited if int(t[1:]) in allocated.get(t[0], ())]
+        print(
+            f"[{check}] ok — {len(resolved)} distinct task ids cited across {n_files} files, "
+            f"all resolve ({len(TASK_ID_NOT_A_CITATION)} registered as not-citations); no "
+            f"unregistered id cited in marked form above its domain ceiling"
+        )
+
+
+def check_task_entries(failures: Failures) -> None:
+    check = "task-entries"
+
+    rows = task_rows()
+    entries = task_detail_entries()
+    if not rows or not entries:
+        failures.add(
+            check,
+            f"TODO.md yielded {len(rows)} rows and tasks/*.md yielded {len(entries)} "
+            "entries — the entry check would be vacuous. Either a heading style changed "
+            "or the row grammar stopped matching.",
+        )
+        return
+
+    row_ids = {tid for tid, _struck in rows}
+    n_live = sum(1 for _tid, struck in rows if not struck)
+    n_struck = sum(1 for _tid, struck in rows if struck)
+
+    for tid, _struck in rows:
+        if tid in entries or tid in ROWS_PENDING_ENTRY:
+            continue
+        domain = tid[0]
+        failures.add(
+            check,
+            f"TODO.md row {tid} has no `### {tid} — ` entry in tasks/{domain}.md. A lane "
+            f"that opens tasks/{domain}.md to read this task's Do/Accept finds nothing "
+            f"and improvises. Write the entry. ROWS_PENDING_ENTRY is closed "
+            f"({BACKLOG_FROZEN_ON}) and is not available for rows added since.",
+        )
+
+    for tid in sorted(entries, key=task_id_key):
+        places = entries[tid]
+        domain = tid[0]
+        if tid not in row_ids:
+            name, line = places[0]
+            failures.add(
+                check,
+                f"tasks/{name}:{line} defines `### {tid} — ` but TODO.md has no row for "
+                f"{tid}, in either the checkbox form or the struck form `- ~~**{tid}**`. "
+                f"Statuses live only in TODO.md (protocol rule 1), so an entry with no row "
+                f"has no status and no milestone.",
+            )
+        if len(places) > 1:
+            where = ", ".join(f"tasks/{name}:{line}" for name, line in places)
+            failures.add(
+                check,
+                f"{tid} has {len(places)} `### {tid} — ` entries ({where}). An entry is the "
+                f"single home of a task's Do/Accept. A sub-heading inside an entry must be "
+                f"`#### `, not `### `.",
+            )
+        for name, _line in places:
+            if name != f"{domain}.md":
+                failures.add(
+                    check,
+                    f"{tid}'s entry is in tasks/{name} but domain {domain} is homed in "
+                    f"tasks/{domain}.md — one file per domain, per TODO.md's header table.",
+                )
+
+    for tid, (date, reason) in sorted(ROWS_PENDING_ENTRY.items(), key=lambda kv: task_id_key(kv[0])):
+        domain = tid[0]
+        if tid in entries:
+            failures.add(
+                check,
+                f"ROWS_PENDING_ENTRY registers {tid} ({reason}) but tasks/{domain}.md now "
+                f"defines `### {tid} — `. Drop the entry — a stale exemption is how a gate "
+                f"decays into a permanent mute.",
+            )
+        if tid not in row_ids:
+            failures.add(check, f"ROWS_PENDING_ENTRY registers {tid} but TODO.md has no row for it at all.")
+        if date != BACKLOG_FROZEN_ON:
+            failures.add(
+                check,
+                f"ROWS_PENDING_ENTRY entry {tid} is dated {date}, not {BACKLOG_FROZEN_ON}. "
+                f"This register was CLOSED on {BACKLOG_FROZEN_ON} and may only shrink: a row "
+                f"added since then that lacks its entry is a defect to fix, not an exemption "
+                f"to grant.",
+            )
+
+    if not failures:
+        print(
+            f"[{check}] ok — {len(rows)} rows ({n_live} live + {n_struck} struck) against "
+            f"{sum(len(p) for p in entries.values())} entries; {len(ROWS_PENDING_ENTRY)} "
+            f"registered in ROWS_PENDING_ENTRY, 0 unexplained; no entry without a row, no "
+            f"duplicate, none misfiled"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
     "decisions": check_decisions,
+    "task-citations": check_task_citations,
+    "task-entries": check_task_entries,
 }
 
 
@@ -677,6 +1076,115 @@ def self_test() -> int:
                 t,
                 count=1,
             )
+
+        # ── Q85's fixtures (D109 R8) ────────────────────────────────────────
+        # Q66's rule, and harder here: not one of these may hard-code a task
+        # id, a count or a line number. Every id below is READ from the scratch
+        # tree at fixture time, and every helper RAISES rather than returning a
+        # literal when the tree yields nothing — a regex that stops matching
+        # has to make the fixture fail loudly instead of vacuously.
+
+        def scratch_rows() -> dict[str, set[int]]:
+            text = (tree / "TODO.md").read_text(encoding="utf-8")
+            found: dict[str, set[int]] = {}
+            for match in TASK_ROW.finditer(text):
+                found.setdefault(match.group(1), set()).add(int(match.group(2)))
+            if not found:
+                raise AssertionError(
+                    "self-test: TASK_ROW matched no row in the scratch TODO.md, so every "
+                    "task fixture below would be built from nothing"
+                )
+            return found
+
+        def scratch_entries() -> dict[str, list[tuple[str, int]]]:
+            found: dict[str, list[tuple[str, int]]] = {}
+            for path in sorted((tree / "tasks").glob("*.md")):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                for number, line in enumerate(lines, 1):
+                    match = TASK_ENTRY.match(line)
+                    if match:
+                        key = match.group(1) + match.group(2)
+                        found.setdefault(key, []).append((path.name, number))
+            if not found:
+                raise AssertionError(
+                    "self-test: TASK_ENTRY matched no heading under the scratch tasks/, so "
+                    "the entry fixtures would be built from nothing"
+                )
+            return found
+
+        def first_hole(domain: str) -> str:
+            """The lowest unallocated number in `domain`, read from the scratch tree."""
+            taken = scratch_rows()[domain]
+            for number in range(1, max(taken) + 1):
+                if number not in taken:
+                    return f"{domain}{number}"
+            raise AssertionError(
+                f"self-test: domain {domain} is dense, so it has no hole to plant a tier-1 "
+                "citation in; the case needs a domain that has one"
+            )
+
+        def above_ceiling(domain: str) -> str:
+            """`domain` + (its highest allocated number + 1), read from the scratch tree."""
+            return f"{domain}{max(scratch_rows()[domain]) + 1}"
+
+        def a_row_with_entry() -> tuple[str, str, str]:
+            """`(id, tasks/<file>, the heading line)` for the first TODO.md row
+            that has an entry — computed, never named."""
+            entries = scratch_entries()
+            todo = (tree / "TODO.md").read_text(encoding="utf-8")
+            for match in TASK_ROW.finditer(todo):
+                key = match.group(1) + match.group(2)
+                if key in entries:
+                    name, number = entries[key][0]
+                    lines = (tree / "tasks" / name).read_text(encoding="utf-8").splitlines()
+                    return key, f"tasks/{name}", lines[number - 1]
+            raise AssertionError("self-test: no TODO.md row has an entry to build a case from")
+
+        def a_live_row_with_entry() -> str:
+            """The exact TODO.md line of the first LIVE row that has an entry."""
+            entries = scratch_entries()
+            for line in (tree / "TODO.md").read_text(encoding="utf-8").splitlines():
+                match = TASK_ROW.match(line)
+                if match and not line.startswith("- ~~"):
+                    if match.group(1) + match.group(2) in entries:
+                        return line
+            raise AssertionError("self-test: no live TODO.md row has an entry")
+
+        def drop_token(token: str):
+            """Delete EVERY bare occurrence of `token`, and the space ahead of it.
+
+            Every occurrence, not the first: an id cited more than once at a
+            path would leave the suppression fresh and the case would prove
+            nothing.
+            """
+            pattern = re.compile(r" ?\b" + re.escape(token) + r"\b")
+            return lambda t: pattern.sub("", t)
+
+        hole_a, hole_q = first_hole("A"), first_hole("Q")
+        minted_a, minted_q = above_ceiling("A"), above_ceiling("Q")
+        entry_id, entry_file, entry_heading = a_row_with_entry()
+        live_row = a_live_row_with_entry()
+        struck_row = "- ~~" + re.sub(r"^- \[[ xX]\] ", "", live_row) + "~~"
+        other_file = next(
+            f"tasks/{p.name}"
+            for p in sorted((tree / "tasks").glob("*.md"))
+            if p.stem != entry_id[0]
+        )
+        if not TASK_ID_NOT_A_CITATION:
+            raise AssertionError(
+                "self-test: TASK_ID_NOT_A_CITATION is empty, so case (e) cannot show the "
+                "register is non-vacuous. When the last suppression goes, delete the "
+                "register, its two staleness rules and this case together."
+            )
+        suppressed_id, suppressed_path = sorted(TASK_ID_NOT_A_CITATION)[0]
+        if not ROWS_PENDING_ENTRY:
+            raise AssertionError(
+                "self-test: ROWS_PENDING_ENTRY is empty, so case (k) cannot show the "
+                "staleness rule bites. When the register is drained (D109 §8 (iv)) delete "
+                "the constant, BACKLOG_FROZEN_ON, the rule and this case together — an "
+                "empty register with a frozen date invites a future lane to reopen it."
+            )
+        pending_id = sorted(ROWS_PENDING_ENTRY, key=task_id_key)[0]
 
         # (check, file, mutation, expect) where expect is "red" or "green".
         #
@@ -778,6 +1286,113 @@ def self_test() -> int:
                 lambda t: t.replace("| M1 | S17 + Q15 | deferred |", "| M1 | S17 + Q15 | defered |", 1),
                 "red",
             ),
+            # ── Q85 / D109 R8 ────────────────────────────────────────────────
+            # (a) tier 1 bites at all: an id in one of the domain's holes,
+            # cited in a normative source file.
+            (
+                "task-citations",
+                "crates/antseal-core/src/anchor/mod.rs",
+                lambda t: t + f"\n// follow-up: `{hole_a}`\n",
+                "red",
+            ),
+            # (b) `scripts/` and `.sh` really are swept. Without this case the
+            # surface widening that found the one genuine dangling pointer
+            # (D109 §1.5) is unproven, and a later edit could narrow TASK_SCAN
+            # back to DECISION_SCAN with nothing noticing.
+            (
+                "task-citations",
+                "scripts/fuzz.sh",
+                lambda t: t + f"\n# follow-up: `{hole_q}`\n",
+                "red",
+            ),
+            # (c) tier 2 — the newly-minted-id case. A fresh id is above its
+            # domain's ceiling by definition, which is the hole the decision
+            # half still has.
+            (
+                "task-citations",
+                "crates/antseal-core/src/anchor/mod.rs",
+                lambda t: t + f"\n// follow-up: `{minted_a}`\n",
+                "red",
+            ),
+            # (d) GREEN ARM. The same id, BARE, above the ceiling: the blind
+            # spot named in check_task_citations is a decision, not an
+            # oversight. Widening tier 2 to bare occurrences turns this case
+            # red and forces a re-decision — the idiom of the matrix's "a later
+            # milestone's row at gap stays green" case.
+            (
+                "task-citations",
+                "crates/antseal-core/src/anchor/mod.rs",
+                lambda t: t + f"\n// follow-up: {minted_a}\n",
+                "green",
+            ),
+            # (e) the suppression register is not vacuous: remove the token it
+            # names from the path it names and the entry goes stale. Without
+            # this, green could be coming from "that file is not swept at all".
+            (
+                "task-citations",
+                suppressed_path,
+                drop_token(suppressed_id),
+                "red",
+            ),
+            # (f) the entry half bites. The heading deleted is one the fixture
+            # FOUND, so the case cannot pass if the finder is broken (D109 §6.3).
+            (
+                "task-entries",
+                entry_file,
+                lambda t: t.replace(entry_heading + "\n", "", 1),
+                "red",
+            ),
+            # (g) a NEW row without an entry fails: ROWS_PENDING_ENTRY is
+            # closed, not a blanket over rows added since.
+            (
+                "task-entries",
+                "TODO.md",
+                lambda t: t + f"\n- [ ] **{minted_q}** (S) fixture\n",
+                "red",
+            ),
+            # (h) GREEN ARM. The struck shape protocol rule 1 mandates is
+            # parsed. Under a checkbox-only regex this row disappears, its
+            # entry becomes an entry-with-no-row and the case goes red — this
+            # is what pins D109 §1.2 and kills the "known standing offset".
+            (
+                "task-entries",
+                "TODO.md",
+                lambda t: t.replace(live_row, struck_row, 1),
+                "green",
+            ),
+            # (i) GREEN ARM. A `#### ` sub-heading inside an entry is permitted.
+            # Note the fixture is stronger than the tree: it plants the
+            # sub-heading in the `<ID> — <title>` grammar, so keying TASK_ENTRY
+            # on `^#{2,4}` counts the id twice and this case goes red. The
+            # tree's own sub-heading (`#### Q14 freeze checklist — …`) would
+            # NOT — see the correction at TASK_ENTRY — so without this planted
+            # form the heading level could widen with nothing noticing.
+            (
+                "task-entries",
+                entry_file,
+                lambda t: t.replace(
+                    entry_heading + "\n",
+                    entry_heading + f"\n#### {entry_id} — fixture sub-heading\n",
+                    1,
+                ),
+                "green",
+            ),
+            # (j) duplicate AND misfiled, in one mutation: the same entry
+            # heading copied into another domain's file.
+            (
+                "task-entries",
+                other_file,
+                lambda t: t + "\n" + entry_heading + "\n",
+                "red",
+            ),
+            # (k) register staleness: an exemption must die the moment its
+            # entry lands, or the register becomes a permanent mute.
+            (
+                "task-entries",
+                f"tasks/{pending_id[0]}.md",
+                lambda t: t + f"\n### {pending_id} — fixture entry\n",
+                "red",
+            ),
         ]
 
         for check, relative, mutate, expect in cases:
@@ -823,6 +1438,62 @@ def self_test() -> int:
                 print(f"self-test: ok — {check} goes red when {relative} is corrupted")
             else:
                 print(f"self-test: ok — {check} stays green where it must, on {relative}")
+
+        # D109 R7 bullet 3 — the floor and the ceiling are ASSERTED, not
+        # observed once. Every token below is real, is in the swept tree, and
+        # must never be reported: `A0`, `C0` and `F0` are hex byte values in
+        # UTF-8 prose ("Overlong 3-byte encoding: E0 requires A0..=BF next"),
+        # killed by the `n >= 1` floor; `P384` is a NIST curve, `U256` an EVM
+        # integer width and `F64` minicbor's IEEE-754 discriminant, all killed
+        # by the marked-form rule above their domain's ceiling.
+        #
+        # They are literals on purpose and Q66's derive-it-from-the-tree rule
+        # does not reach them: they are precisely NOT task ids, so there is
+        # nothing in the register to derive them from. What IS derived, and is
+        # asserted first, is their PRESENCE — a token that had left the tree
+        # would otherwise let its own case pass by absence.
+        #
+        # D109 R7 lists `S310` here too. It is not in the swept tree: it lives
+        # in `testdata/vectors/v1/crosscheck_cbor.py` and TASK_SCAN does not
+        # include `testdata/`, so it is killed by not being swept at all rather
+        # than by the ceiling. Asserting it here would fail.
+        present, _marked, _files = sweep_task_surfaces()
+        not_citations = ("A0", "C0", "F0", "P384", "U256", "F64")
+        for token in not_citations:
+            if token not in present:
+                print(
+                    f"self-test: FAILED — {token} is no longer present in the swept tree, "
+                    "so the floor/ceiling assertion would pass by absence",
+                    file=sys.stderr,
+                )
+                ok = False
+        clean = subprocess.run(
+            [sys.executable, str(tree / "scripts/check-traceability.py"), "--task-citations"],
+            capture_output=True,
+            text=True,
+        )
+        output = clean.stdout + clean.stderr
+        reported = [t for t in not_citations if re.search(rf"\b{t}\b", output)]
+        if clean.returncode != 0:
+            print(
+                "self-test: FAILED — --task-citations is not green on the unmutated tree, "
+                "so the floor/ceiling assertion cannot run; fix the check first",
+                file=sys.stderr,
+            )
+            ok = False
+        elif reported:
+            print(
+                f"self-test: FAILED — {', '.join(reported)} reported as task citations; "
+                "they are hex bytes, a curve name, an integer width and a codec "
+                "discriminant, and the floor/ceiling rules exist to skip them",
+                file=sys.stderr,
+            )
+            ok = False
+        else:
+            print(
+                "self-test: ok — task-citations skips all "
+                f"{len(not_citations)} non-citation tokens, each asserted present first"
+            )
 
     return 0 if ok else 1
 

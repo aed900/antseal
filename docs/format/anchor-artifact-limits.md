@@ -225,7 +225,7 @@ decision. Nothing outside those four may.
 | `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**174** B coinbase-prefix operand) — **still binding, and deliberately so.** The derived upgraded artifact measures only 89 B here: its operands are 32-byte merkle siblings and a 44-byte calendar commitment, where this mainnet proof carries a real fat coinbase-transaction prefix. Re-pointing the cell would *raise* the recorded margin to 184.09x by dropping the fatter real sample (A48, 2026-08-10) | 94.16x | never | **none** — a length header; D58 §10.3 rule 4's clamp governs it |
 | `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**210** B running value) — still binding, for the row above's reason and measured in the same walk; the derived upgraded artifact measures 125 B, which would read 262.14x (A48, 2026-08-10) | 156.04x | never | **none** — rule 4; `exec::apply` allocates the running value after checking it (32 B on the A100 path) |
 | `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (**46** B pending payload; the derived upgraded artifact measures 46 too, so the splice does not move this row); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never | **none** — a length header; rule 4 |
-| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (**220** B — the largest of 18 real calendar *submit* responses measured for D54 §8b). The *upgrade* response is larger, carrying a Bitcoin merkle path. This cell read *"and has not been measured: A25's day-2 run must record it"* until 2026-08-10; the day-2 run happened on **2026-08-03** and the figure is **1 105 B** (catallaxy), a named constant `antseal_anchor::ots::MEASURED_MAX_UPGRADE_RESPONSE_BYTES` pinned per file by `the_measured_upgrade_response_sizes_are_the_f4_row`, margin **59.31x** — the binding one. Appending it *to the margin cell* re-keys which reply this row is scaled against and is **A42's**, not A113's; A113 corrected the arithmetic and the staleness only | 297.89x (submit) | never | **none** — a receive-side byte cap, not a count limit |
+| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/A-catallaxy.upgrade` (**1 105** B — the largest of the six real calendar *upgrade* replies, captured 2026-08-03T09:03Z, pinned per file as `antseal_anchor::ots::MEASURED_MAX_UPGRADE_RESPONSE_BYTES` by `the_measured_upgrade_response_sizes_are_the_f4_row`). **The upgrade reply is the binding one of the two reply classes this cap governs**, and D54 §6.1 ruled it so before either was measured: it recorded the submit figure as provisional and required that *"the F4 row must be completed with that figure"*. The other class is the *submit* reply, largest 220 B at `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` — 5.02x smaller, pinned by the same test, and no longer a margin this table states. Re-keyed from the submit reply to the upgrade reply by A115 under D110, 2026-08-10; `value`, `date set` and `lowered` are untouched, so §6 owes no entry | 59.31x (upgrade) | never | **none** — a receive-side byte cap, not a count limit |
 | `MAX_DER_NESTING_DEPTH` | A5 | 63 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-globalsign-resp.tsr` (measured depth **19**, the deepest of the nine live TSA captures — D60 §6 b1). **No antseal constant holds this number, and this is the only row in this table whose value is pinned behaviourally rather than to a constant.** It is `der 0.8.1`'s `MAX_DEPTH` (`reader/position.rs`, private to the crate and therefore unreadable from antseal), which is 64 exclusive — 63 nested constructions accepted, the 64th rejected as `ErrorKind::NestingDepth` — consumed rather than minted, because measuring depth ourselves needs the recursive walker D60 §2.4 measured aborting the process on hostile input. The F4 raise-only guard is therefore **upstream**: `crates/antseal-core/tests/der_pin_eval.rs` `der_nesting_depth_limit_is_63` builds 63 and 64 nested SEQUENCEs and fails if a `der` bump moves the limit in **either** direction, so a lowering is refused at the bump review instead of shipped. `anchor::caps::tests` binds this row to that test by name | 3.3x | never | **none** — a per-invocation recursion counter inside `der`'s reader, not a container antseal reserves |
 | `MAX_CHAIN_CERTS` | A5 | 8 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-globalsign-resp.tsr` (**4** certificates, the largest bag of the nine live captures; the deepest real validated path is 3 links, 4 closed through the DigiCert cross-certificate — D60 §6 b2) | 2.0x | never | **4 288 B** = `8 x (size_of::<Certificate>() + size_of::<Vec<u8>>())` (512 + 24 B, x86-64) — `tsa::chain_certificates`' two vectors; **0.41 %** of `MAX_TSA_TOKEN_BYTES`. It owns a further **1 024 B** = `8 x size_of::<Node>()` (128 B) of the path-node reservation §5a splits out, and that part is a **ceiling rather than a reservation**: `chain::PathBuilder::new` reserves `supplied.len() + 1`, so an honest 4-certificate token takes 5 nodes, unlike the `.ots` parser's `walk.rest`, which always reserves its bound. Marginal cost of one more unit: **664 B** |
 | `MAX_CHAIN_CERT_BYTES` | A5 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-swisssign-resp.tsr` (signer certificate **2 105 B**, the largest of the 27 certificates embedded across the nine captures — D60 §6 b3). Carries the A28-shaped derived constraint `MAX_CHAIN_CERT_BYTES <= MAX_CERT_BYTES`, a `const` assertion in `anchor::caps` rather than a comment | 7.8x | never | **none** — the size check runs on the output of `to_der()`, so the bytes are already allocated and already bounded by the input; that is rule 4's business, not rule 6's |
@@ -237,12 +237,16 @@ one calendar**. `MAX_OTS_BYTES` (§2 row 16, 1 MiB) bounds the **merged `.ots`
 artifact** a bundle embeds — every calendar, every upgrade, accumulated. They
 are different quantities, and passing the second where the first belongs would
 let four calendars hand `antseal-anchor` 4 MiB per seal against a measured
-worst case of 220 B. It is also the only one of the rows here that is a
-*network-stage* limit rather than an *artifact-parse* limit, which is why it
-is not one of the eight §4 leaves it open. The strict inequality between the
-two is a compile-time assertion in `crates/antseal-anchor/src/ots/mod.rs` and
-`crates/antseal-anchor/src/http.rs` — strict, because equality *is* the
-conflation.
+worst case of **1 105 B** — the *upgrade* reply, the larger of the two reply
+classes this cap governs and the one its margin is keyed to (D110). There is
+no third class: a non-2xx calendar body, including A14's two 404 upgrade
+discriminators, is capped by `HTTP_ERROR_BODY_CAP_BYTES` (4 KiB) on the error
+path and not by this limit. This limit is also the only one of the rows here
+that is a *network-stage* limit rather than an *artifact-parse* limit, which
+is why it is not one of the eight §4 leaves it open. The strict inequality
+between the two is a compile-time assertion in
+`crates/antseal-anchor/src/ots/mod.rs` and `crates/antseal-anchor/src/http.rs`
+— strict, because equality *is* the conflation.
 
 **The bootstrap is over — what A48 re-measured on 2026-08-10, and what it did
 not.** Five of the first seven rows were **bootstrapped, not measured**, against the
@@ -282,7 +286,11 @@ is ≥ 15x)"*. The first clause is true and the parenthesis is false.** No
 silently, because the cell was measuring a January-2017 proof from a rejected
 crate rather than anything antseal produces. D104 §4 records A109 reasoning from
 that 15.28x. The margin band is stated here rather than left to be rediscovered:
-**12.05x to 297.89x, and the floor is `MAX_OTS_DEPTH`.** D104's KEEP-1 024
+over these eight `.ots` and receive-side rows, **12.05x to 178.09x, and the
+floor is `MAX_OTS_DEPTH`** — the ceiling moved down from 297.89x on 2026-08-10,
+when D110 re-keyed A42's row from the submit reply to the binding upgrade
+reply. Across the whole table the floor is lower still: A110's four DER rows,
+added 2026-08-09, put `MAX_CHAIN_CERTS` at **2.0x**. D104's KEEP-1 024
 ruling survives it unchanged and was argued at depth 85 explicitly — the
 admissible floor is `8 x 85 = 680`, and 1 024 is the cost-minimal admissible
 cap — but any future reader quoting a *"≥ 15x"* discipline over this table is
@@ -316,7 +324,17 @@ artifact a verifier parses.
 ### 5a. The `structural cost` column, and the precondition it attaches to F4
 
 **Added 2026-08-07 by [D102](../decisions/D102-parser-structural-allocation-cost.md)
-(task A100), which amends D58 §10.3 with a sixth rule.**
+(task A100), which amends D58 §10.3 with a sixth rule. This banner covers §5a
+and nothing after it.** The DER paragraphs below are **A110's, 2026-08-09**,
+and say so where they stand; the **Update rule** and the `Rows A28 must add on
+day one` paragraph are **A27's**, from `1620543` (2026-07-28), the commit that
+created this document and ten days older than this heading. D102 inserted §5a
+*above* them, so from 2026-08-07 to 2026-08-10 two A27 paragraphs were filed
+under a 2026-08-07 banner; **§5b now ends this section before them** (A114).
+That was not a quibble about a date: D104 §1.2 records a read-only recon lane
+reading the rendered document, concluding that A27's registry-*keeping*
+procedure had been written ten days later by D102's lane, and building its
+central finding on it.
 
 A limit that bounds a **count** rather than a **length header** is not
 governed by the clamp discipline every other allocation in this codebase
@@ -357,8 +375,45 @@ because a number typed by hand is a number that survives a raise.
 
 Clause (c) is a `const` assertion deliberately: a raise that breaks it stops
 the build for every contributor, with no lane to rerun and no budget to
-adjust. Measured headroom on `MAX_OTS_DEPTH` (D102 §3.2): 4 096 green,
-16 384 green and the last one, 32 768 red, 65 536 red at 2.51x.
+adjust. Measured headroom on `MAX_OTS_DEPTH` (D102 §3.2), **on x86-64**:
+4 096 green, 16 384 green and the last one, 32 768 red, 65 536 red at 2.51x.
+That row is not universal, and read as though it were until 2026-08-10: on
+`wasm32` the largest admissible power of two is **32 768**, because
+`P x 24 + 8 192 <= MAX_OTS_BYTES` admits it (D104 §1.3). The conclusion is
+safe either way — the `const` assert fires on the strictest target and CI
+builds both — but the statement was unqualified.
+
+**Every number in this column is x86-64's, and the other target is cheaper —
+which is the opposite of how the one lowering argument this project has seen
+used it.** `OTS_FRAME_BYTES` and `OTS_ATTESTATION_BYTES` are `size_of`, so
+this whole column is a function of pointer width; `Frame` is
+`Option<Vec<u8>> + 2 x u32 + bool`, which is 24+8+1 → 40 on 64-bit and
+12+8+1 → 24 on 32-bit.
+
+| target | `size_of::<Frame>()` | `size_of::<OtsAttestation>()` | `walk.rest` | attestations | total |
+| --- | --- | --- | --- | --- | --- |
+| x86-64 | 40 B | 48 B | **40 960 B** | **12 288 B** | **53 248 B** — 5.08 % of `MAX_OTS_BYTES` |
+| `wasm32-unknown-unknown` | 24 B | 32 B | **24 576 B** | **8 192 B** | **32 768 B** — 3.13 % |
+
+**So the browser tab — the venue with the tightest ceiling this parser runs
+under — is the *cheapest* place it runs, not the constrained one.**
+`crates/antseal-core/src/anchor/ots/limits.rs` has said so at
+`OTS_ATTESTATION_BYTES` since D102 landed; this document did not, and that
+omission has a measured victim. A109's case for lowering `MAX_OTS_DEPTH` was
+*"40 960 B of work-stack bookkeeping in a parser that runs in a browser tab"*
+— the x86-64 figure applied to the one venue where the cost is 40 % lower.
+D104 §1.3 corrected the number and D104 §6 ruled the asymmetry into this
+document, which is why it is stated here rather than only in code: the
+inversion must not be re-derivable from the registry alone.
+
+**The 32-bit row is derived but not yet asserted, which is a gap rather than a
+decision.** `the_structural_cost_column_states_the_derivation_and_its_value`
+checks byte counts only under `size_of::<usize>() == 8`, and
+`scripts/wasm-tests.sh` runs `cargo test -p antseal-core --lib`, so the four
+wasm32 figures above are for now exactly the hand-typed numbers clause (a)
+exists to forbid. D104 §6 rules the 32-bit arm that closes it — mirroring the
+split `anchor/caps.rs` adopted at `873a1cf`, where the same omission on
+`size_of::<Certificate>()` reddened `wasm32-core-tests`.
 
 **The DER half's four rows, added 2026-08-09 by A110.** The A5/D60 limits —
 `MAX_DER_NESTING_DEPTH`, `MAX_CHAIN_CERTS`, `MAX_CHAIN_CERT_BYTES` and
@@ -374,7 +429,7 @@ name the fourth (*"and for the depth limit that is not declared here"*), and
 §4's table of what A5 still chooses lists four A5 leaves, not three. The
 fourth is the one A5 does not declare, and its row says so.
 
-**Still owed: A28's two**, below the Update rule.
+**Still owed: A28's two**, below the Update rule in §5b.
 
 **Where the DER path's 7 488 B goes, and why no one row carries it.**
 `anchor::caps::TSA_STRUCTURAL_ALLOC_BYTES` is **7 488 B** on x86-64 —
@@ -411,6 +466,19 @@ reservation alone, `8 x size_of::<Certificate>()`, is **4 096 B** on x86-64 —
 same product is **3 008 B** and clears the slack by nearly a kilobyte. Every
 number in this subsection is derived in `anchor/caps.rs` and asserted against
 this document, never transcribed.
+
+### 5b. The Update rule
+
+**A27's, from `1620543` (2026-07-28) — the commit that created this document,
+and ten days older than §5a.** It is under its own heading because until
+2026-08-10 it was not: D102's §5a banner was inserted above it and filed it,
+with the `Rows A28 must add on day one` paragraph, under *"Added 2026-08-07 by
+D102"*. Read it as what A27 wrote — a registry-**keeping** procedure, which
+prices a change and says how to record it. It neither permits nor forbids a
+lowering; that is F4 sentence 1's question, and D104 RULING 1 answers it after
+A109 read this rule the other way from under the D102 banner. The bullets
+below have since been revised in place (D107 §R2/R3, 2026-08-09; A113,
+2026-08-10) and say so; the rule and its two paragraphs are A27's.
 
 **Update rule.** One row per artifact-internal limit and per receive-side
 cap, added when the limit is first set, never deleted.

@@ -60,13 +60,13 @@ mod parse;
 
 pub use error::{OtsError, PayloadDefect};
 
-/// The `.ots` code roster, reachable from `error_universe` and
-/// `test_util::tamper_coverage` (**A38/A52**) without making `error` a public
-/// module: `mod error` is private, so `anchor::ots::error::all_code_exemplars`
-/// — the path D91 §8.1 and this module's own docs name — does not resolve
-/// outside `anchor::ots`. `#[cfg(test)]` because the enumerator it feeds is,
-/// so nothing here reaches a production build.
-#[cfg(test)]
+/// The `.ots` code roster, reachable from `error_universe` (test + non-wasm32)
+/// and `test_util::tamper_coverage`'s `mod tests` (test + `test-util`) without
+/// making `error` public: `mod error` is private, so the path D91 §8.1 names,
+/// `anchor::ots::error::all_code_exemplars`, does not resolve outside
+/// `anchor::ots`. The `cfg` is the UNION of those two consumer gates (**A116**)
+/// — `test` in every arm, so no production build; bare `cfg(test)` warned on wasm32.
+#[cfg(all(test, any(not(target_arch = "wasm32"), feature = "test-util")))]
 pub(crate) use error::all_code_exemplars;
 pub use header::{
     EmbeddedHeader, check_embedded_header, header_commits, header_time_unix, merkle_root_of,

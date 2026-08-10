@@ -70,6 +70,83 @@ pub mod fixtures {
         "../../../../testdata/anchors/A16-A17-live/esplora-blockstream-404-body.txt"
     );
 
+    // ── A25's day-3 mainnet headers (2026-08-07T10:36:32Z–10:37:34Z) ───────
+    //
+    // The four constants above are height **800000**: captured for A16's
+    // endpoint-agreement round, and unrelated to anything this project
+    // stamped. The twelve below are the blocks this project's **own** upgraded
+    // `.ots` attests — alice → 960767, bob → 960768, catallaxy → 960771, per
+    // `A25-bootstrap/upgraded/UPGRADE-CAPTURE.log` — so a promotion round can
+    // be replayed at a height that carries a real attestation instead of at
+    // one that carries none. Twelve requests, all `200`; each header was
+    // verified offline at capture time by `double-SHA256(header)`, reversed,
+    // equalling the hash the height lookup returned, so the bytes are not
+    // taken on an endpoint's word.
+    //
+    // Both endpoints' copies are wired for the reason [`MEMPOOL_HEADER`]
+    // gives: the must-agree rule is byte-identity over the header, and a pair
+    // built from one file agrees with itself by construction. Wired here they
+    // make [`super::esplora_recorded_block`] a *replay* of two independent
+    // captures rather than one capture served twice.
+
+    /// esplora: height → block hash for **960767** (alice's attestation),
+    /// from blockstream.info. 64 ASCII hex, no newline.
+    pub const BLOCKSTREAM_HEIGHT_960767: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-height-960767.txt"
+    );
+    /// The 80-byte header of block **960767** as 160 ASCII hex, from
+    /// blockstream.info.
+    pub const BLOCKSTREAM_HEADER_960767: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-header-960767.txt"
+    );
+    /// The same hash from mempool.space. **Byte-identical** to
+    /// [`BLOCKSTREAM_HEIGHT_960767`]; committed and wired separately so the
+    /// agreement has two files to compare.
+    pub const MEMPOOL_HEIGHT_960767: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-height-960767.txt"
+    );
+    /// The same header from mempool.space. **Byte-identical** to
+    /// [`BLOCKSTREAM_HEADER_960767`] — see [`MEMPOOL_HEIGHT_960767`].
+    pub const MEMPOOL_HEADER_960767: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-header-960767.txt"
+    );
+
+    /// esplora: height → block hash for **960768** (bob's attestation), from
+    /// blockstream.info.
+    pub const BLOCKSTREAM_HEIGHT_960768: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-height-960768.txt"
+    );
+    /// The 80-byte header of block **960768**, from blockstream.info.
+    pub const BLOCKSTREAM_HEADER_960768: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-header-960768.txt"
+    );
+    /// The same hash from mempool.space — see [`MEMPOOL_HEIGHT_960767`].
+    pub const MEMPOOL_HEIGHT_960768: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-height-960768.txt"
+    );
+    /// The same header from mempool.space — see [`MEMPOOL_HEIGHT_960767`].
+    pub const MEMPOOL_HEADER_960768: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-header-960768.txt"
+    );
+
+    /// esplora: height → block hash for **960771** (catallaxy's attestation),
+    /// from blockstream.info.
+    pub const BLOCKSTREAM_HEIGHT_960771: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-height-960771.txt"
+    );
+    /// The 80-byte header of block **960771**, from blockstream.info.
+    pub const BLOCKSTREAM_HEADER_960771: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-blockstream-header-960771.txt"
+    );
+    /// The same hash from mempool.space — see [`MEMPOOL_HEIGHT_960767`].
+    pub const MEMPOOL_HEIGHT_960771: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-height-960771.txt"
+    );
+    /// The same header from mempool.space — see [`MEMPOOL_HEIGHT_960767`].
+    pub const MEMPOOL_HEADER_960771: &[u8] = include_bytes!(
+        "../../../../testdata/anchors/A25-upgrade-headers/esplora-mempool-header-960771.txt"
+    );
+
     /// arbitrum-one receipt from `arb1.arbitrum.io` (1786 B).
     pub const ARBONE_RECEIPT_ARB1: &[u8] =
         include_bytes!("../../../../testdata/anchors/A16-A17-live/arbone-arb1-receipt.json");
@@ -93,8 +170,10 @@ pub mod fixtures {
     pub const CALENDAR_BOB_A: &[u8] =
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/A-bob.timestamp");
     /// A real pending calendar attestation (catallaxy, digest A, 220 B) —
-    /// **the largest of the 18 measured**, and the fixture the F4 row for
-    /// `MAX_OTS_CALENDAR_RESPONSE_BYTES` is measured against.
+    /// **the largest of the 18 measured** submit replies, and the fixture
+    /// A42's F4 row was measured against until 2026-08-10, when D110 re-keyed
+    /// the row to the binding *upgrade* reply ([`UPGRADE_A_CATALLAXY`],
+    /// 1 105 B). It is now the lesser of the cap's two reply classes.
     pub const CALENDAR_CATALLAXY_A: &[u8] =
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/A-catallaxy.timestamp");
 
@@ -183,7 +262,11 @@ pub mod fixtures {
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-freetsa-req.tsq");
 }
 
-/// The block height the committed esplora captures are for.
+/// The block height A16's committed esplora captures are for.
+///
+/// Nothing this project stamped is in block 800000; it was captured to
+/// exercise the agreement rule. For the heights this project's own upgraded
+/// `.ots` actually attests, see [`ATTESTED_BLOCKS`].
 pub const RECORDED_HEIGHT: u64 = 800_000;
 
 /// The request line of a recorded request, for tests that assert which
@@ -282,12 +365,177 @@ pub fn esplora(behaviour: &EsploraBehaviour) -> StubScript {
 /// that is otherwise perfectly well-formed.
 #[must_use]
 pub fn tampered_header() -> Vec<u8> {
-    let mut hex = fixtures::BLOCKSTREAM_HEADER.to_vec();
-    // The last nibble of the nonce field: still valid hex, still 160
-    // characters, so nothing but the comparison can catch it.
-    let last = hex.len() - 1;
-    hex[last] = if hex[last] == b'6' { b'7' } else { b'6' };
+    tamper_hex(fixtures::BLOCKSTREAM_HEADER)
+}
+
+/// [`tampered_header`] over any recorded hex body.
+///
+/// The last nibble is flipped: the result is still valid hex and still the
+/// same length, so nothing but the byte comparison can catch it. That is the
+/// point — a tamper fixture that were obviously malformed would exercise the
+/// parser instead of the must-agree rule.
+#[must_use]
+pub fn tamper_hex(hex: &[u8]) -> Vec<u8> {
+    let mut hex = hex.to_vec();
+    if let Some(last) = hex.last_mut() {
+        *last = if *last == b'6' { b'7' } else { b'6' };
+    }
     hex
+}
+
+// ── the attested-height replay (A112) ────────────────────────────────────
+
+/// Which of the two independently captured endpoints a replay serves.
+///
+/// The pair is only evidence because two operators answered separately, so
+/// which capture a stub is replaying is named rather than implied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordedEndpoint {
+    /// `blockstream.info`.
+    Blockstream,
+    /// `mempool.space`.
+    Mempool,
+}
+
+/// One committed mainnet block, as **both** esplora endpoints returned it.
+///
+/// The four bodies are the raw captures: 64 ASCII hex for the height → hash
+/// lookup, 160 ASCII hex for the 80-byte header, no trailing newline on
+/// either.
+#[derive(Debug, Clone, Copy)]
+pub struct AttestedBlock {
+    /// The Bitcoin block height.
+    pub height: u64,
+    /// blockstream.info's answer to `GET /block-height/{height}`.
+    pub blockstream_hash_hex: &'static [u8],
+    /// blockstream.info's answer to `GET /block/{hash}/header`.
+    pub blockstream_header_hex: &'static [u8],
+    /// mempool.space's answer to `GET /block-height/{height}`.
+    pub mempool_hash_hex: &'static [u8],
+    /// mempool.space's answer to `GET /block/{hash}/header`.
+    pub mempool_header_hex: &'static [u8],
+}
+
+impl AttestedBlock {
+    /// The hash body `endpoint` returned for the height lookup.
+    #[must_use]
+    pub const fn hash_hex(self, endpoint: RecordedEndpoint) -> &'static [u8] {
+        match endpoint {
+            RecordedEndpoint::Blockstream => self.blockstream_hash_hex,
+            RecordedEndpoint::Mempool => self.mempool_hash_hex,
+        }
+    }
+
+    /// The header body `endpoint` returned.
+    #[must_use]
+    pub const fn header_hex(self, endpoint: RecordedEndpoint) -> &'static [u8] {
+        match endpoint {
+            RecordedEndpoint::Blockstream => self.blockstream_header_hex,
+            RecordedEndpoint::Mempool => self.mempool_header_hex,
+        }
+    }
+
+    /// The 80 raw header bytes `endpoint` returned, decoded.
+    ///
+    /// `None` if the capture is not exactly 160 lowercase-hex characters,
+    /// which is a re-recorded or truncated fixture rather than something a
+    /// caller should paper over — hence an `Option` and not a panic.
+    #[must_use]
+    pub fn header_bytes(self, endpoint: RecordedEndpoint) -> Option<crate::esplora::BlockHeader> {
+        const fn digit(value: u8) -> Option<u8> {
+            match value {
+                b'0'..=b'9' => Some(value - b'0'),
+                b'a'..=b'f' => Some(value - b'a' + 10),
+                _ => None,
+            }
+        }
+
+        let hex = self.header_hex(endpoint);
+        // The length is `antseal-core`'s, never a literal 80 typed here.
+        let mut header: crate::esplora::BlockHeader =
+            [0; antseal_core::bundle::registry::BLOCK_HEADER_LEN as usize];
+        if hex.len() != header.len() * 2 {
+            return None;
+        }
+        for (byte, pair) in header.iter_mut().zip(hex.chunks_exact(2)) {
+            *byte = (digit(pair[0])? << 4) | digit(pair[1])?;
+        }
+        Some(header)
+    }
+}
+
+/// The three blocks this project's own upgraded `.ots` attests.
+///
+/// One per calendar, from the measured 2026-08-03 cycle: alice landed in
+/// 960767, bob in 960768, catallaxy in 960771 (D92's "three calendars, three
+/// blocks" measurement). These are the only heights at which a promotion round
+/// can be replayed against a header that commits a **real** attestation —
+/// every other replay in this module either uses a height nothing here stamped
+/// or synthesises the 80 bytes.
+pub const ATTESTED_BLOCKS: [AttestedBlock; 3] = [
+    AttestedBlock {
+        height: 960_767,
+        blockstream_hash_hex: fixtures::BLOCKSTREAM_HEIGHT_960767,
+        blockstream_header_hex: fixtures::BLOCKSTREAM_HEADER_960767,
+        mempool_hash_hex: fixtures::MEMPOOL_HEIGHT_960767,
+        mempool_header_hex: fixtures::MEMPOOL_HEADER_960767,
+    },
+    AttestedBlock {
+        height: 960_768,
+        blockstream_hash_hex: fixtures::BLOCKSTREAM_HEIGHT_960768,
+        blockstream_header_hex: fixtures::BLOCKSTREAM_HEADER_960768,
+        mempool_hash_hex: fixtures::MEMPOOL_HEIGHT_960768,
+        mempool_header_hex: fixtures::MEMPOOL_HEADER_960768,
+    },
+    AttestedBlock {
+        height: 960_771,
+        blockstream_hash_hex: fixtures::BLOCKSTREAM_HEIGHT_960771,
+        blockstream_header_hex: fixtures::BLOCKSTREAM_HEADER_960771,
+        mempool_hash_hex: fixtures::MEMPOOL_HEIGHT_960771,
+        mempool_header_hex: fixtures::MEMPOOL_HEADER_960771,
+    },
+];
+
+/// The committed capture for `height`, or `None` if this project stamped
+/// nothing there.
+#[must_use]
+pub fn attested_block(height: u64) -> Option<AttestedBlock> {
+    ATTESTED_BLOCKS
+        .into_iter()
+        .find(|block| block.height == height)
+}
+
+/// Replay **one endpoint's own** recorded exchange for a committed mainnet
+/// block: `block-height/{h}` answers with that endpoint's captured hash, and
+/// `block/{hash}/header` with that endpoint's captured header.
+///
+/// Spawn one of these per endpoint of an [`EndpointPair`](crate::agree::EndpointPair)
+/// and the must-agree rule is exercised over two independently recorded files.
+/// Building both from one capture would make the pair agree by construction —
+/// the same reason [`fixtures::MEMPOOL_HEADER`] is committed at all.
+#[must_use]
+pub fn esplora_recorded_block(block: AttestedBlock, endpoint: RecordedEndpoint) -> StubScript {
+    esplora_block_at(
+        block.height,
+        block.hash_hex(endpoint),
+        block.header_hex(endpoint),
+    )
+}
+
+/// The height-parameterised primitive under [`esplora_recorded_block`], for
+/// the arms that must serve something other than the capture.
+///
+/// [`esplora`] is the height-800000 script with A16's behaviour variants; this
+/// is one honest-shaped exchange at any height, with both bodies supplied — so
+/// a test can perturb exactly one of them and nothing else.
+#[must_use]
+pub fn esplora_block_at(height: u64, hash_hex: &[u8], header_hex: &[u8]) -> StubScript {
+    StubScript::new()
+        .route(
+            StubMatch::target(format!("/block-height/{height}")),
+            text(200, hash_hex.to_vec()),
+        )
+        .route(StubMatch::target("/header"), text(200, header_hex.to_vec()))
 }
 
 /// What a stub Arbitrum RPC endpoint does.
@@ -605,6 +853,87 @@ mod tests {
         let drpc = core::str::from_utf8(fixtures::SEPOLIA_RECEIPT_DRPC).expect("utf8");
         assert!(rollup.contains("timeboosted") && !rollup.contains("blobGasUsed"));
         assert!(drpc.contains("blobGasUsed") && !drpc.contains("timeboosted"));
+    }
+
+    /// The A25 captures are what their `CAPTURE.log` says they are, at every
+    /// attested height and for both endpoints.
+    #[test]
+    fn the_attested_block_captures_have_their_recorded_shapes() {
+        assert_eq!(
+            ATTESTED_BLOCKS.map(|block| block.height),
+            [960_767, 960_768, 960_771],
+            "the heights this project's own upgraded .ots attests"
+        );
+        for block in ATTESTED_BLOCKS {
+            for endpoint in [RecordedEndpoint::Blockstream, RecordedEndpoint::Mempool] {
+                let hash = block.hash_hex(endpoint);
+                let header = block.header_hex(endpoint);
+                assert_eq!(hash.len(), 64, "{endpoint:?} hash at {}", block.height);
+                assert_eq!(header.len(), 160, "{endpoint:?} header at {}", block.height);
+                // Lowercase hex with no trailing newline: `esplora.rs` refuses
+                // an uppercase hash outright, so a re-capture that introduced
+                // one would fail three tests away from its cause.
+                assert!(
+                    hash.iter()
+                        .chain(header)
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)),
+                    "{endpoint:?} at {}: not lowercase hex with no newline",
+                    block.height
+                );
+                assert!(
+                    block.header_bytes(endpoint).is_some(),
+                    "{endpoint:?} at {} does not decode to 80 bytes",
+                    block.height
+                );
+            }
+        }
+        assert!(
+            attested_block(RECORDED_HEIGHT).is_none(),
+            "800000 carries none of this project's attestations"
+        );
+    }
+
+    /// A112's premise, checked rather than quoted: **both endpoints' copies
+    /// are byte-identical**, which is what lets the must-agree promotion round
+    /// be exercised against two independently captured files rather than
+    /// simulated by serving one file twice.
+    ///
+    /// Asserted on the fixtures, so it holds independently of the comparison
+    /// code that consumes them — and at all three heights, because a rule that
+    /// held at one is a rule that has been sampled, not pinned.
+    #[test]
+    fn the_two_services_returned_identical_bytes_at_every_attested_height() {
+        for block in ATTESTED_BLOCKS {
+            assert_eq!(
+                block.blockstream_header_hex, block.mempool_header_hex,
+                "block {}: two esplora instances must return the same 80 bytes",
+                block.height
+            );
+            assert_eq!(
+                block.blockstream_hash_hex, block.mempool_hash_hex,
+                "block {}: two esplora instances must resolve the height alike",
+                block.height
+            );
+            // The anti-vacuity leg. Both sides being empty, or both being the
+            // *same* constant, would satisfy the assertions above; neither is
+            // true, and the three headers are distinct blocks rather than one
+            // file wired three times.
+            assert_eq!(block.blockstream_header_hex.len(), 160);
+            assert_ne!(
+                block.blockstream_header_hex,
+                fixtures::BLOCKSTREAM_HEADER,
+                "block {} is not height 800000's header",
+                block.height
+            );
+        }
+        assert_ne!(
+            ATTESTED_BLOCKS[0].blockstream_header_hex,
+            ATTESTED_BLOCKS[1].blockstream_header_hex
+        );
+        assert_ne!(
+            ATTESTED_BLOCKS[1].blockstream_header_hex,
+            ATTESTED_BLOCKS[2].blockstream_header_hex
+        );
     }
 
     /// The tampered header is still well-formed: 160 hex characters, so only

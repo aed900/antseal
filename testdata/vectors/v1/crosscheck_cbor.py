@@ -857,6 +857,53 @@ def tamper_sweep(cbor2, report) -> int:
 # ---------------------------------------------------------------------------
 
 
+def scope_of(path: pathlib.Path) -> tuple[dict, list[dict], str]:
+    """One vector document, parsed, plus the cases this checker checks.
+
+    THE ONLY EXPRESSION OF SCOPE IN THIS FILE. `run` and `self_test` both go
+    through it, because a scope rule written twice is a scope rule that will
+    diverge: on 2026-08-09 it was written twice, `run` was narrowed to the
+    mapping test, `self_test` kept the bare membership test, and `--self-test`
+    went red against a green `--check` -- CI runs them as separate steps and
+    only the second one selects.
+    `crates/antseal-core/tests/cbor_crosscheck_contract.rs` asserts that the
+    mapping test below occurs EXACTLY ONCE in this file, prose included.
+
+    A vector is in scope exactly when it commits a CBOR diagnostic sidecar --
+    a MAPPING from layer name to that layer's rendering, which is precisely
+    what `check_case` then indexes as `case["diagnostic"][layer]`. That is the
+    weakest predicate under which `check_case` is defined at all, and driving
+    on it rather than on a kind allow-list means a future CBOR-committing kind
+    is covered the day it lands *provided it commits a sidecar*.
+
+    Returns ``(vector, cases, note)``. ``note`` is empty when ``cases`` is
+    non-empty; otherwise it says WHY, in words that tell the two silences
+    apart -- see docs/testing/cbor-cross-check.md section 7.
+    """
+    try:
+        vector = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CheckFailure(f"{_rel(path)}: unreadable vector file: {exc}") from exc
+    if vector.get("schema") != "antseal-golden-vector":
+        raise CheckFailure(
+            f"{_rel(path)}: not a golden-vector envelope (schema={vector.get('schema')!r})"
+        )
+    expect = vector.get("expect", {})
+    if "cases" not in expect:
+        return vector, [], (
+            f"kind {vector['kind']!r} carries no `expect.cases` (it uses "
+            f"{sorted(expect) or 'nothing'}), so this checker cannot reach its payload at "
+            f"all -- which is NOT the same as committing no CBOR. See F31"
+        )
+    cases = [c for c in expect["cases"] if isinstance(c.get("diagnostic"), dict)]
+    if not cases:
+        return vector, [], (
+            f"kind {vector['kind']!r}: {len(expect['cases'])} case(s), none carrying a "
+            f"diagnostic sidecar (out of scope for the CBOR cross-check)"
+        )
+    return vector, cases, ""
+
+
 def run(cbor2, report) -> tuple[int, int, int, int]:
     """Check everything. Returns ``(files, checked, cases, checks)``."""
     checks = preflight(cbor2, report)
@@ -865,53 +912,13 @@ def run(cbor2, report) -> tuple[int, int, int, int]:
 
     for path in discover():
         files += 1
-        try:
-            vector = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise CheckFailure(f"{path}: unreadable vector file: {exc}") from exc
-        if vector.get("schema") != "antseal-golden-vector":
-            raise CheckFailure(
-                f"{path}: not a golden-vector envelope (schema={vector.get('schema')!r})"
-            )
-
-        # A vector is in scope exactly when it commits a CBOR diagnostic
-        # sidecar -- a MAPPING from layer name to that layer's rendering, which
-        # is precisely what `check_case` then indexes as `case["diagnostic"]
-        # [layer]`. Driving on the sidecar rather than on a kind allow-list
-        # means any future CBOR-committing kind is covered the day it lands
-        # *provided it commits a sidecar*.
-        #
-        # The mapping test is load-bearing and NOT a shape sniff: it is the
-        # weakest predicate under which the rest of this function is defined.
-        # It reads `isinstance(..., dict)` rather than `"diagnostic" in c`
-        # because the bare-membership form was FALSE-POSITIVE, and A22 proved
-        # it so on 2026-08-09. The `anchor` kind commits no CBOR at all, but
-        # its cases carry a field also called `diagnostic` -- `AnchorDiagnostic`
-        # rendered as a code string or null (D101 §3.5) -- so every anchor case
-        # was pulled into scope and then failed for having no `*_bytes` field.
-        # Two vocabularies, one word: here it is a CBOR rendering, there it is
-        # a verdict's error code.
-        #
-        # KNOWN LIMITATION, stated rather than hidden, and now known to run in
-        # BOTH directions. False negative: a kind that commits format CBOR and
-        # no sidecar is silently out of scope, and this line cannot tell that
-        # apart from a kind that commits no CBOR at all. False positive: a kind
-        # that commits no CBOR but happens to name a field `diagnostic` is only
-        # excluded because its value is not a mapping -- a future kind whose
-        # `diagnostic` *is* a mapping of something else would be pulled in
-        # again. The honest fix for both is a registry-level flag on the kind,
-        # which is a `KNOWN_KINDS` change and not this file's to make -- see
-        # docs/testing/cbor-cross-check.md §8, and Q130.
-        subject = [
-            c
-            for c in vector.get("expect", {}).get("cases", [])
-            if isinstance(c.get("diagnostic"), dict)
-        ]
+        # The limitation is stated in full at docs/testing/cbor-cross-check.md
+        # section 7, and the scope rule and its history at section 8.1. The
+        # registry-level flag that closes BOTH directions is F31's, not this
+        # file's -- see docs/decisions/D112-cbor-cross-check-scope-rule.md.
+        vector, subject, note = scope_of(path)
         if not subject:
-            report(
-                f"  --  {_rel(path)}: kind {vector['kind']!r}, no diagnostic sidecar "
-                f"(out of scope for the CBOR cross-check)"
-            )
+            report(f"  --  {_rel(path)}: {note}")
             continue
 
         checked += 1
@@ -944,91 +951,132 @@ def _rel(path: pathlib.Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def self_test(cbor2, report) -> int:
-    """Mutate a real committed case in memory; require each mutation to be caught."""
-    # Both selectors below MUST use the same in-scope predicate as `run_check`
-    # (`isinstance(..., dict)`, not `"diagnostic" in c`) or the self-test picks
-    # a document the checker never checks. They diverged once: the bare form
-    # here survived the 2026-08-09 narrowing of `run_check` and immediately
-    # selected `anchor/anchor.json`, which sorts before `bundle/` and carries a
-    # `diagnostic` that is a verdict code rather than a layer mapping. The
-    # result was `StopIteration` on the `*_bytes` lookup below -- a CI red on a
-    # green `--check`, because `--check` and `--self-test` are separate steps
-    # and only the second one selects.
-    def _in_scope(case: dict) -> bool:
-        return isinstance(case.get("diagnostic"), dict)
+def self_test(cbor2, report) -> dict[str, int]:
+    """Mutate real committed cases in memory; require every mutation to be caught.
 
-    path = next(
-        p
-        for p in discover()
-        if any(
-            _in_scope(c)
-            for c in json.loads(p.read_text(encoding="utf-8")).get("expect", {}).get("cases", [])
+    Sweeps **every** in-scope document rather than the first one discovery
+    returns, and reaches them through `scope_of` -- the same function `run`
+    selects with, so "the half that selects is not the half that checks" stops
+    being a true sentence about this file. Sweeping also dissolves the
+    sort-order dependence that caused the 2026-08-09 incident instead of
+    working around it (`anchor/` sorts before `bundle/`), and honours D31 §6:
+    no vector name, case name, layer name or byte string is hard-coded here.
+
+    Returns the run's own counts, so the summary sentence cannot state a
+    literal that the next added mutation would falsify.
+    """
+    subjects: list[tuple[pathlib.Path, dict]] = []
+    for path in discover():
+        _vector, cases, _note = scope_of(path)
+        if cases:
+            subjects.append((path, cases[0]))
+    if not subjects:
+        raise CheckFailure(
+            "self-test: no committed vector carries a diagnostic sidecar, so there is "
+            "nothing to plant a fault in and the self-test would pass vacuously. "
+            "Discovery is broken, or every CBOR-committing vector is gone"
         )
-    )
-    vector = json.loads(path.read_text(encoding="utf-8"))
-    case = next(c for c in vector["expect"]["cases"] if _in_scope(c))
-    field = next(k for k in case if k.endswith("_bytes"))
-    raw = bytes.fromhex(case[field])
 
-    def mutated(fn) -> dict:
-        clone = json.loads(json.dumps(case))
-        fn(clone)
-        return clone
+    count = {"subjects": len(subjects), "mutations": 0, "planted": 0, "controls": 0}
 
-    def flip_a_byte(c):
-        b = bytearray(bytes.fromhex(c[field]))
-        b[len(b) // 2] ^= 0x01
-        c[field] = bytes(b).hex()
+    for path, case in subjects:
+        # Both preconditions are checked HERE rather than inside a mutation,
+        # for the reason spelled out at the mutation loop below.
+        byte_fields = [k for k in case if k.endswith("_bytes")]
+        if len(byte_fields) != 1:
+            raise CheckFailure(
+                f"self-test: {_rel(path)} case {case['name']!r} has {byte_fields} "
+                f"`*_bytes` field(s); exactly one is required to plant a byte-level fault"
+            )
+        if len(case["diagnostic"]) < 2:
+            raise CheckFailure(
+                f"self-test: {_rel(path)} case {case['name']!r} has a single-layer sidecar; "
+                f"the `reorder a map` and `a diagnostic layer removed` mutations need at "
+                f"least two layers to be faults rather than no-ops"
+            )
+        field = byte_fields[0]
+        raw = bytes.fromhex(case[field])
 
-    def reorder_a_map(c):
-        # F19 accept: a sidecar whose entries are CORRECT but REORDERED must
-        # fail. This is the mutation a set comparison would wave through.
-        for item in c["diagnostic"].values():
-            if isinstance(item, dict) and len(item.get("m", [])) >= 2:
-                item["m"][0], item["m"][1] = item["m"][1], item["m"][0]
-                return
-        raise CheckFailure("self-test: no multi-entry map to reorder")
+        def mutated(fn, case=case) -> dict:
+            clone = json.loads(json.dumps(case))
+            fn(clone)
+            return clone
 
-    def non_shortest_int(c):
-        # Rewrite the outermost head to a wider, non-shortest form -- the class
-        # a decoded object can no longer see (F15 row `cbor-non-shortest-*`,
-        # and D31's named self-test).
-        b = bytearray(bytes.fromhex(c[field]))
-        major, ai = b[0] >> 5, b[0] & 0x1F
-        b[0:1] = bytes([(major << 5) | 24, ai])
-        c[field] = bytes(b).hex()
+        def flip_a_byte(c, field=field):
+            b = bytearray(bytes.fromhex(c[field]))
+            b[len(b) // 2] ^= 0x01
+            c[field] = bytes(b).hex()
 
-    def truncate(c):
-        c[field] = bytes.fromhex(c[field])[:-1].hex()
+        def reorder_a_map(c):
+            # F19 accept: a sidecar whose entries are CORRECT but REORDERED
+            # must fail. This is the mutation a set comparison would wave
+            # through. The raise below is a genuine ABORT: it means the fault
+            # could not be planted, and it is raised outside the `try` that
+            # judges the checker's verdict.
+            for item in c["diagnostic"].values():
+                if isinstance(item, dict) and len(item.get("m", [])) >= 2:
+                    item["m"][0], item["m"][1] = item["m"][1], item["m"][0]
+                    return
+            raise CheckFailure("self-test: no multi-entry map to reorder")
 
-    def corrupt_work_id(c):
-        c["work_id"] = ("0" if c["work_id"][0] != "0" else "1") + c["work_id"][1:]
+        def non_shortest_int(c, field=field):
+            # Rewrite the outermost head to a wider, non-shortest form -- the
+            # class a decoded object can no longer see (F15 row
+            # `cbor-non-shortest-*`, and D31's named self-test).
+            b = bytearray(bytes.fromhex(c[field]))
+            major, ai = b[0] >> 5, b[0] & 0x1F
+            b[0:1] = bytes([(major << 5) | 24, ai])
+            c[field] = bytes(b).hex()
 
-    def corrupt_anchor_digest(c):
-        c["anchor_digest"] = ("0" if c["anchor_digest"][0] != "0" else "1") + c["anchor_digest"][1:]
+        def truncate(c, field=field):
+            c[field] = bytes.fromhex(c[field])[:-1].hex()
 
-    def drop_a_layer(c):
-        c["diagnostic"].pop(sorted(c["diagnostic"])[0])
+        def corrupt_work_id(c):
+            c["work_id"] = ("0" if c["work_id"][0] != "0" else "1") + c["work_id"][1:]
 
-    mutations = [
-        ("one flipped byte in the committed bytes", flip_a_byte),
-        ("map entries correct but REORDERED", reorder_a_map),
-        ("non-shortest integer head (non-canonical)", non_shortest_int),
-        ("truncated bytes", truncate),
-        ("wrong work_id", corrupt_work_id),
-        ("wrong anchor_digest", corrupt_anchor_digest),
-        ("a diagnostic layer removed", drop_a_layer),
-    ]
+        def corrupt_anchor_digest(c):
+            c["anchor_digest"] = (
+                "0" if c["anchor_digest"][0] != "0" else "1"
+            ) + c["anchor_digest"][1:]
 
-    report(f"self-test against {_rel(path)} case {case['name']!r} ({len(raw)} bytes):")
-    for label, fn in mutations:
-        try:
-            check_case(cbor2, mutated(fn))
-        except CheckFailure as exc:
-            report(f"  RED as required  {label}\n                   -> {str(exc).splitlines()[0][:140]}")
-        else:
-            raise CheckFailure(f"self-test FAILED: the checker accepted a vector with {label}")
+        def drop_a_layer(c):
+            c["diagnostic"].pop(sorted(c["diagnostic"])[0])
+
+        mutations = [
+            ("one flipped byte in the committed bytes", flip_a_byte),
+            ("map entries correct but REORDERED", reorder_a_map),
+            ("non-shortest integer head (non-canonical)", non_shortest_int),
+            ("truncated bytes", truncate),
+            ("wrong work_id", corrupt_work_id),
+            ("wrong anchor_digest", corrupt_anchor_digest),
+            ("a diagnostic layer removed", drop_a_layer),
+        ]
+        count["mutations"] = len(mutations)
+
+        report(f"self-test against {_rel(path)} case {case['name']!r} ({len(raw)} bytes):")
+        for label, fn in mutations:
+            # PLANTING IS NOT INSIDE THE `try`. A fault we could not plant
+            # raises `CheckFailure` too -- `reorder_a_map` does exactly that on
+            # a sidecar with no multi-entry map -- and inside the try it would
+            # be caught by the handler below and printed as `RED as required`.
+            # A self-test that cannot plant a fault must never announce
+            # success, so an unplantable mutation aborts the whole run.
+            candidate = mutated(fn)
+            try:
+                check_case(cbor2, candidate)
+            except CheckFailure as exc:
+                report(
+                    f"  RED as required  {label}\n"
+                    f"                   -> {str(exc).splitlines()[0][:140]}"
+                )
+                count["planted"] += 1
+            else:
+                raise CheckFailure(f"self-test FAILED: the checker accepted a vector with {label}")
+
+        # And the honest control: unmutated, the same case passes.
+        check_case(cbor2, case)
+        report("  GREEN unmutated  the same case passes untouched")
+        count["controls"] += 1
 
     # The T0 oracle must be fallible too. Plant a wrong RFC expectation and
     # require it to be caught: an anchor that would pass whatever our encoder
@@ -1038,13 +1086,11 @@ def self_test(cbor2, report) -> int:
         rfc_8949_anchor(cbor2, lambda _message: None, planted)
     except CheckFailure:
         report("  RED as required  a wrong RFC 8949 Appendix A expectation")
+        count["planted"] += 1
     else:
         raise CheckFailure("self-test FAILED: the T0 anchor accepted a wrong RFC expectation")
 
-    # And the honest control: unmutated, the same case passes.
-    check_case(cbor2, case)
-    report("  GREEN unmutated  the same case passes untouched")
-    return len(mutations) + 2
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -1175,9 +1221,12 @@ def main() -> int:
 
         if args.self_test:
             count = self_test(cbor2, report)
+            planted = count["planted"]
             report(
-                f"\nself-test PASSED: {count} scenarios — 8 planted faults caught "
-                f"(7 vector mutations + a wrong RFC expectation), 1 control green"
+                f"\nself-test PASSED: {planted + count['controls']} scenarios — {planted} "
+                f"planted faults caught ({count['mutations']} vector mutation(s) × "
+                f"{count['subjects']} in-scope document(s) + a wrong RFC expectation), "
+                f"{count['controls']} control(s) green"
             )
             return 0
 

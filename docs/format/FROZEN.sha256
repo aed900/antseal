@@ -46,8 +46,18 @@
 # `status frozen` (set at Q14): digests are permanent,
 # `scripts/format-freeze.sh --update` refuses to modify or drop an entry,
 # and an addition — a `registry-v2.*` pair — is the only legal change. A
-# byte change to a frozen entry is a format-version event (MVP-SPEC.md
-# line 123; procedure Q27), never an edit.
+# byte change to a frozen entry is a format-version event, never an edit
+# (procedure Q27).
+#
+# The authority for that is Q14's own freeze act, NOT MVP-SPEC.md line 123
+# (Q132). Line 123 is the *compatibility* rule — "every RELEASED
+# manifest/bundle format version remains verifiable by all future CLI and
+# page releases" — and D104 §1.5 measures with three independent
+# confirmations that nothing has been released. Cited as the source of
+# byte-immutability it is a conditional whose condition is false today, so a
+# reader who checks it may conclude the freeze is soft: the inference D108 §3
+# spends a section refusing. Q14 is deliberately STRONGER than line 123
+# requires, and line 123 is what the freeze protects once a version ships.
 #
 #! manifest-version 1
 #! format-version v1

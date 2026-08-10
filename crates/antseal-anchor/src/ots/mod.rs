@@ -179,4 +179,68 @@ mod tests {
         );
         assert_eq!(fixtures::CALENDAR_PENDING_BODY.len(), 42);
     }
+
+    /// **A115/D110.** §5's A42 row is keyed to the **upgrade** reply.
+    ///
+    /// `the_margin_column_is_the_value_over_the_measurement` (antseal-core)
+    /// recomputes `value / measured` *inside* the document, so it is green
+    /// for **either** keying as long as the two cells agree: a lane that
+    /// re-keys both back to the 220-byte submit reply passes it. That is the
+    /// boundary that test records for itself — both operands are pinned
+    /// elsewhere and neither pin is there. This is the pin for the operand.
+    /// Literal-free on both sides: the document supplies one number and
+    /// [`MEASURED_MAX_UPGRADE_RESPONSE_BYTES`], asserted per file above,
+    /// supplies the other.
+    #[test]
+    fn the_f4_row_is_keyed_to_the_upgrade_reply_not_the_submit_reply() {
+        const REGISTRY: &str = include_str!("../../../../docs/format/anchor-artifact-limits.md");
+
+        let row = REGISTRY
+            .lines()
+            .find(|line| line.starts_with("| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 |"))
+            .expect("§5's A42 row is gone or has changed owner");
+        let cells: Vec<&str> = row.split('|').collect();
+        assert_eq!(
+            cells.len(),
+            10,
+            "§5's A42 row is not eight cells; the margin cross-check reads it positionally"
+        );
+
+        // §5's Update rule: the first bolded number in `measured against` is
+        // the measured quantity the margin divides by. The same convention as
+        // A113's checker, read from the other side of the crate graph.
+        let measured: u64 = cells[5]
+            .split("**")
+            .skip(1)
+            .step_by(2)
+            .filter_map(|span| {
+                let token = span.trim().trim_end_matches(" B").replace(' ', "");
+                (!token.is_empty() && token.chars().all(|c| c.is_ascii_digit()))
+                    .then(|| token.parse().ok())
+                    .flatten()
+            })
+            .next()
+            .expect("§5's Update rule requires the measured quantity in bold");
+
+        assert_eq!(
+            measured,
+            MEASURED_MAX_UPGRADE_RESPONSE_BYTES,
+            "§5's `MAX_OTS_CALENDAR_RESPONSE_BYTES` row divides by {measured}, not by the \
+             largest measured upgrade reply ({MEASURED_MAX_UPGRADE_RESPONSE_BYTES} B). D110 \
+             keys this row to the *upgrade* class: it is the binding one of the two classes \
+             this cap governs, and D54 §6.1 required the row to be completed with it. {} B \
+             is the largest *submit* reply — the lesser shape, and re-keying to it restores \
+             the 297.89x margin A115 exists to retire",
+            fixtures::CALENDAR_CATALLAXY_A.len(),
+        );
+
+        // The label and the arithmetic must name the same class. A margin cell
+        // reading `(submit)` over an upgrade-keyed measurement is the defect
+        // this row carried for seven days, one column to the left.
+        assert!(
+            cells[6].contains("upgrade"),
+            "§5's A42 margin cell {:?} does not name the reply class it divides by",
+            cells[6]
+        );
+    }
 }

@@ -7,7 +7,10 @@ use antseal_core::anchor::ots::parse_ots;
 
 use super::*;
 use crate::http::{Endpoint, HttpPolicy, TlsPolicy};
-use crate::testing::replay::{CalendarBehaviour, EsploraBehaviour, calendar, esplora, fixtures};
+use crate::testing::replay::{
+    CalendarBehaviour, EsploraBehaviour, RecordedEndpoint, attested_block, calendar, esplora,
+    esplora_block_at, esplora_recorded_block, fixtures, tamper_hex,
+};
 use crate::testing::stub::StubServer;
 
 fn client() -> HttpClient {
@@ -286,12 +289,21 @@ fn a_successful_upgrade_produces_an_artifact_and_header_transition() {
 /// transition, with every byte of the calendar exchange being a **real
 /// recorded upgrade**.
 ///
-/// Only the block header is synthesised, and it has to be: the attestation is
-/// for Bitcoin block 960767 and this lane did not fetch a mainnet header for
-/// it (that half is A48's). What the synthetic header establishes is the
-/// wiring — that a committing header produces a transition carrying both the
-/// merged artifact and the upgrade group — and the *non*-committing direction
-/// is covered against the same machinery by `a_wrong_header_is_rejected…`.
+/// Only the block header is synthesised. What the synthetic header
+/// establishes is the wiring — that a committing header produces a transition
+/// carrying both the merged artifact and the upgrade group — and the
+/// *non*-committing direction is covered against the same machinery by
+/// `a_wrong_header_is_rejected…`.
+///
+/// **The header is no longer synthetic of necessity** (A112). When this test
+/// was written the tree held no mainnet header for block 960767, so it
+/// spliced the derived root into 80 zero bytes and said so. A25's day-3
+/// capture landed those headers on 2026-08-07 and
+/// [`a_promotion_round_replays_at_a_real_attested_height`] runs the same
+/// round against them. This one is kept, and kept synthetic, because it is
+/// the arm that isolates the wiring from the arithmetic: it passes for any
+/// root the ops derive, so it still fails if the transition stops carrying
+/// both halves even in a world where the mainnet capture were mislaid.
 #[test]
 fn the_engine_records_artifact_and_header_together() {
     // The upgrade the real calendar returned, and the root it derives.
@@ -388,6 +400,149 @@ fn esplora_at(height: u64, header_hex: &str) -> crate::testing::stub::StubScript
                 bytes: header_hex.as_bytes().to_vec(),
             },
         )
+}
+
+// ── A112: the promotion round at a height this project actually attests ──
+
+/// The instant blockstream.info served block 960767's header, from
+/// `A25-upgrade-headers/CAPTURE.log` (2026-08-07T10:36:49Z).
+///
+/// A real recorded instant rather than `0`, because `fetch_date` is what a
+/// bundle carries for ever as "when this header was obtained", and a replay
+/// that stamps it zero is a replay whose one time-bearing field is the one
+/// field it made up.
+const HEADER_FETCH_DATE: u64 = 1_786_099_009;
+
+/// **A112.** The whole round — poll → merge → header → transition — replayed
+/// offline at **960767**, with no network and no new capture.
+///
+/// Every byte of this exchange was recorded from a live service. The calendar
+/// leg replays alice's real 2026-08-03 upgrade response; the esplora legs
+/// replay the two mainnet captures A25 took on 2026-08-07, each stub serving
+/// **its own endpoint's file** so the must-agree rule compares two
+/// independently recorded bodies rather than one body served twice.
+///
+/// What that buys over the synthetic sibling is the assertion at the end.
+/// There, the header exists because the test spliced the derived root into
+/// it, so `header_commits` cannot fail and proves only the wiring. Here
+/// neither side of the comparison was chosen by this crate: the left is
+/// derived by executing a real calendar's op chain over the committed golden
+/// digest, the right is 32 bytes of a block header two independent operators
+/// served. The round therefore promotes only if the OpenTimestamps proof this
+/// project holds really is in the Bitcoin block it names — which is the claim
+/// promotion exists to check, and the one a synthetic header can never test.
+#[test]
+fn a_promotion_round_replays_at_a_real_attested_height() {
+    // alice's pending branch of `MERGED_A` attests block 960767 (D92's
+    // "three calendars, three blocks"); `attested_block` refuses any height
+    // this project did not stamp, so a wrong constant here does not silently
+    // become a replay of nothing.
+    let block = attested_block(960_767).expect("alice's attesting block is committed");
+
+    let calendar_stub = StubServer::spawn(calendar(&CalendarBehaviour::Upgraded {
+        pending: Vec::new(),
+        upgrade: fixtures::UPGRADE_A_ALICE.to_vec(),
+    }));
+    let blockstream =
+        StubServer::spawn(esplora_recorded_block(block, RecordedEndpoint::Blockstream));
+    let mempool = StubServer::spawn(esplora_recorded_block(block, RecordedEndpoint::Mempool));
+
+    let report = upgrade_pending_with(
+        &client(),
+        &esplora_pair(&blockstream, &mempool),
+        &[work_with(fixtures::MERGED_A)],
+        UpgradeBudget {
+            total: Duration::from_secs(60),
+            // One poll, as in the synthetic sibling: the stub answers every
+            // URI with alice's upgrade, and splicing it at bob's attestation
+            // would derive a root 960767's header does not commit.
+            max_polls: 1,
+        },
+        HEADER_FETCH_DATE,
+        &to_stub(&calendar_stub),
+    );
+
+    assert_eq!(report.upgraded.len(), 1, "notes: {:?}", report.notes);
+    let applied = &report.upgraded[0];
+    let upgrade = applied.upgrade.as_ref().expect("the header group");
+
+    assert_eq!(upgrade.block_height(), 960_767);
+    assert_eq!(
+        upgrade.block_header(),
+        &block
+            .header_bytes(RecordedEndpoint::Blockstream)
+            .expect("a committed capture is 160 lowercase hex"),
+        "the recorded header must be the captured bytes, not a re-encoding"
+    );
+    assert_eq!(upgrade.fetch_date(), HEADER_FETCH_DATE);
+
+    // The load-bearing one. `confirm_header` already refused to record a
+    // header the attestation does not commit, so reaching this line is itself
+    // the result; asserting it here says which fact the round established,
+    // and does it through the same predicate the offline verifier will run
+    // against the embedded bytes.
+    let parsed = parse_ots(&applied.artifact, &fixtures::DIGEST_A).expect("A11-clean");
+    assert!(
+        parsed
+            .attestations
+            .iter()
+            .any(|a| antseal_core::anchor::ots::header_commits(a, upgrade)),
+        "the ops-derived merkle root must be the one Bitcoin published at 960767"
+    );
+}
+
+/// The same round, with **one endpoint's copy of the real header** altered by
+/// a single hex digit: nothing is recorded, and the merge is dropped with it.
+///
+/// This is the arm that makes the test above falsifiable. Without it, a
+/// `fetch_agreed_header` that ignored the second endpoint entirely would pass
+/// every assertion there — and the whole reason two endpoints are queried is
+/// that one unsigned reply is not evidence.
+#[test]
+fn a_promotion_round_at_a_real_height_records_nothing_when_one_endpoint_disagrees() {
+    let block = attested_block(960_767).expect("alice's attesting block is committed");
+
+    let calendar_stub = StubServer::spawn(calendar(&CalendarBehaviour::Upgraded {
+        pending: Vec::new(),
+        upgrade: fixtures::UPGRADE_A_ALICE.to_vec(),
+    }));
+    let honest = StubServer::spawn(esplora_recorded_block(block, RecordedEndpoint::Blockstream));
+    // Still 160 lowercase hex, still resolving the same hash: only the
+    // comparison can catch it.
+    let liar = StubServer::spawn(esplora_block_at(
+        block.height,
+        block.mempool_hash_hex,
+        &tamper_hex(block.mempool_header_hex),
+    ));
+
+    let report = upgrade_pending_with(
+        &client(),
+        &esplora_pair(&honest, &liar),
+        &[work_with(fixtures::MERGED_A)],
+        UpgradeBudget {
+            total: Duration::from_secs(60),
+            max_polls: 1,
+        },
+        HEADER_FETCH_DATE,
+        &to_stub(&calendar_stub),
+    );
+
+    assert!(
+        report.upgraded.is_empty(),
+        "a disagreed header must drop the merge with it: {:?}",
+        report.upgraded
+    );
+    assert!(
+        report.notes.iter().any(|note| matches!(
+            note,
+            UpgradeNote::HeaderUnconfirmed {
+                source: HeaderError::NotAgreed { height: 960_767 },
+                ..
+            }
+        )),
+        "notes: {:?}",
+        report.notes
+    );
 }
 
 /// The stored artifact's URI is attacker-writable, so the allowlist must fire

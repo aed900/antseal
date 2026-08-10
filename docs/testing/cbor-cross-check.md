@@ -186,13 +186,20 @@ amount of agreement between our two implementations could manufacture.
 Stated so a reader of a green lane knows what green means.
 
 - **A kind that commits format CBOR without a sidecar is silently out of
-  scope.** Scope is "the case carries a `diagnostic`", which is what makes
-  the checker generic over vectors that have not been written yet — but it
-  means the *absence* of a sidecar reads identically to "this kind commits
-  no CBOR". The lane cannot tell those apart, and it prints the neutral
-  wording rather than claiming the stronger one. Closing this needs a
-  registry-level flag on the kind (a `KNOWN_KINDS` change), not a change
-  here.
+  scope, and one such kind is committed today.** Scope is "the case carries an
+  object-valued `diagnostic`", which is what makes the checker generic over
+  vectors that have not been written yet — but the *absence* of a sidecar
+  reads identically to "this kind commits no CBOR". The measured instance is
+  `testdata/vectors/v1/crypto/manifest-aead.json`, whose `manifest_bytes` is
+  CBOR-shaped, **not well-formed** (`5820` declares 32 bytes over a 30-byte
+  literal) and checked by nothing. Closing this needs a registry-level flag on
+  the kind, which is **F31**'s and not this checker's — see
+  `docs/decisions/D112-cbor-cross-check-scope-rule.md`.
+- **Five kinds cannot enter scope at all, whatever they commit.** Scope is
+  read from `expect.cases`, and `commitments`, `hkdf-labels`, `manifest-aead`
+  and `unit-aead` carry `expect.vectors` while `signatures` carries named
+  sub-objects. The checker now says which of the two silences it means; making
+  those kinds *reachable* is F31's.
 - **Canonical JSON is a different surface.** The `report` kind pins
   `report_json` under D29, not CBOR. D31 §7 registered that gap as **Q38**;
   nothing in this document covers it.
@@ -214,39 +221,37 @@ constant, and requires this document, the vector README and the
 `vectors_cbor_diag` module to keep pointing at each other. A change to one
 side that forgets the other goes red.
 
-### 8.1 Scope is sniffed, not declared — and it has been wrong in both directions
+### 8.1 Scope is decided in exactly one place, and checked against nothing yet
 
-A vector enters the CBOR cross-check when its `expect.cases[]` carry a
-**diagnostic sidecar**: a mapping from layer name to that layer's rendering.
-There is no kind allow-list, which is deliberate — a future CBOR-committing
-kind is covered the day it lands, provided it commits a sidecar.
+A vector enters the CBOR cross-check when its `expect.cases[]` carry an
+object-valued `diagnostic` — a mapping from layer name to that layer's
+rendering. There is no kind allow-list, which is deliberate: a future
+CBOR-committing kind is covered the day it lands, provided it commits a
+sidecar.
 
-The cost is that scope is inferred from a *field name*, and that inference has
-now failed twice over:
+That inference has failed in both directions, and the **false negative is the
+live one** (§7). The false positive was found by the gate on 2026-08-09, when
+A22 landed: the `anchor` kind commits no CBOR, but its cases carry a field also
+called `diagnostic` — `AnchorDiagnostic` as a code string or `null` (D101 §3.5),
+not a layer mapping — so every anchor case was pulled into scope and failed for
+having no `*_bytes` field. Two vocabularies, one word. The repair narrowed the
+test from `"diagnostic" in case` to `isinstance(case.get("diagnostic"), dict)`,
+the weakest predicate under which `check_case` is defined at all.
 
-- **False negative** (known since this checker was written): a kind that
-  commits format CBOR and no sidecar is silently out of scope, and the test
-  cannot distinguish it from a kind that commits no CBOR at all.
-- **False positive** (found by the gate on 2026-08-09, when A22 landed): the
-  `anchor` kind commits no CBOR, but its cases carry a field also called
-  `diagnostic` — `AnchorDiagnostic` rendered as a code string or `null`
-  (D101 §3.5), not a layer mapping. Every anchor case was pulled into scope
-  and then failed for having no `*_bytes` field. Two vocabularies, one word.
+**The sharper lesson is where the rule lived, not what it said.** It lived in
+two functions. `run` was narrowed and `self_test` was not, so `--self-test`
+selected `anchor/anchor.json` — which sorts before `bundle/` — and died on
+`StopIteration`, red against a green `--check`, because CI runs them as
+separate steps and only the second one selects. It is now written **once**, in
+`scope_of`, which both callers use, and
+`crates/antseal-core/tests/cbor_crosscheck_contract.rs::the_cbor_scope_predicate_is_written_exactly_once`
+fails if a second copy is ever written. The self-test no longer selects a
+sample: it sweeps **every** in-scope document, so its selection is the check's
+selection in full rather than the first element of it.
 
-The immediate repair narrowed the test from `"diagnostic" in case` to
-`isinstance(case.get("diagnostic"), dict)` — the weakest predicate under which
-`check_case` is defined at all, since it goes on to index
-`case["diagnostic"][layer]`. That was verified a no-op for every pre-existing
-kind: only `bundle` and `manifest` carry the field, and every one of their
-cases is dict-valued.
-
-It is a repair and not a fix. A future kind whose `diagnostic` *is* a mapping
-of something else would be pulled straight back in. The durable answer is a
-**registry-level flag on the kind**, declaring whether it commits format CBOR,
-so scope is stated rather than guessed. The registry already exists and is
-already cross-checked — `FROZEN.sha256`'s `#! kind` directives are asserted
-equal to `KNOWN_KINDS` by `vector_freeze.rs` — so the flag has a home. Tracked
-as **Q130**.
+The declaration this predicate should be checked against is **F31**'s
+registry-level flag on the kind. Its design is fixed by
+`docs/decisions/D112-cbor-cross-check-scope-rule.md`.
 
 Worth recording *how* this was found, because no lane-local check could have:
 A22's lane verified `scripts/cross-check.sh`'s generator half and never

@@ -5,11 +5,24 @@
 #   ./scripts/format-freeze.sh --self-test  # test-of-the-test: must go RED
 #   ./scripts/format-freeze.sh --update     # regenerate the digest block
 #
-# Contract (MVP-SPEC.md line 123 format stability; tasks/Q.md Q50):
+# Contract (the freeze is Q14's own act; tasks/Q.md Q50):
 # `docs/format/registry-v1.md` IS format v1 — the normative text a
 # third-party verifier implements from — and `registry-v1.json` is its
 # machine mirror. `docs/format/FROZEN.sha256` pins the exact bytes of both
 # AND is the must-exist list.
+#
+# ── Authority: what makes a byte change illegal (Q132) ─────────────────────
+#
+# Q14's freeze act — NOT MVP-SPEC.md line 123. Line 123 is the *compatibility*
+# rule: "every RELEASED manifest/bundle format version remains verifiable by
+# all future CLI and page releases", and D104 §1.5 measures with three
+# independent confirmations that nothing has been released. Cited as the
+# source of byte-immutability it is a conditional whose condition is false
+# today, so a reader who checks it may conclude the freeze is soft — the
+# inference D108 §3 spends a section refusing. The order runs the other way:
+# Q14 imposes a STRONGER, self-imposed discipline than line 123 requires, and
+# line 123 is what that discipline exists to protect once a version ships.
+# Procedure for a legal change: Q27.
 #
 # Why a digest and not just the cross-checks: `format_registry_freeze.rs`
 # asserts that the code agrees with the mirror — 19 D10 caps, 68 map keys
@@ -175,8 +188,9 @@ update)
         path="${line#*  }"
         echo "::error::${manifest} is FROZEN: \`${path}\` would be modified or dropped."
         echo "::error::The wire registry IS format v1. After Q14 the only legal change is an"
-        echo "::error::addition (a registry-v<n+1> pair); a byte change needs a new format version"
-        echo "::error::(MVP-SPEC.md line 123; procedure Q27)."
+        echo "::error::addition (a registry-v<n+1> pair); a byte change is a format-version"
+        echo "::error::event under Q14's freeze act (procedure Q27), never an edit. MVP-SPEC.md"
+        echo "::error::line 123 is the compatibility rule this protects, not its source."
         exit 1
       fi
     done <<< "${old}"
