@@ -5,7 +5,13 @@
 //! Renamed from `format_registry_draft.rs` at the Q14 `format-v1-freeze`
 //! gate (D8 §12). The registry is now **frozen**: every number, name and
 //! rule it records is format-permanent, and changing one is a
-//! format-version event (MVP-SPEC.md line 123), not an edit.
+//! format-version event, not an edit. The authority for that is **Q14's own
+//! freeze act** (procedure Q27), not MVP-SPEC.md line 123 (**Q148**): line
+//! 123 is the *compatibility* rule and is conditioned on *released* — D104
+//! §1.5 measures with three independent confirmations that nothing has been
+//! released — so citing it as the source of immutability hands a reader a
+//! conditional whose condition is false today. Q14 is deliberately stronger;
+//! line 123 is what the freeze protects once a version ships.
 //!
 //! D8 §14 names the assertion set so it cannot be under-delivered.
 //!

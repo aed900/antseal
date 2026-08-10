@@ -15,7 +15,9 @@
 //! registry §14 defers to F5/F8, in **both** directions. **Changing a number
 //! here without changing the registry (or vice versa) fails those tests**,
 //! which is the point: after the Q14 `format-v1-freeze` gate, either change
-//! is a format-version event (MVP-SPEC.md line 123).
+//! is a format-version event under **Q14's own freeze act** (procedure Q27) —
+//! not under MVP-SPEC.md line 123, which is the *released*-conditioned
+//! compatibility rule the freeze protects once a version ships (**Q148**).
 //!
 //! [`FORMAT_VERSION_V1`] is the one constant with no machine-readable row to
 //! bind to — registry §7.6 key 0 states its value in prose — so it is pinned

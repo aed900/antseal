@@ -8,7 +8,11 @@ per-wave record of how the project got here lives in `TODO.md`'s change log
 and in `docs/decisions/`.
 
 **Format versions are the load-bearing entries.** A format version, once
-frozen, is verifiable forever (MVP-SPEC.md line 123). Entries under a
+frozen, is byte-permanent under the act that froze it — **Q14** for the wire
+registry, **Q6/Q14** for the golden vectors — and once *released* it stays
+verifiable by every future release (MVP-SPEC.md line 123, which is
+conditioned on *released*; nothing has been released yet, D104 §1.5).
+Entries under a
 `[format-vN]` heading state exactly what became permanent, because that is
 what a third-party verifier implements against and what a later release may
 not silently change.

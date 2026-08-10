@@ -31,6 +31,39 @@ use std::path::{Path, PathBuf};
 /// retained forever.
 const MAX_EMBEDDED_BYTES_PER_VERSION: u64 = 2_097_152;
 
+/// Names the discovery walk must ignore rather than classify.
+///
+/// Q4/Q5 say nothing under `vectors/v<n>/` is SILENTLY skipped, and that rule
+/// is unchanged: every `*.json` is still discovered, executed and counted, and
+/// every file that is neither a vector, nor a documented auxiliary, nor on
+/// this list is still a hard failure naming the path.
+///
+/// What this list adds is the distinction Q4/Q5 never had to draw, because in
+/// 2026-07 nobody had yet run a Python import inside the vector tree: a file
+/// the REPOSITORY ITSELF declares is not part of the tree is not an
+/// unclassifiable vector, it is not a vector at all. `.gitignore` is where
+/// that declaration lives, and `__pycache__/` has been in it since the wave-7
+/// freeze — so before D116 the tree carried two rules that disagreed about
+/// whether the same directory was expected, and the build-breaking one won.
+///
+/// Measured (D116 §1.5): a `.pyc` here failed `cargo check --workspace` with
+/// exit 101, and so did `vector_runner`, which is CI's `golden-vectors`,
+/// `cross-os` and `test` contexts. A vim swap file did the same, so editing
+/// `crosscheck_cbor.py` bricked the workspace build for as long as the editor
+/// was open.
+///
+/// `vector_freeze.rs`'s `collect_json` needs no such list because it filters
+/// POSITIVELY for `.json` instead of asserting a closed classification, and is
+/// green through all of the above — the tolerant shape was already in the tree.
+///
+/// This block is duplicated VERBATIM in `crates/wasm-bitmatch/build.rs` and
+/// `crates/antseal-core/tests/vector_runner.rs` — a build script cannot import
+/// a test module — and `bitmatch.rs` asserts the two texts are byte-identical
+/// (D116 R8a). Edit both or neither.
+const IGNORED_DIRS: &[&str] = &["__pycache__", ".idea", ".vscode"];
+const IGNORED_SUFFIXES: &[&str] = &[".pyc", ".pyo", ".pyd", ".swp", ".swo"];
+const IGNORED_NAMES: &[&str] = &[".DS_Store"];
+
 fn main() {
     // Declared so the deliberate-divergence self-test's `--cfg` is a known
     // condition rather than an `unexpected_cfgs` warning under `-D warnings`.
@@ -152,11 +185,14 @@ fn walk_root(root: &Path, found: &mut Vec<(String, String, PathBuf, u64)>) {
 /// are documented auxiliaries, anything else fails the build.
 fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, PathBuf, u64)>) {
     for entry in sorted_entries(dir) {
+        let name = file_name(&entry);
         if entry.is_dir() {
+            if IGNORED_DIRS.contains(&name.as_str()) {
+                continue; // pruned, not recursed (D116 R7)
+            }
             walk_version_dir(&entry, version, found);
             continue;
         }
-        let name = file_name(&entry);
         // F10's per-version roster is an auxiliary, not a vector: it carries
         // no `kind`/`inputs`/`expect`, so embedding it would hand the bit-match
         // executor a file it cannot run.
@@ -172,6 +208,13 @@ fn walk_version_dir(dir: &Path, version: &str, found: &mut Vec<(String, String, 
                 .len();
             found.push((repo_relative(&entry), version.to_owned(), entry, len));
         } else {
+            // D116 R7: AFTER the `*.json` arm and after `INDEX.json`, so an
+            // ignorable rule can never swallow a vector.
+            if IGNORED_NAMES.contains(&name.as_str())
+                || IGNORED_SUFFIXES.iter().any(|s| name.ends_with(s))
+            {
+                continue;
+            }
             assert!(
                 name == "README.md" || name == "FROZEN.sha256" || name.ends_with(".py"),
                 "{}: unclassifiable file under vectors/{version}/ — every file must be a vector \

@@ -68,7 +68,7 @@ pub use upgrade_uri::{
 ///
 /// Measured 2026-08-02 across 18 real calendar submit responses: the largest
 /// was **220 B** (`testdata/anchors/A25-bootstrap/A-catallaxy.timestamp`),
-/// a 298x margin.
+/// a 297.89x *submit*-class margin — not the figure the F4 row takes.
 ///
 /// # The upgrade-response half of the F4 row, measured 2026-08-03
 ///
@@ -88,7 +88,7 @@ pub use upgrade_uri::{
 /// merkle path predicts. **The governing figure is the largest: 1 105 B, a
 /// 59.3× margin** against this 65 536-byte cap — and it is the figure the F4
 /// row takes, because the row bounds one HTTP reply and an upgrade reply is
-/// 5.02× larger than the submit reply the 298× margin was computed from.
+/// 5.02× larger than the submit reply the 297.89× margin was computed from.
 ///
 /// The cap holds with room either way; what changed is that the number is now
 /// measured rather than absent. `MAX_OTS_BYTES` in this slot would have been a
@@ -157,7 +157,7 @@ mod tests {
         // The margin the F4 row records, as arithmetic.
         assert_eq!(MAX_OTS_CALENDAR_RESPONSE_BYTES / largest, 59);
         // …and the upgrade reply really is the governing case: 5.02x the
-        // largest submit reply, which is what made the submit-derived 298x
+        // largest submit reply, which is what made the submit-derived 297.89x
         // margin the wrong number to leave in the row.
         assert_eq!(fixtures::CALENDAR_CATALLAXY_A.len(), 220);
         assert!(largest > fixtures::CALENDAR_CATALLAXY_A.len() as u64 * 5);

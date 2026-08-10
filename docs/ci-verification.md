@@ -1614,3 +1614,33 @@ exactly what it was: a finding whose only evidence is local, on a tier this
 document's own rule says is therefore not remotely verified. Q113 is not the
 weaker case here — **the heavy tier is the blind spot**, and the gap is in
 the workflow set, not in the run.
+
+---
+
+## The CBOR checker's self-test counts — correction, 2026-08-10 (M2 wave 13)
+
+**A row in "Local verification (2026-07-28)" above is now wrong about the
+present, and is left standing anyway.** Its `cross-check` step 1 entry records
+*"7 surface proofs, each red with a planted fault and green after restore,
+plus the CBOR checker's own 8 planted faults and 1 control"*. That was
+accurate for the run it dates. This section supersedes it in the same form,
+and for the same reason, as the context-set correction above: this document's
+convention is dated append-only sections, and rewriting a dated row would
+destroy the record of what was actually observed — which is the thing a
+maintainer diffing two runs is looking for.
+
+**Q130** (wave 12) made `./scripts/cross-check.sh --self-test` sweep every
+in-scope document rather than the first, and made every number in the CBOR
+checker's summary **computed from the run**. The shape it reports is: per
+in-scope document, **7 vector mutations + 1 control**, plus **one wrong RFC
+8949 expectation per run**. Those totals scale with the in-scope set, so this
+note states the structure and lets the run state the numbers — restating them
+is what produced **Q146**, four prose sites carrying a count the tool had
+stopped printing. The two other checkers named in that row were re-verified
+and are unchanged.
+
+**No verdict moved.** `--self-test` was rc 0 then and is rc 0 now, and CI
+still runs it as its own step with `--require`. What moved is local: **Q141**
+(wave 13) added that step to `scripts/local-gate.sh`, which had run `--check`
+only and therefore could not observe any of Q130's new instruments — CI could,
+because it runs the two as separate steps.

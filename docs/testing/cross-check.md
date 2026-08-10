@@ -423,3 +423,34 @@ catches up.
 - The CBOR checker's schema branch inspects the outer layer only; it does not
   descend into embedded `bstr` layers the way its canonicality branch does
   (**F36**).
+
+---
+
+## Self-test fault counts — correction, 2026-08-10 (M2 wave 13)
+
+**Supersedes §3's "Proven able to fail" row for `crosscheck_cbor.py`, and
+nothing else in that table.** The row reads *"its own 8 planted faults + 1
+control | red ×8, green ×1"*. That is what the checker printed on 2026-07-28,
+and the row is left standing, because earlier sections are never rewritten
+(§6): rewriting it would claim that run announced a summary which did not
+exist until 2026-08-10.
+
+The finding did not change — the checker did. **Q130** (wave 12) made
+`--self-test` sweep **every in-scope document** instead of the first one it
+found, and made every number in the summary **computed from the run** rather
+than written into the format string. The shape it reports is: per in-scope
+document, **7 vector mutations + 1 control**, plus **one wrong RFC 8949
+expectation per run**. The totals therefore scale with the in-scope set, and
+this note deliberately does not restate them — a fixed number here would go
+stale the next time a document joins the set, which is precisely how the row
+above came to disagree with the tool (**Q146**). The run prints them; the run
+is the authority.
+
+§3b's two rows were re-verified against a live run and still say what those
+checkers say, so they are not superseded.
+
+No count in this document is machine-asserted, and Q146 declined to make one:
+a check comparing prose against the printed summary can only ever be shown red
+against its own literal, which is the bar D111 and D114 set and refused. The
+cheaper fix was to remove the drift surface instead — `scripts/cross-check.sh`
+and `CONTRIBUTING.md` now state the structure and defer the totals to the run.

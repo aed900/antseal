@@ -5,12 +5,28 @@
 #   ./scripts/vector-freeze.sh --self-test  # test-of-the-test: must go RED
 #   ./scripts/vector-freeze.sh --update     # regenerate the digest blocks
 #
-# Contract (MVP-SPEC.md line 123 format stability, line 167 "per-version
-# vectors retained in CI forever"; tasks/Q.md Q6): each
-# `testdata/vectors/v<n>/FROZEN.sha256` pins the exact bytes of every
+# Contract (the byte pin is Q6's own act, executed at Q14; tasks/Q.md Q6):
+# each `testdata/vectors/v<n>/FROZEN.sha256` pins the exact bytes of every
 # committed vector of that format version AND is the must-exist list, so a
 # deleted vector file — which the Q4 runner structurally cannot notice,
 # since it only executes files it finds — turns this lane red.
+#
+# Retention — per version, indefinite — IS spec, and BOTH lines state it:
+# MVP-SPEC.md line 123 ("per-version golden vectors are retained in CI
+# indefinitely") and line 167 ("empty-anchor and per-version vectors retained
+# in CI forever"). Neither states the byte pin.
+#
+# ── Authority: what makes a byte change illegal (Q148) ─────────────────────
+#
+# Q6's freeze manifest, flipped to `#! status frozen` at Q14 — NOT MVP-SPEC.md
+# line 123. Line 123's first clause is the *compatibility* rule: "every
+# RELEASED manifest/bundle format version remains verifiable by all future CLI
+# and page releases", and D104 §1.5 measures with three independent
+# confirmations that nothing has been released. Cited as the source of
+# byte-immutability it is a conditional whose condition is false today, so a
+# reader who checks it may conclude the freeze is soft — the inference D108 §3
+# spends a section refusing. Q6/Q14 impose a STRONGER, self-imposed discipline
+# than line 123 requires; line 123 is what it protects once a version ships.
 #
 # Two independent layers, both required:
 #

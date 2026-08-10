@@ -25,6 +25,39 @@ use antseal_core::test_util::vectors::{VectorSummary, execute_vector_bytes};
 /// manifest dir, so it holds on every OS and checkout location).
 const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/vectors");
 
+/// Names the discovery walk must ignore rather than classify.
+///
+/// Q4/Q5 say nothing under `vectors/v<n>/` is SILENTLY skipped, and that rule
+/// is unchanged: every `*.json` is still discovered, executed and counted, and
+/// every file that is neither a vector, nor a documented auxiliary, nor on
+/// this list is still a hard failure naming the path.
+///
+/// What this list adds is the distinction Q4/Q5 never had to draw, because in
+/// 2026-07 nobody had yet run a Python import inside the vector tree: a file
+/// the REPOSITORY ITSELF declares is not part of the tree is not an
+/// unclassifiable vector, it is not a vector at all. `.gitignore` is where
+/// that declaration lives, and `__pycache__/` has been in it since the wave-7
+/// freeze — so before D116 the tree carried two rules that disagreed about
+/// whether the same directory was expected, and the build-breaking one won.
+///
+/// Measured (D116 §1.5): a `.pyc` here failed `cargo check --workspace` with
+/// exit 101, and so did `vector_runner`, which is CI's `golden-vectors`,
+/// `cross-os` and `test` contexts. A vim swap file did the same, so editing
+/// `crosscheck_cbor.py` bricked the workspace build for as long as the editor
+/// was open.
+///
+/// `vector_freeze.rs`'s `collect_json` needs no such list because it filters
+/// POSITIVELY for `.json` instead of asserting a closed classification, and is
+/// green through all of the above — the tolerant shape was already in the tree.
+///
+/// This block is duplicated VERBATIM in `crates/wasm-bitmatch/build.rs` and
+/// `crates/antseal-core/tests/vector_runner.rs` — a build script cannot import
+/// a test module — and `bitmatch.rs` asserts the two texts are byte-identical
+/// (D116 R8a). Edit both or neither.
+const IGNORED_DIRS: &[&str] = &["__pycache__", ".idea", ".vscode"];
+const IGNORED_SUFFIXES: &[&str] = &[".pyc", ".pyo", ".pyd", ".swp", ".swo"];
+const IGNORED_NAMES: &[&str] = &[".DS_Store"];
+
 /// One discovered-and-executed vector file.
 struct Executed {
     path: PathBuf,
@@ -73,11 +106,14 @@ fn run_tree(root: &Path) -> Result<Vec<Executed>, String> {
 /// `*.py` generators, Q6's `FROZEN.sha256`); anything else is an error.
 fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> Result<(), String> {
     for entry in sorted_entries(dir)? {
+        let name = entry_name(&entry)?;
         if entry.is_dir() {
+            if IGNORED_DIRS.contains(&name.as_str()) {
+                continue; // pruned, not recursed (D116 R7)
+            }
             walk_version_dir(&entry, version, executed)?;
             continue;
         }
-        let name = entry_name(&entry)?;
         // F10's per-version roster is an auxiliary, not a vector: it carries
         // no `kind`/`inputs`/`expect` and is checked by `vector_index.rs`.
         // Listed before the `.json` arm so it is never executed as a vector.
@@ -95,6 +131,11 @@ fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> 
             });
         } else if name == "README.md" || name == "FROZEN.sha256" || name.ends_with(".py") {
             // Documented auxiliaries (discovery contract).
+        } else if IGNORED_NAMES.contains(&name.as_str())
+            || IGNORED_SUFFIXES.iter().any(|s| name.ends_with(s))
+        {
+            // D116 R7: AFTER the `*.json` arm and after `INDEX.json`, so an
+            // ignorable rule can never swallow a vector.
         } else {
             return Err(format!(
                 "{}: unclassifiable file under vectors/{version}/ — every file must be a \
@@ -273,4 +314,218 @@ fn vector_runner_fails_loudly_on_zero_vectors() {
     let root = scratch_tree("zero_vectors");
     fs::write(root.join("v1/README.md"), b"# aux only, no vectors\n").expect("write");
     expect_err(&root, "zero vector files");
+}
+
+// ---------------------------------------------------------------------------
+// D116 R8(c) — tests-of-the-test for the ignorable classifier (Q140).
+//
+// The fatal arm above (`..._on_unclassifiable_file`, a stray `.txt`) is the
+// R8(c) case that proves the closed classification SURVIVED this change: the
+// walk still refuses a file it cannot name. The cases below prove the new
+// arm only ever fires on what `.gitignore` already declares expected.
+// ---------------------------------------------------------------------------
+
+/// Seed a scratch tree with one REAL committed vector.
+///
+/// Without it every "green" case below would be vacuous in the worst way: an
+/// empty tree fails the zero-vector rule, so a green run has to have actually
+/// executed something. Using a committed vector rather than a synthetic one
+/// also means these cases cannot drift away from what the executor accepts.
+fn seed_valid_vector(root: &Path) {
+    let source = Path::new(VECTORS_ROOT).join("v1/hkdf/hkdf-labels.json");
+    let bytes = fs::read(&source)
+        .unwrap_or_else(|e| panic!("cannot read seed vector {}: {e}", source.display()));
+    fs::write(root.join("v1/seed.json"), bytes).expect("write seed vector");
+}
+
+/// `run_tree` must succeed and execute exactly `expected` vector(s).
+fn expect_ok(root: &Path, expected: usize) {
+    match run_tree(root) {
+        Ok(executed) => assert_eq!(
+            executed.len(),
+            expected,
+            "expected {expected} executed vector(s), got {}: {:?}",
+            executed.len(),
+            executed
+                .iter()
+                .map(|e| e.path.display().to_string())
+                .collect::<Vec<_>>(),
+        ),
+        Err(message) => panic!("run_tree must succeed here; instead: {message}"),
+    }
+}
+
+#[test]
+fn vector_runner_ignores_pycache_bytecode() {
+    let root = scratch_tree("ignore_pycache");
+    seed_valid_vector(&root);
+    fs::create_dir_all(root.join("v1/__pycache__")).expect("mkdir");
+    fs::write(
+        root.join("v1/__pycache__/gen.cpython-311.pyc"),
+        b"\x00bytecode",
+    )
+    .expect("write");
+    expect_ok(&root, 1);
+}
+
+#[test]
+fn vector_runner_ignores_bytecode_outside_pycache() {
+    // The suffix rule, not the directory rule: a `.pyc` can be written beside
+    // the source when the interpreter is told to.
+    let root = scratch_tree("ignore_loose_pyc");
+    seed_valid_vector(&root);
+    fs::write(root.join("v1/gen.pyc"), b"\x00bytecode").expect("write");
+    expect_ok(&root, 1);
+}
+
+#[test]
+fn vector_runner_ignores_editor_swap_files() {
+    // Q140's widest consequence: this is a file vim creates merely by OPENING
+    // `crosscheck_cbor.py`, and before D116 it failed the build until close.
+    let root = scratch_tree("ignore_swap");
+    seed_valid_vector(&root);
+    fs::write(root.join("v1/.gen_vectors.py.swp"), b"swap").expect("write");
+    expect_ok(&root, 1);
+}
+
+#[test]
+fn vector_runner_prunes_ignored_directories_rather_than_walking_them() {
+    // Pruning has a real, slightly surprising consequence, so it is pinned
+    // rather than left to be rediscovered: a vector hidden inside an ignored
+    // directory is INVISIBLE — not executed, not counted, not an error. That
+    // is correct (the repository has declared the directory not part of the
+    // tree) but it must be a decision, not an accident.
+    let root = scratch_tree("prune_not_walk");
+    seed_valid_vector(&root);
+    fs::create_dir_all(root.join("v1/__pycache__")).expect("mkdir");
+    fs::write(
+        root.join("v1/__pycache__/hidden.json"),
+        b"{ not even valid json",
+    )
+    .expect("write");
+    expect_ok(&root, 1);
+}
+
+#[test]
+fn vector_runner_still_fails_on_pycache_directly_under_vectors() {
+    // `walk_root` is deliberately NOT relaxed (D116 R7): nothing imports a
+    // module from `vectors/` itself, and loosening the top level would let a
+    // whole stray tree in unnoticed.
+    let root = scratch_tree("pycache_at_root");
+    seed_valid_vector(&root);
+    fs::create_dir_all(root.join("__pycache__")).expect("mkdir");
+    expect_err(&root, "format-version directories");
+}
+
+// ---------------------------------------------------------------------------
+// D116 R8(b) — `.gitignore` is the authority, and this test says so.
+// ---------------------------------------------------------------------------
+
+/// `.gitignore` patterns that must stay BUILD-BREAKING under `vectors/v<n>/`.
+///
+/// R8(b) allows a pattern to be excluded "with the reason". The line is drawn
+/// by what the pattern is *for*, and `.gitignore` states both purposes itself:
+///
+/// - `__pycache__/`, `*.py[cod]`, `*.swp`, `.idea/`, `.vscode/`, `.DS_Store`
+///   are there because a tool routinely PRODUCES them beside the files it
+///   reads — and `.gitignore`'s own comment names `testdata/vectors/v1/` as a
+///   place that happens. Those are ignorable; that is Q140.
+/// - The patterns below are there because the file is DANGEROUS (`.gitignore`
+///   opens with "no secret material may ever be committable by default") or is
+///   devnet runtime state. Silently skipping a key-shaped file that turned up
+///   inside the frozen vector tree is the opposite of what that rule wants —
+///   it should be as loud as possible. They stay fatal on purpose.
+///
+/// `*wallet*.json` is excluded twice over: it ends in `.json`, and the
+/// ignorable arm runs AFTER the `*.json` arm (D116 R7), so this walk sees a
+/// vector regardless of what this list says.
+const GITIGNORE_PATTERNS_DELIBERATELY_FATAL: &[&str] = &[
+    "*.key",
+    "*.pem",
+    "wallets/",
+    "*wallet*.json",
+    ".secrets/",
+    "devnet-data/",
+    "*.devnet/",
+    ".devnet/",
+];
+
+/// Expand a gitignore character class (`*.py[cod]` → `*.pyc`, `*.pyo`,
+/// `*.pyd`). Any other glob metacharacter is left alone: this only has to
+/// understand the patterns the file actually uses.
+fn expand_classes(pattern: &str) -> Vec<String> {
+    let Some(open) = pattern.find('[') else {
+        return vec![pattern.to_owned()];
+    };
+    let Some(close) = pattern[open..].find(']').map(|i| open + i) else {
+        return vec![pattern.to_owned()];
+    };
+    let mut out = Vec::new();
+    for choice in pattern[open + 1..close].chars() {
+        let expanded = format!("{}{choice}{}", &pattern[..open], &pattern[close + 1..]);
+        out.extend(expand_classes(&expanded));
+    }
+    out
+}
+
+/// Every `.gitignore` pattern that can match a bare NAME under the vector
+/// tree must be either ignorable here or deliberately, explicitly fatal.
+///
+/// This is the instrument that closes Q140's actual diagnosis. The bug was
+/// never "`__pycache__` is missing from a list" — it was that the repository
+/// held **two rules that disagreed** about whether a file was expected, and
+/// the build-breaking one won silently. Adding the name to `IGNORED_DIRS`
+/// fixes today's collision; this test is what makes the next one impossible
+/// to introduce without saying so out loud.
+///
+/// One-directional by design: `IGNORED_*` may be a superset (it carries
+/// `.swo` and `.pyd`, which `.gitignore` does not list), because being
+/// tolerant of a file git would have tracked is not a build failure.
+#[test]
+fn vector_gitignore_expected_names_cannot_brick_the_build() {
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.gitignore"));
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+
+    let mut uncovered = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+            continue;
+        }
+        // Anchored (`/target`) and path-bearing (`fuzz/corpus/`) patterns
+        // cannot match a bare name inside `vectors/v<n>/`, so they cannot
+        // produce the Q140 collision.
+        let interior = line.strip_suffix('/').unwrap_or(line);
+        if interior.contains('/') {
+            continue;
+        }
+        if GITIGNORE_PATTERNS_DELIBERATELY_FATAL.contains(&line) {
+            continue;
+        }
+        let is_dir_pattern = line.ends_with('/');
+        for candidate in expand_classes(interior) {
+            let covered = if is_dir_pattern {
+                IGNORED_DIRS.contains(&candidate.as_str())
+            } else if let Some(suffix) = candidate.strip_prefix('*') {
+                IGNORED_SUFFIXES.contains(&suffix)
+            } else {
+                IGNORED_NAMES.contains(&candidate.as_str())
+                    || IGNORED_DIRS.contains(&candidate.as_str())
+            };
+            if !covered {
+                uncovered.push(format!("`{line}` (as `{candidate}`)"));
+            }
+        }
+    }
+
+    assert!(
+        uncovered.is_empty(),
+        ".gitignore declares {} expected anywhere in the tree, but the vector discovery \
+         walk would classify a matching file under testdata/vectors/v<n>/ as unclassifiable \
+         and FAIL THE BUILD. Two rules that disagree about whether a file is expected is the \
+         Q140 defect; add it to IGNORED_* (D116 R7) or exclude the pattern in \
+         GITIGNORE_PATTERNS_DELIBERATELY_FATAL with the reason.",
+        uncovered.join(", "),
+    );
 }

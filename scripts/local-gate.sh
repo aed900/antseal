@@ -22,15 +22,54 @@
 #   golden-vectors, tamper-matrix     their SUITES run under `test`; their
 #                                     non-empty-selection counters do not —
 #                                     `./scripts/ci-lanes.sh <lane>`
-#   cross-check                       the `--self-test` half and
-#                                     `cbor-drift-guard` are CI-only; the
-#                                     lane below runs `--check` only
+#   cross-check                       `cbor-drift-guard` only, and only in
+#                                     NAME: that lane is `cargo test -p
+#                                     antseal-core --all-features --locked
+#                                     --test cbor_crosscheck_contract`
+#                                     (ci-lanes.sh:819), and antseal-core
+#                                     declares exactly two features
+#                                     (`test-util`, `test-vectors`), both
+#                                     LIGHT and both in GATE_LIGHT_FEATURES —
+#                                     so the `test` lane below already runs
+#                                     that target at the same feature set. The
+#                                     residual gap is the lane's IDENTITY, not
+#                                     its coverage. BOTH `--check` and
+#                                     `--self-test` now run below (Q141/D116).
 #   wasm32-tests                      runs here only when the diff selects it
 #                                     (the lane below, and ANTSEAL_GATE_WASM)
 #   wasm-bitmatch                     same — the lane below, and
 #                                     ANTSEAL_GATE_BITMATCH (Q128). Its
 #                                     TRIGGER's self-test is unconditional;
 #                                     the lane's own `--self-test` is not.
+#
+# And what a green run of this script asserts that CI DOES NOT (the other
+# direction, and the one nothing has recorded until D116 §1.8):
+#
+#   gate-features --self-test        no CI job runs scripts/gate-features.sh
+#   gate-features --check-partition  at all. S22's whole partition mechanism —
+#   heavy-features                   including tier 2 — is local-only, and the
+#                                    HEAVY features (antseal-cli/ant-backend,
+#                                    antseal-net/ant-backend,
+#                                    devnet-launcher/devnet) are compiled by
+#                                    ZERO CI lanes; `ci-lanes.sh dep-graph`
+#                                    positively asserts the default graph does
+#                                    not reach them.
+#   bitmatch-trigger                 Q128's trigger self-test: local-only.
+#   e2e-selftest                     devnet-e2e-cron.yml:119 runs
+#                                    `./scripts/e2e-devnet.sh` BARE — the lane
+#                                    without its self-test. Q141's shape,
+#                                    inverted.
+#
+# That is Q43's rule pointing the other way — "a lane that has never run on
+# the remote is not evidence" (docs/ci-verification.md) — and these five have
+# not. Recorded, not fixed: moving them is a required-context change.
+#
+#   PROPTEST_CASES                   ci.yml:152 sets 1024 on the `test` job;
+#                                    this script sets nothing, so the `test`
+#                                    lane below runs proptest's default of
+#                                    256. A green `test` here has explored a
+#                                    QUARTER of the cases CI will
+#                                    (docs/testing/proptest-conventions.md §4).
 #
 # `./scripts/ci-lanes.sh --list` enumerates the lanes that script owns.
 # CONTRIBUTING's "PR checklist" says which of these to run by hand for which
@@ -306,19 +345,45 @@ fi
 # docs/testing/cbor-cross-check.md). Not a cargo lane: its whole value is that
 # it shares no code with the crate it checks.
 #
+# SELF-TEST FIRST, like format-freeze, features, ci-lanes and vector-freeze.
+# Q141, and the reason is a measured incident rather than symmetry: on
+# 2026-08-09 the CBOR checker's scope rule was written twice, `run` was
+# narrowed and `self_test` was not, and the tree was GREEN under `--check` and
+# RED under `--self-test`. CI runs them as separate steps and only the second
+# one selects, so CI saw it and THIS GATE STRUCTURALLY COULD NOT. Q130's three
+# new instruments — the swept subject set, the computed fault counts, the
+# non-vacuity CheckFailure — are all invisible to `--check` for the same
+# reason: `--check` verifies committed bytes, `--self-test` verifies that the
+# checker can still fail.
+#
+# COST, measured here 2026-08-10, two runs on this 2-core host: `--self-test`
+# 55.66 s then 46.41 s; `--check` 24.63 s then 22.48 s. So this block roughly
+# triples, to ~70-80 s. Two samples, one host, one day — the weaker kind of
+# figure, and it says so (the provenance rule in the wasm-bitmatch block
+# above). It is NOT the "~4 s" that reached TODO.md: that figure belongs to
+# `crosscheck_cbor.py --self-test` alone, which is 0.10 s. The 46 s buys
+# planted faults on SIX surfaces (provenance, reference.py's T0 anchors, the
+# generators, the UTF-8 corpus, the CBOR checker, the report checker), five of
+# which no other local lane exercises at all.
+#
 # Exit 2 means the dev tool is not provisioned on THIS machine. That is a
 # visible SKIP locally, with the one-line fix printed — and a hard FAILURE in
 # CI, where the `cross-check` lane passes --require so a freeze-gate input can
 # never go quietly missing.
-crosscheck=$(scripts/cross-check.sh --check 2>&1)
-case $? in
-  0) printf '  %-16s PASS  (%s)\n' cross-check \
-       "$(printf '%s' "$crosscheck" | tail -1 | cut -c1-90)" ;;
-  2) printf '  %-16s SKIP  (cbor2 not provisioned — scripts/cross-check.sh --setup)\n' \
-       cross-check ;;
-  *) printf '  %-16s FAIL\n' cross-check
-     printf '%s\n' "$crosscheck" | tail -25
-     fail=1 ;;
-esac
+crosscheck_lane() {
+  local label="$1"; shift
+  local out; out=$(scripts/cross-check.sh "$@" 2>&1); local rc=$?
+  case $rc in
+    0) printf '  %-16s PASS  (%s)\n' "$label" \
+         "$(printf '%s' "$out" | tail -1 | cut -c1-90)" ;;
+    2) printf '  %-16s SKIP  (cbor2 not provisioned — scripts/cross-check.sh --setup)\n' \
+         "$label" ;;
+    *) printf '  %-16s FAIL\n' "$label"
+       printf '%s\n' "$out" | tail -25
+       fail=1 ;;
+  esac
+}
+crosscheck_lane cross-check-st --self-test
+crosscheck_lane cross-check    --check
 
 exit $fail

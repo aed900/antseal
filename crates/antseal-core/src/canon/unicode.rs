@@ -13,9 +13,12 @@
 //!   honest bundle would false-positive as tampered once the verifier's
 //!   Unicode tables drift.
 //! - Future Unicode versions are **added** to this registry; every table
-//!   ever shipped is **retained forever** under the format-stability policy
-//!   (spec line 123). Removing, renaming, or altering a registered entry is
-//!   a format break.
+//!   ever shipped is **retained forever**, because a released bundle that
+//!   records that version must stay verifiable (MVP-SPEC.md line 123 — the
+//!   correct, *released*-conditioned use of it). Removing, renaming, or
+//!   altering a registered entry is a format break under **Q14's freeze of
+//!   registry §7.3 key 3**, whose v1 value set is `{"unicode-17.0.0"}` (D25)
+//!   and is format-permanent — not under line 123 (**Q148**).
 //! - A descriptor string this build does not register resolves to the
 //!   distinct [`UnicodeVersionError::UnknownUnicodeVersion`] — meaning "this
 //!   bundle needs a newer verifier", which every caller must keep distinct
@@ -59,8 +62,11 @@ pub struct UnicodeVersion(Table);
 
 /// Which shipped normalization table backs a [`UnicodeVersion`].
 ///
-/// One variant per retained table, forever (format-stability policy,
-/// MVP-SPEC.md line 123). Each variant names its exact data source.
+/// One variant per retained table, forever: registry §7.3 key 3's v1 value
+/// set froze at Q14 (D25), so a shipped table can never be removed or
+/// renamed. MVP-SPEC.md line 123 is the *released*-conditioned compatibility
+/// rule that discipline protects, not its source (**Q148**). Each variant
+/// names its exact data source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Table {
     /// Unicode 17.0.0 via the exact pin `unicode-normalization = "=0.1.25"`

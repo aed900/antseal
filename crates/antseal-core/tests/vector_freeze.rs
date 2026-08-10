@@ -7,7 +7,9 @@
 //! `testdata/vectors/v<n>/FROZEN.sha256` pins:
 //!
 //! 1. **the frozen bytes** — a SHA-256 per committed vector file, so a
-//!    modification turns CI red (MVP-SPEC.md line 123, format stability);
+//!    modification turns CI red. The authority is **Q6's freeze manifest**,
+//!    flipped to `#! status frozen` at Q14 — not MVP-SPEC.md line 123, which
+//!    is the *released*-conditioned compatibility rule (**Q148**);
 //! 2. **the must-exist list** — the hash lines themselves. Every listed
 //!    path must exist, so a deletion turns CI red; and every committed
 //!    `*.json` must be listed, so a vector cannot sit outside the freeze;
@@ -434,7 +436,9 @@ fn vector_freeze_pending_must_exist_list_is_complete() {
         v1.status,
         Status::Frozen,
         "v1 is `{:?}`; the format-v1 freeze (Q14) set it to `frozen` on 2026-07-28 \
-         and nothing since may relax it — line 123 makes v1 verifiable forever",
+         and nothing since may relax it. The authority is Q14's own act, not \
+         MVP-SPEC.md line 123, which promises verifiability for RELEASED \
+         versions and nothing has been released (D104 §1.5)",
         v1.status
     );
 }

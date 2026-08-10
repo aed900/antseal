@@ -385,3 +385,70 @@ fn transcript_version_is_still_zero_at_both_sites() {
          this assertion closes."
     );
 }
+
+/// The two discovery walks must carry the **same** ignorable-file rule, and
+/// this is what stops them drifting apart again (D116 R8a, Q140).
+///
+/// `bitmatch_embedded_table_equals_the_committed_tree` above **cannot** catch
+/// this class, which is why the check has to be a separate one: that test
+/// compares the *result sets* of two walks that both **succeeded**, and a
+/// `build.rs` panic happens strictly before any test in this crate runs. A
+/// divergence that bricks the build is invisible to a test that needs the
+/// build to have worked. So this reads the two sources as **text**.
+///
+/// A build script cannot import a test module, so the block is duplicated on
+/// purpose; the duplication is only safe while something asserts the copies
+/// are identical. Same technique as `cbor_crosscheck_contract.rs` on the
+/// Python checker and `wasm-bitmatch.sh --trigger-self-test` arm 4 across two
+/// shell scripts.
+#[test]
+fn bitmatch_ignorable_file_rule_is_identical_in_both_walkers() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let build_rs = manifest.join("build.rs");
+    let runner = manifest
+        .join("..")
+        .join("antseal-core")
+        .join("tests")
+        .join("vector_runner.rs");
+
+    let left = ignorable_block(&build_rs);
+    let right = ignorable_block(&runner);
+
+    assert_eq!(
+        left,
+        right,
+        "the D116 R7 ignorable-file block has diverged between {} and {}. These two \
+         walks impose the SAME closed classification on testdata/vectors/, and when \
+         they disagree the stricter one fails the build (Q140). Edit both or neither.",
+        build_rs.display(),
+        runner.display(),
+    );
+}
+
+/// The shared block, verbatim: its doc comment through the last of the three
+/// `const IGNORED_*` declarations.
+fn ignorable_block(path: &Path) -> String {
+    const START: &str = "/// Names the discovery walk must ignore rather than classify.";
+    const END: &str = "const IGNORED_NAMES:";
+
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let start = text.find(START).unwrap_or_else(|| {
+        panic!(
+            "{}: the D116 R7 ignorable-file block is missing (looked for `{START}`). It is \
+             what keeps a git-ignored file from failing the build; do not delete it.",
+            path.display()
+        )
+    });
+    let rest = &text[start..];
+    let end = rest.find(END).unwrap_or_else(|| {
+        panic!(
+            "{}: found the R7 doc comment but no `{END}` declaration after it",
+            path.display()
+        )
+    });
+    let end = rest[end..]
+        .find('\n')
+        .map_or(rest.len(), |offset| end + offset);
+    rest[..end].to_owned()
+}

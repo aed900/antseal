@@ -15,9 +15,21 @@
 > An erratum is a **reading note, never an amendment**. The frozen bytes
 > govern the format; nothing here changes what a v1 decoder does, and no
 > erratum may state, weaken or extend a rule. An entry says only: *this
-> sentence, verbatim, in this frozen file, will be read to claim more than it
-> claims — here is its scope.* Every entry is queued for correction in the
-> next registry version and is deleted when that version lands.
+> sentence, verbatim, in this frozen file, will be misread — as claiming
+> more than it claims, or as claiming less — here is its scope.* Every
+> entry is queued for correction in the next registry version and is
+> deleted when that version lands.
+>
+> **Both directions, and the second is the easier one to miss.** The
+> **over-read** case is a sentence that will be taken for a rule it does not
+> state. The **under-read** case is a sentence whose rule is exactly right
+> but whose *authority* is misattributed, so a reader who follows the
+> citation lands somewhere weaker than the rule and may conclude the rule is
+> weaker too. Neither direction lets an entry touch what the frozen bytes
+> say: an erratum that shored a rule up would be an amendment. What an
+> under-read note records is **where the rule's authority actually is** —
+> and the rule stands at full strength on that authority whatever the frozen
+> sentence cites.
 
 A frozen document **cannot point at anything**. Every byte of
 `registry-v1.md` and `registry-v1.json` is pinned by `FROZEN.sha256`, §14
@@ -125,6 +137,31 @@ fields to anything at all. This key is the measured instance of a gap that
 spans all **fourteen** of the mirror's maps, and closing it is not this
 erratum's job: it needs an instrument, and a naive one is already ruled
 against (§2.4).
+
+### registry-v1.md — §0's freeze blockquote, the authority parenthetical
+
+- file: `registry-v1.md`
+- quotes: `format-version event, not an edit (MVP-SPEC.md line 123; the procedure is`
+- scope: the **rule** is exactly right and unconditional — a byte change to
+  this document IS a format-version event. Only the **citation** is wrong.
+  Byte-immutability is imposed by **Q14's own freeze act**, which this same
+  blockquote names in its own first sentence; `MVP-SPEC.md` line 123 is the
+  *compatibility* rule and is conditioned on *released*, and D104 §1.5 measures
+  with three independent confirmations that nothing has been released.
+- queued for: the next registry version (Q148)
+
+A reader who follows this citation finds a conditional whose condition is false
+today, and the available inference — *the freeze is soft* — is the one D108 §3
+spends a section refusing. The direction of the misreading is the **opposite**
+of this file's other two entries: those are sentences that will be read to claim
+more than they claim; this one will be read to claim **less**. The rule stands
+at full strength on Q14's authority whatever line 123 says.
+
+The mirror needs no companion entry. `registry-v1.json`'s `change_procedure`
+field states the same rule and cites **Q27** and no spec line, and its
+`direction` field cites line 123 for the relax/tighten rule, which is clause 1
+and correct. This is the one place the two surfaces do **not** diverge, which is
+why D108 needed two entries here and Q148 needs one.
 
 ## 2. Why the frozen bytes were not corrected in place
 

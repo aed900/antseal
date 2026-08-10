@@ -183,13 +183,15 @@ pub const TSA_RESPONSE_CAP_BYTES: u64 = antseal_core::codec::caps::MAX_TSA_TOKEN
 ///
 /// `MAX_OTS_BYTES` = 1 MiB caps the *merged* `.ots` that goes into the
 /// bundle — every calendar, every upgrade, accumulated. This caps **one HTTP
-/// reply from one calendar**. Measured across 18 real calendar responses
-/// (2026-08-02): the **largest was 220 bytes**. 64 KiB is a 298× margin over
-/// that and leaves room for an upgraded attestation's Bitcoin merkle path;
-/// 1 MiB would have frozen a ceiling **4 766×** above anything observed, and
-/// under F4's raise-only rule a too-high cap can never be walked back while a
-/// too-low one costs a follow-up commit. A28's separate merge-side cap is the
-/// one that carries `merge_cap <= MAX_OTS_BYTES`.
+/// reply from one calendar**. The two reply classes were measured separately:
+/// the largest **submit** reply is **220 B** (2026-08-02, largest of 18) at a
+/// 297.89× margin, and the largest **upgrade** reply — the binding class, and
+/// the one the F4 row divides by since D110 — is **1 105 B** at **59.31×**,
+/// its Bitcoin merkle path included. 1 MiB in this slot would have frozen a
+/// ceiling **949×** above the true worst case, and under F4's raise-only rule
+/// a too-high cap can never be walked back while a too-low one costs a
+/// follow-up commit. A28's separate merge-side cap is the one that carries
+/// `merge_cap <= MAX_OTS_BYTES`.
 pub const OTS_CALENDAR_RESPONSE_CAP_BYTES: u64 = 65_536;
 
 /// Advisory online evidence, not an embeddable artifact — no F4 registry row

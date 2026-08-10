@@ -219,9 +219,9 @@ decision. Nothing outside those four may.
 | limit | owner | value | date set | measured against — an A25 fixture path, or a derivation from committed archive bytes | margin | lowered | structural cost (D102) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | the 3 808-byte upgraded `.ots` A22 froze (**244** ops), re-measured by A48 2026-08-10. Derived, not stored: `testdata/vectors/v1/anchor/anchor.json` cases 4–6, `sha256 c2bf8b2c…d88e0c68` | 16.79x | never | **none** — bounds work, not a container |
-| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | the same derived artifact (depth **85**, D58 §9.3's definition), re-measured by A48 2026-08-10. The retired `LARGE_TEST` proof measured 67, which is where this cell's former 15.28x came from; depth is attachment depth *plus* fragment depth, so the artifact a verifier parses is deeper than any fragment of it | 12.05x | never | **40 960 B** = `next_pow2(1_024) x size_of::<Frame>()` (40 B, x86-64) — the parser's `walk.rest`; **3.91 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | the same derived artifact (depth **85**, D58 §9.3's definition), re-measured by A48 2026-08-10. The retired `LARGE_TEST` proof measured 67, which is where this cell's former 15.28x came from; depth is attachment depth *plus* fragment depth, so the artifact a verifier parses is deeper than any fragment of it | 12.05x | never | **40 960 B** (x86-64) and **24 576 B** (`wasm32`) = `next_pow2(1_024) x size_of::<Frame>()` at 40 B and 24 B respectively — the parser's `walk.rest`; **3.91 %** of `MAX_OTS_BYTES` on x86-64, and §5a's table carries both targets in full |
 | `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width **3**; the derived upgraded artifact measures 3 as well — a splice adds depth, never width) | 21.33x | never | **none** — a per-node counter, no container |
-| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | the same derived artifact (**6** — three pending, three Bitcoin — now the binding count), re-measured by A48 2026-08-10; `merged-A.ots` measures 3 and the retired `LARGE_TEST` proof 4 | 42.67x | never | **12 288 B** = `next_pow2(256) x size_of::<OtsAttestation>()` (48 B, x86-64); **1.17 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | the same derived artifact (**6** — three pending, three Bitcoin — now the binding count), re-measured by A48 2026-08-10; `merged-A.ots` measures 3 and the retired `LARGE_TEST` proof 4 | 42.67x | never | **12 288 B** (x86-64) and **8 192 B** (`wasm32`) = `next_pow2(256) x size_of::<OtsAttestation>()` at 48 B and 32 B respectively; **1.17 %** of `MAX_OTS_BYTES` on x86-64, and §5a's table carries both targets in full |
 | `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**174** B coinbase-prefix operand) — **still binding, and deliberately so.** The derived upgraded artifact measures only 89 B here: its operands are 32-byte merkle siblings and a 44-byte calendar commitment, where this mainnet proof carries a real fat coinbase-transaction prefix. Re-pointing the cell would *raise* the recorded margin to 184.09x by dropping the fatter real sample (A48, 2026-08-10) | 94.16x | never | **none** — a length header; D58 §10.3 rule 4's clamp governs it |
 | `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**210** B running value) — still binding, for the row above's reason and measured in the same walk; the derived upgraded artifact measures 125 B, which would read 262.14x (A48, 2026-08-10) | 156.04x | never | **none** — rule 4; `exec::apply` allocates the running value after checking it (32 B on the A100 path) |
 | `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (**46** B pending payload; the derived upgraded artifact measures 46 too, so the splice does not move this row); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never | **none** — a length header; rule 4 |
@@ -383,9 +383,10 @@ That row is not universal, and read as though it were until 2026-08-10: on
 safe either way — the `const` assert fires on the strictest target and CI
 builds both — but the statement was unqualified.
 
-**Every number in this column is x86-64's, and the other target is cheaper —
-which is the opposite of how the one lowering argument this project has seen
-used it.** `OTS_FRAME_BYTES` and `OTS_ATTESTATION_BYTES` are `size_of`, so
+**Every number in this column was x86-64's until A121 put both targets in the
+two numeric cells, and the other target is cheaper — which is the opposite of
+how the one lowering argument this project has seen used it.**
+`OTS_FRAME_BYTES` and `OTS_ATTESTATION_BYTES` are `size_of`, so
 this whole column is a function of pointer width; `Frame` is
 `Option<Vec<u8>> + 2 x u32 + bool`, which is 24+8+1 → 40 on 64-bit and
 12+8+1 → 24 on 32-bit.
@@ -406,14 +407,22 @@ D104 §1.3 corrected the number and D104 §6 ruled the asymmetry into this
 document, which is why it is stated here rather than only in code: the
 inversion must not be re-derivable from the registry alone.
 
-**The 32-bit row is derived but not yet asserted, which is a gap rather than a
-decision.** `the_structural_cost_column_states_the_derivation_and_its_value`
-checks byte counts only under `size_of::<usize>() == 8`, and
-`scripts/wasm-tests.sh` runs `cargo test -p antseal-core --lib`, so the four
-wasm32 figures above are for now exactly the hand-typed numbers clause (a)
-exists to forbid. D104 §6 rules the 32-bit arm that closes it — mirroring the
-split `anchor/caps.rs` adopted at `873a1cf`, where the same omission on
-`size_of::<Certificate>()` reddened `wasm32-core-tests`.
+**Both rows are asserted, each on its own target** (A121, discharging D104 §6).
+`the_structural_cost_column_states_the_derivation_and_its_value` builds its
+needles from `OTS_STRUCTURAL_WORK_STACK_BYTES`,
+`OTS_STRUCTURAL_ATTESTATION_BYTES` and `OTS_STRUCTURAL_ALLOC_BYTES`, which are
+`size_of`-derived and are therefore already the running target's own figures —
+so a native `cargo test` reads the x86-64 row and `scripts/wasm-tests.sh`,
+which runs `cargo test -p antseal-core --lib` on `wasm32-unknown-unknown`,
+reads the `wasm32` one. Neither target asserts the other's numbers, which is
+the split `anchor/caps.rs` adopted at `873a1cf` after the same omission on
+`size_of::<Certificate>()` reddened `wasm32-core-tests`. **The six byte
+figures in the table above are consequently no longer the hand-typed numbers
+clause (a) exists to forbid**: moving `Frame` or `OtsAttestation` on either
+target reddens that target's lane until this table is re-derived. §5's two
+numeric `structural cost` cells carry both targets' figures for the same
+reason, which is what D104 §6 ruled; this table is the derivation they point
+at.
 
 **The DER half's four rows, added 2026-08-09 by A110.** The A5/D60 limits —
 `MAX_DER_NESTING_DEPTH`, `MAX_CHAIN_CERTS`, `MAX_CHAIN_CERT_BYTES` and

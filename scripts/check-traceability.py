@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Five checks live here, and they are the same shape: something written down in
+Six checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -17,6 +17,9 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         (Q85).
     --task-entries      Every row in TODO.md has a detail entry in
                         tasks/<domain>.md, and every entry has a row (Q85).
+    --decision-owners   Every `**Owner: <ID>**` assignment in a RESOLVED
+                        decision names a registered task whose TODO.md row
+                        names that decision back (Q145).
 
 Run with no arguments to run every check.
 
@@ -482,10 +485,46 @@ def resolve(reference: str) -> str | None:
 
 DECISION_DIR = "docs/decisions"
 
-# Where the sweep looks. Normative surfaces only — TODO.md is the register
-# itself and tasks/*.md are working notes, so neither is a citation site.
-DECISION_SCAN = ["crates", "docs/format", "docs/testing"]
-DECISION_SUFFIXES = {".rs", ".md", ".json", ".py"}
+# Where BOTH sweeps look — the decision half here and the task half below.
+# Normative surfaces only: TODO.md is the register itself and tasks/*.md are
+# working notes, so neither is a citation site.
+#
+# `scripts/` is in because the gate is committed code and a dangling pointer
+# there is as normative as one in `crates/`; it is the surface that hid `A71`
+# in `scripts/fuzz.sh:98-103` from the task half and every `D<n>` in
+# `scripts/*.sh` from the decision half (D116 §1.1).
+# `docs/decisions/` is deliberately OUT — D109 §3.3: a record's job includes
+# PROPOSING work the orchestrator may number, renumber or decline, and
+# sweeping it fails 13 rows for ids that D92 and D93 merely proposed. It is
+# also where the captured evidence of these decisions lives, which contains a
+# `registry-v1.md:<n>` literal on purpose (D116 §1.3).
+# `.github/` is deliberately OUT and it is a close call — see D116 §2 (c).
+#
+# ONE pair, not two (D116 R1). Two constants held in step by a comment is the
+# defect D112 spent a wave on, one file over; the only honest comment on two
+# here would be "these are the same, one is stale".
+CITATION_SCAN = ["crates", "docs/format", "docs/testing", "scripts"]
+CITATION_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
+
+# This file names task AND decision ids as literals in its registers and plants
+# them in `--self-test`. Sweeping it reports its own fixtures.
+#
+# NOT because of `D77000`, the decision check's GREEN self-test case, which
+# stays silent under every widening because the ceiling rule holds — that is
+# the fixture working as designed, and it is measured (D116 §1.2). What
+# actually turns the lane red is the `docs/format/registry-v1.md:<line>`
+# literal carried by the Q58 RED case a few cases further down the same
+# `cases` list, whose whole job is to be a line-number citation. That class has
+# no ceiling, no allocation bound and no suppression register, so it fires the
+# moment `scripts/` joins the scan. Check THAT literal before ever deciding
+# this exclusion is unnecessary: reasoning from `D77000` alone concludes,
+# wrongly, that it can be deleted. Measured as this landed: deleting the two
+# lines below reports this file against itself, once per literal. D116 §1.2
+# found one such literal; R4's new case adds a second, so the exclusion covers
+# strictly more than the record that mandated it. This comment states the
+# citation as `registry-v1.md:<line>` on purpose, so that documenting the trap
+# does not lay another one.
+CITATION_SCAN_SELF = "scripts/check-traceability.py"
 
 # Decisions that are recorded, but not in a file of their own. Each entry is
 # the home, so "no file" is a recorded fact rather than an omission. Adding to
@@ -534,20 +573,28 @@ def check_decisions(failures: Failures) -> None:
 
     cited: dict[int, set[str]] = {}
     line_citations: list[str] = []
-    for sub in DECISION_SCAN:
+    n_files = 0
+    # Loop body at parity with `sweep_task_surfaces()` (D116 R2). The two
+    # sweeps were given one scan set; having different prune sets afterwards is
+    # exactly the divergence R1 exists to end. `scripts/__pycache__/` exists in
+    # this tree today, so the prune is defence in depth rather than decoration.
+    for sub in CITATION_SCAN:
         base = ROOT / sub
         if not base.exists():
             continue
         for path in base.rglob("*"):
-            if not path.is_file() or path.suffix not in DECISION_SUFFIXES:
+            if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
                 continue
-            if "target" in path.parts:
+            if {"target", "node_modules", "__pycache__"} & set(path.parts):
+                continue
+            rel = str(path.relative_to(ROOT))
+            if rel == CITATION_SCAN_SELF:
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
             except (UnicodeDecodeError, OSError):
                 continue
-            rel = str(path.relative_to(ROOT))
+            n_files += 1
             for n in re.findall(r"\bD(\d+)\b", text):
                 cited.setdefault(int(n), set()).add(rel)
             # Q58: the registry froze; a line number into it rots on any edit.
@@ -578,11 +625,15 @@ def check_decisions(failures: Failures) -> None:
     if not failures:
         homed = len(DECISIONS_HOMED_ELSEWHERE)
         in_bound = [n for n in cited if n <= max(allocated)]
+        # The file count is reported for the reason the task half reports it
+        # (D116 R3): without it, a scan that silently narrowed back to the
+        # three doc/code roots would be invisible in a green log — a green
+        # lane saying nothing about how much it read.
         print(
-            f"[{check}] ok — {len(in_bound)} distinct decisions cited, all "
-            f"resolve ({len(recorded)} have records, {homed} homed elsewhere, "
-            f"{len(still_open)} still open in the register); "
-            f"no line-number citations into the registry"
+            f"[{check}] ok — {len(in_bound)} distinct decisions cited across "
+            f"{n_files} files, all resolve ({len(recorded)} have records, "
+            f"{homed} homed elsewhere, {len(still_open)} still open in the "
+            f"register); no line-number citations into the registry"
         )
 
 
@@ -605,18 +656,13 @@ def check_decisions(failures: Failures) -> None:
 
 TASK_DOMAINS = "PFCGSARUQ"
 
-# Where task citations are swept. Mirrors DECISION_SCAN and adds `scripts/`:
-# the gate is committed code and a dangling task pointer there is as normative
-# as one in `crates/`. docs/decisions/ is deliberately OUT — see D109 §3.3: a
-# decision record's job includes PROPOSING work the orchestrator may then
-# number, renumber or decline, and sweeping it fails 13 rows for ids that D92
-# and D93 merely proposed.
-TASK_SCAN = ["crates", "docs/format", "docs/testing", "scripts"]
-TASK_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
-
-# This file names task ids as literals in its registers and plants them in
-# `--self-test`. Sweeping it would report its own fixtures (D109 §3.3).
-TASK_SCAN_SELF = "scripts/check-traceability.py"
+# Where task citations are swept: `CITATION_SCAN` / `CITATION_SUFFIXES` /
+# `CITATION_SCAN_SELF`, the same three constants the decision half uses. They
+# used to be two pairs that happened to agree on three of four roots; D116 R1
+# collapsed them, and `DECISION_SCAN`, `DECISION_SUFFIXES`, `TASK_SCAN`,
+# `TASK_SUFFIXES` and `TASK_SCAN_SELF` were deleted rather than aliased — an
+# alias is a second name for one thing and the next reader has to prove they
+# are equal.
 
 # Both row shapes. `- ~~**P18**` carries NO checkbox: protocol rule 1 says a
 # retired task is struck, never deleted, so this shape is mandated and will
@@ -669,36 +715,27 @@ TASK_ID_NOT_A_CITATION: dict[tuple[str, str], str] = {
         "sentence that documents the defect is not the check working.",
 }
 
-# CLOSED 2026-08-10 (D109 §3.5). These 20 rows predate --task-entries. The date
-# is the lock: every value must carry BACKLOG_FROZEN_ON, so a 22nd entry cannot
-# be added without either dating it falsely in a diff or moving the constant,
-# which invalidates all 21 at once. It may only SHRINK. Drained by the two
-# follow-up rows D109 §8 (iii) and (iv) describe: the 12 open rows first,
-# because those are the live hazard, and the 8 done rows separately and later,
-# because they are archaeology.
+# CLOSED 2026-08-10 (D109 §3.5). It may only SHRINK, and it has: D109 froze 21
+# rows that predate --task-entries, Q130's entry landed in the same wave and
+# took its line, and the twelve OPEN rows — the live hazard D109 §8 (iii) named
+# for draining first — were reconstructed and removed together with their
+# register lines. What is left is §8 (iv)'s archaeology: eight rows that are
+# already done, whose entries are being written second because a `Do`/`Accept`
+# for finished work is history rather than instruction.
 #
-# The 21 were MEASURED against the tree at the moment this constant was
-# written, not transcribed from the decision record — the two agree, and the
-# open/done split is the tree's, read from each row's own checkbox. One entry
-# is already known to be short-lived: Q130's `tasks/Q.md` entry lands later in
-# this same wave, and the staleness rule below will then fail until its line
-# here is deleted. That is the register working, not a defect.
+# The date is the lock: every value must carry BACKLOG_FROZEN_ON, so a new
+# entry cannot be added without either dating it falsely in a diff or moving
+# the constant, which invalidates every remaining line at once.
+#
+# Both halves of a row's drain must land in one change. An entry written while
+# its line survives here trips the staleness rule below, and a line deleted
+# before its entry exists trips the missing-entry rule above — measured in both
+# directions as the twelve were drained. That coupling is the register working,
+# not a defect, and it is why the count is not asserted anywhere: a partial
+# drain is legitimately green.
 BACKLOG_FROZEN_ON = "2026-08-10"
 ROWS_PENDING_ENTRY: dict[str, tuple[str, str]] = {
-    # --- open rows: the live hazard, drained first ---
-    "A72":  (BACKLOG_FROZEN_ON, "open, M2 — TSA identity reconciliation"),
-    "A74":  (BACKLOG_FROZEN_ON, "open, M2 — MIN_VERIFIED_TSA_TOKENS doc claim"),
-    "A76":  (BACKLOG_FROZEN_ON, "open, M2 — recorded Bitcoin height is merge order"),
-    "A105": (BACKLOG_FROZEN_ON, "open, M2 — A25 Accept row 2"),
-    "A108": (BACKLOG_FROZEN_ON, "open, M2 — freeze-manifest events in A26's Do"),
-    "Q88":  (BACKLOG_FROZEN_ON, "open, M2 — two signers under one root"),
-    "Q89":  (BACKLOG_FROZEN_ON, "open, M2 — distinct calendars vs identities"),
-    "Q122": (BACKLOG_FROZEN_ON, "open, M2 — dated corrections to resolved decisions"),
-    "Q123": (BACKLOG_FROZEN_ON, "open, M2 — capture script provenance fields"),
-    "R60":  (BACKLOG_FROZEN_ON, "open — R54's load-sensitive linear-time guard"),
-    "R76":  (BACKLOG_FROZEN_ON, "open — AnchorResult::source doc mood"),
-    "U39":  (BACKLOG_FROZEN_ON, "open — no lane type-checks --features ant-backend"),
-    # --- done rows: archaeology, drained second ---
+    # --- done rows: archaeology, drained second (D109 §8 (iv)) ---
     "Q124": (BACKLOG_FROZEN_ON, "done — vectors README post-Q14 sentence"),
     "S27":  (BACKLOG_FROZEN_ON, "done — D37 per-sub-batch capture hook"),
     "S29":  (BACKLOG_FROZEN_ON, "done — imported complete work unrestorable"),
@@ -765,7 +802,7 @@ def task_detail_entries() -> dict[str, list[tuple[str, int]]]:
 
 
 def sweep_task_surfaces() -> tuple[dict[str, set[str]], dict[str, set[str]], int]:
-    r"""`(every occurrence, marked occurrences, files read)` over TASK_SCAN.
+    r"""`(every occurrence, marked occurrences, files read)` over CITATION_SCAN.
 
     Both maps are `id -> {relative path}`. Marked hits are a strict subset of
     all hits: a backtick and an asterisk are both non-word characters, so
@@ -775,17 +812,17 @@ def sweep_task_surfaces() -> tuple[dict[str, set[str]], dict[str, set[str]], int
     cited: dict[str, set[str]] = {}
     marked: dict[str, set[str]] = {}
     files = 0
-    for sub in TASK_SCAN:
+    for sub in CITATION_SCAN:
         base = ROOT / sub
         if not base.exists():
             continue
         for path in base.rglob("*"):
-            if not path.is_file() or path.suffix not in TASK_SUFFIXES:
+            if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
                 continue
             if {"target", "node_modules", "__pycache__"} & set(path.parts):
                 continue
             relative = str(path.relative_to(ROOT))
-            if relative == TASK_SCAN_SELF:
+            if relative == CITATION_SCAN_SELF:
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
@@ -978,12 +1015,139 @@ def check_task_entries(failures: Failures) -> None:
         )
 
 
+# ── check 6: a resolved ruling's owner is reachable from the row it names ────
+# (Q145, ruled by D113)
+#
+# Q145 proposed a join over data this file already holds: resolved decision +
+# owner whose row is ticked. D113 §2 refuses it on the identical two-assignment
+# domain — D104 §4 (executed) and D104 §6 (not) — where the ticked clause fires
+# on both and separates nothing. What separates them is the BACK-citation: A48's
+# row names D104, A106's row named no decision at all.
+
+DECISION_OWNER = re.compile(
+    r"^\*\*Owner: ([" + TASK_DOMAINS + r"]\d{1,3})\*\*", re.M
+)
+
+
+def decision_owner_assignments() -> list[tuple[int, str, str, int]]:
+    """`(decision number, owner id, filename, line)` per per-ruling assignment.
+
+    Anchored and bold on purpose. The bare string `Owner:` occurs 20 times in
+    the corpus and 2 of those are D8 quoting a tail it is DELETING; the
+    front-matter `- **Owner: ...**` bullet is prose that names domains, gates
+    and consumers as often as owners (D113 §1.2 measures 2 parse artifacts in
+    12). This is the only form that is unambiguously one ruling assigned to one
+    registered task, and D113 RULING 2 makes writing it the author's part.
+    """
+    found: list[tuple[int, str, str, int]] = []
+    for path in sorted((ROOT / DECISION_DIR).glob("D*.md")):
+        match = re.match(r"D(\d+)-", path.name)
+        if not match:
+            continue
+        number = int(match.group(1))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), 1):
+            hit = DECISION_OWNER.match(line)
+            if hit:
+                found.append((number, hit.group(1), path.name, line_no))
+    return found
+
+
+def row_text() -> dict[str, str]:
+    """`id -> the whole TODO.md row`. `task_rows()` returns the struck flag and
+    drops the text, and this check's question is about the text."""
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    found: dict[str, str] = {}
+    for line in todo.splitlines():
+        match = TASK_ROW.match(line)
+        if match:
+            found[match.group(1) + match.group(2)] = line
+    return found
+
+
+def check_decision_owners(failures: Failures) -> None:
+    check = "decision-owners"
+
+    allocated = allocated_decision_ids()
+    if not allocated:
+        failures.add(check, "no decision ids in TODO.md's register — the bound is vacuous")
+        return
+    resolved = allocated - open_decision_ids()
+    rows = row_text()
+    if not rows:
+        failures.add(check, "TODO.md yielded no task rows — the check would be vacuous")
+        return
+
+    assignments = decision_owner_assignments()
+    if not assignments:
+        # The domain is small (D113 §1.2: one document today), so vacuity is
+        # this check's likeliest failure and it must be loud, not green.
+        failures.add(
+            check,
+            "no `**Owner: <ID>**` assignment exists in any decision document. Either the "
+            "mandated form (D113 RULING 2) stopped being written or this regex stopped "
+            "matching it; a check over an empty domain proves nothing.",
+        )
+        return
+
+    checked = 0
+    for number, owner, name, line_no in assignments:
+        if number not in resolved:
+            continue  # an unresolved decision has assigned nothing yet
+        checked += 1
+        if owner not in rows:
+            failures.add(
+                check,
+                f"{name}:{line_no} assigns a ruling to {owner}, which has no row in "
+                f"TODO.md's register. A ruling owned by an unregistered id is owned by "
+                f"nobody. Add the row, or name an id that exists.",
+            )
+            continue
+        if not re.search(rf"\bD{number}\b", rows[owner]):
+            failures.add(
+                check,
+                f"{name}:{line_no} assigns a ruling to {owner}, and {owner}'s TODO.md row "
+                f"never names D{number}. A lane that opens {owner}, or the row that succeeds "
+                f"it, cannot learn that D{number} governs the work — which is how a resolved "
+                f"ruling outlives its owner's closure unexecuted and unseen (Q145). Put "
+                f"`D{number} §<n>` in {owner}'s row: if the ruling is done say so there, and "
+                f"if it is not, the row must name the task carrying the remainder.",
+            )
+
+    # The second vacuity guard, and D113 §3.1 does not have it. Its guard fires
+    # only when the corpus holds NO assignment at all; a corpus whose every
+    # assignment sits in an UNRESOLVED decision passes the first guard and then
+    # checks nothing, printing a green "ok — 0 assignment(s)". On a domain of
+    # two, both in one document, reopening that document alone would do it.
+    # `check_matrix` sets the precedent by guarding `gate_rows`, its own
+    # post-filter count, for the same reason (D113 §3.1, corrected).
+    if not checked:
+        failures.add(
+            check,
+            f"{len(assignments)} `**Owner: <ID>**` assignment(s) exist but not one is in a "
+            f"RESOLVED decision, so this check verified nothing. An unresolved decision has "
+            f"assigned no work yet — but a check that silently reports success over an empty "
+            f"domain is worse than no check.",
+        )
+        return
+
+    if not failures:
+        print(
+            f"[{check}] ok — {checked} per-ruling owner assignment(s) in resolved "
+            f"decisions, every one named by the row it assigns"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
     "decisions": check_decisions,
     "task-citations": check_task_citations,
     "task-entries": check_task_entries,
+    "decision-owners": check_decision_owners,
 }
 
 
@@ -1160,6 +1324,28 @@ def self_test() -> int:
             pattern = re.compile(r" ?\b" + re.escape(token) + r"\b")
             return lambda t: pattern.sub("", t)
 
+        def an_owner_assignment() -> tuple[int, str, str]:
+            """`(decision number, owner id, decision filename)` for the first
+            per-ruling assignment whose owned row ALREADY names the decision —
+            so case (l)'s deletion is a real removal and not a no-op."""
+            rows: dict[str, str] = {}
+            for line in (tree / "TODO.md").read_text(encoding="utf-8").splitlines():
+                match = TASK_ROW.match(line)
+                if match:
+                    rows[match.group(1) + match.group(2)] = line
+            for path in sorted((tree / DECISION_DIR).glob("D*.md")):
+                head = re.match(r"D(\d+)-", path.name)
+                if not head:
+                    continue
+                number = int(head.group(1))
+                for owner in DECISION_OWNER.findall(path.read_text(encoding="utf-8")):
+                    if owner in rows and re.search(rf"\bD{number}\b", rows[owner]):
+                        return number, owner, path.name
+            raise AssertionError(
+                "self-test: no per-ruling owner assignment has a back-citing row, so the "
+                "decision-owners cases would be built from nothing"
+            )
+
         hole_a, hole_q = first_hole("A"), first_hole("Q")
         minted_a, minted_q = above_ceiling("A"), above_ceiling("Q")
         entry_id, entry_file, entry_heading = a_row_with_entry()
@@ -1185,6 +1371,8 @@ def self_test() -> int:
                 "empty register with a frozen date invites a future lane to reopen it."
             )
         pending_id = sorted(ROWS_PENDING_ENTRY, key=task_id_key)[0]
+        owner_dnum, owner_id, owner_doc = an_owner_assignment()
+        ghost_owner = above_ceiling(owner_id[0])
 
         # (check, file, mutation, expect) where expect is "red" or "green".
         #
@@ -1245,6 +1433,34 @@ def self_test() -> int:
                 lambda t: t + "\n\nSee `docs/format/registry-v1.md:1097` for the rule.\n",
                 "red",
             ),
+            # (o) The `scripts/` surface really is swept by the DECISION half
+            # too. Without this case, D116 R1's widening is unproven and a
+            # later edit could narrow CITATION_SCAN back to the three doc/code
+            # roots with nothing noticing — which is the state that hid every
+            # `D<n>` in `scripts/*.sh` until D116.
+            #
+            # It plants the Q58 line-citation rather than an unresolvable
+            # `D<n>` DELIBERATELY, and the reason is measured (D116 §1.4):
+            # D1-D112 is dense with ZERO holes and every id resolves, so no
+            # single-file mutation can make a `D<n>` citation fail — and this
+            # harness applies exactly one mutation to exactly one file. The
+            # existing class-1 red case above works only because it mutates
+            # TODO.md and lets an EXISTING citation in crates/ do the naming,
+            # so it does not pin this surface. The Q58 half needs no allocation
+            # to fail, and it exercises the SAME sweep, the same suffix set and
+            # the same file list. Do not "improve" it into a class-1 case by
+            # adding a hole to the D namespace: the density is a property of
+            # the register, not a deficiency.
+            #
+            # `scripts/fuzz.sh` is the target for the same reason case (b) uses
+            # it: it is the file whose real `A71` citation proved the surface
+            # matters.
+            (
+                "decisions",
+                "scripts/fuzz.sh",
+                lambda t: t + "\n# key layout: docs/format/registry-v1.md:1097\n",
+                "red",
+            ),
             (
                 "matrix",
                 MATRIX,
@@ -1295,10 +1511,11 @@ def self_test() -> int:
                 lambda t: t + f"\n// follow-up: `{hole_a}`\n",
                 "red",
             ),
-            # (b) `scripts/` and `.sh` really are swept. Without this case the
-            # surface widening that found the one genuine dangling pointer
-            # (D109 §1.5) is unproven, and a later edit could narrow TASK_SCAN
-            # back to DECISION_SCAN with nothing noticing.
+            # (b) `scripts/` and `.sh` really are swept by the TASK half.
+            # Without this case the surface widening that found the one genuine
+            # dangling pointer (D109 §1.5) is unproven, and a later edit could
+            # narrow CITATION_SCAN back to the three doc/code roots with
+            # nothing noticing. Case (o) below is its decision-half twin.
             (
                 "task-citations",
                 "scripts/fuzz.sh",
@@ -1393,6 +1610,51 @@ def self_test() -> int:
                 lambda t: t + f"\n### {pending_id} — fixture entry\n",
                 "red",
             ),
+            # ── Q145 / D113 §6 ───────────────────────────────────────────────
+            # (l) red — the row stops naming the decision that assigned it.
+            # This is Q145's motivating instance reconstructed: the fixture
+            # picks an assignment whose row ALREADY back-cites, so the deletion
+            # is a real removal rather than a no-op, and then removes it.
+            (
+                "decision-owners",
+                "TODO.md",
+                lambda t: re.sub(
+                    r"^(- (?:\[[ xX]\]|~~)\s*\*\*" + owner_id + r"\*\*.*)$",
+                    lambda m: re.sub(rf"\bD{owner_dnum}\b", "", m.group(1)),
+                    t, count=1, flags=re.M,
+                ),
+                "red",
+            ),
+            # (m) red — the assignment names an id that has no row at all. The
+            # adjacent defect the same parse catches for free: a ruling owned
+            # by an unregistered id is owned by nobody.
+            (
+                "decision-owners",
+                f"{DECISION_DIR}/{owner_doc}",
+                lambda t: t.replace(
+                    f"**Owner: {owner_id}**", f"**Owner: {ghost_owner}**", 1
+                ),
+                "red",
+            ),
+            # (n) GREEN ARM. The four prose `Owner:` shapes the corpus really
+            # contains (D113 §1.2) must not be parsed as assignments: the
+            # front-matter bullet with a consumer list, D8's quotation of a
+            # tail it is DELETING inside an open correction item, D92's
+            # domain-letter form, and an indented bold form. Each is planted
+            # naming an id that has NO row, so if the regex ever widened to
+            # reach one, this case goes red and forces a re-decision instead of
+            # a quiet edit — the idiom of green arms (d) and (h).
+            (
+                "decision-owners",
+                f"{DECISION_DIR}/{owner_doc}",
+                lambda t: t + (
+                    f"\n- **Owner: {ghost_owner} (freeze); consumed by {ghost_owner}**\n"
+                    f'and the trailing "Owner: {ghost_owner} with F8/F9/R" removed.\n'
+                    f"Size S. Owner: A domain, M2 (before a report renders it).\n"
+                    f"   **Owner: {ghost_owner}** (indented, so not an assignment)\n"
+                ),
+                "green",
+            ),
         ]
 
         for check, relative, mutate, expect in cases:
@@ -1426,11 +1688,40 @@ def self_test() -> int:
             )
             path.write_text(original, encoding="utf-8")
             went_red = result.returncode != 0
-            if went_red != (expect == "red"):
+
+            # A non-zero exit is NOT enough to call a red case proven. A
+            # mutation that makes the script CRASH also exits non-zero, so a
+            # red case can pass while the branch it was written for no longer
+            # exists. Measured, on this file: delete check 6's
+            # unregistered-owner branch and case (m) still "went red" — via a
+            # KeyError traceback on the very lookup that branch guards, not via
+            # a finding. Under exit-code-only validation that case pinned
+            # nothing. So a red case must see the check's OWN annotation, and a
+            # traceback fails the harness in either direction.
+            annotated = f"::error::check-traceability [{check}]" in result.stderr
+            crashed = "Traceback (most recent call last)" in result.stderr
+
+            if crashed:
+                print(
+                    f"self-test: FAILED — {check} CRASHED on the {expect}-case mutation "
+                    f"of {relative}. A traceback is not a finding; the check must report "
+                    f"the defect, not fall over on it.",
+                    file=sys.stderr,
+                )
+                ok = False
+            elif went_red != (expect == "red"):
                 print(
                     f"self-test: FAILED — {check} went "
                     f"{'red' if went_red else 'green'} on the {expect}-case "
                     f"mutation of {relative}",
+                    file=sys.stderr,
+                )
+                ok = False
+            elif expect == "red" and not annotated:
+                print(
+                    f"self-test: FAILED — {check} exited non-zero on the red-case mutation "
+                    f"of {relative} but printed no [{check}] annotation, so the exit code "
+                    f"came from somewhere other than this check finding the defect",
                     file=sys.stderr,
                 )
                 ok = False
@@ -1454,7 +1745,7 @@ def self_test() -> int:
         # would otherwise let its own case pass by absence.
         #
         # D109 R7 lists `S310` here too. It is not in the swept tree: it lives
-        # in `testdata/vectors/v1/crosscheck_cbor.py` and TASK_SCAN does not
+        # in `testdata/vectors/v1/crosscheck_cbor.py` and CITATION_SCAN does not
         # include `testdata/`, so it is killed by not being swept at all rather
         # than by the ceiling. Asserting it here would fail.
         present, _marked, _files = sweep_task_surfaces()

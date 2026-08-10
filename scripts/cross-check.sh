@@ -390,7 +390,13 @@ for path in "${generators[@]}"; do
   esac
 done
 
-# 5. The CBOR checker carries its own richer self-test (F14: 8 planted faults).
+# 5. The CBOR checker carries its own richer self-test (F14). It sweeps EVERY
+#    in-scope document, planting 7 vector mutations + 1 control in each, plus
+#    one wrong RFC 8949 expectation per run. Q130 made the totals computed, so
+#    they scale with the in-scope set and are stated only by the checker's own
+#    printed summary — do not restate them here. Restating them is exactly how
+#    this comment came to claim "8 planted faults" long after the run had
+#    stopped saying so (Q146).
 for path in "${cbor_checkers[@]}"; do
   note "self-test: $(rel "${path}") (built-in)"
   if [ "${require}" -eq 1 ]; then
