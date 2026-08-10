@@ -1724,14 +1724,16 @@ at a 10x multiplier and is by far the most expensive of the 19 jobs.
 
 ## Q153 — three gate lanes moved onto the remote, and two ruled to stay local (2026-08-10, M2 wave 14)
 
-**Status of this section: PENDING. It records a workflow change and its
-ruling; it records no remote result, because there has not been one.**
+**Status of this section: DISCHARGED 2026-08-10 — the run-id cell is filled
+and the three promoted steps have been observed green on a runner. The
+discharging evidence is the appended section below; the body of this section
+is left as written.**
 
 | | |
 | --- | --- |
-| Remote run id | *(empty — pending)* |
-| Remote verdict | *(none — the three promoted steps have never executed on a runner)* |
-| Local verdict | green, measured below — which this document's own rule says **is not evidence** |
+| Remote run id | **31436791456** (on `5bcdf7d`; see the appended discharge section) |
+| Remote verdict | **green — all three promoted steps `success`**, in a 19-of-19 run |
+| Local verdict | green, measured below — which this document's own rule says **is not evidence**, and which is why the cell above was left empty until a runner filled it |
 
 Filling that run-id cell is the whole of what remains. Until it carries a
 number, the three steps below are exactly what the rule at "A lane that has
@@ -1886,3 +1888,59 @@ ones), `ci-lanes.sh traceability` green, `ci-lanes.sh anchor-net-policy` green
 Per this document's own rule, none of that is evidence for the thing Q153
 asked for. It is evidence that the change is well-formed. The remote run is
 the evidence, and it does not exist yet.
+
+---
+
+## Q153 discharged — the three promoted lanes observed green on a runner, and the dispatch refusal is over (2026-08-10, M2 wave 14)
+
+**Run `31436791456`, head `5bcdf7d`, conclusion `success`, 19 of 19.** This is
+the project's fifth all-green run and the first since the dispatch refusal.
+
+The three steps Q153 moved onto the remote, by `name:`, each `success`:
+
+| job | step | verdict |
+| --- | --- | --- |
+| `core-dep-graph` | `Q153 — self-test the S22 feature partition (prove it can go red)` | success |
+| `core-dep-graph` | `Q153 — every declared feature is on exactly one gate tier` | success |
+| `traceability` | `Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change` | success |
+
+Required-context count is **unchanged at 19** — 17 job ids with `cross-os` a
+three-way matrix. Three steps were added and no job was, which is why the two
+cargo-touching lanes ride `core-dep-graph` rather than `traceability`: that
+job has no toolchain bootstrap and no cache, and this document already records
+that as a property of it.
+
+**The dispatch refusal is resolved and its diagnosis is confirmed.** The three
+refused runs (`31407751482`, `31412086640`, and the run on `95fcee0`) each
+reported 19 jobs with **zero steps, no runner, ~13 s**. The maintainer upgraded
+the account to Pro, and the next run **queued** rather than completing
+instantly — jobs waiting for runners is the signature of dispatch working. Runs
+`31432412612` and `31436791456` both report **zero zero-step jobs**. The
+standing candidate recorded in the earlier section — exhausted Actions minutes
+on a private repo on GitHub Free — is therefore confirmed by intervention, not
+merely by elimination. **A 13-second run reporting `0 of 19` with zero steps is
+a dispatch refusal and is never a verdict on the code**; check `len(steps)` and
+duration before reading any red.
+
+**One red preceded this green and it is worth recording, because the remote
+caught what the local gate passed.** Run `31432412612` on `360ea2a` was
+**18 of 19**, with `traceability` failing on
+*"decisions went green on the red-case mutation of TODO.md"*. The cause was in
+`TODO.md`, not in the lane: the `decisions` red case mutates that file with a
+first-occurrence string replacement over `D18`'s unchecked register line, and
+the wave's Current-focus block had reproduced that line verbatim in prose
+hundreds of lines above the register, so the replacement consumed the prose
+copy and left the register row untouched. The check then passed over input
+that was supposed to break it.
+
+That is the second instance of the shape in one wave — the first was caught
+during bookkeeping, in the row registering the defect — and it is the
+argument Q153 was filed on, demonstrated within hours of the lanes landing:
+**a lane that has never run on the remote is not evidence**, and here the
+remote falsified a locally-green tree. It was repaired in `5bcdf7d` by
+describing the line instead of quoting it, with no change to `scripts/`.
+**Q184** remains open as the sweep for other self-test fixtures pinned to
+mutable tree values; it now has two instances rather than one.
+
+Appended, not edited, except for the status table of the section above, whose
+own text states that filling its run-id cell *"is the whole of what remains"*.
