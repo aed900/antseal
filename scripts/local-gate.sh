@@ -12,27 +12,6 @@
 #
 #   cross-os-macos, cross-os-windows  no such host exists here. The Linux leg
 #                                     is covered in substance by `test`.
-#   wasm-bitmatch                     the OTHER wasm32-EXECUTION lane —
-#                                     `./scripts/wasm-bitmatch.sh`. Still not
-#                                     gated here; a manual CONTRIBUTING
-#                                     checkbox is all that stands behind it,
-#                                     which is Q125's own defect one file over.
-#                                     Cost is NOT the reason: measured
-#                                     2026-08-09 on this host at 53 s
-#                                     (--self-test) + 32 s (the lane) =
-#                                     1 min 25 s, cheaper than `wasm32-tests`.
-#                                     It is out because its TRIGGER differs:
-#                                     its `build.rs` walks
-#                                     `testdata/vectors/`, so a vectors-only
-#                                     change is the case CONTRIBUTING singles
-#                                     out for it and the case the list below
-#                                     deliberately does not match. Hanging it
-#                                     off `--needs-run` would put a lane in
-#                                     the gate that silently never fires for
-#                                     its most important input — a fresh
-#                                     instance of the defect this task closes.
-#                                     It needs its own `--needs-run` with its
-#                                     own planted change-sets. Follow-up.
 #   core-dep-graph                    `./scripts/ci-lanes.sh dep-graph`
 #   secret-guard                      `./scripts/ci-lanes.sh secret-guard`
 #   audit-deny                        `./scripts/ci-lanes.sh audit-deny`
@@ -48,6 +27,10 @@
 #                                     lane below runs `--check` only
 #   wasm32-tests                      runs here only when the diff selects it
 #                                     (the lane below, and ANTSEAL_GATE_WASM)
+#   wasm-bitmatch                     same — the lane below, and
+#                                     ANTSEAL_GATE_BITMATCH (Q128). Its
+#                                     TRIGGER's self-test is unconditional;
+#                                     the lane's own `--self-test` is not.
 #
 # `./scripts/ci-lanes.sh --list` enumerates the lanes that script owns.
 # CONTRIBUTING's "PR checklist" says which of these to run by hand for which
@@ -155,6 +138,73 @@ case "$wasm_rc" in
   0) run wasm32-tests scripts/wasm-tests.sh --check ;;
   1) printf '  %-16s n/a   (%s)\n' wasm32-tests "$wasm_why" ;;
   *) printf '  %-16s SKIP  (%s)\n' wasm32-tests "$wasm_why" ;;
+esac
+
+# Q128 — the SECOND wasm32 execution lane, and until now the one the gate did
+# not run at all: `wasm-bitmatch` executes every committed golden vector
+# through `antseal_core::test_util::vectors` natively and under wasm32 and
+# requires a BYTE-IDENTICAL transcript (MVP-SPEC.md 167/169). It is the lane
+# that certifies the M2 exit criterion — A22 met it on the `anchor` kind — and
+# a manual CONTRIBUTING checkbox was all that stood behind it, which is Q125's
+# defect one file over.
+#
+# It gets its OWN predicate rather than riding on `wasm-tests.sh --needs-run`,
+# and the reason is the trigger, not the cost (measured on this host at 32 s
+# for the lane plus 53 s for its self-test — CHEAPER than `wasm32-tests`; see
+# the note on that figure's provenance below). `crates/wasm-bitmatch/build.rs`
+# walks `testdata/vectors/` with no hardcoded file lists, so a VECTORS-ONLY
+# change is this lane's mandatory case — and precisely the case the wasm32
+# list must not match, since matching it would fire a 2 min 10 s PQC suite on
+# every vector edit. Folding this lane under that predicate would have
+# installed a gate lane that silently never fires for its most important
+# input. `wasm-bitmatch.sh --trigger-self-test` arm 4 ASSERTS that asymmetry
+# against the other script's list rather than leaving it as two comments in
+# two files that cannot notice each other going stale.
+#
+# THE TRIGGER'S SELF-TEST RUNS UNCONDITIONALLY (Q125's vacuity link, one file
+# over): a path list that stops matching `testdata/vectors/` renders this lane
+# `n/a` for ever, and a guard placed behind the trigger would never run to say
+# so. It costs milliseconds — no cargo, no git, only its own strings.
+#
+# THE LANE'S OWN `--self-test` is a different statement and gets a different
+# placement: it injects a wasm32-only divergence and requires the comparison
+# to go red, which needs two wasm32 builds (~53 s), so it runs only when the
+# trigger fires — and then FIRST, immediately before the lane, because a green
+# comparison means nothing until the comparison has been shown able to fail.
+# That is the same ordering CI uses for this lane.
+#
+# ANTSEAL_GATE_BITMATCH=1/0 forces it on or off; exit 2 is a visible SKIP with
+# the reason, never a silent pass.
+#
+# PROVENANCE OF THE TWO FIGURES ABOVE, because they are not equally sourced
+# and a reader deciding whether to force this lane on deserves to know which:
+#
+#   * "32 s lane + 53 s self-test" is a SINGLE SAMPLE — one run, one host, one
+#     day (2026-08-09), recorded in a shell comment and never re-measured. It
+#     is quoted here because it is the only figure that exists and because the
+#     ARGUMENT it supports is an inequality ("cheaper than wasm32-tests", which
+#     is 2 min 10 s warm by a 3-run measurement), not a budget. Treat it as an
+#     order of magnitude. Q125's `wasm-tests.sh:63-73` is the shape a
+#     replacement should take: cold/warm/warm plus a CI run id for comparison.
+#   * the UNCONDITIONAL half is measured properly, because it is the half this
+#     gate pays on every run: `--trigger-self-test` 0.80 s / 0.08 s / 0.64 s
+#     over three runs on this 2-core host (2026-08-09; no cargo, no git, so
+#     the spread is page cache), and `--needs-run` 1.80 s / 0.61 s / 0.09 s
+#     (two `git diff`/`git status` calls, cold index first). Under a second
+#     each, which is what makes "unconditional" the right answer rather than a
+#     concession.
+run bitmatch-trigger scripts/wasm-bitmatch.sh --trigger-self-test
+
+bm_why="$(scripts/wasm-bitmatch.sh --needs-run 2>&1)"; bm_rc=$?
+case "${ANTSEAL_GATE_BITMATCH:-auto}" in
+  1) bm_rc=0; bm_why="forced by ANTSEAL_GATE_BITMATCH=1" ;;
+  0) bm_rc=1; bm_why="suppressed by ANTSEAL_GATE_BITMATCH=0" ;;
+esac
+case "$bm_rc" in
+  0) run bitmatch-inject scripts/wasm-bitmatch.sh --self-test
+     run wasm-bitmatch   scripts/wasm-bitmatch.sh --check ;;
+  1) printf '  %-16s n/a   (%s)\n' wasm-bitmatch "$bm_why" ;;
+  *) printf '  %-16s SKIP  (%s)\n' wasm-bitmatch "$bm_why" ;;
 esac
 
 # S22 — the policy's own guard (seconds): every declared feature is on

@@ -31,19 +31,40 @@ the three attesting blocks — 960767, 960768, 960771 — are captured too
 establish" below is about. Read that section with this correction in hand: it
 is still accurate about *this* file, and no longer accurate about the tree.
 
-**Four rows of the F4 registry (`docs/format/anchor-artifact-limits.md` §5)
-are bootstrapped from this file and say so in their `measured against` cell:**
-`MAX_OTS_OPS`, `MAX_OTS_DEPTH`, `MAX_OTS_ATTESTATIONS` and
-`MAX_OTS_OPERAND_BYTES`/`MAX_OTS_VALUE_BYTES`. They **must be re-measured
-against the real fixture and appended.** The values do not change — F4 forbids
-lowering and no margin is close — but the provenance cell must stop citing a
-third-party crate's test constant.
+## Re-measured 2026-08-10 (A48(a)) — three rows moved, two did not
 
-*Attribution corrected 2026-08-07: this said "**A25** must re-measure them",
-as `docs/format/anchor-artifact-limits.md:251,258` still does. The task is
-**A48(a)**, which was written for exactly this and lists A25 only as a
-dependency. That dependency is discharged — the six real upgraded `.ots` beside
-this file have existed since 2026-08-03.*
+Five rows of the F4 registry (`docs/format/anchor-artifact-limits.md` §5) were
+bootstrapped from this file. **A48 re-measured all five** against the artifact a
+verifier actually parses — the three-way splice recorded below, measured with
+`anchor::ots::parse_ots_measured`, the parser that enforces the limits.
+
+| row | bootstrapped here | re-measured | outcome |
+| --- | --- | --- | --- |
+| `MAX_OTS_OPS` | 100 | **244** | moved off this file; margin 40.96x → 16.79x |
+| `MAX_OTS_DEPTH` | 67 | **85** | moved off this file; margin 15.28x → 12.05x |
+| `MAX_OTS_ATTESTATIONS` | 4 | **6** | moved off this file; margin 64.00x → 42.67x |
+| `MAX_OTS_OPERAND_BYTES` | 174 B | 89 B | **stays here** — this file is larger |
+| `MAX_OTS_VALUE_BYTES` | 210 B | 125 B | **stays here** — this file is larger |
+
+**No value changed**, so no §6 limit-change entry is owed; the margins moved,
+which §5's Update rule classes as something learned *about* an unchanged limit.
+
+**The last two rows are the finding, and they invert this file's status.** Its
+operands are a real fat coinbase-transaction prefix; the antseal artifact's are
+32-byte merkle siblings and a 44-byte calendar commitment. So this file measures
+**larger** on both byte limits, and re-pointing those cells would have *raised*
+the recorded margins — 94.16x → 184.09x and 156.04x → 262.14x — by discarding
+the fatter real sample. A margin claims something about the worst real artifact
+known, not the most recently captured one. This file is therefore **kept and
+demoted to what A48's Accept row 3 offers** — *"a second, independent upgraded
+shape"* — still binding for two limits and no longer standing in for anything.
+
+*Attribution corrected 2026-08-07: this said "**A25** must re-measure them", as
+`docs/format/anchor-artifact-limits.md` did at `:251,258` until **2026-08-10**,
+when **A106** corrected it there. The task was **A48(a)**, which lists A25 only
+as a dependency; that dependency was discharged 2026-08-03. For three days the
+correction existed in this file and nowhere else, which is the whole reason A106
+was a row rather than a footnote.*
 
 ## What it is, measured
 
@@ -84,17 +105,21 @@ reproduced exactly.
 roots above are the values the ops derive; verifying that they are the
 `merkle_root` field of the real blocks 449397/449399, in that byte order,
 needs a fetched mainnet header, and A12's `Do` asks for exactly that pin
-*"by a real upgraded fixture"*. That is **A25's**, with the rest of the
-re-measurement. **Status 2026-08-07: the header half of that pin now exists,
-the derivation half does not.** `../../A25-upgrade-headers/` carries the
+*"by a real upgraded fixture"*. **Status 2026-08-10: done, and not against this
+file.** `../../A25-upgrade-headers/` carries the
 80-byte headers for 960767/960768/960771 — the blocks the six `.upgrade`
 files beside this one attest, not 449397/449399 — each verified offline by
-`double-SHA256(header) == claimed block hash`. Comparing the `merkle_root`
-those headers carry at bytes `36..68` against the root the `.upgrade` ops
-derive is the step that actually pins the byte order, and it has **not** been
-performed; it is **A48(b)**'s, and A48(b)'s last missing input was that header
-fetch. Until the comparison is made, no file in this tree pins the order
-empirically, and the only guard remains the structural one below. What A11/A12 establish offline is structural: each Bitcoin
+`double-SHA256(header) == claimed block hash`. **A48(b)** compares the
+`merkle_root` those headers carry at bytes `36..68` against the root the
+`.upgrade` ops derive, at all three heights, in
+`crates/antseal-core/tests/anchor_vectors.rs`'s
+`vector_anchor_ops_derive_the_fetched_mainnet_headers_merkle_root`; the same row
+asserts the match vanishes under a byte reversal. The sentence this paragraph
+carried until 2026-08-10 — *"it has **not** been performed"* — is spent.
+**This file still pins nothing empirically**, and its structural guard is the
+one below; the empirical pin belongs to the artifact derived from the six
+`.upgrade` bodies, not to the borrowed proof.
+What A11/A12 establish offline is structural: each Bitcoin
 attestation here is reached through a chain of 32-byte `append`/`prepend`
 siblings each followed by `08 08` — double SHA-256 — which is Bitcoin's own
 merkle algorithm operating on internal-order hashes, the order the header
@@ -178,9 +203,24 @@ both require `check_embedded_header` to return `Committed`, which is exactly
 this comparison. A reversal would move those two verdicts and turn the
 `golden-vectors`, `vector-freeze` and `wasm-bitmatch` lanes red together.
 
-**This does not close A48(b)**, which owns the pin and its own accept wording;
-it records that A48(b)'s last missing input is no longer missing and that the
-comparison it describes now has a committed, frozen witness.
+**This closed A48(b) on 2026-08-10.** The paragraph above read *"This does not
+close A48(b), which owns the pin and its own accept wording"* — true when
+written, because the comparison had been *performed* but not *committed as a
+named test*, which is what A48(b)'s Accept asks for. It now is:
+`crates/antseal-core/tests/anchor_vectors.rs`'s
+`vector_anchor_ops_derive_the_fetched_mainnet_headers_merkle_root` re-derives
+the roots from the frozen artifact, reads the headers from the two committed
+captures, asserts both endpoints agree, and asserts the match vanishes under a
+reversal — at all three heights, offline, with no network and no new capture.
+
+**The three ops-derived roots, in full**, so this table is checkable by hand
+against `../../A25-upgrade-headers/*.txt` bytes `36..68` (hex offsets 72..136):
+
+| height | ops-derived root = `header[36..68]` |
+| --- | --- |
+| 960767 | `74ce7464d6ae1ec81e9415300e713a90178ad207e543b717ffe4d929ab53233a` |
+| 960768 | `a921c752f258a56865c74fed7e1c01739ce441cb4cc5a17f018de06314798ae5` |
+| 960771 | `d303b6540d476819dac860d4785542fcba2c99a385a93dac23e41be192b537a7` |
 
 ## Licensing
 

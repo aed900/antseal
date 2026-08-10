@@ -216,16 +216,20 @@ A28 fill it at M2 — **and A42**, added 2026-08-03: D54 §7 rules a registry ro
 for `MAX_OTS_CALENDAR_RESPONSE_BYTES` and this list of owners predates that
 decision. Nothing outside those four may.
 
-| limit | owner | initial value | date set | measured against (A25 fixture path) | margin | lowered | structural cost (D102) |
+| limit | owner | value | date set | measured against — an A25 fixture path, or a derivation from committed archive bytes | margin | lowered | structural cost (D102) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (100 ops; **bootstrap** measurement taken on the rust-opentimestamps `LARGE_TEST` mainnet proof, blocks 449397/449399, pending A25's two-day cycle) | 40.96x | never | **none** — bounds work, not a container |
-| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (depth **67**; bootstrap measurement as above) | 15.28x | never | **40 960 B** = `next_pow2(1_024) x size_of::<Frame>()` (40 B, x86-64) — the parser's `walk.rest`; **3.91 %** of `MAX_OTS_BYTES` |
-| `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width 3) | 21.33x | never | **none** — a per-node counter, no container |
-| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (3) and `.../upgraded/rust-opentimestamps-LARGE_TEST.ots` (4, the binding one; bootstrap measurement as above) | 64.00x | never | **12 288 B** = `next_pow2(256) x size_of::<OtsAttestation>()` (48 B, x86-64); **1.17 %** of `MAX_OTS_BYTES` |
-| `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (174 B coinbase-prefix operand; bootstrap measurement as above) | 94.16x | never | **none** — a length header; D58 §10.3 rule 4's clamp governs it |
-| `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (210 B running value; bootstrap measurement as above) | 156.04x | never | **none** — rule 4; `exec::apply` allocates the running value after checking it (32 B on the A100 path) |
-| `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (46 B pending payload); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never | **none** — a length header; rule 4 |
-| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (220 B — the largest of 18 real calendar **submit** responses measured for D54 §8b). The **upgrade** response is larger, carrying a Bitcoin merkle path, and has not been measured: A25's day-2 run must record it and append the second margin here (D54 §6.1) | 298.0x (submit; upgrade **not yet measured**) | never | **none** — a receive-side byte cap, not a count limit |
+| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | the 3 808-byte upgraded `.ots` A22 froze (**244** ops), re-measured by A48 2026-08-10. Derived, not stored: `testdata/vectors/v1/anchor/anchor.json` cases 4–6, `sha256 c2bf8b2c…d88e0c68` | 16.79x | never | **none** — bounds work, not a container |
+| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | the same derived artifact (depth **85**, D58 §9.3's definition), re-measured by A48 2026-08-10. The retired `LARGE_TEST` proof measured 67, which is where this cell's former 15.28x came from; depth is attachment depth *plus* fragment depth, so the artifact a verifier parses is deeper than any fragment of it | 12.05x | never | **40 960 B** = `next_pow2(1_024) x size_of::<Frame>()` (40 B, x86-64) — the parser's `walk.rest`; **3.91 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_BRANCH_WIDTH` | A11 | 64 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (width **3**; the derived upgraded artifact measures 3 as well — a splice adds depth, never width) | 21.33x | never | **none** — a per-node counter, no container |
+| `MAX_OTS_ATTESTATIONS` | A11 | 256 | 2026-08-02 | the same derived artifact (**6** — three pending, three Bitcoin — now the binding count), re-measured by A48 2026-08-10; `merged-A.ots` measures 3 and the retired `LARGE_TEST` proof 4 | 42.67x | never | **12 288 B** = `next_pow2(256) x size_of::<OtsAttestation>()` (48 B, x86-64); **1.17 %** of `MAX_OTS_BYTES` |
+| `MAX_OTS_OPERAND_BYTES` | A11 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**174** B coinbase-prefix operand) — **still binding, and deliberately so.** The derived upgraded artifact measures only 89 B here: its operands are 32-byte merkle siblings and a 44-byte calendar commitment, where this mainnet proof carries a real fat coinbase-transaction prefix. Re-pointing the cell would *raise* the recorded margin to 184.09x by dropping the fatter real sample (A48, 2026-08-10) | 94.16x | never | **none** — a length header; D58 §10.3 rule 4's clamp governs it |
+| `MAX_OTS_VALUE_BYTES` | A11 | 32_768 | 2026-08-02 | `testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots` (**210** B running value) — still binding, for the row above's reason and measured in the same walk; the derived upgraded artifact measures 125 B, which would read 262.14x (A48, 2026-08-10) | 156.04x | never | **none** — rule 4; `exec::apply` allocates the running value after checking it (32 B on the A100 path) |
+| `MAX_OTS_ATTESTATION_PAYLOAD_BYTES` | A11 | 8_192 | 2026-08-02 | `testdata/anchors/A25-bootstrap/merged-A.ots` (**46** B pending payload; the derived upgraded artifact measures 46 too, so the splice does not move this row); value taken from python-opentimestamps `MAX_PAYLOAD_SIZE` | 178.09x | never | **none** — a length header; rule 4 |
+| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 | 65_536 | 2026-08-02 | `testdata/anchors/A25-bootstrap/A-catallaxy.timestamp` (**220** B — the largest of 18 real calendar *submit* responses measured for D54 §8b). The *upgrade* response is larger, carrying a Bitcoin merkle path. This cell read *"and has not been measured: A25's day-2 run must record it"* until 2026-08-10; the day-2 run happened on **2026-08-03** and the figure is **1 105 B** (catallaxy), a named constant `antseal_anchor::ots::MEASURED_MAX_UPGRADE_RESPONSE_BYTES` pinned per file by `the_measured_upgrade_response_sizes_are_the_f4_row`, margin **59.31x** — the binding one. Appending it *to the margin cell* re-keys which reply this row is scaled against and is **A42's**, not A113's; A113 corrected the arithmetic and the staleness only | 297.89x (submit) | never | **none** — a receive-side byte cap, not a count limit |
+| `MAX_DER_NESTING_DEPTH` | A5 | 63 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-globalsign-resp.tsr` (measured depth **19**, the deepest of the nine live TSA captures — D60 §6 b1). **No antseal constant holds this number, and this is the only row in this table whose value is pinned behaviourally rather than to a constant.** It is `der 0.8.1`'s `MAX_DEPTH` (`reader/position.rs`, private to the crate and therefore unreadable from antseal), which is 64 exclusive — 63 nested constructions accepted, the 64th rejected as `ErrorKind::NestingDepth` — consumed rather than minted, because measuring depth ourselves needs the recursive walker D60 §2.4 measured aborting the process on hostile input. The F4 raise-only guard is therefore **upstream**: `crates/antseal-core/tests/der_pin_eval.rs` `der_nesting_depth_limit_is_63` builds 63 and 64 nested SEQUENCEs and fails if a `der` bump moves the limit in **either** direction, so a lowering is refused at the bump review instead of shipped. `anchor::caps::tests` binds this row to that test by name | 3.3x | never | **none** — a per-invocation recursion counter inside `der`'s reader, not a container antseal reserves |
+| `MAX_CHAIN_CERTS` | A5 | 8 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-globalsign-resp.tsr` (**4** certificates, the largest bag of the nine live captures; the deepest real validated path is 3 links, 4 closed through the DigiCert cross-certificate — D60 §6 b2) | 2.0x | never | **4 288 B** = `8 x (size_of::<Certificate>() + size_of::<Vec<u8>>())` (512 + 24 B, x86-64) — `tsa::chain_certificates`' two vectors; **0.41 %** of `MAX_TSA_TOKEN_BYTES`. It owns a further **1 024 B** = `8 x size_of::<Node>()` (128 B) of the path-node reservation §5a splits out, and that part is a **ceiling rather than a reservation**: `chain::PathBuilder::new` reserves `supplied.len() + 1`, so an honest 4-certificate token takes 5 nodes, unlike the `.ots` parser's `walk.rest`, which always reserves its bound. Marginal cost of one more unit: **664 B** |
+| `MAX_CHAIN_CERT_BYTES` | A5 | 16_384 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-swisssign-resp.tsr` (signer certificate **2 105 B**, the largest of the 27 certificates embedded across the nine captures — D60 §6 b3). Carries the A28-shaped derived constraint `MAX_CHAIN_CERT_BYTES <= MAX_CERT_BYTES`, a `const` assertion in `anchor::caps` rather than a comment | 7.8x | never | **none** — the size check runs on the output of `to_der()`, so the bytes are already allocated and already bounded by the input; that is rule 4's business, not rule 6's |
+| `MAX_SIGNED_ATTRS` | A5 | 16 | 2026-08-02 | `testdata/anchors/A25-bootstrap/D60-tsa-digicert-resp.tsr` (**5**, also DFN, SwissSign and Certum — D60 §6 b4) | 3.2x | never | **none**, and that is a *measured* finding rather than an omission: the attribute set is already decoded inside `SignerInfo` by the time the count check rejects, so antseal reserves nothing from this limit. Recorded at `anchor/caps.rs`, where `the_der_structural_cost_is_the_one_measured_today` pins the sum at equality — so adding a container under this limit reddens a test on the day it is added |
 
 **A note on the row above, because the next reader will assume one number
 serves both.** `MAX_OTS_CALENDAR_RESPONSE_BYTES` bounds **one HTTP reply from
@@ -240,27 +244,60 @@ two is a compile-time assertion in `crates/antseal-anchor/src/ots/mod.rs` and
 `crates/antseal-anchor/src/http.rs` — strict, because equality *is* the
 conflation.
 
-**Four of the first seven rows were bootstrapped, not measured, and say so in
-the cell.** *(Corrected 2026-08-03. This read "No real *upgraded* `.ots` of this
-project's own exists yet — A25's two-day OTS pending → upgraded cycle started
-2026-08-02T19:16Z and **cannot complete before 2026-08-04**". **Six now exist.**
-The cycle completed in **13 h 47 m**, not 48 h: all six commitments returned 200
-with a Bitcoin attestation at 2026-08-03T09:03Z, having served the pending body
-at 19:34Z. Nothing in the protocol promises two days — a calendar aggregates and
-commits its root to Bitcoin, and the wait is however long that takes. The
-bootstrapped rows may now be re-measured against real material; A25 owes that
-re-measurement. This paragraph sits outside the §7 rule text the freeze-boundary
-check pins byte-for-byte, so correcting it here is legitimate — it is narrative,
-not rule.)* The `upgraded/` rows were measured against the
-`LARGE_TEST` constant of `opentimestamps-0.2.0`, a genuine mainnet proof over
+**The bootstrap is over — what A48 re-measured on 2026-08-10, and what it did
+not.** Five of the first seven rows were **bootstrapped, not measured**, against the
+`LARGE_TEST` constant of `opentimestamps-0.2.0` — a genuine mainnet proof over
 Bitcoin blocks 449397 and 449399 (≈ January 2017), committed with its
-provenance at `testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md`.
-**A25 must re-measure them against the real fixture and append.** The values
-do not change — F4 forbids lowering and none needs raising — but the
-provenance cell must stop citing a third-party crate's test constant. Every
-number in the `measured against` cells is produced by the parser itself
-(`anchor::ots::parse_ots_measured`), so a re-measurement is a call rather
-than a second implementation.
+provenance at `testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md`. It stood
+in because, on 2026-08-02, no upgraded `.ots` over this project's own digests
+existed. Six do now, since **2026-08-03T09:03Z**, and the artifact a verifier
+actually parses — the three-way splice A22 froze (D103 RULING 3b) — has been
+measured by the parser that enforces the limits.
+
+**Three rows moved to it. Two did not, and that is the finding.**
+
+| row | was | is | why |
+| --- | --- | --- | --- |
+| `MAX_OTS_OPS` | 100 (crate) | **244** | the splice is the whole artifact; a fragment is not |
+| `MAX_OTS_DEPTH` | 67 (crate) | **85** | attachment depth *plus* fragment depth |
+| `MAX_OTS_ATTESTATIONS` | 4 (crate) | **6** | three calendars, three Bitcoin branches |
+| `MAX_OTS_OPERAND_BYTES` | 174 (crate) | **174** (crate) | antseal's own measures **89** — smaller |
+| `MAX_OTS_VALUE_BYTES` | 210 (crate) | **210** (crate) | antseal's own measures **125** — smaller |
+
+The last two are why *"the four `measured against` cells name an A25 fixture and
+no crate"* could not simply be executed. This project's own upgraded artifact
+carries 32-byte merkle siblings and a 44-byte calendar commitment; the borrowed
+proof carries a real fat coinbase-transaction prefix. Re-pointing those two
+cells would have **raised** the recorded margins — 94.16x → 184.09x and
+156.04x → 262.14x — by dropping the fatter real sample. A margin is a claim
+about the worst real artifact known, not about the most recently captured one,
+so the crate fixture is **kept and demoted to exactly what A48's own Accept
+row 3 offers**: *"a second, independent upgraded shape"*, still binding for two
+limits and cited as such. It is no longer a stand-in for anything.
+
+**A48's `Do` said *"the values do not change (F4 forbids lowering, every margin
+is ≥ 15x)"*. The first clause is true and the parenthesis is false.** No
+`value` cell moved, so no §6 entry is owed. But `MAX_OTS_DEPTH`'s margin is
+**12.05x**, below 15x — and it was already below 15x before this re-measurement,
+silently, because the cell was measuring a January-2017 proof from a rejected
+crate rather than anything antseal produces. D104 §4 records A109 reasoning from
+that 15.28x. The margin band is stated here rather than left to be rediscovered:
+**12.05x to 297.89x, and the floor is `MAX_OTS_DEPTH`.** D104's KEEP-1 024
+ruling survives it unchanged and was argued at depth 85 explicitly — the
+admissible floor is `8 x 85 = 680`, and 1 024 is the cost-minimal admissible
+cap — but any future reader quoting a *"≥ 15x"* discipline over this table is
+quoting something that has never been true of it.
+
+*Attribution, corrected here 2026-08-10 (**A106**).* Two sentences in this
+section read *"A25 owes that re-measurement"* and *"**A25 must re-measure
+them**"*. The task is **A48**, which was written for exactly this and lists A25
+only as a dependency; A25's obligation was the *capture*, discharged
+2026-08-03. The correction was made in
+`testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md` on 2026-08-07 and **in
+that file only**, because this document was another lane's — so a reader who
+came here first was misdirected for three days. That asymmetry is the reason
+A106 exists as its own row: a correction landed in one of two places is a
+correction that has not happened.
 
 **Correction to D58 §9.5, recorded rather than silently applied.** D58's
 rows read *depth 69* for the upgraded proof and *depth 13* for the merged
@@ -270,8 +307,11 @@ maximum depth `N`"*, which §9.3 says *"must be the one the implementation
 uses"* — the measured depths are **67** and **12**: an attestation is a leaf
 hanging off a node, not a node of its own. Both values were confirmed by an
 independently written length-respecting scanner as well as by the parser.
-The direction is safe (the margin grows, 14.84x → 15.28x) and F4 forbids
-lowering, so nothing moves; the cell records what was measured.
+Both figures are about *fragments*; neither is this table's `MAX_OTS_DEPTH`
+measurement any more, which is 85 against the spliced artifact. The 67-vs-69
+correction moved the margin then computed from 14.84x to 15.28x and F4 forbids
+lowering, so nothing moved; the row now records what was measured against the
+artifact a verifier parses.
 
 ### 5a. The `structural cost` column, and the precondition it attaches to F4
 
@@ -320,29 +360,157 @@ the build for every contributor, with no lane to rerun and no budget to
 adjust. Measured headroom on `MAX_OTS_DEPTH` (D102 §3.2): 4 096 green,
 16 384 green and the last one, 32 768 red, 65 536 red at 2.51x.
 
-**Two rows this table still owes.** The A5/D60 limits — `MAX_CHAIN_CERTS`,
-`MAX_CHAIN_CERT_BYTES`, `MAX_SIGNED_ATTRS` — have **no rows here at all**,
-although `anchor/caps.rs`'s module docs say they belong here and D60 §6 sets
-them. That gap predates D102 and D102 does not close it; the DER path's
-structural cost (**7 488 B**, and note that its certificate-bag reservation is
-`8 x 512 = 4 096 B`, *exactly* the fuzz guard's fixed slack) is derived and
-asserted in `anchor/caps.rs` in the meantime. **A5 owes the rows.**
+**The DER half's four rows, added 2026-08-09 by A110.** The A5/D60 limits —
+`MAX_DER_NESTING_DEPTH`, `MAX_CHAIN_CERTS`, `MAX_CHAIN_CERT_BYTES` and
+`MAX_SIGNED_ATTRS` — had **no rows here at all** until then, although
+`anchor/caps.rs`'s module docs said they belonged here and D60 §6 set all four
+with their measurements. The gap predated D102 and D102 did not close it: the
+`structural cost` column D102 added went to all eight rows this table then
+had, every one of them an A11 or A42 `.ots` row, so there were no DER rows to
+skip. **The paragraph that described the gap got the count wrong in both
+directions** — it opened *"two rows this table still owes"* and then named
+three, and the true number was **four**: `anchor/caps.rs`'s own module docs
+name the fourth (*"and for the depth limit that is not declared here"*), and
+§4's table of what A5 still chooses lists four A5 leaves, not three. The
+fourth is the one A5 does not declare, and its row says so.
+
+**Still owed: A28's two**, below the Update rule.
+
+**Where the DER path's 7 488 B goes, and why no one row carries it.**
+`anchor::caps::TSA_STRUCTURAL_ALLOC_BYTES` is **7 488 B** on x86-64 —
+**0.71 %** of `MAX_TSA_TOKEN_BYTES` — and it is two reservations under two
+different bounds, only one of which is an F4 limit:
+
+| container | bounded by | rule 6 cost |
+| --- | --- | --- |
+| `tsa::chain_certificates`' `certs` and `ders` | `MAX_CHAIN_CERTS` | **4 288 B** = `8 x (size_of::<Certificate>() + size_of::<Vec<u8>>())` — **0.41 %** of the token cap |
+| `chain::PathBuilder::new`'s `nodes` | `MAX_PATH_NODES`, itself `MAX_CHAIN_CERTS + MAX_INTERMEDIATE_COUNT + 1` | **3 200 B** = `25 x size_of::<Node>()` — **0.31 %** of the token cap |
+
+Of that **3 200 B**, `MAX_CHAIN_CERTS` owns **1 024 B**, the signer owns
+128 B, and **2 048 B** belongs to `MAX_INTERMEDIATE_COUNT` — a **frozen** D10
+row (§2, row 8), not an F4 limit at all. So charging the whole path-node
+reservation to `MAX_CHAIN_CERTS`, which is the obvious reading of
+`MAX_PATH_NODES`, attributes **2 176 B** to a raisable limit that an
+unraisable one owns. The number a raise argument actually needs is the
+**marginal cost of one more unit of `MAX_CHAIN_CERTS`: 664 B**
+(`size_of::<Certificate>()` + `size_of::<Vec<u8>>()` + `size_of::<Node>()`).
+
+Two qualifications, both of which the `.ots` rows do not need. First, the
+path-node figure is a **ceiling, not a reservation**: `PathBuilder::new`
+reserves `supplied.len() + 1`, so it is reached only by a token and bundle
+that between them supply the full 24 candidates, where `walk.rest` reserves
+its bound on any input deep enough. Second, the certificate-bag figure is a
+**worst case over real certificates**: `chain_certificates` reserves on the
+count of plain `Certificate` entries, so a bag of `[3] other` entries
+reserves nothing (A111 — before that fix it reserved on every bag entry, and
+eight ~10-byte `[3] other` entries reserved the full **4 288 B**).
+
+**The tie, kept because it is worth knowing.** The certificate-bag
+reservation alone, `8 x size_of::<Certificate>()`, is **4 096 B** on x86-64 —
+*exactly* the fuzz guard's fixed slack. That is a 64-bit fact: on `wasm32` the
+same product is **3 008 B** and clears the slack by nearly a kilobyte. Every
+number in this subsection is derived in `anchor/caps.rs` and asserted against
+this document, never transcribed.
 
 **Update rule.** One row per artifact-internal limit and per receive-side
-cap, added when the limit is first set, never deleted. `lowered` starts at
-`never` and is the only cell that may change; changing it away from `never`
-is a **format-version event** requiring the full freeze procedure (Q27,
-mirroring Q14) and a dated note in §6 saying which release lowered it and
-why. A raise is recorded by appending the new value and its date to the
-`initial value` cell — the history stays readable, so *"has this ever been
-lowered?"* is answerable from the tree, which is the whole point of F4.
+cap, added when the limit is first set, never deleted.
+
+- **`value`** holds **exactly one bare value** — the current one, rendered
+  with `_` group separators. Never a history, never a date, never a
+  parenthesis. `anchor::ots::limits`' cross-check reads this cell as part of
+  a row prefix that ends at the next cell boundary, so anything else in it
+  turns a green test red for a reason that is not the reason.
+- **`measured against`** is prose — it names a fixture path *or* a derivation,
+  and explains a choice where one was made — with **exactly one constraint**:
+  the **first bolded number in the cell is the measured quantity the `margin`
+  divides by**. Added 2026-08-10 by **A113**, because until then `margin` was
+  the only numeric column in this table no test reached, and a number that
+  reads like the checked ones and is checked by nothing is worse than an
+  absent one — it is quoted with their authority, which is exactly how A109
+  came to reason from a 15.28x figure derived against a third-party crate's
+  test constant (D104 §4). Bold anything else you like *after* it. The cell no
+  longer has to be a path: the artifact the `.ots` rows now measure is
+  **derived and deliberately not stored as a file** (D103 RULING 3a), which is
+  why this column's header was widened in the same change.
+- **`margin`** is `value / measured`, rendered `N.MMx` and **recomputed, never
+  transcribed**, by
+  `anchor::ots::limits::tests::the_margin_column_is_the_value_over_the_measurement`
+  — over *every* row, including A42's and D60's four A5 rows, because the
+  arithmetic needs no constant. It is checked **at the precision the cell
+  itself prints**: the `.ots` rows use two places and the DER rows one, and
+  both are correct. Prose may follow the `x`. A margin that disagrees with its
+  own row's two operands is a red test naming the correct value.
+- **`lowered`** reads `never`, or the date of the lowering as
+  `` `YYYY-MM-DD` `` and nothing more — no release and no reason, because
+  those are §6's. Changing it away from `never` is a **format-version event**
+  requiring the full freeze procedure (Q27, mirroring Q14).
+- **A commit may not change a limit's recorded value without adding a §6
+  entry naming that limit.** *Recorded value* means the `value` cell or the
+  `lowered` cell, and nothing else. **Adding a row owes no entry** — the
+  row's own `date set` cell is the record. **Correcting `measured against`,
+  `margin` or `structural cost` owes none either**: those are things learned
+  *about an unchanged limit*. §6 records what a limit **is**, never what we
+  have learned about it.
+
+**Ruled by [D107](../decisions/D107-f4-registry-limit-change-log.md) (task
+Q126), which replaces the previous rule in two places, both defects.** It said
+`lowered` was *"the only cell that may change"* — falsified by its own next
+clause, by D102's eighth column, and by D104 §4's instruction to A48 to
+rewrite two cells of the `MAX_OTS_DEPTH` row. And it said *"a raise is
+recorded by appending the new value and its date to the `initial value`
+cell"*, which **breaks `ots_limits_match_the_f4_registry` the first time it is
+used**: that test's needle requires the value cell to hold one bare value and
+a closing cell boundary, so a cell reading `4_096 (2026-08-02), 8_192
+(2026-09-01)` matches no needle at all — for the new constant *or* the old —
+and the failure blames a drift that never happened. Invisible only because no
+raise has ever occurred. Under the rule above a raise rewrites the `value`
+cell in place and its history and reason go to §6, where a reason can be a
+sentence; `ots_limits_match_the_f4_registry` then becomes a **second** guard
+on the same rule, since a lane that reverts to appending reddens the
+row-prefix pin immediately.
 
 Rows A28 must add on day one: the TSA receive-side response cap
 (`<= MAX_TSA_TOKEN_BYTES`) and the merged-`.ots` cap (`<= MAX_OTS_BYTES`).
 
-## 6. Changelog
+## 6. Limit-change log
 
-- **2026-07-28 (M0 wave 6, A27/D84)** — document created. F1–F4 and the §2
+This log records **changes to a limit's recorded value in §5**, and nothing
+else. It is not a history of this document: that is
+`git log -- docs/format/anchor-artifact-limits.md`, which is where D104 §1.2
+read it. An empty log below the creation entry means no limit's value has
+changed since the table was set — which is a fact, not an omission.
+
+**Retitled 2026-08-09 by D107 §R3, and the retitle is load-bearing.** A
+section called *Changelog* holding one entry reading *"document created"*
+tells a reader this document has not changed since 2026-07-28. It has changed
+eight times, one of those adding a whole section and a whole column — and
+D104 §1.2 records a recon lane injured by exactly that gap, concluding from
+the empty log that A27's Update rule had been written ten days later by
+another lane. The editorial history has a keeper and it is named above.
+
+One line per change, newest last, in this grammar. The checker
+(`anchor::ots::limits::tests::the_limit_change_log_agrees_with_the_registry_rows`)
+reads the **date**, the **backticked limit name**, the word **raised** or
+**lowered** and the value raised *from*; everything after the second em dash
+is free prose it does not parse, deliberately — pinning prose pins editorial
+wording rather than facts.
+
+```
+- **YYYY-MM-DD** — `LIMIT_NAME` raised|lowered `N` → `M` (owner task or
+  decision, release or `pre-release`) — why, in one clause.
+```
+
+The log is checked **in both directions**: a row whose recorded value has
+moved without an entry is red, and an entry claiming a move the table does
+not corroborate is red too. The second arm is D104 §5's refusal of fabricated
+provenance made mechanical — a lane cannot write *"we lowered X"* here unless
+§5 says so.
+
+**Zero point.** The entry below names no limit, which is what makes the
+emptiness beneath it a true statement rather than an absence.
+
+- **2026-07-28 (M0 wave 6, A27/D84)** — table created; no limit's recorded
+  value has changed since. F1–F4 and the §2
   freeze-boundary rows carried verbatim from D84; the §3 constant-reuse
   ruling recorded and `tasks/A.md`'s A5 and A11 `Do` text corrected to match
   it (both previously promised caps that §3 rules already frozen, so an

@@ -1843,6 +1843,17 @@ fn an_attested_ots_contributes_no_identity() {
 ///
 /// What makes it fail: passing `None` at the O3 arm — the 1 becomes 0 and the
 /// equivalence breaks in the same step.
+///
+/// # It also separates senses (c) and (d) of UNANCHORED (D98 rider 3c, D108 R2)
+///
+/// The four-bundle sweep is not only about identity counting.
+/// `pending_only_unanchored` holds a **non-empty** `ots_anchors` — one
+/// `pending` OTS — and is `is_unanchored()`, which is precisely the pair D108
+/// names as most likely to collapse: sense (c), *zero headline-eligible
+/// anchors* (MVP-SPEC.md line 137), against sense (d), registry §7.6 key 3's
+/// *"both anchor arrays empty"*. Rewrite `is_unanchored()` as the shape fact
+/// and this row goes red — measured, not assumed. So do not re-bless it:
+/// the aggregate is a verdict, never a container size.
 #[test]
 fn a_lone_proven_ots_establishes_one_identity() {
     let (digest, bytes, upgrade) = committed_single_branch(0xd4, SYNTHETIC_HEIGHT);
@@ -1860,9 +1871,11 @@ fn a_lone_proven_ots_establishes_one_identity() {
     assert_eq!(lone.distinct_verified_identities(), 1);
     assert!(!lone.aggregate().is_unanchored());
 
-    // The invariant, over both sides of it.
+    // The invariant, over both sides of it. The name says the thing the row
+    // is for: a **non-empty** anchor array whose aggregate is still
+    // UNANCHORED (sense (c), not the registry's sense (d)).
     let pending_only = [ots_anchor(MERGED_A, None)];
-    let unanchored = evaluate_anchors(
+    let pending_only_unanchored = evaluate_anchors(
         &AnchorArtifacts::from_parts(&pending_only, &[], None),
         &DIGEST_A,
         &OnlineEvidence::new(),
@@ -1885,7 +1898,7 @@ fn a_lone_proven_ots_establishes_one_identity() {
         TsaRootStore::pinned(),
     );
 
-    let all = [&lone, &unanchored, &tsa_only, &empty];
+    let all = [&lone, &pending_only_unanchored, &tsa_only, &empty];
     for verdicts in all {
         assert_eq!(
             verdicts.distinct_verified_identities() == 0,

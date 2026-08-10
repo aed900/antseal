@@ -644,6 +644,23 @@ fn reserved_entries_are_not_staged_slots() {
 
 /// **S10 accept**: incomplete works are enumerable through a library API —
 /// with their fine state, and without decrypting a single staged blob body.
+///
+/// # This row is deliberately on the shared vault (D106 §7)
+///
+/// It is the tree's **only** witness that a whole-store scan is *total*
+/// under real concurrent mutation: 27 tests run in parallel against one
+/// vault while `begin`, `set_state` and `put_anchor` execute, so the
+/// enumeration below is racing genuine writers. Its assertions are
+/// membership-only over ids it owns, so a neighbour's work appearing or
+/// vanishing cannot make it wrong — what made it fail historically was the
+/// **scan erroring**, not the scan's contents (U66/S34/S38, three
+/// recordings of one defect).
+///
+/// So a red here means `list_works` or `incomplete_works` stopped being
+/// total. It does **not** mean the test is flaky, and moving it to an
+/// isolated vault would trade a real signal for a permanently green vacuum
+/// (D100 R10.2). The rows below it plant on-disk state and therefore do
+/// own private vaults — a plant races siblings, a read does not.
 #[test]
 fn incomplete_works_are_enumerable_with_their_state() {
     let live = fixture_seal_id(16);
@@ -672,7 +689,7 @@ fn incomplete_works_are_enumerable_with_their_state() {
 
         let incomplete = journal.incomplete_works().expect("enumerate");
         assert!(
-            incomplete.contains(&(live, SealState::Anchored)),
+            incomplete.contains(&(live, Some(SealState::Anchored))),
             "the live work is a resume candidate"
         );
         assert!(
@@ -684,6 +701,75 @@ fn incomplete_works_are_enumerable_with_their_state() {
             "an abandoned work is never a resume candidate"
         );
     });
+}
+
+/// **D106 R4**: `begin` is `create_work` **then**
+/// `put_journal_entry(STATE_ENTRY)`, so between them a work has its `meta`
+/// record and no fine state tag. That is a work in progress, not a corrupt
+/// one — and `incomplete_works` was the only reader in the tree that said
+/// otherwise, failing the **whole enumeration** with
+/// `Corrupt { detail: "work has no journal state record" }`.
+///
+/// Production has always tolerated it: `list` reads the fine tag through
+/// `recorded_state`, which maps an absent record to `Ok(None)` (U19 note 2,
+/// pinned by `a_work_without_its_fine_state_record_still_lists`), and falls
+/// back to U9's coarse mirror. This row makes the enumeration agree.
+///
+/// `SealJournal::state` is deliberately **not** changed: its other callers
+/// are `set_state` and the seal pipeline, which run under the U5 lock, and
+/// a state machine that cannot read the current state must not advance.
+///
+/// The window is reconstructed on disk rather than raced for —
+/// `delete_journal_entry(STATE_ENTRY)` leaves exactly the bytes `begin`
+/// leaves between its two writes. Private vault: this row **plants**, and a
+/// plant races the shared vault's parallel enumerations.
+#[test]
+fn a_work_begun_but_not_yet_state_tagged_is_in_progress_not_corrupt() {
+    let root = std::env::temp_dir().join(format!(
+        "antseal-cli-journal-d106-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mk root");
+    let layout = VaultLayout::at(root.join("vault"));
+    let unlocked = create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng())
+        .expect("create private vault");
+    let mut journal_rng = rng();
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+    let store = WorkStore::new(&unlocked);
+
+    let mid_begin = fixture_seal_id(24);
+    journal.begin(&identity(mid_begin)).expect("begin");
+    assert!(
+        store
+            .delete_journal_entry(&mid_begin, STATE_ENTRY)
+            .expect("delete"),
+        "the fine tag was there to delete"
+    );
+
+    let incomplete = journal
+        .incomplete_works()
+        .expect("a work mid-`begin` is not a corrupt vault");
+    assert!(
+        incomplete.contains(&(mid_begin, None)),
+        "no fine tag is a state, and U9's coarse mirror filters it in: {incomplete:?}"
+    );
+
+    // The fine tag is still preferred wherever it exists, so nothing
+    // outside this window changes: `set_state`'s mirror-lags-by-one-barrier
+    // ordering keeps deciding membership by the authoritative record.
+    let tagged = fixture_seal_id(25);
+    journal.begin(&identity(tagged)).expect("begin");
+    journal
+        .set_state(&tagged, SealState::Anchored)
+        .expect("advance");
+    let incomplete = journal.incomplete_works().expect("enumerate");
+    assert!(incomplete.contains(&(tagged, Some(SealState::Anchored))));
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 // ─────────────────────────────────────────────────────────────────────

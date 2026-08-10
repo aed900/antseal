@@ -72,8 +72,13 @@
 /// ops per level and block transaction count is consensus-bounded to
 /// ≈ 16 666 txs, so ≤ 14 levels → ≤ 42 ops, plus 2 for the coinbase split =
 /// 44; a calendar aggregating 2²⁰ requests in one round costs 60. An honest
-/// branch is ≤ ~110 ops and an 8-calendar merge ≤ ~880. **40.96× the largest
-/// real file measured** (100 ops).
+/// branch is ≤ ~110 ops and an 8-calendar merge ≤ ~880. **16.79× the largest
+/// real artifact measured** — **244** ops, the three-way splice A22 froze.
+///
+/// Re-measured 2026-08-10 (**A48**). This read *"40.96× … (100 ops)"*, which
+/// was `rust-opentimestamps-LARGE_TEST.ots`, a third-party crate's January-2017
+/// test constant standing in for an artifact that did not exist when A11
+/// landed. One does now.
 pub const MAX_OTS_OPS: u32 = 4_096;
 
 /// Longest root-to-attestation path, in **op edges**, root at 0 (D58 §9.2).
@@ -84,9 +89,23 @@ pub const MAX_OTS_OPS: u32 = 4_096;
 /// the §9.3 witnesses computable. An attestation is a leaf hanging off a
 /// node, not a node of its own, so it does not add a level.
 ///
-/// **15.28× the measured 67.** D58's own table says 69, which is that
-/// definition's off-by-two: the F4 registry records the measurement and the
-/// correction, and the direction is safe.
+/// **12.05× the measured 85** — the three-way splice A22 froze, which is the
+/// artifact a verifier parses. Depth is *attachment depth plus fragment
+/// depth*, so the merged whole is deeper than any fragment: the six upgrade
+/// fragments measure 67/70/73 individually.
+///
+/// **This is the smallest margin in the F4 registry**, and it was already the
+/// smallest before it was measured. Re-measured 2026-08-10 (**A48**); this
+/// read *"15.28× the measured 67"*, which was
+/// `rust-opentimestamps-LARGE_TEST.ots` — a third-party crate's test constant,
+/// not an antseal artifact — and D104 §4 records A109 reasoning from that
+/// figure. D104's KEEP-1 024 ruling is unaffected and was argued at 85: the
+/// admissible floor is `8 × 85 = 680`, every cap in `(512, 1 024]` reserves
+/// identical bytes, so 1 024 weakly dominates.
+///
+/// D58's own table says 69, which is that definition's off-by-two over the
+/// borrowed fixture: the F4 registry records that correction too, and the
+/// direction is safe.
 pub const MAX_OTS_DEPTH: u32 = 1_024;
 
 /// Children of one fork node (D58 §9.2).
@@ -278,6 +297,38 @@ mod tests {
         assert_eq!(ALL.len(), 7, "D58 §9.1 sets seven — update deliberately");
     }
 
+    /// **§5's eighth row is pinned by nothing, and this records why rather
+    /// than leaving the next audit to rediscover it** (D107 §8 (i)).
+    ///
+    /// The needle above hardcodes the owner cell to `A11`, so it reaches
+    /// seven rows. The eighth — A42's `MAX_OTS_CALENDAR_RESPONSE_BYTES`,
+    /// added by D54 §7 after this cross-check was written — is **not** one of
+    /// them, and cannot be: its constant lives in
+    /// `antseal-anchor`'s `ots::MAX_OTS_CALENDAR_RESPONSE_BYTES`, and
+    /// `antseal-anchor` depends on `antseal-core`, not the reverse. A pin
+    /// written here could only compare the row against a **literal typed in
+    /// this file**, which is the defect A110's notes name in `caps.rs`'s own
+    /// `f4_registry_values`: an instrument that checks a number against
+    /// itself. So the row is pinned from the crate that can see both — where
+    /// `antseal_anchor::ots::tests::the_measured_upgrade_response_sizes_are_the_f4_row`
+    /// already reads the fixtures the row's margin cell cites — and this
+    /// assertion records the boundary rather than pretending to cross it.
+    ///
+    /// What is checked here is the one thing this crate *can* see: that the
+    /// eighth row exists with the owner D54 §7 gave it, so a silent deletion
+    /// of the row is red somewhere even though its value is not.
+    #[test]
+    fn the_eighth_registry_row_is_a42s_and_this_crate_cannot_pin_its_value() {
+        const REGISTRY: &str = include_str!("../../../../../docs/format/anchor-artifact-limits.md");
+
+        assert!(
+            REGISTRY.contains("| `MAX_OTS_CALENDAR_RESPONSE_BYTES` | A42 |"),
+            "§5's eighth row is gone or has changed owner — D54 §7 rules the row and \
+             A42 owns it; its *value* is pinned from `antseal-anchor`, which is the \
+             only crate that can see both the constant and this document"
+        );
+    }
+
     /// **Rule 6's registry column, cross-checked like the values are.**
     ///
     /// D102 gave every §5 row a `structural cost` cell. A documented number
@@ -321,6 +372,753 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── D107 (Q126): §6's limit-change log, checked against §5's rows ─────
+    //
+    // D107 moves §6's obligation off *lowering* — the branch F4 makes nearly
+    // impossible (D104 §2.1 closes its window at first release, D104 §3 rules
+    // its only proposed exercise empty) — and onto **any change to a limit's
+    // recorded value**, which is the branch F4 exists to permit ("always
+    // available and never expires", D104 §10). The checker below is a pure
+    // function of two `&str`s, so its positive arm is committed fixture
+    // strings rather than a hypothetical future commit: no script, no gate
+    // lane, no temp files, and nothing target-dependent, so the
+    // `wasm32-core-tests` lane runs it for the price of a string comparison.
+
+    /// Which way a §6 entry says a limit moved — R2.3's third field.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Verb {
+        Raised,
+        Lowered,
+    }
+
+    /// One §5 row, reduced to the cells R1 calls a limit's *recorded value*,
+    /// plus the two A113 needs to recompute the `margin` column.
+    struct RegistryRow {
+        name: String,
+        value: String,
+        measured_against: String,
+        margin: String,
+        lowered: String,
+    }
+
+    /// One §6 entry, reduced to the head R2.3 says the checker parses.
+    struct LogEntry {
+        date: String,
+        limit: Option<String>,
+        verb: Option<Verb>,
+        from: Option<String>,
+    }
+
+    /// The §5 table's header, which is also how the table is located.
+    ///
+    /// D107 R2.1 renamed `initial value` to `value`; the needle is written
+    /// against the new name so a revert to the old header is a red test
+    /// rather than a silently unchecked table.
+    const REGISTRY_HEADER: &str = "| limit | owner | value | date set |";
+
+    /// Lines with fenced code blocks removed.
+    ///
+    /// R2.3 prints the entry grammar inside a fence, and a grammar example is
+    /// documentation rather than a log entry — a checker that read it would
+    /// report `LIMIT_NAME` as a limit with no row, every run, forever.
+    fn unfenced(doc: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut fenced = false;
+        for line in doc.lines() {
+            if line.trim_start().starts_with("```") {
+                fenced = !fenced;
+                continue;
+            }
+            if !fenced {
+                out.push(line);
+            }
+        }
+        out
+    }
+
+    /// The chunks of `text` that sit between backticks.
+    fn backticked(text: &str) -> Vec<&str> {
+        text.split('`')
+            .enumerate()
+            .filter_map(|(i, part)| (i % 2 == 1).then_some(part))
+            .collect()
+    }
+
+    /// R2.1's grammar for a `value` cell: one bare value, nothing else.
+    fn is_bare_value(cell: &str) -> bool {
+        !cell.is_empty() && cell.chars().all(|c| c.is_ascii_digit() || c == '_')
+    }
+
+    /// Shaped like a limit constant, so an entry naming one that has no row
+    /// is caught rather than silently skipped.
+    ///
+    /// Deliberately narrower than "any backticked token": §6 entries cite
+    /// paths and tasks in backticks too, and R2.4's zero-point entry is
+    /// exempt from R2.3 precisely *by naming no limit*.
+    fn is_limit_name(token: &str) -> bool {
+        token.len() >= 5
+            && token.contains('_')
+            && token.starts_with(|c: char| c.is_ascii_uppercase())
+            && token
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    }
+
+    /// R2.3's first field: the entry opens on a `YYYY-MM-DD` date.
+    fn is_date_prefixed(field: &str) -> bool {
+        let b = field.as_bytes();
+        b.len() >= 10
+            && b[..4].iter().all(u8::is_ascii_digit)
+            && b[4] == b'-'
+            && b[5..7].iter().all(u8::is_ascii_digit)
+            && b[7] == b'-'
+            && b[8..10].iter().all(u8::is_ascii_digit)
+    }
+
+    fn registry_rows(lines: &[&str], violations: &mut Vec<String>) -> Vec<RegistryRow> {
+        let mut rows = Vec::new();
+        let Some(start) = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with(REGISTRY_HEADER))
+        else {
+            violations.push(format!(
+                "§5's registry table is unreadable: no line begins {REGISTRY_HEADER:?}"
+            ));
+            return rows;
+        };
+        for line in &lines[start + 1..] {
+            let row = line.trim();
+            if !row.starts_with('|') {
+                break;
+            }
+            if row.starts_with("| ---") {
+                continue;
+            }
+            let cells: Vec<&str> = row
+                .trim_start_matches('|')
+                .trim_end_matches('|')
+                .split('|')
+                .map(str::trim)
+                .collect();
+            if cells.len() != 8 {
+                violations.push(format!(
+                    "§5 row {:?} has {} cells, not the 8 its header declares — a cell \
+                     carrying a stray table separator makes every column after it a \
+                     different column",
+                    cells.first().copied().unwrap_or(row),
+                    cells.len()
+                ));
+                continue;
+            }
+            let Some(name) = cells[0]
+                .strip_prefix('`')
+                .and_then(|n| n.strip_suffix('`'))
+                .filter(|n| !n.contains('`'))
+            else {
+                violations.push(format!(
+                    "§5's limit cell {:?} is not one backticked limit name — the column \
+                     is this table's key, and every cross-check reads it as one",
+                    cells[0]
+                ));
+                continue;
+            };
+            rows.push(RegistryRow {
+                name: name.to_string(),
+                value: cells[2].to_string(),
+                measured_against: cells[4].to_string(),
+                margin: cells[5].to_string(),
+                lowered: cells[6].to_string(),
+            });
+        }
+        rows
+    }
+
+    fn log_entries(lines: &[&str], violations: &mut Vec<String>) -> Vec<LogEntry> {
+        let Some(start) = lines.iter().position(|l| l.starts_with("## 6.")) else {
+            violations.push(
+                "the limit-change log is gone: no `## 6.` heading. D107 §2(b) refuses \
+                 deleting it — a `lowered` cell is written only by a lowering, so it \
+                 cannot carry the reason for the raise F4 exists to permit"
+                    .to_string(),
+            );
+            return Vec::new();
+        };
+
+        // Gather each entry's full text: a `- ` line plus its continuations.
+        let mut raw: Vec<String> = Vec::new();
+        let mut in_entry = false;
+        for line in &lines[start + 1..] {
+            if line.starts_with("## ") {
+                break;
+            }
+            if let Some(rest) = line.strip_prefix("- ") {
+                raw.push(rest.trim().to_string());
+                in_entry = true;
+            } else if in_entry && line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
+                if let Some(last) = raw.last_mut() {
+                    last.push(' ');
+                    last.push_str(line.trim());
+                }
+            } else {
+                in_entry = false;
+            }
+        }
+
+        let mut entries = Vec::new();
+        for text in raw {
+            let Some((date, after)) = text
+                .strip_prefix("**")
+                .and_then(|rest| rest.split_once("**"))
+            else {
+                violations.push(format!(
+                    "§6 entry {text:?} does not open with a bolded date — R2.3's first field"
+                ));
+                continue;
+            };
+            if !is_date_prefixed(date) {
+                violations.push(format!(
+                    "§6 entry's bolded field {date:?} does not start with a YYYY-MM-DD \
+                     date — R2.3's first field, and the only one that orders the log"
+                ));
+                continue;
+            }
+
+            // R2.3: everything after the second em dash is free prose the
+            // checker does not parse. An entry with fewer dashes is scanned
+            // whole, which is what exempts R2.4's zero point by naming no
+            // limit rather than by living in a special case.
+            let segments: Vec<&str> = after.split('—').collect();
+            let head = if segments.len() >= 2 {
+                segments[1]
+            } else {
+                segments[0]
+            };
+
+            let tokens = backticked(head);
+            let limit = tokens
+                .iter()
+                .find(|t| is_limit_name(t))
+                .map(|t| (*t).to_string());
+            let verb = match (head.contains("raised"), head.contains("lowered")) {
+                (true, false) => Some(Verb::Raised),
+                (false, true) => Some(Verb::Lowered),
+                _ => None,
+            };
+            let from = tokens
+                .iter()
+                .find(|t| is_bare_value(t))
+                .map(|t| (*t).to_string());
+            entries.push(LogEntry {
+                date: date.to_string(),
+                limit,
+                verb,
+                from,
+            });
+        }
+        entries
+    }
+
+    /// D107 R4's invariant, both directions, over one document.
+    ///
+    /// Forward: a §5 row whose **recorded value** has moved — its `value`
+    /// cell no longer one bare value, or its `lowered` cell no longer
+    /// `never` — needs a §6 entry naming it. Reverse: a §6 entry naming a
+    /// limit must name one this table carries, and the table must corroborate
+    /// what the entry claims. The reverse arm is D104 §5's refusal of
+    /// fabricated provenance made mechanical: a lane cannot write *"we
+    /// lowered X"* into §6 unless §5 says so.
+    fn limit_change_log_violations(doc: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        let lines = unfenced(doc);
+        let rows = registry_rows(&lines, &mut violations);
+        let entries = log_entries(&lines, &mut violations);
+
+        for row in &rows {
+            let cause = if !is_bare_value(&row.value) {
+                format!("its value cell reads {:?}, not one bare value", row.value)
+            } else if row.lowered != "never" {
+                format!("its lowered cell reads {:?}", row.lowered)
+            } else {
+                continue;
+            };
+            if !entries
+                .iter()
+                .any(|e| e.limit.as_deref() == Some(row.name.as_str()))
+            {
+                violations.push(format!(
+                    "§5's `{}` records a change ({cause}) and §6 names no such limit — \
+                     D107 R1: a commit may not change a limit's recorded value without \
+                     a §6 entry naming it",
+                    row.name
+                ));
+            }
+        }
+
+        for entry in &entries {
+            let Some(limit) = entry.limit.as_deref() else {
+                continue;
+            };
+            let Some(row) = rows.iter().find(|r| r.name == limit) else {
+                violations.push(format!(
+                    "§6's {} entry names `{limit}`, which has no §5 row — this log \
+                     records changes to limits this table carries, and nothing else",
+                    entry.date
+                ));
+                continue;
+            };
+            match entry.verb {
+                None => violations.push(format!(
+                    "§6's {} entry names `{limit}` but says neither raised nor lowered \
+                     — R2.3's third field is what §5 is checked against",
+                    entry.date
+                )),
+                Some(Verb::Lowered) => {
+                    if row.lowered == "never" {
+                        violations.push(format!(
+                            "§6's {} entry says `{limit}` was lowered and §5's lowered \
+                             cell still reads `never` — fabricated provenance, refused \
+                             mechanically (D104 §5)",
+                            entry.date
+                        ));
+                    }
+                }
+                Some(Verb::Raised) => match entry.from.as_deref() {
+                    None => violations.push(format!(
+                        "§6's {} entry says `{limit}` was raised and does not say from \
+                         what — R2.3's `N` is the value §5 is checked against",
+                        entry.date
+                    )),
+                    Some(from) => {
+                        if row.value == from {
+                            violations.push(format!(
+                                "§6's {} entry says `{limit}` was raised from `{from}` \
+                                 and §5 still records `{from}` — fabricated provenance, \
+                                 refused mechanically (D104 §5)",
+                                entry.date
+                            ));
+                        }
+                    }
+                },
+            }
+        }
+        violations
+    }
+
+    /// The tree's own document satisfies R1 in both directions.
+    ///
+    /// Today this passes because **zero rows trigger the forward arm**: every
+    /// `value` cell holds one bare value and every `lowered` cell reads
+    /// `never`. That is a fact rather than an absence, and
+    /// [`the_limit_change_log_checker_catches_every_planted_violation`] is
+    /// what keeps it from being a checker that cannot go red.
+    #[test]
+    fn the_limit_change_log_agrees_with_the_registry_rows() {
+        const REGISTRY: &str = include_str!("../../../../../docs/format/anchor-artifact-limits.md");
+
+        let violations = limit_change_log_violations(REGISTRY);
+        assert!(
+            violations.is_empty(),
+            "docs/format/anchor-artifact-limits.md violates D107 R1:\n  {}",
+            violations.join("\n  ")
+        );
+    }
+
+    /// **The whole positive arm** (D107 §6): every violation the checker can
+    /// emit, planted, each asserted to name the thing it is about.
+    ///
+    /// D107 §6: *"Run the planted cases before trusting the green one … if a
+    /// fixture passes the checker, the checker is not checking."* That is
+    /// A104's rule — *"a planted fault passed green in a brand-new suite
+    /// until the row was widened"* — so the row is widened here rather than
+    /// after the fact: D107 R4's table names four cases, and this covers the
+    /// nine distinct violations the implementation can actually produce.
+    #[test]
+    fn the_limit_change_log_checker_catches_every_planted_violation() {
+        /// A miniature registry, so a planted violation is one visible line
+        /// rather than a diff against four hundred lines of real document.
+        fn doc(rows: &str, log: &str) -> String {
+            format!(
+                "## 5. The F4 registry\n\n\
+                 {REGISTRY_HEADER} measured against (A25 fixture path) | margin | lowered | structural cost (D102) |\n\
+                 | --- | --- | --- | --- | --- | --- | --- | --- |\n\
+                 {rows}\n\n\
+                 ## 6. Limit-change log\n\n\
+                 {log}\n"
+            )
+        }
+        const UNCHANGED: &str =
+            "| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | a fixture | 40.96x | never | none |";
+        const ZERO_POINT: &str =
+            "- **2026-07-28** — table created; no limit's recorded value has changed since.";
+
+        let cases: [(&str, String, &str); 12] = [
+            (
+                "a raise appended to the value cell, §6 silent",
+                doc(
+                    "| `MAX_OTS_OPS` | A11 | 4_096 (2026-08-02), 8_192 (2026-09-01) | \
+                     2026-08-02 | a fixture | 40.96x | never | none |",
+                    ZERO_POINT,
+                ),
+                "MAX_OTS_OPS",
+            ),
+            (
+                "a lowering recorded in the cell, §6 silent",
+                doc(
+                    "| `MAX_OTS_DEPTH` | A11 | 1_024 | 2026-08-02 | a fixture | 15.28x | \
+                     `2026-09-01` | none |",
+                    ZERO_POINT,
+                ),
+                "MAX_OTS_DEPTH",
+            ),
+            (
+                "§6 claims a raise the table does not corroborate",
+                doc(
+                    UNCHANGED,
+                    "- **2026-09-01** — `MAX_OTS_OPS` raised `4_096` → `8_192` (A11) — \
+                     because we said so.",
+                ),
+                "raised from `4_096`",
+            ),
+            (
+                "§6 claims a lowering the table does not corroborate",
+                doc(
+                    UNCHANGED,
+                    "- **2026-09-01** — `MAX_OTS_OPS` lowered `4_096` → `2_048` (A11) — \
+                     because we said so.",
+                ),
+                "was lowered",
+            ),
+            (
+                "§6 names a limit with no §5 row",
+                doc(
+                    UNCHANGED,
+                    "- **2026-09-01** — `MAX_INVENTED_LIMIT` raised `1` → `2` (A11) — \
+                     from nowhere.",
+                ),
+                "MAX_INVENTED_LIMIT",
+            ),
+            (
+                "§6 names a limit and no direction",
+                doc(
+                    UNCHANGED,
+                    "- **2026-09-01** — `MAX_OTS_OPS` adjusted `4_096` → `8_192` (A11) \
+                     — with no verb.",
+                ),
+                "neither raised nor lowered",
+            ),
+            (
+                "§6 claims a raise and does not say from what",
+                doc(
+                    UNCHANGED,
+                    "- **2026-09-01** — `MAX_OTS_OPS` raised (A11) — to something.",
+                ),
+                "does not say from what",
+            ),
+            (
+                "§6 entry with no date",
+                doc(
+                    UNCHANGED,
+                    "- **someday** — `MAX_OTS_OPS` raised `4_096` → `8_192`.",
+                ),
+                "YYYY-MM-DD",
+            ),
+            (
+                "§6 deleted outright",
+                format!(
+                    "## 5. The F4 registry\n\n\
+                     {REGISTRY_HEADER} measured against (A25 fixture path) | margin | lowered | structural cost (D102) |\n\
+                     | --- | --- | --- | --- | --- | --- | --- | --- |\n\
+                     {UNCHANGED}\n"
+                ),
+                "no `## 6.` heading",
+            ),
+            // …and three structural faults, which are about the table rather
+            // than about a limit, so they carry no limit name to assert on.
+            (
+                "the §5 table renamed out from under the checker",
+                "## 5. The F4 registry\n\n| limit | owner | initial value | date set |\n\n## 6. \
+                 Limit-change log\n\n- **2026-07-28** — table created.\n"
+                    .to_string(),
+                "no line begins",
+            ),
+            (
+                "a row with a stray cell boundary",
+                doc(
+                    "| `MAX_OTS_OPS` | A11 | 4_096 | 2026-08-02 | a | fixture | 40.96x | \
+                     never | none |",
+                    ZERO_POINT,
+                ),
+                "not the 8 its header declares",
+            ),
+            (
+                "a limit cell that is not one backticked name",
+                doc(
+                    "| MAX_OTS_OPS | A11 | 4_096 | 2026-08-02 | a fixture | 40.96x | never | \
+                     none |",
+                    ZERO_POINT,
+                ),
+                "not one backticked limit name",
+            ),
+        ];
+
+        // Every case is reported, not just the first: a fixture set where one
+        // break hides the rest cannot tell a lane whether it broke one arm or
+        // deleted the checker.
+        let mut passed_the_checker: Vec<&str> = Vec::new();
+        for (what, fixture, expected) in &cases {
+            let violations = limit_change_log_violations(fixture);
+            if !violations.iter().any(|v| v.contains(expected)) {
+                passed_the_checker.push(what);
+            }
+        }
+        assert!(
+            passed_the_checker.is_empty(),
+            "{} of {} planted cases produced no violation naming what they are about, \
+             which means the checker is not checking them: {passed_the_checker:?}",
+            passed_the_checker.len(),
+            cases.len()
+        );
+    }
+
+    // ── A113: the `margin` column, recomputed rather than read ───────────
+    //
+    // Until this landed, `margin` was **the only numeric column in §5 that no
+    // test reached**: `ots_limits_match_the_f4_registry`'s needle stops at the
+    // `value` cell boundary (column 3) and never sees column 6. That is not a
+    // hypothetical gap — D104 §4 records A109 reasoning from a **15.28x**
+    // figure that had been derived against a third-party crate's test constant
+    // and was, by then, wrong about every antseal artifact. A number that
+    // reads like the checked ones and is checked by nothing is worse than an
+    // absent number, because it is quoted with the others' authority.
+    //
+    // The check is **document-internal arithmetic**, deliberately: `margin` is
+    // defined as `value / measured`, and both operands are already in the row.
+    // That keeps this test free of any hand-typed measurement — the defect
+    // A110's notes name in `caps.rs`'s `f4_registry_values`, "an instrument
+    // that checks a number against itself". The two operands are pinned
+    // elsewhere, each by a named test, and neither pin is here:
+    //
+    //   * `value`    — `ots_limits_match_the_f4_registry` (A11 rows) and
+    //                  `anchor::caps::tests::f4_registry_values` (A5 rows).
+    //   * `measured` — the parser, over the artifacts the cells cite:
+    //                  `super::tests::the_committed_fixtures_have_the_shape_the_f4_registry_records`
+    //                  and, for the 3 808-byte upgraded artifact,
+    //                  `crates/antseal-core/tests/anchor_vectors.rs`'s
+    //                  `vector_anchor_upgraded_artifact_has_the_shape_the_f4_registry_records`.
+    //
+    // So this row closes the triangle rather than adding a fourth opinion.
+
+    /// The measured quantity a `measured against` cell states: its **first
+    /// bolded number**.
+    ///
+    /// §5's Update rule requires exactly this rendering, which is what makes
+    /// the column machine-readable without a ninth column: the cell is prose
+    /// naming a fixture and explaining a choice, and the one number the
+    /// margin divides by is the one in bold. Trailing ` B` and the document's
+    /// space thousands-separator are its own conventions (`2 105 B`).
+    fn measured_quantity(cell: &str) -> Option<u64> {
+        cell.split("**")
+            .skip(1)
+            .step_by(2)
+            .filter_map(|span| {
+                let token = span.trim().trim_end_matches(" B").replace(' ', "");
+                (!token.is_empty() && token.chars().all(|c| c.is_ascii_digit()))
+                    .then(|| token.parse().ok())
+                    .flatten()
+            })
+            .next()
+    }
+
+    /// A `margin` cell's leading `N.MMx`, as `(scaled integer, decimals)`.
+    ///
+    /// The decimal count is read from the cell rather than fixed, because the
+    /// table genuinely uses two precisions — the `.ots` rows print 2 places
+    /// and D60's DER rows print 1 — and recomputing at a precision the cell
+    /// does not use would fail every row for a reason that is not the reason.
+    /// Prose after the `x` is allowed and ignored; A42's row carries some.
+    fn printed_margin(cell: &str) -> Option<(u64, u32)> {
+        let head: String = cell
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if !cell[head.len()..].starts_with('x') {
+            return None;
+        }
+        let (whole, frac) = head.split_once('.')?;
+        if whole.is_empty() || frac.is_empty() {
+            return None;
+        }
+        Some((format!("{whole}{frac}").parse().ok()?, frac.len() as u32))
+    }
+
+    /// `value / measured`, scaled by `10^decimals` and rounded half-up.
+    ///
+    /// Integer arithmetic throughout: the same expression must produce the
+    /// same digits on x86-64 and on `wasm32`, and a float round-trip through
+    /// a formatter is the one step in this file that could differ.
+    fn scaled_margin(value: u64, measured: u64, decimals: u32) -> u64 {
+        (value * 10_u64.pow(decimals) * 2 + measured) / (measured * 2)
+    }
+
+    /// **A113.** Every `margin` cell is its own row's `value / measured`.
+    ///
+    /// Quantified over **every** §5 row, not just the seven this module's
+    /// constants cover — the arithmetic needs no constant, so A42's row and
+    /// D60's four A5 rows are checked here even though their *values* are
+    /// pinned from other crates (see
+    /// [`the_eighth_registry_row_is_a42s_and_this_crate_cannot_pin_its_value`],
+    /// which records that boundary for the value cell and is unaffected).
+    /// `MAX_DER_NESTING_DEPTH` needs no exemption either, although it is the
+    /// one row whose value is pinned *behaviourally*, to `der`'s private
+    /// `MAX_DEPTH`, rather than to an antseal constant: what is divided here
+    /// is the number the table records, and the table records 63.
+    #[test]
+    fn the_margin_column_is_the_value_over_the_measurement() {
+        const REGISTRY: &str = include_str!("../../../../../docs/format/anchor-artifact-limits.md");
+
+        let mut violations: Vec<String> = Vec::new();
+        let rows = registry_rows(&unfenced(REGISTRY), &mut violations);
+        assert!(
+            violations.is_empty(),
+            "§5's table did not parse: {violations:?}"
+        );
+
+        let mut checked = 0_usize;
+        for row in &rows {
+            let name = &row.name;
+            let Ok(value) = row.value.replace('_', "").parse::<u64>() else {
+                violations.push(format!(
+                    "`{name}`'s value cell {:?} is not a number",
+                    row.value
+                ));
+                continue;
+            };
+            let Some(measured) = measured_quantity(&row.measured_against) else {
+                violations.push(format!(
+                    "`{name}`'s `measured against` cell states no bolded number, so its \
+                     margin divides by nothing this document records — §5's Update rule \
+                     requires the measured quantity in bold"
+                ));
+                continue;
+            };
+            let Some((printed, decimals)) = printed_margin(&row.margin) else {
+                violations.push(format!(
+                    "`{name}`'s margin cell {:?} does not open `N.MMx`",
+                    row.margin
+                ));
+                continue;
+            };
+            if measured == 0 {
+                violations.push(format!(
+                    "`{name}` measures 0 — a margin over it is undefined"
+                ));
+                continue;
+            }
+            let recomputed = scaled_margin(value, measured, decimals);
+            if recomputed != printed {
+                let places = decimals as usize;
+                let scale = 10_u64.pow(decimals);
+                violations.push(format!(
+                    "`{name}`: {value} / {measured} is {}.{:0places$}x at this cell's own \
+                     precision, and the cell reads {}.{:0places$}x",
+                    recomputed / scale,
+                    recomputed % scale,
+                    printed / scale,
+                    printed % scale,
+                ));
+            }
+            checked += 1;
+        }
+
+        assert!(
+            violations.is_empty(),
+            "docs/format/anchor-artifact-limits.md §5's margin column does not agree with \
+             its own value and measurement cells:\n  {}",
+            violations.join("\n  ")
+        );
+        assert_eq!(
+            checked,
+            rows.len(),
+            "every §5 row's margin is recomputed, or this test has grown a silent exemption"
+        );
+        assert!(checked >= 12, "§5 lost rows: only {checked} were checked");
+    }
+
+    /// The positive arm: the checker goes red on each way a margin cell can
+    /// be wrong, so the green run above is evidence rather than a tautology.
+    ///
+    /// A104's rule, and D107 §6's — *"if a fixture passes the checker, the
+    /// checker is not checking"*. Each case is one visible row rather than a
+    /// mutation of the real four-hundred-line document.
+    #[test]
+    fn a_wrong_margin_cell_is_caught_in_every_way_it_can_be_wrong() {
+        for (what, value, measured_against, margin, expected) in [
+            (
+                "a margin off by one unit in the last printed place",
+                "1_024",
+                "the artifact (depth **85**)",
+                "12.04x",
+                "12.05x",
+            ),
+            (
+                "the retired figure, which is what A109 actually quoted",
+                "1_024",
+                "the artifact (depth **85**)",
+                "15.28x",
+                "12.05x",
+            ),
+            (
+                "a margin recomputed against the wrong measurement",
+                "16_384",
+                "the artifact (**89** B operand)",
+                "94.16x",
+                "184.09x",
+            ),
+            (
+                "a value cell and a margin cell that disagree",
+                "2_048",
+                "the artifact (depth **85**)",
+                "12.05x",
+                "24.09x",
+            ),
+        ] {
+            let doc = format!(
+                "## 5. The F4 registry\n\n\
+                 {REGISTRY_HEADER} measured against | margin | lowered | structural cost |\n\
+                 | --- | --- | --- | --- | --- | --- | --- | --- |\n\
+                 | `MAX_OTS_DEPTH` | A11 | {value} | 2026-08-02 | {measured_against} | \
+                 {margin} | never | none |\n"
+            );
+            let mut violations = Vec::new();
+            let rows = registry_rows(&unfenced(&doc), &mut violations);
+            let row = rows.first().expect("the planted row parses");
+            let value = row.value.replace('_', "").parse::<u64>().expect("a number");
+            let measured = measured_quantity(&row.measured_against).expect("a bolded number");
+            let (printed, decimals) = printed_margin(&row.margin).expect("an `N.MMx` cell");
+            let recomputed = scaled_margin(value, measured, decimals);
+            assert_ne!(
+                recomputed, printed,
+                "{what}: the planted fault was accepted"
+            );
+
+            let places = decimals as usize;
+            let scale = 10_u64.pow(decimals);
+            assert_eq!(
+                format!("{}.{:0places$}x", recomputed / scale, recomputed % scale),
+                expected,
+                "{what}: the checker names the wrong correct value"
+            );
+        }
+
+        // …and the two shapes that carry no number at all.
+        assert_eq!(
+            measured_quantity("a fixture with **no** bolded number"),
+            None
+        );
+        assert_eq!(printed_margin("never measured"), None);
+        assert_eq!(printed_margin("12.05"), None, "a margin cell ends in `x`");
     }
 
     /// D58 renders the values with `_` group separators; the registry rows

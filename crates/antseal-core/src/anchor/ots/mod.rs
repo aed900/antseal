@@ -266,20 +266,27 @@ const MERGED_B: &[u8] =
 
 /// A **real** upgraded mainnet proof over Bitcoin blocks 449397 and 449399.
 ///
-/// **Provenance, stated because the margin it feeds is bootstrapped and not
-/// measured:** these bytes are the `LARGE_TEST` constant from
-/// `opentimestamps-0.2.0/src/lib.rs`, not an A25 capture. **A25 must
-/// re-measure the four `upgraded/` F4 rows against a real fixture and append**
-/// (D58 §9.5, §13.1).
+/// **Provenance:** these bytes are the `LARGE_TEST` constant from
+/// `opentimestamps-0.2.0/src/lib.rs`, not an A25 capture (D58 §9.5, §13.1).
 ///
-/// **Amended 2026-08-03 (A14 lane).** This said the cycle *"cannot complete
-/// before 2026-08-04"*. It completed on **2026-08-03T09:03Z** — 13 h 47 m
-/// after the 19:16Z submission, not the assumed ~48 h — and
-/// `testdata/anchors/A25-bootstrap/upgraded/` now holds six real upgrade
-/// responses for this project's own golden-vector digests. The re-measurement
-/// needs the *assembled* artifact rather than the response bodies, which is a
-/// deterministic merge of files already in the tree (lane task A63); this
-/// constant stays until that lands, with its provenance unchanged.
+/// **No longer a bootstrap stand-in, as of 2026-08-10 (A48/A63).** The
+/// assembled artifact this was standing in for exists — the three-way splice
+/// A22 froze into `testdata/vectors/v1/anchor/anchor.json` — and three of the
+/// five F4 rows measured here moved to it: ops 100 → **244**, depth 67 → **85**,
+/// attestations 4 → **6**.
+///
+/// **Two rows did not, and this fixture is why it is kept.** Its operands are a
+/// real fat coinbase-transaction prefix, so it measures **174 B** operand and
+/// **210 B** running value where antseal's own upgraded artifact measures 89 B
+/// and 125 B. It is therefore still the **binding** measurement for
+/// [`MAX_OTS_OPERAND_BYTES`] and [`MAX_OTS_VALUE_BYTES`], and retiring it would
+/// have raised those margins by dropping the fatter real sample. A48's Accept
+/// row 3 offers exactly this outcome — *"kept as a second, independent upgraded
+/// shape"* — and the F4 registry's two cells say so.
+///
+/// *Spent amendment, recorded because it dated itself twice:* this said the
+/// upgrade cycle *"cannot complete before 2026-08-04"*; it completed
+/// **2026-08-03T09:03Z**, 13 h 47 m after the 19:16Z submission.
 #[cfg(test)]
 const UPGRADED_LARGE_TEST: &[u8] = include_bytes!(
     "../../../../../testdata/anchors/A25-bootstrap/upgraded/rust-opentimestamps-LARGE_TEST.ots"

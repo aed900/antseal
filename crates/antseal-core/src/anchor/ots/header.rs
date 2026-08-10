@@ -32,24 +32,36 @@
 //! double SHA-256 — which is Bitcoin's own merkle algorithm operating on
 //! internal-order hashes.
 //!
-//! **That is structural, not empirical.** A12's `Do` asks for the byte order
-//! to be *"pinned empirically by a real upgraded fixture"*, and pinning it
-//! against a fetched mainnet header is **A25's/A48's**. What is pinned here is
-//! that the implementation does **not** reverse —
-//! `tests::a_byte_reversed_merkle_root_does_not_match` goes red if anyone adds
-//! a reversal — and that the field is read at bytes 36..68.
+//! What is pinned *in this module* is structural: that the implementation does
+//! **not** reverse — `tests::a_byte_reversed_merkle_root_does_not_match` goes
+//! red if anyone adds a reversal — and that the field is read at bytes 36..68.
+//! Both rows are synthetic, and deliberately kept: they are cheap, they run in
+//! the `wasm32-core-tests` lane, and they fail on a code change rather than on
+//! a fixture change.
 //!
-//! **Amended 2026-08-03 (A14 lane).** This paragraph said the fixture was
-//! owed *"once the two-day OTS cycle completes (not before 2026-08-04): no
-//! real upgraded `.ots` of this project's own exists yet"*. Both halves are
-//! now out of date. The cycle completed on **2026-08-03T09:03Z**, 13 h 47 m
-//! after stamping rather than the assumed ~48 h, and
-//! `testdata/anchors/A25-bootstrap/upgraded/` holds six real Bitcoin
-//! attestations for this project's own golden-vector digests. They attest
-//! blocks **960767** (alice), **960768** (bob) and **960771** (catallaxy).
-//! What is still owed is the other half of A48: a *fetched mainnet header* for
-//! one of those heights to compare against. The fixture is no longer the
-//! blocker; the fetch is.
+//! **The empirical pin now exists too, and it is A48(b)'s** — landed
+//! 2026-08-10 as
+//! `crates/antseal-core/tests/anchor_vectors.rs`'s
+//! `vector_anchor_ops_derive_the_fetched_mainnet_headers_merkle_root`. It
+//! compares the root this project's own upgraded `.ots` **derives by executing
+//! a real calendar's op chain** against bytes 36..68 of a **fetched** mainnet
+//! header, at all three attested heights — **960767** (alice), **960768** (bob)
+//! and **960771** (catallaxy) — and asserts the match vanishes under a
+//! reversal. It lives in an integration target because both of its inputs are
+//! files: the headers at `testdata/anchors/A25-upgrade-headers/`, captured
+//! 2026-08-07 from two independent endpoints and byte-identical, and the
+//! artifact inside the frozen `anchor` vector.
+//!
+//! Why the synthetic row could never have done this job: both sides of its
+//! comparison are values the test itself chooses, so a verifier that reversed
+//! *one* side consistently would pass it. Bitcoin's merkle algorithm is not
+//! reversal-symmetric, so only a real header can refuse a reversed root.
+//!
+//! *Two earlier amendments, now spent.* This paragraph once said the fixture
+//! was owed *"once the two-day OTS cycle completes (not before 2026-08-04)"*
+//! — the cycle completed **2026-08-03T09:03Z**, in 13 h 47 m — and then, until
+//! 2026-08-10, that *"the fixture is no longer the blocker; the fetch is"*.
+//! The fetch landed 2026-08-07. Nothing is blocked.
 
 use crate::bundle::registry::BLOCK_HEADER_LEN;
 use crate::bundle::schema::OtsUpgrade;
@@ -218,8 +230,15 @@ mod tests {
     }
 
     /// The mutation guard for the byte-order convention: a reversal added
-    /// anywhere on this path turns this test red. The *empirical* pin against
-    /// a fetched mainnet header is A25's — see the module docs.
+    /// anywhere on this path turns this test red.
+    ///
+    /// Synthetic on purpose, and kept after A48(b) landed the empirical pin:
+    /// this row runs on `wasm32` where the integration target does not, and it
+    /// fails on a **code** change where the empirical one would also fail on a
+    /// fixture change. What it cannot do is pin the *convention* — see the
+    /// module docs and
+    /// `crates/antseal-core/tests/anchor_vectors.rs`'s
+    /// `vector_anchor_ops_derive_the_fetched_mainnet_headers_merkle_root`.
     #[test]
     fn a_byte_reversed_merkle_root_does_not_match() {
         let root = distinct_root();

@@ -1247,6 +1247,52 @@ fn the_record_and_the_bytes_it_wraps_are_reported_at_the_same_severity() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// D106: `status <work-id>` resolves through the same whole-store scan
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D106 §1.5**: `status <work-id>` walks `list_works` → `load_meta` in
+/// `resolve_work_id` (`pipeline/restore.rs:520-531`), lock-free, exactly as
+/// `list` does — so a directory that is not yet a work broke it too, and
+/// broke it worse: the user typed a valid 64-hex work id of their own and
+/// was told *"no work with this id exists in the vault (see `antseal
+/// list`)"*, with `list` being the other command that could not answer.
+///
+/// The planted directory is all-zero so it sorts **first** under
+/// `list_works`' ascending seal-id order (`store.rs:511`) — the scan meets
+/// it before the user's work whatever the fixture ids are, which is what
+/// makes this deterministic rather than a race the test hopes to win.
+///
+/// The second half extends Q120's cross-command matrix by one predicate:
+/// the id `status` resolves is the work `list` renders, on the same vault
+/// at the same moment.
+#[test]
+fn a_concurrent_begin_does_not_make_status_deny_a_work_that_exists() {
+    let vault = fixture_vault();
+    let unlocked = vault.unlock();
+    std::fs::create_dir_all(unlocked.layout().works_dir().join("0".repeat(32)))
+        .expect("plant a mid-`begin` work directory");
+    let store = WorkStore::new(&unlocked);
+
+    let printed = antseal_cli::pipeline::hex32(&work_id(0x01));
+    let resolved = antseal_cli::pipeline::restore::resolve_work_id(&store, &printed)
+        .expect("a work id the user holds still resolves");
+    assert_eq!(resolved, seal_id(0x01));
+
+    // And the two commands agree about it, over the planted directory.
+    assert_eq!(
+        WorkStatus::gather(&store, &resolved, ctx())
+            .expect("status reports it")
+            .seal_id,
+        seal_id(0x01)
+    );
+    let listing = WorkListing::gather(&store).expect("list renders the same vault");
+    assert!(
+        listing.works.iter().any(|row| row.seal_id == resolved),
+        "the work `status` resolved is the work `list` shows"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Q120 / D98 rider 3c: three predicates share the word UNANCHORED, and
 // none of them may be computed from another
 // ─────────────────────────────────────────────────────────────────────

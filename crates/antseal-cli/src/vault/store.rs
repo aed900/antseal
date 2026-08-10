@@ -27,11 +27,12 @@
 //!
 //! # Enumeration without decrypting bodies (U9 Accept)
 //!
-//! [`WorkStore::list_works`] is a readdir — zero decryption. Per-work
-//! display needs exactly one small `meta` decrypt; journal bodies (the
-//! content-scale bytes, D43) are **never** touched by list/status-class
-//! reads. No plaintext index exists: D42 puts record indexes inside the
-//! AEAD, and the directory listing — random hex names — is index enough.
+//! [`WorkStore::list_works`] is a readdir plus one `stat` per entry —
+//! zero decryption. Per-work display needs exactly one small `meta`
+//! decrypt; journal bodies (the content-scale bytes, D43) are **never**
+//! touched by list/status-class reads. No plaintext index exists: D42
+//! puts record indexes inside the AEAD, and the directory listing —
+//! random hex names — is index enough.
 //!
 //! # The D43 journal → cache reclassification
 //!
@@ -62,8 +63,14 @@
 //!
 //! Mutating APIs assume the caller holds the single-writer
 //! [`crate::vault::lock::VaultLock`] (U5 discipline — the command layer
-//! acquires it before any store mutation). Readers are safe against a
-//! concurrent writer because every write is an atomic rename.
+//! acquires it before any store mutation). A reader running unlocked sees
+//! each **record** whole — every write is one atomic rename — but **not
+//! each work whole**: a work is several records and nothing publishes a
+//! set of them together. Enumeration is therefore defined by the same
+//! predicate the writers use, the `meta` record ([`WorkStore::create_work`],
+//! [`WorkStore::store_meta`], `require_work`), so that a work under
+//! construction is simply not yet a work rather than a half-visible one
+//! (D106).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -471,13 +478,37 @@ impl<'v> WorkStore<'v> {
         self.set_state(seal_id, WorkState::Complete, rng)
     }
 
-    /// Every work in the vault — a readdir, zero decryption (module
-    /// docs). Order: ascending by seal-id bytes (deterministic).
+    /// Every work in the vault — a readdir plus one `stat` per entry, zero
+    /// decryption (module docs). Order: ascending by seal-id bytes
+    /// (deterministic).
+    ///
+    /// # What counts as a work (D106)
+    ///
+    /// An entry is enumerated **iff** it is a directory whose name parses
+    /// as a seal id **and** (its `meta` record is present **or** it holds
+    /// at least one non-dot entry). That is the store's own existence
+    /// predicate: [`Self::create_work`] and [`Self::store_meta`] guard on
+    /// `meta`, and `require_work` gates every journal, receipt and anchor
+    /// write on it — so a directory with no `meta` and no content has
+    /// **never held a byte**. It is `create_work`'s in-flight
+    /// intermediate (or the residue of one killed between its two
+    /// syscalls), and skipping it is the same act as skipping the
+    /// dot-prefixed `atomic_write` residue four lines below. Enumerating
+    /// by the *directory name* instead is what made `antseal list` and
+    /// `antseal status <work-id>` refuse a whole healthy vault for the
+    /// duration of one file write.
+    ///
+    /// A directory with content but no `meta` is genuine out-of-band
+    /// damage: it is still enumerated and its `load_meta` still fails
+    /// (D106 R3), because the skip must never widen into a silent drop.
     ///
     /// # Errors
     ///
-    /// [`StoreError::AlienEntry`] for non-work, non-temp entries (a
-    /// corrupted or hand-edited store is loud, never skipped silently).
+    /// [`StoreError::AlienEntry`] for non-work, non-temp entries, and for
+    /// a work-shaped **name** that is not a directory — a hex-named file
+    /// or symlink is a hand-edited store, and the store creates neither
+    /// (a corrupted or hand-edited store is loud, never skipped
+    /// silently). I/O errors reading the works directory or an entry.
     pub fn list_works(&self) -> Result<Vec<SealId>, StoreError> {
         let dir = self.vault.layout().works_dir();
         let entries = match std::fs::read_dir(&dir) {
@@ -498,14 +529,32 @@ impl<'v> WorkStore<'v> {
             if name.starts_with('.') {
                 continue;
             }
-            match parse_hex32(&name) {
-                Some(id) => ids.push(id),
-                None => {
-                    return Err(StoreError::AlienEntry {
-                        detail: format!("unexpected entry {name:?} in the work store"),
-                    });
-                }
+            let Some(id) = parse_hex32(&name) else {
+                return Err(StoreError::AlienEntry {
+                    detail: format!("unexpected entry {name:?} in the work store"),
+                });
+            };
+            // `parse_hex32` tests only the name, so a work-shaped file or
+            // symlink would otherwise be admitted as a work and die later
+            // on `ENOTDIR`. `file_type` does not follow symlinks and the
+            // store creates none, so either is a hand-edited store.
+            let file_type = entry.file_type().map_err(|source| StoreError::Io {
+                path: dir.clone(),
+                source,
+            })?;
+            if !file_type.is_dir() {
+                return Err(StoreError::AlienEntry {
+                    detail: format!(
+                        "work-shaped entry {name:?} in the work store is not a directory"
+                    ),
+                });
             }
+            // The store's existence predicate, the same one every writer
+            // uses (D106).
+            if !self.meta_path(&id).exists() && !self.work_dir_has_content(&entry.path())? {
+                continue;
+            }
+            ids.push(id);
         }
         ids.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
         Ok(ids)
@@ -745,12 +794,57 @@ impl<'v> WorkStore<'v> {
         Ok(slots)
     }
 
+    /// The store's existence predicate, and the gate on **every** write
+    /// that can put content inside a work directory
+    /// ([`Self::put_journal_entry`], [`Self::put_receipt`],
+    /// [`Self::put_anchor`]). [`Self::write_meta`] is the only write that
+    /// does not need it, and it *is* the `meta` record.
+    ///
+    /// That makes it the invariant [`Self::list_works`] relies on: a work
+    /// directory can acquire a `journal/`, an `anchors/` or a `receipt`
+    /// only **after** its `meta` record exists, so the population
+    /// enumeration skips — no `meta`, no non-dot content — is provably
+    /// empty of data (D106 §1.3). A new write under `work_dir` that does
+    /// not come through here breaks that argument.
     fn require_work(&self, seal_id: &SealId) -> Result<(), StoreError> {
         if self.meta_path(seal_id).exists() {
             Ok(())
         } else {
             Err(StoreError::WorkNotFound)
         }
+    }
+
+    /// Does this work directory hold anything but dot-prefixed entries?
+    ///
+    /// Only reached for a directory with no `meta` record, where it
+    /// separates `create_work`'s in-flight intermediate (nothing, or
+    /// `atomic_write` residue) from a work whose `meta` was removed out of
+    /// band while its records remain (D106 R1/R3).
+    ///
+    /// A directory that vanished between the readdir and this call is
+    /// treated as empty: it cannot have held content, since content
+    /// implies `meta` and `meta` was already absent.
+    fn work_dir_has_content(&self, dir: &Path) -> Result<bool, StoreError> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(source) => {
+                return Err(StoreError::Io {
+                    path: dir.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| StoreError::Io {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+            if !entry.file_name().to_string_lossy().starts_with('.') {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

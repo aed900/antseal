@@ -85,6 +85,22 @@ impl AnchorAggregate {
     /// (MVP-SPEC.md line 137). An empty anchor set (a `--no-anchor`
     /// seal) is always UNANCHORED; so is every M0/M1 report (all slots
     /// `absent` until A18).
+    ///
+    /// # Not the other three senses of the word (D98 rider 3c, D108 R2)
+    ///
+    /// This is sense (c), the **verdict**. It is not `WorkRow::unanchored`
+    /// (the `--no-anchor` shaping flag recorded at seal), not
+    /// `NagState::Unanchored` (*no anchor records at all*), and — the pair
+    /// most likely to collapse, because both are about a bundle — **not**
+    /// registry §7.6 key 3's *"both anchor arrays empty"*, which is a
+    /// layer-1 CBOR shape fact at tier [P] and cannot decide this: a bundle
+    /// carrying one `pending` OTS is UNANCHORED **here** with that array
+    /// non-empty. Rewriting this as the shape fact reddens
+    /// `anchor::verdicts::tests::a_lone_proven_ots_establishes_one_identity`,
+    /// which builds exactly that bundle.
+    ///
+    /// The registry's cell is frozen and says otherwise; its scope is
+    /// recorded in `docs/format/frozen-registry-errata.md`.
     #[must_use]
     pub const fn is_unanchored(&self) -> bool {
         self.headline_eligible_count == 0

@@ -121,6 +121,20 @@ const ALLOWED: &[(&str, &str)] = &[
          no_allowlist_entry_is_stale will fail until it is deleted. The pointer \
          is real and was verified by hand on 2026-08-09",
     ),
+    (
+        "the_measured_upgrade_response_sizes_are_the_f4_row",
+        "cross-crate reference: lives in the antseal-anchor crate at \
+         src/ots/mod.rs:126, cited by anchor/ots/limits.rs as the pin for §5's \
+         eighth row (`MAX_OTS_CALENDAR_RESPONSE_BYTES`, owner A42), whose \
+         constant this crate cannot see — antseal-anchor depends on \
+         antseal-core, not the reverse, so a pin written here could only \
+         compare the row against a literal typed in the same file, which is \
+         the defect A110 names in `f4_registry_values`. It cannot resolve \
+         here because this sweep is scoped to this crate; widening it is Q70, \
+         and when Q70 lands this entry starts resolving and \
+         no_allowlist_entry_is_stale will fail until it is deleted. The \
+         pointer is real and was verified by hand on 2026-08-09 (A110/D107)",
+    ),
 ];
 
 /// The one file the sweep skips: this one, which must quote example pointers

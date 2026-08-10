@@ -386,6 +386,18 @@ fn single_signer(sd: &SignedData) -> Result<&SignerInfo, AnchorError> {
 /// `Certificate` ones. A `[3] other` entry is not path material, but counting
 /// it keeps the limit a bound on how much the token can make A9 enumerate,
 /// which is what the limit is for (path building is quadratic in candidates).
+///
+/// **The reservation does not follow that count, and the difference is
+/// A111.** Bounding on every entry is right for the *limit* and wrong for the
+/// *capacity*: an entry the loop skips costs no `Certificate` and no retained
+/// DER, so reserving one for it turns eight `[3] other` entries — about
+/// eighty wire bytes — into the full worst-case reservation
+/// ([`super::caps::TSA_STRUCTURAL_CERT_BAG_BYTES`], 4 288 B on x86-64) for a
+/// bag that carries nothing. One extra pass over at most [`MAX_CHAIN_CERTS`]
+/// already-decoded entries buys that back, and the worst case is unchanged:
+/// eight real certificates still reserve exactly eight.
+/// `tests::the_certificate_bag_reserves_per_certificate_not_per_entry` states
+/// both numbers rather than inferring either from a process allocation peak.
 fn chain_certificates(sd: &SignedData) -> Result<(Vec<Certificate>, Vec<Vec<u8>>), AnchorError> {
     let Some(set) = sd.certificates.as_ref() else {
         return Ok((Vec::new(), Vec::new()));
@@ -394,8 +406,13 @@ fn chain_certificates(sd: &SignedData) -> Result<(Vec<Certificate>, Vec<Vec<u8>>
     if count > MAX_CHAIN_CERTS {
         return Err(AnchorError::ChainCertCount { count });
     }
-    let mut certs = Vec::with_capacity(count);
-    let mut ders = Vec::with_capacity(count);
+    let carried = set
+        .0
+        .iter()
+        .filter(|choice| matches!(choice, cms::cert::CertificateChoices::Certificate(_)))
+        .count();
+    let mut certs = Vec::with_capacity(carried);
+    let mut ders = Vec::with_capacity(carried);
     for choice in set.0.iter() {
         let cms::cert::CertificateChoices::Certificate(cert) = choice else {
             // Not a plain X.509 certificate: counted above, carried nowhere.
@@ -753,6 +770,182 @@ mod tests {
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-freetsa-resp.tsr");
     const D60_DIGICERT: &[u8] =
         include_bytes!("../../../../testdata/anchors/A25-bootstrap/D60-tsa-digicert-resp.tsr");
+
+    // ── A111: the bag reserves per certificate, not per bag entry ────────
+
+    /// A `SignedData` off one of the committed captures, so a fixture built
+    /// from it stays a well-formed token rather than a synthetic blob.
+    fn signed_data(bytes: &[u8]) -> SignedData {
+        token_content_info(bytes)
+            .expect("a granted response")
+            .content
+            .decode_as()
+            .expect("SignedData")
+    }
+
+    /// `n` distinct `[3] other` entries — RFC 5652 §10.2.2's
+    /// `OtherCertificateFormat`, which is legal `CertificateChoices` content,
+    /// is about ten wire bytes each, and is path material for nothing.
+    ///
+    /// The OIDs must differ: `SetOfVec::try_from` canonicalises and **rejects
+    /// duplicates**, so `n` copies of one entry is not a bag of `n`.
+    fn other_only_bag(n: usize) -> cms::signed_data::CertificateSet {
+        let entries: Vec<cms::cert::CertificateChoices> = (0..n)
+            .map(|i| {
+                cms::cert::CertificateChoices::Other(cms::cert::OtherCertificateFormat {
+                    other_cert_format: ObjectIdentifier::new_unwrap(match i {
+                        0 => "1.2.3.200",
+                        1 => "1.2.3.201",
+                        2 => "1.2.3.202",
+                        3 => "1.2.3.203",
+                        4 => "1.2.3.204",
+                        5 => "1.2.3.205",
+                        6 => "1.2.3.206",
+                        _ => "1.2.3.207",
+                    }),
+                    other_cert: Any::from(der::asn1::Null),
+                })
+            })
+            .collect();
+        cms::signed_data::CertificateSet(
+            SetOfVec::try_from(entries).expect("distinct OIDs make a well-formed SET"),
+        )
+    }
+
+    /// Every plain `Certificate` the committed captures carry, deduplicated
+    /// by the SET itself.
+    fn real_certificate_bag(n: usize) -> cms::signed_data::CertificateSet {
+        let mut all: Vec<cms::cert::CertificateChoices> = Vec::new();
+        for bytes in [D60_DIGICERT, D60_SECTIGO, D60_FREETSA] {
+            for choice in signed_data(bytes)
+                .certificates
+                .expect("these captures embed certificates")
+                .0
+                .iter()
+            {
+                if matches!(choice, cms::cert::CertificateChoices::Certificate(_)) {
+                    all.push(choice.clone());
+                }
+            }
+        }
+        all.truncate(n);
+        assert_eq!(all.len(), n, "the captures must supply {n} certificates");
+        cms::signed_data::CertificateSet(
+            SetOfVec::try_from(all).expect("{n} distinct real certificates"),
+        )
+    }
+
+    /// **A111.** The certificate bag reserved on the count of bag *entries*,
+    /// not on the count of certificates it keeps — so eight `[3] other`
+    /// entries, about eighty wire bytes, reserved the full worst-case
+    /// capacity for certificates the loop then skips.
+    ///
+    /// **The fix lands with nothing red**, and that is why this row is the
+    /// deliverable rather than a nicety. The worst case is still eight real
+    /// certificates, `caps::TSA_STRUCTURAL_ALLOC_BYTES` does not move, and
+    /// after D102 the fuzz guard's exemption is derived from the *same*
+    /// constants as the reservation — D102 §4.1's own objection, *"a derived
+    /// bound moves with the limit it derives from"* — so `anchor_token` stays
+    /// green either way. A repair whose only evidence is that nothing broke
+    /// is the shape this project keeps finding in other people's tests.
+    ///
+    /// **Capacity, not a process allocation peak**, for three reasons.
+    /// [`chain_certificates`] is private, so the two counting-allocator
+    /// integration tests are in another crate and could only reach it through
+    /// `verify_token`, whose peak for a ~2 KB token is not established to be
+    /// this reservation. Capacity is exact where a peak is a bound. And
+    /// capacity is a **count**, so this assertion is target-independent and
+    /// runs unchanged in `wasm32-core-tests`, where
+    /// `size_of::<Certificate>()` is 376 rather than 512.
+    #[test]
+    fn the_certificate_bag_reserves_per_certificate_not_per_entry() {
+        use super::super::caps::{CHAIN_CERT_DER_HANDLE_BYTES, CHAIN_CERTIFICATE_BYTES};
+
+        // The defect's own shape: a full bag, no path material in it.
+        let mut sd = signed_data(D60_DIGICERT);
+        sd.certificates = Some(other_only_bag(MAX_CHAIN_CERTS));
+        let (certs, ders) = chain_certificates(&sd).expect("eight entries is within the limit");
+
+        assert!(certs.is_empty() && ders.is_empty(), "none is a Certificate");
+        assert_eq!(
+            certs.capacity(),
+            0,
+            "{} `[3] other` entries reserved capacity for {} certificates — {} B for a bag \
+             carrying none. Reserve on what is kept, not on what is counted",
+            MAX_CHAIN_CERTS,
+            certs.capacity(),
+            certs.capacity() * CHAIN_CERTIFICATE_BYTES
+        );
+        assert_eq!(
+            ders.capacity(),
+            0,
+            "the retained-DER vector reserved {} B for the same non-certificates",
+            ders.capacity() * CHAIN_CERT_DER_HANDLE_BYTES
+        );
+
+        // A mixed bag reserves for the certificates and nothing else.
+        let mut mixed: Vec<cms::cert::CertificateChoices> = real_certificate_bag(2).0.into_vec();
+        mixed.extend(other_only_bag(MAX_CHAIN_CERTS - 2).0.iter().cloned());
+        let mut sd = signed_data(D60_DIGICERT);
+        sd.certificates = Some(cms::signed_data::CertificateSet(
+            SetOfVec::try_from(mixed).expect("two certificates and six others"),
+        ));
+        let (certs, ders) = chain_certificates(&sd).expect("eight entries is within the limit");
+        assert_eq!((certs.len(), certs.capacity()), (2, 2));
+        assert_eq!((ders.len(), ders.capacity()), (2, 2));
+
+        // **The unchanged worst case, pinned in the same row**, because the
+        // fix must not buy its saving by shrinking the case the F4 registry
+        // row and `TSA_STRUCTURAL_CERT_BAG_BYTES` are written against.
+        let mut sd = signed_data(D60_DIGICERT);
+        sd.certificates = Some(real_certificate_bag(MAX_CHAIN_CERTS));
+        let (certs, ders) = chain_certificates(&sd).expect("eight real certificates are in-limit");
+        assert_eq!(
+            (certs.len(), certs.capacity()),
+            (MAX_CHAIN_CERTS, MAX_CHAIN_CERTS),
+            "the worst case must still reserve exactly its bound — {} B, which is what \
+             the F4 registry row for MAX_CHAIN_CERTS records",
+            MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES
+        );
+        assert_eq!(
+            (ders.len(), ders.capacity()),
+            (MAX_CHAIN_CERTS, MAX_CHAIN_CERTS)
+        );
+    }
+
+    /// The fuzz guard's fixed slack is **one** number, and `anchor::caps`
+    /// keeps a copy of it (A111's notes).
+    ///
+    /// `fuzz/` is deliberately outside the workspace — its `Cargo.toml`
+    /// carries the empty `[workspace]` table that keeps `libfuzzer-sys` out
+    /// of the audited graph — so `antseal_fuzz::SLACK` cannot be imported and
+    /// every consumer restates it. A restatement nothing checks is exactly
+    /// the clause-(a) literal D102 wrote into this file's neighbour: *"a
+    /// number typed by hand is a number that survives a raise."* The binding
+    /// mechanism is `include_str!`, which is a compile-time file read rather
+    /// than a link edge, so it needs no build script, no shared crate, and
+    /// works on `wasm32` — proven at
+    /// `tests/anchor_ots_alloc.rs::the_guard_shape_this_file_asserts_is_the_targets`.
+    ///
+    /// **Three copies existed and one was bound.** This binds the copy in
+    /// `anchor::caps`; the copy in `tests/parser_caps_alloc.rs` is bound in
+    /// its own file.
+    #[test]
+    fn the_fuzz_guards_slack_is_the_one_the_target_applies() {
+        const HARNESS: &str = include_str!("../../../../fuzz/src/lib.rs");
+        // The value `anchor::caps::tests` restates, derived from one place.
+        const FUZZ_SLACK: usize = 4 * 1024;
+        assert!(
+            HARNESS.contains(&format!(
+                "pub const SLACK: usize = {} * 1024;",
+                FUZZ_SLACK / 1024
+            )),
+            "fuzz/src/lib.rs's SLACK is no longer {FUZZ_SLACK} B — `anchor::caps`'s \
+             `the_der_structural_cost_relative_to_the_guards_fixed_slack` compares the \
+             DER path's structural cost against a copy of it, and that comparison now \
+             measures a number the fuzz target does not apply"
+        );
+    }
 
     /// The digest the nine `D60-*` captures were stamped over.
     const D60_STAMPED: [u8; 32] = [

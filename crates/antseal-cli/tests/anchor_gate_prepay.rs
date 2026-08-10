@@ -254,7 +254,7 @@ fn a_gate_abort_leaves_the_work_staged_and_resumable() {
         assert!(
             incomplete
                 .iter()
-                .all(|(_, state)| *state == SealState::Staged),
+                .all(|(_, state)| *state == Some(SealState::Staged)),
             "a gate abort moved a work past Staged: {incomplete:?}"
         );
     });

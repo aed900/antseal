@@ -34,10 +34,10 @@ use rand_core::TryCryptoRng;
 use super::journal::{
     BlobSlot, JournalError, PLAN_ENTRY, RecordedIdentity, STATE_ENTRY, SealJournal, SealPlan,
     SealState, StagedBlob, StagedBytesUnavailable, WorkIdentity, corrupt, decode_plan,
-    decode_state, encode_plan, encode_state,
+    decode_state, encode_plan, encode_state, recorded_state,
 };
 use super::receipt_sink::{VaultReceiptSink, decode_receipt, encode_receipt};
-use crate::vault::store::{ConsentRecord, WorkRecord, WorkStore};
+use crate::vault::store::{ConsentRecord, WorkRecord, WorkState, WorkStore};
 
 /// The production seal journal over an unlocked vault's record store.
 ///
@@ -245,6 +245,14 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
             None => {
                 // No state record: either the work does not exist, or it
                 // predates this schema. `load_meta` distinguishes.
+                //
+                // This refusal stays hard, and D106 R4 moved the
+                // enumeration off it rather than softening it here: the
+                // other callers are `set_state` and the seal pipeline,
+                // which run under the U5 lock, and a state machine that
+                // cannot read the current state must not advance. Readers
+                // that only want to *classify* a work take
+                // `recorded_state`, where absent is `Ok(None)`.
                 self.store.load_meta(seal_id)?;
                 Err(corrupt("work has no journal state record"))
             }
@@ -320,12 +328,26 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
         })
     }
 
-    fn incomplete_works(&self) -> Result<Vec<(SealId, SealState)>, JournalError> {
+    fn incomplete_works(&self) -> Result<Vec<(SealId, Option<SealState>)>, JournalError> {
         let mut out = Vec::new();
         for seal_id in self.store.list_works()? {
-            let state = self.state(&seal_id)?;
-            if state.is_incomplete() {
-                out.push((seal_id, state));
+            // The fine tag when it is there; its absence is a state, not a
+            // failure (U19 note 2 / `recorded_state`) — and because
+            // `begin` is two writes, the absence is *expected* under a
+            // concurrent seal. Deliberately not `state()`: see there.
+            let fine = recorded_state(&self.store, &seal_id)?;
+            let incomplete = match fine {
+                Some(state) => state.is_incomplete(),
+                // No fine tag: U9's coarse mirror carries it, which is the
+                // fallback `list` has had since
+                // `a_work_without_its_fine_state_record_still_lists`.
+                None => matches!(
+                    self.store.load_meta(&seal_id)?.state,
+                    WorkState::IncompletePrePay | WorkState::IncompletePostPay
+                ),
+            };
+            if incomplete {
+                out.push((seal_id, fine));
             }
         }
         Ok(out)

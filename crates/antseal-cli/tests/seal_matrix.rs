@@ -354,9 +354,9 @@ fn every_pre_pay_barrier_resumes_to_exactly_one_payment() {
         // Find the work the killed invocation left behind.
         let seal_id = journal_over(&vault, |journal| {
             let mut candidates = journal.incomplete_works().expect("enumerate");
-            candidates.retain(|(_, state)| *state == expected_state);
+            candidates.retain(|(_, state)| *state == Some(expected_state));
             let (seal_id, state) = *candidates.last().expect("a resumable work");
-            assert_eq!(state, expected_state, "{}", barrier.name());
+            assert_eq!(state, Some(expected_state), "{}", barrier.name());
             seal_id
         });
 

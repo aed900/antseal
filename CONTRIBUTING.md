@@ -291,7 +291,21 @@ materialises, and then only for the scheduled slot.
       native verification over every committed golden vector. **Any PR that
       adds a vector or touches a verification path must show this lane
       green**; a byte difference is a format-correctness incident, not a
-      flake ([crates/wasm-bitmatch/README.md](crates/wasm-bitmatch/README.md))
+      flake ([crates/wasm-bitmatch/README.md](crates/wasm-bitmatch/README.md)).
+      **Q128: the local gate now runs this for you** as its `wasm-bitmatch`
+      lane — force it with `ANTSEAL_GATE_BITMATCH=1`, suppress it with `=0`.
+      The trigger is this checkbox's own sentence turned executable: "adds a
+      vector" is `testdata/vectors/`, "touches a verification path" is
+      `crates/antseal-core/`, plus the harness, the lockfile and the wasm32
+      toolchain config. Note it is a **separate** predicate from
+      `wasm32-tests` above and asymmetric to it on purpose — a vectors-only
+      change fires this lane and not that one, because `build.rs` walks
+      `testdata/vectors/` and the PQC suite does not read a vector. The gate
+      runs the lane's injected-divergence `--self-test` first, exactly as CI
+      does, and runs the *trigger's* own guard
+      (`./scripts/wasm-bitmatch.sh --trigger-self-test`, milliseconds)
+      unconditionally — a path list that stopped matching would otherwise
+      render the lane `n/a` for ever and silence its own guard
 - [ ] **Storage-touching change?** (the path list under "Devnet E2E gate")
       Then `./scripts/e2e-devnet.sh` green locally and its evidence line
       recorded. `PENDING` is not a pass

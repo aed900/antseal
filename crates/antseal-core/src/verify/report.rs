@@ -18,6 +18,36 @@
 //! - compact JSON via [`VerificationReport::to_canonical_json`]; binary
 //!   data as lowercase hex; enum wire names kebab-case (spec-aligned).
 //!
+//! **Value-space policy — R-VAL (normative for this module; D105 §6):**
+//! every value report v1 can serialize must be exercised by a committed
+//! assertion that renders it **inside a whole canonical report**, and the
+//! report's enums must be **enumerable**, so that "every value" is a
+//! checkable quantity rather than a hand-maintained list.
+//!
+//! The second half is the enforceable one, and every enum in this module
+//! carries the same triple for it (Q127): a `const ALL`, a wildcard-free
+//! `wire_name()` — so a variant added here is a **compile error**, not a
+//! missing row — and a sweep over `ALL` asserting `serde`'s actual bytes.
+//! The sweeps compare the ordered spelling list against a hand-written
+//! literal, so a lane that grows `ALL` is stopped a second time until the new
+//! value's spelling is written down. The first half is discharged by the
+//! whole-report artifacts: the 21 pinned R9 report vectors and, for values no
+//! bundle produces, D29's fixed-fixture snapshots in `super::tests`
+//! (`EXPECTED_CANONICAL_JSON` and its receipt-bearing twin). Standalone bytes
+//! cannot show a value's key, the sibling ordering rule 1 is about, or an
+//! object sitting where a string sat (D105 §5.3), which is why the rule says
+//! *in composition* rather than *somewhere*.
+//!
+//! The rule exists because the tree's only other instrument here answers the
+//! same way to two different questions: **zero moved pins is a correct
+//! *format* signal and an empty *coverage* signal** (D105 §4.3). A value
+//! nothing renders is byte-indistinguishable from a value addition that is
+//! safe. [`SupportingEvidenceResult::ArbitrumReceipt`] shipped that way
+//! (R12, found by inspection at R69); [`SignatureScheme::Other`] had been
+//! sitting in the same hole since R5 and was found by Q127 — constructed at
+//! one site, rendered by none of the 21 pinned reports and by no assertion in
+//! the tree.
+//!
 //! **Secret-material policy (normative for this module):** no field of
 //! this model may ever carry `W`, unit keys `k_u`, `k_m`, any salt
 //! (`unit_salt`/`path_salt`/`file_salt`), or any GGM seed (`s_root`,
@@ -277,6 +307,47 @@ pub enum SignatureScheme {
     Other,
 }
 
+impl SignatureScheme {
+    /// Every scheme label, in declaration order — which is the wire order of
+    /// the enum's values.
+    ///
+    /// rustc checks this literal against the declared length, so `ALL` can
+    /// never be shorter *than it claims*; no construction on stable can check
+    /// that the claim equals the variant count. Two things do that job
+    /// instead, and both are outside this const: [`Self::wire_name`]'s
+    /// wildcard-free match (a new variant fails to compile) and the hand-
+    /// written spelling list in
+    /// `signature_scheme_wire_names_are_the_serialized_spellings` (a grown
+    /// `ALL` fails the sweep until the new spelling is written down). See the
+    /// module docs, R-VAL.
+    pub const ALL: [Self; 4] = [
+        Self::NotEvaluated,
+        Self::HybridPq,
+        Self::Ed25519Only,
+        Self::Other,
+    ];
+
+    /// This label's serialized spelling — the kebab-case name `serde` emits.
+    ///
+    /// Written as an exhaustive, wildcard-free match so a new label fails
+    /// compilation here rather than reaching a report that nothing renders.
+    /// That is not hypothetical for this enum: [`Self::Other`] has existed
+    /// since R5, is constructed at exactly one site
+    /// (`verify/pipeline.rs`, from `PolicyLabel::Other`), and until Q127 the
+    /// spelling `"other"` appeared in **no** pinned report byte and **no**
+    /// assertion anywhere in the tree — the R69 shape, in a second enum,
+    /// undetected because an unrendered value moves no pin (D105 §4.3).
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::NotEvaluated => "not-evaluated",
+            Self::HybridPq => "hybrid-pq",
+            Self::Ed25519Only => "ed25519-only",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// Evidence-layer outcome (MVP-SPEC.md line 118). A report is only
 /// emitted when the evidence pipeline passed (D27 §4), so `passed` is
 /// `true` in every emitted report — kept explicit so the serialized
@@ -333,6 +404,31 @@ pub enum StorageLinkageResult {
     NotEvaluated,
 }
 
+impl StorageLinkageResult {
+    /// Every storage-linkage value, in declaration order.
+    ///
+    /// One element today, and the degenerate case is the point: R20's
+    /// `evaluated` arm is the next value expected to land in report v1, and
+    /// it lands against scaffolding that already reddens for it rather than
+    /// against nothing. See [`Self::wire_name`] and the module docs, R-VAL.
+    pub const ALL: [Self; 1] = [Self::NotEvaluated];
+
+    /// This value's serialized spelling — the kebab-case name `serde` emits.
+    ///
+    /// Wildcard-free, so R20's arm cannot be added here without also being
+    /// spelled here, and cannot be spelled without
+    /// `storage_linkage_wire_names_are_the_serialized_spellings` demanding the
+    /// spelling be written down (R-VAL). The type doc above already requires
+    /// whatever lands to arrive with an assertion rendering it inside a whole
+    /// canonical report; this is the half a compiler can enforce.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::NotEvaluated => "not-evaluated",
+        }
+    }
+}
+
 /// Which anchoring mechanism produced an anchor artifact
 /// (MVP-SPEC.md lines 106–110). The Arbitrum receipt is deliberately
 /// not representable here — it is not an anchor
@@ -344,6 +440,32 @@ pub enum AnchorKind {
     Ots,
     /// RFC 3161 timestamp token from a TSA.
     Tsa,
+}
+
+impl AnchorKind {
+    /// Every anchor kind, in declaration order.
+    ///
+    /// The receipt is deliberately not here and never will be — it is not an
+    /// anchor (MVP-SPEC.md line 110), and this array is a second place that
+    /// says so. A third kind entering the taxonomy is a spec event, and this
+    /// const plus [`Self::wire_name`] make it a loud one.
+    pub const ALL: [Self; 2] = [Self::Ots, Self::Tsa];
+
+    /// This kind's serialized spelling — the kebab-case name `serde` emits.
+    ///
+    /// The crate already had a wildcard-free match on this enum
+    /// (`AnchorArtifacts::count_for`), but it returns *counts*: it makes a
+    /// third kind a compile error and says nothing about how the third kind
+    /// would be spelled in a report. This accessor is the spelling half, and
+    /// `anchor_kind_wire_names_are_the_serialized_spellings` is the sweep that
+    /// holds it to `serde`'s bytes (R-VAL, D105 §6).
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Ots => "ots",
+            Self::Tsa => "tsa",
+        }
+    }
 }
 
 /// Per-anchor verdict state (MVP-SPEC.md lines 127–135; one authoritative
@@ -541,6 +663,53 @@ pub enum SupportingEvidenceResult {
         /// How many transaction hashes the receipt records.
         transaction_count: u64,
     },
+}
+
+impl SupportingEvidenceResult {
+    /// Every supporting-evidence value, in declaration order.
+    ///
+    /// **`#[cfg(test)]`, and that is a decision rather than an oversight.**
+    /// [`Self::ArbitrumReceipt`] is a struct variant, so an array of *values*
+    /// needs operands, and the tree has exactly one canonical receipt operand
+    /// pair — [`RECEIPT_FIXTURE_BLOCK_NUMBER`] and
+    /// [`RECEIPT_FIXTURE_TRANSACTION_COUNT`], shared precisely so the
+    /// standalone pin and the whole-report snapshot cannot be satisfied
+    /// separately (D105 §5.3). Minting non-test operands so this const could
+    /// be public would create a **second** receipt fixture, which is the
+    /// exact drift that sharing exists to prevent, and would put two
+    /// arbitrary numbers into the crate's public API for no caller: like the
+    /// other `ALL` arrays here, this one's only consumer is its sweep.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 2] = [
+        Self::None,
+        Self::ArbitrumReceipt {
+            block_number: RECEIPT_FIXTURE_BLOCK_NUMBER,
+            transaction_count: RECEIPT_FIXTURE_TRANSACTION_COUNT,
+        },
+    ];
+
+    /// This value's serialized **tag** — kebab-case, as `serde` emits it.
+    ///
+    /// Deliberately not "the value's spelling": a unit variant renders as the
+    /// bare string `"none"`, and the struct variant renders as the externally
+    /// tagged object `{"arbitrum-receipt":{…}}`. The tag is the part common to
+    /// both shapes and the part a value-space sweep can assert, which is why
+    /// `supporting_evidence_wire_names_are_the_serialized_tags` asserts *the
+    /// string or a one-key object keyed by it* rather than one uniform shape
+    /// (Q127: the sweep must be exhaustive, not uniform). The receipt's
+    /// operands are pinned elsewhere — standalone by
+    /// `the_receipt_arm_carries_no_time_and_no_state`, in composition by the
+    /// receipt-bearing snapshot in `super::tests`.
+    ///
+    /// Wildcard-free, so a third value cannot land unnamed here — the R69
+    /// shape this enum is the reason for.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ArbitrumReceipt { .. } => "arbitrum-receipt",
+        }
+    }
 }
 
 /// The one `block_number` every test that renders the receipt arm uses.
@@ -784,6 +953,9 @@ mod tests {
     /// shape the wire registry excludes elsewhere. `AnchorState::ALL` makes
     /// the sweep exhaustive, and the wildcard-free match in `wire_name`
     /// makes a new variant a compile error rather than a missing row.
+    ///
+    /// This was the tree's only enum with that triple until Q127 gave the
+    /// other four the same one; the four sweeps below are its siblings.
     #[test]
     fn wire_name_is_the_serialized_spelling() {
         for state in AnchorState::ALL {
@@ -792,6 +964,143 @@ mod tests {
                 json,
                 format!("\"{}\"", state.wire_name()),
                 "{state:?}: wire_name() disagrees with serde"
+            );
+        }
+    }
+
+    /// One value, one bare string, no second table: `serde`'s **bytes** are
+    /// the authority and `wire_name()` is checked against them.
+    ///
+    /// Deliberately not a parse-and-compare: R-VAL is a statement about what
+    /// the report *emits*, and reading the bytes back with a deserializer
+    /// would assert a round trip instead (no report type derives
+    /// `Deserialize`, and D105 §8 makes deriving one a re-open trigger).
+    fn assert_serializes_as_bare_spelling<T: Serialize + fmt::Debug>(value: &T, wire_name: &str) {
+        let json = serde_json::to_string(value).expect("value serializes");
+        assert_eq!(
+            json,
+            format!("\"{wire_name}\""),
+            "{value:?}: wire_name() disagrees with serde"
+        );
+    }
+
+    /// Every [`SignatureScheme`] value is swept — **and this is the one that
+    /// found something** (Q127).
+    ///
+    /// [`SignatureScheme::Other`] has been constructible since R5 and is
+    /// produced at one pipeline site, yet before this test no committed
+    /// assertion rendered `"other"`: not one of the 21 pinned report vectors
+    /// (20 carry `hybrid-pq`, 1 `ed25519-only`), not the fixed-fixture
+    /// snapshots, not a hand-written row. It moved no pin because a value
+    /// nothing emits moves no pin, and that is indistinguishable from safety
+    /// by pin count alone (D105 §4.3).
+    ///
+    /// The spelling list is compared against a hand-written literal on
+    /// purpose. `ALL` growing by one fails that comparison on **length**
+    /// before any spelling is examined, so the lane that mints the fifth
+    /// scheme has to write its wire name down here — which is the smallest
+    /// committed assertion R-VAL will accept, and strictly more than
+    /// `assert_eq!(ALL.len(), 4)` would say (rustc already knows that).
+    #[test]
+    fn signature_scheme_wire_names_are_the_serialized_spellings() {
+        let spellings: Vec<&str> = SignatureScheme::ALL
+            .iter()
+            .map(|scheme| scheme.wire_name())
+            .collect();
+        assert_eq!(
+            spellings,
+            ["not-evaluated", "hybrid-pq", "ed25519-only", "other"],
+            "the signature-scheme value space moved; a new value must be \
+             written down here and rendered in a whole report (R-VAL)"
+        );
+        for scheme in SignatureScheme::ALL {
+            assert_serializes_as_bare_spelling(&scheme, scheme.wire_name());
+        }
+    }
+
+    /// Every [`StorageLinkageResult`] value is swept.
+    ///
+    /// One value, so the sweep is trivially exhaustive today and that is
+    /// exactly its worth: R20's `evaluated` arm arrives at a slot that
+    /// already has the triple, and the literal below is what will refuse to
+    /// stay green when it does.
+    #[test]
+    fn storage_linkage_wire_names_are_the_serialized_spellings() {
+        let spellings: Vec<&str> = StorageLinkageResult::ALL
+            .iter()
+            .map(|slot| slot.wire_name())
+            .collect();
+        assert_eq!(
+            spellings,
+            ["not-evaluated"],
+            "the storage-linkage value space moved; a new value must be \
+             written down here and rendered in a whole report (R-VAL)"
+        );
+        for slot in StorageLinkageResult::ALL {
+            assert_serializes_as_bare_spelling(&slot, slot.wire_name());
+        }
+    }
+
+    /// Every [`AnchorKind`] value is swept.
+    ///
+    /// Both spellings are already pinned inside whole reports (the vectors
+    /// and the fixed-fixture snapshot render `ots` and `tsa`), so what this
+    /// adds is the *enumerability* half: a third kind is a compile error at
+    /// `AnchorKind::wire_name` and a red list here, rather than a value that
+    /// happens to be covered because some fixture happens to carry it.
+    #[test]
+    fn anchor_kind_wire_names_are_the_serialized_spellings() {
+        let spellings: Vec<&str> = AnchorKind::ALL
+            .iter()
+            .map(|kind| kind.wire_name())
+            .collect();
+        assert_eq!(
+            spellings,
+            ["ots", "tsa"],
+            "the anchor-kind taxonomy moved; a new kind must be written down \
+             here and rendered in a whole report (R-VAL)"
+        );
+        for kind in AnchorKind::ALL {
+            assert_serializes_as_bare_spelling(&kind, kind.wire_name());
+        }
+    }
+
+    /// Every [`SupportingEvidenceResult`] value is swept — and this sweep is
+    /// **exhaustive without being uniform**.
+    ///
+    /// [`SupportingEvidenceResult::None`] renders as the bare string
+    /// `"none"`; [`SupportingEvidenceResult::ArbitrumReceipt`] is a struct
+    /// variant and renders as the externally tagged object
+    /// `{"arbitrum-receipt":{…}}`. A sweep insisting on one shape would have
+    /// to exclude the arm it exists to cover, so the assertion is *the bare
+    /// spelling or a one-key object keyed by the tag* — which still fails on
+    /// a renamed tag, a changed serde representation, or an arm that starts
+    /// rendering as something else entirely.
+    ///
+    /// The receipt's operands are not re-typed here: `ALL` is built from the
+    /// shared fixture consts, so this sweep, the standalone byte pin and the
+    /// whole-report snapshot all move together (D105 §5.3).
+    #[test]
+    fn supporting_evidence_wire_names_are_the_serialized_tags() {
+        let tags: Vec<&str> = SupportingEvidenceResult::ALL
+            .iter()
+            .map(|value| value.wire_name())
+            .collect();
+        assert_eq!(
+            tags,
+            ["none", "arbitrum-receipt"],
+            "the supporting-evidence value space moved; a new value must be \
+             written down here and rendered in a whole report (R-VAL)"
+        );
+        for value in SupportingEvidenceResult::ALL {
+            let json = serde_json::to_string(&value).expect("value serializes");
+            let tag = value.wire_name();
+            let bare = format!("\"{tag}\"");
+            let tagged = format!("{{\"{tag}\":");
+            assert!(
+                json == bare || (json.starts_with(&tagged) && json.ends_with('}')),
+                "{value:?}: serde emits {json}, which is neither the bare \
+                 spelling {bare} nor an object keyed by `{tag}`"
             );
         }
     }

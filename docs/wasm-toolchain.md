@@ -303,8 +303,21 @@ needs.
 cargo build -p antseal-core --target wasm32-unknown-unknown --locked   # wasm32-core
 ./scripts/wasm-tests.sh                                                # wasm32-core-tests
 ./scripts/wasm-tests.sh --self-test                                    #   its planted fault
+./scripts/wasm-bitmatch.sh --self-test                                 #   its planted fault
 ./scripts/wasm-bitmatch.sh                                             # wasm-bitmatch
 ```
+
+Since **Q125** and **Q128**, `scripts/local-gate.sh` runs both execution lanes
+for you when the diff selects them — `wasm32-tests` and `wasm-bitmatch`, each
+with its own `--needs-run` predicate, forced by `ANTSEAL_GATE_WASM=1/0` and
+`ANTSEAL_GATE_BITMATCH=1/0` respectively. The two predicates are **asymmetric
+on purpose**: a change under `testdata/vectors/` selects `wasm-bitmatch` and
+not `wasm32-tests`, because `crates/wasm-bitmatch/build.rs` walks that tree and
+the PQC unit suite reads no vector; a change under `crates/antseal-core/`
+selects both. That is asserted, not just written down —
+`./scripts/wasm-bitmatch.sh --trigger-self-test` reads the other script's
+trigger list and fails if the two stop disagreeing about vectors or stop
+agreeing about `antseal-core`.
 
 `scripts/wasm-tests.sh` is what CI runs, so the lane's shell is executed
 locally before it is pushed (Q43). It wraps the two steps the lane used to

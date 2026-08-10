@@ -68,9 +68,10 @@
 //! machine contract is `ENVELOPE_VERSION`, about the envelope wrapper.
 //! Recorded here so a future reader does not re-derive it.
 //!
-//! ## Three predicates share the word UNANCHORED (D98 rider 3c)
+//! ## Four predicates share the word UNANCHORED (D98 rider 3c)
 //!
-//! They are kept apart in the code and in the rendered words:
+//! Three of them are about a **work in a vault** and are kept apart in the
+//! code and in the rendered words:
 //!
 //! - [`WorkRow::unanchored`] — the `--no-anchor` **flag as the sealer gave
 //!   it**. It describes how the seal was made, and it is what
@@ -85,6 +86,21 @@
 //!   satisfies while `NagState` calls it `OnlyPendingOts` and
 //!   `WorkRow::unanchored` is `false`. `list` does **not** print that
 //!   sentence; `status` (U23) computes it per anchor.
+//!
+//! The fourth is about a **`.sealproof`** and therefore cannot appear on
+//! this surface at all — which is why the Q120 table has three columns and
+//! not four:
+//!
+//! - registry §7.6 key 3's *"both anchor arrays empty"* (sense (d), D98
+//!   rider 3c as extended by **D108 R2**) — a layer-1 CBOR shape fact at
+//!   tier [P]. `list` has no bundle to ask it of. The registry states it in
+//!   frozen bytes that cannot be corrected before the next registry version;
+//!   `docs/format/frozen-registry-errata.md` records its scope.
+//!
+//! **The count in this heading was `three` and was right when written**, on
+//! the same terms as the `NagState` count above: D108 §1.2 found a fourth
+//! sense in frozen normative text. Corrected here rather than in the
+//! decision record, which is immutable.
 //!
 //! ## Why the TSA half is recomputed rather than read
 //!
@@ -277,9 +293,17 @@ pub struct WorkRow {
     /// It is **not** MVP-SPEC.md line 137's UNANCHORED (*zero
     /// headline-eligible anchors*, which is `WorkStatus::is_unanchored`) and
     /// **not** [`NagState::Unanchored`] (*no anchor records at all*). D98
-    /// rider 3c forbids collapsing any two of the three, and
-    /// `status_command.rs` pins a table of works on which they disagree
-    /// (Q120). [`WorkRow::badge`] renders this one, and only this one.
+    /// rider 3c forbids collapsing any two of the four, and
+    /// `status_command.rs` pins a table of works on which those three
+    /// disagree (Q120). [`WorkRow::badge`] renders this one, and only this
+    /// one.
+    ///
+    /// And **not** registry §7.6 key 3's *"both anchor arrays empty"*
+    /// (sense (d), D108 R2): that is a layer-1 fact about the CBOR shape of
+    /// a **`.sealproof`**, and this field is a fact about a **work in a
+    /// vault**, so it can never be the answer here — which is also why the
+    /// Q120 table cannot grow a fourth column. The registry's cell is
+    /// frozen; `docs/format/frozen-registry-errata.md` records its scope.
     pub unanchored: bool,
     /// Sealed with `--force-degraded`.
     pub degraded: bool,
@@ -431,7 +455,7 @@ impl WorkRow {
     /// orthogonal anchor class is folded into the state column.
     ///
     /// Untouched by U25 and deliberately so: this UNANCHORED is the
-    /// `--no-anchor` flag, the first of the three predicates the module
+    /// `--no-anchor` flag, the first of the four predicates the module
     /// docs keep apart. The nag is rendered beside the row, never folded
     /// into this string.
     #[must_use]

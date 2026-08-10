@@ -1446,10 +1446,24 @@ pub struct BundleParts<'b> {
     pub manifest: &'b [u8],
     /// The manifest's own storage triple.
     pub storage_record: StorageRecord,
-    /// OTS anchor artifacts; empty is legal (an UNANCHORED bundle has both
-    /// anchor sections empty).
+    /// OTS anchor artifacts. **Empty is legal**: a bundle with no anchors at
+    /// all is well-formed, not a schema error.
+    ///
+    /// Deliberately **not** spelled "UNANCHORED". That word is MVP-SPEC.md
+    /// line 137's and it means *zero headline-eligible anchors* — a bundle
+    /// carrying one `pending` OTS is UNANCHORED with this array
+    /// **non-empty**. Layer 1 cannot decide it (D78; registry §7.6 is tier
+    /// [P], *"decidable from the one entry being decoded"*), and the registry
+    /// says so itself: *"an under-anchored bundle is a verdict, not a parse
+    /// error"* (§7.9). Four senses of the word share this codebase — D98
+    /// rider 3c, extended by D108.
+    ///
+    /// The registry's own `len/shape` cell for this key **does** spell it
+    /// (registry §7.6 key 3, and again in the mirror's `notes`), and is
+    /// frozen: see `docs/format/frozen-registry-errata.md` for the scope of
+    /// that sentence and D108 §3 for why it is not corrected in place.
     pub ots_anchors: Vec<OtsAnchor>,
-    /// TSA anchor artifacts; empty is legal.
+    /// TSA anchor artifacts; empty is legal, on the same terms.
     pub tsa_anchors: Vec<TsaAnchor>,
     /// The opt-in Arbitrum receipt.
     pub receipt: Option<ReceiptRecord>,

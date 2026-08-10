@@ -1157,6 +1157,20 @@
 - Accept: **DONE 2026-08-07 (U24 lane).** The landed fix keys on the **splice itself** rather than on the artifact's state: `splice_sibling_before` emits `0xff ‖ body` immediately before the attestation, so a repeat is that literal prefix and nothing else. `ots/upgrade.rs::already_merged(stored, target, body)` tests for exactly that, called in `upgrade_one_anchor` between `current_ref` and `merge_upgrade` — checked against `current`, because an earlier merge in the same loop has already moved the offsets — and emits `UpgradeNote::AlreadyMerged`. **A calendar answering with a different body still merges**: the rule refuses repetition, never evidence. Three unit rows over the real `MERGED_A` / `UPGRADE_A_ALICE` / `UPGRADE_A_BOB` fixtures; the characterisation test written at discovery turned green.
 - Notes: the transferable lesson is the one the refuted cut teaches — a de-duplication rule must be keyed on the **operation that would be repeated**, not on the state that operation produces, because the state is reachable by other routes and those routes are the evidence the rule was meant to preserve. U59 records what this fix cannot reach: `already_merged` needs the poll's body, so it stops the growth without stopping the poll.
 
+### A106 — The F4 registry misattributes A48's re-measurement to A25, and the fix landed in one file of two
+- Milestone: M2
+- Size: XS
+- Deps: after A48
+- Discovered by: **the A25 lane** (2026-08-07).
+- Problem: `docs/format/anchor-artifact-limits.md` said the bootstrapped `.ots` rows were **A25's** to re-measure, in two places — `:251` (*"A25 owes that re-measurement"*) and `:258` (*"**A25 must re-measure them against the real fixture and append**"*). The task is **A48**, which was written for exactly that and lists A25 only as a dependency; A25's obligation was the *capture*, discharged 2026-08-03T09:03Z. Separately, five of the six rows at `:221-226` still cited `rust-opentimestamps-LARGE_TEST.ots`, a third-party crate's test constant, in their `measured against` cell — the citation A48 exists to retire. **The A25 lane corrected the attribution in `testdata/anchors/A25-bootstrap/upgraded/PROVENANCE.md` and nowhere else**, because the format document was another lane's file, so a reader arriving at the registry first was misdirected for three days.
+- Do: correct both attributions in `docs/format/anchor-artifact-limits.md`, and re-point the `measured against` cells of the rows that cite the third-party crate. **Five of the six, not all six**: `MAX_OTS_BRANCH_WIDTH` cites `merged-A.ots` and is not in scope. Scoped from `TODO.md`, which names `:251`, `:258` and `:221-226`; two other rows describe A106 differently and neither is authoritative — `tasks/A.md` A109's Notes call it *"the §5a heading capture and the wasm32 asymmetry"* and `tasks/Q.md:1544` calls it *"scoped to two provenance citations"*.
+- Accept:
+  - Neither `:251` nor `:258` attributes the re-measurement to A25, and the correction states that it previously lived in `PROVENANCE.md` alone.
+  - No `measured against` cell cites the third-party crate as a **bootstrap stand-in**; a cell that still cites it says why it is binding on its own merits.
+  - `MAX_OTS_BRANCH_WIDTH`'s provenance is unchanged.
+- **DONE 2026-08-10, executed with A48/A63/A113 in one pass** — the attribution repair is a rewrite of the same paragraph A48's re-measurement rewrites, and splitting them would have produced two lanes editing one paragraph. Both citations corrected and the three-day one-file asymmetry recorded in the document as the reason this was a row. Three rows moved off the crate fixture (ops 100 → **244**, depth 67 → **85**, attestations 4 → **6**); **two did not** — `MAX_OTS_OPERAND_BYTES` and `MAX_OTS_VALUE_BYTES` measure 174 B and 210 B here against antseal's own 89 B and 125 B, so the crate fixture is still the **binding** sample and is kept and demoted per A48's Accept row 3 rather than retired.
+- Notes: the transferable half is the asymmetry, not the misattribution. A correction that lands in one of two places that state the same fact is a correction that has not happened, and it is *invisible* — the corrected file reads as authoritative to anyone who opens it, and nothing in the tree relates the two. **The §5a-heading and wasm32-asymmetry fallout named in A109's Notes is NOT covered here** and remains unowned; it is described as a candidate row by the wave-11 lane.
+
 ### A107 — Decide whether `anchor` vectors carry the recorded capture instant or a normalised one
 - Milestone: M2
 - Size: S
@@ -1237,3 +1251,33 @@
 - Do: cross-check the column the way the value and structural-cost cells are cross-checked, or state in the document that it is unchecked prose. Either is honest; the current state is a number that reads like the others and is not.
 - Accept: a wrong `margin` cell reddens a named test, or the document says the column is not machine-checked and names what is.
 - Notes: this is not hypothetical — **it is precisely how A109 came to reason from a 15.28× figure** derived from a third-party fixture rather than from any antseal artifact. The real margin against the depth-85 spliced artifact is **12.05×**; A48 re-measures with `parse_ots_measured` against A63's artifact, and D104 §4 deliberately wrote **no number into the registry** because a planning round's Python is not the parser the registry's own rule names. *Minted as **A112** by the D104 planner and renumbered here: two concurrent planners claimed A112 the same afternoon for different work — the wave-8 collision repeating exactly as Q85 predicts.*
+
+### A114 — A D102 banner over A27's paragraphs, and the wasm32 asymmetry the registry never states
+- Milestone: M2
+- Size: S
+- Deps: after A106, A48
+- Discovered by: **the A48/A106 lane** (2026-08-10), handed on from `tasks/A.md`'s A109 Notes.
+- Problem: two separate defects, both fallout from A109 and both explicitly out of A106's scope. **(a)** `docs/format/anchor-artifact-limits.md`'s `### 5a.` heading carries *"Added 2026-08-07 by D102"* and was inserted **above** two paragraphs that `git log -S` dates to **A27's commit `1620543`, 2026-07-28** — four independent probes return that one commit. So a reader attributes A27's Update rule to D102, and that misattribution is not idle: it is what let A109 read a registry-*keeping* procedure as a *permission* rule. **(b)** `crates/antseal-core/src/anchor/ots/limits.rs:155-157` records that `Frame` is **40 B natively and 24 B on wasm32**, so the browser tab is the **cheapest** venue for the work stack, not the constrained one. That fact lives in code and appears **nowhere in the registry** — and A109's argument invoked the browser as its constrained venue, i.e. it was inverted on exactly this point.
+- Do: move or re-word the §5a banner so authorship follows `git log -S` rather than adjacency, and state the wasm32 size asymmetry in the registry where the structural-cost column is defined, since that column's numbers are target-dependent and only one target is written down.
+- Accept: the §5a heading attributes A27's text to A27; the registry states the native/wasm32 `Frame` asymmetry and names the cheaper venue; and a reader cannot derive A109's inverted premise from the document.
+- Notes: this is the residue of a lane that was already corrected twice. A106 was scoped by `TODO.md` to two provenance citations and says so in its own entry; `tasks/Q.md:1544` says A106 is *"not"* this; `tasks/A.md:1191` hands it here. Three descriptions, one owner, and this row exists so the fourth reader does not have to re-derive which is authoritative.
+
+### A115 — The calendar-response margin is scaled against the submit reply, not the binding upgrade reply
+- Milestone: M2
+- Size: XS
+- Deps: after A113, A42 (D54 §6.1)
+- Discovered by: **the A113 lane** (2026-08-10), while cross-checking the margin column.
+- Problem: `MAX_OTS_CALENDAR_RESPONSE_BYTES`' §5 margin is computed against the largest **submit** response, 220 B, giving 297.89x. The **binding** real reply is the **upgrade**, measured at **1 105 B** — margin **59.31x**, a fivefold reduction — and it has been pinned as `antseal_anchor::ots::MEASURED_MAX_UPGRADE_RESPONSE_BYTES` and asserted per file since 2026-08-03. The registry cell nevertheless claimed the upgrade *"has not been measured"* for seven days after it had been.
+- Do: decide which reply this limit is scaled against, and make the cell say so. If the upgrade reply is binding — and the evidence is that it is — re-key the margin to 59.31x and state that the submit figure is the lesser of two measured shapes.
+- Accept: the margin cell names which reply class it divides by, and the number matches a measurement pinned by a named test; no cell claims a measurement that exists is absent.
+- Notes: A113 corrected the falsehood and the arithmetic and recorded the 59.31x **in the cell**, but deliberately did **not** re-key the column, because which reply a limit is scaled against is a substantive ruling about A42's limit that D54 §6.1 assigned, and a fivefold margin reduction is not a drive-by edit. The correct fix may also be that both are recorded — a limit with two measured reply classes arguably owes both numbers.
+
+### A116 — An unused import warns on every wasm32 lane run
+- Milestone: M2
+- Size: XS
+- Deps: after P14
+- Discovered by: **the A48 lane** (2026-08-10).
+- Problem: `crates/antseal-core/src/anchor/ots/mod.rs:70` imports `error::all_code_exemplars`, whose consumers are `test-util`-gated and therefore native-only. On `wasm32-unknown-unknown` the import is unused, so the `wasm32-core-tests` lane emits a warning on every run.
+- Do: narrow the `#[cfg]` so the import follows its consumers.
+- Accept: the wasm32 lib-test build is warning-free.
+- Notes: pre-existing and cosmetic, and recorded only because of where it lives. This is a lane whose entire value is that a human reads its output closely — the wasm32/native bit-match is a format-correctness instrument — and a standing warning is exactly the kind of noise that trains a reader to skim. Cheap to close; it is filed rather than fixed in-lane because it was found outside the fixing lane's file scope.

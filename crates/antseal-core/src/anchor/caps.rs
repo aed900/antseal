@@ -125,6 +125,39 @@ pub const CHAIN_PATH_NODE_BYTES: usize = core::mem::size_of::<super::chain::Node
 pub const MAX_PATH_NODES: usize =
     MAX_CHAIN_CERTS + crate::codec::caps::MAX_INTERMEDIATE_COUNT as usize + 1;
 
+/// The certificate bag's share of rule 6's cost: `tsa::chain_certificates`'
+/// two vectors.
+///
+/// **Split out of [`TSA_STRUCTURAL_ALLOC_BYTES`] by A110**, which needed a
+/// number to put in [`MAX_CHAIN_CERTS`]' F4 registry row. The sum answers
+/// *"what does this parse reserve?"*; a registry row has to answer *"what
+/// does **this limit** cost?"*, and those are different questions — the sum
+/// includes bytes the frozen `MAX_INTERMEDIATE_COUNT` owns and no raise of
+/// `MAX_CHAIN_CERTS` can move.
+///
+/// **4 288 B** on x86-64, **3 200 B** on `wasm32-unknown-unknown`.
+pub const TSA_STRUCTURAL_CERT_BAG_BYTES: usize =
+    MAX_CHAIN_CERTS * (CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES);
+
+/// The path search's share: `chain::PathBuilder::new`'s `nodes`.
+///
+/// **A ceiling, not a reservation**, and the registry row says so.
+/// `PathBuilder::new` reserves `Vec::with_capacity(supplied.len() + 1)`, so
+/// this is reached only when a token and a bundle between them supply the
+/// full [`MAX_PATH_NODES`] candidates — where the `.ots` parser's `walk.rest`
+/// reserves its bound on any input deep enough to need it. That asymmetry is
+/// worth carrying, because the `.ots` registry cells describe a reservation
+/// that always happens and these do not.
+///
+/// **Only [`MAX_CHAIN_CERTS`]' share of this is an F4 cost.** Of the 3 200 B
+/// on x86-64, `MAX_CHAIN_CERTS` owns `8 x 128` = 1 024 B, the signer owns
+/// 128 B, and 2 048 B belongs to `MAX_INTERMEDIATE_COUNT` — a **frozen** D10
+/// row that F4 cannot raise. Charging the whole figure to `MAX_CHAIN_CERTS`,
+/// which is what [`MAX_PATH_NODES`]' definition invites, misattributes
+/// 2 176 B; the number a raise argument needs is the marginal one, **664 B**
+/// per additional certificate.
+pub const TSA_STRUCTURAL_PATH_NODE_BYTES: usize = MAX_PATH_NODES * CHAIN_PATH_NODE_BYTES;
+
 /// Rule 6's **structural allocation cost** for the RFC 3161 / CMS / X.509
 /// path: every count-bounded container live in one `verify_token`.
 ///
@@ -147,9 +180,8 @@ pub const MAX_PATH_NODES: usize =
 /// [`tests::the_der_structural_cost_is_the_one_measured_today`] pins this
 /// constant at equality, so *adding* a container under that limit reddens a
 /// test on the day it is added, which is the day it matters.
-pub const TSA_STRUCTURAL_ALLOC_BYTES: usize = MAX_CHAIN_CERTS
-    * (CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES)
-    + MAX_PATH_NODES * CHAIN_PATH_NODE_BYTES;
+pub const TSA_STRUCTURAL_ALLOC_BYTES: usize =
+    TSA_STRUCTURAL_CERT_BAG_BYTES + TSA_STRUCTURAL_PATH_NODE_BYTES;
 
 /// **Rule 6 clause (c)** for the DER path, against
 /// [`crate::codec::caps::MAX_TSA_TOKEN_BYTES`] (D10 row 17, also 1 MiB).
@@ -190,6 +222,27 @@ pub fn tsa_structural_alloc_bytes(input_len: usize) -> usize {
 // the pinned roots, which are compiled in and reviewed at A7/A26.
 const _: () = assert!(MAX_CHAIN_CERT_BYTES as u64 <= crate::codec::caps::MAX_CERT_BYTES);
 
+/// Every (b)-class limit this module **declares**, paired with the name its
+/// F4 registry row carries.
+///
+/// One list, so the registry cross-check and the "is every declared limit
+/// classified?" scan cannot go stale by omission when a fourth is added —
+/// the same shape, and for the same reason, as `anchor::ots::limits::ALL`.
+///
+/// **The fourth A5 limit is deliberately absent**: max DER nesting depth is
+/// consumed from `der` and declared nowhere here (see the module docs), so it
+/// has a row and a behavioural pin rather than a constant, and
+/// [`tests::the_der_limits_match_the_f4_registry`] checks it separately.
+///
+/// Test-only: the limits are consumed by name at their use sites, and a table
+/// of them has no runtime purpose.
+#[cfg(test)]
+const ALL: &[(&str, u64)] = &[
+    ("MAX_CHAIN_CERTS", MAX_CHAIN_CERTS as u64),
+    ("MAX_CHAIN_CERT_BYTES", MAX_CHAIN_CERT_BYTES as u64),
+    ("MAX_SIGNED_ATTRS", MAX_SIGNED_ATTRS as u64),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +255,244 @@ mod tests {
         assert_eq!(MAX_CHAIN_CERTS, 8, "D60 §6 b2 / F4 registry row");
         assert_eq!(MAX_CHAIN_CERT_BYTES, 16_384, "D60 §6 b3 / F4 registry row");
         assert_eq!(MAX_SIGNED_ATTRS, 16, "D60 §6 b4 / F4 registry row");
+    }
+
+    /// **A110: the DER half of the F4 registry, cross-checked like the `.ots`
+    /// half has been since A11.**
+    ///
+    /// The `.ots` rows have been pinned to their constants since D58 §11, by
+    /// `anchor::ots::limits::tests::ots_limits_match_the_f4_registry`. The
+    /// DER rows had no rows to pin, and the reason three separate instruments
+    /// missed that is A21's shape exactly: the `traceability` job never reads
+    /// this file; the `.ots` cross-check builds its needle with the owner cell
+    /// hardcoded to `A11`, which no A5 row could ever match; and
+    /// [`f4_registry_values`] compares these constants against literals **in
+    /// this same file** while their doc comments claim the registry records
+    /// them. Three checkers, none able to see the thing they were collectively
+    /// cited for.
+    ///
+    /// `include_str!` rather than `fs::read_to_string`, for A43's reason and
+    /// with an edge this file has already been bitten by: the
+    /// `wasm32-core-tests` lane has no filesystem, **and a change to this file
+    /// is exactly what selects that lane** (Q125 pinned the trigger's positive
+    /// self-test arm to this path by name). The byte-count needles are
+    /// therefore gated on 64-bit, because the registry records the x86-64
+    /// measurement it says it records; the **derivations** are checked
+    /// everywhere, because that is the part that must not drift.
+    #[test]
+    fn the_der_limits_match_the_f4_registry() {
+        const REGISTRY: &str = include_str!("../../../../docs/format/anchor-artifact-limits.md");
+
+        for (name, value) in ALL {
+            let needle = format!("| `{name}` | A5 | {} |", format_underscored(*value));
+            assert!(
+                REGISTRY.contains(&needle),
+                "docs/format/anchor-artifact-limits.md §5 has no A5 row reading {needle:?} — \
+                 the constant and its F4 registry row have drifted, which is what A110 \
+                 found was impossible to notice while the rows did not exist"
+            );
+        }
+        assert_eq!(
+            ALL.len(),
+            3,
+            "D60 §6 declares three constants here; its fourth (b)-class limit, max DER \
+             nesting depth, is consumed from `der` and has no constant. Update deliberately"
+        );
+
+        // The fourth row, and the ruling A110 had to take to write it.
+        //
+        // **It is pinned behaviourally, not to a mirror constant.** A
+        // `#[cfg(test)]` mirror of 63 was the alternative, and it is worse:
+        // `der`'s `MAX_DEPTH` is private, so a mirror could only ever be
+        // *hand-transcribed* — clause (a)'s "a number typed by hand is a
+        // number that survives a raise" — and the thing keeping it honest
+        // would still be the behavioural test below. That buys two
+        // transcriptions where one will do, and pins the registry row to the
+        // copy rather than to the behaviour. So `63` is spelled **once in
+        // this crate**, here, and tied to both artifacts that must agree with
+        // it: the registry row, and the guard whose name carries the number.
+        //
+        // What makes it fail: a `der` bump that moves the limit reddens
+        // `der_pin_eval.rs` first, on the behaviour; renaming or deleting
+        // that test — the only way to make it green again — reddens this.
+        const DER_PIN: &str = include_str!("../../tests/der_pin_eval.rs");
+        const DER_NESTING_DEPTH: u32 = 63;
+
+        assert!(
+            REGISTRY.contains(&format!(
+                "| `MAX_DER_NESTING_DEPTH` | A5 | {DER_NESTING_DEPTH} |"
+            )),
+            "§5 has no A5 row for the max DER nesting depth at {DER_NESTING_DEPTH} — it is \
+             the one F4 limit antseal does not declare (module docs above; D60 §6 b1), so \
+             the row is the only place its value is recorded at all"
+        );
+        assert!(
+            DER_PIN.contains(&format!(
+                "fn der_nesting_depth_limit_is_{DER_NESTING_DEPTH}"
+            )),
+            "the F4 raise-only guard for the DER depth limit is gone or renamed. That row \
+             is pinned behaviourally rather than to a constant, so this test IS the pin — \
+             if `der` moved the limit, re-measure and move the registry row with it"
+        );
+        assert!(
+            REGISTRY.contains("der_nesting_depth_limit_is_63"),
+            "the DER depth row no longer names the behavioural guard it is pinned by — a \
+             reader has no other way to learn that this row's value is not a constant"
+        );
+    }
+
+    /// **A110's Accept, third clause: a limit declared without a row reddens
+    /// something.**
+    ///
+    /// [`ALL`] and the registry cross-check above are only as complete as
+    /// `ALL` is, and a list a lane forgets to extend is the omission that put
+    /// the DER half outside the registry for two waves. So the module's own
+    /// source is scanned: every `pub const MAX_*` it declares is either an F4
+    /// limit with a row, or is classified here as not being one, with its
+    /// reason. A fourth declaration is red until a lane says which it is.
+    #[test]
+    fn every_max_constant_declared_here_is_classified() {
+        /// `pub const MAX_*` names in this module that are **not** F4 limits,
+        /// each with the reason, because an exemption without one is how a
+        /// list stops meaning anything.
+        const NOT_F4_LIMITS: &[(&str, &str)] = &[(
+            "MAX_PATH_NODES",
+            "derived from MAX_CHAIN_CERTS and the frozen MAX_INTERMEDIATE_COUNT — it \
+             sizes a container, it is not a limit on a foreign artifact's structure, \
+             and nothing rejects an artifact for exceeding it",
+        )];
+
+        const THIS_FILE: &str = include_str!("caps.rs");
+        // The library region only: `ALL` and this test both spell these names.
+        let library_region = THIS_FILE.split("#[cfg(test)]").next().unwrap_or("");
+
+        let mut declared = 0_usize;
+        for line in library_region.lines() {
+            let Some(rest) = line.strip_prefix("pub const MAX_") else {
+                continue;
+            };
+            let Some((name, _)) = rest.split_once(':') else {
+                continue;
+            };
+            let name = format!("MAX_{name}");
+            declared += 1;
+            let has_row = ALL.iter().any(|(n, _)| *n == name);
+            let exempt = NOT_F4_LIMITS.iter().any(|(n, _)| *n == name);
+            assert!(
+                has_row ^ exempt,
+                "`{name}` is declared in anchor/caps.rs and is neither in `ALL` — whose \
+                 every entry is cross-checked against a §5 F4 registry row — nor listed \
+                 in this test's `NOT_F4_LIMITS` with a reason. A11's half of the registry \
+                 went two waves without rows because nothing could see this; classify it"
+            );
+        }
+        assert_eq!(
+            declared,
+            ALL.len() + NOT_F4_LIMITS.len(),
+            "the scan found {declared} `pub const MAX_*` declarations against {} classified \
+             — if it found none, the scan itself has broken and this test is measuring \
+             nothing, which is the failure mode it exists to prevent",
+            ALL.len() + NOT_F4_LIMITS.len()
+        );
+    }
+
+    /// **A110: the `structural cost` cells of the DER rows, derived and
+    /// asserted rather than typed** (D102 rule 6 clause (a)).
+    ///
+    /// The `.ots` twin is
+    /// `anchor::ots::limits::tests::the_structural_cost_column_states_the_derivation_and_its_value`,
+    /// and it does **not** parse the table — it is two `contains` loops over a
+    /// closed list. This is the same instrument for the DER half, and it has
+    /// one thing to say that the `.ots` side does not: the DER containers
+    /// reserve with `Vec::with_capacity` **after** the count check and never
+    /// regrow, so the cells read plain `limit x size_of::<T>()` and **must
+    /// not** copy the `.ots` rows' `next_pow2(limit) x size_of::<T>()` shape.
+    #[test]
+    fn the_der_structural_cost_column_states_the_derivation_and_its_value() {
+        const REGISTRY: &str = include_str!("../../../../docs/format/anchor-artifact-limits.md");
+
+        // Everywhere: the derivations. No pointer width in any of them, so a
+        // cell that drifts from the code is red on `wasm32` too.
+        for formula in [
+            format!("`{MAX_CHAIN_CERTS} x (size_of::<Certificate>() + size_of::<Vec<u8>>())`"),
+            format!("`{MAX_PATH_NODES} x size_of::<Node>()`"),
+            format!("`{MAX_CHAIN_CERTS} x size_of::<Node>()`"),
+            format!("`{MAX_CHAIN_CERTS} x size_of::<Certificate>()`"),
+        ] {
+            assert!(
+                REGISTRY.contains(&formula),
+                "the F4 registry no longer states {formula} — clause (a) says the cost is \
+                 derived, and the row must say from what"
+            );
+        }
+        // …and not the `.ots` shape, which would be wrong here: these
+        // containers are reserved once at their exact count.
+        assert!(
+            !REGISTRY.contains("next_pow2(8)") && !REGISTRY.contains("next_pow2(25)"),
+            "a DER row has copied the `.ots` rows' next_pow2 shape. `chain_certificates` \
+             and `PathBuilder::new` reserve after the count check and never regrow, so \
+             rounding up to a power of two overstates every one of these numbers"
+        );
+
+        // 64-bit only: the measured layout the registry says it records.
+        if core::mem::size_of::<usize>() == 8 {
+            for (what, bytes) in [
+                ("the certificate bag", TSA_STRUCTURAL_CERT_BAG_BYTES),
+                ("the path-node ceiling", TSA_STRUCTURAL_PATH_NODE_BYTES),
+                ("the whole DER path", TSA_STRUCTURAL_ALLOC_BYTES),
+                (
+                    "MAX_CHAIN_CERTS' share of the path nodes",
+                    MAX_CHAIN_CERTS * CHAIN_PATH_NODE_BYTES,
+                ),
+                (
+                    "MAX_INTERMEDIATE_COUNT's share, which F4 cannot raise",
+                    crate::codec::caps::MAX_INTERMEDIATE_COUNT as usize * CHAIN_PATH_NODE_BYTES,
+                ),
+                (
+                    "the marginal cost of one more certificate",
+                    CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES + CHAIN_PATH_NODE_BYTES,
+                ),
+                (
+                    "the tie with the fuzz guard's slack",
+                    MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES,
+                ),
+            ] {
+                let needle = format!("**{}**", format_spaced(bytes));
+                assert!(
+                    REGISTRY.contains(&needle),
+                    "the F4 registry has no cell reading {needle:?} for {what} — the \
+                     derived cost and its registry row have drifted, which is the one \
+                     thing D102's column exists to make impossible"
+                );
+            }
+        }
+    }
+
+    /// D58 renders registry values with `_` group separators, and the DER rows
+    /// follow the document's convention rather than D60's draft block, which
+    /// wrote `16384`. Duplicated from `anchor::ots::limits::tests` rather than
+    /// shared: `ots::limits` is a private module of `ots`, so nothing outside
+    /// it can name its test helpers, and widening a module's visibility to
+    /// share eight lines of formatting is the worse trade.
+    fn format_underscored(value: u64) -> String {
+        group(&value.to_string(), '_')
+    }
+
+    /// The registry renders byte counts with a space thousands separator
+    /// (`4 288 B`), which is the document's convention and not this module's.
+    fn format_spaced(value: usize) -> String {
+        format!("{} B", group(&value.to_string(), ' '))
+    }
+
+    fn group(digits: &str, sep: char) -> String {
+        let mut out = String::new();
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(sep);
+            }
+            out.push(ch);
+        }
+        out
     }
 
     /// The D10 constants A5 consumes by name are unchanged by this module —

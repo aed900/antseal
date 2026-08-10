@@ -566,9 +566,9 @@ fn a_kill_after_staging_leaves_a_resumable_work() {
         let (seal_id, state) = incomplete
             .iter()
             .copied()
-            .find(|(_, state)| *state == SealState::Staged)
+            .find(|(_, state)| *state == Some(SealState::Staged))
             .expect("the killed work is a resume candidate");
-        assert_eq!(state, SealState::Staged);
+        assert_eq!(state, Some(SealState::Staged));
         let plan = journal.plan(&seal_id).expect("read").expect("planned");
         assert_eq!(plan.unit_count, 4);
         assert!(plan.manifest_bytes.is_some());

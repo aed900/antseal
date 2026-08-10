@@ -418,7 +418,7 @@ different meanings and rendering them identically is how an UNANCHORED work come
 to look merely pending"* — and it applies to the JSON exactly as it applies to the
 text.
 
-3c. **Three predicates currently share the word UNANCHORED and must not be
+3c. **Four predicates currently share the word UNANCHORED and must not be
 collapsed.** `WorkRow.unanchored` is the `--no-anchor` shaping flag
 (`store.rs:205`). `NagState::Unanchored` is *"no anchors at all"*. MVP-SPEC.md
 line 137's UNANCHORED is *"zero headline-eligible anchors"* — which a
@@ -428,6 +428,34 @@ badge (it describes how the seal was made); **`status` must never print the
 spec's UNANCHORED sentence off `WorkRow.unanchored`** — it must compute it from
 headline eligibility, which `AnchorVerdict::is_headline_eligible()` gives it per
 anchor.
+
+**Extended from three to four by D108 R2** (Q129, 2026-08-09), which found the
+fourth in frozen normative text. The *layer / subject* column is what makes the
+fourth legible rather than merely listed: the first three are about a **work**
+or a **verdict**, the fourth is about the **bytes of a `.sealproof`**.
+
+| # | predicate | layer / subject | authority |
+| --- | --- | --- | --- |
+| (a) | the `--no-anchor` shaping flag | a **vault work**, at seal time | `listing.rs` (`WorkRow::unanchored`) |
+| (b) | no anchor records at all | a **vault work**, now | `ots/engine.rs` (`NagState::Unanchored`) |
+| (c) | zero **headline-eligible** anchors | a **verdict** over a bundle or a work | `MVP-SPEC.md:137`; `verify/aggregate.rs` (`AnchorAggregate::is_unanchored`); `status.rs` (`WorkStatus::is_unanchored`) |
+| (d) | both anchor arrays empty | the **CBOR shape** of a `.sealproof`, tier [P] | `registry-v1.md:664` (**frozen**); `registry-v1.json:356` (**frozen**); `bundle/schema.rs` (`BundleParts::ots_anchors`) |
+
+*(d) is not a competing definition; it is a true layer-1 shape fact that
+borrowed the word. Its two normative sites are frozen and cannot be corrected
+before the next registry version — D108 §3 rules the in-place edit refused,
+`docs/format/frozen-registry-errata.md` records both sentences with their scope,
+and D108 §8 records the maintainer's alternative and its price. (c) and (d) are
+the pair most likely to collapse, because both are about a bundle;
+`anchor/verdicts/tests.rs`'s `a_lone_proven_ots_establishes_one_identity` is the
+row that goes red if they do — it builds a bundle with a **non-empty**
+`ots_anchors` holding one `pending` OTS and asserts `is_unanchored()`.*
+
+**This rider is not renumbered**: it stays 3c with four rows, so every existing
+citation of "D98 rider 3c" — `listing.rs`, `engine.rs`, `status.rs`,
+`status_command.rs`, Q120, Q129 — keeps resolving. The Q120 cross-surface table
+stays at **three** columns and must not be extended to a fourth: its vehicle is
+a vault of works, and (d) is a property of a `.sealproof`.
 
 3d. U50 inherits 3a–3c as recorded fact rather than as a surprise.
 

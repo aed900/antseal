@@ -946,10 +946,20 @@ pub trait SealJournal {
     /// candidate set (D45), enumerable without decrypting a single staged
     /// blob body. Rendering is U's (`list`).
     ///
+    /// The fine [`SealState`] is `None` when the journal state record is
+    /// **absent**, which is a state and not a failure ([`recorded_state`],
+    /// U19 note 2): a `vault import`ed work carries no journal entries at
+    /// all, and [`Self::begin`] is two writes, so a work is briefly meta'd
+    /// but not yet state-tagged. Membership of the set is then decided by
+    /// U9's coarse [`crate::vault::store::WorkState`] mirror — the same
+    /// fallback `list` has had since
+    /// `a_work_without_its_fine_state_record_still_lists` (D106 R4).
+    ///
     /// # Errors
     ///
-    /// Store-level failures.
-    fn incomplete_works(&self) -> Result<Vec<(SealId, SealState)>, JournalError>;
+    /// Store-level failures, and a state record that is present but
+    /// unreadable.
+    fn incomplete_works(&self) -> Result<Vec<(SealId, Option<SealState>)>, JournalError>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

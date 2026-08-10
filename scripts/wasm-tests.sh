@@ -35,6 +35,10 @@ set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo" || exit 1
 
+# The diff computation, shared with `wasm-bitmatch.sh --needs-run` since Q128.
+# shellcheck source=lib/gate-trigger.sh
+. "$repo/scripts/lib/gate-trigger.sh"
+
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::wasm-tests: %s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -72,13 +76,19 @@ cmd_check() {
 # compilation, so no warm target dir and no `rust-cache` will shrink it, which
 # is exactly why this is a trigger and not a `run` line.
 #
-# Same SHAPE as `gate-features.sh
-# --needs-heavy`: same `ANTSEAL_GATE_BASE` override, same committed-since-base
-# PLUS uncommitted change-set, same 0/1/2 contract. Deliberately a second
-# copy rather than a shared helper — this list answers "can wasm32 behaviour
-# move?", which is a different question from "did the storage path change?",
-# and the two lists share no entries but `Cargo.toml`/`Cargo.lock`. If a
-# third trigger appears, factor the diff computation out then, not now.
+# Same SHAPE as `gate-features.sh --needs-heavy`: same `ANTSEAL_GATE_BASE`
+# override, same committed-since-base PLUS uncommitted change-set, same 0/1/2
+# contract. This was written as a deliberate second copy, with the condition
+# for stopping written down: "if a third trigger appears, factor the diff
+# computation out then, not now."
+#
+# Q128 IS THAT THIRD TRIGGER (`wasm-bitmatch.sh --needs-run`), and the diff
+# computation now lives in `scripts/lib/gate-trigger.sh`. What did NOT move is
+# the LIST: it still answers "can wasm32 behaviour move?", which is a
+# different question from "did the storage path change?" and from "can the
+# native<->wasm32 comparison move?", and it is still the part `--self-test`
+# plants change-sets against. `scripts/gate-features.sh` remains a third copy
+# of the computation — see the note in the helper.
 #
 # Why each entry:
 #   crates/antseal-core/        the crate whose --lib tests this lane runs
@@ -92,10 +102,20 @@ cmd_check() {
 #                                     lane must survive
 #   scripts/wasm-toolchain-audit.sh   step 2 of cmd_check
 #
-# NOT here: `crates/wasm-bitmatch/`. `wasm-bitmatch` is the OTHER wasm32
-# execution lane and it is still absent from the local gate — see the Q125
-# note in local-gate.sh's header. Its manifest already selects this lane via
-# `Cargo.toml`, which is all `wasm-toolchain-audit.sh` reads of it.
+# NOT here, and NOT an oversight: `crates/wasm-bitmatch/` and
+# `testdata/vectors/`. `wasm-bitmatch` is the OTHER wasm32 execution lane and
+# since Q128 it is in the local gate with its OWN predicate
+# (`wasm-bitmatch.sh --needs-run`), because its trigger is the opposite of
+# this one's: its `build.rs` walks `testdata/vectors/`, so a vectors-only
+# change is its mandatory case and precisely the case this list must not
+# match — matching it would fire this 2 min 10 s PQC suite on every vector
+# edit, for a lane that reads no vector. That asymmetry is ASSERTED, not
+# merely described: `wasm-bitmatch.sh --trigger-self-test` arm 4 reads this
+# very list out of this file and fails if the two predicates stop disagreeing
+# about vectors or stop agreeing about `crates/antseal-core/`. Adding
+# `testdata/vectors/` here will turn that arm red, and that is the point.
+# The harness's manifest already selects this lane via `Cargo.toml`, which is
+# all `wasm-toolchain-audit.sh` reads of it.
 WASM_TRIGGER_PATHS='crates/antseal-core/
 Cargo.toml
 Cargo.lock
@@ -110,25 +130,11 @@ scripts/wasm-toolchain-audit.sh'
 # a positive and a negative arm. Reads changed paths on stdin, prints the ones
 # that select the lane.
 wasm_hits() {
-  grep -F -f <(printf '%s\n' "$WASM_TRIGGER_PATHS") || true
+  gate_trigger_hits "$WASM_TRIGGER_PATHS"
 }
 
 cmd_needs_run() {
-  local base="${ANTSEAL_GATE_BASE:-main}" changed hits
-  if ! git rev-parse --verify --quiet "$base" >/dev/null; then
-    printf 'cannot decide: no `%s` ref to diff against (set ANTSEAL_GATE_BASE, or ANTSEAL_GATE_WASM=1/0 to force)\n' "$base"
-    return 2
-  fi
-  # Committed-since-base AND uncommitted: the gate runs before a merge, and a
-  # dirty tree is the normal state when it does.
-  changed="$( { git diff --name-only "$base"...HEAD; git status --porcelain | cut -c4-; } | sort -u )"
-  hits="$(printf '%s\n' "$changed" | wasm_hits)"
-  if [ -n "$hits" ]; then
-    printf 'wasm32-relevant: %s\n' "$(printf '%s' "$hits" | tr '\n' ' ')"
-    return 0
-  fi
-  printf 'no wasm32-relevant path changed vs %s\n' "$base"
-  return 1
+  gate_needs_run "$WASM_TRIGGER_PATHS" wasm32-relevant ANTSEAL_GATE_WASM
 }
 
 # Q125's arms: the TRIGGER, both directions, over planted change-sets (no git

@@ -477,6 +477,55 @@ fn a_work_without_its_fine_state_record_still_lists() {
     assert_eq!(row.state_name(), "complete");
 }
 
+/// **D106**: a second antseal is inside `begin()` — its work directory
+/// exists, its `meta` record has not landed yet — and `antseal list` still
+/// renders this vault.
+///
+/// Before D106 it did not: `list_works` enumerated the bare directory,
+/// `load_meta` refused it, and `gather` returned `CliError::Usage` *"no work
+/// with this id exists in the vault (see `antseal list`)"* — the whole vault
+/// refused at exit 2, with `--json` emitting an error envelope carrying no
+/// `works` array at all, and `list` telling the user to run `list`. Since
+/// nothing sweeps the directory, one killed `seal` made the vault
+/// permanently unlistable.
+///
+/// The state is **constructed on disk**, not raced for: `list` is
+/// deliberately lock-free (`commands.rs:316-323`), so this is exactly the
+/// shape a concurrent `begin` presents, and constructing it is the only way
+/// to assert on it deterministically.
+#[test]
+fn a_work_being_created_right_now_does_not_break_the_listing() {
+    let vault = fixture_vault();
+    let unlocked = vault.unlock();
+
+    // All-zero, so it sorts first under `list_works`' ascending seal-id
+    // order: whatever the fix is, it is met before any fixture work.
+    let planted_name = "0".repeat(32);
+    std::fs::create_dir_all(unlocked.layout().works_dir().join(&planted_name))
+        .expect("plant a mid-`begin` work directory");
+
+    let listing = WorkListing::gather(&WorkStore::new(&unlocked)).expect("gather");
+    assert_eq!(listing.works.len(), 5, "every fixture work still lists");
+    assert!(
+        !listing
+            .works
+            .iter()
+            .any(|row| *row.seal_id.as_bytes() == [0u8; 16]),
+        "and the directory that is not yet a work is not a row"
+    );
+
+    // Neither surface mentions it — a work under construction is rendered
+    // as nothing, not as a row with no work id, title, state or date
+    // (D106 R1.4: every column would have to be invented).
+    let rendered = listing.render().join("\n");
+    assert!(!rendered.contains(&planted_name), "{rendered}");
+    assert!(
+        !listing.json().to_string().contains(&planted_name),
+        "the --json document names it nowhere"
+    );
+    assert_eq!(listing.json()["counts"]["total"], serde_json::json!(5));
+}
+
 /// An empty vault says so, rather than printing nothing at all.
 #[test]
 fn an_empty_vault_renders_a_sentence_not_a_blank() {

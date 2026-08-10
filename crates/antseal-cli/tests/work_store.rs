@@ -636,6 +636,163 @@ fn alien_entries_in_the_works_dir_are_loud() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// D106: what enumeration does with a work that is being created
+//
+// These rows **plant** entries in `works_dir`, so each owns a private
+// vault for the reason `alien_entries_in_the_works_dir_are_loud` gives
+// four rows up: a store-wide plant in the shared vault would race the
+// parallel tests' enumerations.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Removes its vault root when the test ends, however it ends.
+struct PrivateVault(PathBuf);
+
+impl Drop for PrivateVault {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A fresh vault nobody else can see, with the handle its creation
+/// already unlocked (a second `unlock_vault` would pay Argon2id twice).
+fn private_vault(tag: &str) -> (PrivateVault, UnlockedVault) {
+    let root = std::env::temp_dir().join(format!(
+        "antseal-cli-store-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mk root");
+    let layout = VaultLayout::at(root.join("vault"));
+    let unlocked = create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng())
+        .expect("create private vault");
+    (PrivateVault(root), unlocked)
+}
+
+/// The all-zero seal id, whose 32-hex name sorts **first** under
+/// `list_works`' ascending byte order — so a planted directory is always
+/// scanned before any fixture work, which is what makes these rows
+/// deterministic rather than racy.
+const PLANTED_NAME: &str = "00000000000000000000000000000000";
+
+fn planted_id() -> SealId {
+    SealId::from_bytes([0u8; 16])
+}
+
+/// **D106 R1**: `create_work` is `create_dir_all` then `write_meta`, so
+/// between them a work directory exists with no `meta` record. The store's
+/// three writers — `create_work`, `store_meta` and `require_work` — all
+/// define existence as *the `meta` record is present*, and enumeration now
+/// agrees with them: a directory that has not yet acquired its `meta` is
+/// not yet a work.
+///
+/// Before D106 this was the reachable defect, not a nicety: `antseal list`
+/// and `antseal status <work-id>` both exited 2 with *"no work with this id
+/// exists in the vault"* for the whole vault, for the duration of one file
+/// write — and for ever after a `seal` was killed between the two calls.
+#[test]
+fn a_work_directory_without_its_meta_record_is_not_yet_a_work() {
+    let (_guard, unlocked) = private_vault("d106-nometa");
+    let store = WorkStore::new(&unlocked);
+    let mut rng = rng();
+
+    let record = fixture_record(0x21, WorkState::IncompletePrePay, false, false);
+    let real = record.seal_id;
+    store.create_work(&record, &mut rng).expect("create");
+
+    // `create_work`'s intermediate, reconstructed exactly: the directory
+    // without the record that makes it a work.
+    let planted = unlocked.layout().works_dir().join(PLANTED_NAME);
+    std::fs::create_dir_all(&planted).expect("plant bare work dir");
+
+    let ids = store.list_works().expect("enumeration is unbothered");
+    assert!(
+        !ids.contains(&planted_id()),
+        "a directory with no meta record is the writer's intermediate, not a work"
+    );
+    assert_eq!(ids, vec![real], "and the real work is still the only work");
+
+    // The whole point: the scan every command starts from still completes,
+    // and the work the user has still resolves.
+    assert_eq!(
+        store.load_meta(&real).expect("meta round-trips").state,
+        WorkState::IncompletePrePay
+    );
+}
+
+/// **D106 R1's anti-vacuity pin, and it cannot redden.** A work directory
+/// holding records with **no** `meta` record is genuine out-of-band damage,
+/// and it is still enumerated and still refused — D106 R3 keeps today's
+/// behaviour there deliberately.
+///
+/// It is written down because the skip above must never be widened to
+/// *"skip whenever `meta` is absent"*: that rule would silently swallow a
+/// work whose journal, receipt and anchors are all still on disk, which is
+/// the D100 R3/R4 silent drop. Nothing else in the suite would go red if it
+/// were, so this row is the only thing standing between R1 and data loss.
+#[test]
+fn a_work_directory_holding_records_without_its_meta_is_still_enumerated() {
+    let (_guard, unlocked) = private_vault("d106-damaged");
+    let store = WorkStore::new(&unlocked);
+
+    let planted = unlocked.layout().works_dir().join(PLANTED_NAME);
+    std::fs::create_dir_all(planted.join("journal")).expect("plant journal dir");
+    std::fs::write(planted.join("journal/0"), b"a record this work did hold")
+        .expect("plant record");
+
+    let ids = store.list_works().expect("enumeration succeeds");
+    assert!(
+        ids.contains(&planted_id()),
+        "a work that has held records is never silently dropped, meta or no meta"
+    );
+    assert!(
+        matches!(
+            store.load_meta(&planted_id()),
+            Err(StoreError::WorkNotFound)
+        ),
+        "and reading it is still loud"
+    );
+}
+
+/// **D106 R2**: `parse_hex32` tests only the *name*, so before D106 a
+/// hex-named **regular file** was admitted as a work and the caller died
+/// later on `ENOTDIR` — `ErrorClass::Io`, leaking an absolute in-vault path
+/// into the message.
+///
+/// This is R1's safety obligation as much as a bug fix: a hex-named file
+/// has no `meta` child and no content, so without the directory check R1
+/// would skip it silently — a new silent drop introduced by the fix. It
+/// also makes `list_works`' documented promise (*"loud, never skipped
+/// silently"*) true for every entry rather than only for names that fail
+/// the parse. A symlink is covered by the same line: `DirEntry::file_type`
+/// does not follow it, and the store never creates one.
+#[test]
+fn a_work_shaped_entry_that_is_not_a_directory_is_loud() {
+    let (_guard, unlocked) = private_vault("d106-notadir");
+    let store = WorkStore::new(&unlocked);
+
+    let planted = unlocked.layout().works_dir().join(PLANTED_NAME);
+    std::fs::write(&planted, b"work-shaped, but a file").expect("plant hex-named file");
+
+    let err = store.list_works().expect_err("work-shaped file is alien");
+    let detail = match &err {
+        StoreError::AlienEntry { detail } => detail.clone(),
+        other => panic!("expected AlienEntry, got {other:?}"),
+    };
+    assert!(
+        detail.contains(PLANTED_NAME) && detail.contains("not a directory"),
+        "the message names the entry and what is wrong with it: {detail}"
+    );
+    assert!(
+        !detail.contains(&*unlocked.layout().works_dir().to_string_lossy()),
+        "and never leaks the in-vault path (project rule 6): {detail}"
+    );
+    assert_eq!(cli_class(err), ErrorClass::VaultAuthFailure);
+}
+
 /// Non-UTF-8 paths are refused at record-construction time with the D46
 /// invalid-argument class (recorded v1 limitation).
 #[cfg(unix)]

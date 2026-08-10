@@ -652,12 +652,20 @@ pub enum NagState {
     /// `--no-anchor`. Rendered UNANCHORED, never "pending".
     ///
     /// **Not** `WorkRecord::unanchored` and **not** MVP-SPEC.md line 137's
-    /// UNANCHORED, and D98 rider 3c forbids collapsing any two of the three:
+    /// UNANCHORED, and D98 rider 3c forbids collapsing any two of the four:
     /// the first is the `--no-anchor` input recorded at seal time, the
     /// second is *zero headline-eligible anchors* — which a work holding one
     /// pending OTS satisfies while this variant does not apply to it at all.
     /// `antseal-cli`'s `status_command.rs` pins a table of works on which
-    /// the three answer differently (Q120).
+    /// those three answer differently (Q120).
+    ///
+    /// And **not** registry §7.6 key 3's *"both anchor arrays empty"*
+    /// (sense (d), D108 R2), which is a layer-1 fact about the CBOR shape of
+    /// a **`.sealproof`** and can never be the answer here: this variant is
+    /// about a **work in a vault**, which has no bundle to have arrays in.
+    /// That is also why the Q120 table cannot grow a fourth column. The
+    /// registry's cell is frozen — `docs/format/frozen-registry-errata.md`
+    /// records its scope.
     Unanchored,
 }
 
