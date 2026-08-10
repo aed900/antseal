@@ -241,7 +241,22 @@ MILESTONE_ORDER = ("M0", "M1", "M2", "M3", "M4")
 # runs when someone remembers to pass `--milestone` is the same unenforced
 # prose this check exists to replace. `--milestone` overrides it for a one-off
 # question ("would M1 pass today?").
-CURRENT_MILESTONE = "M0"
+#
+# It names the last milestone whose review has PASSED, not the one being
+# built. The rule is cumulative, so `M1` gates M0's rows and M1's forever
+# while leaving M2's — a milestone still in progress — free to read `gap`
+# honestly. Setting it to the in-progress milestone instead would force every
+# not-yet-done row into ACCEPTED_NON_COVERED, and that register's entries are
+# for a milestone shipping with a known hole, not for work in flight; it would
+# also mute those rows at the one review that is supposed to read them.
+#
+# M0 -> M1 on 2026-08-10 (Q165 / D118). It sat at "M0" from the freeze until
+# then — through all of M1 and half of M2 — so the status gate was green over
+# sixteen M0 rows and blind to eighteen others, and six M1 rows sat at
+# `deferred` for eight days after their work landed. Bumping this line is the
+# durable half of that fix: it is what makes the next such drift visible to
+# the ordinary flagless run that every lane actually performs.
+CURRENT_MILESTONE = "M1"
 
 # The full vocabulary, per the matrix's own "Status vocabulary" note. Anything
 # else is a typo, and a typo'd status at a not-yet-gated milestone would
@@ -253,6 +268,15 @@ STATUS_VOCABULARY = ("covered", "gap", "deferred")
 # is a milestone shipping with a known hole, which is a decision worth writing
 # down rather than a lint to be silenced. Stale entries are themselves a
 # failure — see `check_matrix` — so this cannot rot into a permanent mute.
+#
+# Still empty after Q165 / D118, deliberately. Eleven rows read `deferred` at
+# or before M2 and this register was the obvious place to put the survivor
+# (`V7.1`, whose real calendar cycle was run by hand with curl rather than by
+# antseal). It is the wrong place: M2 has not shipped, so there is no known
+# hole to accept yet, and an entry here would silence `V7.1` at the M2 review
+# — the one moment it exists to speak. `V7.1` reads `gap` at an ungated
+# milestone instead, which is loud in `--milestone M2` and silent in the
+# flagless run, exactly as intended.
 ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {}
 
 
@@ -500,10 +524,51 @@ DECISION_DIR = "docs/decisions"
 # `registry-v1.md:<n>` literal on purpose (D116 §1.3).
 # `.github/` is deliberately OUT and it is a close call — see D116 §2 (c).
 #
+# ROOT-LEVEL FILES (Q176). Every entry above is a directory, and both sweeps
+# used to walk `ROOT/<sub>` only — so no root-level file was ever a citation
+# site, and `CHANGELOG.md`, the one externally-facing document in the project,
+# was swept by NOTHING anywhere in the tree. That is exactly why its line-123
+# misquotation drifted unobserved until D114 found it by hand as site S10.
+# They are listed here rather than in a second constant, and a scan root of
+# `"."` was refused: `"."` reaches `target/`, `testdata/`, every dot-directory
+# and — fatally — `TODO.md` itself, turning the register into a citation
+# surface that reports every id it allocates.
+#
+# The four that are IN are live normative documents. The line is drawn at
+# *live* versus *preserved*, which is `docs/decisions/`'s distinction one
+# directory up:
+#   `MVP-SPEC.orig.md` is OUT — it is the reviewed ORIGINAL, kept verbatim so
+#   that `SPEC-REVIEW.md`'s line references still resolve (`MVP-SPEC.md:5`).
+#   Sweeping a preserved artifact asserts its ids must resolve for ever, and
+#   the only way to satisfy that is to edit the thing whose whole job is to be
+#   unedited.
+#   `SPEC-REVIEW.md` is OUT for the same reason — a dated 2026-07-27 review of
+#   that original, recording what was found then.
+# Both were MEASURED green before being excluded (2026-08-10), so this is a
+# rule about what a citation surface is, not a suppression of a failure.
+# `TODO.md` and `tasks/*.md` stay out for the reason stated at the top.
+#
+# HAZARD when adding to this list: an entry is filtered by CITATION_SUFFIXES
+# like any other path, so naming a root file whose suffix is not in that set
+# (`deny.toml`, `.gitattributes`) adds a scan root that reads nothing at all.
+#
 # ONE pair, not two (D116 R1). Two constants held in step by a comment is the
 # defect D112 spent a wave on, one file over; the only honest comment on two
-# here would be "these are the same, one is stale".
-CITATION_SCAN = ["crates", "docs/format", "docs/testing", "scripts"]
+# here would be "these are the same, one is stale". Q176 kept it one pair for
+# that reason: root files went INTO this list, and the loop in both sweeps
+# gained the same two-branch line, rather than a second list only one sweep
+# might learn to read.
+CITATION_SCAN = [
+    "crates",
+    "docs/format",
+    "docs/testing",
+    "scripts",
+    # Root-level files, swept as themselves (Q176).
+    "CHANGELOG.md",
+    "README.md",
+    "CONTRIBUTING.md",
+    "MVP-SPEC.md",
+]
 CITATION_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
 
 # This file names task AND decision ids as literals in its registers and plants
@@ -582,7 +647,13 @@ def check_decisions(failures: Failures) -> None:
         base = ROOT / sub
         if not base.exists():
             continue
-        for path in base.rglob("*"):
+        # Q176 — an entry may be a directory (swept recursively) or a single
+        # FILE (swept as itself). Without this branch a filename in
+        # CITATION_SCAN is a silent no-op: `Path.rglob` on a non-directory
+        # yields nothing at all, so the constant would look widened and read
+        # nothing. Both sweeps carry this line identically; see the note at
+        # CITATION_SCAN.
+        for path in ([base] if base.is_file() else base.rglob("*")):
             if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
                 continue
             if {"target", "node_modules", "__pycache__"} & set(path.parts):
@@ -715,36 +786,23 @@ TASK_ID_NOT_A_CITATION: dict[tuple[str, str], str] = {
         "sentence that documents the defect is not the check working.",
 }
 
-# CLOSED 2026-08-10 (D109 §3.5). It may only SHRINK, and it has: D109 froze 21
-# rows that predate --task-entries, Q130's entry landed in the same wave and
-# took its line, and the twelve OPEN rows — the live hazard D109 §8 (iii) named
-# for draining first — were reconstructed and removed together with their
-# register lines. What is left is §8 (iv)'s archaeology: eight rows that are
-# already done, whose entries are being written second because a `Do`/`Accept`
-# for finished work is history rather than instruction.
+# ROWS_PENDING_ENTRY and BACKLOG_FROZEN_ON lived here and are DELETED
+# 2026-08-10 (Q135), together with the staleness rule below and self-test case
+# (k), because the register is drained: it opened at 21 rows (D109 §3.5), lost
+# Q130 to an entry that landed in the same wave, lost the twelve OPEN rows to
+# Q134, and lost its last eight — Q124, S27, S29, S34, U36, U37, U38, U40 — to
+# Q135. It may only ever have SHRUNK, and it only ever did.
 #
-# The date is the lock: every value must carry BACKLOG_FROZEN_ON, so a new
-# entry cannot be added without either dating it falsely in a diff or moving
-# the constant, which invalidates every remaining line at once.
+# The four pieces went in one change deliberately. An empty dict beside a frozen
+# date is an invitation to reopen a register that was closed, so `--self-test`
+# refused to run against one: "ROWS_PENDING_ENTRY is empty, so case (k) cannot
+# show the staleness rule bites … delete the constant, BACKLOG_FROZEN_ON, the
+# rule and this case together". That assertion was the mechanism that forced
+# this deletion, and it is recorded here rather than merely removed.
 #
-# Both halves of a row's drain must land in one change. An entry written while
-# its line survives here trips the staleness rule below, and a line deleted
-# before its entry exists trips the missing-entry rule above — measured in both
-# directions as the twelve were drained. That coupling is the register working,
-# not a defect, and it is why the count is not asserted anywhere: a partial
-# drain is legitimately green.
-BACKLOG_FROZEN_ON = "2026-08-10"
-ROWS_PENDING_ENTRY: dict[str, tuple[str, str]] = {
-    # --- done rows: archaeology, drained second (D109 §8 (iv)) ---
-    "Q124": (BACKLOG_FROZEN_ON, "done — vectors README post-Q14 sentence"),
-    "S27":  (BACKLOG_FROZEN_ON, "done — D37 per-sub-batch capture hook"),
-    "S29":  (BACKLOG_FROZEN_ON, "done — imported complete work unrestorable"),
-    "S34":  (BACKLOG_FROZEN_ON, "done — closed with U66 under D106"),
-    "U36":  (BACKLOG_FROZEN_ON, "done — CLI storage-backend construction seam"),
-    "U37":  (BACKLOG_FROZEN_ON, "done — init/consent gate in the default lane"),
-    "U38":  (BACKLOG_FROZEN_ON, "done — D39 flag-supplied value not re-asked"),
-    "U40":  (BACKLOG_FROZEN_ON, "done — durable receipt sink attached"),
-}
+# What survives without it: a TODO.md row with no `### <ID> — ` entry is now
+# unconditionally a failure, which is the state D109 §8 was driving at. There is
+# no exemption surface left, so there is nothing to keep dated.
 
 
 def task_id_key(tid: str) -> tuple[str, int]:
@@ -816,7 +874,13 @@ def sweep_task_surfaces() -> tuple[dict[str, set[str]], dict[str, set[str]], int
         base = ROOT / sub
         if not base.exists():
             continue
-        for path in base.rglob("*"):
+        # Q176 — an entry may be a directory (swept recursively) or a single
+        # FILE (swept as itself). Without this branch a filename in
+        # CITATION_SCAN is a silent no-op: `Path.rglob` on a non-directory
+        # yields nothing at all, so the constant would look widened and read
+        # nothing. Both sweeps carry this line identically; see the note at
+        # CITATION_SCAN.
+        for path in ([base] if base.is_file() else base.rglob("*")):
             if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
                 continue
             if {"target", "node_modules", "__pycache__"} & set(path.parts):
@@ -947,15 +1011,15 @@ def check_task_entries(failures: Failures) -> None:
     n_struck = sum(1 for _tid, struck in rows if struck)
 
     for tid, _struck in rows:
-        if tid in entries or tid in ROWS_PENDING_ENTRY:
+        if tid in entries:
             continue
         domain = tid[0]
         failures.add(
             check,
             f"TODO.md row {tid} has no `### {tid} — ` entry in tasks/{domain}.md. A lane "
             f"that opens tasks/{domain}.md to read this task's Do/Accept finds nothing "
-            f"and improvises. Write the entry. ROWS_PENDING_ENTRY is closed "
-            f"({BACKLOG_FROZEN_ON}) and is not available for rows added since.",
+            f"and improvises. Write the entry. There is no exemption register: the "
+            f"D109 §3.5 backlog was drained and deleted at Q135 (2026-08-10).",
         )
 
     for tid in sorted(entries, key=task_id_key):
@@ -986,32 +1050,11 @@ def check_task_entries(failures: Failures) -> None:
                     f"tasks/{domain}.md — one file per domain, per TODO.md's header table.",
                 )
 
-    for tid, (date, reason) in sorted(ROWS_PENDING_ENTRY.items(), key=lambda kv: task_id_key(kv[0])):
-        domain = tid[0]
-        if tid in entries:
-            failures.add(
-                check,
-                f"ROWS_PENDING_ENTRY registers {tid} ({reason}) but tasks/{domain}.md now "
-                f"defines `### {tid} — `. Drop the entry — a stale exemption is how a gate "
-                f"decays into a permanent mute.",
-            )
-        if tid not in row_ids:
-            failures.add(check, f"ROWS_PENDING_ENTRY registers {tid} but TODO.md has no row for it at all.")
-        if date != BACKLOG_FROZEN_ON:
-            failures.add(
-                check,
-                f"ROWS_PENDING_ENTRY entry {tid} is dated {date}, not {BACKLOG_FROZEN_ON}. "
-                f"This register was CLOSED on {BACKLOG_FROZEN_ON} and may only shrink: a row "
-                f"added since then that lacks its entry is a defect to fix, not an exemption "
-                f"to grant.",
-            )
-
     if not failures:
         print(
             f"[{check}] ok — {len(rows)} rows ({n_live} live + {n_struck} struck) against "
-            f"{sum(len(p) for p in entries.values())} entries; {len(ROWS_PENDING_ENTRY)} "
-            f"registered in ROWS_PENDING_ENTRY, 0 unexplained; no entry without a row, no "
-            f"duplicate, none misfiled"
+            f"{sum(len(p) for p in entries.values())} entries; no row without an entry, no "
+            f"entry without a row, no duplicate, none misfiled"
         )
 
 
@@ -1200,15 +1243,67 @@ def self_test() -> int:
     """Prove both checks are able to fail. A check never seen red proves nothing."""
     import shutil
     import tempfile
+    import time
 
     ok = True
     with tempfile.TemporaryDirectory() as scratch:
         tree = pathlib.Path(scratch) / "tree"
-        shutil.copytree(
-            ROOT,
-            tree,
-            ignore=shutil.ignore_patterns(".git", "target", "node_modules"),
-        )
+
+        # Q150 — this copy races every other writer under ROOT, and it used to
+        # lose. `copytree` lists a directory with one `scandir` and copies the
+        # entries afterwards; anything that vanishes in between makes `copy2`
+        # raise, and `copytree` collects those into a `shutil.Error` it raises
+        # at the end. Exit 1, a traceback rather than this file's own
+        # annotation, and the offending path already gone by the time anyone
+        # reads it. In a parallel-lane wave that reddens the `traceability`
+        # required context for a reason that has nothing to do with
+        # traceability — the worst shape a flaky failure can take.
+        #
+        # Two guards, because they cover different things.
+        #
+        # (1) `*.tmp.*` is THIS project's atomic-write shape — `vault/fs.rs:59`
+        #     writes `.<name>.tmp.<pid>.<seq>` beside its target and renames it
+        #     away, and the tracker's own writers use `<name>.tmp.<pid>.<hash>`.
+        #     `fnmatch` does not special-case a leading dot, so the one pattern
+        #     covers both spellings. Ignoring the shape removes the race at its
+        #     source rather than retrying through it. It hides no committed
+        #     file: no path in `git ls-files` contains `.tmp.`, and a temp file
+        #     that IS present is by construction a half-written one, so copying
+        #     it would give the mutation harness a tree that is not the tree.
+        # (2) A bounded retry, because the glob only names the transients we
+        #     already know about. `__pycache__/*.pyc` is written and replaced by
+        #     any concurrent `python3 scripts/…` run and is NOT ignored here,
+        #     and an editor `.swp` has been observed appearing under
+        #     `testdata/vectors/v1/` from a gate script. Those cost one retry
+        #     each instead of a red lane.
+        #
+        # The retry is bounded and reports rather than raising: a copy that
+        # fails three times is an environment fault, not a transient, and it
+        # must say so in a sentence instead of a stack trace. It is NOT a
+        # silent swallow — the last failure is printed with its cause.
+        copy_attempts = 3
+        for attempt in range(1, copy_attempts + 1):
+            try:
+                shutil.copytree(
+                    ROOT,
+                    tree,
+                    ignore=shutil.ignore_patterns(
+                        ".git", "target", "node_modules", "*.tmp.*"
+                    ),
+                )
+                break
+            except (shutil.Error, OSError) as exc:
+                # A failed copytree leaves a partial tree behind; the next
+                # attempt needs a clean destination.
+                shutil.rmtree(tree, ignore_errors=True)
+                if attempt == copy_attempts:
+                    print(
+                        f"self-test: FAILED — could not stage a copy of the tree in "
+                        f"{copy_attempts} attempts; the last failure was: {exc}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                time.sleep(0.25 * attempt)
 
         # Q66 — the gate-state fixtures derive their mutation from whatever
         # state the row is in, never from a hardcoded `- [ ]` literal. The
@@ -1363,14 +1458,6 @@ def self_test() -> int:
                 "register, its two staleness rules and this case together."
             )
         suppressed_id, suppressed_path = sorted(TASK_ID_NOT_A_CITATION)[0]
-        if not ROWS_PENDING_ENTRY:
-            raise AssertionError(
-                "self-test: ROWS_PENDING_ENTRY is empty, so case (k) cannot show the "
-                "staleness rule bites. When the register is drained (D109 §8 (iv)) delete "
-                "the constant, BACKLOG_FROZEN_ON, the rule and this case together — an "
-                "empty register with a frozen date invites a future lane to reopen it."
-            )
-        pending_id = sorted(ROWS_PENDING_ENTRY, key=task_id_key)[0]
         owner_dnum, owner_id, owner_doc = an_owner_assignment()
         ghost_owner = above_ceiling(owner_id[0])
 
@@ -1483,14 +1570,29 @@ def self_test() -> int:
                 "red",
             ),
             # And the bound from the other side. A *later* milestone's row at
-            # `gap` must stay GREEN: M1's crates are stubs and gating them
-            # would make the check unrunnable until M4, which is how a gate
-            # gets switched off. Without this case the rule could quietly
-            # widen to "every row must be covered" and nothing would notice.
+            # `gap` must stay GREEN: a not-yet-reviewed milestone's crates may
+            # still be stubs, and gating them would make the check unrunnable
+            # until M4, which is how a gate gets switched off. Without this
+            # case the rule could quietly widen to "every row must be covered"
+            # and nothing would notice.
+            #
+            # **Retargeted M1 -> M4 on 2026-08-10 (Q165 / D118), because the
+            # fixture had inherited its row's lifetime.** Both cases below used
+            # to mutate `| M1 | S17 + Q15 | deferred |`, which is V6.1's cell.
+            # M1 was reviewed, CURRENT_MILESTONE moved to M1 and V6.1 became
+            # `covered` — so the string vanished, both mutations matched
+            # nothing, and the no-op guard in `self_test` failed both cases
+            # loudly. (Loudly is right: had it not, the green case would have
+            # been green for no reason at all.) V9.2 is the one small real
+            # mainnet seal. It cannot be covered before the release, and at
+            # the release Q34 requires this whole matrix green, so this
+            # fixture's expiry now lands on a review somebody must attend
+            # anyway. Any status-gate fixture must be pinned to a row that
+            # outlives the constant it is testing against.
             (
                 "matrix",
                 MATRIX,
-                lambda t: t.replace("| M1 | S17 + Q15 | deferred |", "| M1 | S17 + Q15 | gap |", 1),
+                lambda t: t.replace("| M4 | Q34 | deferred |", "| M4 | Q34 | gap |", 1),
                 "green",
             ),
             # A status outside the vocabulary is a typo, and a typo at a
@@ -1499,7 +1601,7 @@ def self_test() -> int:
             (
                 "matrix",
                 MATRIX,
-                lambda t: t.replace("| M1 | S17 + Q15 | deferred |", "| M1 | S17 + Q15 | defered |", 1),
+                lambda t: t.replace("| M4 | Q34 | deferred |", "| M4 | Q34 | defered |", 1),
                 "red",
             ),
             # ── Q85 / D109 R8 ────────────────────────────────────────────────
@@ -1520,6 +1622,42 @@ def self_test() -> int:
                 "task-citations",
                 "scripts/fuzz.sh",
                 lambda t: t + f"\n# follow-up: `{hole_q}`\n",
+                "red",
+            ),
+            # (b2) Q176's twin of (b): a ROOT-LEVEL file really is swept by the
+            # task half. `CHANGELOG.md` is the target because it is the file
+            # the row is about — the only externally-facing document in the
+            # project, swept by nothing anywhere until this landed, which is
+            # how its line-123 misquotation drifted to D114's site S10.
+            #
+            # This case does three jobs at once, and the third is the one worth
+            # naming: (i) it proves the widening bites; (ii) a later narrowing
+            # of CITATION_SCAN turns it red instead of silently un-sweeping the
+            # document; and (iii) because the harness treats a missing target
+            # as a FAILURE and never a skip, RENAMING `CHANGELOG.md` also goes
+            # red. Without (iii) a scan root that names a file — unlike one
+            # that names a directory — could vanish under `base.exists()` with
+            # nothing to say so.
+            (
+                "task-citations",
+                "CHANGELOG.md",
+                lambda t: t + f"\n<!-- follow-up: `{hole_q}` -->\n",
+                "red",
+            ),
+            # (o2) …and by the DECISION half. Both halves are proven on the new
+            # surface for the reason Q156 states: Q133 collapsed five constants
+            # into one pair precisely so the two sweeps could not disagree, and
+            # a widening proven on one half only re-opens that gap from the
+            # test side even when the constant is shared.
+            #
+            # It plants the Q58 line-citation rather than an unresolvable
+            # `D<n>` for case (o)'s measured reason: the D namespace is dense
+            # with zero holes, so no single-file mutation can make a `D<n>`
+            # citation fail.
+            (
+                "decisions",
+                "CHANGELOG.md",
+                lambda t: t + "\n<!-- see `docs/format/registry-v1.md:1097` -->\n",
                 "red",
             ),
             # (c) tier 2 — the newly-minted-id case. A fresh id is above its
@@ -1559,8 +1697,10 @@ def self_test() -> int:
                 lambda t: t.replace(entry_heading + "\n", "", 1),
                 "red",
             ),
-            # (g) a NEW row without an entry fails: ROWS_PENDING_ENTRY is
-            # closed, not a blanket over rows added since.
+            # (g) a NEW row without an entry fails. This was the case that
+            # proved ROWS_PENDING_ENTRY was closed rather than a blanket; with
+            # the register deleted (Q135) it is the unconditional rule, and it
+            # is now the only case standing between a row and a missing entry.
             (
                 "task-entries",
                 "TODO.md",
@@ -1602,14 +1742,10 @@ def self_test() -> int:
                 lambda t: t + "\n" + entry_heading + "\n",
                 "red",
             ),
-            # (k) register staleness: an exemption must die the moment its
-            # entry lands, or the register becomes a permanent mute.
-            (
-                "task-entries",
-                f"tasks/{pending_id[0]}.md",
-                lambda t: t + f"\n### {pending_id} — fixture entry\n",
-                "red",
-            ),
+            # (k) was the ROWS_PENDING_ENTRY staleness case. Deleted 2026-08-10
+            # with the register it exercised (Q135) — see the note at the old
+            # constant's site. Case (g) above is what now carries the property
+            # it protected: a row without an entry is red, unconditionally.
             # ── Q145 / D113 §6 ───────────────────────────────────────────────
             # (l) red — the row stops naming the decision that assigned it.
             # This is Q145's motivating instance reconstructed: the fixture

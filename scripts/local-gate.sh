@@ -43,26 +43,78 @@
 #                                     the lane's own `--self-test` is not.
 #
 # And what a green run of this script asserts that CI DOES NOT (the other
-# direction, and the one nothing has recorded until D116 §1.8):
+# direction, and the one nothing had recorded until D116 §1.8). This is Q43's
+# rule pointing the other way — "a lane that has never run on the remote is
+# not evidence" (docs/ci-verification.md) — and until Q153 all five of these
+# had never run there. THREE HAVE NOW MOVED and TWO HAVE NOT; the two that
+# stayed carry their reason here rather than in a decision record, because
+# this header is what a contributor reads before a push.
 #
-#   gate-features --self-test        no CI job runs scripts/gate-features.sh
-#   gate-features --check-partition  at all. S22's whole partition mechanism —
-#   heavy-features                   including tier 2 — is local-only, and the
-#                                    HEAVY features (antseal-cli/ant-backend,
-#                                    antseal-net/ant-backend,
-#                                    devnet-launcher/devnet) are compiled by
-#                                    ZERO CI lanes; `ci-lanes.sh dep-graph`
-#                                    positively asserts the default graph does
-#                                    not reach them.
-#   bitmatch-trigger                 Q128's trigger self-test: local-only.
-#   e2e-selftest                     devnet-e2e-cron.yml:119 runs
-#                                    `./scripts/e2e-devnet.sh` BARE — the lane
-#                                    without its self-test. Q141's shape,
-#                                    inverted.
+# MOVED TO THE REMOTE AT Q153 (2026-08-10) — no new required context; each
+# rides as a step of a job that already exists, so the set stays at 19:
 #
-# That is Q43's rule pointing the other way — "a lane that has never run on
-# the remote is not evidence" (docs/ci-verification.md) — and these five have
-# not. Recorded, not fixed: moving them is a required-context change.
+#   gate-features --self-test        now ALSO a step of CI's `core-dep-graph`
+#   gate-features --check-partition  job, not `traceability` as Q153's row
+#                                    said. The row called these two "seconds
+#                                    and cargo-free"; they are seconds and
+#                                    they are NOT cargo-free —
+#                                    `declared_features()` runs `cargo
+#                                    metadata --no-deps --locked`, and with
+#                                    cargo off PATH `--check-partition` exits
+#                                    1. `traceability` deliberately carries no
+#                                    toolchain and no cache, so cargo there
+#                                    would mean an implicit rustup install of
+#                                    the 1.92.0 pin on one of only TWO CI jobs
+#                                    that need no toolchain at all
+#                                    (`secret-guard` is the other).
+#                                    `core-dep-graph` already bootstraps,
+#                                    already caches, and already runs `cargo
+#                                    metadata`/`cargo tree` over the same
+#                                    S22/P20 subject.
+#   bitmatch-trigger                 now ALSO a step of CI's `traceability`
+#                                    job (Q153). Measured cargo-free and
+#                                    git-free — it runs green with cargo off
+#                                    PATH — which is what earns it the job
+#                                    that has no toolchain.
+#
+# STILL LOCAL-ONLY, AND WHY (Q153's ruling — the asymmetry is declared here so
+# it is not discovered a sixth time):
+#
+#   heavy-features                   `gate-features.sh --heavy` is a COMPILE,
+#                                    not a check: clippy + test for three
+#                                    package/feature pairs over the
+#                                    ant-core/ant-node/EVM graph, 475 packages
+#                                    against the default 120 (`ci-lanes.sh
+#                                    dep-graph`). Per-PR it is the single most
+#                                    expensive thing this workflow could gain,
+#                                    on a private repo on GitHub Free whose
+#                                    2 000-minute allowance is already the
+#                                    standing suspect for a refused dispatch
+#                                    (docs/ci-verification.md, the 2026-08-10
+#                                    section). It stays a local, diff-selected
+#                                    tier-2 gate; the HEAVY features are still
+#                                    compiled by ZERO CI lanes and that is now
+#                                    a decision rather than an oversight.
+#                                    NOTE the residual: `--check-partition`
+#                                    above proves every feature has a tier, so
+#                                    CI can now see a feature nobody
+#                                    classified — it still cannot see a
+#                                    heavy-gated path that stopped compiling.
+#   e2e-selftest                     `e2e-devnet.sh --self-test` needs no
+#                                    devnet and costs seconds, but its remote
+#                                    home is the SCHEDULED lane beside the
+#                                    thing it tests, not a per-PR job:
+#                                    .github/workflows/devnet-e2e-cron.yml
+#                                    runs `./scripts/e2e-devnet.sh` BARE — the
+#                                    lane without its test-of-the-test, Q141's
+#                                    shape inverted. Ruled for Q154, which
+#                                    owns that workflow: add `--self-test` as
+#                                    its own step immediately before the bare
+#                                    lane, the way ci.yml already runs the
+#                                    cross-check's two halves. Not taken here
+#                                    because a per-PR copy would have put the
+#                                    self-test in one venue and the lane it
+#                                    guards in another.
 #
 #   PROPTEST_CASES                   ci.yml:152 sets 1024 on the `test` job;
 #                                    this script sets nothing, so the `test`

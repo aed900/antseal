@@ -78,6 +78,26 @@ skipped:
 - Zero vectors discovered across the whole tree **fails the runner**
   (guards against discovery rot).
 
+### How many things walk this tree (Q157)
+
+The runner is not the only one. **Twelve walk sites**, in three languages,
+enumerate directories under `testdata/vectors/` — a build script, six test
+files, a Python cross-checker and a shell script — and each carries a rule
+about what belongs in the tree. The census is
+`crates/antseal-core/tests/vector_walk/mod.rs`: it names every site, its
+class (`closed`, `positive`, `version-gate`), and the reason its rule is what
+it is; `crates/antseal-core/tests/vector_walk_census.rs` holds the count and
+turns red when a Rust walk appears unregistered.
+
+Read it before adding a thirteenth, because the expensive failure here is not
+a wrong rule, it is **two rules that disagree**: in wave 13 a `__pycache__/`
+directory that `.gitignore` declares expected failed the whole workspace build
+(Q140), and in wave 14 a git-ignored `.vscode/settings.json` failed eight
+tests across four targets — one of them advising a rebuild that could not
+help — because four sites saw a file the other four had pruned. Adding a
+vector still requires no change to any of them (see "Adding a vector" below);
+adding a *walk* requires a census entry.
+
 ## Envelope schema (`schema_version` 1)
 
 Every vector file is a UTF-8 JSON object with **exactly** these fields

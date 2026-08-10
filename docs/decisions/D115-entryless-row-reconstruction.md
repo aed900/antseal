@@ -385,9 +385,11 @@ through matrix row `V7.2`, not through the row.
 ### 3.5 The provenance line — required, and this is its exact form
 
 **Every entry authored under Q134 or Q135 carries a dated, bolded top-level
-bullet, immediately after `Accept`, naming the source and separating what was
-transcribed from what was authored.** The house form for a dated provenance
-statement already exists and is used throughout `tasks/*.md` — a bolded, dated
+bullet, last in the entry, naming the source and separating what was
+transcribed from what was authored.** (**Corrected 2026-08-10 by
+[D117](D117-resolved-decision-corrections.md) §5.1, executing `Q167`** — see
+"Correction — the provenance bullet's placement, 2026-08-10" below.)
+The house form for a dated provenance statement already exists and is used throughout `tasks/*.md` — a bolded, dated
 sentence as a top-level `- ` bullet (*"**Scope corrected 2026-08-09 by the
 wave-10 recon; still open.**"*, *"**Accept row 2 amended 2026-08-09 by D101 §4.4
 (RULING 3d).**"*, *"**RULED 2026-08-09 by D103 RULING 8**"*). This follows it:
@@ -837,8 +839,11 @@ blocks — the examples a lane implements from — place it **last, after `Notes
 Lane C followed §4 for all twelve entries, so the tree is consistent and the
 ruling is not. **Follow §4**: the twelve entries in `tasks/{A,Q,R,U}.md` all
 carry the bullet after `Notes`, verified by parsing each entry's field order,
-and the four entries wave 13's bookkeeping authored follow them. Settling this
-before `Q135` writes twenty more is `Q167`.
+and the ~~four~~ **35** entries wave 13's bookkeeping authored follow them.
+Settling this before `Q135` writes ~~twenty~~ **eight** more is `Q167`. **Both
+counts corrected 2026-08-10 by [D117](D117-resolved-decision-corrections.md)
+§5.1, executing `Q167`**; see "Correction — the provenance bullet's placement,
+2026-08-10" below.
 
 **§4.1 undercounts the `chain.rs` `proven` tests.** The record says `chain.rs`
 *"already names three chain-level `proven` tests"*; the A105 entry written from
@@ -871,3 +876,132 @@ which calls §2a *"the neighbouring subsection"*. Registered as `Q168`.
 
 **Every ruling in §3 stands**, including §3.2's rule that a re-estimate goes in
 `Notes` without moving the field, which is what makes `Q166` writable.
+
+---
+
+## Correction — the provenance bullet's placement, 2026-08-10
+
+**§3.5's placement clause is REPLACED; two counts in the amendment above are
+STRUCK.** Executed under [D117](D117-resolved-decision-corrections.md) §5.1,
+which routes this record to §2.3(a) because §3.5 states an *"exact form"* that a
+lane executes.
+
+### 1. The replaced sentence, quoted verbatim
+
+**§3.5**, as first written:
+
+> **Every entry authored under Q134 or Q135 carries a dated, bolded top-level
+> bullet, immediately after `Accept`, naming the source and separating what was
+> transcribed from what was authored.**
+
+It now reads *"last in the entry"*. The three rules that bind the bullet, the
+code block giving its wording, and the heading identifier `3.5` are untouched.
+
+**Why "last in the entry" and not "immediately after `Notes`".** Both phrases
+describe §4's worked blocks equally well, because in those blocks `Notes` *is*
+the last field. They come apart on a **closed** row, whose entry carries a dated
+closing bullet after `Notes` — and the eight entries `Q135` wrote are the first
+of that kind. Measured over all 55 entries carrying the bullet: **55 place it
+last**; **47 also have it immediately after `Notes`**; the **8** that do not are
+exactly `Q135`'s, where the dated outcome bullet sits between. *Last* is
+therefore the invariant and *immediately after `Notes`* was an artefact of the
+open-row entries that happened to be written first. Which of the two bullets
+comes first on a closed row is **not ruled here** — a correction may not
+introduce a ruling (D117 §2.2) — and is reported as unregistered discovered
+work; this correction records only that the tree is unanimous on *last*.
+
+### 2. The measured fact, with its command and output
+
+Every entry in `tasks/*.md` carrying a provenance bullet places it **last, after
+`Notes`**. Measured at `95fcee0` plus this wave's uncommitted `tasks/*.md` work,
+by parsing each `### <ID> — ` entry's top-level bullets in order and locating the
+provenance bullet within that sequence — not by grep, because the placement is a
+field *order*, not a string:
+
+```
+$ python3 - <<'PY'   # full script: parse '### <ID> — ' entries, stop at the next
+                     # '### ' or '## ', classify each '- ' bullet by its field name
+… for every entry, record the index of the '- **… authored …**' bullet …
+PY
+entries carrying a provenance bullet : 47
+  placed LAST, immediately after Notes : 47
+  placed immediately after Accept      : 0
+  neither                              : 0
+```
+
+Split by author: **12** are lane C's, written under Q134 (`A72 A74 A76 A105 A108
+Q88 Q89 Q122 Q123 R60 R76 U39`); **35** are the wave-13 bookkeeping lane's
+(`A122 A123 A124 A125 F55 Q149–Q158 Q160–Q179`). §3.5's placement has **zero**
+instances in the tree; §4's has **47**.
+
+That is the measurement that **decided** the ruling, taken before `Q135` ran.
+Re-run after `Q135` landed its eight entries (`Q124 S27 S29 S34 U36 U37 U38
+U40`), the same script reports **55** carrying the bullet, **55** placing it
+last, and **0** placing it after `Accept` — so the domain grew by eight and the
+verdict did not move.
+
+### 3. The two struck counts (RULING 5)
+
+Both are in the `## Amendment — the document contradicts itself on the
+provenance bullet, 2026-08-10` section above, and both **went stale** — neither
+was wrong when written.
+
+| | quoted original | new figure | predicate and command | why it moved |
+| --- | --- | --- | --- | --- |
+| a | *"the **four** entries wave 13's bookkeeping authored follow them"* | **35** | entries in `tasks/*.md` whose provenance bullet names *"the wave-13 bookkeeping lane"*, counted by the §2 parse | the amendment was written while that lane was still authoring rows; it counted an intermediate state of its own wave |
+| b | *"Settling this before `Q135` writes **twenty** more"* | **eight** | rows in `ROWS_PENDING_ENTRY` awaiting an entry, at the epoch below | `twenty` was `12 + 8` before Q134 ran; Q134 drained the twelve, leaving Q135's eight |
+
+**Epoch.** Both new figures are taken at `95fcee0` with this wave's uncommitted
+`tasks/*.md` present. (b) is re-derivable at any time from
+`python3 scripts/check-traceability.py`, whose `[task-entries]` line reported
+*"8 registered in `ROWS_PENDING_ENTRY`"* immediately before this correction was
+written and reports **0** after `Q135` drains it — at which point the constant is
+deleted, so the figure becomes unrecoverable from the tree and this is its
+record.
+
+**The conclusion each count supports survives, and (a) strengthens it.** (a) is
+the evidence that the tree is unanimous: 35 further entries, authored by a
+different lane in a different session from lane C's twelve, independently chose
+§4's placement. A ruling that had to overturn 47 entries rather than 12 is
+correspondingly more expensive, which is the direction the error moves the
+argument. (b) shrinks the deadline's stakes from twenty entries to eight and
+does not touch the reason for settling before `Q135` runs.
+
+### 4. Authority, and separability (§2.1(c))
+
+Found by **lane C** (2026-08-10), which had to choose between §3.5 and §4 while
+writing the twelve and recorded the choice; registered as **`Q167`**; routed to
+the REPLACE arm by **D117 §5.1**; measured and executed by **wave 14's lane F**,
+which is also `Q135`'s executor, so `Q167`'s Accept — *"Q135's execution cites
+the settled placement rather than the section number"* — is satisfied by
+construction rather than by handoff.
+
+**Separability holds.** This correction lands in a commit distinct from
+`1c702d4`, which created D115 and its amendment together. It is therefore a real
+diff against a committed resolved body, and not the vacuous shape D117 §1.7
+measured across all five wave-13 amendment sections.
+
+**D115's own amendment recorded this contradiction and deliberately did not
+apply it**, citing §3.7's rule that correcting a resolved body is `Q122`'s
+question. D117 RULING 1 answers that question in the affirmative, so the
+correction is now made rather than merely recorded. §3.7 is not thereby wrong —
+it was right about its own wave — and is not struck.
+
+### 5. Which rulings stand
+
+**All of them.** §3.5's three binding rules — name the row by ID and never by
+line number; make it possible to read the entry and know which sentences nobody
+verified; delete the bullet on execution rather than editing it — are untouched
+by where the bullet sits, and all three still bind. §3.1's five mandatory fields,
+§3.2's transcribe-never-re-estimate rule, §3.3, §3.4, §3.6 and §3.8 are
+unaffected. §4's two worked blocks are now the document's only statement of the
+placement and are unedited.
+
+**Identifier discipline (RULING 4).** `3.5` is **not renumbered**, and neither is
+`4`. `D115 §3.5` is cited by `TODO.md`'s `Q170` and `Q175` rows, by `tasks/Q.md`'s
+`Q167`, `Q170` and `Q175` entries, and by D117 §5.1. **None of those citations is
+for the placement clause** — `Q170` and `Q175` both cite §3.5 for the
+provenance-bullet rules this correction leaves standing (deletion on execution,
+and the requirement that the entry disclose what nobody verified), and `Q167`
+cites it for the contradiction itself. Every one keeps resolving, and none
+changes meaning.

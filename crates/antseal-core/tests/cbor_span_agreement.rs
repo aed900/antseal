@@ -35,6 +35,11 @@ use antseal_core::codec::decode::check_canonical;
 use antseal_core::test_util::cbor_span::{ItemSpan, all_item_spans, item_span, span_of_next_item};
 use serde_json::Value;
 
+/// The census of every walk over `testdata/vectors/` and the one prune list
+/// they share (Q140/D116 R7, Q157). This file holds census site 9.
+#[path = "vector_walk/mod.rs"]
+mod vector_walk;
+
 /// The committed vector tree (workspace-relative via the crate manifest dir).
 const VECTORS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/vectors");
 
@@ -75,9 +80,25 @@ fn byte_fields(path: &Path, value: &Value, trail: &str, out: &mut Vec<(String, V
 }
 
 /// Every committed vector document, as `(label, bytes)`.
+///
+/// **Census site 9, class `positive`** (`vector_walk/mod.rs`, Q157). It
+/// selects `*.json` and ignores everything else, and that stays — but it is
+/// the site where a positive filter is *least* forgiving, because it does not
+/// merely list what it selects, it **parses** it. A file it should never have
+/// seen is a panic, not a skip. Measured 2026-08-10: a git-ignored
+/// `.vscode/settings.json` planted under `v1/` (JSON with comments, as VS Code
+/// writes it) failed all three tests in this file with "does not parse", while
+/// the Q4 runner had already pruned the same directory. Hence the shared
+/// prune below: the sites see one tree, or they disagree about it.
 fn committed_byte_strings() -> Vec<(String, Vec<u8>)> {
+    committed_byte_strings_under(Path::new(VECTORS_DIR))
+}
+
+/// The walk itself, parameterised on the root so the tests-of-the-test can
+/// point it at a scratch tree.
+fn committed_byte_strings_under(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
-    let mut walk = vec![PathBuf::from(VECTORS_DIR)];
+    let mut walk = vec![root.to_path_buf()];
     while let Some(dir) = walk.pop() {
         let entries =
             fs::read_dir(&dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));
@@ -85,6 +106,13 @@ fn committed_byte_strings() -> Vec<(String, Vec<u8>)> {
             let entry = entry.unwrap_or_else(|e| panic!("cannot read a directory entry: {e}"));
             let path = entry.path();
             if path.is_dir() {
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(vector_walk::is_ignored_dir)
+                {
+                    continue; // pruned, not recursed (D116 R7, Q157)
+                }
                 walk.push(path);
             } else if path.extension().is_some_and(|e| e == "json") {
                 let text = fs::read_to_string(&path)
@@ -226,4 +254,66 @@ fn the_discovery_filter_selects_cbor_and_rejects_ciphertext() {
             .any(|(label, _)| label.contains("manifest_bytes")),
         "no manifest vector was picked up"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Q157 — census site 9 is the site where a stray file is a PANIC, not a skip:
+// this walk parses everything it selects. These pin that the droppings the
+// repository declares expected never reach the parser.
+// ---------------------------------------------------------------------------
+
+/// A scratch tree with one document carrying one `*_bytes` field.
+fn scratch_tree(test: &str) -> PathBuf {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("cbor_span_agreement")
+        .join(test);
+    if root.exists() {
+        fs::remove_dir_all(&root).expect("scratch cleanup");
+    }
+    fs::create_dir_all(root.join("v1/group")).expect("scratch tree");
+    fs::write(root.join("v1/group/a.json"), br#"{"manifest_bytes":"a0"}"#).expect("write");
+    root
+}
+
+/// The walk harvests the real document and nothing else.
+fn expect_only_the_vector(root: &Path) {
+    let found = committed_byte_strings_under(root);
+    assert_eq!(
+        found.len(),
+        1,
+        "expected exactly the one seeded document, got {:?}",
+        found.iter().map(|(l, _)| l).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn vector_span_walk_ignores_pycache_bytecode() {
+    let root = scratch_tree("ignore_pycache");
+    fs::create_dir_all(root.join("v1/__pycache__")).expect("mkdir");
+    fs::write(root.join("v1/__pycache__/g.cpython-311.pyc"), b"\x00b").expect("write");
+    expect_only_the_vector(&root);
+}
+
+#[test]
+fn vector_span_walk_ignores_editor_swap_files() {
+    let root = scratch_tree("ignore_swap");
+    fs::write(root.join("v1/.gen_vectors.py.swp"), b"").expect("write");
+    expect_only_the_vector(&root);
+}
+
+/// **The case Q157 fixed.** Before the prune, a git-ignored
+/// `.vscode/settings.json` — JSON *with comments*, which is how VS Code writes
+/// it and which `serde_json` rejects — panicked all three tests in this file
+/// with "does not parse", naming a file no one had committed. Measured
+/// 2026-08-10 against the live tree.
+#[test]
+fn vector_span_walk_ignores_json_inside_an_ignored_directory() {
+    let root = scratch_tree("ignore_json_in_ignored_dir");
+    fs::create_dir_all(root.join("v1/.vscode")).expect("mkdir");
+    fs::write(
+        root.join("v1/.vscode/settings.json"),
+        b"{\n  // not a vector, and not even JSON\n}\n",
+    )
+    .expect("write");
+    expect_only_the_vector(&root);
 }

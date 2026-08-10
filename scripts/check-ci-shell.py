@@ -181,7 +181,18 @@ def check(*targets: Path) -> list[str]:
 
 
 def self_test() -> int:
-    """Plant the two faults this check exists to catch and require red."""
+    """Plant the two faults this check exists to catch and require red.
+
+    Q149 surveyed every red arm in the repository and found this one
+    structurally immune to the class — it judges on the failure list `check()`
+    RETURNS, in-process, so a crash propagates and fails the harness instead of
+    satisfying an arm the way a bare non-zero exit status would. Its lesser
+    weakness, recorded here rather than fixed: the arm below asks only WHETHER
+    a failure was raised and never WHICH, so a finding unrelated to the planted
+    fault would satisfy it — partly compensated by the control run at the end,
+    which requires the unmodified workflow to raise nothing at all. The rule
+    and the register of instruments that owe it are in scripts/lib/red-arm.sh.
+    """
     original = WORKFLOW.read_text(encoding="utf-8")
     # Dot-prefixed so `workflows()` never picks it up; the siblings are still
     # passed alongside it, so an ALLOWED_INLINE entry used only by one of them

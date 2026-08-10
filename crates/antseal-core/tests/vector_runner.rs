@@ -25,38 +25,17 @@ use antseal_core::test_util::vectors::{VectorSummary, execute_vector_bytes};
 /// manifest dir, so it holds on every OS and checkout location).
 const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/vectors");
 
-/// Names the discovery walk must ignore rather than classify.
-///
-/// Q4/Q5 say nothing under `vectors/v<n>/` is SILENTLY skipped, and that rule
-/// is unchanged: every `*.json` is still discovered, executed and counted, and
-/// every file that is neither a vector, nor a documented auxiliary, nor on
-/// this list is still a hard failure naming the path.
-///
-/// What this list adds is the distinction Q4/Q5 never had to draw, because in
-/// 2026-07 nobody had yet run a Python import inside the vector tree: a file
-/// the REPOSITORY ITSELF declares is not part of the tree is not an
-/// unclassifiable vector, it is not a vector at all. `.gitignore` is where
-/// that declaration lives, and `__pycache__/` has been in it since the wave-7
-/// freeze — so before D116 the tree carried two rules that disagreed about
-/// whether the same directory was expected, and the build-breaking one won.
-///
-/// Measured (D116 §1.5): a `.pyc` here failed `cargo check --workspace` with
-/// exit 101, and so did `vector_runner`, which is CI's `golden-vectors`,
-/// `cross-os` and `test` contexts. A vim swap file did the same, so editing
-/// `crosscheck_cbor.py` bricked the workspace build for as long as the editor
-/// was open.
-///
-/// `vector_freeze.rs`'s `collect_json` needs no such list because it filters
-/// POSITIVELY for `.json` instead of asserting a closed classification, and is
-/// green through all of the above — the tolerant shape was already in the tree.
-///
-/// This block is duplicated VERBATIM in `crates/wasm-bitmatch/build.rs` and
-/// `crates/antseal-core/tests/vector_runner.rs` — a build script cannot import
-/// a test module — and `bitmatch.rs` asserts the two texts are byte-identical
-/// (D116 R8a). Edit both or neither.
-const IGNORED_DIRS: &[&str] = &["__pycache__", ".idea", ".vscode"];
-const IGNORED_SUFFIXES: &[&str] = &[".pyc", ".pyo", ".pyd", ".swp", ".swo"];
-const IGNORED_NAMES: &[&str] = &[".DS_Store"];
+/// The ignorable-droppings list and the census of every walk over this tree
+/// (Q140/D116 R7, extended by Q157). This file holds **two** of the twelve
+/// registered walk sites: `run_tree` is a `version-gate` and
+/// `walk_version_dir` is one of only two `closed` sites, which is why it is
+/// the file that carries the `.gitignore`-derivation test below.
+#[path = "vector_walk/mod.rs"]
+mod vector_walk;
+
+use vector_walk::{
+    IGNORED_DIRS, IGNORED_NAMES, IGNORED_SUFFIXES, is_ignorable_file, is_ignored_dir,
+};
 
 /// One discovered-and-executed vector file.
 struct Executed {
@@ -108,7 +87,7 @@ fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> 
     for entry in sorted_entries(dir)? {
         let name = entry_name(&entry)?;
         if entry.is_dir() {
-            if IGNORED_DIRS.contains(&name.as_str()) {
+            if is_ignored_dir(&name) {
                 continue; // pruned, not recursed (D116 R7)
             }
             walk_version_dir(&entry, version, executed)?;
@@ -131,9 +110,7 @@ fn walk_version_dir(dir: &Path, version: &str, executed: &mut Vec<Executed>) -> 
             });
         } else if name == "README.md" || name == "FROZEN.sha256" || name.ends_with(".py") {
             // Documented auxiliaries (discovery contract).
-        } else if IGNORED_NAMES.contains(&name.as_str())
-            || IGNORED_SUFFIXES.iter().any(|s| name.ends_with(s))
-        {
+        } else if is_ignorable_file(&name) {
             // D116 R7: AFTER the `*.json` arm and after `INDEX.json`, so an
             // ignorable rule can never swallow a vector.
         } else {

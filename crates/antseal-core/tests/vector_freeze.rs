@@ -52,6 +52,14 @@ mod freeze_manifest;
 
 use freeze_manifest::{EntryPolicy, Pending, Status, hex_sha256, parse_manifest};
 
+/// The census of every walk over `testdata/vectors/` and the one prune list
+/// they share (Q140/D116 R7, Q157). This file holds census sites 5 and 6 —
+/// `version_dirs` (a `version-gate`) and `collect_json` (a `positive` filter).
+#[path = "vector_walk/mod.rs"]
+mod vector_walk;
+
+use vector_walk::is_ignored_dir;
+
 /// The committed vector tree (workspace-relative via the crate manifest
 /// dir, so it holds on every OS and checkout location).
 const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/vectors");
@@ -147,6 +155,12 @@ fn check_tree(root: &Path) -> Result<Vec<VersionReport>, Vec<String>> {
     }
 }
 
+/// **Census site 5, class `version-gate`.** Uses no ignorable list, on
+/// purpose: D116 R7 ruled that a stray directory sitting *directly under*
+/// `vectors/` stays fatal for every gate, because nothing imports a module
+/// from there and loosening the root would admit a whole stray tree unnoticed.
+/// The prune applies one level down, inside `v<n>/`, which is where the Python
+/// checkers run and where `__pycache__/` actually appears.
 fn version_dirs(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let mut dirs = Vec::new();
     for path in sorted_entries(root)? {
@@ -273,9 +287,28 @@ fn check_version_dir(dir: &Path, version: &str) -> Result<VersionReport, Vec<Str
 }
 
 /// Recursively collect committed `*.json` paths, relative to `base`.
+///
+/// **Census site 6, class `positive`** — and deliberately so (Q157). It
+/// selects `*.json` instead of asserting a closed classification, which is why
+/// it was green through the whole of Q140 while the two `closed` sites failed
+/// the workspace build on a `.pyc`. That tolerance is now a decision on the
+/// record: **do not turn this into a closed classification.** The question
+/// this site answers is "is any committed *vector* outside the freeze?", and
+/// an unclassifiable non-vector file is the Q4 runner's failure to raise
+/// (`vector_runner.rs`, census site 4), not this one's.
+///
+/// What it does share is the **prune**: a directory `.gitignore` declares is
+/// not part of the tree is not walked, exactly as sites 1–4 prune it. Without
+/// that, this site and the runner disagreed about whether a `*.json` inside
+/// `__pycache__/`, `.idea/` or `.vscode/` is a vector — measured 2026-08-10,
+/// a planted `.vscode/settings.json` turned three tests here red demanding it
+/// be frozen, while the runner had already declared it absent.
 fn collect_json(base: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String> {
     for path in sorted_entries(dir)? {
         if path.is_dir() {
+            if is_ignored_dir(&file_name(&path)?) {
+                continue; // pruned, not recursed (D116 R7, Q157)
+            }
             collect_json(base, &path, out)?;
         } else if file_name(&path)?.ends_with(".json") && file_name(&path)? != INDEX_NAME {
             let relative = path
@@ -538,6 +571,59 @@ fn vector_freeze_green_on_an_added_vector() {
     let root = scratch_tree("added");
     fs::write(root.join("v1/group/b.json"), b"{\"b\":1}\n").expect("write");
     write_manifest(&root, MANIFEST_HEADER, &["group/a.json", "group/b.json"]);
+    expect_green(&root);
+}
+
+// ---------------------------------------------------------------------------
+// Q157 — planted git-ignored droppings leave this walk green.
+//
+// Census site 6 is a `positive` filter, so a stray FILE was always ignored
+// here; the pair below is the one wave 13 measured fatal for the two `closed`
+// sites, pinned so this site can never acquire their fault. The third case is
+// the one that was NOT green before Q157 and is the reason this site now
+// shares the prune.
+// ---------------------------------------------------------------------------
+
+/// A `__pycache__/` full of bytecode is invisible to the freeze.
+#[test]
+fn vector_freeze_ignores_pycache_bytecode() {
+    let root = scratch_tree("ignore_pycache");
+    fs::create_dir_all(root.join("v1/__pycache__")).expect("mkdir");
+    fs::write(
+        root.join("v1/__pycache__/gen.cpython-311.pyc"),
+        b"\x00bytecode",
+    )
+    .expect("write");
+    expect_green(&root);
+}
+
+/// So is an editor swap file — the dropping vim creates merely by OPENING a
+/// generator, which before D116 bricked the workspace build until close.
+#[test]
+fn vector_freeze_ignores_editor_swap_files() {
+    let root = scratch_tree("ignore_swap");
+    fs::write(root.join("v1/.gen_vectors.py.swp"), b"").expect("write");
+    expect_green(&root);
+}
+
+/// **The case Q157 fixed.** A `*.json` inside a git-ignored directory is not
+/// a vector that landed unfrozen — it is not in the tree at all, because the
+/// Q4 runner already pruned that directory and the two sites have to agree.
+///
+/// Measured before the fix (2026-08-10): a planted `.vscode/settings.json`
+/// under `testdata/vectors/v1/` failed three tests in this file demanding it
+/// be frozen, while `vector_runner` and `build.rs` were green over the same
+/// tree. That is Q140's diagnosis exactly — two rules disagreeing about
+/// whether a file is part of the tree — with this site on the losing side.
+#[test]
+fn vector_freeze_ignores_json_inside_an_ignored_directory() {
+    let root = scratch_tree("ignore_json_in_ignored_dir");
+    fs::create_dir_all(root.join("v1/.vscode")).expect("mkdir");
+    fs::write(
+        root.join("v1/.vscode/settings.json"),
+        b"{\n  // editor settings, not a vector\n}\n",
+    )
+    .expect("write");
     expect_green(&root);
 }
 

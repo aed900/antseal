@@ -1719,3 +1719,170 @@ the green local gate as covering it.
 Restoring dispatch is a maintainer action: raise the spending limit, wait for
 the monthly reset, or reduce what the workflow spends — `cross-os-macos` bills
 at a 10x multiplier and is by far the most expensive of the 19 jobs.
+
+---
+
+## Q153 — three gate lanes moved onto the remote, and two ruled to stay local (2026-08-10, M2 wave 14)
+
+**Status of this section: PENDING. It records a workflow change and its
+ruling; it records no remote result, because there has not been one.**
+
+| | |
+| --- | --- |
+| Remote run id | *(empty — pending)* |
+| Remote verdict | *(none — the three promoted steps have never executed on a runner)* |
+| Local verdict | green, measured below — which this document's own rule says **is not evidence** |
+
+Filling that run-id cell is the whole of what remains. Until it carries a
+number, the three steps below are exactly what the rule at "A lane that has
+never run on the remote is not evidence" describes: committed, plausible, and
+unexecuted. **No later reader should treat this section as closing Q153.**
+
+### What Q153 was, and the part of it that was wrong
+
+Q153 measured five lanes that `scripts/local-gate.sh` runs and CI did not:
+`gate-features.sh --self-test`, `gate-features.sh --check-partition`,
+`gate-features.sh --heavy`, `wasm-bitmatch.sh --trigger-self-test` and
+`e2e-devnet.sh --self-test`. `grep -rn 'gate-features' .github/` returned
+**zero hits**, so S22's entire feature-partition mechanism — the guard that
+makes dropping `--all-features` safe — had never run on a runner, and the
+HEAVY features were compiled by no CI lane at all.
+
+The row said the first two and the fourth were "seconds and cargo-free" and
+should therefore ride the `traceability` job. **Half of that is false.**
+`gate-features.sh`'s `declared_features()` runs `cargo metadata
+--format-version 1 --no-deps --locked`, so `--check-partition` and the
+`--self-test` that wraps it are **not cargo-free**. Measured by removing cargo
+from `PATH` and running each lane:
+
+| lane | with cargo | cargo off `PATH` |
+| --- | --- | --- |
+| `gate-features.sh --check-partition` | rc 0 | **rc 1** — `cargo metadata returned NO features at all` |
+| `gate-features.sh --self-test` | rc 0 | **rc 1** — arm 1 fails to reach its planted-fault message |
+| `wasm-bitmatch.sh --trigger-self-test` | rc 0 | **rc 0** — genuinely cargo-free and git-free |
+
+That matters because `traceability` **has no toolchain bootstrap and no
+cache**, which the Q16 section above states as a property of the job ("needs
+no toolchain and no cache, so the step adds no setup"). A `cargo` invocation
+there would resolve `rust-toolchain.toml` through the rustup shim and
+implicitly install the pinned 1.92.0 — plus `rustfmt`, `clippy` and the
+`wasm32-unknown-unknown` std — on one of the only **two** jobs in this
+workflow that need no toolchain at all (`secret-guard` is the other), on a
+repository whose minute consumption is the standing suspect for the refused
+dispatch recorded in the section above.
+
+### Where the three actually landed
+
+Two jobs, **no new job**, so no new required context:
+
+| step | job | why that job |
+| --- | --- | --- |
+| `./scripts/gate-features.sh --self-test` | `core-dep-graph` | already bootstraps the toolchain, already caches, already runs `cargo metadata`/`cargo tree`, and is the **complementary half of the same claim**: dep-graph proves the heavy graph stays out of the default build, the partition proves every declared feature is compiled by some tier. `gate-features.sh`'s own header calls the two complementary and says why neither substitutes for the other. |
+| `./scripts/gate-features.sh --check-partition` | `core-dep-graph` | as above; self-test runs first, as everywhere else in this workflow. |
+| `./scripts/wasm-bitmatch.sh --trigger-self-test` | `traceability` | cargo-free and git-free, verified rather than assumed, so it adds no setup to the job that deliberately has none — the same argument `ci-shell`, `fuzz-budget` and `anchor-net-policy` made for the same job. |
+
+**The context set does not change: still 19.** Recounted from
+`.github/workflows/ci.yml`, not read from this file: 17 job ids
+(`fmt`, `clippy`, `test`, `wasm32-core`, `wasm32-core-tests`, `core-dep-graph`,
+`cross-os`, `golden-vectors`, `cross-check`, `vector-freeze`, `format-freeze`,
+`wasm-bitmatch`, `tamper-matrix`, `fuzz-smoke`, `audit-deny`, `secret-guard`,
+`traceability`), of which `cross-os` is a 3-way matrix — **19**. Q153 adds
+three *steps* and zero jobs. The branch-protection payload and Q56's generated
+context list are untouched.
+
+### Minute cost
+
+Measured locally, three runs each, 2-core host, warm toolchain:
+
+| step | run 1 | run 2 | run 3 |
+| --- | --- | --- | --- |
+| `gate-features.sh --self-test` | 0.72 s | 0.69 s | 0.75 s |
+| `gate-features.sh --check-partition` | 0.48 s | 0.17 s | 0.16 s |
+| `wasm-bitmatch.sh --trigger-self-test` | 0.08 s | 0.08 s | 0.08 s |
+
+Under two seconds in total, added to two jobs that already pay checkout and —
+for `core-dep-graph` — toolchain and cache. Nothing here required
+re-deriving the fuzz budget.
+
+**The figures are labelled, not laundered** (Q128's standard). Those three
+runs each were taken back to back on an otherwise idle host. A fourth run of
+the same three commands, taken later while sibling wave lanes were running
+cargo on the same 2-core box, measured **1.83 s / 0.28 s / 1.95 s** — the
+trigger self-test, which touches neither cargo nor git, moved 24x on
+scheduling alone. So the honest claim is the ORDER: all three are
+sub-two-second shell-and-Python checks whose cost is dominated by whatever
+else the machine is doing, not a runner budget. The runner numbers are part
+of what the pending run will produce.
+
+### The ruling on the two that did not move
+
+**`gate-features.sh --heavy` stays local.** It is not a check, it is a
+**compile**: `cargo clippy` and `cargo test` for three package/feature pairs
+(`antseal-net --features ant-backend`, `antseal-cli --features ant-backend`,
+`devnet-launcher --features devnet`) over the ant-core/ant-node/EVM graph —
+**475 packages against the default 120**, measured by `ci-lanes.sh dep-graph`.
+Per PR that is the single most expensive thing this workflow could gain, on a
+private repo on GitHub Free whose 2 000-minute allowance is already the
+standing candidate for the dispatch refusal recorded above, and where the
+scheduled fuzz lane is separately budgeted against a named 700-minute ceiling.
+It stays the local, diff-selected tier-2 gate that D52/S22 designed it to be.
+
+**The residual is stated rather than hidden.** After this change CI *can* see
+a feature that no tier classifies — that is what `--check-partition` proves,
+and it now proves it on the remote. CI still **cannot** see a heavy-gated code
+path that has stopped compiling; the HEAVY features remain compiled by zero CI
+lanes. Q112 is the standing evidence that this failure mode is real and not
+theoretical. The difference from before is that this is now a priced decision
+with the price written down, rather than an absence nobody had noticed.
+
+**`e2e-devnet.sh --self-test` stays out of `ci.yml`, and its home is named.**
+It needs no devnet and costs seconds, so cost is not the argument. The
+argument is venue: `.github/workflows/devnet-e2e-cron.yml` runs
+`./scripts/e2e-devnet.sh` **bare** — the lane without its test-of-the-test —
+and putting the self-test on a per-PR job would leave the self-test in one
+venue and the lane it guards in another. It belongs **beside the bare lane, in
+the cron workflow, as its own step immediately before it**, matching how
+`ci.yml` already runs the cross-check's two halves as separate steps. That
+work is **Q154**, which owns that file; this section records the ruling so
+Q154's executor does not have to re-derive it, and takes nothing from it.
+
+### What produces the missing evidence
+
+`ci.yml` has **no `workflow_dispatch` trigger**; it runs on `pull_request` and
+on `push` to `main`. There is therefore no way to exercise these three steps
+remotely without a push, which is a maintainer action requiring express
+consent. The sequence that fills the cell at the top of this section:
+
+```
+git push origin main                       # maintainer action, express consent
+gh run list --workflow=ci.yml --limit 1    # take the run id
+gh run view <id> --log | grep -E 'Q153'    # the three new steps, by name
+```
+
+The three steps to look for, by their `name:` in the workflow:
+
+- `Q153 — self-test the S22 feature partition (prove it can go red)` — job `core-dep-graph`
+- `Q153 — every declared feature is on exactly one gate tier` — job `core-dep-graph`
+- `Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change` — job `traceability`
+
+**That run is also the test of something else, and this section claims neither
+outcome.** The three runs before it (31407751482, 31412086640 and one further
+attempt) all died in ~13 s with 19 jobs, zero steps and no runner assigned —
+the account-level dispatch refusal diagnosed in the section above. If the next
+run reproduces that signature, it says nothing whatever about Q153; these
+steps will simply not have executed, and this section stays PENDING.
+
+### What was verified locally, and what that is worth
+
+All three lanes were run at this commit and are green, with the timings above,
+and the surrounding lanes were re-run after the edits: `ci-lanes.sh ci-shell`
+green (**65** `run:` blocks across 4 workflows, up from 62 — every one a
+committed script call, which is what Q43's check requires of the three new
+ones), `ci-lanes.sh traceability` green, `ci-lanes.sh anchor-net-policy` green
+(it reads `scripts/local-gate.sh`, whose header this change rewrites), and
+`gate-features.sh --check-partition` green after that rewrite (it parses
+`GATE_LIGHT_FEATURES` out of the same file).
+
+Per this document's own rule, none of that is evidence for the thing Q153
+asked for. It is evidence that the change is well-formed. The remote run is
+the evidence, and it does not exist yet.

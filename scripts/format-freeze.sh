@@ -44,7 +44,9 @@
 #
 # --self-test copies the directory to a scratch location, mutates one frozen
 # byte and deletes one frozen file there, and requires layer 1 to go red on
-# the copy. The committed tree is never touched.
+# the copy — red WITH THE RIGHT MESSAGE, never merely nonzero (Q149; the rule
+# and the register of instruments that owe it are in scripts/lib/red-arm.sh).
+# The committed tree is never touched.
 #
 # --update rewrites the digest block from the directory, preserving the
 # prose and `#!` directives. Under `#! status frozen` it REFUSES to modify
@@ -52,6 +54,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# shellcheck source=lib/red-arm.sh
+. scripts/lib/red-arm.sh
 
 MODE="check"
 case "${1:-}" in
@@ -84,7 +89,7 @@ registry_files() {
 }
 
 check_digests() {
-  local dir="$1" rc=0 count missing
+  local dir="$1" rc=0 count missing detail line
   if [ ! -f "${dir}/${MANIFEST}" ]; then
     echo "::error::${dir}/${MANIFEST} is missing — the wire registry would be unfrozen"
     return 1
@@ -98,7 +103,24 @@ check_digests() {
     echo "  ${count} frozen registry file(s) OK (independent ${SUM[*]} check)"
   else
     echo "::error::${dir}/${MANIFEST}: digest check FAILED — the wire registry was modified or deleted"
-    ( cd "${dir}" && grep -v '^#' "${MANIFEST}" | "${SUM[@]}" -c - 2>&1 | grep -v ': OK$' || true )
+    # WHICH of the two, said in our own words (Q149). `sha256sum -c` already
+    # distinguishes them — `<file>: FAILED` for a content mismatch,
+    # `<file>: FAILED open or read` for an absent one — and collapsing both
+    # into the single verdict above is what left the deletion arm below
+    # unable to tell a working must-exist list from any other file-open
+    # error. Ours rather than coreutils' wording because the arms match on
+    # it: `FAILED` is a prefix of `FAILED open or read`, and the second half
+    # of that sentence is locale- and implementation-dependent.
+    detail="$( cd "${dir}" && grep -v '^#' "${MANIFEST}" | "${SUM[@]}" -c - 2>&1 | grep -v ': OK$' || true )"
+    while IFS= read -r line; do
+      case "${line}" in
+        *': FAILED open or read')
+          echo "::error::${dir}: frozen file MISSING or unreadable: ${line%: FAILED open or read}" ;;
+        *': FAILED')
+          echo "::error::${dir}: frozen file MODIFIED: ${line%: FAILED}" ;;
+      esac
+    done <<< "${detail}"
+    printf '%s\n' "${detail}"
     rc=1
   fi
   # The other direction: nothing that defines a format version sits outside.
@@ -131,44 +153,61 @@ self-test)
   trap 'rm -rf "${SCRATCH}"' EXIT
   cp -R "${DIR}/." "${SCRATCH}/"
 
+  # Every arm below is `assert_red <the message this fault produces> ...`, not
+  # "did it exit nonzero" (Q149 — scripts/lib/red-arm.sh carries the rule).
+  # Four arms, four DIFFERENT expected messages, which is the point: before
+  # this, arms 1-3 accepted each other's evidence and all three accepted a
+  # vanished manifest, an unreadable scratch directory or a missing sha256sum.
   echo "self-test: the untouched copy must be GREEN"
-  if ! check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  if ! assert_green check_digests "${SCRATCH}"; then
     echo "::error::the unmodified copy already fails — the self-test cannot conclude anything"
+    printf '%s\n' "${ARM_OUT}" | sed 's/^/    /'
     exit 1
   fi
 
   echo "self-test: MUTATING registry-v1.md — the lane must go RED"
   printf '\n' >> "${SCRATCH}/registry-v1.md"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  assert_red 'frozen file MODIFIED: registry-v1.md' check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::a mutated registry did NOT turn the lane red — the freeze guard is broken"
+    red_arm_evidence "${rc}" 'frozen file MODIFIED: registry-v1.md'
     exit 1
-  fi
+  }
 
   cp -R "${DIR}/." "${SCRATCH}/"
   echo "self-test: MUTATING registry-v1.json — the lane must go RED"
   printf '\n' >> "${SCRATCH}/registry-v1.json"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  assert_red 'frozen file MODIFIED: registry-v1.json' check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::a mutated mirror did NOT turn the lane red — the freeze guard is broken"
+    red_arm_evidence "${rc}" 'frozen file MODIFIED: registry-v1.json'
     exit 1
-  fi
+  }
 
   cp -R "${DIR}/." "${SCRATCH}/"
   echo "self-test: DELETING registry-v1.md — the lane must go RED"
   rm -f "${SCRATCH}/registry-v1.md"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  # THE arm Q149 names: a deletion and a file-open error produce the same
+  # nonzero, so this one has to require that the file it deleted is the file
+  # reported absent, by name.
+  assert_red 'frozen file MISSING or unreadable: registry-v1.md' check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::a deleted registry did NOT turn the lane red — the must-exist list is broken"
+    red_arm_evidence "${rc}" 'frozen file MISSING or unreadable: registry-v1.md'
     exit 1
-  fi
+  }
 
   cp -R "${DIR}/." "${SCRATCH}/"
   echo "self-test: ADDING an unfrozen registry-v2.md — the lane must go RED"
   printf '# v2\n' > "${SCRATCH}/registry-v2.md"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  assert_red 'registry document(s) not frozen: registry-v2.md' check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::an unfrozen registry version did NOT turn the lane red — discovery is broken"
+    red_arm_evidence "${rc}" 'registry document(s) not frozen: registry-v2.md'
     exit 1
-  fi
+  }
 
-  echo "self-test: OK — mutation, deletion and an unfrozen version all turn the lane red"
+  echo "self-test: OK — mutation, deletion and an unfrozen version each turn the lane red FOR THEIR OWN REASON"
   ;;
 
 update)

@@ -927,18 +927,32 @@ orchestrator's call, not this decision's. **This must land in Q85's own lane**,
 because it is the finding that makes `--task-citations` green, and R7 bullet 1
 records the red-before-green.
 
-**(iii) Thirteen open rows have no detail entry, and that is the live
+**(iii) ~~Thirteen~~ twelve open rows have no detail entry, and that is the live
 hazard.** — M2 · M · deps: Q85. A72, A74, A76, A105, A108, Q88, Q89, Q122,
-Q123, Q130, R60, R76, U39. Each has a row of 386–2 193 characters carrying its
-size and often its `after:` deps, so the entry is substantially a reformat
+Q123, ~~Q130,~~ R60, R76, U39. Each has a row of ~~386–2 193~~ 386–1 735
+characters carrying its size and often its `after:` deps,
+~~so the entry is substantially a reformat
 rather than an invention — but **not for all of them**: A105 and A108 are the
 two the Current-focus block describes as having been reconstructed from
-disagreeing sources, and those two need their domain owner, not a lint lane.
+disagreeing sources, and those two need their domain owner, not a lint lane.~~
 Explicitly **not** folded into Q85 (§2 (b)): writing a `Do`/`Accept` for a row
 you did not execute is defining the task second-hand, which is the defect Q85
-exists to close. Accept: all thirteen have `### <ID> — ` entries and thirteen
-`ROWS_PENDING_ENTRY` lines are deleted; the check stays green throughout,
-because deleting a register line and adding an entry are the same commit.
+exists to close. Accept: all ~~thirteen~~ twelve have `### <ID> — ` entries and
+~~thirteen~~ twelve `ROWS_PENDING_ENTRY` lines are deleted; the check stays
+green throughout,
+~~because deleting a register line and adding an entry are the same commit~~.
+
+— **Corrected 2026-08-10 by [D117](D117-resolved-decision-corrections.md) §6**,
+under the rule D117 RULING 1/3 makes. The struck text is what this record said
+when it was written and is preserved for that reason (D117 §2.1 (a)). **Five
+claims are wrong** — the count, `Q130`'s membership, the character range, the
+routing reason given for A105 and A108, and the `Accept`'s per-batch atomicity
+clause — each with its measuring command in **"Correction — §8 (iii)'s census,
+reformat claim, routing reason and atomicity clause, 2026-08-10"** below. **Every
+ruling in this bullet stands**, and every error runs in the direction that
+strengthens it. **`(iii)` is not renumbered** (D117 RULING 4): it is cited by
+`TODO.md`'s Q134 row, `tasks/Q.md`'s Q134 entry, and D115's front matter, §1.4
+and §3.7.
 
 **(iv) Eight closed rows have no detail entry.** — M3 · S · deps: Q85, (iii).
 Q124, S27, S29, S34, U36, U37, U38, U40. Archaeology: nobody will execute
@@ -1039,3 +1053,95 @@ re-key this passage to an id that is still free at that time.
 The same trap applies to any decision document that plants a fixture id: the id
 is free when the document is written and may not be later. Registering the
 example ids the way `TASK_ID_NOT_A_CITATION` registers real ones would close it.
+
+---
+
+## Correction — §8 (iii)'s census, reformat claim, routing reason and atomicity clause, 2026-08-10
+
+**Authority: `Q122`, ruled by [D117](D117-resolved-decision-corrections.md) §6,
+executed by the D117 planning lane of M2 wave 14.** D115 §3.7 found the fourth
+error below on 2026-08-10 and **declined to correct it**, because whether a
+resolved decision's body may take a dated correction was `Q122` and `Q122` was
+open. D117 RULING 1 rules that it may. This is the first correction made under
+that rule.
+
+**Separability (D117 §2.1 (c)): this correction lands in a commit distinct from
+`d23dccc`, which created this document.** It is not a same-commit amendment.
+
+**Disposition (D117 §2.3): STRIKE, not replace.** §8 (iii) is a discovered-work
+description whose Accept has already been executed — `Q134` closed 2026-08-10 —
+so no lane will act on it, and its value is the record of what was believed.
+The wrong text stays, struck, with the corrected scalar beside it where the
+correction is a single value (D117 §2.3 (c)). **`(iii)` is not renumbered.**
+
+### The five errors
+
+**1. The count. *"Thirteen open rows"* → twelve. WENT STALE, not wrong when
+written.** `Q130` drained at wave 12's bookkeeping, after this record was
+written. `Q134`'s row states the same thing: *"Q130 was the thirteenth and closed
+at this wave's bookkeeping."*
+
+**2. Membership. The list names `Q130`, which had left.** The twelve are A72,
+A74, A76, A105, A108, Q88, Q89, Q122, Q123, R60, R76, U39 — the set `Q134`
+entered and `D115` §1.1 confirmed exactly.
+
+**3. The character range. *"386–2 193 characters"* → 386–1 735. WENT STALE by
+the same event as (1)**: 2 193 was `Q130`'s own row, and the range was inherited
+from the sentence the count was corrected in without being re-measured. Measured
+at `5fbc48d`, the epoch `D115` used (D117 RULING 5's epoch rule — a count over a
+mutable corpus is meaningless without one):
+
+```
+$ git show 5fbc48d:TODO.md > /tmp/todo.md
+$ for id in A72 A74 A76 A105 A108 Q88 Q89 Q122 Q123 R60 R76 U39; do
+    grep -E "^- \[[ x]\] \*\*$id\*\*" /tmp/todo.md | head -1 | tr -d '\n' | wc -m
+  done | sort -n | sed -n '1p;$p'
+386
+1735
+$ grep -E '^- \[[ x]\] \*\*Q130\*\*' /tmp/todo.md | tr -d '\n' | wc -m
+2193
+```
+
+`wc -m`, not `wc -c`: the rows carry em-dashes and typographic quotes, and bytes
+give 392–1748 / 2217. The unit is part of the fact.
+
+**4. The routing reason for A105 and A108. WRONG WHEN WRITTEN — this is an
+attribution error, not a stale count.** The bullet says A105 and A108 are *"the
+two the Current-focus block describes as having been reconstructed from
+disagreeing sources"*. No such Current-focus sentence exists, and the phrase
+belongs to **A106**:
+
+```
+$ git grep -n "second-hand in three places that disagreed"
+TODO.md:464: … **A106** … the row was defined second-hand in three places that disagreed …
+```
+
+**§2 (b) of this same document attributes it to A106 correctly**; §8 (iii) does
+not, and `Q134`'s row and its `tasks/Q.md` entry both inherited the error from
+here — which is why one misattribution in a resolved record became three. The
+conclusion the false premise supports is also wrong about membership: by the
+`Do`/`Accept` measure D115 §1.4 applied, **A108 is better specified than `A72`,
+`A74` and `R60`**, all of which this bullet routes to the lint lane.
+
+**5. The reformat claim and the `Accept`'s atomicity clause. WRONG WHEN
+WRITTEN.** *"Substantially a reformat rather than an invention"* is **3 of 12,
+not 10 of 2** — only `Q123`, `R76` and `U39` carry both a `Do` and an `Accept`,
+five carry a `Do` alone and four carry neither, so **nine of twelve needed an
+`Accept` authored**, which is exactly what §2 (b) of this document forbids a lint
+lane to do silently. And *"deleting a register line and adding an entry are the
+same commit"* is true **per row** and false **per batch**: D115 §3.8 measured a
+10-of-12 drain **green** on `--task-entries`, on the no-flag run and on
+`--self-test`, with either half of a single row's drain **red**. The twelve could
+have been split across lanes; the real constraint is that twelve register lines
+share one file (`scripts/check-traceability.py`).
+
+### Which rulings stand
+
+**All of them, on stronger ground than this record gives.** Every error runs in
+the direction that *strengthens* (iii)'s conclusion: the set is smaller, the rows
+are shorter, and **more** of them needed authorship rather than reformatting — so
+§2 (b)'s refusal to fold this into Q85's lane is better supported than the text
+argues, not worse. The split of (iii) from (iv) is untouched, and (iv) is
+deliberately **not** corrected here: its eight rows are undrained, so it is a
+sentence a lane would still act on, and D117 §2.3 (a) makes that a replace for
+its owning lane rather than a strike for this one.

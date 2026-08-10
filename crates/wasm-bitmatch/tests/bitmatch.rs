@@ -18,6 +18,16 @@ use wasm_bitmatch::{
     transcript, transcript_bytes, transcript_for,
 };
 
+/// The shared ignorable-droppings list and the census of every walk over
+/// `testdata/vectors/` (Q140/D116 R7, Q157). Reached by `#[path]` across the
+/// crate boundary — both files are test-only, in one workspace, and this crate
+/// is `publish = false`; the alternative is a third verbatim copy of the list,
+/// which is the thing Q140 was about. `build.rs` still cannot reach it (a
+/// build script has no test module), so that copy stays, guarded by
+/// `bitmatch_ignorable_file_rule_is_identical_in_both_walkers` below.
+#[path = "../../antseal-core/tests/vector_walk/mod.rs"]
+mod vector_walk;
+
 /// `testdata/vectors/`, resolved from this crate's manifest so it holds on
 /// every OS and checkout location.
 fn vectors_root() -> PathBuf {
@@ -34,6 +44,13 @@ fn vectors_root() -> PathBuf {
 /// for the executor to run (`testdata/vectors/README.md`). This walk is the
 /// independent cross-check of `build.rs`'s, so the exclusion has to be stated
 /// in both — that is the point of having two.
+///
+/// Census site 10 (`positive`). Independent in its *classification*, not in
+/// what it believes the tree contains: it prunes `IGNORED_DIRS` because
+/// `build.rs` does, and the two must see the same tree or their disagreement
+/// is reported by the assertion below as a stale embedded table — advice to
+/// rebuild that can never help. Measured 2026-08-10: a git-ignored
+/// `.vscode/settings.json` under `v1/` did exactly that.
 fn walk_committed(dir: &Path, out: &mut BTreeSet<String>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
@@ -42,6 +59,13 @@ fn walk_committed(dir: &Path, out: &mut BTreeSet<String>) {
             .unwrap_or_else(|e| panic!("dir entry error under {}: {e}", dir.display()))
             .path();
         if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(vector_walk::is_ignored_dir)
+            {
+                continue; // pruned, exactly as build.rs prunes (D116 R7, Q157)
+            }
             walk_committed(&path, out);
         } else if path.file_name().is_some_and(|n| n == "INDEX.json") {
             // auxiliary — see above
@@ -386,8 +410,8 @@ fn transcript_version_is_still_zero_at_both_sites() {
     );
 }
 
-/// The two discovery walks must carry the **same** ignorable-file rule, and
-/// this is what stops them drifting apart again (D116 R8a, Q140).
+/// The two `closed` walk sites must carry the **same** ignorable-file rule,
+/// and this is what stops them drifting apart again (D116 R8a, Q140).
 ///
 /// `bitmatch_embedded_table_equals_the_committed_tree` above **cannot** catch
 /// this class, which is why the check has to be a separate one: that test
@@ -396,32 +420,35 @@ fn transcript_version_is_still_zero_at_both_sites() {
 /// divergence that bricks the build is invisible to a test that needs the
 /// build to have worked. So this reads the two sources as **text**.
 ///
-/// A build script cannot import a test module, so the block is duplicated on
-/// purpose; the duplication is only safe while something asserts the copies
-/// are identical. Same technique as `cbor_crosscheck_contract.rs` on the
-/// Python checker and `wasm-bitmatch.sh --trigger-self-test` arm 4 across two
-/// shell scripts.
+/// Q157 reduced the copies from two to one: every walk site that *can* import
+/// the list now does (`vector_walk/mod.rs`), and `build.rs` is the only one
+/// that cannot, because a build script has no access to a test module. That
+/// last copy is only safe while something asserts it is identical. Same
+/// technique as `cbor_crosscheck_contract.rs` on the Python checker and
+/// `wasm-bitmatch.sh --trigger-self-test` arm 4 across two shell scripts.
 #[test]
 fn bitmatch_ignorable_file_rule_is_identical_in_both_walkers() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let build_rs = manifest.join("build.rs");
-    let runner = manifest
+    let shared = manifest
         .join("..")
         .join("antseal-core")
         .join("tests")
-        .join("vector_runner.rs");
+        .join("vector_walk")
+        .join("mod.rs");
 
     let left = ignorable_block(&build_rs);
-    let right = ignorable_block(&runner);
+    let right = ignorable_block(&shared);
 
     assert_eq!(
         left,
         right,
-        "the D116 R7 ignorable-file block has diverged between {} and {}. These two \
-         walks impose the SAME closed classification on testdata/vectors/, and when \
-         they disagree the stricter one fails the build (Q140). Edit both or neither.",
+        "the D116 R7 ignorable-file block has diverged between {} and {}. Every walk \
+         over testdata/vectors/ that can import the shared module does; this copy \
+         exists only because a build script cannot, and when the two disagree the \
+         stricter one fails the build (Q140). Edit both or neither.",
         build_rs.display(),
-        runner.display(),
+        shared.display(),
     );
 }
 

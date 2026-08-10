@@ -224,6 +224,47 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Assert antseal-core normal deps are I/O-free
         run: ./scripts/ci-lanes.sh dep-graph
+      # Q153 — S22's feature partition, which had NEVER RUN ON THE REMOTE.
+      # `grep -rn 'gate-features' .github/` returned zero hits until this
+      # edit, so the guard that makes dropping `--all-features` safe was
+      # local-only, in violation of this project's own rule (Q43,
+      # docs/ci-verification.md "A lane that has never run on the remote is
+      # not evidence").
+      #
+      # WHY HERE AND NOT ON `traceability`, which is where Q153's row sent
+      # it: the row calls these two "seconds and cargo-free" and they are
+      # NOT cargo-free. `declared_features()` runs `cargo metadata
+      # --format-version 1 --no-deps --locked` (scripts/gate-features.sh),
+      # and with cargo off PATH `--check-partition` exits 1 on its own
+      # anti-vacuity arm. `traceability` carries no toolchain and no cache
+      # BY DESIGN — docs/ci-verification.md's Q16 section states that as a
+      # property of the job — so a `cargo` there would trigger an implicit
+      # rustup install of the pinned 1.92.0 (plus rustfmt, clippy and the
+      # wasm32 std) on one of the only TWO jobs in this workflow that need
+      # no toolchain at all (`secret-guard` is the other). THIS job already
+      # bootstraps the toolchain, already caches, and already runs `cargo
+      # metadata`/`cargo tree` for the SAME S22/P20 subject matter:
+      # dep-graph proves the heavy graph stays OUT of the default build,
+      # the partition proves every declared feature is compiled by SOME
+      # tier. gate-features.sh's own header calls the two complementary.
+      #
+      # It rides as a STEP of an existing job for the reason `ci-shell`,
+      # `fuzz-budget` and `anchor-net-policy` do on `traceability`: ZERO
+      # new required-status contexts (the set stays at 19; Q56's generated
+      # context list is untouched). Self-test first, as everywhere else —
+      # four planted faults plus both trigger directions — because a green
+      # partition verdict means nothing until the guard has been shown able
+      # to go red. Measured locally, 3 runs, 2-core host, warm toolchain:
+      # `--self-test` 0.72/0.69/0.75 s, `--check-partition` 0.48/0.17/0.16 s.
+      #
+      # NOT here: `gate-features.sh --heavy` (tier 2). It is a compile of
+      # the ant-core/ant-node/EVM graph — 475 packages against the default
+      # 120 — and stays a local, diff-triggered gate. The ruling and its
+      # cost argument are in docs/ci-verification.md, Q153's section.
+      - name: Q153 — self-test the S22 feature partition (prove it can go red)
+        run: ./scripts/gate-features.sh --self-test
+      - name: Q153 — every declared feature is on exactly one gate tier
+        run: ./scripts/gate-features.sh --check-partition
 
   cross-os:
     name: cross-os-${{ matrix.label }}
@@ -676,3 +717,24 @@ jobs:
       # single-HTTP-client rule, and endpoint-constant coverage.
       - name: Q16 — the no-real-anchor-network policy is armed, not merely stated
         run: ./scripts/ci-lanes.sh anchor-net-policy
+      # Q153 — Q128's TRIGGER self-test, which had never run on the remote.
+      # The `wasm-bitmatch` job below runs the lane and the lane's own
+      # `--self-test`; neither is this. This is the test of the PREDICATE
+      # that decides whether the lane runs at all — and its most important
+      # case is a vectors-only change, which must fire `wasm-bitmatch` and
+      # must NOT fire `wasm32-tests`. A predicate that silently stopped
+      # matching `testdata/vectors/` would render the M2 exit-criterion lane
+      # `n/a` for ever, and nothing downstream of the predicate could ever
+      # say so. Arm 4 additionally reads scripts/wasm-tests.sh's own trigger
+      # list and asserts the asymmetry between the two, so this step is also
+      # what stops those two lists drifting apart.
+      #
+      # It rides HERE for exactly the reason `ci-shell`, `fuzz-budget` and
+      # `anchor-net-policy` do, and this one earns the claim the other two
+      # Q153 lanes could not: it is genuinely cargo-free AND git-free —
+      # verified by running it with cargo off PATH, rc 0 — so it adds no
+      # setup to a job that deliberately has none, and ZERO new
+      # required-status contexts (the set stays at 19). Measured locally,
+      # 3 runs, 2-core host: 0.08 s / 0.08 s / 0.08 s.
+      - name: Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change
+        run: ./scripts/wasm-bitmatch.sh --trigger-self-test

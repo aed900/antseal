@@ -42,6 +42,11 @@ use antseal_core::format::SUPPORTED_VERSIONS;
 use antseal_core::test_util::vectors::KNOWN_KINDS;
 use serde::Deserialize;
 
+/// The census of every walk over `testdata/vectors/` and the one prune list
+/// they share (Q140/D116 R7, Q157). This file holds census sites 7 and 8.
+#[path = "vector_walk/mod.rs"]
+mod vector_walk;
+
 /// The committed vector tree (workspace-relative via the crate manifest dir).
 const VECTORS_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/vectors");
 
@@ -107,8 +112,19 @@ struct VectorHead {
 // discovery
 // ---------------------------------------------------------------------------
 
+/// **Census site 7, class `version-gate`.** Uses no ignorable list, on
+/// purpose: D116 R7 keeps a stray directory sitting *directly under*
+/// `vectors/` fatal for every gate. Here that fatality arrives via
+/// `load_index`, which refuses a directory carrying no `INDEX.json`.
 fn version_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = fs::read_dir(VECTORS_ROOT)
+    version_dirs_in(Path::new(VECTORS_ROOT))
+}
+
+/// The gate itself, parameterised on the root so the tests-of-the-test can
+/// point it at a scratch tree (the committed tree is the only caller in
+/// anger).
+fn version_dirs_in(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(root)
         .expect("vectors root must exist")
         .map(|e| e.expect("dir entry").path())
         .filter(|p| p.is_dir())
@@ -120,6 +136,15 @@ fn version_dirs() -> Vec<PathBuf> {
 
 /// Every committed `*.json` **vector** under `dir`, relative and slash-joined.
 /// The index itself is excluded: it is an auxiliary, not a vector.
+///
+/// **Census site 8, class `positive`** (Q157). It selects `*.json` rather than
+/// asserting a closed classification, and that stays: an unclassifiable file
+/// is the Q4 runner's business (census site 4), not the roster's. It does
+/// share the **prune**, because a roster that counts a `*.json` inside
+/// `__pycache__/`, `.idea/` or `.vscode/` as a vector disagrees with the
+/// runner about what the tree contains — measured 2026-08-10, a planted
+/// `.vscode/settings.json` failed this file's roster check as an unregistered
+/// vector while the runner had already declared it absent.
 fn committed_vectors(base: &Path, dir: &Path, out: &mut BTreeSet<String>) {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
@@ -128,6 +153,13 @@ fn committed_vectors(base: &Path, dir: &Path, out: &mut BTreeSet<String>) {
     entries.sort();
     for path in entries {
         if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(vector_walk::is_ignored_dir)
+            {
+                continue; // pruned, not recursed (D116 R7, Q157)
+            }
             committed_vectors(base, &path, out);
             continue;
         }
@@ -368,4 +400,90 @@ fn vector_index_kinds_stay_inside_the_known_vocabulary() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Q157 — tests-of-the-test for census sites 7 and 8: planted git-ignored
+// droppings leave both walks green, and the roster never counts one as an
+// unregistered vector.
+// ---------------------------------------------------------------------------
+
+/// A scratch `vectors/`-shaped tree with one vector in it.
+fn scratch_tree(test: &str) -> PathBuf {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("vector_index")
+        .join(test);
+    if root.exists() {
+        fs::remove_dir_all(&root).expect("scratch cleanup");
+    }
+    fs::create_dir_all(root.join("v1/group")).expect("scratch tree");
+    fs::write(root.join("v1/group/a.json"), b"{\"a\":1}\n").expect("write vector");
+    root
+}
+
+/// Exactly the committed set, and nothing the repository declares absent.
+fn expect_rostered(root: &Path, expected: &[&str]) {
+    let dir = root.join("v1");
+    let mut found = BTreeSet::new();
+    committed_vectors(&dir, &dir, &mut found);
+    let want: BTreeSet<String> = expected.iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(
+        found, want,
+        "the roster walk (census site 8) sees a different tree from the Q4 runner; \
+         a git-ignored dropping counted as a vector is reported as a vector that \
+         landed without registering, which is the wrong diagnosis for the wrong file"
+    );
+}
+
+#[test]
+fn vector_index_walk_ignores_pycache_bytecode() {
+    let root = scratch_tree("ignore_pycache");
+    fs::create_dir_all(root.join("v1/__pycache__")).expect("mkdir");
+    fs::write(root.join("v1/__pycache__/g.cpython-311.pyc"), b"\x00b").expect("write");
+    expect_rostered(&root, &["group/a.json"]);
+}
+
+#[test]
+fn vector_index_walk_ignores_editor_swap_files() {
+    let root = scratch_tree("ignore_swap");
+    fs::write(root.join("v1/.gen_vectors.py.swp"), b"").expect("write");
+    expect_rostered(&root, &["group/a.json"]);
+}
+
+/// **The case Q157 fixed** (measured red 2026-08-10 before the prune landed:
+/// a planted `.vscode/settings.json` was reported here as a vector that had
+/// landed without registering, while the Q4 runner had already pruned it).
+#[test]
+fn vector_index_walk_ignores_json_inside_an_ignored_directory() {
+    let root = scratch_tree("ignore_json_in_ignored_dir");
+    fs::create_dir_all(root.join("v1/.vscode")).expect("mkdir");
+    fs::write(root.join("v1/.vscode/settings.json"), b"{}\n").expect("write");
+    expect_rostered(&root, &["group/a.json"]);
+}
+
+/// Census site 7 stays a `version-gate` with no ignorable list: a stray
+/// directory sitting directly under `vectors/` is still seen, and still fails
+/// downstream for want of an `INDEX.json` (D116 R7 — the root is deliberately
+/// not relaxed, because nothing imports a module from there).
+#[test]
+fn vector_index_root_gate_does_not_prune() {
+    let root = scratch_tree("root_gate");
+    fs::create_dir_all(root.join("__pycache__")).expect("mkdir");
+    let dirs = version_dirs_in(&root);
+    let names: Vec<String> = dirs
+        .iter()
+        .map(|d| {
+            d.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec!["__pycache__".to_owned(), "v1".to_owned()],
+        "the ROOT gate must keep seeing a stray directory (D116 R7): the prune \
+         applies inside v<n>/, where the Python checkers run, and relaxing the root \
+         would admit a whole stray tree unnoticed"
+    );
 }

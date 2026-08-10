@@ -339,22 +339,40 @@ mod tests {
     ///
     /// `include_str!` for the same reason the row above uses it: the
     /// `wasm32-core-tests` lane has no filesystem. The **formula**, which is
-    /// the part that must not drift, is checked everywhere. The **byte
-    /// counts** are checked per target, and need no `cfg` to be: the needles
-    /// are built from the `size_of`-derived constants, so on x86-64 this
-    /// reads §5's x86-64 figures and on `wasm32-unknown-unknown` — where
-    /// `Frame` is 24 B and `OtsAttestation` 32 B — it reads §5a's `wasm32`
-    /// row instead. **Neither target asserts the other's numbers**, which is
-    /// the split `anchor/caps.rs` took at `873a1cf` when the same omission on
-    /// `size_of::<Certificate>()` reddened that lane. There the measurements
-    /// were literals and the split had to be written out; here they are
-    /// derived, so it falls out of clause (a).
+    /// the part that must not drift, is checked everywhere, and *"stated
+    /// somewhere normative"* is the whole of that claim — so it stays a
+    /// document-wide search. The **byte counts** are checked per target, and
+    /// need no `cfg` to be: the needles are built from the `size_of`-derived
+    /// constants, so on x86-64 this reads the x86-64 figure §5's row states
+    /// and on `wasm32-unknown-unknown` — where `Frame` is 24 B and
+    /// `OtsAttestation` 32 B — it reads the `wasm32` figure from the same
+    /// cell. **Neither target asserts the other's
+    /// numbers**, which is the split `anchor/caps.rs` took at `873a1cf` when
+    /// the same omission on `size_of::<Certificate>()` reddened that lane.
+    /// There the measurements were literals and the split had to be written
+    /// out; here they are derived, so it falls out of clause (a).
     ///
     /// **D104 §6 rules the 32-bit arm** (A121). Until it landed the byte
     /// counts ran only under `size_of::<usize>() == 8`, so §5a's `wasm32`
     /// figures were exactly the *"number typed by hand is a number that
     /// survives a raise"* that clause (a) forbids — one file over from where
     /// clause (a) is written.
+    ///
+    /// **The byte counts are read out of the row, not out of the document**
+    /// (A123). They were `REGISTRY.contains(&needle)` over the whole file
+    /// until 2026-08-10, which pins *"this number appears in this
+    /// document"* — not *"this row states this number"*. Proved by
+    /// mutation, not by reading: changing the `MAX_OTS_ATTESTATIONS` row's
+    /// own structural-cost figure and nothing else left this test — and
+    /// every other test in this crate — **green**, because §5a's two-target
+    /// table still carried the string elsewhere in the file. A121 had just
+    /// doubled the number of places any one figure legitimately appears,
+    /// which makes a substring search weaker rather than stronger. So each
+    /// figure is now matched inside the `structural cost` cell of the row it
+    /// belongs to, **carrying its target label**, because that cell states
+    /// both targets and an unqualified match would survive the two being
+    /// swapped. `registry_rows` is the parse — the one this file already
+    /// had for §6's cross-check, not a second one.
     #[test]
     fn the_structural_cost_column_states_the_derivation_and_its_value() {
         const REGISTRY: &str = include_str!("../../../../../docs/format/anchor-artifact-limits.md");
@@ -370,26 +388,69 @@ mod tests {
             );
         }
 
+        let mut violations = Vec::new();
+        let rows = registry_rows(&unfenced(REGISTRY), &mut violations);
+        assert!(
+            violations.is_empty(),
+            "§5's registry table did not parse, so no cell can be read out of it — \
+             every figure below would be unchecked rather than red: {violations:?}"
+        );
+
         // Everywhere, per target: the derived cost against the figure the
-        // registry prints for whichever target is running this test.
-        let target = if core::mem::size_of::<usize>() == 8 {
-            "x86-64"
+        // row itself prints for whichever target is running this test. The
+        // label is part of the needle — the cell renders both targets as
+        // `**N NNN B** (x86-64) and **N NNN B** (`wasm32`)`, so its exact
+        // rendering is load-bearing here and a reword of it is a red test
+        // rather than a silently unchecked cell.
+        let (target, label) = if core::mem::size_of::<usize>() == 8 {
+            ("x86-64", "(x86-64)")
         } else {
-            "wasm32"
+            ("wasm32", "(`wasm32`)")
         };
-        for (what, bytes) in [
-            ("walk.rest", OTS_STRUCTURAL_WORK_STACK_BYTES),
-            ("attestations", OTS_STRUCTURAL_ATTESTATION_BYTES),
-            ("both containers summed", OTS_STRUCTURAL_ALLOC_BYTES),
+        for (limit, what, bytes) in [
+            (
+                "MAX_OTS_DEPTH",
+                "the parser's `walk.rest`",
+                OTS_STRUCTURAL_WORK_STACK_BYTES,
+            ),
+            (
+                "MAX_OTS_ATTESTATIONS",
+                "the attestation list",
+                OTS_STRUCTURAL_ATTESTATION_BYTES,
+            ),
         ] {
-            let needle = format!("**{}**", format_spaced(bytes));
+            let Some(row) = rows.iter().find(|r| r.name == limit) else {
+                panic!(
+                    "§5 carries no `{limit}` row — D102's `structural cost` column hangs \
+                     off that row, and this assertion is the only thing that reads it"
+                );
+            };
+            let needle = format!("**{}** {label}", format_spaced(bytes));
             assert!(
-                REGISTRY.contains(&needle),
-                "the F4 registry states no structural cost of {needle:?} for {what} on \
-                 {target} — the derived cost and its registry row have drifted, which \
-                 is the one thing D102's column exists to make impossible"
+                row.structural_cost.contains(&needle),
+                "§5's `{limit}` row states no structural cost of {needle:?} for {what} on \
+                 {target}; its cell reads {:?}. The derived cost and its registry row have \
+                 drifted, which is the one thing D102's column exists to make impossible",
+                row.structural_cost
             );
         }
+
+        // The **sum** is the one figure with no row to be read out of: §5's
+        // `structural cost` column is per limit, and the total of both
+        // containers is stated only by §5a's two-target table. So it stays a
+        // document-wide search — and says so by requiring exactly one match,
+        // which is the property that made the searches above pass for
+        // reasons their author never intended. A second home for this figure
+        // is not a defect, but it is the moment this line stops meaning what
+        // it says, and the next lane should read A123 before relaxing it.
+        let summed = format!("**{}**", format_spaced(OTS_STRUCTURAL_ALLOC_BYTES));
+        assert_eq!(
+            REGISTRY.matches(summed.as_str()).count(),
+            1,
+            "§5a's two-target table is the single site that states the summed structural \
+             cost, and it must state {summed:?} for {target} — exactly once, because this \
+             one is matched against the document rather than against a cell"
+        );
 
         // 32-bit only, mirroring `caps.rs`'s else-arm at `873a1cf`: the
         // *direction* §5a states and A109's lowering argument inverted. An
@@ -431,13 +492,16 @@ mod tests {
     }
 
     /// One §5 row, reduced to the cells R1 calls a limit's *recorded value*,
-    /// plus the two A113 needs to recompute the `margin` column.
+    /// plus the two A113 needs to recompute the `margin` column and the
+    /// `structural cost` cell A123 needs to read a figure **out of its own
+    /// row** rather than out of the document.
     struct RegistryRow {
         name: String,
         value: String,
         measured_against: String,
         margin: String,
         lowered: String,
+        structural_cost: String,
     }
 
     /// One §6 entry, reduced to the head R2.3 says the checker parses.
@@ -567,6 +631,7 @@ mod tests {
                 measured_against: cells[4].to_string(),
                 margin: cells[5].to_string(),
                 lowered: cells[6].to_string(),
+                structural_cost: cells[7].to_string(),
             });
         }
         rows

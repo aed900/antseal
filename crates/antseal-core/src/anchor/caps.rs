@@ -538,12 +538,35 @@ mod tests {
     /// the layout"* — reviewed, and the whole point — with *"we are on 32-bit
     /// pointers"*, which is neither a defect nor reviewable.
     ///
-    /// So it now splits the way the `.ots` side already did (`limits.rs`,
+    /// So it split the way the `.ots` side had already split (`limits.rs`,
     /// `the_structural_cost_column_states_the_derivation_and_its_value`): the
     /// **derivation** is asserted everywhere, from the constants rather than
     /// from literals, because that is the part that must not drift; the
-    /// **measured byte counts** are asserted on 64-bit only, because the
+    /// **measured byte counts here** are asserted on 64-bit only, because the
     /// registry records the x86-64 measurement it says it records.
+    ///
+    /// **The precedent has since moved and this row deliberately has not**
+    /// (A121, A122, 2026-08-10). The `.ots` side's measured counts are no
+    /// longer 64-bit only: that test selects the running target's own label
+    /// from `size_of::<usize>() == 8` and asserts the registry's figure for
+    /// **whichever target is executing** — read out of the named §5 row's own
+    /// `structural cost` cell — with a 32-bit arm below it asserting a
+    /// *direction* rather than a figure. **Do not carry that shape back
+    /// here.** It is available there because the registry records **both**
+    /// targets for `Frame` and `OtsAttestation`: §5's two numeric
+    /// `structural cost` cells state each figure per target, and §5a's
+    /// two-target table derives them. It is not available here. This row's
+    /// subject is `size_of::<x509_cert::Certificate>()`, and §5a's *"Where
+    /// the DER path's 7 488 B goes"* paragraph records that cost on x86-64
+    /// and no 32-bit figure anywhere — so a per-target assertion here could
+    /// only compare against a literal typed into this file, which is §5a's
+    /// own *"a number typed by hand is a number that survives a raise"*. The
+    /// 64-bit gate therefore stays until the registry records a `wasm32`
+    /// measurement to assert against, and the 32-bit side gets what it can
+    /// honestly have: the direction arm in
+    /// `the_der_structural_cost_relative_to_the_guards_fixed_slack` below.
+    /// The asymmetry between the two files is the registry's, not a
+    /// correction that landed in one place and not the other.
     ///
     /// It also cost this project a CI red on a lane the local gate could not
     /// see: `scripts/local-gate.sh`'s `wasm32` lane was a `cargo build`, and

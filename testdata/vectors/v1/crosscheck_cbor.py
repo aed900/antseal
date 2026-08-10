@@ -494,6 +494,21 @@ def preflight(cbor2, report) -> int:
 # ---------------------------------------------------------------------------
 
 
+# Directories the repository declares are not part of the vector tree
+# (``.gitignore``). Census site 11 of 12 -- the full census of every walk over
+# ``testdata/vectors/`` lives in ``crates/antseal-core/tests/vector_walk/mod.rs``
+# (Q157). The list is RESTATED here rather than shared, and that is the one
+# place in the census where restating is correct: this checker is D31's
+# deliberately independent CBOR implementation, and importing anything from the
+# code it cross-checks is the single thing it must not do.
+#
+# This file is also the reason the list exists. Importing it drops
+# ``__pycache__/`` right here, which is what bricked the workspace build in
+# wave 13 (Q140); running it under ``python3 -B`` is the habit, but the walk
+# must survive the habit being forgotten.
+IGNORED_DIRS = ("__pycache__", ".idea", ".vscode")
+
+
 def discover() -> list[pathlib.Path]:
     """Every committed vector file of THIS format version.
 
@@ -501,8 +516,20 @@ def discover() -> list[pathlib.Path]:
     ``*.json`` under ``v<n>/`` is a vector; ``INDEX.json`` is the one
     auxiliary that is also ``.json``. Other versions are covered by their own
     copy of this checker -- ``scripts/cross-check.sh`` iterates ``v*/``.
+
+    Positive filter, deliberately (Q157): an unknown FILE is skipped, never a
+    hard failure -- ``vector_runner.rs`` is the site that raises those. What is
+    shared with every other walk is the prune of ``IGNORED_DIRS``, so a
+    ``*.json`` sitting inside a git-ignored directory is invisible here exactly
+    as it is invisible to the runner, instead of being cross-checked as a
+    vector.
     """
-    return [p for p in sorted(VERSION_DIR.rglob("*.json")) if p.name != "INDEX.json"]
+    return [
+        p
+        for p in sorted(VERSION_DIR.rglob("*.json"))
+        if p.name != "INDEX.json"
+        and not any(part in IGNORED_DIRS for part in p.relative_to(VERSION_DIR).parts[:-1])
+    ]
 
 
 def locate_layers(case: dict, top_bytes: bytes) -> dict[str, bytes]:

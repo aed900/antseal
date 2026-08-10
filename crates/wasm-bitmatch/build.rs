@@ -31,6 +31,14 @@ use std::path::{Path, PathBuf};
 /// retained forever.
 const MAX_EMBEDDED_BYTES_PER_VERSION: u64 = 2_097_152;
 
+// The census this block's doc comment refers to — every walk site over
+// `testdata/vectors/`, its class, and why its rule is what it is — lives in
+// `crates/antseal-core/tests/vector_walk/mod.rs` (Q157). This file cannot
+// import it (a build script has no access to a test module), which is exactly
+// why the block below is a verbatim copy under a byte-identity test. This
+// comment sits OUTSIDE the copied block: the copy starts at the doc line
+// below, which is the marker `bitmatch.rs` searches for.
+
 /// Names the discovery walk must ignore rather than classify.
 ///
 /// Q4/Q5 say nothing under `vectors/v<n>/` is SILENTLY skipped, and that rule
@@ -52,17 +60,20 @@ const MAX_EMBEDDED_BYTES_PER_VERSION: u64 = 2_097_152;
 /// `crosscheck_cbor.py` bricked the workspace build for as long as the editor
 /// was open.
 ///
-/// `vector_freeze.rs`'s `collect_json` needs no such list because it filters
-/// POSITIVELY for `.json` instead of asserting a closed classification, and is
-/// green through all of the above — the tolerant shape was already in the tree.
+/// The two halves belong to different WALK CLASSES (census above, Q157).
+/// `IGNORED_DIRS` is a prune every recursive walk over the tree obeys, because
+/// a directory the repository declares absent has to be absent for all of them
+/// or they disagree — measured, four of them did. `IGNORED_SUFFIXES` and
+/// `IGNORED_NAMES` mean something only where an unknown file is fatal, which
+/// is the two `closed` sites and nowhere else; a positive-filter walk needs no
+/// such list and must not grow one.
 ///
-/// This block is duplicated VERBATIM in `crates/wasm-bitmatch/build.rs` and
-/// `crates/antseal-core/tests/vector_runner.rs` — a build script cannot import
-/// a test module — and `bitmatch.rs` asserts the two texts are byte-identical
-/// (D116 R8a). Edit both or neither.
-const IGNORED_DIRS: &[&str] = &["__pycache__", ".idea", ".vscode"];
-const IGNORED_SUFFIXES: &[&str] = &[".pyc", ".pyo", ".pyd", ".swp", ".swo"];
-const IGNORED_NAMES: &[&str] = &[".DS_Store"];
+/// This block is duplicated VERBATIM in `crates/wasm-bitmatch/build.rs` — a
+/// build script cannot import a test module — and `bitmatch.rs` asserts the
+/// two texts are byte-identical (D116 R8a). Edit both or neither.
+pub const IGNORED_DIRS: &[&str] = &["__pycache__", ".idea", ".vscode"];
+pub const IGNORED_SUFFIXES: &[&str] = &[".pyc", ".pyo", ".pyd", ".swp", ".swo"];
+pub const IGNORED_NAMES: &[&str] = &[".DS_Store"];
 
 fn main() {
     // Declared so the deliberate-divergence self-test's `--cfg` is a known

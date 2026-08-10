@@ -41,7 +41,9 @@
 #
 # --self-test copies the vector tree to a scratch directory, mutates one
 # frozen byte and deletes one frozen file there, and requires layer 1 to go
-# red on the copy. The committed tree is never touched. Layer 2's own
+# red on the copy — red WITH THE RIGHT MESSAGE, never merely nonzero (Q149;
+# the rule and the register of instruments that owe it are in
+# scripts/lib/red-arm.sh). The committed tree is never touched. Layer 2's own
 # tests-of-the-test live in crates/antseal-core/tests/vector_freeze.rs.
 #
 # --update rewrites each manifest's digest block from the tree, preserving
@@ -78,6 +80,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# shellcheck source=lib/red-arm.sh
+. scripts/lib/red-arm.sh
 
 MODE="check"
 VERDICT_EVENT=""
@@ -178,7 +183,7 @@ version_dirs() {
 # Layer 1 over one vector tree. Prints per-version results; returns non-zero
 # if any version fails or is missing its manifest.
 check_digests() {
-  local root="$1" rc=0 dir version count
+  local root="$1" rc=0 dir version count detail line
   local dirs
   dirs="$(version_dirs "${root}")"
   if [ -z "${dirs}" ]; then
@@ -202,7 +207,24 @@ check_digests() {
       echo "  ${version}: ${count} frozen vector(s) OK (independent ${SUM[*]} check)"
     else
       echo "::error::${dir}/${MANIFEST}: digest check FAILED — a frozen vector was modified or deleted"
-      ( cd "${dir}" && grep -v '^#' "${MANIFEST}" | "${SUM[@]}" -c - 2>&1 | grep -v ': OK$' || true )
+      # WHICH of the two, said in our own words (Q149). `sha256sum -c` already
+      # distinguishes them — `<file>: FAILED` for a content mismatch,
+      # `<file>: FAILED open or read` for an absent one — and collapsing both
+      # into the single verdict above is what left this script's two red arms,
+      # a MUTATION and a DELETION of the same victim, accepting each other's
+      # evidence. Ours rather than coreutils' wording because the arms match on
+      # it: `FAILED` is a prefix of `FAILED open or read`, and the second half
+      # of that sentence is locale- and implementation-dependent.
+      detail="$( cd "${dir}" && grep -v '^#' "${MANIFEST}" | "${SUM[@]}" -c - 2>&1 | grep -v ': OK$' || true )"
+      while IFS= read -r line; do
+        case "${line}" in
+          *': FAILED open or read')
+            echo "::error::${dir}: frozen vector MISSING or unreadable: ${line%: FAILED open or read}" ;;
+          *': FAILED')
+            echo "::error::${dir}: frozen vector MODIFIED: ${line%: FAILED}" ;;
+        esac
+      done <<< "${detail}"
+      printf '%s\n' "${detail}"
       rc=1
     fi
   done <<< "${dirs}"
@@ -226,34 +248,69 @@ self-test)
   trap 'rm -rf "${SCRATCH}"' EXIT
   cp -R "${VECTORS}/." "${SCRATCH}/"
 
+  # Both arms below are `assert_red <the message this fault produces> ...`,
+  # not "did it exit nonzero" (Q149 — scripts/lib/red-arm.sh carries the
+  # rule). The two arms tamper with the SAME victim in two different ways, so
+  # before this they accepted each other's evidence, and both accepted a
+  # vanished manifest, an unreadable scratch directory or a missing sha256sum.
   echo "self-test: the untouched copy must be GREEN"
-  if ! check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  if ! assert_green check_digests "${SCRATCH}"; then
     echo "::error::the unmodified copy already fails — the self-test cannot conclude anything"
+    printf '%s\n' "${ARM_OUT}" | sed 's/^/    /'
     exit 1
   fi
 
-  victim="$(find "${SCRATCH}" -name '*.json' ! -name "${INDEX}" | LC_ALL=C sort | head -n 1)"
-  if [ -z "${victim}" ]; then
-    echo "::error::no vector files to tamper with"
+  # THE VICTIM IS CHOSEN FROM THE MANIFEST, NOT FROM A DIRECTORY WALK, and
+  # `victim_rel` is the manifest's own spelling of it — which is also how
+  # `sha256sum -c` names it, so the expected messages below are built from the
+  # same string rather than from `basename`.
+  #
+  # Measured 2026-08-10, and the reason this is not a `find`: the old
+  # `find "${SCRATCH}" -name '*.json' ! -name INDEX.json | LC_ALL=C sort |
+  # head -n 1` returns whatever is on disk, and under LC_ALL=C a dot-directory
+  # sorts first. A stray `v1/.vscode/settings.json` in the tree became the
+  # victim; mutating it changed nothing the freeze pins, `check_digests` stayed
+  # GREEN, and the arm reported "the freeze guard is broken" about a guard that
+  # was working perfectly. An arm that can plant its fault outside the surface
+  # it is testing is the Q149 class in the PLANTING direction: it certifies —
+  # or here, condemns — a surface it never touched.
+  victim=""
+  victim_rel=""
+  while IFS= read -r vdir; do
+    [ -n "${vdir}" ] || continue
+    line="$(grep -v '^#' "${vdir}/${MANIFEST}" | LC_ALL=C sort -k2 | head -n 1)"
+    [ -n "${line}" ] || continue
+    victim_rel="${line#*  }"
+    victim="${vdir}/${victim_rel}"
+    break
+  done <<< "$(version_dirs "${SCRATCH}")"
+  if [ -z "${victim}" ] || [ ! -f "${victim}" ]; then
+    echo "::error::no PINNED vector file to tamper with (looked for the first digest line of the first version manifest under ${SCRATCH})"
     exit 1
   fi
 
-  echo "self-test: MUTATING $(basename "${victim}") — the lane must go RED"
+  echo "self-test: MUTATING ${victim_rel} — the lane must go RED"
   printf '\n' >> "${victim}"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  assert_red "frozen vector MODIFIED: ${victim_rel}" check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::a mutated frozen vector did NOT turn the lane red — the freeze guard is broken"
+    red_arm_evidence "${rc}" "frozen vector MODIFIED: ${victim_rel}"
     exit 1
-  fi
+  }
 
   cp -R "${VECTORS}/." "${SCRATCH}/"
-  echo "self-test: DELETING $(basename "${victim}") — the lane must go RED"
+  echo "self-test: DELETING ${victim_rel} — the lane must go RED"
   rm -f "${victim}"
-  if check_digests "${SCRATCH}" >/dev/null 2>&1; then
+  # The deletion and the mutation produce the same nonzero, so this arm has to
+  # require that the file it deleted is the file reported absent, by name.
+  assert_red "frozen vector MISSING or unreadable: ${victim_rel}" check_digests "${SCRATCH}" || {
+    rc=$?
     echo "::error::a deleted frozen vector did NOT turn the lane red — the must-exist list is broken"
+    red_arm_evidence "${rc}" "frozen vector MISSING or unreadable: ${victim_rel}"
     exit 1
-  fi
+  }
 
-  echo "self-test: OK — mutation and deletion both turn the lane red"
+  echo "self-test: OK — mutation and deletion each turn the lane red FOR THEIR OWN REASON"
   ;;
 
 update)

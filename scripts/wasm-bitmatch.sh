@@ -25,9 +25,17 @@
 # --self-test rebuilds ONLY the wasm32 side with
 # `--cfg antseal_bitmatch_inject_divergence`, which makes the wasm transcript
 # order its entries differently — the platform-divergence class Q5 names
-# ("HashMap-ordered serialization"). The lane must then go red; this script
-# inverts the exit code so a correctly-failing lane is a passing self-test.
-# Nothing is left behind: the injected artifact is rebuilt clean at the end.
+# ("HashMap-ordered serialization"). The lane must then go red WITH THE
+# COMPARATOR SAYING SO, and this script inverts the verdict so a
+# correctly-failing lane is a passing self-test. Nothing is left behind: the
+# injected artifact is rebuilt clean at the end.
+#
+# "with the comparator saying so" is Q149 and is not decoration. Steps 1 and 2
+# are now hard failures and step 3 matches on the divergence message, because
+# a missing .wasm, a node error, an unemittable native transcript and a real
+# byte divergence all exit non-zero, and only the last of them is what this
+# lane claims to have proven. The rule and the register of instruments that
+# owe it are in scripts/lib/red-arm.sh.
 #
 # ── TWO self-tests, deliberately, at two different places in the gate ──────
 #
@@ -55,6 +63,8 @@ cd "$repo" || exit 1
 # third trigger, which is the condition that file set for factoring it out).
 # shellcheck source=lib/gate-trigger.sh
 . "$repo/scripts/lib/gate-trigger.sh"
+# shellcheck source=lib/red-arm.sh
+. "$repo/scripts/lib/red-arm.sh"
 
 TARGET="wasm32-unknown-unknown"
 WASM="target/${TARGET}/debug/wasm_bitmatch.wasm"
@@ -362,40 +372,66 @@ build_wasm_diverged() {
 }
 
 cmd_lane() {
-  local SELF_TEST="$1" status
+  local SELF_TEST="$1" status arm
+  # The message the comparator prints when it finds a byte divergence — the
+  # one thing `--self-test` is entitled to conclude from a red lane. Read from
+  # scripts/wasm-bitmatch.mjs, where `fail(...)` emits it.
+  local expected='wasm32 transcript differs from native'
 
   mkdir_out
 
+  # ERRORS IN STEPS 1 AND 2 ARE HARD FAILURES (Q149). `set -e` is SUSPENDED
+  # throughout this function — it is invoked on the left of `||` at the case
+  # below — so before this, a build that never happened fell straight through
+  # to step 3, where node failed on an absent or stale artifact, and that
+  # nonzero was reported as "the injected divergence turned the lane red".
   echo "== 1/3 build the harness for ${TARGET} =="
   if [ "${SELF_TEST}" -eq 1 ]; then
     echo "   (--self-test: injecting a wasm32-only platform divergence)"
-    build_wasm_diverged
-  else
-    build_wasm
+    if ! build_wasm_diverged; then
+      echo "::error::--self-test could not build the divergence-injected wasm32 artifact, so NO divergence was ever injected and a red lane below would prove nothing."
+      build_wasm >/dev/null 2>&1 || true
+      return 1
+    fi
+  elif ! build_wasm; then
+    echo "::error::the wasm32 build failed — the lane has no right-hand side to compare."
+    return 1
   fi
 
   echo "== 2/3 emit the native transcript =="
-  cargo run -q -p wasm-bitmatch --bin bitmatch-emit --locked -- "${NATIVE}"
+  if ! cargo run -q -p wasm-bitmatch --bin bitmatch-emit --locked -- "${NATIVE}"; then
+    echo "::error::the native transcript could not be emitted — the lane has no left-hand side to compare against."
+    [ "${SELF_TEST}" -eq 1 ] && build_wasm >/dev/null 2>&1
+    return 1
+  fi
 
   echo "== 3/3 execute on ${TARGET} and byte-compare =="
-  status=0
-  node scripts/wasm-bitmatch.mjs "${WASM}" "${NATIVE}" || status=$?
 
   if [ "${SELF_TEST}" -eq 1 ]; then
+    # THE red arm. `assert_red`, not "did node exit non-zero": a missing
+    # .wasm, a node error, a transcript that is not valid JSON and a real byte
+    # divergence all exit 1, and only the last is the platform-divergence
+    # class this arm claims to have observed.
+    assert_red "${expected}" node scripts/wasm-bitmatch.mjs "${WASM}" "${NATIVE}"
+    arm=$?
     # Rebuild clean before reporting, so an interrupted self-test can never
     # leave a divergence-injected artifact behind for the next run.
     build_wasm >/dev/null
-    if [ "${status}" -eq 0 ]; then
+    if [ "${arm}" -ne 0 ]; then
       echo
-      echo "::error::SELF-TEST FAILED: an injected wasm32-only divergence did NOT turn the lane red."
-      echo "The bit-match is not actually comparing anything — fix it before trusting a green lane."
+      echo "::error::SELF-TEST FAILED: an injected wasm32-only divergence did NOT turn the lane red the way a divergence turns it red."
+      echo "::error::The bit-match is not actually comparing anything — fix it before trusting a green lane."
+      red_arm_evidence "${arm}" "${expected}"
       return 1
     fi
+    printf '%s\n' "${ARM_OUT}"
     echo
-    echo "SELF-TEST PASSED: the injected divergence turned the lane red (exit ${status}), as required."
+    echo "SELF-TEST PASSED: the injected divergence turned the lane red (exit ${ARM_STATUS}) AND the comparator reported it as \"${expected}\", as required."
     return 0
   fi
 
+  status=0
+  node scripts/wasm-bitmatch.mjs "${WASM}" "${NATIVE}" || status=$?
   return "${status}"
 }
 

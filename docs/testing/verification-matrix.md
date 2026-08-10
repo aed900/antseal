@@ -28,14 +28,24 @@
 - **M0 rows must be complete before the `format-v1-freeze` tag** — that is a
   Q14 gate condition, and Q14's checklist cites this file.
 - **M1/M2/M3/M4 rows are checked at their own milestone reviews** (M4 via
-  Q34, which requires the whole matrix green). Their rows read `NONE` today
-  and that is correct, not a gap: the crates they test are stubs.
+  Q34, which requires the whole matrix green). **M1's review has happened and
+  M1 is gated from 2026-08-10** (D118); M2's has not. A later milestone's row
+  reading `NONE` is correct, not a gap — but only while the crates it tests
+  are stubs, and that sentence outlived its truth here by eight days.
 - Status vocabulary: **`covered`** (a test exists and is named here);
   **`gap`** (the milestone owns the bullet and no test exists — this blocks
   that milestone's gate); **`deferred`** (a later milestone owns it). Nothing
   else parses: an unrecognised status is a typo and fails the check, at every
   milestone, because a typo at a not-yet-gated one would otherwise stay
   invisible until that milestone's review.
+- **`deferred` is the one status that decays on its own, and D118 is what it
+  cost.** It is not a property of the row; it is a *relation* between the
+  row's milestone and `CURRENT_MILESTONE`. A row is correctly `deferred` only
+  while its own milestone is strictly later than the constant. The moment the
+  constant reaches that milestone, `deferred` is a category error and the row
+  must be re-read as `covered` or `gap`. All eleven rows D118 adjudicated had
+  decayed exactly this way, and none of them changed a character while doing
+  it — the constant moved underneath them, or rather failed to.
 - **The gate that enforces the first two bullets** is
   `scripts/check-traceability.py --matrix`, and the milestone it enforces is
   the constant `CURRENT_MILESTONE` in that script — **the line a milestone
@@ -64,7 +74,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | V2.1 | 168 | Tamper matrix harness — every mutation fails with a **distinct** error | M0 | Q7 | covered | `crates/antseal-core/tests/tamper_matrix.rs::tamper_registry_is_green`, `crates/antseal-core/tests/tamper_matrix.rs::seeded_rows_span_multiple_domains` | The harness asserts unique row ids, pairwise-distinct expected outcomes, exact outcome per row, and no panic (`catch_unwind`). Its own red-path proofs live in `crates/antseal-core/src/test_util/tamper.rs` (`two_rows_with_the_same_expected_code_fail_distinctness`, `a_panicking_row_fails_the_harness`). |
 | V2.2 | 168 | The **M0** mutation families (format / commitment / signature / structural), all of them | M0 | Q8 | covered | `crates/antseal-core/tests/tamper_matrix.rs::tamper_matrix_is_mapped_1_to_1_onto_the_spec_row_list`, `crates/antseal-core/tests/tamper_matrix.rs::tamper_matrix_records_its_deliberate_non_rows`, `crates/antseal-core/tests/tamper_matrix.rs::tamper_matrix_reports_the_q14_gate`, `testdata/tamper/MATRIX.json` | **Deliberately delegated, not re-listed.** `MATRIX.json` already enumerates every spec-mandated family and is asserted 1:1 against the spec's own sentence; copying those ~20 rows here would create a third hand-maintained list of one fact, which is the failure mode this file exists to prevent. What *is* recorded here: the registry carries **zero pending M0 rows**, and one family — **swapped unit** — is a deliberate recorded `non_row` (its AEAD tag failure is one observable with `verify-flipped-ciphertext-byte`, per D81), discharged by three named tests rather than a matrix row. `tamper_matrix_records_its_deliberate_non_rows` is what stops that discharge from decaying into an omission. |
-| V2.3 | 168 | The **M2** anchor rows (untrusted TSA root, forged header, `.ots` not committing `anchor_digest`, expired-at-vs-after-genTime, BER-where-DER) | M2 | A21 | deferred | NONE at M0 — registered and pending in the tamper registry, implemented by A21 | Present in `MATRIX.json` as pending families; the completeness checker keeps them visible instead of letting them be forgotten. Checked at the M2 review, not at Q14. |
+| V2.3 | 168 | The **M2** anchor rows (untrusted TSA root, forged header, `.ots` not committing `anchor_digest`, expired-at-vs-after-genTime, BER-where-DER) | M2 | A21 | covered | `crates/antseal-core/src/test_util/tamper_rows_anchor_verdicts.rs`, `crates/antseal-core/tests/tamper_matrix.rs::tamper_matrix_m2_anchor_set_is_the_pinned_size_and_armed`, `crates/antseal-core/tests/tamper_matrix.rs::tamper_matrix_is_mapped_1_to_1_onto_the_spec_row_list`, `testdata/tamper/MATRIX.json` | **A21 landed 2026-08-06; this row went on reading `deferred` for four days (D118).** The five clauses the bullet names are **eight** live rows in `tamper_rows_anchor_verdicts.rs::ROWS` over six `MATRIX.json` families — `anchor-token-for-a-different-digest` is two rows and not one, because D53 §8 found the spec clause compound and the two checks sit in different stages on different artifact kinds, so one row cannot discharge both. `tamper_matrix_m2_anchor_set_is_the_pinned_size_and_armed` pins the count **and** that every case supplies an outcome key, so the layer-3 distinctness check cannot silently skip the anchor half. |
 
 ### Line 169 — fine-tree E2E, perf budget, CBOR fuzzing
 
@@ -74,7 +84,7 @@
 | V3.2 | 169 | Unbalanced-`n` golden vector (n = 6) pinning MSB-first GGM indexing | M0 | G15 | covered | `crates/antseal-core/tests/fine_tree_vectors.rs::vector_fine_tree_document_covers_the_mandated_cases`, `crates/antseal-core/tests/cover_disclosure.rs::leaf_exact_cover_at_n6_reveal_2_discloses_exactly_salt_2`, `testdata/vectors/v1/fine-tree/fine-tree.json` | The vector's `msb-first-indexing` case computes the LSB-first walk as well and **requires the two to diverge**, so the vector cannot pass under the wrong indexing. The leaf-exact-cover test is the spec's own n=6-reveal-{2} example. |
 | V3.3 | 169 | Perf / memory budget | M0 | G | covered | `crates/antseal-core/src/content/fine_tree/cost.rs::large_files_sit_at_the_bottom_of_the_spec_envelope`, `crates/antseal-core/src/content/fine_tree/cost.rs::estimate_matches_measured_counts`, `crates/antseal-core/src/content/fine_tree/build.rs::memory_stays_logarithmic`, `crates/antseal-core/src/content/fine_tree/proof.rs::proof_size_is_logarithmic` | Budget is asserted against a measured count, not a wall-clock timing, so it is stable in CI. |
 | V3.4 | 169 | **bundle/manifest CBOR fuzzing in CI** | M0 | F17 + Q39 + Q9 | covered | `fuzz/fuzz_targets/manifest_decode.rs`, `fuzz/fuzz_targets/bundle_decode.rs`, `fuzz/fuzz_targets/codec_round_trip.rs`, `scripts/fuzz.sh`, `fuzz/rust-toolchain.toml`, `.github/workflows/ci.yml` | **Closed 2026-07-28 (M0 wave 6); this row read `gap` and was the last open M0 row.** All three missing pieces landed together: F17's three CBOR targets (`manifest_decode`, `bundle_decode`, `codec_round_trip`), Q39's dated nightly pin (`fuzz/rust-toolchain.toml` = `nightly-2026-01-26`, scoped to `fuzz/` only so the workspace stable pin and the MSRV are untouched), and Q9's `fuzz-smoke` lane, which is no longer a mount point: it installs pinned cargo-fuzz 0.13.2, builds the instrumented targets, runs `scripts/fuzz.sh selftest` — a permanent tripwire that fails the lane unless an injected panic both crashes the target **and** leaves a reproducer artifact — then fuzzes 90 s per target over `testdata/fuzz-seeds/`. Only after the self-test is a clean run treated as evidence. The in-suite property tests (`verify_fuzz.rs::arbitrary_bytes_never_panic`, `codec_properties.rs::arbitrary_bytes_never_panic_the_decoder`) remain as a cheap always-on complement, not as the coverage for this row. **Recorded limitation:** the lane's present content has not yet run on the remote (see `docs/ci-verification.md`); a lane that has never run remotely is weaker evidence than one that has. |
-| V3.5 | 169 | Anchor-parser fuzzing | M2 | A23 + Q17 | deferred | NONE at M0 — spec places it at M2 explicitly | Blocked behind the same nightly pin as V3.4. |
+| V3.5 | 169 | Anchor-parser fuzzing | M2 | A23 + Q17 | covered | `fuzz/fuzz_targets/anchor_token.rs`, `fuzz/fuzz_targets/anchor_ots.rs`, `crates/antseal-core/src/anchor/fuzz_entry.rs::the_driver_is_exercised_by_the_normal_suite`, `crates/antseal-core/src/anchor/fuzz_entry.rs::the_ots_driver_is_exercised_by_the_normal_suite`, `crates/antseal-core/src/anchor/fuzz_entry.rs::the_ots_driver_reaches_the_walk_rather_than_stalling_at_the_digest`, `scripts/fuzz.sh` | **A23 and Q17 both landed 2026-08-05; this row read `deferred` for five days (D118).** Both targets — `anchor_token` (DER/CMS/X.509) and `anchor_ots` (decode, op execution, all seven D58 limits) — sit in `scripts/fuzz.sh`'s `TARGETS`, so `fuzz-smoke` and `fuzz-long` pick them up with no workflow edit, and they are seeded from the real `testdata/anchors/A25-bootstrap/` captures rather than a synthetic corpus. The drivers are in-crate, so the ordinary suite executes both entry points even where nothing runs libFuzzer; `the_ots_driver_reaches_the_walk_rather_than_stalling_at_the_digest` is what stops that in-suite exercise decaying into a call that returns at the first length check. The nightly pin V3.4 records is shared, not a blocker: it is `fuzz/rust-toolchain.toml`, scoped to `fuzz/` only. |
 
 ### Line 170 — the UTF-8 corpus
 
@@ -93,29 +103,56 @@
 
 ## M1 — storage (line 172)
 
-Checked at the M1 review, not at Q14. Every row is `NONE` today because
+**M1 is complete and this section is gated.** `CURRENT_MILESTONE` is `M1`
+from 2026-08-10 (D118), so every row here must read `covered` on the ordinary
+flagless run, cumulatively with M0's.
+
+The paragraph that stood here said *"every row is `NONE` today because
 `antseal-net` is a doc-comment stub with no `StorageBackend` and no
-`MockBackend`, and no devnet script exists.
+`MockBackend`, and no devnet script exists"*. **All three clauses were false
+from 2026-08-02**, and all six rows below went on reading `deferred` for eight
+days after the work landed — invisibly, because `CURRENT_MILESTONE` was still
+`M0` and no runbook asks anyone to type `--milestone`. The venue is
+`scripts/e2e-devnet.sh`, D52's required **local** gate and scheduled lane —
+one script for both — whose `suite_registry` names every suite below as
+`live` and refuses to go quiet if one is deleted or renamed.
+
+**Recorded limitation, and it applies to all six rows.** These suites run
+against a live 14-node devnet, in a local gate and a scheduled lane. They are
+not a required remote context, so this section's evidence has never gated a
+pull request. That is weaker evidence than a required lane, in exactly the
+sense V3.4's note records for `fuzz-smoke`.
 
 | id | spec line | spec bullet | milestone | owner | status | tests / evidence | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| V6.1 | 172 | Devnet E2E: multi-file seal with `--split` | M1 | S17 + Q15 | deferred | NONE at M0 | Venue decision is Q15's. |
-| V6.2 | 172 | Kill **between pay and finalize** to resume, verifying no double payment | M1 | S18 | deferred | NONE at M0 | The spec calls this out specifically; it is the highest-value M1 row. |
-| V6.3 | 172 | Kill **mid-upload** to resume: byte-identical ciphertext, and abort rather than re-encrypt under a journaled nonce | M1 | S18 | deferred | NONE at M0 | The `(k_u, nonce)`-reuse guard. |
-| V6.4 | 172 | `restore` from vault backup on a clean tree | M1 | S14 | deferred | NONE at M0 | |
-| V6.5 | 172 | UNANCHORED library-verify | M1 | A1 | deferred | NONE at M0 | Consumes V1.4's empty-anchor vector, which already exists. |
-| V6.6 | 172 | `--live` re-fetch passes | M1 | S | deferred | NONE at M0 | Storage-linkage layer. |
+| V6.1 | 172 | Devnet E2E: multi-file seal with `--split` | M1 | S17 + Q15 | covered | `crates/antseal-cli/tests/e2e_devnet.rs::the_multi_file_split_seal_round_trips_against_a_live_devnet`, `scripts/e2e-devnet.sh` | Venue decision was Q15's and it landed 2026-08-02 with S17, on a live 14-node devnet. The suite is registered `live` in `e2e-devnet.sh`'s `suite_registry`, which is a second, independent statement that this row's test exists — the script fails if the named suite is missing. |
+| V6.2 | 172 | Kill **between pay and finalize** to resume, verifying no double payment | M1 | S18 | covered | `crates/antseal-cli/tests/e2e_kill_resume.rs::case1_a_kill_between_pay_and_finalize_never_pays_twice`, `crates/antseal-cli/tests/e2e_kill_resume.rs::case1_a_real_sigkill_between_pay_and_finalize_never_pays_twice`, `crates/antseal-cli/tests/e2e_kill_resume.rs::case1c_a_sigkill_between_sub_batch_txs_pays_each_sub_batch_once` | The spec calls this out specifically; it is the highest-value M1 row, and S18 landed it 2026-08-02. **Two kill shapes, not one** — a cooperative barrier and a real `SIGKILL` — and every payment claim is settled **on-chain** by counting Anvil transactions rather than by an in-process ledger, so the assertion does not depend on the code under test being honest about what it paid. The negative twin `case1c_without_a_durable_sink_the_same_kill_re_pays_the_landed_sub_batches` is what proves the guard is the durable sink and not the harness. |
+| V6.3 | 172 | Kill **mid-upload** to resume: byte-identical ciphertext, and abort rather than re-encrypt under a journaled nonce | M1 | S18 | covered | `crates/antseal-cli/tests/e2e_kill_resume.rs::case2_a_sigkill_mid_upload_resumes_byte_identically`, `crates/antseal-cli/tests/e2e_kill_resume.rs::case3_changed_sources_with_staged_bytes_gone_abandons`, `crates/antseal-cli/tests/e2e_kill_resume.rs::case3_changed_sources_with_staged_bytes_intact_resume_from_staged_bytes` | **Both halves of the bullet, and they are different tests.** `case2` reads every staged nonce before the kill and re-reads them after the resume, so a re-encryption is caught as a *changed nonce* rather than inferred from byte equality alone. `case3` is the `(k_u, nonce)`-reuse guard the bullet's second clause names: changed sources with the staged bytes gone **abandon** rather than re-encrypt, and the intact-bytes twin shows the abandon is a decision and not the only reachable path. |
+| V6.4 | 172 | `restore` from vault backup on a clean tree | M1 | S14 | covered | `crates/antseal-cli/tests/e2e_restore.rs::a_clean_machine_restores_from_the_vault_backup_and_the_network`, `crates/antseal-cli/tests/e2e_restore.rs::a_clean_machine_without_the_vault_fails_with_a_clear_no_vault_error`, `scripts/e2e-devnet.sh` | S19's suite over S14's `RestoreEngine`; the row's owner column names the engine, the registry names the suite. The clean tree is a **real child process** with its own root, not a reset directory in the parent. The no-vault twin is the anti-vacuity arm: without it, a restore reading the parent's residual state would pass and nothing would say so. |
+| V6.5 | 172 | UNANCHORED library-verify | M1 | A1 | covered | `crates/antseal-cli/tests/e2e_devnet.rs::a_zero_anchor_seal_library_verifies_as_unanchored` | Consumes V1.4's empty-anchor vector, which already existed at M0 — the row predicted this and was right. A1's `AnchorGate`/`NoAnchorGate` zero-anchor contract is what the test drives, through library APIs and not the M3 `verify` CLI, per the spec bullet's own parenthesis. |
+| V6.6 | 172 | `--live` re-fetch passes | M1 | S | covered | `crates/antseal-net/tests/devnet_backend.rs::devnet_s15_live_persistence_identical_missing_and_different`, `crates/antseal-cli/tests/e2e_devnet.rs::the_multi_file_split_seal_round_trips_against_a_live_devnet`, `scripts/e2e-devnet.sh` | Storage-linkage layer. The named devnet test separates the **three** outcomes a live re-fetch can have — identical, missing, different — so a pass is not merely "the fetch returned something", which is the failure a single happy-path assertion would have shipped. |
 
 ## M2 — anchors (line 173)
 
-Checked at the M2 review. `antseal-anchor` is a doc-comment stub;
-`testdata/anchors/` holds a README and nothing else.
+Checked at the M2 review, **which has not happened**. `CURRENT_MILESTONE` is
+`M1`, so these rows are not gated by the ordinary run — which is why `V7.1`
+can read `gap` honestly instead of being muted into `ACCEPTED_NON_COVERED`
+before M2 has shipped. `--matrix --milestone M2` answers the one-off question
+*"would M2 pass today?"*, and from 2026-08-10 the answer is **no, on `V7.1`
+alone** rather than on eleven rows of stale bookkeeping.
+
+The paragraph that stood here said *"`antseal-anchor` is a doc-comment stub;
+`testdata/anchors/` holds a README and nothing else"*. `antseal-anchor` has
+carried a TSA layer, an OTS engine, an esplora client, an Arbitrum client and
+a stub/replay test substrate since the M2 wave opened, and `testdata/anchors/`
+holds **88 files** across three real capture campaigns (`A25-bootstrap/` 61,
+`A25-upgrade-headers/` 14, `A16-A17-live/` 12, plus the directory README).
 
 | id | spec line | spec bullet | milestone | owner | status | tests / evidence | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| V7.1 | 173 | Real OTS calendars: pending, then upgraded the next day | M2 | A25 + Q16 | deferred | NONE at M0 | Two-day protocol; non-CI lane by policy. |
-| V7.2 | 173 | Real FreeTSA (ECDSA P-384) and DigiCert tokens verified against the pinned roots | M2 | A25 + A7 | deferred | NONE at M0 | |
-| V7.3 | 173 | CI uses a mock TSA + recorded OTS fixtures (no real anchor network in CI) | M2 | A24 + Q16 | deferred | NONE at M0 | |
+| V7.1 | 173 | Real OTS calendars: pending, then upgraded the next day | M2 | A25 + Q16 | gap | `testdata/anchors/A25-bootstrap`, `testdata/anchors/A25-bootstrap/upgraded`, `docs/anchors/real-smoke-runbook.md`, `crates/antseal-core/tests/anchor_vectors.rs::vector_anchor_upgraded_artifact_has_the_shape_the_f4_registry_records`, `crates/antseal-core/tests/anchor_vectors.rs::vector_anchor_ops_derive_the_fetched_mainnet_headers_merkle_root` | **The one genuine hole among the eleven D118 adjudicated, and the reason this row is `gap` rather than `covered`.** The cycle really happened and is fully logged — submit 2026-08-02T19:16:18Z, upgrade 2026-08-03T09:03:38Z, six commitments all `200` — and the resulting bytes are verified offline by the named tests. But **it was performed by hand with `curl`, before the OTS client existed**: `CAPTURE.log` still carries curl's own *"Could not resolve host"* line for the `finney` calendar. antseal's own submit/upgrade path has never spoken to a real calendar; `scripts/` carries no `anchor-smoke` entry point; and the runbook's own §0 states the protocol *"is not yet executable end-to-end"* and has been run three times without it — *"which is precisely the repeatability the script is for"*. A25's Accept row 1 is adjudicated **PARTIAL** for exactly this reason and names the script as the whole of what is missing. The spec's own heading for this bullet is **"Anchor smoke tests"**, so offline replay of captured bytes is not the thing being asked for. Non-CI by policy either way — `docs/testing/anchor-ci-policy.md`. |
+| V7.2 | 173 | Real FreeTSA (ECDSA P-384) and DigiCert tokens verified against the pinned roots | M2 | A25 + A7 | covered | `crates/antseal-core/tests/anchor_real_tokens.rs::freetsa_verifies_ecdsa_p384_sha512`, `crates/antseal-core/tests/anchor_real_tokens.rs::digicert_verifies_rsa_pkcs1v15_sha256`, `crates/antseal-core/src/anchor/verdicts/tests.rs::a_token_whose_cms_signature_fails_never_reaches_chain_classification`, `crates/antseal-core/src/anchor/verdicts/tests.rs::a_malformed_bundle_intermediate_is_invalid_with_a5s_der_code`, `testdata/anchors/A25-bootstrap` | Real 2026-08-02 captures, not synthetic tokens; A7 admitted the roots with a written provenance record. A25's Accept row 2 is adjudicated **SATISFIED**. **Recorded limitation, and it is why `A105` is open:** the two assertions carrying the *pinned-store* half — `FREETSA` and `DIGICERT` reaching `proven` under `TsaRootStore::pinned()` — are the **anti-vacuity arms** of the two `verdicts` tests named here, which are named for something else. The pin is real and the build reddens if either token stops reaching `proven`, but the exposure is **asymmetric**: `DIGICERT` reaches `proven` at three further places and `FREETSA` at exactly one, so a tamper-test rewrite could delete the FreeTSA half and take the milestone criterion with it. A105 gives the property its own named home at the verdict level; this cell names it when it lands. |
+| V7.3 | 173 | CI uses a mock TSA + recorded OTS fixtures (no real anchor network in CI) | M2 | A24 + Q16 | covered | `crates/antseal-anchor/tests/no_real_network.rs::the_environment_arm_gates_the_dialling_path_in_a_non_cfg_test_build`, `crates/antseal-anchor/src/testing/stub.rs`, `crates/antseal-anchor/src/testing/replay.rs::the_committed_captures_have_their_recorded_shapes`, `crates/antseal-anchor/src/testing/replay.rs::the_attested_block_captures_have_their_recorded_shapes`, `scripts/check-anchor-net.py`, `docs/testing/anchor-ci-policy.md`, `testdata/anchors` | **The policy is enforced, not merely stated.** The runtime gate lives in `HttpClient::attempt` — the one function in the workspace that hands a URL to `ureq` — and refuses any endpoint that is not a loopback literal; its `cfg(test)` arm is armed by the compiler with no off switch, and `ANTSEAL_NO_REAL_ANCHOR_NETWORK` arms every other test binary. `check-anchor-net.py` checks the three things a runtime gate structurally cannot see: that the arming is declared in every committed workflow, that there is exactly **one** HTTP client in the workspace, and that the endpoint inventory is closed. The stubs match on the **request** rather than on position, so a client retry cannot be handed the next scripted body — a sequential script would have passed while testing the wrong thing. |
 
 ## M3 — reveal and verifier page (line 174)
 
@@ -170,6 +207,45 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
    by three named tests and pinned by
    `tamper_matrix_records_its_deliberate_non_rows`.
 
+## Findings from adjudicating the eleven deferred rows (2026-08-10, D118)
+
+5. **Finding 1 recurred, and Q51's fix did not stop it — it moved it.**
+   Q51 made the status column machine-checked so a stale row could not
+   survive a milestone review. It checks the column *against
+   `CURRENT_MILESTONE`*, and that constant sat at `M0` from the freeze until
+   2026-08-10 while M1 shipped and M2 reached its halfway point. So the gate
+   was green over sixteen M0 rows and blind to eighteen others, and the six
+   M1 rows repeated V3.4's failure — **stale in the direction of pessimism,
+   asserting work was missing that was already done** — for eight days, with
+   the lint green the whole time. The instrument was correct and unarmed.
+   **A gate parameterised by a hand-maintained constant is only as current as
+   the constant**, and nothing in this file, in the checker, or in any runbook
+   compared that constant to the milestone the project was actually in.
+6. **Ten of the eleven were stale; exactly one was real.** The comfortable
+   reading — *"it is all bookkeeping"* — is wrong by one row, and the
+   uncomfortable one — *"eleven live claims that work is missing"* — is wrong
+   by ten. `V7.1` is the survivor, and it survives on a distinction no status
+   column can express: the real two-day calendar cycle **happened**, but
+   `curl` performed it, not antseal. Replaying captured bytes offline proves
+   the parser; it does not prove the client. The rows that record a real
+   campaign are the ones most likely to be mistaken for coverage.
+7. **The `deferred` status is a relation, not a property, and it is the only
+   status in the vocabulary that can rot without being edited.** `covered`
+   and `gap` are claims about the tree; `deferred` is a claim about the
+   *calendar*. Every one of the eleven became wrong without a character
+   changing. This is now stated in the vocabulary note above.
+8. **Both self-test fixtures for the status gate were pinned to `V6.1`'s
+   cell** (`| M1 | S17 + Q15 | deferred |`), one asserting green and one
+   asserting red. Marking `V6.1` covered would have made both mutations
+   match nothing — and the harness fails loudly on a no-op mutation, so the
+   fixtures were retargeted to `V9.2`'s `| M4 | Q34 | deferred |` in the same
+   change. `V9.2` is the real-mainnet-seal row: it cannot be covered before
+   the release gate, and at that gate Q34 requires the whole matrix green, so
+   the fixture's expiry now coincides with a moment somebody is already
+   forced to look. **A self-test fixture pinned to a row's status inherits
+   that row's lifetime**, which is the same class of defect as this file's
+   own hand-maintained counts.
+
 ## Changelog
 
 - **2026-07-28 (M0 wave 6, Q13)** — matrix created from the tree as it
@@ -177,3 +253,16 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
   lines 167–175. One M0 gap found and named (V3.4). Machine-checked by
   `scripts/check-traceability.py --matrix`, which is proven able to fail via
   `--self-test`.
+- **2026-08-10 (M2 wave 14, Q165 / D118)** — the eleven rows reading
+  `deferred` at or before M2 adjudicated one by one against the tree, and
+  **`CURRENT_MILESTONE` moved `M0` → `M1`**, the milestone whose review has
+  actually passed. Ten rows were stale and are now `covered` with named
+  evidence: `V2.3` (A21, eight live anchor tamper rows), `V3.5` (A23 + Q17,
+  both fuzz targets), `V6.1`–`V6.6` (S17/S18/S14/A1 + Q15's venue), `V7.2`
+  (A25 row 2, with A105's asymmetry recorded as a limitation) and `V7.3`
+  (A24 + Q16's enforced policy). **One was real**: `V7.1` is now `gap` — the
+  real calendar cycle was run by hand with `curl` and antseal's own path has
+  never performed it. `ACCEPTED_NON_COVERED` stays empty; nothing was
+  exempted, because exempting an in-progress milestone's row would mute it at
+  the review that is supposed to read it. The M1 and M2 section preambles
+  were rewritten: both described a tree that stopped existing on 2026-08-02.

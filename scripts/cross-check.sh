@@ -49,6 +49,9 @@ set -uo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# shellcheck source=lib/red-arm.sh
+. "${root}/scripts/lib/red-arm.sh"
+
 python="${PYTHON:-python3}"
 if ! command -v "$python" >/dev/null 2>&1; then
   echo "UNAVAILABLE  no ${python} on PATH; the cross-check needs a stdlib Python >= 3.10" >&2
@@ -220,6 +223,13 @@ fi
 # is not evidence." So every surface is proven able to go red, here, every
 # time the lane runs — not once by hand in a report nobody re-reads.
 #
+# Q149 sharpens that sentence: a checker observed EXITING NON-ZERO is not
+# evidence either. Every arm below requires the message the checker prints when
+# it catches its planted fault, so that a traceback, an import error or a
+# fixture the mutation left unreadable is a failure of the arm rather than a
+# pass. The rule and the register of instruments that owe it are in
+# scripts/lib/red-arm.sh.
+#
 # Faults are planted in a COPY of testdata/ under a temp directory, never in
 # the working tree: a self-test that can leave the repo dirty on a crash is a
 # worse hazard than the one it guards against.
@@ -232,12 +242,55 @@ cp -a "${root}/testdata" "${work}/testdata" || {
 
 selftest_status=0
 
-# Plant a fault, expect red, restore, expect green.
+# The sentence a generator prints when its committed vector disagrees with the
+# freshly derived bytes — the message `prove_can_fail` requires below, so that
+# "the checker went red" and "the checker reported THIS disagreement" stop
+# being the same statement (Q149; the rule is in scripts/lib/red-arm.sh).
+#
+# THREE reporters over five generators, not the two the tree describes:
+#
+#   crypto, hkdf, fine-tree  `check_committed(path, produced)`, byte-diffing,
+#                            `FAIL  <name>: re-derived bytes differ from the
+#                            committed vector` — genuinely verbatim across the
+#                            three.
+#   anchor                   its own structural report (envelope/inputs, then
+#                            the self-binding leg).
+#   storage                  a THIRD `check_committed`, with the arguments
+#                            reversed and different wording
+#                            (`MISMATCH  <name>: committed file differs from
+#                            fresh derivation`), under a docstring at
+#                            testdata/vectors/v1/storage/gen_vectors.py:58
+#                            claiming it is "duplicated verbatim in the
+#                            sibling generators". It is not, and nothing
+#                            checked that claim — this arm is what found it.
+#
+# The default is deliberately the majority sentence: a NEW generator with a
+# fourth reporter fails LOUDLY here — as "went red, but never said what this
+# surface says" — rather than silently accepting whatever nonzero it happens
+# to produce. That is the failure direction this whole change exists to
+# choose, and it is the direction that produced the finding above on its first
+# run.
+expected_mismatch_for() {
+  case "$1" in
+    */anchor/gen_vectors.py)  printf '%s' 'FAIL  anchor.json: the re-derived envelope/inputs differ' ;;
+    */storage/gen_vectors.py) printf '%s' ': committed file differs from fresh derivation' ;;
+    *)                        printf '%s' 're-derived bytes differ from the committed vector' ;;
+  esac
+}
+
+# Plant a fault, expect red FOR THE STATED REASON, restore, expect green.
 #
 # $1 label · $2 script (path inside the copy) · $3 victim (path inside the
-# copy) · $4 mutation mode passed to the helper below.
+# copy) · $4 mutation mode passed to the helper below · $5 the literal the
+# checker must print when it catches this fault.
+#
+# $5 is what makes the arm mean anything. Without it any nonzero satisfies the
+# red leg: a traceback, an import error, or — the case this harness makes
+# easy — a mutation that leaves the fixture unparseable, which crashes the
+# checker, restores cleanly, and reports "red with the fault, green without
+# it" while proving nothing about the property being mutated.
 prove_can_fail() {
-  local label="$1" script="$2" victim="$3" mutation="$4"
+  local label="$1" script="$2" victim="$3" mutation="$4" expected="$5"
   note "self-test: ${label}"
 
   if [ ! -f "${victim}" ]; then
@@ -317,35 +370,52 @@ PY
 
   local args=("--check")
   case "${script}" in *reference.py) args=() ;; esac
-  "$python" "${script}" "${args[@]}" >/dev/null 2>&1
-  local rc=$?
+  assert_red "${expected}" "$python" "${script}" "${args[@]}"
+  local arm=$?
   mv -f "${victim}.orig" "${victim}"
 
-  if [ "${rc}" -eq 0 ]; then
-    echo "FAIL  ${label}: the checker stayed GREEN with a planted fault — it is not" \
-         "actually checking this surface" >&2
+  if [ "${arm}" -ne 0 ]; then
+    case "${arm}" in
+      1) echo "FAIL  ${label}: the checker stayed GREEN with a planted fault — it is not" \
+              "actually checking this surface" >&2 ;;
+      2) echo "FAIL  ${label}: the checker went red, but never reported the disagreement" \
+              "this surface reports — so it failed for some other reason and this arm" \
+              "certified a surface it never exercised" >&2 ;;
+    esac
+    red_arm_evidence "${arm}" "${expected}" >&2
     selftest_status=1
     return
   fi
 
   # And green again once restored, so the red was the fault and not the setup.
-  "$python" "${script}" "${args[@]}" >/dev/null 2>&1
-  if [ $? -ne 0 ]; then
+  # `assert_green` rather than `>/dev/null 2>&1`: this leg used to discard the
+  # evidence of its own failure, so "still red after restoring" named no cause.
+  if ! assert_green "$python" "${script}" "${args[@]}"; then
     echo "FAIL  ${label}: still red after restoring — the self-test is unsound" >&2
+    printf '%s\n' "${ARM_OUT}" | sed 's/^/      /' >&2
     selftest_status=1
     return
   fi
-  echo "OK    ${label}: red with the fault, green without it"
+  echo "OK    ${label}: red with the fault (said \"${expected}\"), green without it"
 }
 
 copy_of() { printf '%s' "${work}/testdata/${1#"${root}"/testdata/}"; }
 
 # 1. reference.py — no committed artifact of its own, so the fault goes in the
 #    implementation: RFC 5869's expand loop starts its counter at 1.
+#
+#    The expected message is an AssertionError line, and deliberately so: this
+#    checker signals a failed known answer by RAISING, so its designed failure
+#    IS a traceback. That is why the Q149 rule is "match the expected message"
+#    and not "reject tracebacks" — the latter would make this arm
+#    unsatisfiable. Naming the vector in the literal is what separates the
+#    intended AssertionError from an ImportError, a SyntaxError left by a bad
+#    mutation, or an assertion about some OTHER primitive.
 for path in "${references[@]}"; do
   prove_can_fail "$(rel "${path}") known answers (T0)" \
     "$(copy_of "${path}")" "$(copy_of "${path}")" \
-    "replace:counter = 1:counter = 2"
+    "replace:counter = 1:counter = 2" \
+    'AssertionError: RFC 5869 A.1 HKDF-SHA256'
 done
 
 # 2-4. The vector generators — flip a hex digit in the committed vector.
@@ -355,11 +425,25 @@ for path in "${generators[@]}"; do
   case "${path}" in
     */utf8-corpus/gen_corpus.py)
       # Two checks live behind this one --check, so prove both can fail.
+      # Two expectations, not one, because the two checks behind this single
+      # `--check` fail in different words and each arm must require its own.
+      #
+      # The second literal is a PER-LINE disagreement, not the anchor's
+      # summary line, and that distinction was measured rather than guessed.
+      # `normalization_test_anchor` reports an absent conformance sample as
+      # one "disagreement" (gen_corpus.py:394-395), so `FAIL  NormalizationTest
+      # NFC anchor: 1 disagreement(s)` is printed BOTH when a conformance line
+      # disagrees and when the file is simply gone — the arm would have
+      # accepted a missing fixture as proof that the T0 anchor compares
+      # anything. `: NFC(c1) = ` is emitted only by the per-line comparison
+      # loop, so it cannot be produced by a file that was never read.
       prove_can_fail "$(rel "${path}") corpus goldens" \
-        "${script}" "${dir}/expected/lone-cr" "byte"
+        "${script}" "${dir}/expected/lone-cr" "byte" \
+        'MISMATCH expected/lone-cr'
       prove_can_fail "$(rel "${path}") Unicode NormalizationTest anchor (T0)" \
         "${script}" "${work}/testdata/unicode/NormalizationTest-17.0.0-sample.txt" \
-        "replace:1E0A;1E0A;:1E0A;1E0C;"
+        "replace:1E0A;1E0A;:1E0A;1E0C;" \
+        ': NFC(c1) = '
       ;;
     *)
       victim=""
@@ -371,7 +455,8 @@ for path in "${generators[@]}"; do
         selftest_status=1
         continue
       fi
-      prove_can_fail "$(rel "${path}") committed vectors" "${script}" "${victim}" "hex"
+      prove_can_fail "$(rel "${path}") committed vectors" "${script}" "${victim}" "hex" \
+        "$(expected_mismatch_for "${path}")"
 
       # C27. The generic fault above lands in the first *.json of the
       # directory (commitments.json), so signatures.json's ML-DSA half was
@@ -380,11 +465,19 @@ for path in "${generators[@]}"; do
       # STAYS green for them by construction: the re-derivation is handed
       # those fields, so it re-emits whatever the file says. The red comes
       # from check_mldsa_half and nowhere else, which is the proof C27 owes.
+      #
+      # Their expected message is `check_mldsa_half`'s own, NOT the byte-diff
+      # sentence — which is the sharpest illustration of why the message is
+      # required here. The byte-diff leg stays green for these two by
+      # construction, so an arm that accepted `re-derived bytes differ` would
+      # be accepting a red that cannot come from the leg it claims to prove.
       if [ -f "${dir}/signatures.json" ]; then
         prove_can_fail "$(rel "${path}") mldsa65.public_key (C27)" \
-          "${script}" "${dir}/signatures.json" 'field:"mldsa65":public_key'
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":public_key' \
+          'FAIL  signatures.json: the ML-DSA half does not check out'
         prove_can_fail "$(rel "${path}") mldsa65.signature (C27)" \
-          "${script}" "${dir}/signatures.json" 'field:"mldsa65":signature'
+          "${script}" "${dir}/signatures.json" 'field:"mldsa65":signature' \
+          'FAIL  signatures.json: the ML-DSA half does not check out'
       fi
       ;;
   esac
