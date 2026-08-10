@@ -1644,3 +1644,78 @@ still runs it as its own step with `--require`. What moved is local: **Q141**
 (wave 13) added that step to `scripts/local-gate.sh`, which had run `--check`
 only and therefore could not observe any of Q130's new instruments — CI could,
 because it runs the two as separate steps.
+
+---
+
+## The push of 2026-08-10 (waves 12–13), and a run that never started
+
+`5fbc48d..1c702d4`, two commits — `d23dccc` (wave 12) and `1c702d4` (wave 13).
+The push succeeded and `origin/main` carries both. **CI did not fail; CI never
+ran**, and the distinction is the whole content of this section.
+
+Run **31407751482** on `1c702d4` reports `0 of 19`. Read naively that is the
+worst result this project has ever recorded, immediately after four
+consecutive all-green runs. It is not a result at all. **Every one of the 19
+jobs has zero steps, no runner assigned (`runner_name: ""`), and the entire run
+completed in 13 s** against ~28 min for the green run on `5fbc48d` eight hours
+earlier. Nothing was checked out, compiled or executed.
+
+**Reproduced, not inferred.** The run was re-run at 16:56 UTC, 44 minutes after
+the first attempt. Attempt 2 is identical: 19 of 19 jobs, zero steps, no runner,
+**14 s**. Two attempts, same signature, no code or configuration change between
+them.
+
+Four benign explanations were eliminated by measurement rather than argument:
+
+| candidate | how it was ruled out |
+| --- | --- |
+| waves 12–13 broke the CI config | `git diff 5fbc48d..1c702d4 -- .github/` is **empty** — the pushed range touches no workflow file |
+| Actions disabled on the repository | `actions/permissions` reports `enabled: true`, `allowed_actions: all` |
+| a GitHub platform incident | githubstatus.com reported **All Systems Operational**, no incidents, at both attempts |
+| a transient scheduling blip | attempt 2 reproduced it exactly, 44 minutes later |
+
+A job that is created, is never assigned a runner, and dies in seconds across
+**every** label — including plain `ubuntu-latest`, not merely the `macos` and
+`windows` legs — is a dispatch refusal at the account level, not a property of
+this repository or this commit. On a **private repo on GitHub Free**, where
+Actions minutes are metered, the standing candidate is an exhausted minute
+allowance or a reached spending limit. That is consistent with the other
+account-level refusal this project already records: branch protection returning
+403 for the same class of reason (D52).
+
+**Unconfirmable from the checkout, and the reason is worth recording.** The
+billing endpoint requires the `user` token scope, which the working token does
+not carry (`gist`, `read:org`, `repo`, `workflow`); a device-flow refresh was
+attempted and its one-time code expired before completion. Independently,
+`actions/runs/<id>/timing` reports **`0` billable milliseconds for every job of
+the *successful* `5fbc48d` run**, so that endpoint is not a usable probe for
+consumption here and should not be treated as one by a later reader. The
+diagnosis above therefore rests on the dispatch signature, which is
+reproducible, rather than on a quota figure, which is not readable.
+
+**The failed dispatches cost nothing.** No runner was assigned, so neither
+attempt billed minutes — which is also why re-running was the cheap decisive
+test rather than an expensive gamble.
+
+### What `1c702d4` is and is not verified by
+
+**Is:** the full local gate, green — **23 printed lanes, 21 PASS, zero reds,
+2437 tests** — plus `scripts/ci-lanes.sh secret-guard` run by hand (not in the
+gate), whose own self-test detected all 5 planted fakes first. The 23rd lane is
+new this wave and is **Q141**'s fix: `cross-check-st` runs `--self-test` before
+`--check`, so the gate now runs the half that selects.
+
+**Is not:** anything only the remote can reach. This document's standing
+warning — *a lane that has never run on the remote is not evidence* (Q43) —
+applies to this commit in full, and it applies with unusual force here, because
+**Q140 changed a `build.rs` that backs `golden-vectors`, `cross-os-*` and
+`test`**. D116 §1.5(a) is the reason that matters: the row named one walker and
+the tree held two, and a `build.rs`-only fix would have left four required
+contexts brickable. The macOS and Windows legs of that change have not run
+anywhere. **Until a CI run completes on `1c702d4` or a successor, the
+cross-platform half of Q140 is unverified**, and no later reader should treat
+the green local gate as covering it.
+
+Restoring dispatch is a maintainer action: raise the spending limit, wait for
+the monthly reset, or reduce what the workflow spends — `cross-os-macos` bills
+at a 10x multiplier and is by far the most expensive of the 19 jobs.
