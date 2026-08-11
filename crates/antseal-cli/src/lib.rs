@@ -30,6 +30,7 @@ pub mod listing;
 pub mod machine;
 pub mod passphrase;
 pub mod pipeline;
+pub mod preview;
 pub mod restore_out;
 pub mod rng;
 mod run;
