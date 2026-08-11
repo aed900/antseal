@@ -116,7 +116,15 @@ executed end-to-end on the dev machine, toolchain cargo 1.92.0:
 
 ## Post-execution record (fill at real publish)
 
-- Date: _(pending)_
-- Published versions: _(pending — expected 0.0.0 ×5)_
-- crates.io owner verified on all five: _(pending)_
-- Fed back into TODO/P2 acceptance: _(pending)_
+- Date: **2026-08-11**
+- Published versions: **0.0.0 ×5** (antseal, antseal-core, antseal-anchor, antseal-net, antseal-cli)
+- crates.io owner verified on all five: **`aed900`**, read from the public
+  `GET /api/v1/crates/<name>/owners` endpoint after the run (`200` + sole
+  owner on every name), not inferred from the script's summary
+- Fed back into TODO/P2 acceptance: row ticked ✅ 2026-08-11, carrying the
+  two same-hour refusals that preceded success — the unquoted-heredoc
+  command substitution in this script's own `--execute` banner (fixed,
+  `4a54681`; the dry-run path never enters that branch, so three prior
+  dry-runs proved nothing about it) and crates.io's verified-email
+  requirement (cleared by the maintainer). The placeholders are superseded
+  by real publishes from the workspace at Q31.
