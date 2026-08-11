@@ -411,7 +411,11 @@ impl<'a> AnchorArtifacts<'a> {
 /// represented by *the absence of the entry* in [`OnlineEvidence`], so a state
 /// machine cannot branch on a failure it has no way to receive.
 /// `antseal-anchor` keeps A16's richer typed outcome for the overlay; it
-/// simply has nothing to hand core.
+/// simply has nothing to hand core — nothing to hand the **verdict path**,
+/// that is: per D64 §6.3, core carries a *rendering-input* probe type
+/// ([`crate::verify::overlay::ProbeLog`], R17) for the overlay's
+/// disagreement and fetch-failure lines, and the no-failure-variant rule
+/// here remains the law of the verdict path.
 ///
 /// The match in [`Self::agreement_with`] is wildcard-free so that adding a
 /// third variant — the natural way this ruling would be undone — does not

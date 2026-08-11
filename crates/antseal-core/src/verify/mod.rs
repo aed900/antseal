@@ -57,15 +57,36 @@
 //!   the zero-headline-eligible (UNANCHORED) flag, so the M1 E2E can
 //!   library-verify a `--no-anchor` seal before A18 (M2) and R17 (M3).
 //!   Derived data only — never part of the serialized report bytes.
+//!
+//! - [`verdict`] (task R17) — the full offline verdict aggregate over
+//!   `evaluate_anchors`' output (D64 §6.1): the one headline by
+//!   earliest-wins, the >48 h divergence outcome, the UNANCHORED
+//!   predicate, and the receipt's separate supporting-evidence class —
+//!   through A1's single eligibility predicate, with the claimed time
+//!   excluded at the type level. Derived data only, like [`aggregate`].
+//!
+//! - [`overlay`] (task R17) — the `--online` advisory overlay (D64
+//!   §§3–6): the typed probe-outcome **rendering** input (never verdict
+//!   input; D56 §3's rules are untouched), the second aggregation's
+//!   impact against the offline verdict, and the sibling document that
+//!   rides beside — never inside — the frozen report bytes.
+//!
+//! - [`wording`] (task R17 mechanism; **R18 freezes**) — the single core
+//!   wording source every aggregate/overlay display string is drawn
+//!   from. Structure per D64 §8; every spelling provisional until R18's
+//!   snapshot table lands over it.
 
 pub mod aggregate;
 pub mod coherence;
 pub mod error;
 pub mod file_stages;
+pub mod overlay;
 pub mod pipeline;
 pub mod report;
 pub mod structural;
 pub mod unit_stages;
+pub mod verdict;
+pub mod wording;
 
 pub use aggregate::{AnchorAggregate, aggregate_anchors, headline_eligible};
 pub use coherence::{
@@ -84,6 +105,12 @@ pub use file_stages::{
     check_fine_root_rebuild, check_full_reveal_content, check_raw_mirror, classify_file_reveal,
     concat_non_mirror_bytes, participates_in_concat, resolve_raw_mirror,
 };
+pub use overlay::{
+    AggregateDelta, BlockProbe, EndpointProbeFailure, EndpointsDisclosure, HeadlineImpact,
+    NotPromotedReason, OnlineOverlay, OverlayAnchorOutcome, OverlayDelta, OverlayEncodeError,
+    OverlayOutcomeClass, ProbeEndpoints, ProbeFailureClass, ProbeLog, ReceiptEcho,
+    ReceiptEchoOutcome, ReceiptProbe, build_online_overlay,
+};
 pub use pipeline::{VerifyOptions, VerifyStage, verify_bundle, verify_bundle_collecting};
 pub use report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
@@ -98,6 +125,9 @@ pub use structural::{
 };
 pub use unit_stages::{
     ContentBinding, FineRangeCheck, FineTreeError, RevealedUnitInput, verify_revealed_unit,
+};
+pub use verdict::{
+    HEADLINE_DIVERGENCE_THRESHOLD_SECS, Headline, HeadlineDivergence, VerdictAggregate,
 };
 
 #[cfg(test)]
