@@ -16,10 +16,11 @@ Captures here are **append-only in practice**: a pending `.ots` body can
 never be re-taken once its commitment is upgraded, so a refresh commits
 beside an old capture, never over it.
 
-## The three campaigns
+## The four campaigns
 
 Each carries a `README.md` or equivalent provenance record (runbook §4). File
-counts are as of 2026-08-07 and grow by appending, never by replacement.
+counts are as of each campaign's capture date and grow by appending, never by
+replacement.
 
 Two of the three record their maintainer authorisation verbatim in their own
 log, which is what runbook §1 requires; **`A16-A17-live/` does not**, and
@@ -34,6 +35,7 @@ runbook; neither gap is a licence to repeat it.
 | `A25-bootstrap/` | 2026-08-02, upgraded 2026-08-03 | 61 | The OTS and TSA half. Six **pending** calendar timestamps over two golden-vector digests at three live calendars, and in `upgraded/` their six **Bitcoin-attested** upgrades plus the hard-error `Not found` bodies; nine live TSA request/response pairs (`D60-*`); five root certificates with provenance (`roots-*`). Prose: `OTS-BOOTSTRAP.md`, `roots-PROVENANCE.md`, `upgraded/PROVENANCE.md`. |
 | `A16-A17-live/` | 2026-08-03 | 12 | The must-agree half. The esplora pair over block 800000 plus its agreed-absence `404` bodies, and the Arbitrum RPC pairs on mainnet and Sepolia — the fixtures behind the finding that two honest RPCs differ byte-for-byte and must be compared on the extracted tuple. |
 | `A25-upgrade-headers/` | 2026-08-07 | 14 | The promotion half. The 80-byte mainnet headers for **960767 / 960768 / 960771** — the blocks `A25-bootstrap/upgraded/` actually attests — from both esplora endpoints, byte-identical, each verified offline by `double-SHA256(header) == claimed block hash`. Reads only; no digest was sent. |
+| `A25-wave16-cycle/` | 2026-08-11 (day-1; day-2 upgrades owed) | 9 | The product's-own-calendars half. Eight **pending** submissions — the same two golden-vector digests at the four `DEFAULT_OTS_CALENDARS` pool endpoints (D54's set), which **no earlier campaign had stamped**: the bootstrap's hosts were the `*.btc.calendar` names, and even catallaxy differs (`ots.btc.catallaxy.com` vs `btc.calendar.catallaxy.com`). All eight `200`; consent recorded verbatim in the log header per runbook §1. The day-2 upgrade GETs belong to wave 16's A25 lane and its `anchor-smoke` script. |
 
 The **pending** bodies in `A25-bootstrap/` are the irreplaceable ones: those
 six commitments will never serve a pending body again, and a fresh stamp

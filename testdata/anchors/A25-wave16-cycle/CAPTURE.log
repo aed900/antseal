@@ -1,0 +1,38 @@
+# A25 wave-16 cycle capture log — day-1 submits (wave 16, D125 queue)
+#
+# Maintainer authorisation for this capture was given in-session on
+# 2026-08-11: express consent ("I give consent"), given in direct reply
+# to the named request "A25 consent - wave 16's first act is the
+# real-endpoint smoke, and runbook section 1 needs fresh recorded
+# consent before any contact". Scope as named in that exchange and
+# executed here: submissions (POST /digest) of the two
+# already-committed golden-vector digests to the four
+# DEFAULT_OTS_CALENDARS endpoints read from
+# crates/antseal-anchor/src/ots/calendars.rs. No account, no
+# credentials, no secret material - digests only, both already public
+# in this repository (the same two the 2026-08-02 bootstrap stamped).
+# TSA requests are deliberately NOT part of this run: they carry no
+# calendar latency and belong to the anchor-smoke script's own proving
+# run.
+#
+# Why this campaign is not a re-run of the bootstrap: D54 pinned
+# DEFAULT_OTS_CALENDARS to upstream's four POOL endpoints, which are
+# not the three *.btc.calendar.opentimestamps.org hosts the bootstrap
+# stamped (catallaxy differs too: ots.btc.catallaxy.com here vs
+# btc.calendar.catallaxy.com there). No committed capture exercises
+# the calendar set the product actually defaults to; this one does,
+# and its day-2 upgrades give wave 16's A25 lane material against the
+# product's own endpoints. One pass, no retries, requests spaced >= 3 s
+# (runbook section 2).
+utc_start=2026-08-11T12:46:41Z
+digest_A=083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df bytes=32
+submit digest=A calendar=apool url=https://a.pool.opentimestamps.org/digest http=200 bytes=172 sha256=dbfdeaa8ec9dac63adb9fb179275134fe7df5d2598601a3951a42f430980ea3f utc=2026-08-11T12:46:43Z
+submit digest=A calendar=bpool url=https://b.pool.opentimestamps.org/digest http=200 bytes=240 sha256=bbee86ca1873f8676617a02f167b5e7f4baf0c2e1cbaea84f172a1bef98cdf62 utc=2026-08-11T12:46:48Z
+submit digest=A calendar=eternitywall url=https://a.pool.eternitywall.com/digest http=200 bytes=121 sha256=678b1a16805bd1853b255462e8930b76be2d06ba5184a5ffa89cf07b0fc9f3cd utc=2026-08-11T12:46:52Z
+submit digest=A calendar=catallaxy url=https://ots.btc.catallaxy.com/digest http=200 bytes=115 sha256=5ca938b6e7c82ee05402469c4ae4c9b06b324b303dea33139755e7881984f74b utc=2026-08-11T12:46:56Z
+digest_B=3448b9f22d6d4de5b68e0c1ba28d56e8466aa5a01892835411f7c467b52e5e9c bytes=32
+submit digest=B calendar=apool url=https://a.pool.opentimestamps.org/digest http=200 bytes=172 sha256=7844dc9076a164107ef6e4c6052a35d2a33fed819d59800da0101d56b0d6f26a utc=2026-08-11T12:47:00Z
+submit digest=B calendar=bpool url=https://b.pool.opentimestamps.org/digest http=200 bytes=135 sha256=34d0d59245bf4d8f80e650e1242839d098b6a197a81798d18766e39b59f15a88 utc=2026-08-11T12:47:04Z
+submit digest=B calendar=eternitywall url=https://a.pool.eternitywall.com/digest http=200 bytes=156 sha256=02051f8110008daee730bfe1907a27a1de9ae3b31faadc35e08985189834c43b utc=2026-08-11T12:47:08Z
+submit digest=B calendar=catallaxy url=https://ots.btc.catallaxy.com/digest http=200 bytes=80 sha256=a5efc95323390187287cf49e13304e8aa322de4be5735ddf3722ab2ae75f803e utc=2026-08-11T12:47:12Z
+utc_end=2026-08-11T12:47:12Z
