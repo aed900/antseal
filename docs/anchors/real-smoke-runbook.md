@@ -190,6 +190,10 @@ not exist; `docs/anchors/` holds only this runbook and
 [`root-store-update.md`](root-store-update.md). Until it does, findings live
 in the campaign logs and are cited from there — see A25's Notes in
 `../../tasks/A.md` for the standing list of what Q26 will owe a row.
+The hand-off itself executed 2026-08-11 (D126 §3.2): findings (a)–(e) now sit
+verbatim-by-citation in Q26's own `Do` (`tasks/Q.md`), with A25 in its `Deps`,
+so the M4 lane meets them in its entry rather than through this pointer; the
+calendar-rot half stays with D54/A14/A44 as above.
 
 ## 4. Recording the run
 
