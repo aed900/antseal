@@ -2249,3 +2249,12 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
    fires before the extractor is reached, so the wrong diagnosis stops being
    *seen* on that job; the naked `JSONDecodeError` on empty stdin remains in
    the code, reachable by any other cause of empty `cargo metadata` output.
+
+## Remote verdicts — 2026-08-11 (recorded at wave-16 open)
+
+- **Run `31450497379` on `f9e315d` (wave 15): 19 of 19 GREEN** — `completed
+  success`, re-verified via `gh run view` immediately before this entry was
+  written rather than copied from memory. The project's sixth all-green
+  remote run and the first carrying the `cargo-free` guard. This entry
+  closes wave 15's one recorded loose end: the run was green for a day
+  before the project's own convention had a record of it.
