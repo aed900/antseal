@@ -116,7 +116,7 @@ if [ "$EXECUTE" -eq 1 ]; then
   *** REAL PUBLISH MODE ***
 
   This will PERMANENTLY claim the following crates.io names under the
-  currently `cargo login`-ed account:
+  currently logged-in account (per cargo login):
 
 $(printf '      %s\n' "${CRATES[@]}")
 
