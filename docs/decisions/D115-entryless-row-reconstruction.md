@@ -539,8 +539,8 @@ line citations are **exact at the working tree**:
   - A test **named for the property** asserts that both real captures reach `AnchorState::Proven` through `evaluate_tsa_artifact` against `TsaRootStore::pinned()` at `AFTER_CAPTURE` — `FREETSA` (from `anchor::testing::tamper_rows`) and `DIGICERT` (`verdicts/tests.rs:59`), over the real 2026-08-02 tokens, not synthetic ones.
   - It is shown **red** by a planted fault before it is trusted — dropping a pinned root, or moving `verify_at` outside the chain's validity, must redden it. A test whose only evidence is that nothing broke is the shape this project keeps finding in other people's suites.
   - Both anti-vacuity arms at `:1205-1208` and `:1313-1316` are **still present and still asserting**, so the new test is an additional home and not a migration.
-  - Matrix row `V7.2`'s `tests / evidence` cell names the new test **by name, never by line number**, and `python3 scripts/check-traceability.py --matrix` resolves it. Whether `V7.2`'s status may move `deferred` → `covered` depends on `A25`'s row-1 script, which is A25's, not this row's — if it may not, `V7.2`'s notes cell says which half is outstanding rather than leaving a blank, because the file's own header says a blank cell reads as covered.
-- Notes: `V7.2` is one of **11** rows `--matrix --milestone M2` names as `deferred` at or before M2 (`V2.3`, `V3.5`, `V6.1`–`V6.6`, `V7.1`–`V7.3`), so this row does not by itself unblock the M2 matrix gate and must not be described as if it did. `ACCEPTED_NON_COVERED` is empty, so nothing is currently exempted. The lane runs `check-traceability.py` with no flags, and `--milestone` defaults to `CURRENT_MILESTONE`, which is **`"M0"`** (`scripts/check-traceability.py:241`) — so today's green says nothing whatever about the M2 review, and will not until that constant moves.
+  - Matrix row `V7.2`'s `tests / evidence` cell names the new test **by name, never by line number**, and `python3 scripts/check-traceability.py --matrix` resolves it. `V7.2` restates A25's Accept **row 2**, which **D118 §1.6 adjudicated SATISFIED** on its own evidence — the real 2026-08-02 FreeTSA and DigiCert captures against `TsaRootStore::pinned()` — with no dependence on the missing `scripts/anchor-smoke` entry point at all. That script is A25's Accept **row 1** (adjudicated PARTIAL) and it blocks **`V7.1`**, not this row; it is `A127`'s subject. `V7.2` already reads `covered`, with this row's asymmetry recorded as its limitation, so what this row owes the cell is the new test's **name**, not a status move. — **Replaced 2026-08-11 under [D117](D117-resolved-decision-corrections.md) §2.3(a)**; the original clause is quoted verbatim in D115's *"Correction — §4.1's `V7.2` acceptance clause and its `CURRENT_MILESTONE` citation, 2026-08-11"*.
+- Notes: `V7.2` is one of **11** rows `--matrix --milestone M2` names as `deferred` at or before M2 (`V2.3`, `V3.5`, `V6.1`–`V6.6`, `V7.1`–`V7.3`), so this row does not by itself unblock the M2 matrix gate and must not be described as if it did. `ACCEPTED_NON_COVERED` is empty, so nothing is currently exempted. The lane runs `check-traceability.py` with no flags, and `--milestone` defaults to the `CURRENT_MILESTONE` constant in `scripts/check-traceability.py` — cited by **symbol, never by line**, per [D117](D117-resolved-decision-corrections.md) RULING 6 — which reads **`"M1"`**, re-derivable at any time by `grep '^CURRENT_MILESTONE' scripts/check-traceability.py`; D118 moved it up from `"M0"`. A flagless green still says nothing whatever about the M2 review, and will not until that constant reads `M2`. — **Replaced 2026-08-11 under D117 §2.3(a) and RULING 6**; the original clause is quoted verbatim in the correction section named in the bullet above.
 - **Entry authored 2026-08-11 under Q134 from `TODO.md`'s A105 row alone — no other source existed.** Transcribed from the row: `Size`, `Deps`, `Discovered by`, and the `Problem`'s first two sentences. **Authored here, not transcribed: the whole `Do` and the whole `Accept`** — the row states a defect and a rationale and names no acceptance criterion at all. The criterion was chosen by finding where the tree already asks this question and finding it unanswered (`V7.2`), rather than by inventing a test shape; the "do not write a chain-level test" clause and the eleven-row caveat are findings of that search and are **not** in the row. The two line citations and A25's Accept row 2 wording were re-verified against the working tree on 2026-08-11 and are exact.
 ```
 
@@ -647,6 +647,7 @@ task's `Do`" is otherwise the kind of instruction a lane refuses on sight.
 | `docs/decisions/D109-*.md` | **none** — §3.7. The §8 (iii) error is recorded here and its correction waits on Q122. |
 | `docs/testing/verification-matrix.md` | **none in Q134's lane.** `V7.2` is A105's execution, not A105's entry. |
 | `scripts/vector-freeze.sh`, `testdata/vectors/v1/**`, `docs/format/FROZEN.sha256` | **untouched.** Zero frozen bytes. |
+| `docs/decisions/README.md` | this decision's index row — **applied 2026-08-11** under [D119](D119-decision-index-identity-and-the-index-row-sections.md) RULING 4, which demotes the former `## Index row` section to this row |
 
 ---
 
@@ -817,14 +818,6 @@ twelve, which is the sharpest available demonstration that `Q122` is real work.
 Zero frozen bytes; no `cargo` run; no change to any check.
 
 ---
-
-## Index row (orchestrator applies at merge)
-
-| [D115](D115-entryless-row-reconstruction.md) | Q134 — what an entry must contain when the row is its only source — **the set is confirmed exactly and every claim about it is refused**. 20 entryless rows, **12 open / 8 done**, `Q130` confirmed drained, register neither stale nor grown. But **"substantially a reformat except two" is 3/9, not 10/2**: only `Q123`, `R76` and `U39` carry both a `Do` and an `Accept`; 5 carry a `Do` alone; 4 carry neither — **nine of twelve need an `Accept` authored**, which is exactly what D109 §2 (b) forbids a lint lane to do silently. **The reason A105/A108 were singled out does not exist** — no Current-focus sentence says it; the phrase *"defined second-hand in three places that disagreed"* is **A106's** (`TODO.md:462`), misattributed at **D109 §8 (iii)** and inherited by Q134's row and entry, which get A106 right one clause earlier. Membership is wrong too: **A108 is better specified than `A72`, `A74` and `R60`**. **Atomicity is per row, not per batch** — measured on a full tree copy: 10-of-12 drained is green on `--task-entries`, the no-flag run **and** `--self-test`, while both halves of one row's drain are red — so the twelve **can** be split; the real constraint is that twelve register lines share one file. **A105**: both cited line ranges verify exactly, but `chain.rs` already names three chain-level `proven` tests (the gap is the **verdict** level), and matrix row **`V7.2`** already exists for the property reading **`NONE at M0`**. **A108**: the **manifest half already landed** (`FROZEN.sha256:82-90`), leaving one bullet in a **closed** task's `Do`; and its *"two frozen files, one with a hatch and one without"* is **false** — `report/`'s three anchor verdicts are all `invalid` with `source: null`, so **all three events move only `anchor/anchor.json`, the file with no hatch**, which strengthens D101 RULING 3c. Provenance convention: a **dated bolded bullet naming the row by ID, never by line number**, separating transcribed from authored; where the row offers a menu, **the `Do` is the choice**. Correcting D109 §8 (iii) and D101 §3.4 is **blocked on `Q122`**, one of the twelve. Also found: `--matrix --milestone M2` names **11** deferred rows incl. **six M1 rows**; the `report` kind pins the anchor surface only in its degenerate case; `Size`/`Milestone` live in two places unchecked. Character range corrected **386–2 193 → 386–1 735** (2 193 was `Q130`'s, the row that left). Zero frozen bytes, no `cargo` run | RESOLVED (Q134 executes) | 2026-08-11 |
-
-
----
-
 ## Amendment — the document contradicts itself on the provenance bullet, 2026-08-10
 
 **Recorded, not applied. The body above is byte-unchanged** — which this record
@@ -1005,3 +998,196 @@ provenance-bullet rules this correction leaves standing (deletion on execution,
 and the requirement that the entry disclose what nobody verified), and `Q167`
 cites it for the contradiction itself. Every one keeps resolving, and none
 changes meaning.
+
+---
+
+## Correction — §4.1's `V7.2` acceptance clause and its `CURRENT_MILESTONE` citation, 2026-08-11
+
+**Two clauses of §4.1 are REPLACED.** Executed under
+[D117](D117-resolved-decision-corrections.md) §2.3(a) — **not** §2.3(b), and the
+routing is the substance of this correction, so §3 below argues it rather than
+asserting it. `Q203`'s row proposed the STRIKE arm; the test in D117 §2.3 was
+applied here to the sentence itself and comes out the other way.
+
+### 1. The replaced clauses, quoted verbatim
+
+**§4.1**, in the fenced *"Proposed entry — paste into `tasks/A.md` in numeric
+order"* block, last bullet of the `Accept`:
+
+> Whether `V7.2`'s status may move `deferred` → `covered` depends on `A25`'s
+> row-1 script, which is A25's, not this row's — if it may not, `V7.2`'s notes
+> cell says which half is outstanding rather than leaving a blank, because the
+> file's own header says a blank cell reads as covered.
+
+**§4.1**, same block, the `Notes` bullet:
+
+> The lane runs `check-traceability.py` with no flags, and `--milestone`
+> defaults to `CURRENT_MILESTONE`, which is **`"M0"`**
+> (`scripts/check-traceability.py:241`) — so today's green says nothing whatever
+> about the M2 review, and will not until that constant moves.
+
+The rest of §4.1 — its two-part archaeology, the quoted matrix row, the
+*"do not write a chain-level test"* clause and the remaining `Accept` bullets —
+is untouched.
+
+### 2. The measured facts, with the commands and their output
+
+**(a) The acceptance clause names the wrong Accept row.** A25's Accept **row 1**
+is *"Runbook + script committed; the two-day OTS protocol completed at least
+once before M2 close"* — the OTS calendar cycle and the `scripts/anchor-smoke`
+entry point. A25's Accept **row 2** is *"Both real TSA tokens reach `proven`
+against the pinned store"*, which is what `V7.2` restates and what A105 exists
+to give a named home. The two matrix rows sort the same way, and the one blocked
+on the script is `V7.1`, not `V7.2`:
+
+```
+$ awk -F'|' '/^\| V7\.[12] /{...print row, owner, status}' docs/testing/verification-matrix.md
+V7.1  owner=A25 + Q16  status=gap
+V7.2  owner=A25 + A7   status=covered
+```
+
+`V7.2` is `covered`, so the clause's premise — that its status is waiting to
+move out of `deferred` — is no longer true either. D118 §1.6 adjudicated A25 row
+2 **SATISFIED** on the real 2026-08-02 captures and moved the row, recording
+A105's asymmetry as a limitation rather than as a blocker. The script the clause
+names is genuinely missing, which is why the sentence is credible and therefore
+costly:
+
+```
+$ ls scripts/ | grep -c anchor-smoke
+0
+```
+
+It is registered as `A127`, and D118 §10 (iv) counts four artefacts waiting on
+it. `V7.2` is not among them.
+
+**(b) The clause was executed, byte for byte.** The block containing it is
+prescribed text — its own heading instructs a lane to paste it into
+`tasks/A.md` — and a lane did. The bullet in this decision and the bullet in
+A105's live entry were a single distinct line across the two files:
+
+```
+$ grep -h "row-1 script" docs/decisions/D115-entryless-row-reconstruction.md tasks/A.md | sort -u | wc -l
+1
+$ grep -hc "row-1 script" docs/decisions/D115-entryless-row-reconstruction.md tasks/A.md
+1
+1
+```
+
+One occurrence in each file, and `sort -u` collapses them to one: identical to
+the byte. Both are corrected in this commit, so the command above now returns
+`2` — that is the record of what it returned before.
+
+**(c) The `CURRENT_MILESTONE` citation was stale in its locator and is now stale
+in its value.** The value is the live fact and it is re-derivable:
+
+```
+$ grep -h "^CURRENT_MILESTONE" scripts/check-traceability.py
+CURRENT_MILESTONE = "M1"
+```
+
+Two defects, in D117 RULING 5's vocabulary. The **locator** was *wrong when
+written*: it pointed inside the constant's comment block rather than at the
+constant, and D118's own commands table recorded that. The **value** *went
+stale*: D118 moved the constant `M0` → `M1` in the same commit that recorded
+the locator error. The conclusion resting on both survives untouched and in the
+same direction — a flagless run still gates a milestone below M2, so it still
+says nothing about the M2 review.
+
+**Why no replacement line number, and why this is RULING 6's own case.** D118
+proposed a corrected line number for this citation. That proposal was already
+false when it was written, because the commit carrying it lengthened the
+constant's comment block and moved the constant further down the file than the
+number D118 offered. One document therefore produced a stale locator, a
+correction for it, and the invalidation of that correction, all in one commit.
+RULING 6's measured justification (D117 §1.9) is that a correction's locators go
+stale faster than the claim they correct; this is that, at zero days. The
+citation now names the **symbol**, and the value is given as a command rather
+than as a number read at an epoch.
+
+### 3. The routing: §2.3(a), and why not §2.3(b)
+
+D117 §2.3's test is *"would a lane act on this sentence?"* — and the argument
+for STRIKE is real: the defect is a **misattribution of fact** (row 1 for row
+2), and misattributions look like the census-and-rationale material §2.3(b)
+keeps standing. Four things move it to §2.3(a).
+
+1. **The test asks what kind of *sentence* is wrong, not what kind of *defect*
+   it has.** §2.3 says so in terms: *"the answer turns on what kind of sentence
+   is wrong"*. A false statement of fact inside a rule is still a rule.
+2. **It is prescribed text, which §2.3(a) names explicitly** — *"Rules,
+   constants, table rows, cross-references, edit sets, prescribed text"*. The
+   sentence sits inside a fenced block headed *"paste into `tasks/A.md`"*. It is
+   also a **cross-reference** (it routes `V7.2` to an Accept row) and its second
+   half is an **edit set** (it prescribes what a lane writes into a named cell
+   of a named file). Three of §2.3(a)'s six categories, on one sentence.
+3. **The test is answered by measurement here, not by prediction.** §2 (b) shows
+   a lane already acted on it, byte for byte. *"Would a lane act on this"* is not
+   hypothetical when the paste is in the tree.
+4. **§2.3(a)'s stated rationale is this case.** *"A rule left visibly wrong is a
+   rule somebody executes anyway, and the strike is not load-bearing at the
+   moment of execution."* The moment of execution here is a copy out of a fenced
+   block — and `~~ ~~` does not render inside a fence at all. A strike would not
+   merely have failed to bind; it would have travelled into a live task file as
+   literal tilde characters.
+
+**The one clause of §2.3(b) that argues back** is *"anything already
+executed"*. It does not reach: this block is the reusable template of a decision
+about **reconstructing entries from rows**, so it is read again whenever that
+happens, and the harm it causes is prospective — D118 §10 (v) puts it in the
+present tense, *"A105's entry tells its executor"*. The executor has not acted
+yet.
+
+**Nothing is lost by replacing.** §2.1(a) is satisfied by §1 above: both
+original clauses survive verbatim, in this section, which is the arm's whole
+requirement.
+
+### 4. What this correction deliberately does not do
+
+The same `Notes` bullet opens by calling `V7.2` one of **11** rows that read
+`deferred` at or before M2. D118 adjudicated all eleven — ten to `covered`, one
+(`V7.1`) to `gap` — so that clause is stale too. It is **not** corrected here:
+no row charges it, it is a dated measurement rather than an instruction, and it
+would land on the other arm. It is reported as unregistered discovered work
+instead. Recording it is not correcting it, and this section states only what
+`Q203` measured.
+
+### 5. Authority, and separability (§2.1(c))
+
+Found and adjudicated by **D118** §10 (v), which named both the decision and the
+propagated copy in A105's live entry; registered as **`Q203`**; unblocked by
+**D117** RULING 1, which is the `Q122` answer D118 recorded itself as waiting
+for (*"It does not correct D115 §4.1. Blocked on `Q122`"*); measured and executed
+by **wave 15's Q203 lane**, which routed it to §2.3(a) against the row's own
+proposal of §2.3(b).
+
+**Separability holds.** §4.1 was written at `1c702d4` and this correction lands
+in a distinct, later commit, so it is a real diff against a committed resolved
+body and not the same-commit shape D117 §1.7 measured. The live twin in
+`tasks/A.md` is corrected in the *same* commit as this section, which §2.1(c)
+does not reach — a live task entry is not a resolved body and D117 does not gate
+it — but it is stated here so no reader has to work it out.
+
+### 6. Which rulings stand
+
+**All of them, and the error runs in the direction that strengthens §3.**
+§4.1's purpose is to demonstrate that an entry can be reconstructed from a row
+alone; the reconstruction was faithful to `TODO.md`'s A105 row and the defect
+came from a routing claim the reconstruction **added**, not from anything it
+transcribed. That is §3.5's disclosure rule earning its keep, not failing:
+§4.1's own provenance bullet already said the `Accept` was authored rather than
+transcribed, which is exactly how this sentence was located as the lane's own
+work. §3.1's five mandatory fields, §3.2, §3.3, §3.4, §3.5, §3.6, §3.7 and §3.8
+are unaffected, and §4.2 is untouched.
+
+**Identifier discipline (RULING 4).** `4.1` is **not renumbered**, and neither is
+`4`. `D115 §4.1` is cited by `TODO.md`'s D118 row, by `tasks/A.md`'s A105
+provenance bullet, by `tasks/Q.md`'s `Q203` entry, by
+`docs/decisions/D118-deferred-matrix-rows-and-the-gate-constant.md` in its
+preamble, its commands table, its §10 (v) and its index row, and by
+`docs/decisions/README.md`'s D118 index row. **Every one cites §4.1 either as
+the thing being corrected or as the source A105 was reconstructed from**, and
+none cites it for the two clauses replaced here. All keep resolving, and none
+changes meaning. A105's provenance bullet is the one worth naming twice: it
+says the entry was reconstructed from §4.1, and after this commit the two agree
+again — which is the drift this correction exists to close.

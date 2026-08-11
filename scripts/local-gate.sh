@@ -41,6 +41,20 @@
 #                                     ANTSEAL_GATE_BITMATCH (Q128). Its
 #                                     TRIGGER's self-test is unconditional;
 #                                     the lane's own `--self-test` is not.
+#   traceability's cargo-free         D124/Q182 asserts that CI's
+#   PROPERTY                          `traceability` job invokes no cargo,
+#                                     rustc or rustup, and the converse for
+#                                     `core-dep-graph`. Both are ASSERTED ON
+#                                     THE REMOTE ONLY, and not because nobody
+#                                     wired them here: `--arm` works by
+#                                     appending to `$GITHUB_PATH`, which
+#                                     covers the LATER STEPS OF A JOB, and a
+#                                     local run has no later steps. The
+#                                     `cargo-free` lane below runs the
+#                                     `--self-test`, which proves the guard
+#                                     CAN go red; it does not run the job. So
+#                                     a contributor can break this property
+#                                     locally and find out only on the remote.
 #
 # And what a green run of this script asserts that CI DOES NOT (the other
 # direction, and the one nothing had recorded until D116 §1.8). This is Q43's
@@ -50,8 +64,9 @@
 # stayed carry their reason here rather than in a decision record, because
 # this header is what a contributor reads before a push.
 #
-# MOVED TO THE REMOTE AT Q153 (2026-08-10) — no new required context; each
-# rides as a step of a job that already exists, so the set stays at 19:
+# MOVED TO THE REMOTE AT Q153 (2026-08-10), plus one addition at D124/Q182
+# (2026-08-11) — no new required context; each rides as a step of a job that
+# already exists, so the set stays at 19:
 #
 #   gate-features --self-test        now ALSO a step of CI's `core-dep-graph`
 #   gate-features --check-partition  job, not `traceability` as Q153's row
@@ -71,11 +86,33 @@
 #                                    already caches, and already runs `cargo
 #                                    metadata`/`cargo tree` over the same
 #                                    S22/P20 subject.
+#                                    ADDED 2026-08-11 (D124/Q182): the
+#                                    property this record was written to
+#                                    correct — that `traceability` runs no
+#                                    cargo — is no longer prose anywhere. It
+#                                    is asserted on every run of that job by
+#                                    `scripts/cargo-free.sh --arm`/
+#                                    `--verdict`, and its converse for
+#                                    `core-dep-graph` by `--require`. The
+#                                    record above stands unchanged: it is what
+#                                    happened.
 #   bitmatch-trigger                 now ALSO a step of CI's `traceability`
-#                                    job (Q153). Measured cargo-free and
-#                                    git-free — it runs green with cargo off
-#                                    PATH — which is what earns it the job
-#                                    that has no toolchain.
+#                                    job (Q153). Measured git-free, and
+#                                    ASSERTED cargo-free every run since
+#                                    D124/Q182 rather than measured once —
+#                                    which is what earns it the job that has
+#                                    no toolchain.
+#   cargo-free                       `cargo-free.sh --self-test` is now ALSO a
+#                                    step of CI's `traceability` job, because
+#                                    `--arm` runs it before it arms (D124).
+#                                    The ASSERTION it tests is two steps on
+#                                    that job and has no local equivalent —
+#                                    `$GITHUB_PATH` covers later steps of a
+#                                    job, and there are no later steps here.
+#                                    The gap that leaves is stated in the
+#                                    FIRST list above, under "traceability's
+#                                    cargo-free PROPERTY", because it is a
+#                                    thing CI asserts and this script cannot.
 #
 # STILL LOCAL-ONLY, AND WHY (Q153's ruling — the asymmetry is declared here so
 # it is not discovered a sixth time):
@@ -323,6 +360,18 @@ run format-freeze scripts/format-freeze.sh
 # remote is not evidence, and neither is one that never runs locally.
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
+
+# D124/Q182 — the test-of-the-test for the guard that asserts CI's
+# `traceability` job runs no cargo. The ASSERTION is two steps on that job and
+# has no local equivalent (`$GITHUB_PATH` covers a job's later steps; there are
+# none here) — but the guard's own command must be executable before a push,
+# which is the defect `check-ci-shell.py`'s docstring opens with and the exact
+# reason Q8's malformed `--list` sat latent for two waves. Nine red arms, two
+# direct property assertions, two green controls; no cargo, no network,
+# milliseconds. The property itself is stated once, in scripts/cargo-free.sh's
+# header, and every prose site in this file now cites it instead of asserting
+# it.
+run cargo-free scripts/cargo-free.sh --self-test
 
 # Q16 — the no-real-anchor-network policy's static half (self-tests first,
 # six planted faults). Reads committed files only, so it costs a fraction of

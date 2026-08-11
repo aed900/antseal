@@ -633,6 +633,7 @@ assertion and its indices 0/1/3; R2–R5 are additive.
 | `docs/format/FROZEN.sha256` | **untouched** |
 | `docs/format/frozen-registry-errata.md` | **untouched** — no entry is added; §2(e) |
 | `TODO.md`, `tasks/Q.md` | orchestrator's, at bookkeeping |
+| `docs/decisions/README.md` | this decision's index row — **applied 2026-08-11** under [D119](D119-decision-index-identity-and-the-index-row-sections.md) RULING 4, which demotes the former `## Index row` section to this row |
 
 Expected suite count: `format_registry_freeze` **24 → 28**.
 
@@ -788,13 +789,6 @@ arise, no erratum is added, and `format-v1-freeze` is unmoved — because the
 prose diverges and the structure does not.
 
 ---
-
-## Index row (orchestrator applies at merge)
-
-`D111 — Q131: registry prose cross-check — RESOLVED 2026-08-10 — prose⟷prose closed-vocabulary check REFUSED (green at its own motivating instance, ~30 false positives); four mechanical checks land instead on type/presence/rule/tier, all green, zero frozen bytes moved.`
-
----
-
 ## Amendments — found by the implementing lane, 2026-08-10
 
 Recorded here rather than left in a task report, per the standing rule that a

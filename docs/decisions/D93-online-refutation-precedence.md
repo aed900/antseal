@@ -604,6 +604,7 @@ decision, not a fixture to adjust.
    owner note for `anchor-ots-online-block-absent` says *"a named test drives
    it"*. After A80 that test is the committed twin; after A81/Q92 it is a row.
    A80 updates the string.
+10. `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ---
 
@@ -661,9 +662,3 @@ used.
 - Do: Add the `project_added[]` entry for `anchor-ots-online-block-absent` with the D93 §12 justification (line 168 names it nowhere; its only instrument was measured blind). Re-run the combined distinctness sweep.
 - Accept: the sweep is green with the new key; a planted duplicate of an existing key goes red naming both rows.
 - Notes: registry-side only — A81 builds the fixture. Ordered before A81 for the same reason Q76 was ordered before A21.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| [D93](D93-online-refutation-precedence.md) | Reconciling the M2 anchor tamper matrix with the shipped state machine — **the registry cell is right, the code is wrong, and D56 §5 is wrong in the place the code copied faithfully.** `MATRIX.json` row `anchor-forged-header` keeps `verdict:invalid`; **no `expected` cell moves** and the 6-family/8-case counts hold. D56 §5 placed **O4 above O6/O7**, which makes both online refutations unreachable whenever the ops commit the embedded header — so a forged header (trivial to build: the attacker picks the ops, reads the root, writes 80 bytes around it) renders `attested` against any online evidence, and an `.ots` claiming a height beyond the chain tip renders **`attested` for ever**, which is the defect **D56 §3 states verbatim as the reason O7 exists**. Five statements contradict the shipped order, four of them inside D56 (§3, §5's own summary table, §1's ruling that spec 108/168 win, A18's Accept row 2); the single argument for it — best-evidence-wins — is a **per-branch** rule and the D79 upgrade group is singular, while O8 already hands a relay the same downgrade primitive offline. Fix is one guard: **O4 fires only when no agreed online evidence refutes the recorded height**; O5 stays above O6/O7, so §4's anti-downgrade ruling and the A21 single-branch trap are untouched. Row 4's fixture is now **load-bearing in two directions** — single-branch *and* ops-committing — because the uncommitted forgery that satisfies the row today is already `invalid` offline and never runs the online gate; the row carries a vacuity latch so that mistake goes red naming itself. D56 §9's `nTime` row formally retired-and-replaced. Q75 confirmed in substance and corrected in two of its three instructions (the `pending` block **stays**; `EXPECTED_M2_UNMINTED` empties in the same commit). Zero frozen report bytes, zero codes minted | RESOLVED | 2026-08-06 |

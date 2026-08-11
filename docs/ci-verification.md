@@ -1369,8 +1369,10 @@ leaves more than 5 days between runs (the corpus cache is evicted after 7
 days without access, and accumulation is this lane's only reason to exist).
 
 It rides as a **step of the existing `traceability` job**, not as a job of
-its own: it needs no cargo and no network, so the **required-context set
-stays at 19** and Q56's generated context list is untouched.
+its own: it needs no network, and that job's cargo-freeness — which is what
+makes riding there free — is asserted on every run since D124/Q182 rather
+than claimed here. So the **required-context set stays at 19** and Q56's
+generated context list is untouched.
 
 **Billing was not read.** `gh api /users/aed900/settings/billing/actions`
 needs the `user` OAuth scope, which this token does not carry; obtaining it
@@ -1427,8 +1429,9 @@ assertion passed**.
 **After:** the policy is enforced at runtime by
 `crates/antseal-anchor/src/http/offline.rs` inside `HttpClient::attempt`, and
 its out-of-Rust half by `scripts/ci-lanes.sh anchor-net-policy`, which rides
-as a **step of the existing `traceability` job** — Python only, no cargo, no
-network — exactly as `ci-shell` and `fuzz-budget` do.
+as a **step of the existing `traceability` job** — Python only, no network,
+and cargo-free by that job's asserted property (D124/Q182) rather than by
+this sentence — exactly as `ci-shell` and `fuzz-budget` do.
 
 ## Minute cost
 
@@ -1437,8 +1440,9 @@ invocation over committed text: it reads 4 workflow files, 6 manifests,
 `scripts/local-gate.sh` and antseal-anchor's sources, with six in-memory
 planted faults first. Measured locally on this 2-core host over three runs:
 **0.13 s / 0.10 s / 0.10 s** wall, self-test included.
-`traceability` needs no toolchain and no cache, so the step adds no
-setup. The `test` lane gains 5 unit tests and one integration target whose
+`traceability` needs no toolchain and no cache, so the step adds no setup — a
+property this document used to state and D124/Q182 now asserts on every run of
+that job. The `test` lane gains 5 unit tests and one integration target whose
 parent spawns three short child processes; on a 2-core host
 `cargo test -p antseal-anchor` went from **189 tests / 9.69 s** before to
 **194 + 1 tests / 9.90–10.67 s** across four runs — inside this host's own
@@ -1773,6 +1777,63 @@ workflow that need no toolchain at all (`secret-guard` is the other), on a
 repository whose minute consumption is the standing suspect for the refused
 dispatch recorded in the section above.
 
+#### Correction — the cargo-off-`PATH` table is a measurement on a date, and the property it measured is now asserted on every run, 2026-08-11
+
+**The corrected clause, quoted verbatim**, from the paragraph immediately
+above ("What Q153 was, and the part of it that was wrong"):
+
+> That matters because `traceability` **has no toolchain bootstrap and no
+> cache**, which the Q16 section above states as a property of the job
+
+**The table and that paragraph are correct and are not rewritten.** What is
+corrected is their *status*: they read as a standing property of the job, and
+they were a **one-off measurement taken on 2026-08-10** by removing cargo from
+`PATH` and running each lane once. Nothing re-took it, and nothing would have
+noticed if a later step had made it false — which is Q182.
+
+**The measured fact, with the command and its output.** Since D124/Q182 the
+property is asserted by `scripts/cargo-free.sh`, armed as the first step of
+`traceability` and read back as its last. Re-measured 2026-08-11 through the
+real guard, prepending its shim directory to `PATH` exactly as a
+`$GITHUB_PATH` entry does, control and masked, output diffed:
+
+| step | control | masked | output | shims tripped |
+| --- | --- | --- | --- | --- |
+| `ci-lanes.sh traceability` | rc 0 | rc 0 | **byte-identical** | 0 |
+| `ci-lanes.sh ci-shell` | rc 0 | rc 0 | **byte-identical** | 0 |
+| `ci-lanes.sh fuzz-budget` | rc 0 | rc 0 | **byte-identical** | 0 |
+| `ci-lanes.sh anchor-net-policy` | rc 0 | rc 0 | **byte-identical** | 0 |
+| `wasm-bitmatch.sh --trigger-self-test` | rc 0 | rc 0 | **byte-identical** | 0 |
+
+Each was verified **by its message, not by its exit status** — `cargo`,
+`rustc` and `rustup` were each confirmed to resolve to the shim and to print
+`invoked a masked toolchain binary` at exit 127 before the steps were run, and
+the run of a control before *and* after each masked run separates "the mask
+changed nothing" from "the shared tree moved under the measurement".
+
+The near-miss was then reproduced end to end. With the job armed,
+`./scripts/gate-features.sh --check-partition` — Q153's actual first placement
+— was run **with both its streams discarded**, which is
+`scripts/gate-features.sh:116`'s own shape:
+
+```
+    step exit status: 1        (gate-features' own rc — proof of nothing)
+::error::cargo-free: the 'traceability' job invoked a masked toolchain binary
+  — 1 invocation(s) recorded. …
+::error::  no-step-id	cargo metadata --format-version 1 --no-deps --locked
+```
+
+**Authority**: D124 (Q182), wave-15 implementing lane, 2026-08-11. This
+correction lands in the same change as the guard it describes.
+
+**Which findings still stand**: all of them, and in the direction that
+strengthens them. The three cargo-off-`PATH` rows above are unchanged; the
+placement of the two `gate-features.sh` steps on `core-dep-graph` is
+unchanged and now has its own assertion (`--require`); and the paragraph's
+account of the failure mode — *an implicit install of the pinned 1.92.0 on a
+green job*, not a red — is the account Q182's row garbled into "will fail on a
+missing toolchain", and it is this document that had it right.
+
 ### Where the three actually landed
 
 Two jobs, **no new job**, so no new required context:
@@ -1781,7 +1842,7 @@ Two jobs, **no new job**, so no new required context:
 | --- | --- | --- |
 | `./scripts/gate-features.sh --self-test` | `core-dep-graph` | already bootstraps the toolchain, already caches, already runs `cargo metadata`/`cargo tree`, and is the **complementary half of the same claim**: dep-graph proves the heavy graph stays out of the default build, the partition proves every declared feature is compiled by some tier. `gate-features.sh`'s own header calls the two complementary and says why neither substitutes for the other. |
 | `./scripts/gate-features.sh --check-partition` | `core-dep-graph` | as above; self-test runs first, as everywhere else in this workflow. |
-| `./scripts/wasm-bitmatch.sh --trigger-self-test` | `traceability` | cargo-free and git-free, verified rather than assumed, so it adds no setup to the job that deliberately has none — the same argument `ci-shell`, `fuzz-budget` and `anchor-net-policy` made for the same job. |
+| `./scripts/wasm-bitmatch.sh --trigger-self-test` | `traceability` | git-free, verified rather than assumed; and cargo-free — **asserted every run since D124/Q182** rather than measured once — so it adds no setup to the job that deliberately has none, the same argument `ci-shell`, `fuzz-budget` and `anchor-net-policy` made for the same job. |
 
 **The context set does not change: still 19.** Recounted from
 `.github/workflows/ci.yml`, not read from this file: 17 job ids
@@ -1907,8 +1968,10 @@ The three steps Q153 moved onto the remote, by `name:`, each `success`:
 Required-context count is **unchanged at 19** — 17 job ids with `cross-os` a
 three-way matrix. Three steps were added and no job was, which is why the two
 cargo-touching lanes ride `core-dep-graph` rather than `traceability`: that
-job has no toolchain bootstrap and no cache, and this document already records
-that as a property of it.
+job has no toolchain bootstrap and no cache. **This document used to be the
+record of that property; since D124/Q182 it is asserted on every run of the
+job by `scripts/cargo-free.sh`, and stated once in that script's header** —
+which is what this sentence now cites instead of asserting.
 
 **The dispatch refusal is resolved and its diagnosis is confirmed.** The three
 refused runs (`31407751482`, `31412086640`, and the run on `95fcee0`) each
@@ -1944,3 +2007,245 @@ mutable tree values; it now has two instances rather than one.
 
 Appended, not edited, except for the status table of the section above, whose
 own text states that filling its run-id cell *"is the whole of what remains"*.
+
+---
+
+## A blast radius measured under fail-fast is a lower bound, not a radius (Q196, M2 wave 15 — 2026-08-11)
+
+**The general form, and the reason this section exists:**
+
+> **Any measurement of blast radius — the answer to *"how much does this
+> break?"* — records the command that produced it and the predicate it
+> counted. If the command is `cargo test`, it carries `--no-fail-fast`.**
+> A count taken without the flag is not wrong; it is a **lower bound**, and a
+> lower bound reported as a radius is the defect.
+
+This is the sibling of the standing rule in *"A lane that has never run on the
+remote is not evidence (Q43, M0 wave 7)"* above. Both say the same thing about
+a different half of a measurement: Q43 about **where it ran**, this one about
+**what it was allowed to count**.
+
+### What the flag does, and the two things it does not do
+
+`cargo test --help`, cargo 1.92.0 (the pinned toolchain), verbatim:
+
+> `--no-fail-fast` — Run all tests regardless of failure. Without this flag,
+> Cargo will exit after the first executable fails. **The Rust test harness
+> will run all tests within the executable to completion, this flag only
+> applies to the executable as a whole.**
+
+**(1) The loss is at test-target granularity, never at test granularity.**
+Within the first failing executable the count is *already complete* — libtest
+runs the whole binary and reports `N passed; M failed`. What a fail-fast run
+loses is every test in every *subsequent* target, all of it. So a fail-fast
+survey is not "the first failure and nothing after it"; it is "one target,
+counted in full, and zero from every other target". Its tightness therefore
+depends on **target order**, which nothing in this repository pins or asserts.
+Anyone writing *"cargo test stops at the first failure"* has the mechanism
+wrong in a way that matters: it predicts a count of 1 where the true fail-fast
+count is however many tests that one target happens to hold.
+
+**(2) It does nothing for a breakage that stops the compile.** From the same
+manual page:
+
+> While `cargo test` involves compilation, it does not provide a
+> `--keep-going` flag. Use `--no-fail-fast` to run as many tests as possible
+> without stopping at the first failure. To "compile" as many tests as
+> possible, use `--tests` to build test binaries separately.
+>
+> ```
+> cargo build --tests --keep-going
+> cargo test --tests --no-fail-fast
+> ```
+
+A survey of a change that breaks a build script, a shared type or a macro must
+run the two commands in that order, or it measures the first compile error and
+stops. **D116 §1.5 is exactly this case and no test flag would have widened
+it**: a planted `.pyc` made `crates/wasm-bitmatch`'s build script panic, so
+`cargo check --workspace` exited 101 before any test binary existed.
+
+### Surveying and gating are different jobs, and only one of them needs the flag
+
+| | question it answers | flag |
+| --- | --- | --- |
+| **Survey** | *how much of the tree does this move?* | `--no-fail-fast` (and `cargo build --tests --keep-going` first, when the breakage can stop a compile) |
+| **Gate** | *is this tree shippable?* | **no flag, deliberately** |
+
+The gate's job is to **stop**, not to survey. One red is already the whole
+answer to *"is this shippable?"*, and the marginal reds cost a full run of a
+broken tree — slower, and noisier at exactly the moment the operator wants one
+name to go and fix. **Do not add `--no-fail-fast` to `scripts/local-gate.sh`,
+to any `lane_*` in `scripts/ci-lanes.sh`, or to any workflow.** That is a
+different question with a different cost, and this section is not an argument
+for it.
+
+A survey is therefore a **separate, deliberate, ad-hoc invocation**, run by the
+lane that needs the number and written down with the number. It is not a lane
+and must not become one.
+
+### Recording the number: the command and the predicate, both
+
+Two figures in this tracker have been misread, and only one of them was
+misread because of a flag:
+
+- **The command**, because a bare count does not say what was allowed to stop.
+  D95 §7 is the one place in this repository that got this right before the
+  convention existed — *"`cargo test -p antseal-core --features test-util
+  --no-fail-fast --tests`: **five** red, not D94 step 0's predicted two"* — and
+  the reason it is quotable is that the flag is inside the quote.
+- **The predicate**, because a bare count attaches itself to whatever the
+  reader is already thinking about (Q160's generalisation; D116 §9 item 8's
+  *"a measurement recorded without its subject is a measurement that will be
+  applied to the wrong thing"*). D116 §1.5(a)'s *"two walkers"* and the Q157
+  census's *"twelve walk sites"* count **different predicates** over the same
+  directory and are both true; the row that read the second as superseding the
+  first (Q196) is the measured instance of the hazard.
+
+So: *"eight tests across four targets, `cargo test --workspace --locked
+--no-fail-fast` at `<commit>`, counting failing test functions"* is a radius.
+*"eight tests"* is not.
+
+The epoch rule of D117 §2.5 applies to a radius the same way it applies to any
+count: name the commit it was taken at, or write it as a command the reader can
+re-run.
+
+### The measured state of the tree, 2026-08-11 (working tree at `1f82da1` plus wave-15 lanes)
+
+- **`--no-fail-fast` appears in no invocation anywhere.** Not in `scripts/`,
+  not in `.github/`, not in `CONTRIBUTING.md`'s PR checklist. Its only
+  occurrence as a *record* is D95 §7, quoted above. (Its other occurrences are
+  in `TODO.md`'s and `tasks/Q.md`'s Q196 rows, which are this convention's own
+  paperwork — the "exactly once in the whole repository" figure those rows
+  state was falsified by the act of writing them down.)
+- **Twelve `cargo test` invocations execute tests, and every one runs
+  fail-fast**: `local-gate.sh`'s `test` lane; `ci-lanes.sh`'s `lane_cross_os`,
+  `lane_golden_vectors`, `lane_tamper_matrix` (two) and `lane_cbor_drift_guard`;
+  `gate-features.sh`'s per-feature lane; `format-freeze.sh`'s and
+  `vector-freeze.sh`'s authoritative checkers; `wasm-tests.sh`'s wasm32 unit-test
+  lane; `e2e-devnet.sh`'s devnet target; and `ci.yml`'s `test` job.
+- Two further `cargo test` invocations execute nothing and are correctly
+  unaffected: `ci-lanes.sh`'s `count_matched` (`-- --list`) and
+  `wasm-tests.sh`'s planted-fault build (`--no-run`).
+
+**All twelve are correct as they stand.** Every one of them is a gate, not a
+survey. Nothing in this section asks for a single one of them to change.
+
+### What this does not claim
+
+A fail-fast count is not a false count. It is a true count of a smaller thing,
+and for the question a gate asks it is the *right* thing. This section is
+about one sentence in a write-up: the sentence that turns a true lower bound
+into a claimed radius by omitting the command that produced it.
+
+Appended, not edited.
+
+---
+
+# Q182/D124 — the `traceability` job's cargo-free property, asserted rather than stated (2026-08-11, M2 wave 15)
+
+## The context set does not change: still 19
+
+**Recounted from `.github/workflows/ci.yml`, not read from this file**, per
+this document's standing instruction. **17** job ids — `fmt`, `clippy`,
+`test`, `wasm32-core`, `wasm32-core-tests`, `core-dep-graph`, `cross-os`,
+`golden-vectors`, `cross-check`, `vector-freeze`, `format-freeze`,
+`wasm-bitmatch`, `tamper-matrix`, `fuzz-smoke`, `audit-deny`, `secret-guard`,
+`traceability` — of which `cross-os` is a 3-way matrix (`linux`/`macos`/
+`windows`) and every other job is one context: 17 − 1 + 3 = **19**. D124 adds
+**three steps and zero jobs**. The branch-protection payload and Q56's
+generated context list are untouched.
+
+## What is asserted, and where
+
+Two steps on `traceability` and one on `core-dep-graph`, all calling one new
+committed script, `scripts/cargo-free.sh`:
+
+| job | step | what it asserts |
+| --- | --- | --- |
+| `traceability` | `cargo-free.sh --arm traceability` — **first**, right after checkout | self-tests the guard, then installs failing `cargo`, `rustc` and `rustup` shims under `$RUNNER_TEMP` and appends that directory to `$GITHUB_PATH`, which prepends it for **every later step of the job, including steps not yet written** |
+| `traceability` | `cargo-free.sh --verdict traceability` — **last** | red if any step tripped a shim, red if the guard directory is gone, red if the shims are not what `PATH` resolves |
+| `core-dep-graph` | `cargo-free.sh --require core-dep-graph` — after the cache step | the **converse**: this job does have a working cargo and rustc, which two of its steps need |
+
+**The property itself is stated exactly once**, in `scripts/cargo-free.sh`'s
+header. Sixteen prose statements across six files — five in `ci.yml`, one in
+`ci-lanes.sh`, two in `local-gate.sh`, **six in this document**, one in
+`docs/testing/fuzzing.md`, one in `docs/testing/anchor-ci-policy.md` — kept
+their own local point (why a step rides that job, the context arithmetic) and
+**dropped the assertion**, citing the guard instead. A seventeenth sat inside
+`check-ci-shell.py`'s own docstring.
+
+## Why not in `check-ci-shell.py`, where workflow facts get checked
+
+**Because a per-job predicate over `run:` text is vacuous against the incident
+that produced the row, not because it is expensive.** Q153's near-miss line —
+`./scripts/gate-features.sh --check-partition` — carries no `cargo` token, and
+neither does any of the five `run:` lines the job carried before this change:
+**0 of 6**. Reading one level into the callee is worse, not better:
+`ci-lanes.sh` holds 31 `cargo` occurrences belonging to other lanes and
+`wasm-bitmatch.sh` 4, so a callee-grep turns **all five of the job's green
+steps red**, starting with the one step Q153 verified cargo-free by running
+it.
+
+Job attribution itself was prototyped and **measured at nine lines, 65 of 65
+`run:` blocks attributed, zero unattributed** — so *"that is the larger half
+of the work"* is refuted, and the parse is declined because nothing needs it
+rather than because it costs anything. Both facts are recorded at
+`run_blocks()` so the shape is not re-proposed and the price is not
+re-litigated.
+
+`run:` text is simply the wrong **observable**. The property is a claim about
+a *process tree*: which argument a committed script was called with, which
+branch it took, what it shelled out to. So the assertion goes where the fact
+is — at the job, at runtime, where a shim either gets called or does not.
+
+## The two steps guard each other
+
+Deleting the arming step does not quietly disarm the job: `--verdict` is red
+when the guard directory does not exist, which is what the arming step
+creates. It is also red when `cargo` no longer resolves to the shim, which
+closes the subtler hole — an **empty marker file read as "clean" when it means
+"never armed"**. Deleting *both* steps is a deliberate two-step act that
+removes two steps whose names say what they are, and nothing fires; closing
+that needs the per-job step-presence check D124 declined to build.
+
+## Why a marker file rather than a message
+
+Because the message can be taken away and the file cannot.
+`scripts/gate-features.sh:116` pipes `cargo metadata … 2>/dev/null`: with
+cargo masked, the exit status survives and the diagnosis does not, and what a
+maintainer reads is an unhandled `JSONDecodeError` followed by *"cargo
+metadata returned NO features at all — the extractor is broken"* — loud, and
+pointing at the wrong file. That measurement is why `--require` exists at all,
+and why the shims write their record **before** printing anything.
+
+## Cost
+
+Three steps, no new job, no new required context. `--arm` and `--verdict` read
+and write a handful of small files under `$RUNNER_TEMP`; `--require` runs
+`cargo --version` and `rustc --version` on a job that has already bootstrapped
+its toolchain and restored its cache. **No wall-clock figure is recorded
+here**: this lane's measurements were taken on a 2-core host under ten
+concurrent lanes, where D124 already caught itself recording a 39× figure that
+was cold page cache and nothing else. A figure with no honest sample is worse
+than no figure — the rule is `local-gate.sh`'s own, and Q160's.
+
+## What this does not do
+
+1. **The property is asserted on the remote only.** `--arm` works by appending
+   to `$GITHUB_PATH`, which covers a job's *later steps*, and a local run has
+   no later steps. `local-gate.sh` runs `cargo-free.sh --self-test`, which
+   proves the guard can go red; it does not run the job. A contributor can
+   break this property locally and find out only on the remote — recorded in
+   `local-gate.sh`'s own both-directions ledger rather than only here.
+2. **It introduces `$GITHUB_PATH` to this repository for the first time.** No
+   workflow and no script used it before. A reader of `ci.yml` will not see
+   the `PATH` change at the step that causes it, which is why both steps carry
+   comments naming each other.
+3. **It cannot catch a cargo invocation by absolute path.** A step running
+   `/usr/share/rust/.cargo/bin/cargo` bypasses `PATH` entirely. Nothing in the
+   tree does this and the idiom would be conspicuous in review, but the
+   guard's coverage is `PATH` resolution, not process creation.
+4. **It does not fix `gate-features.sh`'s unhandled traceback.** `--require`
+   fires before the extractor is reached, so the wrong diagnosis stops being
+   *seen* on that job; the naked `JSONDecodeError` on empty stdin remains in
+   the code, reachable by any other cause of empty `cargo metadata` output.

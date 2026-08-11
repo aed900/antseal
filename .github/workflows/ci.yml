@@ -222,6 +222,21 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup show
       - uses: Swatinem/rust-cache@v2
+      # D124/Q182 — the CONVERSE property, asserted for the same reason and in
+      # the same instrument as `traceability`'s. Without it, cargo missing here
+      # surfaces as an unhandled JSONDecodeError followed by `the extractor is
+      # broken` — loud, and pointing at the wrong file (D124 §1.9). It also
+      # catches the arm/verdict pair being copied onto this job by mistake,
+      # which would mask the toolchain two steps below need.
+      # NOTE the step name carries no ": " — a plain YAML scalar containing a
+      # colon-space is a mapping indicator and makes the whole file
+      # unparseable. D124's edit set prescribed `the converse: cargo IS
+      # available`, which broke ci.yml, and `check-ci-shell.py` read the
+      # broken file as GREEN because it is a line scanner, not a parser
+      # (measured 2026-08-11). It is the only step name in any workflow here
+      # that would have contained one.
+      - name: Q182 — the converse property, that cargo IS available in this job
+        run: ./scripts/cargo-free.sh --require core-dep-graph
       - name: Assert antseal-core normal deps are I/O-free
         run: ./scripts/ci-lanes.sh dep-graph
       # Q153 — S22's feature partition, which had NEVER RUN ON THE REMOTE.
@@ -237,11 +252,14 @@ jobs:
       # --format-version 1 --no-deps --locked` (scripts/gate-features.sh),
       # and with cargo off PATH `--check-partition` exits 1 on its own
       # anti-vacuity arm. `traceability` carries no toolchain and no cache
-      # BY DESIGN — docs/ci-verification.md's Q16 section states that as a
-      # property of the job — so a `cargo` there would trigger an implicit
-      # rustup install of the pinned 1.92.0 (plus rustfmt, clippy and the
-      # wasm32 std) on one of the only TWO jobs in this workflow that need
-      # no toolchain at all (`secret-guard` is the other). THIS job already
+      # BY DESIGN, and since D124/Q182 that is asserted on every run by the
+      # `--arm`/`--verdict` pair on that job rather than stated — so a
+      # `cargo` there is caught by a check that names the job and the
+      # property, instead of quietly triggering an implicit rustup install
+      # of the pinned 1.92.0 (plus rustfmt, clippy and the wasm32 std) on
+      # one of the only TWO jobs in this workflow that need no toolchain at
+      # all (`secret-guard` is the other). The converse — that THIS job does
+      # have cargo — is asserted by the `--require` step above. THIS job already
       # bootstraps the toolchain, already caches, and already runs `cargo
       # metadata`/`cargo tree` for the SAME S22/P20 subject matter:
       # dep-graph proves the heavy graph stays OUT of the default build,
@@ -669,7 +687,10 @@ jobs:
         run: ./scripts/ci-lanes.sh secret-guard
 
   # Q13 (live) + Q37: the two checks over documented claims that nothing else
-  # verifies. Neither needs cargo, so this lane is seconds, not minutes.
+  # verifies. This lane is seconds, not minutes. The cargo-free property that
+  # buys those seconds is no longer claimed here: it is ASSERTED, by the
+  # `--arm`/`--verdict` pair on this job, and stated once in
+  # scripts/cargo-free.sh's header (D124/Q182).
   #
   #   --matrix           docs/testing/verification-matrix.md maps every
   #                      Verification-section bullet (MVP-SPEC.md lines
@@ -693,24 +714,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # D124/Q182 — this job's cargo-free property, ASSERTED instead of
+      # stated. Installs failing `cargo`/`rustc`/`rustup` shims ahead of the
+      # real ones for every step below, INCLUDING STEPS NOT YET WRITTEN, and
+      # self-tests first. The property itself is stated once, in
+      # scripts/cargo-free.sh's header — this comment does not restate it.
+      # Measured 2026-08-11: all five steps below run BYTE-IDENTICALLY with
+      # cargo, rustc and rustup masked, which is what makes this installable
+      # today rather than a migration.
+      - name: Q182 — self-test the cargo-free guard, then arm it
+        run: ./scripts/cargo-free.sh --arm traceability
       - name: Self-test (prove both checks can fail), then check
         run: ./scripts/ci-lanes.sh traceability
       - name: Q43 — every workflow `run:` block is a committed script or an allowlisted line
         run: ./scripts/ci-lanes.sh ci-shell
       # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its
       # named 700-minute ceiling. It rides HERE, as a step of an existing
-      # job, for the reason `ci-shell` does: it needs no cargo and no
-      # network, so folding it in costs SECONDS and ZERO new required-status
-      # contexts (the set stays at 19; Q56's generated context list is
-      # untouched). A separate job would have added a context for a check
-      # that reads four literals out of committed files.
+      # job, for the reason `ci-shell` does: it needs no network, and the
+      # cargo half of that argument is asserted by this job's `--arm`/
+      # `--verdict` pair rather than claimed here (D124/Q182). So folding it
+      # in costs SECONDS and ZERO new required-status contexts (the set stays
+      # at 19; Q56's generated context list is untouched). A separate job
+      # would have added a context for a check that reads four literals out
+      # of committed files.
       - name: Q81 — the scheduled fuzz lane fits its named minutes ceiling
         run: ./scripts/ci-lanes.sh fuzz-budget
       # Q16 — the no-real-anchor-network policy's static half. It rides HERE
       # for the same reason `ci-shell` and `fuzz-budget` do: Python only, no
-      # cargo, no network, so it costs SECONDS and ZERO new required-status
-      # contexts (the set stays at 19; Q56's generated context list is
-      # untouched). The policy's *enforcing* half is a runtime gate inside
+      # network, and cargo-free by this job's asserted property rather than by
+      # this comment (D124/Q182). So it costs SECONDS and ZERO new
+      # required-status contexts (the set stays at 19; Q56's generated context
+      # list is untouched). The policy's *enforcing* half is a runtime gate inside
       # the anchor HTTP substrate and is executed by the `test` lane above;
       # this step checks the parts of the policy that live outside Rust —
       # the workflow-level arming three lines from the top of this file, the
@@ -731,10 +765,23 @@ jobs:
       #
       # It rides HERE for exactly the reason `ci-shell`, `fuzz-budget` and
       # `anchor-net-policy` do, and this one earns the claim the other two
-      # Q153 lanes could not: it is genuinely cargo-free AND git-free —
-      # verified by running it with cargo off PATH, rc 0 — so it adds no
-      # setup to a job that deliberately has none, and ZERO new
-      # required-status contexts (the set stays at 19). Measured locally,
-      # 3 runs, 2-core host: 0.08 s / 0.08 s / 0.08 s.
+      # Q153 lanes could not: it is genuinely GIT-free as well, which nothing
+      # asserts and which is still a 2026-08-10 measurement in this comment.
+      # Its cargo-freeness is no longer a measurement recorded here — it is
+      # asserted on every run by this job's `--arm`/`--verdict` pair
+      # (D124/Q182), which is where the one-off "verified with cargo off
+      # PATH, rc 0" became permanent. ZERO new required-status contexts (the
+      # set stays at 19). Measured locally, 3 runs, 2-core host:
+      # 0.08 s / 0.08 s / 0.08 s.
       - name: Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change
         run: ./scripts/wasm-bitmatch.sh --trigger-self-test
+      # D124/Q182 — reads the marker back, and MUST STAY LAST. Red if any step
+      # above invoked cargo, red if the arming step above is gone, and red if
+      # the shims are not what PATH resolves — so the two steps guard each
+      # other and a $GITHUB_PATH mechanism that quietly stopped working cannot
+      # read as a green property. The marker file exists because a callee can
+      # redirect the shim's stderr to /dev/null and one measurably does
+      # (scripts/gate-features.sh:116), so the exit status survives and the
+      # message does not.
+      - name: Q182 — no step of this job invoked cargo
+        run: ./scripts/cargo-free.sh --verdict traceability

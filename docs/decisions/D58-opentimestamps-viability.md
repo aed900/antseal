@@ -1202,6 +1202,7 @@ miss, and it argues for keeping adversarial parsing inside code we own and
 audit rather than behind a dependency's API.
 
 ## 12. Errors found in the register, the tasks and the docs
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ### 12.1 `tasks/A.md` A11 Notes — the stated test is not the deciding test
 
@@ -1346,7 +1347,3 @@ and a well-formed 404 on upgrade.
   i.e. any measured quantity lands within 1.5× of its cap.
 - Bitcoin's consensus block-size rule changes, which is the input to
   `MAX_OTS_OPS`' and `MAX_OTS_DEPTH`' structural derivations.
-
-## Index row (orchestrator applies at merge)
-
-| [D58](D58-opentimestamps-viability.md) | `opentimestamps` 0.2.0 viability — **not adopted in any form; the `.ots` codec is in-house in `antseal-core` over the already-pinned `sha2`, at +0 packages against the crate's +13.** Both halves of the register's framing overturned: it **does** compile on `=1.92.0` and wasm32 (`cargo build` codegen green), so the stated test decides nothing; and "vendor/fork" is not a cheaper contingency because the crate is **edition 2015** and every line needing change is a line. Decided on measured behaviour instead — an **80-byte** `.ots` drives an uncatchable `SIGABRT` from `vec![0; attacker_varint]`, a **102-byte** one from an unbounded hexlify chain, an **87-byte** one panics in debug and *parses to a different answer* in release, and a **90-byte** one makes this crate and `python-opentimestamps` report **different attestation sets from identical bytes** (the crate ignores the declared attestation payload length; the reference sub-slices, caps at 8192 and asserts EOF). Unwrappable: `from_reader` fuses parse + op execution + recursion in one call, so any pre-filter enforcing A11's limits *is* the parser. Also: `env_logger` is a non-optional dep of a codec, and `core-dep-graph`'s forbidden list would not have caught it (→ Q74). Establishes the `.ots` container byte-by-byte from the A25 captures (65-B header, `0xff` before every branch but the last; 3-calendar merge = 664 B, round-trip byte-identical), and — by falsifying it against corrupted commitments — that the upgrade endpoint's discriminator is **three-way, not two**: `404 + "Pending confirmation in Bitcoin blockchain"` (re-poll) vs `404 + "Not found"` (hard error), separated by body alone, which also validates the op executor against a live calendar (→ A14). **Seven limits set with F4 rows** (ops 4 096, depth 1 024, width 64, attestations 256, operand 16 384 B, running value 32 768 B, attestation payload 8 192 B), two of them absent from A27 §4's "exhaustive" list and each closing a measured abort; measured, a 1 048 566-B `.ots` carries **74 893** attestations under `MAX_OTS_BYTES`. **P18 retired** | RESOLVED | 2026-08-02 |

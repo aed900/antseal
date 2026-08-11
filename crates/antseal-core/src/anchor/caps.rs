@@ -401,8 +401,15 @@ mod tests {
     ///
     /// The `.ots` twin is
     /// `anchor::ots::limits::tests::the_structural_cost_column_states_the_derivation_and_its_value`,
-    /// and it does **not** parse the table — it is two `contains` loops over a
-    /// closed list. This is the same instrument for the DER half, and it has
+    /// and **since A123 it is three arms, not the two `contains` loops this
+    /// sentence used to describe**: a document-wide `contains` for the
+    /// derivation formulae, a per-row read of §5's own `structural cost` cell
+    /// for the figures that have a row, and `matches().count() == 1` for the
+    /// one figure that has none. A126 brings the DER half to the same shape —
+    /// the formula loop below is the first arm, and the two loops inside the
+    /// 64-bit gate are the second and third — while still **not** parsing the
+    /// registry: a line selected by what it opens with, and an occurrence
+    /// count. This is the same instrument for the DER half, and it has
     /// one thing to say that the `.ots` side does not: the DER containers
     /// reserve with `Vec::with_capacity` **after** the count check and never
     /// regrow, so the cells read plain `limit x size_of::<T>()` and **must
@@ -435,34 +442,118 @@ mod tests {
         );
 
         // 64-bit only: the measured layout the registry says it records.
+        //
+        // **Two arms, because the seven figures have two authoritative homes**
+        // (D121 §8, closing A126). §5 is a registry keyed by **F4 limit** and
+        // §5a is the derivation behind it, which §5a says of itself; so a
+        // figure an F4 limit owns is stated in that limit's row, and a figure
+        // no F4 limit owns is stated in §5a and nowhere else. A single
+        // document-wide `contains` over all seven could not go red at either
+        // home: measured, mutating §5's `MAX_CHAIN_CERTS` cell alone left this
+        // test and all 1056 lib tests green, because the needle still occurred
+        // twice in §5a. Blast radius zero — the defect A126 filed, realised.
         if core::mem::size_of::<usize>() == 8 {
+            // Arm 1 — the three figures §5's `MAX_CHAIN_CERTS` row states of
+            // record, read out of that row rather than out of the file. This
+            // is A123's second arm; §5a's restatements of these are derivation
+            // and commentary, and are deliberately not pinned here.
+            //
+            // **`starts_with` and not `contains`, and that is load-bearing**:
+            // the string below occurs on two lines — §5's row, which *opens*
+            // with it, and §5a's per-container table, where it is the
+            // `bounded by` cell mid-line. Exactly one line starts with it, so
+            // `contains` would select §5a's row on some future reordering and
+            // silently move this assertion off the cell it exists to protect.
+            // Same selector shape as `ots::limits::tests`' A42 row, one crate
+            // over.
+            let Some(row) = REGISTRY
+                .lines()
+                .find(|line| line.starts_with("| `MAX_CHAIN_CERTS` |"))
+            else {
+                panic!(
+                    "§5 carries no `MAX_CHAIN_CERTS` row — D102's `structural cost` column \
+                     hangs off that row, and it is the only text that states these three \
+                     figures of record"
+                );
+            };
             for (what, bytes) in [
                 ("the certificate bag", TSA_STRUCTURAL_CERT_BAG_BYTES),
-                ("the path-node ceiling", TSA_STRUCTURAL_PATH_NODE_BYTES),
-                ("the whole DER path", TSA_STRUCTURAL_ALLOC_BYTES),
                 (
                     "MAX_CHAIN_CERTS' share of the path nodes",
                     MAX_CHAIN_CERTS * CHAIN_PATH_NODE_BYTES,
                 ),
                 (
-                    "MAX_INTERMEDIATE_COUNT's share, which F4 cannot raise",
-                    crate::codec::caps::MAX_INTERMEDIATE_COUNT as usize * CHAIN_PATH_NODE_BYTES,
-                ),
-                (
                     "the marginal cost of one more certificate",
                     CHAIN_CERTIFICATE_BYTES + CHAIN_CERT_DER_HANDLE_BYTES + CHAIN_PATH_NODE_BYTES,
-                ),
-                (
-                    "the tie with the fuzz guard's slack",
-                    MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES,
                 ),
             ] {
                 let needle = format!("**{}**", format_spaced(bytes));
                 assert!(
-                    REGISTRY.contains(&needle),
-                    "the F4 registry has no cell reading {needle:?} for {what} — the \
-                     derived cost and its registry row have drifted, which is the one \
-                     thing D102's column exists to make impossible"
+                    row.contains(&needle),
+                    "§5's `MAX_CHAIN_CERTS` row states no structural cost of {needle:?} for \
+                     {what}. The derived cost and its registry row have drifted, which is \
+                     the one thing D102's column exists to make impossible. The row reads: \
+                     {row:?}"
+                );
+            }
+
+            // Arm 2 — the four figures with **no §5 row to be read out of**,
+            // which is A123's third arm and needs no parse of §5a. §5 is keyed
+            // by F4 limit and no F4 limit owns these: `MAX_PATH_NODES` is
+            // classified out of the F4 set by `NOT_F4_LIMITS` above,
+            // `MAX_INTERMEDIATE_COUNT` is frozen at D10 §2 row 8, the whole
+            // path is a sum across two containers under two bounds, and the
+            // fuzz-guard tie is a sub-product of a cell that states the whole.
+            //
+            // A count of **0** is drift; a count of **2 is not a pass** — it
+            // is the moment one of these acquires a second home and this line
+            // stops meaning what it says, which is exactly how the old
+            // document-wide search passed for reasons its author never
+            // intended. Read A126 and D121 before relaxing it.
+            //
+            // The path-node ceiling is the one §5a figure with two homes there
+            // — its table row and the decomposition sentence below it — so its
+            // needle is the figure **joined to its derivation**, which only the
+            // table states. Both halves are already code-derived (the formula
+            // is one of the four asserted above), so the join adds no literal.
+            for (what, needle) in [
+                (
+                    "the path-node ceiling",
+                    format!(
+                        "**{}** = `{MAX_PATH_NODES} x size_of::<Node>()`",
+                        format_spaced(TSA_STRUCTURAL_PATH_NODE_BYTES)
+                    ),
+                ),
+                (
+                    "the whole DER path",
+                    format!("**{}**", format_spaced(TSA_STRUCTURAL_ALLOC_BYTES)),
+                ),
+                (
+                    "MAX_INTERMEDIATE_COUNT's share, which F4 cannot raise",
+                    format!(
+                        "**{}**",
+                        format_spaced(
+                            crate::codec::caps::MAX_INTERMEDIATE_COUNT as usize
+                                * CHAIN_PATH_NODE_BYTES
+                        )
+                    ),
+                ),
+                (
+                    "the tie with the fuzz guard's slack",
+                    format!(
+                        "**{}**",
+                        format_spaced(MAX_CHAIN_CERTS * CHAIN_CERTIFICATE_BYTES)
+                    ),
+                ),
+            ] {
+                assert_eq!(
+                    REGISTRY.matches(needle.as_str()).count(),
+                    1,
+                    "§5a is the single site that states {needle:?} for {what}, and this \
+                     document states it a different number of times. 0 means the derived \
+                     cost and §5a have drifted; 2 means the figure has a second home, \
+                     which is not a pass — it is what made the old document-wide search \
+                     unable to go red (A126, D121 §8)"
                 );
             }
         }

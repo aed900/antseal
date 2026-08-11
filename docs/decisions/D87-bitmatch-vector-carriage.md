@@ -432,11 +432,22 @@ likewise revisitable — the forcing conditions that would reopen it are:
 harness gaining a reason to ship the artifact to a user (it has none —
 the M3 verifier page is a separate wasm-bindgen build, D18).
 
-## 8. Register row (for `docs/decisions/README.md`, added at merge)
+## 8. Register row (for `docs/decisions/README.md`) — applied
 
-```
-| [D87](D87-bitmatch-vector-carriage.md) | Bit-match vector carriage — **keep `include_bytes!`**, with a ceiling of **2 MiB embedded bytes per format-version directory** enforced by a `build.rs` panic plus a testable second leg. Measured at `aa169ac`: vectors are **2.32 %** of the 25 461 350 B artifact (83.7 % of which is DWARF) and **0.73 %** of the 13.71 s lane, while *executing* them is **90.1 %** — so run-time carriage (b) and digest-streaming (c) optimise the wrong 1 % and cost zero imports, zero unsafe operations, and "identical bytes as a link-time fact". Per-version budget because Q6 retains every version forever: v2 beside v1 is the contract working. Overturns F21's framing | RESOLVED | 2026-07-28 |
-```
+**Applied — this section holds no row.** D87's index row is in
+`docs/decisions/README.md` and has been since `3a72933` (2026-07-28), which is
+**not a merge**: `git rev-list --parents -n 1 3a72933` returns two words, one
+commit and one parent. The verbatim copy that stood here is deleted rather than
+re-headed, because once the index is checked a hand-written row in a body is a
+second home for a fact the check already guarantees.
+
+Demoted in place on 2026-08-11 under
+[D119](D119-decision-index-identity-and-the-index-row-sections.md) RULING 4,
+which measured **zero** rows applied at a merge across 83 merges. The heading
+keeps its number — D117 §2.4 forbids moving a section identifier, and this
+record's own front-matter `Index note` cites this section by number; D119 §5
+step 8 reserves the five `Index note` prose sites for a separate act, so that
+bullet still describes the old hand-off and is deliberately untouched here.
 
 ## 9. What the implementer must report back
 

@@ -27,6 +27,7 @@
   `e450be73…ff8e`, which the machine then produced byte-for-byte.
 
 ---
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## 1. Why this decision exists at all
 
@@ -341,9 +342,3 @@ diagnostic never reaches the report*, which R12 does not touch. **R75.**
 - **The `source` question is closed for case 19 but not exercised anywhere.**
   No committed vector renders a claimed source. Trigger: A22's `anchor` kind
   landing without one.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| [D95](D95-sealer-recorded-anchor-metadata-in-the-report.md) | May a refuted anchor render sealer-recorded metadata? — **RENDER, unconditionally, no state gate**, as decimal POSIX seconds (`u64::to_string()`), format-permanent for report v1. D94 §6's STOP fired, and fired on `fetch_date` alone: `source` is `null` six times out of six in case 19, and D53 §4 had already ruled it (*claimed* identity on `invalid`, rendered as claimed) — D95 does not reopen it. The field is sealer-written and bound by nothing **in every state** (unsigned bundle; `anchor_digest` covers only the manifest; D59 §6(a) normatively forbids the one available cross-check off a measured 129 s skew), so a state gate would encode a verification distinction that does not exist — and the only benefit anyone can name for the `proven` case is *itself* the inference D59 forbids, which inverts the harm. The precedent is frozen in case 19's own bytes: `"claimed_time_informational_only":"1767225600"` is the same construction over the numerically same value, rendered unconditionally in all 21 cases, and `"fetch_date":null` on a TSA slot would assert what registry §7.9 key 3 (`req`) makes impossible. Recorded so nobody re-runs them: **D29 permits suppression** (a state-conditioned `null` is legal and would have cost one line) — it loses on meaning, not mechanism; **no spec line mandates the render** (`fetch date` is at MVP-SPEC 108/114 only, both bundle content, and the doc citing "line 127+" is mispointed); and **registry §6.1 is not the suppression authority D94 read into it** — its rule is *do not consume, MAY display as a claim*, said about `anchor_status`, the sealer's own competing verdict. The label is owed and currently **unreachable**: `model.rs` drops the `AnchorSource::Verified`/`Claimed` discriminant, `is_verified` has three repo-wide hits all definition-or-test, and R22 hands the page only report bytes — dischargeable at M3 via R18's embedded strings, no version bump. Two further instruments go red **after** the emit in a file D94 never opened, both with wrong-cause messages, one carrying a **sixth** copy of D84 §7's stale report-v2 claim in a fourth file. Discovered R72–R75 | RESOLVED (R12 executes) | 2026-08-06 |

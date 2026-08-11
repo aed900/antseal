@@ -35,6 +35,7 @@
   collection), **A26** (versioning/update process); binding findings for
   **A8**, **A9**, **A21**, **A24**; new **A43**, **A44**
 - **Blocks: A6, A7, A8, A9, A21, A24, A25, A26**
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## Context — the register's lean, and what actually decides it
 
@@ -570,7 +571,3 @@ C1/C3 channels (§6) are executed.
   (its `AllCertificateRecordsCSVFormatv2` URL 404'd at
   `2026-08-02T19:34:22Z`) → that would give C2 coverage for Sectigo and
   SwissSign and should be added to the C2 menu.
-
-## Index row (orchestrator applies at merge)
-
-| [D57](D57-tsa-root-store-scope.md) | Pinned TSA root-store scope — **include the alternates, lean confirmed on a reason the register never gave, and the list replaced by a closure rule** (*a root is pinned iff antseal NAMES a TSA whose live chain closes at it*). The decider is the sealing side, not rendering: U26 makes alternates configurable and A20 aborts a seal on zero fully-verified tokens, so documenting an alternate whose root we withhold ships a **pre-payment abort**, not a weaker bundle. Store v1 = ****4 roots / 6 429 B**** (**0.31 %** of D87's per-version budget). Two findings from live tokens at all five TSAs, neither reachable with A24's test CA: **2 of 5 chains terminate at a CROSS-CERTIFICATE** (DigiCert→Assured ID, Sectigo→USERTrust; SPKI equality proven), so A9 must **stop at the first pinned match** or the production DigiCert default renders `internally-consistent-only`; and **3 of 5 tokens ship their own self-signed root**, in **3 different certificate orders**, so P2 needs a positive twin and P3 forbids any positional assumption. Also measured: FreeTSA signs **`ecdsa-with-SHA512`** (A8 names no digest) and SwissSign's leaf is **RSA-3072** (no size allow-list). The provenance procedure names four channel classes and was **executed** — Wayback snapshots from 2016 and 2019 corroborate FreeTSA, NSS corroborates DigiCert — with the three unfinished rows stated as A7 work; mandating root-programme membership would have been unexecutable, since **only 2 of 5 candidates are in Mozilla NSS**. Corrects A7's "DFN-PKI/T-TeleSec" (the live chain is a self-signed DFN Community Root 2022) and finds `crt.sectigo.com` serves its root over **plain HTTP only** (TLS handshake failure) | RESOLVED (A6/A7/A26 + new A43/A44 implement) | 2026-08-02 |

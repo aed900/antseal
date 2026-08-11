@@ -382,6 +382,8 @@ The other lane's hunks are at `1227` (`import time`) and `1232`–`1287` (the
 
 ---
 
+**`docs/decisions/README.md`** — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
+
 ## 8. Commands run, with verdicts
 
 | # | command | verdict |
@@ -489,11 +491,3 @@ M1's gate was not wrong about M1. It was right about work while its own record
 said the opposite and its own instrument was pointed at the wrong milestone —
 and the reason no one noticed for eight days is that the only command that
 would have said so is one no runbook asks anyone to type.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| decision | summary | status | date |
-| --- | --- | --- | --- |
-| [D118](D118-deferred-matrix-rows-and-the-gate-constant.md) | Q165 — the eleven `deferred` matrix rows adjudicated one by one, and **both readings refused: it is ten and one**. Ten (`V2.3`, `V3.5`, `V6.1`–`V6.6`, `V7.2`, `V7.3`) describe work that landed 2026-08-01…08-06 and are now `covered`; references resolved go **55 → 97**. **One is real and the row does not name it**: `V7.1`'s real calendar cycle ran 2026-08-02 → 08-03 with six `200`s — **performed by `curl`, before the OTS client existed** (`CAPTURE.log` carries curl's own resolve error), so antseal's own path has never spoken to a calendar; runbook §0 says the protocol *"is not yet executable end-to-end"* and A25 row 1 is **PARTIAL**. `V7.1` → **`gap`**. **`CURRENT_MILESTONE` `M0` → `M1`, not `M2`**: it names the last review that **passed**, and `M2` would force `V7.1` into `ACCEPTED_NON_COVERED` — a register reserved for *"a milestone shipping with a known hole"* — and mute it at the very review meant to read it; the register stays `{}`. Gated rows **16 → 22**; flagless run green; `--milestone M2` now fails on **one** row, not eleven. **M1's gate is not implicated in its verdict but is in its evidence**: every M1 bullet had a real test the day M1 passed, while this matrix said six were owned by a later milestone and the checker agreed because it was pointed at M0 — **Q51's fix was correct and unarmed**, and *nothing in the project makes a milestone review move the constant*. Also: **both status-gate `--self-test` fixtures were pinned to `V6.1`'s cell** and broke on the no-op guard the moment it went `covered` — retargeted to `V9.2` (M4), whose expiry lands on Q34's release gate. Both section preambles were false in three clauses each for eight days. Corrects **D115 §4.1** twice (`:241` for `:244`; `V7.2` mis-routed to A25 row 1) — both blocked on `Q122`. Zero frozen bytes | RESOLVED (Q165 executes) | 2026-08-10 |

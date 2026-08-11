@@ -472,9 +472,58 @@ eight ~10-byte `[3] other` entries reserved the full **4 288 B**).
 **The tie, kept because it is worth knowing.** The certificate-bag
 reservation alone, `8 x size_of::<Certificate>()`, is **4 096 B** on x86-64 —
 *exactly* the fuzz guard's fixed slack. That is a 64-bit fact: on `wasm32` the
-same product is **3 008 B** and clears the slack by nearly a kilobyte. Every
-number in this subsection is derived in `anchor/caps.rs` and asserted against
-this document, never transcribed.
+same product is **3 008 B** and clears the slack by nearly a kilobyte.
+
+**Which text states each of these seven figures, and which merely derives it**
+— ruled 2026-08-11 by
+[D121](../decisions/D121-der-structural-cost-figures-normative-home.md) for
+task A126. Three of them are `MAX_CHAIN_CERTS`' own and are **stated in §5's
+row for that limit**: the certificate bag's cost, that limit's share of the
+path-node reservation, and the marginal cost of one more unit. What this
+subsection says about those three is **derivation and commentary** — the same
+division §5a already draws for the `.ots` rows, whose two numeric cells *"carry
+both targets' figures … this table is the derivation they point at"*. The other
+four are **stated here and nowhere else**, because §5 is keyed by **F4 limit**
+and no F4 limit owns them: the path-node ceiling is `MAX_PATH_NODES`', and
+`anchor/caps.rs` classifies that constant *out* of the F4 set with its reason
+(*"it sizes a container, it is not a limit on a foreign artifact's structure,
+and nothing rejects an artifact for exceeding it"*); the intermediates' share
+is `MAX_INTERMEDIATE_COUNT`'s, **frozen** at §2 row 8 and unraisable by F4; the
+DER path's total is a sum across two containers under two different bounds,
+which is what this subsection's own heading — *"why no one row carries it"* —
+says; and the fuzz-guard tie is a sub-product of a cell that already states the
+whole. **A number no F4 limit owns has no row to move to** — §5's preamble
+names four owners and *"Nothing outside those four may"* add one — so mirroring
+any of the four into that table would advertise as raisable a figure F4 cannot
+raise, which is the misattribution the decomposition above (*"attributes
+2 176 B to a raisable limit that an unraisable one owns"*) exists to prevent.
+`anchor/caps.rs` asserts the split in exactly that shape: the three read out of
+§5's `MAX_CHAIN_CERTS` row, and the four required to occur **exactly once** in
+this document, so that a second home for one of them reddens a test instead of
+quietly weakening it. This paragraph therefore names the seven by role rather
+than by value: restating one here would give it the second home that assertion
+exists to detect.
+
+**Corrected 2026-08-11 (task A126, under D121 §9.3).** This subsection closed
+with: *"Every number in this subsection is derived in `anchor/caps.rs` and
+asserted against this document, never transcribed."* Its first and last clauses
+hold; **the middle one is false**, and a lane acting on the sentence would
+conclude that every figure above is pinned. Seven are — the three §5's
+`MAX_CHAIN_CERTS` row states and the four the paragraph above assigns here.
+The rest are not: `2 176 B`, `3 008 B`, the signer's 128 B and the three
+percentages (`0.71 %`, `0.41 %`, `0.31 %`) are stated in this document's own
+voice and asserted by nothing — and they are named here by value precisely
+because no exactly-once assertion counts their occurrences. **It now reads:
+every number in this subsection is derived in `anchor/caps.rs`, never
+transcribed; the seven that
+`anchor::caps::tests::the_der_structural_cost_column_states_the_derivation_and_its_value`
+builds are also asserted against this document, and the rest are not.**
+Widening the assertions instead of narrowing the claim is the other half of
+this finding and is separate work, described in D121 §12. The original is
+quoted rather than overwritten because it is a sentence a lane would act on;
+this applies **D117 §2.3(b)'s form by analogy** — D117's stated subject is a
+resolved decision's body and this is a format document — rather than under
+D117's own scope.
 
 ### 5b. The Update rule
 

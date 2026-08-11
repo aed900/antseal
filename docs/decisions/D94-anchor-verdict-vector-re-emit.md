@@ -357,6 +357,7 @@ class. Task **R68**.
   and reasons only, per the planning brief.
 
 ## 9. Amendments (orchestrator applies at source)
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ### 9a. D84 §7 second row — three files, byte-identical, one commit
 
@@ -551,8 +552,18 @@ tree that can observe an anchor byte changing a verdict."*
   `testdata/vectors/README.md:206-207` reserves an `anchor` **kind** under
   `testdata/vectors/v<n>/` with the envelope, the runner, `FROZEN.sha256`,
   `INDEX.json` and the wasm bit-match already wired for it. Only the second
-  gets retention, freeze and native↔WASM parity for free — which are three of
-  A22's four Accept rows. Pick one before A22 builds against the other.
+  gets retention, freeze and native↔WASM parity for free — ~~which are three of
+  A22's four Accept rows~~. Pick one before A22 builds against the other.
+
+  — **Corrected 2026-08-11 by [D103](D103-upgraded-ots-vector-provenance.md)
+  §7.2 RULING 6a, under [D117](D117-resolved-decision-corrections.md)
+  §2.3 (b)**; see "Correction — §11's Q109 bullet miscounts A22's Accept rows,
+  2026-08-11" below. The count is **dropped, not restated** — A22's Accept is
+  numbered (D103 §7.1) so that nobody counts it again — and the corrected
+  citation-by-number lives in that section and nowhere else (D117 §2.3 (c)).
+  **Q109's ruling stands**: D101 RULING 1 picked Home B, and the error runs in
+  the direction that strengthens the case for it. **`Q109` is not renumbered**
+  (D117 RULING 4).
 
 ### Q110 — Sweep for prose that predicts a test will fail at a future task
 - Milestone: M2 · Size: M · Deps: Q64
@@ -634,7 +645,126 @@ written.
   not from A25.
 
 ---
+## Correction — §11's Q109 bullet miscounts A22's Accept rows, 2026-08-11
 
-## Index row (orchestrator applies at merge)
+**The sentence, quoted verbatim, from §11's `### Q109` bullet** — cited
+everywhere else as `D94:554-555`; this correction cites it by section, per
+D117 RULING 6:
 
-| [D94](D94-anchor-verdict-vector-re-emit.md) | Frozen report vector's anchor state changes when R12 replaces the M0 `absent` stub — **RE-EMIT, and it is not report v2**. Report v1 already carries all seven states (`verify/report.rs:282-290`, `REPORT_VERSION = 1` unchanged), no field is added/reordered/renamed and no bundle byte moves, so this is a **VERDICT EVENT** — the third class the tree has no word for, between "the format changed" and "the targets diverged", which both failing assertion messages enumerate and neither covers. Full freeze ceremony, zero version bump. `"invalid"` is correct (D84 F3) and the fixture's synthetic bytes **stay**: R12's own Accept sources the seven-state fixtures from A, and swapping in A25 material would move frozen `bundle_bytes` in `bundle/bundle.json`, both bundle digests in all 21 report cases and the fuzz seed corpus — a FIXTURE EVENT for zero gain, when the meaningful home is the `anchor` kind already reserved for A22 as a legal-forever *append*. R30's in-tree re-pin is the same class with a lesser ceremony and one obligation the vector side lacks: **exactly one of 26 rows may move, and a second is a D84 F2 breach to fix rather than re-pin** — the only test of F2's blast radius the tree has. **D84 §7's report-**v2** row is stale** and never was true — R32 froze `REPORT_VERSION = 1` the same day D84 was written, so the row asserted a gap the file it was freezing did not have; amended byte-identically across three lint-checked files. **The finding is the third instrument the brief did not count**: `m0_anchor_artifacts_are_inert_until_r12_wires_the_anchor_stage` — named by D84 §2, `docs/security-assumptions.md`, the Q14 gate plan's row N1 (*"the row's own load-bearing evidence … as an equality"*) and `GraftAnchors` as the test **written to go red at R12** — observes only `verify_bundle`'s accept/reject bit, which D84's own rule F2 guarantees never moves. It stays green through R12 and through any correct implementation of it; it must **not** be inverted (F2 forbids what the inversion would assert, and with synthetic bytes every flip yields `invalid` either way) but re-titled as the permanent F2 guard it has always been, with P2's successor being A21 rows 1–2 against A25's real material. One claim, five copies, no lint — D84's own correction-to-the-correction recurring. Also found: the brief's *"the anchor-state change is the whole of the diff"* is **unestablished** (the assertion reports the *first* difference only, and `fetch_date` is a live second candidate the fixture supplies), and a vector's `pins` prose is compared only against the const that generated it, so `report_vectors.rs:137`'s *"each an absent M0 slot"* would stay green and false in a frozen file. Discovered R67–R70, Q107–Q110 | RESOLVED (R12 executes) | 2026-08-06 |
+> Only the second gets retention, freeze and native↔WASM parity for free —
+> which are three of A22's four Accept rows.
+
+**Disposition: STRIKE, and the sentence stays standing (D117 §2.3 (b)).** §11
+is this record's discovered-work list, and the bullet's instruction — *"Pick
+one before A22 builds against the other"* — was executed on 2026-08-07, when
+D101 RULING 1 picked Home B. No lane will act on it; the sentence's value is
+the record of what this record believed on 2026-08-06. Because the count is
+**dropped** rather than restated, there is no scalar to carry inline
+(D117 §2.3 (c)) and the strike is the whole of the edit at the site.
+
+**(1) The original figure.** *"three of A22's four Accept rows"*, in §11's
+`### Q109` bullet.
+
+**(2) The new figure: none — the count is dropped.** D101 §2.2's own fallback,
+*"or delete the count — a count that has been wrong in three places at once is
+not load-bearing enough to keep"*, taken by D103 RULING 6: *"the defect class
+is counting and the fix is to make counting unnecessary."*
+
+**(3) The predicate, and the commands.** A22's `Accept` rows, counted at two
+epochs (D117 RULING 5's epoch rule — a count over a mutable corpus is
+meaningless without the commit it was taken at):
+
+```
+$ git show a053272:tasks/A.md | awk '/^### A22 /,/^### A23 /' \
+    | sed -n '/^- Accept:/,/^- Notes:/p' | grep -c '^  - '
+3
+$ awk '/^### A22 /,/^### A23 /' tasks/A.md | grep -c '^  - \*\*[0-9]\.\*\*'
+4
+```
+
+`a053272` is the commit that created this record (2026-08-06), so the first
+figure is what A22 read on the day the sentence was written. The second is
+today's, after D103 §7.1 replaced the `Accept` with four **numbered** rows.
+
+**(4) Which defect: WRONG WHEN WRITTEN, not gone stale.** A22 had **three**
+`Accept` rows on 2026-08-06 and this record said four. The mechanism is the one
+D101 §2.2 measured: the old row 1 — *"Vectors committed under
+`testdata/anchors/`; retained forever in CI per format-stability policy (Q
+wiring)."* — is a home clause and a retention clause joined by a semicolon, so
+counting clauses gives four where counting rows gives three. D53 had already
+recorded the same expansion on A21, before this record was written.
+
+**(5) The citation by number, which is what replaces the count — and it is not
+the pair D103 §7.2 prescribes.** RULING 6a's instruction is *"the D94 sentence
+becomes 'which are A22 Accept rows 1 and 2'"*. **That pair is the pre-§7.1
+numbering and does not survive §7.1's own renumber.** Against the `Accept` as
+D103 §7.1 wrote it, the three properties this sentence names are supplied by
+**rows 2 and 3**:
+
+| property named in the sentence | the row that supplies it, per D103 §7.1 |
+| --- | --- |
+| retention | **2.** *"Frozen and retained … retained forever per Q6's per-version retention policy"* |
+| freeze | **2.** — the same row, *"Frozen and retained"* |
+| native↔WASM parity | **3.** *"Native and wasm runs produce byte-identical `recomputed_digest` for every vector"* |
+
+Row **1** is the home row — the *subject* of *"only the second"*, not one of
+the properties it supplies. It names all three properties, but only in its
+*"Not `testdata/anchors/`, which … carries no freeze, no retention rule and no
+wasm parity lane"* clause, which is what the refused home lacks; a reader who
+counts that as a supplying row re-derives the wrong pair. Row **4** is the M2
+exit checklist. Under the three-row `Accept` RULING 6a was reading from —
+retention inside row 1, parity in row 2, freeze in neither — *"rows 1 and 2"*
+was correct, which is why it was written. **The corrected reading is therefore
+`which are A22 Accept rows 2 and 3`.** RULING 6a's disposition is applied in
+full; its example text is not, and the reason is recorded here rather than
+propagated silently. Whether D103 §7.2's own text takes a correction is D103's
+to make, not this record's (D117 §2.3 (e)).
+
+**A second defect D101 §2.2 found in this sentence has since cured itself.**
+§2.2's item 2 — *"all three sources name 'freeze' as an A22 Accept property,
+and no A22 Accept row mentions freeze"* — was true on 2026-08-07 and is false
+today: D103 §7.1's row 2 is *"Frozen and retained"*. The sentence's *"retention,
+freeze"* is now exactly one `Accept` row. Only the count was ever wrong, and
+only the count is struck.
+
+**(6) Does the conclusion survive? Yes, and slightly strengthened.** The
+bullet's claim is that only the reserved `anchor` **kind** supplies retention,
+freeze and wasm parity without new machinery, and that A22 must pick a home
+before it builds. D101 RULING 1 picked Home B on five committed sources
+against one, and D103 §7.1's `Accept` now asks for the freeze the old `Accept`
+never did. Every error above runs in the direction that strengthens the
+bullet.
+
+**Authority, and who executed it.** `Q187`, under D117 RULING 1 and §5.4,
+discharging two orders that were issued and never ran:
+
+- **D101.** The order is the closing sentence of **§2.3** — *"And amend
+  `tasks/Q.md:1373`, `TODO.md:529` and `D94:554-555` to 'three of A22's three
+  Accept rows', or delete the count …"* — with this record's site tabulated in
+  **§2.2** and the edit repeated in **§10**'s edit set, whose `§` column
+  attributes it to §2.2. D117 §1.10 and `TODO.md`'s `Q187` row both cite it as
+  *"D101 §2.2 / §7"*: **§7 is *"Ruling 6 — the artifact bytes"* and carries no
+  such order**, and §2.2 carries the diagnosis and the table of sites but not
+  the imperative.
+- **D103 §7.2 RULING 6a**, which re-issued it with the disposition applied
+  above, and repeated it in **§12**'s edit set.
+
+Executed by the `Q187` lane of M2 wave 15, which re-measured every figure here.
+
+**Separability (D117 §2.1 (c)).** This correction lands in a commit distinct
+from `a053272`, which created this record, and from `5f758de`, which executed
+it.
+
+**Which rulings stand (D117 §2.2, required content 4).** All of this record's.
+The corrected sentence is in §11, the discovered-work list; no ruling rests on
+it. Rulings 1–4, §2a's three-class vocabulary and §4's finding about the third
+instrument are untouched by the count.
+
+**Identifier discipline (D117 RULING 4).** `Q109` is not renumbered, and
+neither is §11. The sites that cite this bullet are: D101's front matter
+(`Corrects:`), its §2.2 table and its §10 edit set; D103 §7.2 and its §12 edit
+set; D117 §1.10, §5.4, §7 and §8 (iii); `tasks/Q.md`'s `Q109` and `Q187`
+entries; and `TODO.md`'s `Q109` and `Q187` rows. **Every one of them cites it
+as `D94:554-555` or `D94:555`.** This correction mints no successor line
+number for them (D117 RULING 6); the durable handle is §11's `### Q109`
+bullet.

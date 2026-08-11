@@ -1119,9 +1119,4 @@ orchestrator amends them at source; they are not edits made here.
    duplicate and drops it.
 8. **`docs/testing/error-code-contract.md` §2** — the prefix table has no
    `anchor-` row, so A has no registered namespace. → Q72.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| [D60](D60-der-cms-x509-pins.md) | DER/CMS/X.509 pins + P-256 — **seven pins into `antseal-core`, `p256` NOT among them**: `der =0.8.1`, `const-oid =0.10.2` (`db`), `x509-cert =0.3.0`, `cms =0.3.0-pre.2`, `p384 =0.14.0`, `rsa =0.10.0-rc.18`, `sha1 =0.11.0`, plus `oid` on `sha2`. Measured **55 → 82** packages, **zero** new duplicate pairs, zero `getrandom`/`rand`, wasm32 green. Both stable lines overturned: `rsa 0.9.10` drags `rand 0.8.7` into the normal graph and **fails the `core-dep-graph` regex outright** (+22 pkgs, 9 dupes incl. a second `signature`/`digest`/`der`); `cms 0.2.3` forks the DER stack and adds a **second `x509-cert`**. `sha1` is REQUIRED and was missing from the register's list — ESSCertID v1's `certHash` is SHA-1 by definition and FreeTSA sends v1 only; answered as a *selector*, never the trust decision. **P-256 out**: of 9 live TSAs surveyed, exactly one uses ECDSA and it is P-384; cost of adding later priced at +1 package. The `to_der(from_der(x)) == x` strictness rule **rejected on measurement** — 6 of 9 real TSAs, DigiCert included, emit a non-DER-sorted `certificates` SET. Limits: depth **63** consumed from `der` (no antseal walker — a recursive one stack-overflows to `abort`), `MAX_CHAIN_CERTS` 8, `MAX_CHAIN_CERT_BYTES` 16384 (`<= MAX_CERT_BYTES`), `MAX_SIGNED_ATTRS` 16. One mandatory RUSTSEC ignore (`rsa`, Marvin — private-key-only, antseal verifies only) | RESOLVED (A5/A8/A9 implement) | 2026-08-02 |
+9. `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.

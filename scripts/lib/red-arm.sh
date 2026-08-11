@@ -54,6 +54,24 @@
 #                                 '<expected>' <<<"$out"`. The in-repo
 #                                 template; unconverted on purpose, so the
 #                                 rule is legible without this helper.
+#   scripts/cargo-free.sh         `--self-test` — assert_red through the local
+#                                 `arm_case` wrapper, eight arms, each matching
+#                                 one of the named MSG_* constants the guard
+#                                 prints. The messages are constants rather
+#                                 than literals precisely so an arm and the
+#                                 sentence it proves cannot drift apart.
+#                                 It also obeys the rule in a THIRD direction
+#                                 this file had not named: every child is
+#                                 launched with GITHUB_PATH and RUNNER_TEMP
+#                                 SCRUBBED (`env -u`) and then set explicitly.
+#                                 Measured 2026-08-11: its `--arm` refusal arm
+#                                 passed standalone and proved NOTHING when the
+#                                 self-test was invoked from a harness that had
+#                                 GITHUB_PATH set, because `env VAR=…` does not
+#                                 unset what it does not name. An arm that
+#                                 inherits the caller's environment is an arm
+#                                 the caller can satisfy — the same class as
+#                                 judging on exit status, one level out.
 #   scripts/check-ci-shell.py     structurally immune: its arm reads a
 #                                 RETURNED failure list in-process, so a crash
 #                                 propagates and fails the harness rather than

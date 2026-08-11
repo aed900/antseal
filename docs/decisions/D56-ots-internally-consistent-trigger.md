@@ -682,6 +682,7 @@ entries in the planner's task file). None are unique to D56:
 8. Shared with D53 §11: the missing `anchor-` prefix row, `TODO.md`'s *"all 7
    anchor tamper rows"* (there are eight), and the registry §8 anchor-
    independence obligation that no task carries.
+9. `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ---
 
@@ -712,9 +713,3 @@ entries in the planner's task file). None are unique to D56:
   §9 test `an_all_unknown_attestation_ots_is_internally_consistent_only`
   fails — which is the intended way to find out. Trigger: D58 choosing the
   vendor/fork fallback.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| [D56](D56-ots-internally-consistent-trigger.md) | OTS trigger for `internally-consistent-only` — the alleged conflict is **real** (line 133 says the state, 108/168 say `invalid`, on the same input) and the register's line numbers are right, but its fix is half an answer: **108/168 win**, *and* the state stays OTS-reachable, because its true trigger is an `.ots` whose ops commit `anchor_digest` but whose every branch is an **unevaluable op/attestation type** (A11's "typed unverifiable results") — line 133's own definition, unedited. Line 133's *parenthetical* is corrected, not its definition. Two spec silences closed: `--online` attempted but endpoints **unreachable or disagreeing** stays **`attested`** (enforced structurally — `OnlineEvidence` has no failure variant, only `Header`/`NoSuchBlock` keyed by height, so "network weather changes the cryptographic verdict" is unrepresentable), and because A13/A14 make the **merged multi-branch `.ots`** normal while line 108 addresses a single one, per-branch precedence is **best-evidence-wins**: refutation-wins would hand any relay a downgrade-to-`invalid` primitive over the **unsigned** bundle, while best-evidence-wins concedes nothing (the forgeable ceiling is `attested`, already non-headline-eligible by design). Complete 10-rule order O0–O9 with every overlapping pair adjudicated; `anchor-ots-online-block-absent` is a new refutation the spec never named. Four `anchor-ots-*` codes minted; zero frozen report bytes change | RESOLVED | 2026-08-02 |

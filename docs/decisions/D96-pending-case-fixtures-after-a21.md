@@ -1,6 +1,12 @@
 # D96 — How Q8's tests-of-the-test survive the pending set emptying
 
-- **Status**: Resolved 2026-08-06
+- **Status: RESOLVED**
+- **Date: 2026-08-06** — status block normalised to the house
+  `- **Status:` / `- **Date:` form on 2026-08-11, executing
+  [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5
+  step 2. The original front matter read `- **Status**: Resolved 2026-08-06`
+  and carried no `- **Date` line; the status word and the date are unchanged,
+  and nothing else in this record is touched.
 - **Owner**: Q8 / Q18 / A21
 - **Minted**: mid-execution, by A21's lane, from a blocker the task brief did
   not name

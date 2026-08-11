@@ -309,7 +309,7 @@ that stand between a user and an adversary's `.sealproof`.
 | --- | --- | --- | --- |
 | `fuzz-smoke` (`.github/workflows/ci.yml`) | every PR + push to main | self-test, then 90 s per target | intended-required — see the note below |
 | `fuzz-nightly` (`.github/workflows/fuzz-nightly.yml`) | scheduled **twice weekly** (Mon/Thu 03:41 UTC) + manual | 600 s per target, corpus persisted | no (not a PR context) |
-| `fuzz-budget` (a step of ci.yml's `traceability` job) | every PR + push to main | reads four committed literals; no cargo, no network | no new context — folded into an existing job |
+| `fuzz-budget` (a step of ci.yml's `traceability` job) | every PR + push to main | reads four committed literals; no network, and cargo-free by that job's asserted property (D124/Q182) rather than by this cell | no new context — folded into an existing job |
 
 **Corrected 2026-08-02 (D61).** The "required" column said `fuzz-smoke` was
 a *branch-protection context*. **No context is enforced on this repository**

@@ -95,9 +95,44 @@ def run_blocks(text: str) -> list[tuple[int, str]]:
     """Every `run:` block with its 1-based line number.
 
     Hand-rolled rather than via a YAML library: this check must work with no
-    third-party dependency (the `traceability` lane it joins needs none), and
-    a YAML loader would also normalise away the very indentation that tells a
-    single-line `run:` from a block one.
+    third-party dependency (the `traceability` lane it joins needs none).
+
+    That first clause is the real reason and it still holds. **The second
+    reason this docstring used to give is false**, and is recorded here rather
+    than quietly deleted (D124 §3.2): it said a YAML loader "would normalise
+    away the very indentation that tells a single-line `run:` from a block
+    one". Measured 2026-08-11 — a loader tells them apart BETTER. A block
+    scalar comes back with its trailing newline, and the `defaults: run:
+    shell: bash` case this scanner special-cases by hand at :112-117 comes back
+    as a `dict` rather than a `str`, which is a type distinction rather than an
+    indentation heuristic. The real cost of `safe_load` is LINE NUMBERS: every
+    failure message in this file is `workflow.name:lineno` and recovering that
+    needs a mark-recording `Loader` subclass. The docstring named the wrong
+    cost and omitted the real one.
+
+    **A per-job `cargo` predicate was proposed here (Q182) and REFUSED AS
+    VACUOUS, not as expensive** (D124 RULING 2). It is recorded so the shape is
+    not re-proposed: the incident that produced the row was the near-miss line
+    `./scripts/gate-features.sh --check-partition`, which carries no `cargo`
+    token — and neither does any of the five `run:` lines the `traceability`
+    job carries today. 0 of 6, measured. Reading one level into the callee is
+    worse: `ci-lanes.sh` holds 31 `cargo` occurrences belonging to other lanes
+    and `wasm-bitmatch.sh` 4, so a callee-grep reds all five of today's GREEN
+    steps. `run:` text is the wrong OBSERVABLE for a property of a process
+    tree, and any static instrument reading it inherits the emptiness however
+    well it is built. The property is asserted at the job instead, at runtime,
+    by `scripts/cargo-free.sh` — whose header states it once.
+
+    **Job attribution itself is cheap and was measured, not guessed**: adding a
+    tracked current-job to this function costs NINE LINES and attributes 65 of
+    65 `run:` blocks across all four workflows with zero unattributed, a total
+    matching the one `main()` already prints (D124 §1.7, measured 2026-08-11 at
+    65 blocks; the count is now 68). It is not built because nothing needs it —
+    so a future row that genuinely wants a per-job workflow predicate should
+    price it at nine lines and not at "the larger half of the work". One trap
+    if it is ever built: a naive scan for two-space-indented keys also reports
+    `pull_request` and `push` as jobs, since they are children of `on:` at the
+    same indent, so the attribution must track the `jobs:` section.
     """
     out: list[tuple[int, str]] = []
     lines = text.splitlines()

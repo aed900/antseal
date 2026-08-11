@@ -42,6 +42,7 @@
   never-run-on-the-remote rule, Q125/Q128's trigger contract.
 
 ---
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## The problem, in one sentence
 
@@ -280,6 +281,26 @@ That test is the substance of CI's **`golden-vectors`** required context
 the `test` lane. **A fix to `build.rs` alone leaves four required contexts still
 brickable by a `.pyc`.**
 
+> **Predicate added 2026-08-11 under `Q196`. The finding above is
+> byte-unchanged and is neither struck nor replaced, because it is not wrong**
+> — see *"Correction — the section numbers in the Amendment above, and what
+> §1.5(a)'s 'two walkers' counts, 2026-08-11"* below for the routing under
+> D117 §2.3. What this figure counts is **walks carrying the identical closed
+> classification rule**, not walks over the tree. Q157's later census counts a
+> different predicate — *walk sites* of every class — and finds **twelve**, of
+> which exactly **two** are `closed`: these two. The twelve does not supersede
+> the two; it confirms it and re-denominates it. Both figures are true today,
+> and a sentence that carries only the number invites the reading that one
+> replaces the other, which `tasks/Q.md`'s `Q196` row is the measured instance
+> of.
+>
+> **This finding was not measured under `cargo test`'s fail-fast.** It was
+> reached by reading `vector_runner.rs`'s classification and confirmed by two
+> commands that name their targets — §7 cmd 11's `cargo check` and §7 cmd 12's
+> single-target `cargo test --test vector_runner`, whose own transcript above
+> (`7 passed; 1 failed`) shows the target counted to completion. `--no-fail-fast`
+> would have changed nothing here.
+
 **(b) A third walker over the same tree is naturally immune, and the reason is
 the rule shape.** `vector_freeze.rs`'s `collect_json` (`:273-297`) filters
 **positively** for `.json` instead of asserting a closed classification, so it
@@ -329,6 +350,17 @@ invocation in this repository to add `-B` to.** That is not an argument about
 elegance; it is the observation that the producer-side fix has no producer.
 
 ### 1.7 Q141 — the cost figure is wrong by an order of magnitude, and the wrong figure is a real one from the wrong subject
+
+> **Signpost added 2026-08-11 under `Q196`; nothing in this section is
+> corrected.** This section is Q141's **cost** figure and nothing else. If you
+> arrived here looking for a finding about directory **walks**: the *"two
+> walkers"* finding is **§1.5(a)**, the two naturally immune walks are
+> **§1.5(b)**, and the discovered-work item that became `Q157` is **§9 item 5**.
+> Two live documents send a reader to this section for a walk finding and
+> neither citation resolves — the Amendment below (*"§1.7's extra directory
+> walks as `Q157`"*) and `tasks/Q.md`'s `Q196` row (*"D116 §1.7 concluding
+> Q140's radius was 'two walkers'"*). See the correction section at the end of
+> this document. §9 item 8 cites this section correctly, for the cost figure.
 
 Three timed runs (§7 cmd 15):
 
@@ -1169,14 +1201,6 @@ dev-dependency self-edges), and `wasm-bitmatch` (bare and `--check` are one
 branch) — and are recorded so nobody re-opens them.
 
 ---
-
-## Index row (orchestrator applies at merge)
-
-| [D116](D116-gate-and-sweep-coverage.md) | Q133, Q141, Q140 — the gate and the sweeps are blind to three things, and **all three rows state the wrong number.** **Q133**: D109 §6.4 cmd 8's *"zero new unresolved decisions — the widening is free"* measured **one** of the two failure classes `check_decisions()` raises from one sweep; the **Q58 line-citation** class has no ceiling, no allocation bound and no suppression register, and widening turns the lane **RED** immediately — on `scripts/check-traceability.py:1245`'s `registry-v1.md:1097`, the RED arm of the Q58 case, **not** on the `D77000` at `:1229` that the row and D109 §8 (i) both name, which is the GREEN arm of the ceiling rule and stays correctly silent under every arm. The self-exclusion is therefore mandatory and its comment must name the literal that fires. **One** constant, not two: the only honest comment on two would be *"these are the same, one is stale"*, which is D112's defect one file over. Proven by planting in both directions — on a staged tree, a `D<n>` cited only from a `.sh` with its record deleted is **green today** and **red under the proposal, naming the file**; on the real tree the same surface goes red via the Q58 class, then green on deletion, with `git status` unchanged. The new self-test case must be **class 2**, because D1–D112 is measured **100 % dense with zero holes and zero failing ids**, so no single-file mutation can make a `D<n>` fail and the harness applies exactly one. **Q141**: *"measured cost ~4 s"* is wrong by ~12× — `cross-check.sh --self-test` is **55.66 s then 46.41 s** against `--check`'s 24.63/22.48 s; the 4 s figure belongs to `crosscheck_cbor.py --self-test`, measured at **0.10 s**. The lane lands anyway, on a better argument: 46 s fires planted faults on **six** surfaces, five of which no local lane exercises. **Q140** reproduces verbatim (`cargo check --workspace` **rc 101**) and exceeds its row twice: **two** walkers carry the identical fatal rule — `vector_runner.rs`, which is CI's `golden-vectors`, `cross-os` and `test` contexts, fails the same way — and the trigger is **import, never run** (measured: running the checker creates nothing), so the producer-side fix has **no producer in this repository to fix**. A vim `.swp` bricks the build identically, so the class is wider than Python. `vector_freeze.rs`'s `collect_json` is immune because it filters **positively** for `.json` instead of asserting a closed classification — the tolerant shape is already in the tree. Ruling: prune `__pycache__`, classify the git-ignored droppings ignorable **after** the `*.json` arm, one list in both walkers with a byte-identity test, and a test asserting `.gitignore`'s patterns are covered — so one rule **derives** from the other instead of two disagreeing. **The general measurement found Q125's shape a third and fourth time, in the direction nobody has looked**: **five gate lanes have no CI counterpart at all** — `gate-features.sh --self-test`/`--check-partition`/`--heavy` (so the HEAVY features are compiled by **zero** CI lanes), `wasm-bitmatch.sh --trigger-self-test`, and `e2e-devnet.sh --self-test`, whose cron sibling runs the lane **bare** — violating `docs/ci-verification.md`'s own *"a lane that has never run on the remote is not evidence"* five times with nothing saying so, while the gate header enumerates only the opposite direction. Plus **256 vs 1024 proptest cases**, undeclared. Four further argument divergences measured **not** substantive: `fmt` (101 files each, diff clean), `clippy` (virtual manifest → `--workspace` is a no-op), `test` (**2440 = 2440**; the LIGHT features are already unified through dev-dependency self-edges), `wasm-bitmatch` (bare and `--check` are one branch). **35 comparison points; 15 CI steps absent from the gate, 5 gate lanes absent from CI, 5 argument divergences, 3 undeclared classes.** | RESOLVED (Q133, Q141, Q140 execute) | 2026-08-10 |
-
-
----
-
 ## Amendment — there is a second landmine, 2026-08-10
 
 **Recorded, not applied. The body above is byte-unchanged**, per D115 §3.7 and
@@ -1207,3 +1231,172 @@ are registered as `Q153`, `Q154` and `Q155`; §1.7's extra directory walks as
 `Q157` — **narrowed**, because `vector_index.rs`'s `read_frozen` is not a walk
 but a second parser of `FROZEN.sha256`, which is `Q142`'s subject — and its
 build-gated cross-check as `Q158`. §2's cost-figure lesson is `Q160`.
+
+---
+
+## Correction — the section numbers in the Amendment above, and what §1.5(a)'s "two walkers" counts, 2026-08-11
+
+**Authority** (D117 §2.2.3): `Q196`, *"Blast radius measured under fail-fast is
+a lower bound reported as a radius"*, wave-15 implementing lane. **This
+correction lands in a commit separate from its subject.** D116 landed as
+`1c702d4` in wave 13 and its Amendment on 2026-08-10; this section is written
+in wave 15, so it is a diff against a published record and not a same-commit
+amendment (D117 §2.1(c)).
+
+**Epoch** (D117 §2.5): every figure below was measured on 2026-08-11 against
+the working tree at `1f82da1` plus ten concurrent wave-15 lanes. No concurrent
+lane owns this document. `tasks/Q.md` **is** concurrently owned, and its `Q196`
+row is quoted below as it stood when this lane read it.
+
+**What moved in the body**: two **additive dated notes**, one at the end of
+§1.5(a) and one at the head of §1.7. Nothing is struck, nothing is replaced,
+nothing is deleted, and no section, rule, ruling or rider identifier moves
+(D117 §2.4.1). No new ruling is introduced (D117 §2.7).
+
+### (1) What is wrong: five section citations in the Amendment above
+
+Quoted verbatim, from *"Amendment — there is a second landmine, 2026-08-10"*:
+
+> The five never-remote gate lanes (§1.4), the bare cron invocation (§1.4) and
+> the undeclared proptest divergence (§1.5) are registered as `Q153`, `Q154`
+> and `Q155`; §1.7's extra directory walks as `Q157` … §2's cost-figure lesson
+> is `Q160`.
+
+Measured by reading every cited heading in this document's body against the
+subject the Amendment attaches to it:
+
+| the Amendment cites | for | where the subject actually is | what the cited section actually holds |
+| --- | --- | --- | --- |
+| §1.4 | the five never-remote gate lanes | **§1.8** | the D-namespace density census |
+| §1.4 | the bare cron invocation | **§1.8** | *(same)* |
+| §1.5 | the undeclared proptest divergence | **§1.9** | Q140 reproduced, with the real error text |
+| §1.7 | the extra directory walks | **§1.5(b)**, registered from **§9 item 5** | Q141's cost figure |
+| §2 | the cost-figure lesson | **§1.7** | the options, and what kills each |
+
+**None of the five resolves.** The body's numbering is the stable one, and it
+is corroborated twice inside this same document: **§9 item 3 cites `(§1.9)` for
+the proptest divergence and §9 item 8 cites `(§1.7)` for the cost figures**,
+both correct. The Amendment is the outlier.
+
+**Which defect this is** (D117 §2.5.4): **wrong when written**, not *went
+stale*. The body was never renumbered — §2.4.1 forbids it, this file has one
+commit in `git log`, and the subjects themselves have not moved — so these
+citations never resolved against any published state of the document.
+
+**Routing, and why the correction is applied at the destination rather than at
+the source.** A cross-reference is a D117 §2.3(a) **REPLACE** case by name.
+It is recorded here and deliberately **not** applied to the Amendment's text:
+
+- The same mis-citation is live in `tasks/Q.md` and in `TODO.md`, neither of
+  which this lane owns. Repairing only the Amendment would still leave a reader
+  arriving from the `Q196` row at §1.7 with nothing to tell them they are in
+  the wrong section. **The dated signpost at the head of §1.7 catches every
+  arrival, from all three sources**, which a source-side replacement does not.
+- Replacing text *inside an appended amendment*, rather than inside the argued
+  body, is not a case D117 §2.2 contemplates — its placement rule governs
+  where correction sections go, not how one amendment corrects another. This
+  lane declines to improvise a form for it.
+
+**Registered for the owning wave as discovered work**, described and not
+numbered, rather than left silent.
+
+### (2) §1.5(a)'s "two walkers": routed under D117 §2.3, and NOT struck
+
+`Q196`'s `Accept` asks for this figure to be annotated as superseded. Applying
+D117 §2.3 here, and recording the reasoning as the row requires:
+
+§2.3's test — *"would a lane act on this sentence?"* — forks between **(a)
+REPLACE** and **(b) STRIKE**. Both arms assert that the sentence is **wrong**;
+§2.2's limit on a correction is explicit: *"A correction states what is
+false."* So the prior question is whether anything in §1.5(a) is false.
+**Measured, nothing is.**
+
+- §1.5(a) claims that **two** walks carry the *identical fatal closed
+  classification rule*. Read against `crates/antseal-core/tests/vector_walk/mod.rs`,
+  the Q157 census: of its twelve registered sites, exactly two carry class
+  `closed` — `wasm-bitmatch/build.rs`'s `walk_version_dir` and
+  `antseal-core/tests/vector_runner.rs`'s `walk_version_dir`. **The same two.**
+- §1.5(b) already found two further walks over the same tree and called them
+  immune, and §1.5's closing sentence already says *"the two fatal walkers are
+  the outliers"*. §1.5 therefore never claimed that only two walks exist; it
+  counted the ones carrying the rule under repair.
+- The census's own text confirms rather than corrects it: *"Q140 found two
+  walks over the committed vector tree carrying the same closed classification
+  rule"*, and its class column keeps `closed` at exactly two.
+
+**Therefore neither arm of §2.3 applies.** REPLACE would substitute a correct
+sentence for a correct sentence; STRIKE would assert that a true measurement
+was mistaken and would falsify the record that §2.1(a)'s non-erasure principle
+exists to protect. What the sentence lacks is its **predicate** — an
+under-specification, not an error — and the instrument for that is an
+**additive dated note that leaves the text standing**, which is what §1.5(a)
+now carries. That note is not a §2.3(d) marker and does not use its `~~`
+form, because nothing is struck; this paragraph is the record of why a new
+shape was used rather than one of the two sanctioned ones.
+
+### (3) The `Q196` premises that sent a reader here, refuted in three parts
+
+`tasks/Q.md`'s `Q196` states, and `TODO.md`'s row repeats: *"a plausible
+mechanism for **D116 §1.7** concluding Q140's radius was 'two walkers' when
+Q157's later census found twelve walk sites"*. The row flags its own causal
+claim as a hypothesis. It does not hold, in three separable ways:
+
+1. **Wrong section.** The finding is §1.5(a). §1.7 is Q141's cost figure. The
+   likeliest provenance is the Amendment's own *"§1.7's extra directory
+   walks"*, corrected in (1) above — stated as the most probable route, not as
+   proven.
+2. **Not measured under fail-fast.** §7's own log is decisive: the finding came
+   from **reading** `vector_runner.rs`'s classification, and was confirmed by
+   **cmd 11** (`cargo check -p wasm-bitmatch --locked`, which runs no test at
+   all and which `--no-fail-fast` cannot reach — `cargo test` has no
+   `--keep-going`) and **cmd 12** (`cargo test -p antseal-core --test
+   vector_runner --locked`, a single named target). §1.5(a)'s own transcript
+   reports `7 passed; 1 failed`, which is the whole target counted to
+   completion — libtest never stops at the first failure, and cargo's
+   `--no-fail-fast` governs *executables*, not tests within one. The flag would
+   have changed nothing about this figure.
+3. **Not superseded.** Per (2): twelve and two count different predicates and
+   are both true at this epoch.
+
+**What the row is right about, and it is the part worth keeping**: a recorded
+figure that does not name what produced it attaches itself to whatever the
+reader is thinking about. `Q196` is itself the measured instance — the missing
+detail here was **what was counted**, not *what was allowed to stop*, which is
+`Q160`'s generalisation arriving one measurement earlier than the row placed
+it. The convention the row asks for is written at
+`docs/ci-verification.md`, *"A blast radius measured under fail-fast is a lower
+bound, not a radius"*, and it requires **both** the command and the predicate
+for exactly this reason.
+
+### (4) The count, stated per D117 §2.5
+
+1. **The original figure, with its section**: §1.5(a), *"There are two walkers
+   with the identical fatal rule, not one."*
+2. **The new figure**: unchanged — **two**.
+3. **The predicate, in words, and how it was measured**: *walks over
+   `testdata/vectors/` whose classification is closed, i.e. that fail on any
+   file they cannot classify.* Measured by reading the class column of
+   `VECTOR_TREE_WALKS`' census in
+   `crates/antseal-core/tests/vector_walk/mod.rs`, which registers twelve sites
+   and marks exactly two `closed`; `tests/vector_walk_census.rs` holds that
+   table to the tree.
+4. **Which defect this is**: **neither**. The figure was correct when written
+   and is correct now. What is added is the predicate it always counted.
+5. **Whether the conclusion resting on the count survives**: **yes, and it
+   widens.** R7 and R8 put one shared list behind both closed walkers; Q157
+   then found that the *prune* half of that list is needed by every recursive
+   walk, closed or positive, and extended it to seven. That is R8's own
+   derive-one-rule-from-the-other principle applied further out, not a
+   correction of it.
+
+**No tie-break is needed** (D117 §2.5): the two figures do not conflict, and
+both have a reproducible source.
+
+### (5) What stands
+
+**RULINGS on Q133, Q141 and Q140 all stand, and every rider R1–R8 stands
+unchanged.** Every error corrected here is a **pointer**, not a finding: the
+Amendment's five section numbers misdirect a reader and change nothing about
+what this document measured or ruled. §1.5(a)'s figure is confirmed by the
+later census rather than superseded by it, so the argument for R7 and R8 is
+strengthened, not weakened. Nothing in §1.7's cost measurement is touched.

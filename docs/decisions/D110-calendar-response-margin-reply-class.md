@@ -664,6 +664,8 @@ defect executed forwards instead of backwards. Replace with:
     /// 1 105 B). It is now the lesser of the cap's two reply classes.
 ```
 
+**`docs/decisions/README.md`** — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
+
 **Explicitly NOT edited, each with its reason** — recorded so the lane does
 not go looking:
 
@@ -853,13 +855,6 @@ lands in `antseal-anchor` — the only crate that can see both the document and
 the measurement — and is literal-free on both sides. **No constant moves.**
 
 ---
-
-## Index row (orchestrator applies at merge)
-
-| [D110](D110-calendar-response-margin-reply-class.md) | A115 — which reply class `MAX_OTS_CALENDAR_RESPONSE_BYTES`' margin divides by — **the UPGRADE reply, 59.31x, and the question was already ruled.** A115 and the brief both frame the keying as *"a substantive ruling D54 §6.1 assigned"*; read in full, **D54 §6.1 made it** on 2026-08-02 — *"the F4 row must be completed with that figure before M2 closes"* — and D54 §9 finding 3, `OTS-BOOTSTRAP.md`, `ots/mod.rs:89-91` (*"it is the figure the F4 row takes"*) and `replay.rs:141-142` all agree, so **the registry cell is the only artefact in the tree keyed to the submit reply** and one of the five it contradicts is a code doc asserting what the registry currently falsifies — A106's *"a correction landed in one of two places has not happened"*, one file over. Keeping submit would require **amending a ratified decision**, which nothing argues for. Re-measured from bytes, not from the row: submit 207/170/**220**/207/170/185, upgrade 1 000/1 036/**1 105** ×2 digests, **both pinned by the same test** (`the_measured_upgrade_response_sizes_are_the_f4_row`, per file) — and the upgrade's sample is **complete and committed** where the submit's *"largest of 18"* is prose-backed, six committed of eighteen. Arithmetic re-derived with the checker's own integer expression: 297.8909 → **297.89x**, 59.3086 → **59.31x**, both of A115's figures correct. The limit bounds **any single calendar reply**, not a request class (`submit.rs:343`, `upgrade.rs:213`, no third site) — which *strengthens* the ruling: a shared cap is only as generous as its worst shape. The class set is **exactly two**: non-2xx bodies, including A14's two 404 discriminators, read under `HTTP_ERROR_BODY_CAP_BYTES` (4 KiB) at `http.rs:820-835`, **not** `receive_cap_bytes`. **"Record both" is refused on §5's own rule**: `printed_margin` reads only the leading `N.MMx`, so a second margin is *"a number that reads like the checked ones and is checked by nothing"* — A113's words for the defect it landed to remove, and the 15.28x shape that injured A109; both figures are still recorded, the submit one **unbolded** and not written as a margin. **Value KEEPS 65 536** — worst shape is **1.69 %** of the cap, structural cost genuinely none, a lowering saves ≤ 256 KiB of transient heap, and **zero of the four `DEFAULT_OTS_CALENDARS` endpoints has ever been measured** (the A25 captures used `*.btc.calendar.opentimestamps.org`, which `calendars.rs:6-13` says the default list deliberately excludes). **§6 owes no entry** — and the brief's *"D107 fires on lowering alone"* is the rule **D107 replaced**; D107 R1's exclusion table names *"correcting `measured against`, `margin` or `structural cost`"* as owing none, and writing one anyway reddens the bidirectional log checker. **Ships an instrument**, because A113's cross-check is document-internal and a *consistent* re-key back passes every test today: `the_f4_row_is_keyed_to_the_upgrade_reply_not_the_submit_reply` lands in `antseal-anchor`, the only crate that can see both operands, literal-free on both sides. Also repaired: the §5 margin band's ceiling (297.89x → **178.09x**) and its floor claim, which has said `MAX_OTS_DEPTH` at 12.05x since A110 put `MAX_CHAIN_CERTS` at **2.0x** in the same table. **No constant moves** | RESOLVED (A115 executes, with A114) | 2026-08-10 |
-
----
-
 ## Amendments — found by the implementing lane, 2026-08-10
 
 Recorded here rather than left in a task report. The RULING and every figure in

@@ -664,6 +664,7 @@ same defect with money attached.
 - **Required-context set — unchanged at 19**, plus one if `fuzz-budget`
   lands as a `ci.yml` job. `fuzz-long` is not a PR context and never becomes
   one, so Q56's generated-context-list discipline is untouched by §2 and §3.
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## Residual risks
 
@@ -740,7 +741,3 @@ same defect with money attached.
   the allowance, above §1's 91 % lower bound.)*
 - **A seventh fuzz target is proposed** — §5 goes red by construction, which
   is the trigger firing correctly rather than a problem.
-
-## Index row (orchestrator applies at merge)
-
-| [D61](D61-fuzz-venue.md) | Long-run fuzz venue | RESOLVED | 2026-08-02 | The existing `fuzz-nightly.yml`, re-cadenced twice-weekly at 600 s/target under a 700 min/month ceiling with a machine check. OSS-Fuzz rejected as not applicable — its criterion is adoption, not visibility, so Q65 alone does not unblock it; ClusterFuzzLite rejected (same minutes, more machinery). Found the committed daily × 4 × 900 s configuration spending ≥ 91 % of the free allowance, live and unobserved since 2026-07-28. | Q9, Q17, Q65 |

@@ -735,6 +735,7 @@ planner's task file). A41, R62, R63 and Q77 are unused.
    calling the evaluator on an anchor kind the bundle does not carry; a
    companion test asserts R12 emits no `AnchorResult` slot for it and the
    empty-anchor vector still serializes `\"anchors\":[]`."*
+9. `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ---
 
@@ -763,7 +764,3 @@ planner's task file). A41, R62, R63 and Q77 are unused.
   artifact's best attempt, and A39's anomaly list carries the rest — but a
   reader of the code alone will under-read the artifact. Trigger: A39
   landing, at which point R18's wording should lead with the anomaly count.
-
-## Index row (orchestrator applies at merge)
-
-| [D53](D53-chain-invalid-at-gentime.md) | State for a TSA chain that does not validate at `genTime` — the register's **binary framing is overturned**: the question is a six-way partition and MVP-SPEC.md:109/133 had already ruled two sub-cases the *opposite* way from the lean. Partition principle (shared with D56): **`invalid` iff the artifact makes a claim the verifier can refute from trusted material; `internally-consistent-only` iff it makes no refutable and no confirmable claim**. Temporal failure at `genTime` (**both** directions — the not-yet-valid/back-dating half is named in no spec line, task or matrix entry), failed path constraints, and a failed link signature on a chain **naming a pinned root** → `Invalid` with three new `anchor-` codes; no pinned root reached, bundle-supplied roots included → `InternallyConsistentOnly`. Decisive evidence for the lean's true scope is mechanical rather than editorial: error-contract §4b layer 3 refuses a pending row re-claiming `anchor-untrusted-root`'s `verdict:internally-consistent-only` key, and its only escape hatch is an explicit record asserting the two mutations are **one observable** — false for "unpinned TSA" vs "back-dated token". (The check is dormant today because both rows carry `expected: null` — itself the defect Q76 fixes.) Rules quantify over the candidate-path *set*, so the state is permutation-invariant and a relay cannot demote an honest anchor by appending a certificate to the **unsigned** bundle. Also found: **there is no `anchor-` error-code prefix** (§2's table has no A row, and A cannot borrow `bundle-`), and line 168's M2 enumeration is **six clauses / eight cases**, with two incompatible "sevens" in the tree. Zero frozen report bytes change — held so by keeping diagnostic codes out of `AnchorResult` (D86's ruling, one domain over) | RESOLVED | 2026-08-02 |

@@ -389,6 +389,8 @@ in the canonical surface and none is added. Wired by **U44**.
 paragraph (`docs/config.md:77-78`), add `ots_calendars` to the list of keys
 whose entries must start with `http://` or `https://`.
 
+**`docs/decisions/README.md`** — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
+
 ## 8. Tests that must exist, and what makes each fail
 
 | test | lives in | fails when |
@@ -460,7 +462,3 @@ bytes, so it passes `cap + 1`) applies unchanged.
   suffix, append-only.
 - Any proposal to make OTS success a seal precondition → §3's argument must
   be defeated first.
-
-## Index row (orchestrator applies at merge)
-
-| [D54](D54-default-ots-calendars.md) | Default OTS calendar set — **upstream's own four defaults verbatim** (`a.pool.opentimestamps.org`, `b.pool.opentimestamps.org`, `a.pool.eternitywall.com`, `ots.btc.catallaxy.com`, `otsclient/cmds.py:186-189`), which are **aggregator aliases, not the calendar hostnames the A25 bootstrap used** — and the alias indirection is the whole point: the dead `finney.btc.calendar.opentimestamps.org` was never an upstream default, while every real default is live (measured, 18 submissions). Success is counted over **distinct pending-attestation URIs** (a pool and its calendar return the same one, measured 4/4 rounds), ≥2 normal / 1 thin / 0 absent — **none ever blocks a seal**, because A20's gate is TSA-only and a seal-time OTS anchor is `pending`. No calendar key exists to pin and none is needed: an impersonated calendar can deny service or return a *later* time, never an earlier one, so this is a liveness decision. What is pinned is an **append-only upgrade-URI host allowlist** (3 suffixes, strict dot-boundary, `https`-only), closing an SSRF the U24 every-invocation hook would otherwise expose. Replacing a dead default is **not** a format event — no byte of `antseal-core` names a calendar | RESOLVED (A13/A14/A20/A25 + new A42/A44/U44 implement) | 2026-08-02 |

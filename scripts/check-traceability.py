@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Six checks live here, and they are the same shape: something written down in
+Seven checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -20,6 +20,10 @@ prose asserts a fact about the repository, and nothing else verifies it.
     --decision-owners   Every `**Owner: <ID>**` assignment in a RESOLVED
                         decision names a registered task whose TODO.md row
                         names that decision back (Q145).
+    --decision-index    Every `docs/decisions/D*.md` record has exactly one
+                        row in the decision index, whose link resolves to that
+                        record and whose status word and date are the
+                        record's, in ascending id order (Q180, D119).
 
 Run with no arguments to run every check.
 
@@ -236,14 +240,25 @@ ROW = re.compile(r"^\|\s*(?P<cells>.+)\s*\|$")
 # crates are stubs and `deferred` is the correct answer, not a gap.
 MILESTONE_ORDER = ("M0", "M1", "M2", "M3", "M4")
 
-# The milestone under review. **This is the line a milestone review bumps.**
+# The last milestone whose review has PASSED — not the one being built, and
+# not "the milestone under review", which is the reading that sent Q165 to M2
+# (D118 §5). **What moves it is the milestone-gate row for the milestone that
+# just passed**: TODO.md rule 4 lists the acts that close a passing gate and
+# this is one of them. Q14 was M0's gate row; Q34 is M4's.
+#
+# Nothing compares this line to TODO.md's Current-focus block, and D122
+# refuses such a check on measurement, not taste: the block names the
+# milestone IN PROGRESS ("M2" today) where this names the last one PASSED
+# ("M1"), so equality is red against a correct constant; and across this
+# project's history that line has used five grammars, in which the same token
+# position means the current milestone in three and the finished one in two.
+#
 # It is a constant rather than a required flag on purpose: a gate that only
 # runs when someone remembers to pass `--milestone` is the same unenforced
 # prose this check exists to replace. `--milestone` overrides it for a one-off
 # question ("would M1 pass today?").
 #
-# It names the last milestone whose review has PASSED, not the one being
-# built. The rule is cumulative, so `M1` gates M0's rows and M1's forever
+# The rule is cumulative, so `M1` gates M0's rows and M1's forever
 # while leaving M2's — a milestone still in progress — free to read `gap`
 # honestly. Setting it to the in-progress milestone instead would force every
 # not-yet-done row into ACCEPTED_NON_COVERED, and that register's entries are
@@ -322,21 +337,21 @@ def parse_matrix(path: pathlib.Path) -> list[dict[str, str]]:
     return rows
 
 
-def gated_milestones(under_review: str) -> tuple[str, ...]:
-    """Every milestone at or before `under_review`.
+def gated_milestones(gated_through: str) -> tuple[str, ...]:
+    """Every milestone at or before `gated_through`.
 
     Cumulative on purpose: at the M1 review, M0's rows must *still* read
     covered. A gate that only looked at the current milestone would let an
     earlier one silently regress to `gap` the moment its own review passed.
     """
-    if under_review not in MILESTONE_ORDER:
+    if gated_through not in MILESTONE_ORDER:
         raise ValueError(
-            f"unknown milestone {under_review!r}; known: {', '.join(MILESTONE_ORDER)}"
+            f"unknown milestone {gated_through!r}; known: {', '.join(MILESTONE_ORDER)}"
         )
-    return MILESTONE_ORDER[: MILESTONE_ORDER.index(under_review) + 1]
+    return MILESTONE_ORDER[: MILESTONE_ORDER.index(gated_through) + 1]
 
 
-def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> None:
+def check_matrix(failures: Failures, gated_through: str = CURRENT_MILESTONE) -> None:
     check = "matrix"
     path = ROOT / MATRIX
     if not path.is_file():
@@ -349,7 +364,7 @@ def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> N
         return
 
     try:
-        gated = gated_milestones(under_review)
+        gated = gated_milestones(gated_through)
     except ValueError as error:
         failures.add(check, str(error))
         return
@@ -387,7 +402,7 @@ def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> N
                 failures.add(
                     check,
                     f"{MATRIX}:{row['_line']} row {identifier!r} ({milestone}) reads "
-                    f"{status!r}, but {under_review} is under review and every row at or "
+                    f"{status!r}, but {gated_through}'s review has passed and every row at or "
                     f"before it must read 'covered'. Either the work is genuinely missing "
                     f"— in which case the milestone is not done — or the row is stale and "
                     f"has not been updated since the work landed. Resolving it by "
@@ -446,7 +461,7 @@ def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> N
     if not gate_rows:
         failures.add(
             check,
-            f"no rows at or before {under_review} — the status gate would be vacuous. "
+            f"no rows at or before {gated_through} — the status gate would be vacuous. "
             "Either the milestone column stopped parsing or CURRENT_MILESTONE names a "
             "milestone this matrix has no rows for.",
         )
@@ -456,7 +471,7 @@ def check_matrix(failures: Failures, under_review: str = CURRENT_MILESTONE) -> N
         print(
             f"[{check}] ok — {len(rows)} rows over {len(bullets)} spec bullets, "
             f"{checked} references resolved ({summary}); status gate: all {gate_rows} "
-            f"row(s) at or before {under_review} read 'covered'"
+            f"row(s) at or before {gated_through} read 'covered'"
         )
 
 
@@ -548,9 +563,18 @@ DECISION_DIR = "docs/decisions"
 # rule about what a citation surface is, not a suppression of a failure.
 # `TODO.md` and `tasks/*.md` stay out for the reason stated at the top.
 #
-# HAZARD when adding to this list: an entry is filtered by CITATION_SUFFIXES
-# like any other path, so naming a root file whose suffix is not in that set
-# (`deny.toml`, `.gitattributes`) adds a scan root that reads nothing at all.
+# SUFFIXES ARE A DIRECTORY RULE (Q190/D123, 2026-08-11). A literal file entry
+# above is read as itself and is NOT filtered by CITATION_SUFFIXES; a
+# directory entry is walked and filtered. This paragraph replaces a HAZARD
+# note written by Q176 in the same act that created the hazard — "an entry is
+# filtered by CITATION_SUFFIXES like any other path, so naming a root file
+# whose suffix is not in that set adds a scan root that reads nothing at all"
+# — which was TRUE of the old semantics and named two of the three files then
+# in that state. Measured before the change: naming the files with the suffix
+# set unchanged moved the swept count 359 -> 359. Adding .toml instead reached
+# SIX crates/*/Cargo.toml and NOT deny.toml, because a root-level file is
+# reached only by being named; and no suffix can ever reach a dotfile, whose
+# suffix is the empty string. Do NOT "simplify" this back to one filter.
 #
 # ONE pair, not two (D116 R1). Two constants held in step by a comment is the
 # defect D112 spent a wave on, one file over; the only honest comment on two
@@ -568,6 +592,23 @@ CITATION_SCAN = [
     "README.md",
     "CONTRIBUTING.md",
     "MVP-SPEC.md",
+    # Root-level files whose suffix is outside CITATION_SUFFIXES, reachable
+    # only under the literal-entry rule above (Q190/D123). Measured 2026-08-11:
+    # 57/7/2 distinct task ids and 19/4/3 decision ids in the three with
+    # suffixes, 6 and 6 in the two dotfiles; all resolve.
+    #
+    # R7 — the asymmetry these five create, stated where it is created: the
+    # ROOT manifest is swept because it is NAMED here, and the six MEMBER
+    # manifests under crates/ are not, because .toml is not a directory-walk
+    # suffix. That looks arbitrary and is not: whether crates/ should gain
+    # .toml is a separate question with its own measurement (62 distinct task
+    # ids across the six, all allocated, none above ceiling), deliberately not
+    # answered as a side effect of this one.
+    "Cargo.toml",
+    "deny.toml",
+    "requirements-crosscheck.txt",
+    ".gitattributes",
+    ".gitignore",
 ]
 CITATION_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
 
@@ -647,14 +688,20 @@ def check_decisions(failures: Failures) -> None:
         base = ROOT / sub
         if not base.exists():
             continue
-        # Q176 — an entry may be a directory (swept recursively) or a single
-        # FILE (swept as itself). Without this branch a filename in
-        # CITATION_SCAN is a silent no-op: `Path.rglob` on a non-directory
-        # yields nothing at all, so the constant would look widened and read
-        # nothing. Both sweeps carry this line identically; see the note at
-        # CITATION_SCAN.
-        for path in ([base] if base.is_file() else base.rglob("*")):
-            if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
+        # Q176 + Q190/D123 — an entry may be a directory (swept recursively
+        # and filtered by CITATION_SUFFIXES) or a single FILE (swept as
+        # itself, UNFILTERED). Two branches because they answer different
+        # questions: a tree walk has no opinion about what it finds, so it
+        # needs the suffix set; a named file was already deliberated in a
+        # reviewed constant, so a second gate is owed to nobody. Filtering a
+        # named file is what made deny.toml, .gitattributes and .gitignore
+        # scan roots that read nothing at all. Without the branch at all, a
+        # filename here is a silent no-op: `Path.rglob` on a non-directory
+        # yields nothing. Both sweeps carry these lines identically (D116 R2);
+        # see the note at CITATION_SCAN.
+        literal = base.is_file()
+        for path in ([base] if literal else base.rglob("*")):
+            if not path.is_file() or (not literal and path.suffix not in CITATION_SUFFIXES):
                 continue
             if {"target", "node_modules", "__pycache__"} & set(path.parts):
                 continue
@@ -874,14 +921,20 @@ def sweep_task_surfaces() -> tuple[dict[str, set[str]], dict[str, set[str]], int
         base = ROOT / sub
         if not base.exists():
             continue
-        # Q176 — an entry may be a directory (swept recursively) or a single
-        # FILE (swept as itself). Without this branch a filename in
-        # CITATION_SCAN is a silent no-op: `Path.rglob` on a non-directory
-        # yields nothing at all, so the constant would look widened and read
-        # nothing. Both sweeps carry this line identically; see the note at
-        # CITATION_SCAN.
-        for path in ([base] if base.is_file() else base.rglob("*")):
-            if not path.is_file() or path.suffix not in CITATION_SUFFIXES:
+        # Q176 + Q190/D123 — an entry may be a directory (swept recursively
+        # and filtered by CITATION_SUFFIXES) or a single FILE (swept as
+        # itself, UNFILTERED). Two branches because they answer different
+        # questions: a tree walk has no opinion about what it finds, so it
+        # needs the suffix set; a named file was already deliberated in a
+        # reviewed constant, so a second gate is owed to nobody. Filtering a
+        # named file is what made deny.toml, .gitattributes and .gitignore
+        # scan roots that read nothing at all. Without the branch at all, a
+        # filename here is a silent no-op: `Path.rglob` on a non-directory
+        # yields nothing. Both sweeps carry these lines identically (D116 R2);
+        # see the note at CITATION_SCAN.
+        literal = base.is_file()
+        for path in ([base] if literal else base.rglob("*")):
+            if not path.is_file() or (not literal and path.suffix not in CITATION_SUFFIXES):
                 continue
             if {"target", "node_modules", "__pycache__"} & set(path.parts):
                 continue
@@ -1184,6 +1237,263 @@ def check_decision_owners(failures: Failures) -> None:
         )
 
 
+# ── check 7: the decision index says what the records say (Q180, D119) ──────
+# `docs/decisions/README.md` opens by claiming, in one sentence, that it
+# carries exactly one row per record, in ascending id order, with each row's
+# status and date taken from that record. Nothing verified any of it, and every
+# clause of it was false when D119 measured: 29 records had no row at all, and
+# one row diverged from its record in both status and date — in the direction
+# nobody expects, the INDEX right and the RECORD stale for fourteen days, which
+# is why RULING 2 had to name the record authoritative before this check could
+# mean anything. A claim a document makes about itself, with no instrument, is
+# the shape every check in this file exists to end.
+#
+# ══ THE DOMAIN IS THE GLOB, AND IT IS THE ONE THING THIS CHECK COULD GET
+#    CATASTROPHICALLY WRONG (D119 §1.4 and RULING 3) ═══════════════════════
+# The natural phrasing — "every id in TODO.md's Decision register has an index
+# row" — is written over the wrong artefact, and it is the phrasing Q180's `Do`
+# gestures at. The register's domain is the ID SPACE: it ALLOCATES, so it
+# legitimately carries ids that have no file. Measured when D119 ruled: 18 of
+# its ids had no file, 5 homed in `DECISIONS_HOMED_ELSEWHERE` and **13 still
+# open for decisions nobody has written**. A check over that id space is red on
+# 47 ids and demands index rows for documents that do not exist.
+#
+# So `allocated_decision_ids()` is deliberately NOT read here — and neither is
+# `open_decision_ids()`, which is the subtler half. Being open in the register
+# is exactly what lets `check_decisions()` stay silent about an id, and
+# importing that rule here would make an unwritten decision's missing row
+# unfalsifiable in a check whose whole subject is which files exist.
+#
+# Three artefacts, three domains, each authoritative over its own: the register
+# holds the id space, the RECORD holds the decision, and this index holds the
+# FILES ON DISK. This check reads the third and compares it to the second.
+#
+# It does not reopen D109 §3.3. `docs/decisions/` stays out of `CITATION_SCAN`
+# and nothing here reads a citation: it reads the index table's structure and
+# each record's `- **Status`/`- **Date` lines, nothing else. A record stays
+# free to PROPOSE ids the orchestrator may renumber or decline.
+
+INDEX = f"{DECISION_DIR}/README.md"
+
+# A row of the index table: `| [D<n>](<file>) | <title> | <status> | <date> |`.
+INDEX_ROW = re.compile(r"^\| \[D(\d+)\]\(([^)]*)\) \|")
+
+# Cell boundaries — NOT `str.split("|")`, and not `split_row()` above.
+# Measured on the table this landed against: 5 of its 106 rows carry `\|`
+# INSIDE a cell (a shell `||`, a JSON `string \| object`, a CLI
+# `generate\|import`, and a needle that is itself a table row), and Markdown
+# renders a backslash-escaped pipe as content, not as a boundary. A plain split
+# reads those five rows as 7, 7, 10, 7 and 8 fields, shifts their status and
+# date cells left, and reports every one of them — a check red on arrival, on
+# five rows nobody wrote wrong. The lookbehind is what makes the escape its
+# author wrote mean what it renders as; an UNescaped pipe still shifts the
+# cells, and that is the defect this check is entitled to report.
+INDEX_PIPE = re.compile(r"(?<!\\)\|")
+
+# The leading word of a status, upper-cased: `RESOLVED` out of `RESOLVED
+# (recorded deferral)`, `RESOLVED — …` and `RESOLVED. The register's lean …`
+# alike. Whole-cell equality is not the property: the index summarises in a
+# terse cell what the record spends a paragraph on, so whole-cell equality
+# would be red on all 106 rows and the check would have to be deleted. What has
+# to agree is the VERDICT. The trailing-period form is not hypothetical — D36
+# and D37 carry it, and a first-whitespace-token split reports both.
+INDEX_STATUS_WORD = re.compile(r"[A-Za-z][A-Za-z-]*")
+
+# Both status-block spellings, on purpose. D119 §1.9 measured 98 records in the
+# house form and 2 in `- **Status**:`, and §5 step 2 normalised those two — so
+# the corpus is uniform today and this could be strict. It is not, because
+# minting a spelling rule here is exactly what RULING 5 refuses to do twice:
+# the `Owner`/`Owning task(s)` field already has four coexisting spellings and
+# no rule, Q162 owns that question, and a Status-field rule invented as a side
+# effect of a row-mirroring check is how the fifth spelling of the next field
+# gets born. This check's subject is whether the index tells the truth about a
+# record, not how the record spells its own front matter.
+RECORD_STATUS = re.compile(r"^- \*\*Status\*{0,2}:\s*(.*)$", re.M)
+RECORD_DATE = re.compile(r"^- \*\*Date\*{0,2}:\s*(\d{4}-\d{2}-\d{2})", re.M)
+
+
+def index_cells(line: str) -> list[str] | None:
+    """The cells of one index row, stripped, or None if `line` is not a row."""
+    if not INDEX_ROW.match(line):
+        return None
+    return [cell.strip() for cell in INDEX_PIPE.split(line.rstrip())[1:-1]]
+
+
+def status_word(text: str) -> str:
+    """The leading status word of `text`, upper-cased; `""` if it has none."""
+    match = INDEX_STATUS_WORD.search(text)
+    return match.group(0).upper() if match else ""
+
+
+def check_decision_index(failures: Failures) -> None:
+    check = "decision-index"
+
+    records: dict[int, pathlib.Path] = {}
+    for path in sorted((ROOT / DECISION_DIR).glob("D*.md")):
+        match = re.match(r"D(\d+)-", path.name)
+        if match:
+            records[int(match.group(1))] = path
+    if not records:
+        # The glob IS the domain (see the note above), so a glob that matches
+        # nothing is not a green tree — it is a check with no subject, and the
+        # likeliest cause is that `DECISION_DIR` moved.
+        failures.add(
+            check,
+            f"no decision record matched {DECISION_DIR}/D*.md, so this check has no "
+            f"domain at all. The glob is the domain — see the note above the check.",
+        )
+        return
+
+    index = ROOT / INDEX
+    if not index.is_file():
+        failures.add(check, f"{INDEX} does not exist, so {len(records)} record(s) are indexed by nothing")
+        return
+    text = index.read_text(encoding="utf-8")
+
+    rows: list[tuple[int, int, str, list[str], str]] = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        cells = index_cells(line)
+        head = INDEX_ROW.match(line)
+        if cells is None or head is None:
+            continue
+        rows.append((line_no, int(head.group(1)), head.group(2), cells, line))
+    if not rows:
+        failures.add(
+            check,
+            f"{INDEX} holds no parseable index row. Either the table was emptied or "
+            f"its row shape changed under this check, and both are silent otherwise.",
+        )
+        return
+
+    # (a) one row per record, in both directions.
+    seen: dict[int, list[int]] = {}
+    for line_no, number, _target, _cells, _line in rows:
+        seen.setdefault(number, []).append(line_no)
+
+    for number in sorted(set(records) - set(seen)):
+        failures.add(
+            check,
+            f"{INDEX}: D{number} has a record ({records[number].name}) and no row in "
+            f"the index. Every record gets exactly one row, in ascending id order, and "
+            f"the act that commits the record is the act that adds it (D119 RULING 6).",
+        )
+    for number in sorted(set(seen) - set(records)):
+        failures.add(
+            check,
+            f"{INDEX}:{seen[number][0]}: the row for D{number} names a decision with no "
+            f"record under {DECISION_DIR}/. The index never carries an id without a file "
+            f"— allocating ids is TODO.md's register's job, not this file's "
+            f"(D119 RULING 1).",
+        )
+    for number, at in sorted(seen.items()):
+        if len(at) > 1:
+            failures.add(
+                check,
+                f"{INDEX}: D{number} has {len(at)} rows (lines "
+                f"{', '.join(str(n) for n in at)}); exactly one is the rule, and two rows "
+                f"are two statuses waiting to disagree",
+            )
+
+    # (c) ascending id order. Strictly less, so an adjacent duplicate is
+    # reported once, by the branch above, and not twice.
+    previous: int | None = None
+    for line_no, number, _target, _cells, _line in rows:
+        if previous is not None and number < previous:
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s row follows D{previous}'s, so the table "
+                f"is not in ascending id order. Insert by id — a reader scanning for a "
+                f"decision stops at the first id past the one they want.",
+            )
+        previous = number
+
+    for line_no, number, target, cells, _line in rows:
+        # (b) the link resolves, and it resolves to the record it names.
+        if len(cells) != 4:
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s row splits into {len(cells)} cells, not "
+                f"4 (ID, Title, Status, Date). An unescaped `|` inside a cell renders as "
+                f"a column break and shifts every cell after it; write it `\\|`.",
+            )
+            continue
+        destination = ROOT / DECISION_DIR / target
+        if not destination.is_file():
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s link target `{target}` does not exist "
+                f"under {DECISION_DIR}/. This is the page GitHub renders at the "
+                f"directory URL, so a dead link here is a dead link on the front page.",
+            )
+            continue
+        if number in records and destination.resolve() != records[number].resolve():
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s link resolves to `{target}`, which is "
+                f"not D{number}'s record ({records[number].name}). It resolves, so link "
+                f"existence alone never sees it, and the row then annotates one decision "
+                f"while pointing at another.",
+            )
+            continue
+
+        # (d) the status token and the date are the record's. The RECORD
+        # decides (D119 RULING 2) — including when the index is the correct one
+        # and the record is the stale one, which is the case that produced this
+        # check. Correcting the record, in D117's form, is the repair; editing
+        # the row to agree with a wrong record is how the defect gets laundered.
+        record = records[number]
+        try:
+            body = record.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            failures.add(check, f"{record.name} could not be read to check D{number}'s row: {exc}")
+            continue
+        status_line = RECORD_STATUS.search(body)
+        date_line = RECORD_DATE.search(body)
+        if status_line is None or not status_word(status_line.group(1)):
+            failures.add(
+                check,
+                f"{record.name}: no parseable `- **Status: <word> …**` line, so D{number}'s "
+                f"index row is checked against nothing. A record whose status cannot be "
+                f"read is a record whose row cannot be wrong.",
+            )
+            continue
+        if date_line is None:
+            failures.add(
+                check,
+                f"{record.name}: no parseable `- **Date: YYYY-MM-DD**` line, so D{number}'s "
+                f"index row date is checked against nothing",
+            )
+            continue
+        recorded_status = status_word(status_line.group(1))
+        row_status = status_word(cells[2])
+        if row_status != recorded_status:
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s row reads status `{row_status or '(none)'}` "
+                f"where {record.name} reads `{recorded_status}`. The RECORD decides "
+                f"(D119 RULING 2): correct it there under D117's form and let the row "
+                f"follow, and if the record is the stale one, correct the record first.",
+            )
+        if cells[3] != date_line.group(1):
+            failures.add(
+                check,
+                f"{INDEX}:{line_no}: D{number}'s row is dated {cells[3] or '(empty)'} where "
+                f"{record.name} reads {date_line.group(1)}. Same rule: the record decides.",
+            )
+
+    if not failures:
+        # Both counts, per D116 R3: a check that silently narrowed its glob — the
+        # one mistake this check's domain makes expensive — would otherwise be
+        # invisible in a green log, which is a green lane saying nothing about
+        # how much it read.
+        print(
+            f"[{check}] ok — {len(rows)} index row(s) in {INDEX} against {len(records)} "
+            f"record(s) matching {DECISION_DIR}/D*.md, one apiece and in ascending id "
+            f"order; every link resolves to its own record, and every status word and "
+            f"date is the record's"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
@@ -1191,6 +1501,7 @@ CHECKS = {
     "task-citations": check_task_citations,
     "task-entries": check_task_entries,
     "decision-owners": check_decision_owners,
+    "decision-index": check_decision_index,
 }
 
 
@@ -1203,9 +1514,10 @@ def main() -> int:
         default=CURRENT_MILESTONE,
         choices=MILESTONE_ORDER,
         help=(
-            "milestone under review for the --matrix status gate: every row at or "
-            f"before it must read 'covered' (default: {CURRENT_MILESTONE}, the constant "
-            "a milestone review bumps)"
+            "last milestone whose review has passed; the --matrix status gate "
+            "requires every row at or before it to read 'covered' "
+            f"(default: {CURRENT_MILESTONE}, moved by the milestone-gate row for "
+            "the milestone that just passed — TODO.md rule 4)"
         ),
     )
     parser.add_argument(
@@ -1241,6 +1553,7 @@ def main() -> int:
 
 def self_test() -> int:
     """Prove both checks are able to fail. A check never seen red proves nothing."""
+    import fnmatch
     import shutil
     import tempfile
     import time
@@ -1259,7 +1572,32 @@ def self_test() -> int:
         # required context for a reason that has nothing to do with
         # traceability — the worst shape a flaky failure can take.
         #
-        # Two guards, because they cover different things.
+        # WHICH TREE, and the trade-off recorded rather than assumed (Q191 /
+        # D120 R1). This stages the WORKING tree — every uncommitted edit
+        # included — because the arms must exercise the tree the contributor is
+        # about to push, which is the same tree the flagless half checks. A
+        # `git archive HEAD` snapshot was measured head to head and refused: on
+        # one working tree carrying an uncommitted edit that had already killed
+        # a fixture, the snapshot exited 0 and printed twenty-eight lines of
+        # "ok". It would prove the checks can bite committed content while
+        # leaving the thing being checked unproven — and in CI it is a no-op,
+        # because the runner's checkout IS `HEAD`, so its only real effect is
+        # to move fixture-rot detection off the developer's machine.
+        #
+        # WHAT of that tree, and it is git that decides (D120 R2). The staged
+        # set is `git ls-files` ∪ `git ls-files --others --exclude-standard`.
+        # The reason for excluding what git ignores is not tidiness: NO CHECK
+        # CAN OPEN IT. `fuzz/corpus` and `fuzz/artifacts` alone were 922 files
+        # — 46.5% of the staged entries — outside every citation scan root,
+        # outside the register and outside the matrix, and rewritten
+        # continuously by `cargo fuzz` while this copy runs. Measured, the old
+        # tuple staged 1,983 files where at most 474 are readable by any check.
+        # Git also knows the residue a hand-written tuple never will, including
+        # the entries in `.git/info/exclude` that a `.gitignore` parser cannot
+        # see — `.claude/scheduled_tasks.lock` was staged on every local run.
+        #
+        # Two guards, because they cover different things, and NEITHER closes
+        # the class alone.
         #
         # (1) `*.tmp.*` is THIS project's atomic-write shape — `vault/fs.rs:59`
         #     writes `.<name>.tmp.<pid>.<seq>` beside its target and renames it
@@ -1270,27 +1608,103 @@ def self_test() -> int:
         #     file: no path in `git ls-files` contains `.tmp.`, and a temp file
         #     that IS present is by construction a half-written one, so copying
         #     it would give the mutation harness a tree that is not the tree.
+        #     KEPT ON TOP OF GIT'S SET, and measured (D120 R3): `git
+        #     check-ignore` reports BOTH spellings of this shape as NOT
+        #     ignored, so git's knowledge does not subsume this glob any more
+        #     than this glob subsumes git's.
         # (2) A bounded retry, because the glob only names the transients we
         #     already know about. `__pycache__/*.pyc` is written and replaced by
         #     any concurrent `python3 scripts/…` run and is NOT ignored here,
         #     and an editor `.swp` has been observed appearing under
         #     `testdata/vectors/v1/` from a gate script. Those cost one retry
-        #     each instead of a red lane.
+        #     each instead of a red lane. Both are now git-ignored and gone
+        #     before the retry sees them; the retry stays as the BACKSTOP for
+        #     what R4 does not cover — a tracked file genuinely removed
+        #     mid-stage, or an I/O fault.
         #
         # The retry is bounded and reports rather than raising: a copy that
         # fails three times is an environment fault, not a transient, and it
         # must say so in a sentence instead of a stack trace. It is NOT a
         # silent swallow — the last failure is printed with its cause.
+        def git_paths(*selectors: str) -> list[str]:
+            """One `ls-files` listing, NUL-separated, relative to ROOT.
+
+            Raises `OSError` on a git failure so the retry below sees it
+            through its existing `except` clause rather than through a new one.
+            """
+            listing = subprocess.run(
+                ["git", "-C", str(ROOT), "ls-files", "-z", *selectors],
+                capture_output=True,
+                text=True,
+            )
+            if listing.returncode != 0:
+                raise OSError(
+                    f"git ls-files {' '.join(selectors)} failed: {listing.stderr.strip()}"
+                )
+            return [entry for entry in listing.stdout.split("\0") if entry]
+
+        def stage_as_git_sees_it() -> int:
+            """Copy git's view of ROOT into `tree`; return the skipped count.
+
+            D120 R4, and the asymmetry is measured rather than assumed: under a
+            continuous writer the tracked list lost nothing across three runs
+            while the untracked list lost 1, 31 and 49 entries. A tracked path
+            cannot vanish under an atomic-write discipline — `rename` never
+            leaves the name absent — so its disappearance is a real event and
+            is re-raised into the retry. An untracked one disappearing is the
+            definition of transient: counted, skipped, and announced.
+            """
+            listed = [(entry, True) for entry in git_paths()]
+            listed += [
+                (entry, False) for entry in git_paths("--others", "--exclude-standard")
+            ]
+            skipped = 0
+            for entry, tracked in listed:
+                if fnmatch.fnmatch(entry, "*.tmp.*"):
+                    continue
+                destination = tree / entry
+                try:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / entry, destination)
+                except (FileNotFoundError, NotADirectoryError):
+                    if tracked:
+                        raise
+                    skipped += 1
+            return skipped
+
+        def git_can_see_this_tree() -> bool:
+            """D120 R8. `git` is not a Python dependency and the CI job cannot
+            exist without it — `actions/checkout` IS git — but a source tarball
+            has no work tree, and the docstring's standard-library-only
+            commitment has to survive that. When this is false the old
+            `copytree` stages the tree instead, and the run says which
+            mechanism it used, so a run's provenance is never ambiguous."""
+            try:
+                probe = subprocess.run(
+                    ["git", "-C", str(ROOT), "rev-parse", "--is-inside-work-tree"],
+                    capture_output=True,
+                    text=True,
+                )
+            except OSError:
+                return False
+            return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+        from_git = git_can_see_this_tree()
+        vanished = 0
         copy_attempts = 3
         for attempt in range(1, copy_attempts + 1):
             try:
-                shutil.copytree(
-                    ROOT,
-                    tree,
-                    ignore=shutil.ignore_patterns(
-                        ".git", "target", "node_modules", "*.tmp.*"
-                    ),
-                )
+                if from_git:
+                    tree.mkdir(parents=True, exist_ok=True)
+                    vanished = stage_as_git_sees_it()
+                else:
+                    shutil.copytree(
+                        ROOT,
+                        tree,
+                        ignore=shutil.ignore_patterns(
+                            ".git", "target", "node_modules", "*.tmp.*"
+                        ),
+                    )
                 break
             except (shutil.Error, OSError) as exc:
                 # A failed copytree leaves a partial tree behind; the next
@@ -1305,6 +1719,27 @@ def self_test() -> int:
                     return 1
                 time.sleep(0.25 * attempt)
 
+        # Provenance, always printed (D120 R8): a reader must never have to
+        # guess which of the two mechanisms produced the tree an arm exercised.
+        print(
+            "self-test: staged "
+            + (
+                "git's view of the working tree (ls-files + others, "
+                "--exclude-standard), minus the atomic-write shape"
+                if from_git
+                else "a full copy of the working tree — git could not see this "
+                "tree, so the pre-D120 copytree staged it"
+            )
+        )
+        if vanished:
+            # R4's announced skip. Silence here would make a shrinking tree
+            # indistinguishable from a stable one.
+            print(
+                f"self-test: note — {vanished} untracked path(s) vanished between "
+                "listing and copy and were skipped; a tracked path doing the same "
+                "is an error and would have gone to the retry above"
+            )
+
         # Q66 — the gate-state fixtures derive their mutation from whatever
         # state the row is in, never from a hardcoded `- [ ]` literal. The
         # first fixtures wrote the literals out, so the moment Q14's execution
@@ -1312,14 +1747,23 @@ def self_test() -> int:
         # this self-test failed vacuous — red from the gate commit onward,
         # invisible until the lane first ran locally (`local-gate.sh` gained
         # the lane in the same commit as this fix).
+        # Q184 — and every pattern below is anchored at the START OF A LINE.
+        # Unanchored, `sub(..., count=1)` takes the first match ANYWHERE, and a
+        # sentence *about* one of these fixtures contains the fixture's own
+        # literal: `tasks/Q.md` carries a backticked marker-plus-title copy of
+        # the pair these three are aimed at, inside the prose of the entry that
+        # records why they exist. It sorts below the block today and above it
+        # after any edit that moves either. The anchor makes the ordering
+        # irrelevant, because a quotation is indented, fenced or mid-sentence
+        # and a row is not. See the fixture rule above `cases`.
         def strip_marker(row: str):
             """Delete the checkbox marker ahead of `row`, whatever its state."""
-            pattern = re.compile(r"- \[[ xX]\] (\*\*" + re.escape(row) + ")")
+            pattern = re.compile(r"^- \[[ xX]\] (\*\*" + re.escape(row) + ")", re.M)
             return lambda t: pattern.sub(r"- \1", t, count=1)
 
         def flip_tick(row: str):
             """Tick an unticked `row`, untick a ticked one — always a real change."""
-            pattern = re.compile(r"- \[([ xX])\] (\*\*" + re.escape(row) + ")")
+            pattern = re.compile(r"^- \[([ xX])\] (\*\*" + re.escape(row) + ")", re.M)
             return lambda t: pattern.sub(
                 lambda m: ("- [x] " if m.group(1) == " " else "- [ ] ") + m.group(2),
                 t,
@@ -1329,12 +1773,26 @@ def self_test() -> int:
         def retick_upper(row: str):
             """Rewrite `row`'s marker to the uppercase `[X]` form (to `[ ]` if
             already uppercase) — the case-insensitivity bound."""
-            pattern = re.compile(r"- \[([ xX])\] (\*\*" + re.escape(row) + ")")
+            pattern = re.compile(r"^- \[([ xX])\] (\*\*" + re.escape(row) + ")", re.M)
             return lambda t: pattern.sub(
                 lambda m: ("- [ ] " if m.group(1) == "X" else "- [X] ") + m.group(2),
                 t,
                 count=1,
             )
+
+        def rewrite_line(line: str, replacement: str):
+            """Rewrite `line` — matched as a WHOLE line — once, wherever it sits.
+
+            The anchored form of `t.replace(x, y, 1)`, and the reason is Q184's
+            second rule: a first-occurrence replacement over a whole file is
+            taken by the first COPY of the literal, which is routinely a
+            sentence describing the fixture rather than the thing the check
+            reads. Measured in this tree, three such copies exist and one of
+            them has already absorbed a mutation and reported its case green.
+            `replacement` carries its own newline; pass "" to delete the line.
+            """
+            pattern = re.compile("^" + re.escape(line) + "\n", re.M)
+            return lambda t: pattern.sub(lambda _match: replacement, t, count=1)
 
         # ── Q85's fixtures (D109 R8) ────────────────────────────────────────
         # Q66's rule, and harder here: not one of these may hard-code a task
@@ -1419,10 +1877,19 @@ def self_test() -> int:
             pattern = re.compile(r" ?\b" + re.escape(token) + r"\b")
             return lambda t: pattern.sub("", t)
 
-        def an_owner_assignment() -> tuple[int, str, str]:
-            """`(decision number, owner id, decision filename)` for the first
-            per-ruling assignment whose owned row ALREADY names the decision —
-            so case (l)'s deletion is a real removal and not a no-op."""
+        def an_owner_assignment() -> tuple[int, str, str, str]:
+            """`(decision number, owner id, decision filename, the whole
+            assignment line)` for the first per-ruling assignment whose owned
+            row ALREADY names the decision — so case (l)'s deletion is a real
+            removal and not a no-op.
+
+            The line comes back with the id (Q184) because case (m) rewrites it
+            and must do so anchored: the bold `Owner:` form also occurs
+            INDENTED in this corpus (D113 §1.2 counts it among the four prose
+            shapes), and an indented copy earlier in the same document would
+            take an unanchored replacement while the assignment the check
+            parses stayed put.
+            """
             rows: dict[str, str] = {}
             for line in (tree / "TODO.md").read_text(encoding="utf-8").splitlines():
                 match = TASK_ROW.match(line)
@@ -1433,13 +1900,238 @@ def self_test() -> int:
                 if not head:
                     continue
                 number = int(head.group(1))
-                for owner in DECISION_OWNER.findall(path.read_text(encoding="utf-8")):
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    hit = DECISION_OWNER.match(line)
+                    if not hit:
+                        continue
+                    owner = hit.group(1)
                     if owner in rows and re.search(rf"\bD{number}\b", rows[owner]):
-                        return number, owner, path.name
+                        return number, owner, path.name, line
             raise AssertionError(
                 "self-test: no per-ruling owner assignment has a back-citing row, so the "
                 "decision-owners cases would be built from nothing"
             )
+
+        # ── Q184's fixtures ─────────────────────────────────────────────────
+        # Q66's rule applied to the four checks it never reached. Everything
+        # below reads the scratch tree and RAISES rather than returning a
+        # literal, for the reason Q85's helpers do: a fixture built from a
+        # borrowed sentence, status or checkbox state has that value's
+        # lifetime, and the values a project edits every wave are exactly the
+        # ones it borrows most readily.
+
+        def a_boundary_rule_line(relative: str) -> str:
+            """A line of RULE TEXT from inside `relative`'s freeze-boundary
+            block, unique in that file.
+
+            Rule text, not a checkbox row: the marker cases below already own
+            gate state, and this one has to prove that an ordinary byte inside
+            the block still bites. Uniqueness is computed rather than assumed —
+            this file mirrors the same rules by hand OUTSIDE the markers a few
+            dozen lines above, so a reworded mirror is one edit away from
+            standing in front of an unanchored replacement.
+            """
+            text = (tree / relative).read_text(encoding="utf-8")
+            block = extract_boundary(tree / relative)
+            if block is None:
+                raise AssertionError(
+                    f"self-test: {relative} has no freeze-boundary block, so the drift "
+                    "fixture would be built from nothing"
+                )
+            for line in block.splitlines():
+                if not line.strip() or CHECKBOX_MARKER.match(line):
+                    continue
+                if text.count(line + "\n") == 1:
+                    return line
+            raise AssertionError(
+                f"self-test: no rule-text line inside {relative}'s freeze-boundary block "
+                "occurs exactly once in the file, so no drift mutation can be anchored"
+            )
+
+        def boundary_checkbox_titles(relative: str) -> list[str]:
+            """The bold lead-in of every checkbox row inside `relative`'s
+            freeze-boundary block, in order.
+
+            These titles used to be spelled out here. They are prose inside a
+            frozen block — safe against ordinary edits, but not against the
+            re-cut that any amendment of D84 §7 requires, and a re-cut is
+            precisely the event these three cases exist to survive.
+            """
+            block = extract_boundary(tree / relative)
+            if block is None:
+                raise AssertionError(
+                    f"self-test: {relative} has no freeze-boundary block, so the marker "
+                    "fixtures would be built from nothing"
+                )
+            titles = re.findall(r"^- \[[ xX]\] \*\*(.+?)\*\*", block, re.M)
+            if len(titles) < 2:
+                raise AssertionError(
+                    f"self-test: {relative}'s freeze-boundary block holds {len(titles)} "
+                    "checkbox row(s); the marker cases need two distinct rows, one for the "
+                    "red arm and one for the case-insensitivity arm"
+                )
+            return titles
+
+        def scratch_matrix_rows() -> list[tuple[str, str, str, int]]:
+            """`(milestone, status, whole line, index of the status field)` for
+            every matrix row whose status cell can be located unambiguously and
+            whose line occurs exactly once in the file.
+
+            Both filters are Q184's: a row whose status text also appears in
+            another of its own cells cannot be restatused by field index, and a
+            line with a second copy cannot be rewritten by anchor alone. The
+            file carries a backticked copy of one row's milestone/task/status
+            cells in the prose recording D118's retarget, which is what a
+            fixture pinned to that fragment would collide with.
+            """
+            path = tree / MATRIX
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            found: list[tuple[str, str, str, int]] = []
+            for row in parse_matrix(path):
+                status = row.get("status", "").strip("*` ").lower()
+                milestone = row.get("milestone", "").strip("*` ").upper()
+                line = lines[int(row["_line"]) - 1]
+                fields = line.split("|")
+                hits = [i for i, f in enumerate(fields) if f.strip("*` ").lower() == status]
+                if len(hits) != 1 or text.count(line + "\n") != 1:
+                    continue
+                found.append((milestone, status, line, hits[0]))
+            if not found:
+                raise AssertionError(
+                    "self-test: no matrix row yielded an unambiguous status cell, so the "
+                    "status-gate fixtures would be built from nothing"
+                )
+            return found
+
+        def restatus(line: str, field: int, status: str) -> str:
+            """`line` with its status field replaced, every other byte kept."""
+            fields = line.split("|")
+            fields[field] = f" {status} "
+            return "|".join(fields)
+
+        def a_unique_rust_test_reference() -> str:
+            """The first `path.rs::name` reference in the matrix that occurs
+            exactly once in the file, backticks included.
+
+            The reference is mutated whole. The case used to replace the first
+            `::` in the document, which is a two-byte literal with 66 hits
+            here: it landed on a reference cell only because no prose above the
+            first table happened to contain one, and Q185 is rewriting exactly
+            that prose.
+            """
+            text = (tree / MATRIX).read_text(encoding="utf-8")
+            for row in parse_matrix(tree / MATRIX):
+                for reference in REFERENCE.findall(row.get("tests / evidence", "")):
+                    if RUST_TEST.match(reference) and text.count(f"`{reference}`") == 1:
+                        return reference
+            raise AssertionError(
+                "self-test: no Rust-test reference in the matrix occurs exactly once, so "
+                "the unresolvable-reference mutation cannot be aimed"
+            )
+
+        def scratch_decision_citations() -> dict[int, set[str]]:
+            """`D<n> -> the swept files naming it`, over the scratch tree.
+
+            Reads `CITATION_SCAN`/`CITATION_SUFFIXES` rather than restating
+            them, so a narrowing of either moves this fixture with the check
+            instead of leaving it aimed at a surface nothing reads any more.
+
+            COST, recorded rather than hidden (Q184): this is a THIRD copy of
+            the two-branch scan loop `check_decisions` and
+            `sweep_task_surfaces` already share, and D116 R1/R2 collapsed five
+            constants into one pair precisely so those two could not disagree.
+            The constants are shared, so the surfaces cannot drift; the prune
+            set and the file/directory branch are now spelled three times and
+            can. The consolidation belongs with whoever next rules on that
+            constant, and this comment is the pointer to it.
+
+            AND THE BILL ARRIVED IN THE SAME WAVE (D123 §7.1 E1b). The next
+            ruling on that constant changed the loop, and this copy had to take
+            the change by hand: under D123 a LITERAL entry is read UNFILTERED
+            and only a DIRECTORY entry is suffix-filtered. Sharing the
+            constants while copying the filter is exactly what would have
+            defeated the intent stated two paragraphs up — the surfaces cannot
+            drift, because the constants are shared, but the SEMANTICS can, and
+            an unpatched copy here would have aimed this fixture at a narrower
+            surface than the check reads while still claiming to follow it.
+            """
+            found: dict[int, set[str]] = {}
+            for sub in CITATION_SCAN:
+                base = tree / sub
+                if not base.exists():
+                    continue
+                literal = base.is_file()
+                for path in [base] if literal else base.rglob("*"):
+                    if not path.is_file() or (not literal and path.suffix not in CITATION_SUFFIXES):
+                        continue
+                    if {"target", "node_modules", "__pycache__"} & set(path.parts):
+                        continue
+                    rel = str(path.relative_to(tree))
+                    if rel == CITATION_SCAN_SELF:
+                        continue
+                    try:
+                        text = path.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    for number in re.findall(r"\bD(\d+)\b", text):
+                        found.setdefault(int(number), set()).add(rel)
+            return found
+
+        def an_unrecorded_open_decision() -> str:
+            """The register line of a decision that is OPEN in the register,
+            cited as normative in a swept file, and has neither a
+            record nor an entry in `DECISIONS_HOMED_ELSEWHERE` — so ticking its
+            box is exactly "RESOLVED, record never written", the Q57 failure.
+
+            Computed, because the case used to name one decision and pin its
+            UNRESOLVED STATE: the day that decision resolved, the register line
+            it was aimed at would no longer exist in the form the mutation
+            spelled, and the case would disarm itself at the moment its subject
+            stopped being hypothetical. Three decisions qualify today; the
+            fixture takes whichever is lowest and moves on its own.
+            """
+            todo = (tree / "TODO.md").read_text(encoding="utf-8")
+            allocated = {int(n) for n in re.findall(r"^- \[[ x]\] \*\*D(\d+)\*\*", todo, re.M)}
+            recorded = {
+                int(head.group(1))
+                for path in (tree / DECISION_DIR).glob("D*.md")
+                if (head := re.match(r"D(\d+)-", path.name))
+            }
+            cited = scratch_decision_citations()
+            for line in todo.splitlines():
+                match = re.match(r"^- \[ \] \*\*D(\d+)\*\*", line)
+                if not match:
+                    continue
+                number = int(match.group(1))
+                if number > max(allocated, default=0):
+                    continue
+                if number in recorded or number in DECISIONS_HOMED_ELSEWHERE:
+                    continue
+                if number in cited:
+                    return line
+            raise AssertionError(
+                "self-test: no open decision is cited as normative without a record, so "
+                "the resolved-with-no-record case cannot be built. If the register really "
+                "is in that state, the case has nothing left to prove and goes with it."
+            )
+
+        def a_cited_decision_in(relative: str) -> str:
+            """The first `D<n>` token in `relative`, read at fixture time.
+
+            The green ceiling case replaces it with an id far above the
+            register's own ceiling. Which real id is standing there does not
+            matter to the case and never did, so it is read rather than named:
+            a decision id in a source file is a citation, and citations move.
+            """
+            text = (tree / relative).read_text(encoding="utf-8")
+            match = re.search(r"\bD\d+\b", text)
+            if not match:
+                raise AssertionError(
+                    f"self-test: {relative} cites no decision, so the ceiling case has "
+                    "nothing to replace"
+                )
+            return match.group(0)
 
         hole_a, hole_q = first_hole("A"), first_hole("Q")
         minted_a, minted_q = above_ceiling("A"), above_ceiling("Q")
@@ -1458,8 +2150,178 @@ def self_test() -> int:
                 "register, its two staleness rules and this case together."
             )
         suppressed_id, suppressed_path = sorted(TASK_ID_NOT_A_CITATION)[0]
-        owner_dnum, owner_id, owner_doc = an_owner_assignment()
+        owner_dnum, owner_id, owner_doc, owner_line = an_owner_assignment()
         ghost_owner = above_ceiling(owner_id[0])
+
+        # ── Q184's derived values ───────────────────────────────────────────
+        # The freeze-boundary cases follow BOUNDARY_COPIES instead of naming
+        # files, so a renamed copy moves them with the check rather than
+        # leaving them aimed at a path that no longer exists.
+        if len(BOUNDARY_COPIES) < 2:
+            raise AssertionError(
+                "self-test: fewer than two registered boundary copies, so the drift and "
+                "marker cases cannot be aimed at different files — and the check itself "
+                "is vacuous below two"
+            )
+        marker_copy, drift_copy = BOUNDARY_COPIES[0], BOUNDARY_COPIES[1]
+        drift_line = a_boundary_rule_line(drift_copy)
+        marker_titles = boundary_checkbox_titles(marker_copy)
+
+        matrix_rows = scratch_matrix_rows()
+        gated = gated_milestones(CURRENT_MILESTONE)
+        gate_target = next(
+            (
+                (line, field)
+                for milestone, status, line, field in matrix_rows
+                if milestone in gated and status == "covered"
+            ),
+            None,
+        )
+        if gate_target is None:
+            raise AssertionError(
+                "self-test: no row at a gated milestone reads 'covered', so the status "
+                "gate's red case has nothing to regress"
+            )
+        gate_line, gate_field = gate_target
+        later_target = next(
+            (
+                (status, line, field)
+                for milestone, status, line, field in matrix_rows
+                if milestone not in gated and status in STATUS_VOCABULARY and status != "gap"
+            ),
+            None,
+        )
+        if later_target is None:
+            raise AssertionError(
+                "self-test: no row at a milestone past the gate carries a status other "
+                "than 'gap', so the ungated arms have nothing to move"
+            )
+        later_status, later_line, later_field = later_target
+        # A non-vocabulary token, TRUNCATED from the row's own status rather
+        # than spelled here: a spelled misspelling is one vocabulary change
+        # away from being a legal status, and this case would then read green
+        # for a reason no one would look for.
+        not_a_status = later_status[:-1]
+        if not_a_status in STATUS_VOCABULARY or not not_a_status:
+            raise AssertionError(
+                f"self-test: {not_a_status!r} is a legal status, so the typo case would "
+                "mutate one valid status into another and prove nothing"
+            )
+        unresolvable_reference = a_unique_rust_test_reference()
+        open_decision_row = an_unrecorded_open_decision()
+
+        # The one target path a Q184 fixture and its case BOTH need. Named once
+        # so the two cannot drift apart: a fixture reading one file while the
+        # harness mutates another is a case that proves nothing and says
+        # nothing, because both halves are individually well-formed.
+        ceiling_target = "crates/antseal-core/src/bundle/error.rs"
+        ceiling_id = a_cited_decision_in(ceiling_target)
+        # Left a literal on purpose, unlike everything else here: the comment
+        # at CITATION_SCAN_SELF reasons about this exact id by name, and a
+        # derived one would silently falsify a record of why this file is
+        # excluded from its own sweep. What the case actually needs of it is
+        # asserted instead of assumed.
+        ghost_decision = "D77000"
+        register_ceiling = max(
+            (
+                int(n)
+                for n in re.findall(
+                    r"^- \[[ x]\] \*\*D(\d+)\*\*",
+                    (tree / "TODO.md").read_text(encoding="utf-8"),
+                    re.M,
+                )
+            ),
+            default=0,
+        )
+        if int(ghost_decision[1:]) <= register_ceiling:
+            raise AssertionError(
+                f"self-test: {ghost_decision} is at or below the register's ceiling "
+                f"(D{register_ceiling}), so the green ceiling case would plant an id the "
+                "check is entitled to report and the case would be red for a real reason"
+            )
+
+        # ── D119's fixtures — the index-row shape is AMBIENT ────────────────
+        # All three decision-index cases name `docs/decisions/README.md` as
+        # their target and assert their pre-image is IN THAT FILE before
+        # mutating. The reason is a hazard D119 §8(v) MEASURED rather than
+        # imagined: 36 decision BODIES each carried a line of exactly the
+        # index-row shape — a hand-written row awaiting application to the index
+        # — under the convention RULING 6 now writes down. That census is 0 in
+        # this tree, because D119 §5 step 6 emptied those sections in the same
+        # act, and it returns to 1 the moment the next planner writes a decision
+        # with its row pre-written, which is precisely what RULING 6 tells them
+        # to do. A fixture resting on today's census has a one-decision
+        # lifetime, so these are built for the shape coming back.
+        #
+        # The harness mutates exactly one file, the one the case names, so a
+        # copy of the literal in a decision body cannot absorb the mutation.
+        # What the pre-image assertion adds is the other half — that the literal
+        # is present, and present ONCE, in the file being mutated. Without it a
+        # reworded row falls through to the no-op guard, which can say the
+        # mutation matched nothing but not whether the harness was even looking
+        # at the right file; with it, the failure names the path. Uniqueness is
+        # computed, never assumed, as in `scratch_matrix_rows()` and
+        # `a_boundary_rule_line()`.
+
+        def an_index_row(plain: bool) -> tuple[str, list[str]]:
+            """`(the whole line, its four cells)` for a row of the decision
+            index, asserted present EXACTLY ONCE in `INDEX` itself.
+
+            `plain` additionally demands a row carrying no escaped pipe, so its
+            status cell can be addressed by `split("|")` field index. Five rows
+            of this table do carry one, and on those the naive splitter and the
+            check's escape-aware `INDEX_PIPE` disagree about which field the
+            status is — which is the whole reason `INDEX_PIPE` exists. The
+            removal case does not need the property and does not ask for it.
+            """
+            path = tree / INDEX
+            if not path.is_file():
+                raise AssertionError(
+                    f"self-test: {INDEX} is not in the staged tree, so no decision-index "
+                    "fixture can be aimed at the file that carries the table"
+                )
+            text = path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                cells = index_cells(line)
+                if cells is None or len(cells) != 4:
+                    continue
+                if plain and len(line.split("|")) != len(cells) + 2:
+                    continue
+                if text.count(line + "\n") != 1:
+                    continue
+                return line, cells
+            raise AssertionError(
+                f"self-test: no {'escape-free ' if plain else ''}index row occurs exactly "
+                f"once in {INDEX}, so a decision-index mutation cannot be aimed inside the "
+                "one file that carries the table"
+            )
+
+        index_row_any, _index_cells_any = an_index_row(plain=False)
+        index_row_plain, index_row_cells = an_index_row(plain=True)
+        # Field 3 of `['', ID, Title, Status, Date, '']`, and ASSERTED against
+        # the cells the check itself parsed rather than trusted: the two
+        # splitters agree only while the row carries no escaped pipe, and the
+        # cost of being wrong is a fixture that rewrites the Title column and a
+        # case that goes red for the wrong reason.
+        index_status_field = 3
+        if index_row_plain.split("|")[index_status_field].strip() != index_row_cells[2]:
+            raise AssertionError(
+                f"self-test: field {index_status_field} of the escape-free index row is not "
+                "the status cell the check parses, so the status fixtures would rewrite the "
+                "wrong column"
+            )
+        index_status = status_word(index_row_cells[2])
+        # A status word that is NOT the record's, TRUNCATED from the row's own
+        # rather than spelled here — the device `not_a_status` uses above, for
+        # the same reason: a spelled status is one house-vocabulary change away
+        # from being a legal status for that record, and the red case would
+        # then read green for a reason nobody would look for.
+        diverged_status = index_status[:-1]
+        if not diverged_status or diverged_status == index_status:
+            raise AssertionError(
+                f"self-test: {index_status!r} does not truncate to a different status word, "
+                "so the divergence case would rewrite the status cell into itself"
+            )
 
         # (check, file, mutation, expect) where expect is "red" or "green".
         #
@@ -1469,51 +2331,129 @@ def self_test() -> int:
         # nothing" and no case would notice. The "red" cases bound it from the
         # other side: change a word, or delete the marker instead of ticking
         # it, and the check still bites.
+        #
+        # ══ THE FIXTURE RULE (Q184) ═════════════════════════════════════════
+        # Every mutation here is a string replacement, so every case embeds a
+        # literal. Each literal is in exactly one of three classes, and the
+        # class decides what may be written:
+        #
+        #   (1) SCRIPT-OWNED — one of this file's own constants, or a token the
+        #       check's own regex defines. Stable by construction: the only
+        #       thing that can change it is the thing under test, and that
+        #       change is supposed to be visible.
+        #   (2) FIXTURE-BUILT — the case plants the text it later mutates, or
+        #       derives it from the scratch tree at fixture time. The helpers
+        #       above are this class, and every one of them RAISES rather than
+        #       returning a literal, so a tree that stops yielding one fails in
+        #       a sentence instead of vacuously.
+        #   (3) BORROWED — copied out of live tree content: a status, a
+        #       checkbox state, a title, a sentence. A borrowed literal has the
+        #       lifetime of whatever ordinary work may edit it, and the day it
+        #       expires the mutation matches nothing.
+        #
+        # Class 3 is permitted ONLY with the reason it outlives the case
+        # written beside it. Where the borrowed value is a STATUS or a CHECKBOX
+        # STATE, do not write a reason — derive it or retarget: those are the
+        # values the project is in the business of changing, and both of this
+        # harness's recorded vacuous-fixture incidents were exactly that. Q66:
+        # three fixtures hard-coded an unticked marker and died the moment Q14
+        # ticked the rows. D118: two status-gate fixtures pinned one row's
+        # status cell and died together the moment that row went covered.
+        #
+        # ══ AND THE SECOND RULE, about WHERE a literal matches ══════════════
+        # A mutation that takes the FIRST occurrence over a whole file must be
+        # anchored (`rewrite_line`, or `^` with re.M), or its target shown
+        # unique at fixture time. Not a hypothetical: prose that DESCRIBES a
+        # fixture necessarily contains that fixture's literal, and it sorts
+        # wherever it sorts. Three such copies are in this tree today — one in
+        # the register, one in a task file, one in the matrix — and the
+        # register's copy has already absorbed a mutation and reported its case
+        # green over a file that was never mutated where the check reads.
+        # A corollary for whoever writes ABOUT these fixtures: spell the
+        # literal apart in prose. A sentence is allowed to describe a fixture;
+        # it is not allowed to be one.
+        #
+        # The target PATHS are the lesser half and stay literal on purpose:
+        # several cases exist precisely to pin one surface (`scripts/`, a
+        # root-level file), so the path IS the assertion. A path that stops
+        # existing is a hard failure in the loop below and never a skip.
         cases = [
             (
                 "freeze-boundary",
-                "docs/format/anchor-artifact-limits.md",
-                lambda t: t.replace(
-                    "an over-limit artifact fails that",
-                    "an over-limit artifact fails THE WHOLE BUNDLE and that",
-                    1,
+                drift_copy,
+                rewrite_line(drift_line, drift_line + " AND ONE WORD MORE\n"),
+                "red",
+            ),
+            (
+                "freeze-boundary",
+                marker_copy,
+                strip_marker(marker_titles[0]),
+                "red",
+            ),
+            (
+                "freeze-boundary",
+                marker_copy,
+                flip_tick(marker_titles[0]),
+                "green",
+            ),
+            (
+                "freeze-boundary",
+                marker_copy,
+                retick_upper(marker_titles[1]),
+                "green",
+            ),
+            # The ceiling bound from the green side: an id above the register's
+            # highest allocated number is not a decision citation, so the sweep
+            # must stay silent about it. The id being REPLACED is read from the
+            # file (Q184), and the substitution is word-bounded — unbounded, a
+            # two-digit id would eat the prefix of a three-digit one and mutate
+            # this case into a different case entirely.
+            (
+                "decisions",
+                ceiling_target,
+                lambda t: re.sub(rf"\b{ceiling_id}\b", ghost_decision, t, count=1),
+                "green",
+            ),
+            # The Q57 failure, faithfully: a decision marked RESOLVED in the
+            # register whose record was never written.
+            #
+            # The row is COMPUTED (Q184) — open, cited as normative, no record,
+            # no registered home. It used to name one decision, which pinned
+            # that decision's UNRESOLVED STATE: the day it resolved, the line
+            # the mutation spelled would no longer exist in that form and the
+            # case would disarm itself at the exact moment its subject stopped
+            # being hypothetical. Deriving it also fixes the direction of the
+            # dependency — the case now needs *some* decision to be in that
+            # state, and says so out loud when none is, which is a fact worth
+            # hearing rather than a fixture worth repairing.
+            #
+            # Anchored for the second rule's reason, and this is the case that
+            # proved it: the register carries prose about this very fixture
+            # ABOVE the row it aims at, an unanchored first-occurrence
+            # replacement consumed the prose, and the harness reported the
+            # check green over a register whose row was never touched.
+            (
+                "decisions",
+                "TODO.md",
+                rewrite_line(
+                    open_decision_row,
+                    open_decision_row.replace("- [ ] ", "- [x] ", 1) + "\n",
                 ),
                 "red",
             ),
-            (
-                "freeze-boundary",
-                "tasks/Q.md",
-                strip_marker("Anchor-artifact freeze scope"),
-                "red",
-            ),
-            (
-                "freeze-boundary",
-                "tasks/Q.md",
-                flip_tick("Anchor-artifact freeze scope"),
-                "green",
-            ),
-            (
-                "freeze-boundary",
-                "tasks/Q.md",
-                retick_upper("Report-version evolution"),
-                "green",
-            ),
-            (
-                "decisions",
-                "crates/antseal-core/src/bundle/error.rs",
-                lambda t: t.replace("D78", "D77000", 1),
-                "green",
-            ),
-            (
-                # The Q57 failure, faithfully: a decision marked RESOLVED in the
-                # register whose record was never written. D18 is cited in
-                # crates/wasm-bitmatch and is legitimately open today, so
-                # flipping its checkbox is exactly "resolved, no record".
-                "decisions",
-                "TODO.md",
-                lambda t: t.replace("- [ ] **D18**", "- [x] **D18**", 1),
-                "red",
-            ),
+            # Q58 — a line-number citation into the frozen registry. The three
+            # cases carrying this literal (here, `scripts/fuzz.sh` below, and
+            # the root-file twin) are class 1 under the rule above: what they
+            # spell is the check's OWN regex, not tree content, and neither the
+            # registry file nor that line has to exist for the mutation to
+            # fire. The literal therefore has the lifetime of the rule being
+            # tested, which is the definition of a fixture that cannot rot —
+            # and note the direction, because it is the opposite of a borrowed
+            # one: if the check's regex is narrowed, these cases go green and
+            # fail loudly rather than quietly matching nothing.
+            #
+            # They also APPEND rather than replace, so the no-op guard can
+            # never fire for them and the expectation is doing all the work.
             (
                 "decisions",
                 "docs/testing/error-code-contract.md",
@@ -1548,25 +2488,41 @@ def self_test() -> int:
                 lambda t: t + "\n# key layout: docs/format/registry-v1.md:1097\n",
                 "red",
             ),
+            # A reference that no longer resolves. The mutation renames the
+            # test a row cites; the row still points at it, and nothing else
+            # in the tree does.
+            #
+            # It used to replace the first `::` in the document — a two-byte
+            # literal with 66 occurrences, which landed inside a reference cell
+            # only because no prose above the first table happened to contain
+            # one. Q185 is rewriting exactly that prose. The reference is now
+            # read from the parsed matrix and shown to occur exactly once
+            # before it is used (Q184).
             (
                 "matrix",
                 MATRIX,
                 lambda t: t.replace(
-                    "::", "::this_test_does_not_exist_", 1
+                    f"`{unresolvable_reference}`",
+                    f"`{unresolvable_reference}_this_test_does_not_exist`",
+                    1,
                 ),
                 "red",
             ),
             # Q51 — the status gate. The red case is the exact regression that
-            # motivated it: an M0 row back at `gap`, in the `**gap**` spelling
-            # the file actually used, so the marker stripping is exercised too.
+            # motivated it: a row at or before the milestone under review back
+            # at `gap`, in the `**gap**` spelling the file actually used, so the
+            # marker stripping is exercised too.
+            #
+            # The row is chosen at fixture time — the first gated row reading
+            # `covered` — and its status FIELD is located by index, so no other
+            # byte of the row moves. Which row it is does not matter to the
+            # case and never did; what mattered was that the previous spelling
+            # pinned one row's id list and status together, so an ordinary
+            # edit to either could silently retire the fixture.
             (
                 "matrix",
                 MATRIX,
-                lambda t: t.replace(
-                    "| M0 | F17 + Q39 + Q9 | covered |",
-                    "| M0 | F17 + Q39 + Q9 | **gap** |",
-                    1,
-                ),
+                rewrite_line(gate_line, restatus(gate_line, gate_field, "**gap**") + "\n"),
                 "red",
             ),
             # And the bound from the other side. A *later* milestone's row at
@@ -1576,32 +2532,42 @@ def self_test() -> int:
             # case the rule could quietly widen to "every row must be covered"
             # and nothing would notice.
             #
-            # **Retargeted M1 -> M4 on 2026-08-10 (Q165 / D118), because the
-            # fixture had inherited its row's lifetime.** Both cases below used
-            # to mutate `| M1 | S17 + Q15 | deferred |`, which is V6.1's cell.
-            # M1 was reviewed, CURRENT_MILESTONE moved to M1 and V6.1 became
-            # `covered` — so the string vanished, both mutations matched
-            # nothing, and the no-op guard in `self_test` failed both cases
-            # loudly. (Loudly is right: had it not, the green case would have
-            # been green for no reason at all.) V9.2 is the one small real
-            # mainnet seal. It cannot be covered before the release, and at
-            # the release Q34 requires this whole matrix green, so this
-            # fixture's expiry now lands on a review somebody must attend
-            # anyway. Any status-gate fixture must be pinned to a row that
-            # outlives the constant it is testing against.
+            # **Retargeted twice, and the second time was the last.** Both
+            # cases below used to mutate one named row's milestone/task/status
+            # cells. On 2026-08-10 (Q165 / D118) the row they named went
+            # `covered`, the string vanished, both mutations matched nothing,
+            # and the no-op guard failed both cases loudly. (Loudly is right:
+            # had it not, the green case would have been green for no reason at
+            # all.) They were retargeted to a row whose status expires only at
+            # the release gate — a longer lease, but still a lease, and the
+            # replacement row's cells were then quoted verbatim in the prose of
+            # this very file, one screen below the row, where any reordering
+            # would have put a second copy in front of an unanchored
+            # first-occurrence replacement.
+            #
+            # So Q184 stopped choosing a row: the fixture takes the first row
+            # PAST the gate that is not already at `gap`, moves its status
+            # field alone, and rewrites the line anchored. The rule that was
+            # written here — "a status-gate fixture must be pinned to a row
+            # that outlives the constant it is testing against" — generalises
+            # to the rule now stated at the head of this list, of which this is
+            # the worked instance: derive a status, never borrow one.
             (
                 "matrix",
                 MATRIX,
-                lambda t: t.replace("| M4 | Q34 | deferred |", "| M4 | Q34 | gap |", 1),
+                rewrite_line(later_line, restatus(later_line, later_field, "gap") + "\n"),
                 "green",
             ),
             # A status outside the vocabulary is a typo, and a typo at a
             # not-yet-gated milestone would otherwise be invisible until that
-            # milestone's review.
+            # milestone's review. The token is truncated from the row's own
+            # status and checked against STATUS_VOCABULARY at fixture time, so
+            # a vocabulary that grew to admit it fails here rather than turning
+            # this case quietly green.
             (
                 "matrix",
                 MATRIX,
-                lambda t: t.replace("| M4 | Q34 | deferred |", "| M4 | Q34 | defered |", 1),
+                rewrite_line(later_line, restatus(later_line, later_field, not_a_status) + "\n"),
                 "red",
             ),
             # ── Q85 / D109 R8 ────────────────────────────────────────────────
@@ -1660,6 +2626,53 @@ def self_test() -> int:
                 lambda t: t + "\n<!-- see `docs/format/registry-v1.md:1097` -->\n",
                 "red",
             ),
+            # (b3) Q190/D123's twin of (b2), one layer down: a literal root
+            # entry whose suffix is OUTSIDE CITATION_SUFFIXES really is read,
+            # and read UNFILTERED. This is the only case that can prove it.
+            # Every other scan root — (b2)'s CHANGELOG.md included — has an
+            # in-set suffix, so silently reverting the per-entry rule to one
+            # filter leaves (b), (b2), (o) and (o2) all green and says
+            # nothing; this pair goes red instead.
+            #
+            # The id is planted BARE, not marked, and the reason is the
+            # fixture rule applied to a surface rather than to a literal: all
+            # 29 citation occurrences across the five root files this ruling
+            # named are bare, so a marked fixture would leave the only form
+            # these files actually use unproven. Bare below the domain ceiling
+            # is tier 1 and fires.
+            #
+            # deny.toml is the target rather than one of the other four
+            # because its ids sit inside RUSTSEC advisory-suppression `reason`
+            # strings that carry a dated review obligation — a rotted id there
+            # makes the justification for silencing a security advisory
+            # unverifiable at the exact moment somebody tries to verify it.
+            # And by the harness's missing-target rule — never a skip —
+            # deleting or renaming deny.toml goes red here too, which is the
+            # only thing standing between a named scan root and a silent
+            # `base.exists()` miss.
+            (
+                "task-citations",
+                "deny.toml",
+                lambda t: t + f"\n# follow-up: {hole_q}\n",
+                "red",
+            ),
+            # (o3) …and by the DECISION half, for (o2)'s reason: a widening
+            # proven on one half only re-opens from the test side the gap
+            # D116 R1 collapsed five constants to close, even when the
+            # constant is shared. It plants the Q58 line-citation rather than
+            # an unresolvable `D<n>` on case (o)'s measured ground — the D
+            # namespace is dense with zero holes, so no single-file mutation
+            # can make a `D<n>` citation fail.
+            #
+            # Both of these are TOML-comment-shaped, so the staged fixture
+            # leaves valid TOML behind while it is in place; the harness
+            # restores the original bytes either way.
+            (
+                "decisions",
+                "deny.toml",
+                lambda t: t + "\n# see `docs/format/registry-v1.md:1097` for the key layout\n",
+                "red",
+            ),
             # (c) tier 2 — the newly-minted-id case. A fresh id is above its
             # domain's ceiling by definition, which is the hole the decision
             # half still has.
@@ -1691,10 +2704,13 @@ def self_test() -> int:
             ),
             # (f) the entry half bites. The heading deleted is one the fixture
             # FOUND, so the case cannot pass if the finder is broken (D109 §6.3).
+            # Deleted as a whole anchored line (Q184): the finder reads headings
+            # at line start, `str.replace` reads them anywhere, and a quoted or
+            # indented copy earlier in the file would separate the two.
             (
                 "task-entries",
                 entry_file,
-                lambda t: t.replace(entry_heading + "\n", "", 1),
+                rewrite_line(entry_heading, ""),
                 "red",
             ),
             # (g) a NEW row without an entry fails. This was the case that
@@ -1714,7 +2730,7 @@ def self_test() -> int:
             (
                 "task-entries",
                 "TODO.md",
-                lambda t: t.replace(live_row, struck_row, 1),
+                rewrite_line(live_row, struck_row + "\n"),
                 "green",
             ),
             # (i) GREEN ARM. A `#### ` sub-heading inside an entry is permitted.
@@ -1727,10 +2743,9 @@ def self_test() -> int:
             (
                 "task-entries",
                 entry_file,
-                lambda t: t.replace(
-                    entry_heading + "\n",
+                rewrite_line(
+                    entry_heading,
                     entry_heading + f"\n#### {entry_id} — fixture sub-heading\n",
-                    1,
                 ),
                 "green",
             ),
@@ -1767,8 +2782,10 @@ def self_test() -> int:
             (
                 "decision-owners",
                 f"{DECISION_DIR}/{owner_doc}",
-                lambda t: t.replace(
-                    f"**Owner: {owner_id}**", f"**Owner: {ghost_owner}**", 1
+                rewrite_line(
+                    owner_line,
+                    owner_line.replace(f"**Owner: {owner_id}**", f"**Owner: {ghost_owner}**", 1)
+                    + "\n",
                 ),
                 "red",
             ),
@@ -1791,7 +2808,138 @@ def self_test() -> int:
                 ),
                 "green",
             ),
+            # ── Q180 / D119 §5 step 5 ────────────────────────────────────────
+            # (o) red — a record loses its row. This is Q180's Accept verbatim
+            # ("red on a deliberately removed row and green with it restored")
+            # and the direction the index drifted for fifteen days: 29 records
+            # with no row at all, growing by one per decision written, with
+            # nothing in the tree able to say so.
+            (
+                "decision-index",
+                INDEX,
+                rewrite_line(index_row_any, ""),
+                "red",
+            ),
+            # (p) red — the row's status word stops being its record's. The
+            # OTHER direction, and the one that decided D119: (o) is the index
+            # falling behind, this is a row and its record disagreeing while
+            # both exist, which is where D29 sat for fourteen days with the row
+            # correct and the record stale. Presence alone never sees it — Q180
+            # arm (a)'s own Accept quantified over presence only, and would have
+            # been satisfiable with this defect still standing.
+            (
+                "decision-index",
+                INDEX,
+                rewrite_line(
+                    index_row_plain,
+                    restatus(index_row_plain, index_status_field, diverged_status) + "\n",
+                ),
+                "red",
+            ),
+            # (q) GREEN ARM, pinning the two tolerances the red arms bound from
+            # the other side, both of them load-bearing on the live table.
+            #
+            #   1. Only the leading status WORD is compared. The index is a
+            #      terse annotated listing and the records are paragraphs, so a
+            #      cell tightened to whole-string equality against the record
+            #      would be red on all 106 rows — and the tempting repair, "then
+            #      generate the table", is refused in D119 §4.3 because
+            #      generation would have overwritten a correct audit finding
+            #      with a stale record's status. This arm makes that tightening
+            #      a re-decision instead of an edit.
+            #   2. `\|` inside a cell is CONTENT. Five rows carry one today; a
+            #      `split("|")` here reads this row as five cells and reports it.
+            #      The escape is planted in the STATUS cell, where the tree has
+            #      none, so the case is stronger than the corpus that motivated
+            #      it — the idiom of green arms (i) and (n).
+            (
+                "decision-index",
+                INDEX,
+                rewrite_line(
+                    index_row_plain,
+                    restatus(
+                        index_row_plain,
+                        index_status_field,
+                        f"{index_status} (fixture detail, with a \\| escaped pipe in it)",
+                    )
+                    + "\n",
+                ),
+                "green",
+            ),
         ]
+
+        # ── D120 R6: every arm is a DELTA, not an absolute verdict ──────────
+        # The failure this replaces was never in the red arms. 23 of the 32
+        # cases below are red and 9 are green, and every one of the seven checks
+        # has at least one GREEN arm — so under exit-code validation
+        # `--self-test` contained a complete second run of the entire check
+        # suite that nobody declared and nobody could see, and it inherited
+        # every unrelated red in the staged tree. Measured twice: a sibling
+        # lane registering a row before writing its entry — the most ordinary
+        # act in a wave — reddened this harness with two messages naming
+        # green-case mutations of two files it had never touched and never
+        # naming the row; and the D120 lane reddened it a second time by
+        # leaving two scratch `.py` files in `scripts/`, a swept surface since
+        # D116. At the gate it was worse than noisy: `lane_traceability` runs
+        # this half FIRST and returns on failure, so the flagless half — which
+        # names the real cause in one exact sentence — never ran at all.
+        #
+        # A baseline makes the tree's own state incapable of producing a
+        # verdict, which is what a snapshot was proposed to buy and buys it
+        # WITHOUT making the harness blind to the contributor's uncommitted
+        # work. Note the direction: a green arm now asserts that the findings
+        # do not CHANGE, which is strictly stronger than exit 0 — a widening
+        # that made a check report FEWER findings now fails a green arm, where
+        # under exit-code validation it would not. That is deliberate; do not
+        # "simplify" it back to a truthiness test.
+        def findings(check_name: str) -> set[str] | None:
+            """That check's OWN annotations over the staged tree, or None on a
+            crash.
+
+            Line numbers are collapsed, so an unrelated shift — a sibling lane
+            adding a paragraph above a finding's line — is not counted as a
+            change. Only this check's annotation prefix is collected, which is
+            what folds the old separate `annotated` test into the delta: a
+            non-zero exit from anywhere else can no longer be mistaken for the
+            check biting.
+            """
+            run = subprocess.run(
+                [sys.executable, str(tree / "scripts/check-traceability.py"), f"--{check_name}"],
+                capture_output=True,
+                text=True,
+            )
+            if "Traceback (most recent call last)" in run.stderr:
+                return None
+            prefix = f"::error::check-traceability [{check_name}] "
+            return {
+                re.sub(r":\d+", ":<line>", line[len(prefix) :])
+                for line in run.stderr.splitlines()
+                if line.startswith(prefix)
+            }
+
+        baseline: dict[str, set[str]] = {}
+        for check_name in dict.fromkeys(name for name, _r, _m, _e in cases):
+            measured = findings(check_name)
+            if measured is None:
+                print(
+                    f"self-test: FAILED — {check_name} CRASHED on the UNMUTATED staged "
+                    "tree, so no arm of it can be a delta against anything. Every case "
+                    "below will report the same crash.",
+                    file=sys.stderr,
+                )
+                ok = False
+                measured = set()
+            elif measured:
+                # Printed, never suppressed: a contaminated tree must be
+                # visible rather than silent. It is not a failure — the arms
+                # are indifferent to it — but a reader who sees an arm behave
+                # oddly is owed the fact that the tree was not clean.
+                print(
+                    f"self-test: note — {check_name} already reports {len(measured)} "
+                    "finding(s) on the unmutated tree; the arms below are measured as "
+                    "changes against that, and the flagless run is what names them"
+                )
+            baseline[check_name] = measured
 
         for check, relative, mutate, expect in cases:
             path = tree / relative
@@ -1817,13 +2965,8 @@ def self_test() -> int:
                 ok = False
                 continue
             path.write_text(mutated, encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, str(tree / "scripts/check-traceability.py"), f"--{check}"],
-                capture_output=True,
-                text=True,
-            )
+            after = findings(check)
             path.write_text(original, encoding="utf-8")
-            went_red = result.returncode != 0
 
             # A non-zero exit is NOT enough to call a red case proven. A
             # mutation that makes the script CRASH also exits non-zero, so a
@@ -1834,10 +2977,7 @@ def self_test() -> int:
             # a finding. Under exit-code-only validation that case pinned
             # nothing. So a red case must see the check's OWN annotation, and a
             # traceback fails the harness in either direction.
-            annotated = f"::error::check-traceability [{check}]" in result.stderr
-            crashed = "Traceback (most recent call last)" in result.stderr
-
-            if crashed:
+            if after is None:
                 print(
                     f"self-test: FAILED — {check} CRASHED on the {expect}-case mutation "
                     f"of {relative}. A traceback is not a finding; the check must report "
@@ -1845,19 +2985,27 @@ def self_test() -> int:
                     file=sys.stderr,
                 )
                 ok = False
-            elif went_red != (expect == "red"):
+                continue
+
+            added = after - baseline[check]
+            removed = baseline[check] - after
+
+            if expect == "red" and not added:
                 print(
-                    f"self-test: FAILED — {check} went "
-                    f"{'red' if went_red else 'green'} on the {expect}-case "
-                    f"mutation of {relative}",
+                    f"self-test: FAILED — {check} added no finding on the red-case "
+                    f"mutation of {relative}. The mutation applied and the check read "
+                    f"the file, so either the check no longer bites this defect or it no "
+                    f"longer reads this surface.",
                     file=sys.stderr,
                 )
                 ok = False
-            elif expect == "red" and not annotated:
+            elif expect == "green" and (added or removed):
                 print(
-                    f"self-test: FAILED — {check} exited non-zero on the red-case mutation "
-                    f"of {relative} but printed no [{check}] annotation, so the exit code "
-                    f"came from somewhere other than this check finding the defect",
+                    f"self-test: FAILED — {check}'s findings CHANGED on the green-case "
+                    f"mutation of {relative}: {len(added)} added, {len(removed)} removed. "
+                    f"This arm exists to pin a tolerance, so a check that starts biting "
+                    f"here — or stops biting something else — is a re-decision, not an "
+                    f"edit.",
                     file=sys.stderr,
                 )
                 ok = False
@@ -1880,6 +3028,14 @@ def self_test() -> int:
         # asserted first, is their PRESENCE — a token that had left the tree
         # would otherwise let its own case pass by absence.
         #
+        # Under Q184's rule this is the one BORROWED fixture left in the
+        # harness, and it discharges the rule by a third route: not by being
+        # derived and not by an argument that it is stable, but by a GUARD that
+        # fails loudly the moment it stops being true. Where a borrowed literal
+        # is unavoidable, that is the form to copy — a reason written beside a
+        # fixture is a claim about the future, and a guard is a measurement
+        # taken every run.
+        #
         # D109 R7 lists `S310` here too. It is not in the swept tree: it lives
         # in `testdata/vectors/v1/crosscheck_cbor.py` and CITATION_SCAN does not
         # include `testdata/`, so it is killed by not being swept at all rather
@@ -1901,10 +3057,22 @@ def self_test() -> int:
         )
         output = clean.stdout + clean.stderr
         reported = [t for t in not_citations if re.search(rf"\b{t}\b", output)]
-        if clean.returncode != 0:
+        # D120 R7 — a TRACEBACK gate, not an exit-code gate. This block used to
+        # refuse to run at all unless the citation check was green on the
+        # unmutated tree, which made the closing assertion the last inheritor
+        # of the whole-suite coupling R6 removed everywhere else: a sibling
+        # lane's unrelated finding turned it red. The assertion's real question
+        # is whether these six tokens appear in the report, and that is
+        # answerable whatever ELSE the check found. What it cannot survive is
+        # an EMPTY report, so the crash still fails — see the message.
+        if "Traceback (most recent call last)" in clean.stderr:
             print(
-                "self-test: FAILED — --task-citations is not green on the unmutated tree, "
-                "so the floor/ceiling assertion cannot run; fix the check first",
+                "self-test: FAILED — --task-citations CRASHED on the unmutated staged "
+                "tree, so this assertion would pass BY ABSENCE: a check that fell over "
+                "names no token at all, and 'none of the six was reported' then means "
+                "'nothing was reported'. An unrelated finding here is fine and is no "
+                "longer a failure; a traceback is not, because it is what makes the "
+                "absence meaningless.",
                 file=sys.stderr,
             )
             ok = False

@@ -574,6 +574,7 @@ disagree on everything an implementer would actually have had to guess.
   that implies otherwise would overclaim. Recorded here for R18's wording
   freeze at M3.
 - **Q — the `anchor-` prefix registration** (§5), which A21/Q18 need anyway.
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## Residual risks
 
@@ -680,7 +681,3 @@ which is a `testdata/` write this planning round did not authorise.
   request** — the stored nonce is what makes the request reconstructable
   (§3 item 1); this is the one direction in which persistence could become
   load-bearing rather than merely useful.
-
-## Index row (orchestrator applies at merge)
-
-| [D59](D59-request-nonce-persistence.md) | Request-nonce persistence semantics | RESOLVED | 2026-08-02 | Capture-time only: nonce generated in `antseal-anchor` (8 B, OS CSPRNG, never from `W`), compared in core only when supplied, persisted in the vault, and **verdict-inert** on every bundle path. Register's conclusion kept, its reason corrected — the nonce *is* in the bundle, inside the signed `TSTInfo`. Bundle-side request-nonce field ruled a permanent non-rule. | A8, A10, A2 |

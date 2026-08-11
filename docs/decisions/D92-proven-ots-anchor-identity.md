@@ -529,6 +529,7 @@ touches no byte any of those pin, and A22's native-vs-wasm32 bit-match
 covers the module already.
 
 ## 10. Register, task rows, amendments
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ### 10.1 Register entry for `TODO.md` "Due M2" (orchestrator pastes)
 
@@ -715,7 +716,3 @@ rendering layer cannot conflate them by accident.
 - **The count acquiring a consumer.** It has none today. The first wiring
   (R12 into `verify/pipeline.rs`, then A20/R17/U22) is the moment §5.6's
   permitted/forbidden list stops being advice and starts being reviewable.
-
-## Index row (orchestrator applies at merge)
-
-| [D92](D92-proven-ots-anchor-identity.md) | What a `proven` OTS anchor contributes to the independence count — **the chain, not the calendars and not the block**. One opaque `AnchorIdentity::BitcoinChain` for every headline-eligible OTS anchor; `OtsCalendars` deleted. A40's recorded risk confirmed and sharpened twice over: the calendar set is a **sealer-chosen bundle-recorded string** (the input A40's own `TsaSigner` rustdoc forbids) and is **invariant across `pending → attested → proven`** because the merge *enforces* attestation retention; and the over-count needs **no adversary**, since the measured 2026-08-03 cycle put one digest's three calendars in **three blocks** (960767/960768/960771) — scored 3 by both the calendar key and the block key, 1 by MVP-SPEC.md line 19. The block key fails again on `merged.added.first()`: the recorded height is merge order, not evidence. Two heights of one chain are one identity and two data points. "No identity for OTS" rejected for breaking `count == 0 ⟺ UNANCHORED`. **A20's gate must never read the mixed scalar** (A40's `Do` said it should) → kind-scoped accessor added, A40's `Do` amended. Found: the eligibility filter has no OTS-side witness; the one existing OTS identity test cannot distinguish three of four candidates; two disagreeing TSA identity notions, the seal-side one over-counting → A72. Errs toward under-counting; §8's irreversibility restated as being about the **published claim**, not the code. Zero wire bytes, zero vectors, zero codes | RESOLVED | 2026-08-06 |

@@ -1,6 +1,12 @@
 # D98 — What state vocabulary does `antseal status` render, and how are the vault's anchor records projected into it?
 
-- **Status**: Resolved 2026-08-06
+- **Status: RESOLVED**
+- **Date: 2026-08-06** — status block normalised to the house
+  `- **Status:` / `- **Date:` form on 2026-08-11, executing
+  [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5
+  step 2. The original front matter read `- **Status**: Resolved 2026-08-06`
+  and carried no `- **Date` line; the status word and the date are unchanged,
+  and nothing else in this record is touched.
 - **Owner**: U23 / U25 (executing) · A15 / A18 (the two machines) · U47, U48 and
   **D97** are hard dependencies
 - **Companion**: **D97** was minted by this same lane, in parallel, and rules the
@@ -522,6 +528,7 @@ pair R70 just finished making precise.
 - **Three stale journal-on-import claims** (`listing.rs:13-18`,
   `journal.rs:973-975`, `export.rs:515-516`), and `list`'s documented reason for
   its coarse-mirror fallback.
+- `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
 
 ## Residual risks and revisit triggers
 
@@ -572,9 +579,3 @@ D97 allocated U53–U57 and Q116 from the same lane's block; those ids are its o
 - Accept: either the capture path stores the responder's certificate bag, or the
   reliance on self-carrying tokens is a recorded decision with a test that fails
   when a configured endpoint stops self-carrying.
-
----
-
-## Index row (orchestrator applies at merge)
-
-| [D98](D98-status-anchor-state-vocabulary.md) | What state vocabulary does `antseal status` render, and how are the vault's records projected into it? — **A18's seven names, computed per artifact through the public evaluators; A15 keeps the nag; nothing is fabricated.** The register's lean assumed `AnchorStatus` had to be invented — **false**: `evaluate_ots_artifact`/`evaluate_tsa_artifact` are `pub` and both `*ArtifactView::from_parts` constructors take no status, naming A18 as their intended consumer; measured by evaluating all five real captures with no status anywhere. `vec![]` intermediates is **not** a weaker input — `validate_token_chain` pools the token's own bag, all four pinned-root TSAs reach `proven` with `&[]` in already-committed tests, and no CLI path has *ever* populated the field (`TsaAnchor::new` has zero call sites outside core), so it is the same input `verify` will get; SwissSign's `internally-consistent-only` is root quarantine, identical either way. The journal contradiction resolves **for** S29 — `export.rs:784` skips only `>= UNIT_ENTRY_BASE`, so entries 0–2 survive import and the `anchor_digest` recovery path works; **three** stale claims say otherwise, one of them inside the file that implements the opposite. `verify_at_unix` copies **`VerifyOptions`**, never `AnchorStageConfig.fetch_date`, whose own doc says it is safe to expose *because it gates no outcome* — `verify_at` gates the headline, is one-sided, and `verify_at = 0` renders an expired DigiCert chain `proven`, so it gets no user surface at all. Option (b) dies because A15 has **no TSA verdict**; option (c) — a projection table — is the one design that guarantees `status` and `verify` diverge. `status` emits six of seven states (OTS is never `proven`; `absent` is never an outcome, R70) and adds no core API. **A fifth gap nobody named blocks U23**: `AnchorArtifact`'s key-0–3 schema cannot store the D79 upgrade group, so `attested` is unreachable under **both** machines and U23's Accept is unmeetable — reached independently from the render side here and the write side in **D97**, which rules it (keys 4/5/6, journal v2) and whose §1.2 adds that `--online` can then neither promote *nor refute*, and that `list` **stops nagging** on exactly the work whose evidence was destroyed. Discovered U58, A101 | RESOLVED (U23/U25 execute) | 2026-08-06 |

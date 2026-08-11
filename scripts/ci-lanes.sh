@@ -33,6 +33,13 @@
 #                     the local gate, exactly one HTTP client is declared and
 #                     only by antseal-anchor, and every URL-valued constant
 #                     is covered by the gate's endpoint walk
+#   cargo-free        the test-of-the-test for the guard that asserts CI's
+#                     `traceability` job runs no cargo (D124/Q182). The guard
+#                     itself is two steps ON that job — `cargo-free.sh --arm`
+#                     and `--verdict` — which cannot be run anywhere but a
+#                     runner; what CAN be run before a push is the proof that
+#                     the guard can go red, and Q43's own opening defect is a
+#                     guard whose command had never been executed
 #
 # Exit: 0 pass · 1 failure. Every lane is runnable locally; the ones that
 # need a pinned external tool say which and how (audit-deny).
@@ -59,7 +66,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -849,16 +856,39 @@ lane_ci_shell() {
 # every venue, that no second HTTP client exists to route around it, and that
 # no endpoint constant has appeared outside the walk that proves the refusal.
 #
-# Python-only, no cargo, no network, so it rides in the `traceability` job
-# beside `ci-shell` and `fuzz-budget` rather than costing a new
-# required-status context (the set stays at 19). Its own six planted faults
-# run first, every run.
+# Python-only and no network, so it rides in the `traceability` job beside
+# `ci-shell` and `fuzz-budget` rather than costing a new required-status
+# context (the set stays at 19). The cargo half of that placement argument is
+# no longer stated here: `scripts/cargo-free.sh` asserts it on every run of
+# that job and states the property once, in its own header (D124/Q182). Its
+# own six planted faults run first, every run.
 lane_anchor_net_policy() {
   if ! python3 scripts/check-anchor-net.py --self-test; then
     printf '::error::check-anchor-net self-test FAILED — the policy check stayed green over a planted fault, so a green run below would prove nothing\n'
     return 1
   fi
   python3 scripts/check-anchor-net.py
+}
+
+# D124/Q182: the guard that asserts CI's `traceability` job invokes no cargo,
+# rustc or rustup — including from steps not yet written.
+#
+# THE GUARD ITSELF CANNOT RIDE HERE, and that asymmetry is the point rather
+# than an omission. `--arm` writes to `$GITHUB_PATH` so that the shims cover
+# every LATER STEP OF THE SAME JOB, which is a runner mechanism with no local
+# equivalent; running it from this script would mask one process and prove
+# nothing about a job. So the two halves land in the two venues that can hold
+# them: the assertion is two steps on `ci.yml`'s `traceability` job, and the
+# TEST OF THAT ASSERTION is this lane, runnable before a push.
+#
+# `--self-test` runs thirteen checks — nine red arms, two direct property
+# assertions and two green controls. Each red arm plants one fault (a verdict
+# that ignores the marker, an arm that claims success without arming, a
+# $GITHUB_PATH entry that never took effect, the pair copied onto another job)
+# and requires it to be caught BY ITS MESSAGE (scripts/lib/red-arm.sh). No
+# cargo, no network, milliseconds.
+lane_cargo_free() {
+  ./scripts/cargo-free.sh --self-test
 }
 
 # Q2: vault-export / wallet-key signature guard.
@@ -1273,5 +1303,6 @@ case "${1:-}" in
   audit-deny)       lane_audit_deny ;;
   fuzz-budget)      lane_fuzz_budget ;;
   anchor-net-policy) lane_anchor_net_policy ;;
+  cargo-free)       lane_cargo_free ;;
   *) die "usage: scripts/ci-lanes.sh <$(printf '%s' "$LANES" | tr ' ' '|')> | --list | --self-test" ;;
 esac

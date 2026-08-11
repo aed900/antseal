@@ -487,11 +487,22 @@ report's namespace for the evidence and storage-linkage layers, and the
 decode layer never becomes a report field. That is the sentence to carry
 into Q14's freeze checklist.
 
-## 10. Register row (for `docs/decisions/README.md`, added at merge)
+## 10. Register row (for `docs/decisions/README.md`) — applied
 
-```
-| [D86](D86-decode-layer-in-verdict.md) | Decode layer in the verdict — **never a `VerificationReport` field** (the report is success-only per D27 §4, and `layer` already names the evidence + storage-linkage layers, lines 118/119); the two `layer()` accessors reconciled by making the layer **total on both**, derived from a new `ManifestError::map()`. Overturns F26's lean (harmonise *downward*): the real defect was not the documented asymmetry but that `manifest-unknown-key` at the envelope and at the body were **one observable**, so `envelope-unknown-key` could not prove it hit the envelope — a counterexample to error-code-contract §2's own claim. Three `FIXTURES.json` layer values change; no code, digest, or report byte changes; **no coupling to R32** | RESOLVED | 2026-07-28 |
-```
+**Applied — this section holds no row.** D86's index row is in
+`docs/decisions/README.md` and has been since `3a72933` (2026-07-28), which is
+**not a merge**: `git rev-list --parents -n 1 3a72933` returns two words, one
+commit and one parent. The verbatim copy that stood here is deleted rather than
+re-headed, because once the index is checked a hand-written row in a body is a
+second home for a fact the check already guarantees.
+
+Demoted in place on 2026-08-11 under
+[D119](D119-decision-index-identity-and-the-index-row-sections.md) RULING 4,
+which measured **zero** rows applied at a merge across 83 merges. The heading
+keeps its number — D117 §2.4 forbids moving a section identifier, and this
+record's own front-matter `Index note` cites this section by number; D119 §5
+step 8 reserves the five `Index note` prose sites for a separate act, so that
+bullet still describes the old hand-off and is deliberately untouched here.
 
 ## 11. What the implementer must report back
 

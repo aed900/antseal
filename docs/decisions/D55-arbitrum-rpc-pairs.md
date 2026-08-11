@@ -466,6 +466,8 @@ The two margins are given separately on purpose: the 37× is against an
 arbitrary third-party receipt and is not the binding constraint; the 1.4×
 against this project's own maximum payment shape is (§7b).
 
+**`docs/decisions/README.md`** — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
+
 ## 7. Tests that must exist, and what makes each fail
 
 | test | lives in | fails when |
@@ -563,7 +565,3 @@ in the F4 row.)*
 - A17 ever needing a method beyond `eth_getTransactionReceipt` and
   `eth_chainId` → re-probe every endpoint with it before shipping (§2's
   whole lesson).
-
-## Index row (orchestrator applies at merge)
-
-| [D55](D55-arbitrum-rpc-pairs.md) | Default Arbitrum advisory-RPC pairs — **one = `arb1.arbitrum.io/rpc` + `arbitrum.drpc.org`; sepolia = `sepolia-rollup.arbitrum.io/rpc` + `arbitrum-sepolia.drpc.org`; devnet disabled**. Two measurements decided it and a liveness probe would have missed both: `publicnode` answers `eth_blockNumber` in 0.75 s and then rejects `eth_getTransactionReceipt` with **"Archive requests require a personal token"** (so endpoints are probed with the production method, never a cheaper one), and `1rpc.io/arb` returns `ACAO: *` on the **preflight** and none on the **POST** (so CORS is measured on the POST — which also answers D66's Arbitrum half affirmatively for all four ruled endpoints). "Must agree" is over an extracted tuple `(present, status, blockNumber, blockHash)` with **zero tolerance** and never over bytes or the whole object: the two ruled endpoints return different key sets for the same receipt (`timeboosted` vs `blobGasUsed`) while the tuple is identical. Head-height agreement — the brief's hard case — is not in A17's comparison and could not be (5 endpoints, **3 blocks apart inside 0.878 s**). Disagreement is **advisory-degraded, never an error**, locked by a test requiring the D29 report bytes to be identical across all five overlay outcomes. Adds a fifth outcome `Lagging` A17 lacks, an `eth_chainId` guard it lacks, and **overturns the landed `[verify] arbitrum_endpoints` config slot as unable to hold a per-network pair** | RESOLVED (A17 + new U44 implement) | 2026-08-02 |

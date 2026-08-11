@@ -146,9 +146,12 @@ job would have cost a 20th required status context and a branch-protection
 change for coverage that already existed.
 
 What Q16 added to CI is a **step** on the existing `traceability` job —
-Python only, no cargo, no network, seconds — beside `ci-shell` and
-`fuzz-budget`, which ride there for the same reason. **The required-context
-set stays at 19 (17 jobs, `cross-os` contributing 3).**
+Python only, no network, seconds — beside `ci-shell` and `fuzz-budget`, which
+ride there for the same reason. That job's cargo-freeness, which is what makes
+riding there free, is **asserted on every run** by `scripts/cargo-free.sh` and
+stated once in that script's header (D124/Q182); this paragraph cites it
+rather than repeating it. **The required-context set stays at 19 (17 jobs,
+`cross-os` contributing 3).**
 
 ## 5. Doing a real-endpoint run anyway
 
