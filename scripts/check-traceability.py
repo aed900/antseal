@@ -271,7 +271,11 @@ MILESTONE_ORDER = ("M0", "M1", "M2", "M3", "M4")
 # `deferred` for eight days after their work landed. Bumping this line is the
 # durable half of that fix: it is what makes the next such drift visible to
 # the ordinary flagless run that every lane actually performs.
-CURRENT_MILESTONE = "M1"
+# M1 -> M2 on 2026-08-11 (Q236 / D127) — the first bump owned by a gate row,
+# landed in the same change as the register's first ACCEPTED_NON_COVERED
+# entry, because the checker reds either half without the other
+# (bump-atomic by construction, D127 §1e).
+CURRENT_MILESTONE = "M2"
 
 # The full vocabulary, per the matrix's own "Status vocabulary" note. Anything
 # else is a typo, and a typo'd status at a not-yet-gated milestone would
@@ -279,20 +283,44 @@ CURRENT_MILESTONE = "M1"
 STATUS_VOCABULARY = ("covered", "gap", "deferred")
 
 # Rows allowed to sit at a non-`covered` status inside a gated milestone, as
-# `id -> (status, reason)`. Empty, and it should stay that way: an entry here
-# is a milestone shipping with a known hole, which is a decision worth writing
-# down rather than a lint to be silenced. Stale entries are themselves a
-# failure — see `check_matrix` — so this cannot rot into a permanent mute.
+# `id -> (status, reason)`. An entry here is a milestone shipping with a
+# known hole - a decision worth writing down rather than a lint to be
+# silenced - so every entry requires a recorded ruling (D118 §5) and carries
+# its closure trigger. Stale entries are themselves a failure - see
+# `check_matrix` - so this cannot rot into a permanent mute.
 #
-# Still empty after Q165 / D118, deliberately. Eleven rows read `deferred` at
-# or before M2 and this register was the obvious place to put the survivor
-# (`V7.1`, whose real calendar cycle was run by hand with curl rather than by
-# antseal). It is the wrong place: M2 has not shipped, so there is no known
-# hole to accept yet, and an entry here would silence `V7.1` at the M2 review
-# — the one moment it exists to speak. `V7.1` reads `gap` at an ungated
-# milestone instead, which is loud in `--milestone M2` and silent in the
-# flagless run, exactly as intended.
-ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {}
+# It stayed empty through Q165 / D118, deliberately: eleven rows read
+# `deferred` at or before M2 and this register was the obvious place to put
+# the survivor (`V7.1`, whose real calendar cycle was run by hand with curl
+# rather than by antseal). It was the wrong place THEN: M2 had not shipped,
+# so there was no known hole to accept yet, and an entry would have silenced
+# `V7.1` at the M2 review - the one moment it exists to speak. That moment
+# arrived at Q236's review, the row spoke, and D127 (2026-08-11) answered it
+# on the record. The entry below is the register's first, at the price D118
+# §5 set: a decision document, a named closure trigger, and machine-enforced
+# removal. That price is the precedent - an entry for work the project can
+# perform itself is not covered by it (D127 §3 iii).
+ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {
+    # The register's first entry, ruled by D127 (2026-08-11) at the M2
+    # review. Bump-atomic by construction: before the M1 -> M2 bump this
+    # entry reds on the unused-exemption arm below, and the bump without it
+    # reds on the status arm - one change, both directions (D127 §1e).
+    "V7.1": (
+        "gap",
+        "M2 ships with the submit half owed (D127, 2026-08-11): antseal's "
+        "A13 submit path has never spoken to a real calendar - every "
+        "committed pending was hand-submitted, and the 2026-08-11 consented "
+        "run's scope excluded fresh submissions. Bounded residue: the "
+        "loopback selftest pins the request shape and the upgrade/TSA/"
+        "must-agree legs proved the client's real branch, but the four "
+        "DEFAULT_OTS_CALENDARS pool hosts have never been contacted by the "
+        "product in any mode, and the composed cycle (client-submitted "
+        "pending -> client-upgraded) has never run. Closes on the first "
+        "consented script-driven submit->upgrade pair (maintainer action, "
+        "fresh consent per half): the V7.1 cell flips covered and this "
+        "entry is removed in the same change.",
+    ),
+}
 
 
 def split_row(line: str) -> list[str] | None:
