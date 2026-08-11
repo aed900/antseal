@@ -2264,3 +2264,19 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
   all-green remote run, dispatched normally in under a minute on the Pro
   plan — the second consecutive push with no trace of the dispatch-refusal
   signature.
+
+## Remote verdicts — 2026-08-11 (recorded at wave-16 close, ~17:45Z)
+
+- **Run `31516683380` on `e50bb1a` (the wave-16 range, `5654518..e50bb1a`,
+  10 commits): 19 of 19 GREEN** — `completed success`, job conclusions
+  counted from the API (`{"success": 19}`), recorded within the hour of the
+  verdict. The eighth consecutive all-green remote run, and the first
+  carrying the R13 builder, the R14 property suite, the R15 preview, the
+  Q236/Q237 gate rows and `scripts/anchor-smoke` — the wasm32 lanes ran on
+  the diff selection (the range touches `antseal-core`), and the range also
+  carried this file's wave-15/seventh-verdict record, closing the loop where
+  a verdict-record commit rides the next wave's push. One non-verdict
+  observation from the run log: `actions/checkout@v4` now warns that Node.js
+  20 is deprecated and is being forced onto Node 24 by the runner — an
+  upstream-action deprecation to absorb at the next deliberate workflow
+  touch, not a failure and not this wave's to chase.
