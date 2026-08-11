@@ -262,6 +262,7 @@
   - Mock-endpoint tests: agreement → promotion + overlay headline; disagreement → advisory disagreement outcome, offline verdict untouched (the M3 endpoint-disagreement case, also exercised in R27); header mismatch → `invalid` rendering
   - Live mode renders match/mismatch/fetch-failed per blob against `MockBackend`; distinct from evidence layer
   - The full deterministic report (incl. overlay/live sections) is exposed for U30's `--json`; verdict-class data is exposed for U30's exit-code mapping (the mapping itself is U30's, per D69)
+  - **[D64, 2026-08-11]** Report-byte equality: an `--online` run and an offline run over the same bundle expose **byte-identical canonical report bytes** — the overlay is a sibling document carried beside the report in U30's envelope, never a report-v1 field (D64 §3, D105) — red-capable against any implementation that renders the online computation as *the* verdict
 - Notes: The page never gets `--live`; CLI-only by spec. CLI flag surface, exit codes, and the `--json` envelope are U30's. (Redefined as a library API after the consistency audit — U30 is the sole CLI owner.)
 
 ### R22 — Build the wasm-bindgen binding surface for the verifier page
@@ -299,7 +300,7 @@
   - Mocked-endpoint tests (R27 playwright routes): agreement/promotion, disagreement, mismatch→invalid, one-endpoint-down
   - Endpoint override persists for the session and is clearly labeled as departing from pinned defaults
   - Overlay wording matches R18 snapshots
-- Notes: Verify CORS availability of the pinned endpoints from browsers early in M3; overrides are the mitigation if a default becomes CORS-hostile (open decision).
+- Notes: Verify CORS availability of the pinned endpoints from browsers early in M3; overrides are the mitigation if a default becomes CORS-hostile (open decision). **[D64, 2026-08-11]**: the endpoint-override label is the overlay's endpoints-disclosure line from the shared R18 table — the page composes no wording of its own for it.
 
 ### R25 — Make the page build reproducible and surface provenance (footer hash + published SHA-256)
 - Milestone: M3
@@ -711,7 +712,7 @@
 - Discovered by: **D53 §6 / D56 §4** (2026-08-02).
 - Problem: two coupled gaps. (1) A39's suppressed-anomaly list has no wording, so the information best-evidence-wins removes from the anchor state has nowhere to surface. (2) R18's premise — *"the one authoritative wording table in `antseal-core` (shared verbatim by CLI and page — renderers receive final strings, never compose their own)"* — assumes both renderers see the same data. They do not: the CLI holds `AnchorVerdicts`, while R22 hands the **page** only the report's canonical bytes, and report v1 is frozen with no field for anomalies (`AnchorResult` has five fields; D29/R32, Q14). So there is exactly one class of datum the CLI can render and the page cannot, and R18's snapshot set would silently encode that asymmetry as "wording we happened not to write".
 - Spec: Verifier web page — advisory overlay distinct from the offline verdict (MVP-SPEC.md line 137); Verification M3 (lines 156, 174)
-- Do: Add the anomaly wording to R18's table — one line per suppressed refutation, framed as *advisory* and explicitly subordinate to the anchor's state ("this anchor is `proven`; one certificate path in it did not verify") so it can never read as a demotion. State the CLI/page asymmetry in the wording table's own header as a **declared** divergence with the report-version reason, and pin it with a test rather than leaving it as an omission.
+- Do: Add the anomaly wording to R18's table — one line per suppressed refutation, framed as *advisory* and explicitly subordinate to the anchor's state ("this anchor is `proven`; one certificate path in it did not verify") so it can never read as a demotion. State the CLI/page asymmetry in the wording table's own header as a **declared** divergence with the report-version reason, and pin it with a test rather than leaving it as an omission. **[D64, 2026-08-11]**: the online overlay's declared non-string surfaces join the same header — page chrome only (the activation affordance, page CSS, the busy affordance; D64 §5) — every other overlay surface is shared-verbatim strings from R18's table.
 - Accept:
   - Every `AnchorAnomaly` code has a rendering; an exhaustive-enumeration test fails when a new code lacks one (the R18 pattern).
   - A snapshot test pins the CLI rendering of a `proven`-with-suppressed-anomaly anchor, and a second asserts the **page** binding for the identical bundle contains none of that wording — so the asymmetry is asserted, not assumed.
