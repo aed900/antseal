@@ -1,0 +1,28 @@
+# anchor-smoke capture log - OTS day-1 submits (runbook s3.1 step 1)
+#
+# Consent (runbook s1), recorded verbatim before the first request:
+# Maintainer authorisation for this capture was given in-session on 2026-08-11: express consent, quote, I consent to this and to the upgrade whenever ready to go, unquote, given in direct reply to the named request: run scripts/anchor-smoke submit, driving the antseal A13 submit_to_calendars client to issue POST /digest of the two already-committed, already-public golden-vector digests (A=083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df, B=3448b9f22d6d4de5b68e0c1ba28d56e8466aa5a01892835411f7c467b52e5e9c) to the four DEFAULT_OTS_CALENDARS pool endpoints read from crates/antseal-anchor/src/ots/calendars.rs (a.pool.opentimestamps.org, b.pool.opentimestamps.org, a.pool.eternitywall.com, ots.btc.catallaxy.com), 8 requests total, at least 3s spacing, one pass, no retries, no account, no credentials, no secret material, new append-only campaign, creating pendings only. The maintainer additionally stated consent for the upgrade half whenever it is ready; per D127 section 5 and runbook section 1 that half re-confirms in-the-moment when it runs, hours from now.
+#
+# Calendars, read from DEFAULT_OTS_CALENDARS (or overridden):
+#   https://a.pool.opentimestamps.org
+#   https://b.pool.opentimestamps.org
+#   https://a.pool.eternitywall.com
+#   https://ots.btc.catallaxy.com
+# Format notes: requests are issued by antseal's own clients via
+# anchor-smoke-driver; successes log http=2xx (the typed client
+# returns carry the response class, not the exact code); outcomes
+# whose bodies antseal's classifier/verifier consumed (D58 s7.4
+# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport
+# failures log http=000 bytes=0 sha256= as in the bootstrap logs.
+utc_start=2026-08-11T23:39:30Z
+digest_A=083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df bytes=32
+submit digest=A calendar=apool url=https://a.pool.opentimestamps.org/digest http=2xx bytes=207 sha256=f992f862706e5af63f19c5db5a95bc1ac5730b1ff31f8497bd6515da51794018 utc=2026-08-11T23:39:33Z outcome=pending-accepted uri=https://alice.btc.calendar.opentimestamps.org
+submit digest=A calendar=bpool url=https://b.pool.opentimestamps.org/digest http=2xx bytes=205 sha256=879d65e540676f5473144514d546a2c69e1006e725a7c5227f6f09f63426e49c utc=2026-08-11T23:39:37Z outcome=pending-accepted uri=https://bob.btc.calendar.opentimestamps.org
+submit digest=A calendar=eternitywall url=https://a.pool.eternitywall.com/digest http=2xx bytes=191 sha256=d7bd0616922e50ff23e5e7ba2b6b91801be0bac73dbd3b3dcd215f1e33f7c635 utc=2026-08-11T23:39:41Z outcome=pending-accepted uri=https://finney.calendar.eternitywall.com
+submit digest=A calendar=catallaxy url=https://ots.btc.catallaxy.com/digest http=2xx bytes=220 sha256=9f70cf390e3ee3ec05ee676522ecd7c89c149e14d850ea8b1957170c6b76a6f2 utc=2026-08-11T23:39:45Z outcome=pending-accepted uri=https://btc.calendar.catallaxy.com
+digest_B=3448b9f22d6d4de5b68e0c1ba28d56e8466aa5a01892835411f7c467b52e5e9c bytes=32
+submit digest=B calendar=apool url=https://a.pool.opentimestamps.org/digest http=2xx bytes=242 sha256=8783a7168e3eee41f673a884fb8d1821971ae92a1845223aa438042e339fe745 utc=2026-08-11T23:39:50Z outcome=pending-accepted uri=https://alice.btc.calendar.opentimestamps.org
+submit digest=B calendar=bpool url=https://b.pool.opentimestamps.org/digest http=2xx bytes=240 sha256=fb3990ec3cf3d9def4e86f1d5c3e3dae7897ab99f7c57588f53533ffefb7716c utc=2026-08-11T23:39:54Z outcome=pending-accepted uri=https://bob.btc.calendar.opentimestamps.org
+submit digest=B calendar=eternitywall url=https://a.pool.eternitywall.com/digest http=2xx bytes=226 sha256=2ff7bb231d8a1ecad8bcef4ca0fa147c3ce4daca269b01251285a5663f6fa34b utc=2026-08-11T23:39:58Z outcome=pending-accepted uri=https://finney.calendar.eternitywall.com
+submit digest=B calendar=catallaxy url=https://ots.btc.catallaxy.com/digest http=2xx bytes=185 sha256=fee4a511b4e59855b3f4072015b67063b8d51fda07c75e8f7a0c5fe7c7a8d2e1 utc=2026-08-11T23:40:03Z outcome=pending-accepted uri=https://btc.calendar.catallaxy.com
+utc_end=2026-08-11T23:40:03Z
