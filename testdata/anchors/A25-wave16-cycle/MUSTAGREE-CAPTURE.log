@@ -1,0 +1,21 @@
+# anchor-smoke capture log - live must-agree rounds (runbook s3.3)
+#
+# Consent (runbook s1), recorded verbatim before the first request:
+# Maintainer authorisation for this capture was given in-session on 2026-08-11: express consent (the words: consent granted), in direct reply to the named request for the A25 day-2 run - script-driven upgrade GETs for the eight pending commitments in testdata/anchors/A25-wave16-cycle against the calendars their attestations name; RFC 3161 requests for committed golden-vector digest A to freetsa.org/tsr and timestamp.digicert.com; one must-agree round each against the esplora pair (height 960767, reads) and the Arbitrum One RPC pair (read of the committed A16 transaction hash). No account, no credentials, no secret material - already-public digests only. Scope excludes fresh calendar submissions.
+#
+# One round per pair, agreement over the EXTRACTED tuple (D55 s3: the
+# two ruled-in RPCs return different JSON for identical values, so
+# byte comparison would report a disagreement between honest
+# endpoints). Per-request wire capture is structurally unavailable
+# through fetch_and_agree - the round outcome and the agreed tuple's
+# hash are the record.
+# Format notes: requests are issued by antseal's own clients via
+# anchor-smoke-driver; successes log http=2xx (the typed client
+# returns carry the response class, not the exact code); outcomes
+# whose bodies antseal's classifier/verifier consumed (D58 s7.4
+# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport
+# failures log http=000 bytes=0 sha256= as in the bootstrap logs.
+utc_start=2026-08-11T17:56:27Z
+mustagree kind=esplora height=960767 url=https://blockstream.info/api,https://mempool.space/api http=- bytes=80 sha256=9663ac095df046f313fd75a77eda5d383af879239f05075807c1c04b469e63fb utc=2026-08-11T17:56:28Z outcome=agreed-header
+mustagree kind=arbitrum network=arbitrum-one tx=0x06a5012dddc0365d81d93a9ceac5a0060f4a23650fb75ddd683fbc1fb805b0b3 url=https://arb1.arbitrum.io/rpc,https://arbitrum.drpc.org http=- bytes=107 sha256=81e3b250cdba603445511c301bdeb6508f73da4c982ba4255a7ef7db0e465958 tuple=status=1,block_number=490596171,block_hash=86236d12825b9f6938b9504e72afd7d2b8bd364aeb863b930334cd50df10a1d4 utc=2026-08-11T17:56:32Z outcome=agreed
+utc_end=2026-08-11T17:56:32Z

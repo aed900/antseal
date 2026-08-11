@@ -1,0 +1,27 @@
+# anchor-smoke capture log - OTS day-2 upgrades (runbook s3.1 step 3)
+#
+# Consent (runbook s1), recorded verbatim before the first request:
+# Maintainer authorisation for this capture was given in-session on 2026-08-11: express consent (the words: consent granted), in direct reply to the named request for the A25 day-2 run - script-driven upgrade GETs for the eight pending commitments in testdata/anchors/A25-wave16-cycle against the calendars their attestations name; RFC 3161 requests for committed golden-vector digest A to freetsa.org/tsr and timestamp.digicert.com; one must-agree round each against the esplora pair (height 960767, reads) and the Arbitrum One RPC pair (read of the committed A16 transaction hash). No account, no credentials, no secret material - already-public digests only. Scope excludes fresh calendar submissions.
+#
+# Upgrade GETs for the pending captures beside this log, via antseal's
+# own A14 path (pending_refs -> UpgradeTarget -> poll_upgrade).
+# Calendar-behaviour classes preserved verbatim (runbook s3.1):
+# pending-42-byte-404 -> not-yet-confirmed (re-pollable),
+# hard-9-byte-404 -> not-found (hard), transport -> http=000
+# (re-pollable, NEVER promoted to the hard error).
+# Format notes: requests are issued by antseal's own clients via
+# anchor-smoke-driver; successes log http=2xx (the typed client
+# returns carry the response class, not the exact code); outcomes
+# whose bodies antseal's classifier/verifier consumed (D58 s7.4
+# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport
+# failures log http=000 bytes=0 sha256= as in the bootstrap logs.
+utc_start=2026-08-11T17:55:17Z
+upgrade digest=A pending=A-apool calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a7b1a377e4580a857e2634b6664caf9445dfd783e6d85425c7afac9c9e23c0f51abeea1ec99e1c3e34ff3b4 http=2xx bytes=1000 sha256=6fdb12e3712348e5cc5147227f2e659e174d6f173dad9c89022141d341ff740c utc=2026-08-11T17:55:18Z outcome=upgraded
+upgrade digest=A pending=A-bpool calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a7b1a3cee6528692fc67d28162cff24568b17c2e711a38e9f972b3b1cf36a8053a754d77de4c7b03d398641 http=2xx bytes=1035 sha256=186fd30c9fa1bee13a00275c7f21d46605dd60b998eb523ed6355add75bdcf75 utc=2026-08-11T17:55:22Z outcome=upgraded
+upgrade digest=A pending=A-catallaxy calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a7b1a44e3e6a45cfe5c5f543ff938234523ef5a1e53713309dba5c50ccd3d1b2aa4bc024ec038ea764d9ec6 http=2xx bytes=1106 sha256=97ef1a1943cd299e4368d2a78df6d6358d5b6619172e16c311a37fc05560c195 utc=2026-08-11T17:55:26Z outcome=upgraded
+upgrade digest=A pending=A-eternitywall calendar=eternitywall url=https://finney.calendar.eternitywall.com/timestamp/6a7b1a40e64a65d8484c07b943cf468eb7119bfd4c275cbb346d8037adbfc7f2b363d625094427cb6e6a065b http=404 bytes=- sha256=- utc=2026-08-11T17:55:29Z outcome=not-yet-confirmed
+upgrade digest=B pending=B-apool calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a7b1a487af9bcfe96209709d2cfb422cdf28b372ac4c57d7c24abae7cd63fabf7623cbcbb76493308f053d8 http=2xx bytes=1000 sha256=3faa9adea9429bc89275ba3819a069a53267ef94c67857382a8fd55d9164115b utc=2026-08-11T17:55:33Z outcome=upgraded
+upgrade digest=B pending=B-bpool calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a7b1a4cd31466ff185351f3572cc15fdb1a6338a85dbfc7948eb385353bdbf282893144dad9f895fda82ce5 http=2xx bytes=1035 sha256=99d031d51fe0070f578a722edb6995a817f893042d14b1a6d841ea8e9c817b13 utc=2026-08-11T17:55:37Z outcome=upgraded
+upgrade digest=B pending=B-catallaxy calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a7b1a549c5ad5b981705b908b51d6402cb877da24dd1d772ee4f8bf30a0de6962857fbc41f193894f36258b http=2xx bytes=1106 sha256=de56bcecfe461f0ba54c88586a24f0d4f81099a1b28e0ba15d1aced818fcfcff utc=2026-08-11T17:55:41Z outcome=upgraded
+upgrade digest=B pending=B-eternitywall calendar=eternitywall url=https://finney.calendar.eternitywall.com/timestamp/6a7b1a502837317f38286a0e47613b1529ed8e304aae193ed6e67cfe54bd74b9cd4769d687fde0abb7966190 http=404 bytes=- sha256=- utc=2026-08-11T17:55:44Z outcome=not-yet-confirmed
+utc_end=2026-08-11T17:55:44Z

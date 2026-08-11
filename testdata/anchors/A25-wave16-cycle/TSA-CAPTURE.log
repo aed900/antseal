@@ -1,0 +1,20 @@
+# anchor-smoke capture log - TSA tokens against the pinned store (runbook s3.2)
+#
+# Consent (runbook s1), recorded verbatim before the first request:
+# Maintainer authorisation for this capture was given in-session on 2026-08-11: express consent (the words: consent granted), in direct reply to the named request for the A25 day-2 run - script-driven upgrade GETs for the eight pending commitments in testdata/anchors/A25-wave16-cycle against the calendars their attestations name; RFC 3161 requests for committed golden-vector digest A to freetsa.org/tsr and timestamp.digicert.com; one must-agree round each against the esplora pair (height 960767, reads) and the Arbitrum One RPC pair (read of the committed A16 transaction hash). No account, no credentials, no secret material - already-public digests only. Scope excludes fresh calendar submissions.
+#
+# RFC 3161 exchanges via antseal's own A10 path (fresh CSPRNG nonce,
+# build_timestamp_req, capture_one), each reply fully verified against
+# TsaRootStore::pinned() at the token's own genTime (A32). Respect the
+# spacing caveats: Sectigo ~15 s published, SwissSign ~10/day published
+# (neither measured here - runbook s2).
+# Format notes: requests are issued by antseal's own clients via
+# anchor-smoke-driver; successes log http=2xx (the typed client
+# returns carry the response class, not the exact code); outcomes
+# whose bodies antseal's classifier/verifier consumed (D58 s7.4
+# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport
+# failures log http=000 bytes=0 sha256= as in the bootstrap logs.
+utc_start=2026-08-11T17:56:08Z
+tsa digest=A tsa=freetsa url=https://freetsa.org/tsr http=2xx bytes=4643 sha256=2edeb4f8011ad3dd9829ba4aa59463179a993c584247c37024dd3538c0666cdf utc=2026-08-11T17:56:09Z outcome=verified req_bytes=69 req_sha256=b90972a65a65995a7cb3cc284bbafa4db258f4c05fb4c084949d353055ec6039 state=Proven root_store_version=1 gen_time_unix=1786471102 root_label=freetsa-root-ca
+tsa digest=A tsa=digicert url=http://timestamp.digicert.com http=2xx bytes=6007 sha256=99144472d8a5cfba404dc2b2db5b2a8c0111b71cf80ff59e06ad7c6350a7dbc0 utc=2026-08-11T17:56:13Z outcome=verified req_bytes=69 req_sha256=d06e8e91a11caa0cf7225472aa50fee898ee63734a40ef44fdf31092d391460d state=Proven root_store_version=1 gen_time_unix=1786471105 root_label=digicert-trusted-root-g4
+utc_end=2026-08-11T17:56:13Z
