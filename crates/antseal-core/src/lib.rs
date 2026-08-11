@@ -17,6 +17,7 @@
 //! verification.
 
 pub mod anchor;
+pub mod builder;
 pub mod bundle;
 pub mod canon;
 pub mod codec;
