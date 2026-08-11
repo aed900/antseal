@@ -1,0 +1,127 @@
+antseal — the one authoritative verdict-wording set (R18, frozen)
+Every string below is final display text. Renderers — the CLI, the verifier page,
+the online overlay — receive these strings and do layout only.
+
+════ 1. what a seal proves ════
+a seal proves the holder of the sealing key possessed this content by the proven time — not authorship, and not exclusive possession
+
+════ 2. the one headline, and its absence ════
+existed no later than 1785000000 (tsa, CN=antseal mock TSA signer,O=antseal fixtures)
+existed no later than 1785000000 (ots, source not recorded)
+UNANCHORED — integrity and signature only, no provable time
+flagged: headline-eligible anchors disagree by more than 48 h (earliest 1780000000, latest 1785000000)
+
+════ 3. the seven anchor states ([H] = headline-eligible) ════
+proven [H] — a TSA token valid against the pinned root store, or an OTS anchor confirmed online against its Bitcoin block — it carries an independently proven time
+valid-at-stamping-cert-since-expired [H] — valid at stamping; certificate since expired — the chain closed at the token's own stamping time, which stays independently proven
+attested — an upgraded OTS with the block header embedded — not headline-eligible offline, because an embedded header proves no time on its own
+pending — an OTS submitted but not yet upgraded to a Bitcoin attestation
+internally-consistent-only — cryptographically well-formed but not independently anchored — it chains to no pinned root (TSA) and matched nothing online (OTS)
+invalid — the signature or op check failed — this anchor proves nothing
+absent — no anchor of this kind is present
+
+════ 4. one slot block per state ════
+The fetch-date row renders under every state that emits a slot, `invalid` included: it
+is gated by the artifact's recorded value and never by the verdict beside it (D95 rider
+(a)). `absent` is a statement about a kind with no artifact (R70), so it has no source,
+no time and no fetch date to render — an absent datum, not a state gate.
+The `pending` block shows both audiences' guidance (declared divergence 1); a renderer
+prints exactly one of them.
+
+── state: proven ──
+proven [H] — a TSA token valid against the pinned root store, or an OTS anchor confirmed online against its Bitcoin block — it carries an independently proven time
+    independently proven time: 1785000000
+    source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: valid-at-stamping-cert-since-expired ──
+valid-at-stamping-cert-since-expired [H] — valid at stamping; certificate since expired — the chain closed at the token's own stamping time, which stays independently proven
+    independently proven time: 1780000000
+    source: CN=antseal mock TSA signer,O=antseal fixtures (verified by this run)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: attested ──
+attested — an upgraded OTS with the block header embedded — not headline-eligible offline, because an embedded header proves no time on its own
+    ops commit `anchor_digest` to the merkle root of Bitcoin block 700113 (header embedded); a provable time requires `--online` confirmation
+    source: bitcoin-block-700113 (claimed by the artifact — this run did not verify it)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: pending ──
+pending — an OTS submitted but not yet upgraded to a Bitcoin attestation
+    not yet independently provable — ask the sealer to run `status --upgrade`
+    not yet independently provable — run `antseal status <work-id> --upgrade`
+    source: bitcoin-block-700113 (claimed by the artifact — this run did not verify it)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: internally-consistent-only ──
+internally-consistent-only — cryptographically well-formed but not independently anchored — it chains to no pinned root (TSA) and matched nothing online (OTS)
+    source: CN=antseal mock TSA signer,O=antseal fixtures (claimed by the artifact — this run did not verify it)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: invalid ──
+invalid — the signature or op check failed — this anchor proves nothing
+    source: CN=antseal mock TSA signer,O=antseal fixtures (claimed by the artifact — this run did not verify it)
+    fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+── state: absent ──
+absent — no anchor of this kind is present
+
+════ 5. subordinate, sealer-written metadata ════
+claimed time: 1779999999 (asserted by sealer — NOT verified)
+fetch date: 1785600000 (sealer-recorded — NOT verified; it is not evidence for the state above)
+
+════ 6. supporting evidence (never an anchor) ════
+receipt: supporting evidence — no independently proven time
+recorded on Arbitrum block 377262147 across 1 transaction(s) — this proves payment and existence-by-block, never this work's time
+
+════ 7. signature scheme ════
+signature scheme: not evaluated by this build — this says nothing about the bundle's signatures in either direction
+signature scheme: hybrid (PQ)
+signature scheme: Ed25519-only
+signature scheme: a registered signature policy that is neither of the two named schemes — its signatures were checked and passed
+
+════ 8. the raw mirror (R53) ════
+raw mirror: the original file, byte-for-byte (4096 bytes) — its bytes open the raw commitment and canonicalize to the sealed canonical form
+a raw mirror revealed beside a partial reveal is an ordinary revealed unit — verified as a unit, and never presented as the original file: the raw-commitment opening and the canonicalization binding run only on a full reveal
+
+════ 9. the two proof layers, and the advisory live check ════
+evidence — this alone carries the evidentiary verdict
+storage linkage — offline address recomputation; storage is the product's bonus, not its proof
+storage linkage: not evaluated by this build — this says nothing about where the work is stored
+storage linkage: 4 embedded ciphertext(s) and the encrypted manifest recompute to the addresses the manifest records
+storage linkage: 1 of 4 recorded address(es) do not match the bytes in this bundle — the evidence verdict above is unchanged
+live network check (`--live`) — advisory: whether Autonomi still serves these bytes today; it gates no verdict above
+live check: all 4 blob(s) are still served, byte-identical
+live check: 1 address(es) served different bytes — under content addressing that should be impossible
+live check: 2 blob(s) are no longer on the network
+live check: inconclusive — 1 fetch(es) failed and nothing negative was established
+unit 7: still served, byte-identical
+unit 7: the network served different bytes
+unit 7: not found on the network
+unit 7: fetch failed (transport failure) — nothing established either way
+
+════ 10. the online advisory overlay (D64) ════
+online advisory — must-agree endpoint pairs; does not replace the offline verdict above; online results can strengthen or refute individual anchors
+
+── headline impact — exactly one of three ──
+existed no later than 1785000000 (ots, bitcoin-block-700113 — online-confirmed)
+online result agrees: the offline headline above stands (time and source unchanged)
+still no independently provable time after the online check — the offline verdict above stands
+
+── per-probed-anchor outcomes ──
+ots-1: Bitcoin block 700113 agreed by both endpoints — time 1785000000 (bitcoin-block-700113 — online-confirmed)
+ots-1: invalid — agreed online evidence refutes this anchor (anchor-ots-online-header-mismatch)
+ots-1: agreed online evidence contradicts the embedded header (anchor-ots-online-header-mismatch), but a pending attestation out-votes the refutation; recorded, not promoted
+ots-1: the two endpoints disagreed about block 700113 — no promotion; the offline state stands
+ots-1: online check for block 700113 failed (no endpoint detail recorded) — no promotion; the offline state stands
+ots-1: no agreed online evidence for block 700113 — no promotion; the offline state stands
+
+── receipt echo, endpoints, change-only deltas ──
+receipt: both RPC endpoints confirm the recorded transaction on Arbitrum (block 377262147) — supporting evidence only
+receipt: both RPC endpoints confirm the recorded transaction on Arbitrum (block 377262147; the transaction reverted) — supporting evidence only
+receipt: both RPC endpoints agree the recorded transaction is not on chain — supporting evidence only
+receipt: the two RPC endpoints disagreed — no confirmation; supporting evidence only
+receipt: online confirmation failed (no endpoint detail recorded) — supporting evidence only
+endpoints: https://blockstream.example/api, https://mempool.example/api (pinned defaults)
+endpoints: https://blockstream.example/api, https://mempool.example/api (override — departing from pinned defaults)
+newly flagged: headline-eligible anchors now disagree by more than 48 h (earliest 1780000000, latest 1785000000)

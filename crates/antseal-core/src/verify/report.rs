@@ -594,8 +594,14 @@ pub struct AnchorResult {
     ///
     /// The honesty obligation that creates is discharged by a **label**
     /// (R18's wording set, in the `claimed_time` register of MVP-SPEC.md
-    /// line 137), never by conditional presence. Until R18 lands, the label
-    /// is the sibling [`AnchorResult::state`] and nothing else.
+    /// line 137), never by conditional presence. **R18 landed that label**:
+    /// [`wording::fetch_date_line`] is the one row every renderer uses — it
+    /// takes no [`AnchorState`], so the label cannot vary with the verdict,
+    /// and it says outright that the date is not evidence for the state above
+    /// (the reading a refuted anchor invites). It is snapshot-frozen under
+    /// `invalid` in `tests/verdict_wording.rs`.
+    ///
+    /// [`wording::fetch_date_line`]: super::wording::fetch_date_line
     ///
     /// MVP-SPEC.md names fetch dates at lines 108 and 114 only, both as
     /// *bundle content*; there is no spec line requiring this rendering, and

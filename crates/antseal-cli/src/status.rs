@@ -90,6 +90,7 @@ use antseal_core::anchor::verdicts::{evaluate_ots_artifact, evaluate_tsa_artifac
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::manifest::anchor_digest;
 use antseal_core::verify::report::{AnchorKind, AnchorState};
+use antseal_core::verify::wording;
 use rand_core::TryCryptoRng;
 
 use crate::error::CliError;
@@ -113,11 +114,15 @@ use crate::vault::store::{WorkState, WorkStore};
 /// constructor — so U23's *"receipt never rendered as an anchor is enforced by
 /// the type"* is true of the bundle and **false of this path**, and a test
 /// enforces it instead.
-pub const RECEIPT_CLASS: &str = "supporting evidence — no independently proven time";
+///
+/// **R18**: the string itself now comes from the one authoritative wording
+/// table (`antseal_core::verify::wording`); this const is the name `status`
+/// and its tests already knew it by, not a second spelling of it.
+pub const RECEIPT_CLASS: &str = wording::RECEIPT_CLASS;
 
 /// What a work with zero headline-eligible anchors says (MVP-SPEC.md line
-/// 137, verbatim).
-pub const UNANCHORED_NOTE: &str = "UNANCHORED — integrity and signature only, no provable time";
+/// 137, verbatim; the string is R18's table row).
+pub const UNANCHORED_NOTE: &str = wording::UNANCHORED_BANNER;
 
 /// What a work holding artifacts but no journaled manifest says (**D100 R6**).
 ///
@@ -131,9 +136,11 @@ pub const UNCLASSIFIED_NOTE: &str = "this work holds anchor artifacts but its jo
 ///
 /// MVP-SPEC.md line 130's *"ask the sealer to run `status --upgrade`"* is
 /// verifier-page copy, whose reader is a third party. This command's reader
-/// **is** the sealer. The person mismatch is flagged for R18's authoritative
-/// wording set at M3 — an alignment check, not an ordering dependency.
-pub const PENDING_HINT: &str = "not yet independently provable — run";
+/// **is** the sealer. **R18 resolved the person mismatch by keeping both**:
+/// the table carries the page's third-party form
+/// (`wording::PENDING_GUIDANCE`) and this second-person one as its first
+/// *declared* divergence, so one fact has one home and two audiences.
+pub const PENDING_HINT: &str = wording::PENDING_GUIDANCE_SELF;
 
 /// Per-invocation inputs `status` does not decide.
 ///
@@ -477,11 +484,15 @@ impl WorkStatus {
         ));
 
         match self.headline() {
+            // R18: the one headline template, from the one table — this
+            // renderer supplies the indent and nothing else.
             Some(headline) => out.push(format!(
-                "  existed no later than {} ({}, {})",
-                headline.time_unix,
-                kind_name(headline.kind),
-                headline.source.as_deref().unwrap_or("source not recorded")
+                "  {}",
+                wording::headline_sentence(
+                    headline.time_unix,
+                    headline.kind,
+                    &wording::source_slot(headline.source.as_deref()),
+                )
             )),
             None => out.push(format!("  {UNANCHORED_NOTE}")),
         }
@@ -546,7 +557,7 @@ impl WorkStatus {
         // Outside the per-anchor section, under the spec's own sentence, with
         // no state spelling and no time (D98 rider 4).
         if let Some(receipt) = &self.receipt {
-            out.push(format!("  receipt: {RECEIPT_CLASS}"));
+            out.push(format!("  {}", wording::receipt_class_line()));
             out.push(format!(
                 "      paid in {} transaction(s){}",
                 receipt.transactions,
@@ -675,11 +686,12 @@ fn evaluate(artifact: &AnchorArtifact, digest: &[u8; 32], ctx: StatusContext) ->
 fn verdict_detail(verdict: &AnchorVerdict, work_id: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(time) = verdict.verified_time_unix() {
-        out.push(format!("      independently proven time: {time}"));
+        out.push(format!("      {}", wording::verified_time_line(time)));
     }
     if verdict.state() == AnchorState::Pending {
         out.push(format!(
-            "      {PENDING_HINT} `antseal status {work_id} --upgrade`"
+            "      {}",
+            wording::pending_guidance_self_line(&format!("`antseal status {work_id} --upgrade`"))
         ));
     }
     if verdict.state() == AnchorState::Attested {
@@ -713,11 +725,15 @@ fn verdict_detail(verdict: &AnchorVerdict, work_id: &str) -> Vec<String> {
 }
 
 /// How a source identity is labelled — the whole of rider 1c, in one place.
+///
+/// **R18/R74**: both spellings are the shared table's, so the CLI's and the
+/// page's answers to *"was this identity verified?"* are string-equal by
+/// construction rather than by review.
 fn source_label(source: &AnchorSource) -> &'static str {
     if source.is_verified() {
-        "verified by this run"
+        wording::SOURCE_VERIFIED_LABEL
     } else {
-        "claimed by the artifact — this run did not verify it"
+        wording::SOURCE_CLAIMED_LABEL
     }
 }
 
