@@ -470,6 +470,7 @@
   - fixture work with text (multi-unit via `--split`), binary, `--no-fine-tree`, and raw-mirror units renders all fields; raw-mirror marked with the not-directly-revealable note
   - snippet provenance labeled; missing local data degrades gracefully (no error)
   - `--json` fixture registered (full unit table, snippet omitted or flagged by provenance)
+- Notes: **[D67, 2026-08-11]** Snippet value + form are D67's (docs/decisions/D67-disclosure-preview-snippet-format.md): 64-byte text window to a code-point boundary / `hex:` + 16-byte lowercase-pair window; form from the manifest's committed domain (raw mirrors always hex — a BOM must not render invisibly beside the not-selectable mark); escaping per D67 §3 R3; marker `…` outside the quotes; absent arm renders `(snippet unavailable)`. The current-file fallback slices in the unit's commitment domain (re-canonicalize a Text file before applying the canonical range, spec line 83) or degrades to absent — never an approximate raw-offset slice. In `--json`, snippet fields carry the raw window value + form + truncated + provenance; quotes, `hex:` and `…` are terminal rendering only. Schema shape/stability stays with the D65/U50 family.
 
 ### U28 — Implement `reveal <work-id>` command core
 - Milestone: M3
@@ -493,6 +494,7 @@
   - preview snapshot-tested (unit rows with file/range/size/snippet + "irreversibly disclosed" wording); declining writes no bundle file
   - `--include-receipt` warning snapshot-tested; absent otherwise
   - `--yes` and non-TTY-abort paths tested; preview on stderr under `--json`
+- Notes: **[D67, 2026-08-11]** The preview's rows render per D67 (docs/decisions/D67-disclosure-preview-snippet-format.md); U29's snapshot tests are the M3 freeze vehicle for that rendering; the absent arm is near-unreachable under this gate (R16 already holds the plaintext to build at all).
 
 ### U30 — Implement `verify <bundle> [--online] [--live]` CLI
 - Milestone: M3
