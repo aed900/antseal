@@ -2258,3 +2258,9 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
   remote run and the first carrying the `cargo-free` guard. This entry
   closes wave 15's one recorded loose end: the run was green for a day
   before the project's own convention had a record of it.
+- **Run `31493145976` on `5654518` (D125 + P3-partial + A25 day-1): 19 of 19
+  GREEN** — `completed success`, job conclusions counted from the API
+  (`{"success": 19}`), not inferred from the watch's exit code. The seventh
+  all-green remote run, dispatched normally in under a minute on the Pro
+  plan — the second consecutive push with no trace of the dispatch-refusal
+  signature.
