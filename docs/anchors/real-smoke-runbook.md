@@ -11,60 +11,23 @@ This is the one sanctioned way real anchor endpoints are contacted from this
 project. It is a **maintainer-run, out-of-band protocol**, never a CI lane
 and never a test.
 
-## 0. Status — what is executable today
+The entry point is **`scripts/anchor-smoke`** (A25; committed 2026-08-11,
+the same change that deleted this document's §0 status section per Q99's
+rule). One subcommand per §3 step — `submit`, `upgrade`, `tsa`,
+`must-agree` — plus a loopback-only `selftest`. It drives **antseal's own
+clients**, never `curl`: A13's `submit_to_calendars`, A14's
+`pending_refs`/`poll_upgrade` behind A42's allowlist, A10's `capture_one`
+verified against `TsaRootStore::pinned()`, and A16/A17's must-agree rounds,
+all through the dev-only `anchor-smoke-driver` binary
+(`crates/antseal-anchor/src/bin/`, built with `--features test-util`, absent
+from every default build). A capture made with `curl` proves the endpoints
+and not the client — that distinction is D118 §1.5 and verification-matrix
+row `V7.1`, and it is why the driver exists.
 
-**The protocol below is not yet executable end-to-end.** This section names
-only blockers that are live today, and each bullet is retired the day its
-cause dies — one was retired on 2026-08-07, below.
-
-- **`scripts/` carries no `anchor-smoke` entry point.** A25 owns the capture
-  script; Q99 owns deleting this section in the same change that commits it.
-  The protocol has now been executed three times *without* it, by hand and
-  one request at a time, which is precisely the repeatability the script is
-  for.
-- **`antseal verify --online` is an M3 stub.** The flag is declared
-  (`crates/antseal-cli/src/cli.rs:164-178`), but `crates/antseal-cli/src/run.rs:50`
-  maps `Command::Verify` to `Milestone::M3` and `run.rs:60` returns
-  `CliError::NotImplemented`, so §3.1 step 4's promotion to `proven` has no
-  command to run from the shipped CLI. Its **inputs** are no longer missing:
-  the three mainnet headers that promotion needs were captured 2026-08-07
-  (`testdata/anchors/A25-upgrade-headers/`).
-
-**Retired 2026-08-07 — and the retirement is the point of Q99.** Until this
-edit §0 asserted that *"**U22** has not wired the anchor gate into the
-product: `seal_run.rs` still passes `&NoAnchorGate`"*, concluding that "§2
-and §3 have no command to run". U22 landed **2026-08-06**:
-`crates/antseal-cli/src/seal_run.rs:410-412` now reads *"Before U22 this was
-`&NoAnchorGate`"*. The conclusion was never true of §3 in any case — all
-three capture campaigns were driven by hand against real endpoints, two of
-them before U22 existed, under §1's consent rule rather than under any CLI.
-Q99 exists because *"a caveat section that outlives its cause is how a
-document starts lying"*, and the caveat that outlived its cause was in the
-document Q99 guards. Q99's Accept row forbids **deleting** §0 before the
-script lands; it does not license leaving a dead bullet inside it, and this
-correction is the reading to follow.
-
-What *has* been executed is on disk under `testdata/anchors/`, in three
-campaigns, each carrying a `CAPTURE.log` (see §4 for what those logs do and
-do not record):
-
-- **`A25-bootstrap/`** — 2026-08-02, upgraded 2026-08-03: six pending
-  calendar timestamps over two committed golden-vector digests, their day-2
-  upgrades, nine live TSA request/response pairs, five root certificates with
-  provenance.
-- **`A16-A17-live/`** — 2026-08-03: the esplora must-agree pair over block
-  800000, and the Arbitrum RPC pairs on both mainnet and Sepolia.
-- **`A25-upgrade-headers/`** — 2026-08-07: the 80-byte mainnet headers for
-  blocks **960767/960768/960771**, which are the blocks the day-2 upgrades
-  actually attest, from both esplora endpoints.
-
+What *has* been executed is on disk under `testdata/anchors/` — four
+campaigns, inventoried with their provenance in
+[`../../testdata/anchors/README.md`](../../testdata/anchors/README.md).
 Those captures are what the offline suite replays.
-
-This runbook exists now, ahead of its script, for the reason F19 and A27
-exist ahead of theirs: a protocol that lives only in a task entry is a
-protocol the implementing task rediscovers or contradicts. §1's consent rule
-in particular binds the bootstrap capture that already happened and every
-capture that follows.
 
 ## 1. Consent — required before any request leaves the machine
 
@@ -123,14 +86,24 @@ two independent anchors.
 
 Run the whole protocol **once** per capture campaign. If a step fails,
 diagnose from the log before re-firing; a retry loop against a TSA is the
-thing this document exists to prevent.
+thing this document exists to prevent. `scripts/anchor-smoke` enforces both
+mechanically — ≥ 3 s between consecutive non-loopback requests, one pass, no
+campaign-level retries. (Within one request the substrate applies D90's
+bounded, idempotency-aware attempt policy, under which a TSA or calendar
+POST that may already have been delivered is never re-sent.)
 
 ## 3. The protocol
+
+`scripts/anchor-smoke` is the entry point for every step below: it records
+§1's consent before the first request, enforces §2's spacing and one-pass
+rule, and emits §4's per-request fields, refusing to finish without them.
 
 Endpoint lists are read from the code, never re-typed here — they are
 `DEFAULT_TSA_URLS`, `DEFAULT_OTS_CALENDARS`, `DEFAULT_ESPLORA_ENDPOINTS` and
 `ARBITRUM_ONE_VERIFY_RPCS` in `crates/antseal-anchor/src/`. If this document
-and the code disagree, the code is right and this table is stale.
+and the code disagree, the code is right and this table is stale. The script
+follows the same rule: its defaults come from the driver's `defaults` mode,
+which prints those constants.
 
 ### 3.1 OTS: submit, then upgrade
 
@@ -165,8 +138,15 @@ and the code disagree, the code is right and this table is stale.
    bootstrap's own three attesting blocks are captured
    (`testdata/anchors/A25-upgrade-headers/`), each verified offline by
    `double-SHA256(header) == claimed block hash`, so this step's *evidence*
-   is now reproducible with no network at all — only its CLI half is still
-   §0's second blocker.
+   is now reproducible with no network at all. Its CLI half is still
+   missing, and this step is that fact's home now that the old §0 status
+   section is deleted: **`antseal verify --online` is an M3 stub** — the
+   flag is declared (`crates/antseal-cli/src/cli.rs:164-178`), but
+   `crates/antseal-cli/src/run.rs:50` maps `Command::Verify` to
+   `Milestone::M3` and `run.rs:60` returns `CliError::NotImplemented`, so
+   the promotion to `proven` has no command to run from the shipped CLI.
+   That is blocked by a milestone, not by a network, and it is not this
+   protocol's to unblock.
 
 Three calendar behaviours the bootstrap measured, all of which the capture
 must preserve because A14's classifier is graded on them:
@@ -233,7 +213,15 @@ this document. The SHA-256 is the field whose absence bites: it is what lets a
 later reader confirm the committed file is the byte string the endpoint
 actually returned, and without it "verbatim" rests on the capturer's word.
 A capture script must emit all four per request, and should refuse to finish
-otherwise.
+otherwise. `scripts/anchor-smoke` is that script: it hashes each body from
+the bytes antseal's client surfaced, before any file is written — never
+back-filled from disk — and refuses to finish over a missing field (its
+selftest proves the refusal by message). Its logs carry two notations,
+each explained in the log header: successes record `http=2xx`, because the
+typed client returns carry the response class rather than the exact code;
+and outcomes whose bodies antseal's own classifier consumed — the two D58
+§7.4 404s, an unverifiable TSA reply — record `bytes=- sha256=-`, because
+by design those bytes are not surfaced past the classification.
 
 That last point is not bookkeeping. A pending `.ots` capture can never be
 re-taken: once a commitment is upgraded, those calendars will never serve the
@@ -271,3 +259,10 @@ duration only, so a normal gate run does not leak the arming into your shell.
 Never run the smoke by removing the arming from a workflow or from
 `local-gate.sh`; `scripts/ci-lanes.sh anchor-net-policy` will go red, and it
 is right to.
+
+`scripts/anchor-smoke` enforces this section's rule from its own side: a
+network mode refuses to start when the variable is set to anything but `0`
+**and** any planned target is not a loopback IP literal, naming this policy
+in the refusal. Its loopback `selftest` runs with the gate armed — the
+runtime gate admits loopback literals, which is the sanctioned test path —
+so proving the script needs no disarming anywhere.

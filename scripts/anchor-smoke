@@ -1,0 +1,1593 @@
+#!/usr/bin/env python3
+"""The real-endpoint anchor smoke entry point (task A25; Q99, A127, V7.1).
+
+This is the script half of docs/anchors/real-smoke-runbook.md - the one
+sanctioned way real anchor endpoints are contacted from this project. It is
+maintainer-run and out-of-band: excluded from every gating lane, never a CI
+job, never a test (docs/testing/anchor-ci-policy.md).
+
+WHAT IT DRIVES, AND WHY NOT CURL
+  Every request is issued by antseal's own clients, through the dev-only
+  `anchor-smoke-driver` binary (crates/antseal-anchor/src/bin/, built with
+  `--features test-util`, absent from every default build):
+    submit     -> antseal_anchor::ots::submit_to_calendars   (A13)
+    upgrade    -> pending_refs + UpgradeTarget + poll_upgrade (A42 + A14)
+    tsa        -> antseal_anchor::tsa::capture_one over TsaRootStore::pinned() (A10)
+    must-agree -> fetch_agreed_header (A16) and confirm_arbitrum_tx (A17),
+                  agreement over the EXTRACTED tuple (D55 s3)
+  D118 s1.5: every earlier campaign was performed by hand with curl, so
+  "antseal's submit and upgrade paths have never spoken to a real calendar"
+  (verification-matrix row V7.1, `gap`). A curl script here would reproduce
+  the exact gap this script exists to close.
+
+CONSENT (runbook s1) - HARD REQUIREMENT
+  Every network mode refuses to start without --consent "<text>", where
+  <text> is the express, in-the-moment maintainer confirmation naming the
+  action, the destinations and the account, given for THIS run. A task list,
+  the runbook, or a previous authorisation is not consent for a new run. The
+  text is written verbatim into the campaign log before the first request.
+  The bootstrap's recorded form is the model:
+    "Maintainer authorisation for real-endpoint submission was given
+     in-session on <date> (reads and submissions to public TSAs and OTS
+     calendars, throwaway test digests only)"
+
+RATE DISCIPLINE (runbook s2)
+  >= 3 s spacing between consecutive non-loopback requests; one pass, no
+  campaign-level retries - a failure is recorded and diagnosed from the log.
+  (Within one driver invocation the substrate applies antseal's own bounded,
+  idempotency-aware attempt policy, D90: a TSA/calendar POST that may have
+  been delivered is never re-sent. A must-agree round is one product-shaped
+  two-endpoint fan-out; spacing applies between rounds.)
+
+CAPTURE DISCIPLINE (runbook s4)
+  Per request: URL, HTTP status, byte count, SHA-256, UTC instant. The
+  SHA-256 is computed from the response bytes as surfaced by antseal's
+  client, BEFORE the file is written - never back-filled from disk. The run
+  refuses to finish (nonzero, with a message) if any completed request is
+  missing a field. Two honest notations, explained in each log header:
+    http=2xx      successes: the typed client returns carry the response
+                  class, not the exact code (HttpResponse documents the Ok
+                  arm as "the 2xx status code").
+    bytes=- sha256=-
+                  the response body was consumed by antseal's typed
+                  classifier/verifier (the two classified 404s of D58 s7.4,
+                  and unverifiable/not-granted TSA replies); the class is
+                  the record. Transport failures log http=000 bytes=0 and an
+                  empty sha256, matching the bootstrap logs.
+  The 32-byte digest check runs BEFORE any submit, here and again in the
+  driver: the bootstrap once stamped an EMPTY body and got 200s back.
+
+CAMPAIGN LAYOUT (append-only - runbook s4/s5)
+  --campaign must lie under testdata/anchors/. New files only: an existing
+  capture file is never overwritten (a pending .ots body can never be
+  re-taken). Per mode: submit -> CAPTURE.log + <label>-<name>.timestamp;
+  upgrade -> upgraded/UPGRADE-CAPTURE.log + upgraded/<stem>.upgrade;
+  tsa -> TSA-CAPTURE.log + <label>-<name>-req.tsq / -resp.tsr;
+  must-agree -> MUSTAGREE-CAPTURE.log (+ agreed-header file).
+
+THE GATE (runbook s6)
+  A network mode refuses to run when ANTSEAL_NO_REAL_ANCHOR_NETWORK is set
+  to anything but 0 and any planned target is not a loopback IP literal -
+  that is scripts/ci-lanes.sh anchor-net-policy's environment, and it is
+  right to refuse. Loopback-only runs (the selftest) proceed with the gate
+  armed: the runtime gate in crates/antseal-anchor/src/http/offline.rs
+  admits loopback literals and refuses everything else, which is the
+  sanctioned test path.
+
+SELFTEST (no real contact, ever)
+  `anchor-smoke selftest` starts loopback mocks and drives every mode's real
+  code path against them - the same request-building and IO code the real
+  branch uses, endpoint parameterised, no separate code path - and proves
+  four red arms BY MESSAGE: (1) a wrong-size digest is refused before any
+  request; (2) the ANTSEAL_NO_REAL_ANCHOR_NETWORK=1 refusal fires; (3) a
+  missing --consent refuses; (4) an incomplete log record makes the run
+  refuse to finish. Selftest plumbing: ANTSEAL_SMOKE_CAMPAIGN_ROOT relocates
+  the campaign root (file placement only - it changes nothing about network
+  policy), and --loopback-base (upgrade/its selftest) is validated to be a
+  loopback literal before it is accepted.
+
+Exit codes: 0 all requests completed and the log is whole; 1 refusal or an
+incomplete/failed campaign (the message says which; the log stays on disk).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlsplit
+
+REPO = Path(__file__).resolve().parent.parent
+ANCHORS_ROOT = REPO / "testdata" / "anchors"
+DRIVER = REPO / "target" / "debug" / "anchor-smoke-driver"
+ENV_VAR = "ANTSEAL_NO_REAL_ANCHOR_NETWORK"
+CAMPAIGN_ROOT_ENV = "ANTSEAL_SMOKE_CAMPAIGN_ROOT"
+SPACING_SECONDS = 3.0
+
+# Outcome classes, mirroring the driver's tokens (see the driver's module
+# docs). BODY_BEARING outcomes must carry real bytes + sha256; CONSUMED
+# outcomes had their bodies eaten by antseal's typed classifier/verifier and
+# record `-` for both; `transport` matches the bootstrap logs' http=000 form.
+BODY_BEARING = {
+    "pending-accepted",
+    "upgraded",
+    "unclassified-status",
+    "verified",
+    "empty-200",
+    "agreed-header",
+    "agreed",
+}
+CONSUMED = {
+    "not-yet-confirmed",
+    "not-found",
+    "unparseable",
+    "no-pending-attestation",
+    "indeterminate-commitment",
+    "not-granted",
+    "unverifiable",
+    "untrusted-chain",
+    "agreed-absent",
+    "disagreed",
+    "unavailable",
+    "lagging",
+}
+UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def fail(message: str) -> "NoReturn":  # noqa: F821 - py3.11 typing kept light
+    print(f"anchor-smoke: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def utc_iso(unix_seconds: int) -> str:
+    return datetime.fromtimestamp(unix_seconds, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def is_loopback_url(url: str) -> bool:
+    """The gate's own carve-out, mirrored: a loopback IP LITERAL, never the
+    name `localhost` (crates/antseal-anchor/src/http/offline.rs)."""
+    host = urlsplit(url).hostname
+    if host is None:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def short_name(url: str) -> str:
+    """A short calendar/TSA label for log lines and file names, matching the
+    committed campaigns: a.pool.opentimestamps.org -> apool,
+    alice.btc.calendar.opentimestamps.org -> alice, freetsa.org -> freetsa,
+    ots.btc.catallaxy.com -> catallaxy."""
+    if is_loopback_url(url):
+        return "loopback"
+    host = urlsplit(url).hostname or "unknown"
+    parts = host.split(".")
+    if len(parts) < 2:
+        return host
+    if parts[-2] == "opentimestamps" and len(parts) > 2:
+        return parts[0] + "pool" if parts[1] == "pool" else parts[0]
+    return parts[-2]
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+# --------------------------------------------------------------------------
+# The driver: antseal's own clients behind one dev-only binary.
+# --------------------------------------------------------------------------
+
+
+def build_driver() -> None:
+    """Build the wire half once per run. Zero new dependencies; the binary
+    is required-features-gated and absent from every default build."""
+    result = subprocess.run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "antseal-anchor",
+            "--features",
+            "test-util",
+            "--bin",
+            "anchor-smoke-driver",
+            "--locked",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        tail = "\n".join(result.stderr.splitlines()[-15:])
+        fail(f"cargo build for anchor-smoke-driver failed:\n{tail}")
+    if not DRIVER.exists():
+        fail(f"driver missing after build: {DRIVER}")
+
+
+def run_driver(
+    args: list[str], env: dict[str, str] | None = None, timeout: float = 120.0
+) -> tuple[int, dict[str, dict[str, str]], str]:
+    """Run one driver invocation; parse its key=value stdout lines.
+
+    Returns (returncode, {line-kind: fields}, raw output). Line kinds are
+    `request` and `event`; `mode=` and `default` lines are ignored here.
+    """
+    result = subprocess.run(
+        [str(DRIVER), *args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env if env is not None else os.environ.copy(),
+        check=False,
+    )
+    parsed: dict[str, dict[str, str]] = {}
+    for line in result.stdout.splitlines():
+        tokens = line.strip().split(" ")
+        if tokens and tokens[0] in ("request", "event"):
+            fields: dict[str, str] = {}
+            for token in tokens[1:]:
+                if "=" in token:
+                    key, _, value = token.partition("=")
+                    fields[key] = value
+            parsed[tokens[0]] = fields
+    return result.returncode, parsed, result.stdout + result.stderr
+
+
+def driver_defaults() -> dict[str, list[str]]:
+    """Endpoint lists read from the code, never re-typed here (runbook s3)."""
+    rc, _, raw = run_driver(["defaults"])
+    if rc != 0:
+        fail(f"anchor-smoke-driver defaults failed:\n{raw}")
+    out: dict[str, list[str]] = {}
+    for line in raw.splitlines():
+        match = re.match(r"^default kind=(\S+) url=(\S+)$", line.strip())
+        if match:
+            out.setdefault(match.group(1), []).append(match.group(2))
+    if not out.get("ots-calendar") or not out.get("tsa"):
+        fail("driver defaults returned no endpoint lists - the driver is broken")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Campaign log: consent header first, one record per request, finish check.
+# --------------------------------------------------------------------------
+
+
+class Campaign:
+    """One capture campaign directory under testdata/anchors/ (append-only:
+    the log file and every body file must not already exist)."""
+
+    def __init__(self, root: Path, directory: str, log_rel: str, title: str) -> None:
+        self.dir = Path(directory).resolve()
+        root = root.resolve()
+        if root not in self.dir.parents and self.dir != root:
+            fail(
+                f"the campaign directory must lie under {root} "
+                f"(got {self.dir}); captures live beside the campaigns they "
+                f"extend, never elsewhere (runbook s4)"
+            )
+        self.log_path = self.dir / log_rel
+        if self.log_path.exists():
+            fail(
+                f"refusing to reuse the existing capture file {self.log_path}: "
+                f"testdata/anchors is append-only - a pending capture can "
+                f"never be re-taken, so a refresh commits BESIDE an old "
+                f"campaign, never over it (runbook s4/s5)"
+            )
+        self.title = title
+        self.records: list[dict[str, str]] = []
+        self.planned = 0
+        self._log = None
+        self._last_remote_done = 0.0
+
+    def open_log(self, consent: str, preamble: list[str]) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log = self.log_path.open("x", encoding="utf-8")
+        self._write(f"# {self.title}")
+        self._write("#")
+        self._write("# Consent (runbook s1), recorded verbatim before the first request:")
+        for line in consent.splitlines() or [""]:
+            self._write(f"# {line}")
+        self._write("#")
+        for line in preamble:
+            self._write(f"# {line}")
+        self._write(
+            "# Format notes: requests are issued by antseal's own clients via"
+        )
+        self._write(
+            "# anchor-smoke-driver; successes log http=2xx (the typed client"
+        )
+        self._write(
+            "# returns carry the response class, not the exact code); outcomes"
+        )
+        self._write(
+            "# whose bodies antseal's classifier/verifier consumed (D58 s7.4"
+        )
+        self._write(
+            "# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport"
+        )
+        self._write("# failures log http=000 bytes=0 sha256= as in the bootstrap logs.")
+        self._write(f"utc_start={utc_iso(int(time.time()))}")
+        self._log.flush()
+
+    def _write(self, line: str) -> None:
+        assert self._log is not None
+        self._log.write(line + "\n")
+
+    def note(self, line: str) -> None:
+        self._write(line)
+        self._log.flush()
+
+    def space_before(self, url: str) -> None:
+        """>= 3 s between consecutive non-loopback requests (runbook s2)."""
+        if is_loopback_url(url):
+            return
+        gap = time.monotonic() - self._last_remote_done
+        if gap < SPACING_SECONDS:
+            time.sleep(SPACING_SECONDS - gap)
+
+    def request_done(self, url: str) -> None:
+        if not is_loopback_url(url):
+            self._last_remote_done = time.monotonic()
+
+    def record(self, kind: str, fields: dict[str, str]) -> None:
+        """One request record: written and flushed immediately, so a crash
+        mid-run still leaves every completed exchange on disk."""
+        self.records.append(dict(fields))
+        rendered = " ".join(f"{k}={v}" for k, v in fields.items())
+        self._write(f"{kind} {rendered}")
+        self._log.flush()
+
+    def write_body(self, rel: str, data: bytes) -> Path:
+        path = self.dir / rel
+        if path.exists():
+            fail(
+                f"refusing to overwrite the existing capture file {path}: "
+                f"testdata/anchors is append-only (runbook s4)"
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            handle.write(data)
+        return path
+
+    def finish(self) -> None:
+        self._write(f"utc_end={utc_iso(int(time.time()))}")
+        self._log.flush()
+        problems = validate_records(self.records, self.planned)
+        if problems:
+            self._write("# INCOMPLETE - this run refused to finish:")
+            for problem in problems:
+                self._write(f"#   {problem}")
+            self._log.flush()
+            self._log.close()
+            fail(format_finish_refusal(problems))
+        self._log.close()
+
+
+def validate_records(records: list[dict[str, str]], planned: int) -> list[str]:
+    """Runbook s4's four-field discipline, as an executable rule.
+
+    Every completed request must carry url, http, bytes, sha256 and utc; a
+    body-bearing outcome must carry a real byte count and a real SHA-256
+    (computed from the bytes antseal's client surfaced, at capture). A
+    missing field here is what "refuse to finish" refuses over.
+    """
+    problems: list[str] = []
+    if len(records) < planned:
+        problems.append(
+            f"{planned} request(s) were planned but only {len(records)} "
+            f"produced a record - the run did not complete its single pass"
+        )
+    for index, rec in enumerate(records, start=1):
+        where = f"request {index} ({rec.get('url', '<no url>')})"
+        for key in ("url", "http", "bytes", "sha256", "utc", "outcome"):
+            if key not in rec or rec[key] is None:
+                problems.append(f"{where} is missing the `{key}` field")
+        if problems and problems[-1].startswith(where):
+            continue
+        if not UTC_RE.match(rec["utc"]):
+            problems.append(f"{where}: utc `{rec['utc']}` is not an ISO-8601 Z instant")
+        outcome = rec["outcome"]
+        if outcome in BODY_BEARING:
+            if not rec["bytes"].isdigit():
+                problems.append(
+                    f"{where}: outcome `{outcome}` carries a body, but bytes "
+                    f"is `{rec['bytes']}`"
+                )
+            if not SHA256_RE.match(rec["sha256"]):
+                problems.append(
+                    f"{where}: outcome `{outcome}` carries a body, but sha256 "
+                    f"is `{rec['sha256']}` - a capture without its hash cannot "
+                    f"prove the committed file is what arrived (runbook s4)"
+                )
+        elif outcome in CONSUMED:
+            if rec["bytes"] != "-" or rec["sha256"] != "-":
+                problems.append(
+                    f"{where}: outcome `{outcome}` was consumed by the typed "
+                    f"classifier and must record bytes=- sha256=-"
+                )
+        elif outcome == "transport":
+            if rec["http"] != "000":
+                problems.append(f"{where}: transport failures record http=000")
+        else:
+            problems.append(f"{where}: unknown outcome `{outcome}`")
+    return problems
+
+
+def format_finish_refusal(problems: list[str]) -> str:
+    lines = "\n  ".join(problems)
+    return (
+        "refusing to finish: the capture log is missing required fields "
+        "(runbook s4 - URL, HTTP status, byte count, SHA-256 and UTC per "
+        f"completed request):\n  {lines}"
+    )
+
+
+# --------------------------------------------------------------------------
+# Shared refusals: the gate, consent, digests. Checked in this order.
+# --------------------------------------------------------------------------
+
+
+def check_gate(targets: list[str]) -> bool:
+    """Refuse a real-endpoint run in an armed environment (fail closed).
+
+    Loopback-only runs proceed with the gate armed - the runtime gate admits
+    loopback IP literals, which is the sanctioned test path. Returns whether
+    the environment is armed (for the log header)."""
+    value = os.environ.get(ENV_VAR)
+    armed = value is not None and value != "0"
+    if armed and any(not is_loopback_url(t) for t in targets):
+        fail(
+            f"{ENV_VAR}={value!r} is set: this environment enforces the "
+            f"no-real-anchor-network policy (docs/testing/anchor-ci-policy.md, "
+            f"enforced by scripts/ci-lanes.sh anchor-net-policy), and this run "
+            f"names non-loopback endpoints. Refusing before any request. Run "
+            f"the smoke from a shell that does not set the variable (or sets "
+            f"it to 0) - never by weakening a gate or a workflow (runbook s6)."
+        )
+    return armed
+
+
+def check_consent(consent: str | None) -> str:
+    if consent is None or not consent.strip():
+        fail(
+            "no --consent given: runbook s1 requires express, in-the-moment "
+            "maintainer consent naming the action, the destinations and the "
+            "account, recorded for THIS run before any request leaves the "
+            "machine. A task list, the runbook, or a previous authorisation "
+            "is not consent for a new run. Pass the recorded sentence "
+            'verbatim: --consent "..."'
+        )
+    return consent
+
+
+def parse_digest_args(pairs: list[str]) -> dict[str, bytes]:
+    """--digest LABEL=HEX, refused unless HEX decodes to exactly 32 bytes.
+
+    The 32-byte check runs BEFORE any request (runbook s4): the bootstrap
+    once submitted an EMPTY body - a broken hex step - and the calendars
+    answered 200. The driver repeats the check independently."""
+    digests: dict[str, bytes] = {}
+    for pair in pairs:
+        label, sep, hexpart = pair.partition("=")
+        if not sep or not label:
+            fail(f"--digest takes LABEL=HEX, got {pair!r}")
+        try:
+            raw = bytes.fromhex(hexpart.strip())
+        except ValueError as error:
+            fail(f"--digest {label}: not hex ({error})")
+        if len(raw) != 32:
+            fail(
+                f"--digest {label}: the digest must be exactly 32 bytes, got "
+                f"{len(raw)}; refusing before any request (runbook s4 - an "
+                f"empty or short body can be stamped with a 200 and look "
+                f"successful)"
+            )
+        digests[label] = raw
+    return digests
+
+
+def campaign_root() -> Path:
+    """testdata/anchors/, or the selftest's relocation (file placement only:
+    the override changes nothing about consent, spacing or the gate)."""
+    override = os.environ.get(CAMPAIGN_ROOT_ENV)
+    return Path(override).resolve() if override else ANCHORS_ROOT
+
+
+def event_to_record(
+    prefix: dict[str, str], event: dict[str, str]
+) -> tuple[dict[str, str], bytes | None]:
+    """Fold one driver event into a log record; return the surfaced body
+    bytes (hashed here, from the driver's hex, before any file is written)."""
+    outcome = event.get("outcome", "driver-gave-no-outcome")
+    record = dict(prefix)
+    record["http"] = event.get("http", "-")
+    body: bytes | None = None
+    if "body_hex" in event:
+        body = bytes.fromhex(event["body_hex"])
+        record["bytes"] = str(len(body))
+        record["sha256"] = sha256_hex(body)
+    elif outcome == "transport":
+        record["bytes"] = "0"
+        record["sha256"] = ""
+    else:
+        record["bytes"] = "-"
+        record["sha256"] = "-"
+    record["utc"] = utc_iso(int(event.get("utc_unix", "0")))
+    record["outcome"] = outcome
+    if "detail_hex" in event:
+        detail = bytes.fromhex(event["detail_hex"]).decode("utf-8", "replace")
+        record["detail"] = '"' + detail.replace("\n", " ").replace('"', "'") + '"'
+    return record, body
+
+
+def refuse_gate_denial(event: dict[str, str], url: str) -> None:
+    if event.get("outcome") == "denied-by-gate":
+        fail(
+            f"the runtime no-real-anchor-network gate refused {url} before any "
+            f"socket - this run is misconfigured, not the endpoint. See "
+            f"docs/testing/anchor-ci-policy.md and scripts/ci-lanes.sh "
+            f"anchor-net-policy; runbook s6."
+        )
+
+
+# --------------------------------------------------------------------------
+# Modes.
+# --------------------------------------------------------------------------
+
+
+def mode_submit(args: argparse.Namespace) -> None:
+    digests = parse_digest_args(args.digest or [])
+    if not digests:
+        fail("submit needs at least one --digest LABEL=HEX")
+    calendars = args.calendar or driver_defaults()["ots-calendar"]
+    armed = check_gate(calendars)
+    consent = check_consent(args.consent)
+    build_driver()
+
+    campaign = Campaign(
+        campaign_root(),
+        args.campaign,
+        "CAPTURE.log",
+        "anchor-smoke capture log - OTS day-1 submits (runbook s3.1 step 1)",
+    )
+    preamble = ["Calendars, read from DEFAULT_OTS_CALENDARS (or overridden):"]
+    preamble += [f"  {c}" for c in calendars]
+    if armed:
+        preamble.append("Gate armed; loopback-only run (sanctioned test path).")
+    campaign.planned = len(digests) * len(calendars)
+    campaign.open_log(consent, preamble)
+
+    for label, digest in digests.items():
+        campaign.note(f"digest_{label}={digest.hex()} bytes=32")
+        for calendar in calendars:
+            campaign.space_before(calendar)
+            rc, parsed, raw = run_driver(
+                ["submit", "--digest-hex", digest.hex(), "--calendar", calendar]
+            )
+            event = parsed.get("event")
+            if event is None:
+                fail(f"the driver produced no event line (exit {rc}):\n{raw}")
+            url = event.get("url", calendar)
+            refuse_gate_denial(event, url)
+            prefix = {
+                "digest": label,
+                "calendar": short_name(calendar),
+                "url": url,
+            }
+            record, body = event_to_record(prefix, event)
+            if "uri" in event:
+                record["uri"] = event["uri"]
+            campaign.record("submit", record)
+            campaign.request_done(url)
+            if body is not None and record["outcome"] == "pending-accepted":
+                campaign.write_body(f"{label}-{short_name(calendar)}.timestamp", body)
+    campaign.finish()
+    print(f"anchor-smoke: submit campaign complete - {campaign.log_path}")
+
+
+def digests_from_capture_log(path: Path) -> dict[str, bytes]:
+    """day-2 self-containedness: read digest_<LABEL>=<hex> from the day-1
+    CAPTURE.log of the campaign being upgraded."""
+    digests: dict[str, bytes] = {}
+    if not path.exists():
+        return digests
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^digest_(\w+)=([0-9a-f]{64}) ", line)
+        if match:
+            digests[match.group(1)] = bytes.fromhex(match.group(2))
+    return digests
+
+
+def mode_upgrade(args: argparse.Namespace) -> None:
+    campaign_dir = Path(args.campaign).resolve()
+    pendings = (
+        [Path(p).resolve() for p in args.pending]
+        if args.pending
+        else sorted(campaign_dir.glob("*.timestamp"))
+    )
+    if not pendings:
+        fail(f"no pending *.timestamp files under {campaign_dir}")
+    digests = parse_digest_args(args.digest or [])
+    if not digests:
+        digests = digests_from_capture_log(campaign_dir / "CAPTURE.log")
+    if not digests:
+        fail(
+            "no digests: pass --digest LABEL=HEX, or point --campaign at a "
+            "directory whose CAPTURE.log carries digest_<LABEL>= lines"
+        )
+    if args.loopback_base and not is_loopback_url(args.loopback_base):
+        fail(
+            f"--loopback-base {args.loopback_base} is not a loopback IP "
+            f"literal: that flag exists for the selftest's stub only, and A42's "
+            f"allowlist governs every real pending URI"
+        )
+
+    # The targets are the pending attestations' own URIs; for the gate check
+    # the conservative answer is "remote" unless a loopback base overrides.
+    targets = [args.loopback_base] if args.loopback_base else ["https://remote.invalid"]
+    armed = check_gate(targets)
+    consent = check_consent(args.consent)
+    build_driver()
+
+    campaign = Campaign(
+        campaign_root(),
+        str(campaign_dir),
+        "upgraded/UPGRADE-CAPTURE.log",
+        "anchor-smoke capture log - OTS day-2 upgrades (runbook s3.1 step 3)",
+    )
+    preamble = [
+        "Upgrade GETs for the pending captures beside this log, via antseal's",
+        "own A14 path (pending_refs -> UpgradeTarget -> poll_upgrade).",
+        "Calendar-behaviour classes preserved verbatim (runbook s3.1):",
+        "pending-42-byte-404 -> not-yet-confirmed (re-pollable),",
+        "hard-9-byte-404 -> not-found (hard), transport -> http=000",
+        "(re-pollable, NEVER promoted to the hard error).",
+    ]
+    if armed:
+        preamble.append("Gate armed; loopback-only run (sanctioned test path).")
+    campaign.planned = len(pendings)
+    campaign.open_log(consent, preamble)
+
+    hard, repollable = [], []
+    for pending in pendings:
+        label = pending.stem.split("-")[0]
+        digest = digests.get(label)
+        if digest is None:
+            fail(f"{pending.name}: no digest for label {label!r}")
+        driver_args = [
+            "upgrade",
+            "--digest-hex",
+            digest.hex(),
+            "--pending",
+            str(pending),
+        ]
+        if args.loopback_base:
+            driver_args += ["--loopback-base", args.loopback_base]
+        # Spacing against the attestation host; conservative: any remote.
+        campaign.space_before(args.loopback_base or "https://remote.invalid")
+        rc, parsed, raw = run_driver(driver_args)
+        event = parsed.get("event")
+        request = parsed.get("request", {})
+        if event is None:
+            fail(f"{pending.name}: the driver produced no event line (exit {rc}):\n{raw}")
+        url = event.get("url", request.get("url", "?"))
+        refuse_gate_denial(event, url)
+        prefix = {
+            "digest": label,
+            "pending": pending.stem,
+            "calendar": short_name(request.get("uri", url)),
+            "url": url,
+        }
+        record, body = event_to_record(prefix, event)
+        campaign.record("upgrade", record)
+        campaign.request_done(url)
+        outcome = record["outcome"]
+        if outcome == "upgraded" and body is not None:
+            campaign.write_body(f"upgraded/{pending.stem}.upgrade", body)
+        elif outcome == "not-found":
+            hard.append(pending.name)
+        elif outcome in ("not-yet-confirmed", "transport", "empty-200"):
+            repollable.append(pending.name)
+    campaign.finish()
+    if hard:
+        campaign_note = ", ".join(hard)
+        print(
+            f"anchor-smoke: HARD not-found for: {campaign_note} - the calendar "
+            f"does not know this commitment; re-polling cannot help (A14)."
+        )
+    if repollable:
+        print(
+            f"anchor-smoke: still re-pollable: {', '.join(repollable)} - wait on "
+            f"the calendar's cadence and re-run under fresh s1 consent "
+            f"(runbook s3.1 step 2: do not plan on a fixed interval)."
+        )
+    print(f"anchor-smoke: upgrade campaign complete - {campaign.log_path}")
+
+
+def mode_tsa(args: argparse.Namespace) -> None:
+    digests = parse_digest_args(args.digest or [])
+    if len(digests) != 1:
+        fail("tsa takes exactly one --digest LABEL=HEX")
+    tsas = args.tsa or driver_defaults()["tsa"]
+    armed = check_gate(tsas)
+    consent = check_consent(args.consent)
+    build_driver()
+
+    campaign = Campaign(
+        campaign_root(),
+        args.campaign,
+        "TSA-CAPTURE.log",
+        "anchor-smoke capture log - TSA tokens against the pinned store (runbook s3.2)",
+    )
+    preamble = [
+        "RFC 3161 exchanges via antseal's own A10 path (fresh CSPRNG nonce,",
+        "build_timestamp_req, capture_one), each reply fully verified against",
+        "TsaRootStore::pinned() at the token's own genTime (A32). Respect the",
+        "spacing caveats: Sectigo ~15 s published, SwissSign ~10/day published",
+        "(neither measured here - runbook s2).",
+    ]
+    if armed:
+        preamble.append("Gate armed; loopback-only run (sanctioned test path).")
+    ((label, digest),) = digests.items()
+    campaign.planned = len(tsas)
+    campaign.open_log(consent, preamble)
+
+    for tsa_url in tsas:
+        campaign.space_before(tsa_url)
+        rc, parsed, raw = run_driver(
+            ["tsa", "--digest-hex", digest.hex(), "--url", tsa_url]
+        )
+        event = parsed.get("event")
+        request = parsed.get("request")
+        if event is None or request is None:
+            fail(f"the driver produced no event/request lines (exit {rc}):\n{raw}")
+        refuse_gate_denial(event, tsa_url)
+        name = short_name(tsa_url)
+        req_bytes = bytes.fromhex(request.get("req_body_hex", ""))
+        prefix = {"digest": label, "tsa": name, "url": tsa_url}
+        record, body = event_to_record(prefix, event)
+        record["req_bytes"] = str(len(req_bytes))
+        record["req_sha256"] = sha256_hex(req_bytes)
+        for key in ("state", "root_store_version", "gen_time_unix"):
+            if key in event:
+                record[key] = event[key]
+        if "root_label_hex" in event:
+            record["root_label"] = bytes.fromhex(event["root_label_hex"]).decode(
+                "utf-8", "replace"
+            )
+        campaign.record("tsa", record)
+        campaign.request_done(tsa_url)
+        campaign.write_body(f"{label}-{name}-req.tsq", req_bytes)
+        if body is not None and record["outcome"] == "verified":
+            campaign.write_body(f"{label}-{name}-resp.tsr", body)
+    campaign.finish()
+    print(f"anchor-smoke: tsa campaign complete - {campaign.log_path}")
+
+
+def mode_mustagree(args: argparse.Namespace) -> None:
+    rounds: list[tuple[str, list[str]]] = []
+    defaults: dict[str, list[str]] | None = None
+    targets: list[str] = []
+
+    esplora_pair = None
+    if not args.skip_esplora:
+        if args.first and args.second:
+            esplora_pair = [args.first, args.second]
+        else:
+            defaults = defaults or driver_defaults()
+            esplora_pair = defaults["esplora"]
+        if args.height is None:
+            fail("must-agree needs --height for the esplora round (or --skip-esplora)")
+        targets += esplora_pair
+
+    rpc_pair = None
+    if not args.skip_arbitrum:
+        if args.rpc_first and args.rpc_second:
+            rpc_pair = [args.rpc_first, args.rpc_second]
+        else:
+            defaults = defaults or driver_defaults()
+            rpc_pair = defaults[f"{args.network}-rpc"]
+        if not args.tx:
+            fail("must-agree needs --tx <32-byte hex> for the Arbitrum round (or --skip-arbitrum)")
+        targets += rpc_pair
+
+    if not targets:
+        fail("both rounds skipped - nothing to do")
+    armed = check_gate(targets)
+    consent = check_consent(args.consent)
+    build_driver()
+
+    campaign = Campaign(
+        campaign_root(),
+        args.campaign,
+        "MUSTAGREE-CAPTURE.log",
+        "anchor-smoke capture log - live must-agree rounds (runbook s3.3)",
+    )
+    preamble = [
+        "One round per pair, agreement over the EXTRACTED tuple (D55 s3: the",
+        "two ruled-in RPCs return different JSON for identical values, so",
+        "byte comparison would report a disagreement between honest",
+        "endpoints). Per-request wire capture is structurally unavailable",
+        "through fetch_and_agree - the round outcome and the agreed tuple's",
+        "hash are the record.",
+    ]
+    if armed:
+        preamble.append("Gate armed; loopback-only run (sanctioned test path).")
+    campaign.planned = (1 if esplora_pair else 0) + (1 if rpc_pair else 0)
+    campaign.open_log(consent, preamble)
+
+    if esplora_pair:
+        campaign.space_before(esplora_pair[0])
+        rc, parsed, raw = run_driver(
+            [
+                "esplora",
+                "--height",
+                str(args.height),
+                "--first",
+                esplora_pair[0],
+                "--second",
+                esplora_pair[1],
+            ]
+        )
+        event = parsed.get("event")
+        if event is None:
+            fail(f"the driver produced no esplora event (exit {rc}):\n{raw}")
+        record = {
+            "kind": "esplora",
+            "height": str(args.height),
+            "url": f"{esplora_pair[0]},{esplora_pair[1]}",
+            "http": "-",
+        }
+        outcome = event.get("outcome", "driver-gave-no-outcome")
+        if outcome == "agreed-header" and "header_hex" in event:
+            header = bytes.fromhex(event["header_hex"])
+            record["bytes"] = str(len(header))
+            record["sha256"] = sha256_hex(header)
+            campaign_file = f"esplora-agreed-header-{args.height}.txt"
+        else:
+            record["bytes"] = "-"
+            record["sha256"] = "-"
+            campaign_file = None
+        record["utc"] = utc_iso(int(event.get("utc_unix", "0")))
+        record["outcome"] = outcome
+        if "detail_hex" in event:
+            detail = bytes.fromhex(event["detail_hex"]).decode("utf-8", "replace")
+            record["detail"] = '"' + detail.replace("\n", " ").replace('"', "'") + '"'
+        campaign.record("mustagree", record)
+        campaign.request_done(esplora_pair[0])
+        if campaign_file:
+            campaign.write_body(campaign_file, (event["header_hex"] + "\n").encode())
+
+    if rpc_pair:
+        campaign.space_before(rpc_pair[0])
+        rc, parsed, raw = run_driver(
+            [
+                "arbitrum",
+                "--network",
+                args.network,
+                "--tx-hex",
+                args.tx,
+                "--first",
+                rpc_pair[0],
+                "--second",
+                rpc_pair[1],
+            ]
+        )
+        event = parsed.get("event")
+        if event is None:
+            fail(f"the driver produced no arbitrum event (exit {rc}):\n{raw}")
+        record = {
+            "kind": "arbitrum",
+            "network": args.network,
+            "tx": args.tx,
+            "url": f"{rpc_pair[0]},{rpc_pair[1]}",
+            "http": "-",
+        }
+        outcome = event.get("outcome", "driver-gave-no-outcome")
+        if outcome == "agreed":
+            tuple_line = (
+                f"status={event.get('status')} "
+                f"block_number={event.get('block_number')} "
+                f"block_hash={event.get('block_hash_hex')}"
+            )
+            record["bytes"] = str(len(tuple_line.encode()))
+            record["sha256"] = sha256_hex(tuple_line.encode())
+            record["tuple"] = tuple_line.replace(" ", ",")
+        else:
+            record["bytes"] = "-"
+            record["sha256"] = "-"
+        record["utc"] = utc_iso(int(event.get("utc_unix", "0")))
+        record["outcome"] = outcome
+        if "detail_hex" in event:
+            detail = bytes.fromhex(event["detail_hex"]).decode("utf-8", "replace")
+            record["detail"] = '"' + detail.replace("\n", " ").replace('"', "'") + '"'
+        campaign.record("mustagree", record)
+        campaign.request_done(rpc_pair[0])
+    campaign.finish()
+    print(f"anchor-smoke: must-agree campaign complete - {campaign.log_path}")
+
+
+# --------------------------------------------------------------------------
+# Selftest: loopback mocks, the same code paths, four red arms by message.
+# --------------------------------------------------------------------------
+
+
+class MockHandler(BaseHTTPRequestHandler):
+    server_version = "anchor-smoke-mock"
+
+    def _serve(self, method: str) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        self.server.seen.append(
+            {
+                "method": method,
+                "path": self.path,
+                "body": body,
+                "accept": self.headers.get("Accept"),
+                "content_type": self.headers.get("Content-Type"),
+            }
+        )
+        for rule in self.server.script:
+            if rule["method"] == method and re.match(rule["path_re"], self.path):
+                reply = rule["body"]
+                if callable(reply):
+                    reply = reply(body)
+                self.send_response(rule["status"])
+                self.send_header("Content-Type", rule.get("ctype", "application/octet-stream"))
+                self.send_header("Content-Length", str(len(reply)))
+                self.end_headers()
+                self.wfile.write(reply)
+                return
+        self.send_response(500)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server API
+        self._serve("GET")
+
+    def do_POST(self) -> None:  # noqa: N802 - http.server API
+        self._serve("POST")
+
+    def log_message(self, *_args) -> None:  # silence per-request stderr noise
+        pass
+
+
+def start_mock(script: list[dict]) -> tuple[ThreadingHTTPServer, str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
+    server.script = script
+    server.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{server.server_port}"
+
+
+def closed_loopback_port() -> int:
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+def self_invoke(
+    mode_args: list[str], env_overrides: dict[str, str | None]
+) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env.pop(ENV_VAR, None)
+    for key, value in env_overrides.items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    return subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), *mode_args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+        check=False,
+    )
+
+
+def mode_selftest(_args: argparse.Namespace) -> None:
+    failures: list[str] = []
+    passes = 0
+
+    def arm(name: str, ok: bool, evidence: str) -> None:
+        nonlocal passes
+        verdict = "PASS" if ok else "FAIL"
+        print(f"selftest: {name:58s} {verdict} - {evidence}")
+        if ok:
+            passes += 1
+        else:
+            failures.append(name)
+
+    build_driver()
+    tmp = Path(tempfile.mkdtemp(prefix="anchor-smoke-selftest-"))
+    root = tmp / "campaigns"
+    root.mkdir()
+    plumbing = {CAMPAIGN_ROOT_ENV: str(root)}
+
+    # Committed fixtures, read-only, all public material.
+    wave16 = ANCHORS_ROOT / "A25-wave16-cycle"
+    digest_a = digests_from_capture_log(wave16 / "CAPTURE.log").get("A")
+    if digest_a is None:
+        fail("selftest cannot read digest_A from A25-wave16-cycle/CAPTURE.log")
+    pending_fixture = (wave16 / "A-apool.timestamp").read_bytes()
+    upgrade_fixture = (
+        ANCHORS_ROOT / "A25-bootstrap" / "upgraded" / "A-alice.upgrade"
+    ).read_bytes()
+    tsa_fixture = (ANCHORS_ROOT / "A25-bootstrap" / "D60-tsa-freetsa-resp.tsr").read_bytes()
+    headers_dir = ANCHORS_ROOT / "A25-upgrade-headers"
+    height_body = (headers_dir / "esplora-blockstream-height-960767.txt").read_bytes()
+    header_body = (headers_dir / "esplora-blockstream-header-960767.txt").read_bytes()
+    live = ANCHORS_ROOT / "A16-A17-live"
+    receipt_first = (live / "arbone-arb1-receipt.json").read_bytes()
+    receipt_second = (live / "arbone-drpc-receipt.json").read_bytes()
+    tx_hash = json.loads(receipt_first)["result"]["transactionHash"]
+
+    # G1: submit through A13 against a loopback mock serving a committed
+    # pending body. Proves the request the product builds: POST /digest,
+    # exactly the 32 raw digest bytes, the OTS Accept header.
+    mock, base = start_mock(
+        [{"method": "POST", "path_re": r"^/digest$", "status": 200, "body": pending_fixture}]
+    )
+    g1 = self_invoke(
+        [
+            "submit",
+            "--campaign",
+            str(root / "g1"),
+            "--consent",
+            "loopback selftest - no external action; no real endpoint contacted",
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--calendar",
+            base,
+        ],
+        plumbing,
+    )
+    log_text = (root / "g1" / "CAPTURE.log").read_text() if g1.returncode == 0 else g1.stderr
+    req = mock.seen[0] if mock.seen else {}
+    arm(
+        "G1 submit: A13 path, 32-byte POST /digest, pending accepted",
+        g1.returncode == 0
+        and "outcome=pending-accepted" in log_text
+        and f"sha256={sha256_hex(pending_fixture)}" in log_text
+        and len(mock.seen) == 1
+        and req.get("body") == digest_a
+        and req.get("path") == "/digest"
+        and req.get("accept") == "application/vnd.opentimestamps.v1"
+        and (root / "g1" / "A-loopback.timestamp").read_bytes() == pending_fixture,
+        f"mock saw {len(mock.seen)} request(s), body={len(req.get('body', b''))}B, "
+        f"accept={req.get('accept')}",
+    )
+    mock.shutdown()
+
+    # G2: upgrade through A14 against a mock serving a committed upgraded
+    # body. The pending input is a copy of the committed capture; the driver
+    # extracts URI + commitment through assemble/pending_refs and polls
+    # GET /timestamp/<commitment-hex>.
+    g2_dir = root / "g2"
+    g2_dir.mkdir(parents=True)
+    shutil.copyfile(wave16 / "A-apool.timestamp", g2_dir / "A-apool.timestamp")
+    mock, base = start_mock(
+        [{"method": "GET", "path_re": r"^/timestamp/[0-9a-f]+$", "status": 200, "body": upgrade_fixture}]
+    )
+    g2 = self_invoke(
+        [
+            "upgrade",
+            "--campaign",
+            str(g2_dir),
+            "--consent",
+            "loopback selftest - no external action",
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--loopback-base",
+            base,
+        ],
+        plumbing,
+    )
+    g2_log = (
+        (g2_dir / "upgraded" / "UPGRADE-CAPTURE.log").read_text()
+        if g2.returncode == 0
+        else g2.stderr
+    )
+    path_seen = mock.seen[0]["path"] if mock.seen else "?"
+    arm(
+        "G2 upgrade: A14 path, GET /timestamp/<hex>, 200 body stored",
+        g2.returncode == 0
+        and "outcome=upgraded" in g2_log
+        and f"sha256={sha256_hex(upgrade_fixture)}" in g2_log
+        and re.match(r"^/timestamp/[0-9a-f]{40,}$", path_seen) is not None
+        and mock.seen[0].get("accept") == "application/vnd.opentimestamps.v1"
+        and (g2_dir / "upgraded" / "A-apool.upgrade").read_bytes() == upgrade_fixture,
+        f"polled {path_seen[:30]}..., stored upgraded/A-apool.upgrade",
+    )
+    mock.shutdown()
+
+    # G3 + G4: the two classified 404s stay distinct classes.
+    outcomes = {}
+    for name, body_404 in (
+        ("g3", b"Pending confirmation in Bitcoin blockchain"),
+        ("g4", b"Not found"),
+    ):
+        gd = root / name
+        gd.mkdir(parents=True)
+        shutil.copyfile(wave16 / "A-apool.timestamp", gd / "A-apool.timestamp")
+        mock, base = start_mock(
+            [{"method": "GET", "path_re": r"^/timestamp/", "status": 404, "body": body_404}]
+        )
+        run = self_invoke(
+            [
+                "upgrade",
+                "--campaign",
+                str(gd),
+                "--consent",
+                "loopback selftest - no external action",
+                "--digest",
+                f"A={digest_a.hex()}",
+                "--loopback-base",
+                base,
+            ],
+            plumbing,
+        )
+        text = (
+            (gd / "upgraded" / "UPGRADE-CAPTURE.log").read_text()
+            if run.returncode == 0
+            else run.stderr
+        )
+        outcomes[name] = (run.returncode, text)
+        mock.shutdown()
+    arm(
+        "G3 upgrade class: 42-byte 404 -> not-yet-confirmed (re-pollable)",
+        outcomes["g3"][0] == 0
+        and "outcome=not-yet-confirmed" in outcomes["g3"][1]
+        and "http=404" in outcomes["g3"][1]
+        and "bytes=- sha256=-" in outcomes["g3"][1],
+        "log records the pending class with bytes=- sha256=-",
+    )
+    arm(
+        "G4 upgrade class: 9-byte 404 -> not-found (hard, distinct)",
+        outcomes["g4"][0] == 0
+        and "outcome=not-found" in outcomes["g4"][1]
+        and "outcome=not-yet-confirmed" not in outcomes["g4"][1],
+        "the hard class is recorded and is not the pending class",
+    )
+
+    # G5: transport failure (closed loopback port) stays its own class and
+    # is never promoted to the hard error.
+    g5_dir = root / "g5"
+    g5_dir.mkdir(parents=True)
+    shutil.copyfile(wave16 / "A-apool.timestamp", g5_dir / "A-apool.timestamp")
+    g5 = self_invoke(
+        [
+            "upgrade",
+            "--campaign",
+            str(g5_dir),
+            "--consent",
+            "loopback selftest - no external action",
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--loopback-base",
+            f"http://127.0.0.1:{closed_loopback_port()}",
+        ],
+        plumbing,
+    )
+    g5_log = (
+        (g5_dir / "upgraded" / "UPGRADE-CAPTURE.log").read_text()
+        if (g5_dir / "upgraded" / "UPGRADE-CAPTURE.log").exists()
+        else g5.stderr
+    )
+    arm(
+        "G5 upgrade class: connection refused -> transport 000, never hard",
+        g5.returncode == 0
+        and "outcome=transport" in g5_log
+        and "http=000" in g5_log
+        and "outcome=not-found" not in g5_log
+        and "re-pollable" in g5.stdout,
+        "http=000 recorded re-pollable; not promoted to not-found",
+    )
+
+    # G6: TSA through A10 - request built by build_timestamp_req, POSTed,
+    # reply verified against the pinned store. The canned committed token
+    # cannot match a fresh CSPRNG nonce, so the honest outcome is the
+    # `unverifiable` class; day-2's consented real run is what proves
+    # `verified` end-to-end.
+    mock, base = start_mock(
+        [
+            {
+                "method": "POST",
+                "path_re": r"^/$",
+                "status": 200,
+                "body": tsa_fixture,
+                "ctype": "application/timestamp-reply",
+            }
+        ]
+    )
+    g6 = self_invoke(
+        [
+            "tsa",
+            "--campaign",
+            str(root / "g6"),
+            "--consent",
+            "loopback selftest - no external action",
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--tsa",
+            base,
+        ],
+        plumbing,
+    )
+    g6_log = (root / "g6" / "TSA-CAPTURE.log").read_text() if g6.returncode == 0 else g6.stderr
+    tsq = root / "g6" / "A-loopback-req.tsq"
+    sent = mock.seen[0] if mock.seen else {}
+    arm(
+        "G6 tsa: A10 path, DER request sent, reply verified+classified",
+        g6.returncode == 0
+        and "outcome=unverifiable" in g6_log
+        and len(mock.seen) == 1
+        and sent.get("content_type") == "application/timestamp-query"
+        and tsq.exists()
+        and sha256_hex(sent.get("body", b"")) == sha256_hex(tsq.read_bytes())
+        and f"req_sha256={sha256_hex(sent.get('body', b''))}" in g6_log,
+        f"mock-received request sha == logged req_sha256; class=unverifiable "
+        f"(fresh nonce vs canned token, by design)",
+    )
+    mock.shutdown()
+
+    # G7: esplora must-agree through A16 - both endpoints resolve
+    # height -> hash -> header independently, agreement over the 80 bytes.
+    esplora_script = [
+        {"method": "GET", "path_re": r"^/block-height/960767$", "status": 200, "body": height_body},
+        {"method": "GET", "path_re": r"^/block/[0-9a-f]{64}/header$", "status": 200, "body": header_body},
+    ]
+    mock1, base1 = start_mock(list(esplora_script))
+    mock2, base2 = start_mock(list(esplora_script))
+    g7 = self_invoke(
+        [
+            "must-agree",
+            "--campaign",
+            str(root / "g7"),
+            "--consent",
+            "loopback selftest - no external action",
+            "--height",
+            "960767",
+            "--first",
+            base1,
+            "--second",
+            base2,
+            "--skip-arbitrum",
+        ],
+        plumbing,
+    )
+    g7_log = (
+        (root / "g7" / "MUSTAGREE-CAPTURE.log").read_text()
+        if g7.returncode == 0
+        else g7.stderr
+    )
+    raw_header = bytes.fromhex(header_body.decode().strip())
+    arm(
+        "G7 must-agree esplora: independent 2-step per endpoint, agreed",
+        g7.returncode == 0
+        and "outcome=agreed-header" in g7_log
+        and f"sha256={sha256_hex(raw_header)}" in g7_log
+        and len(mock1.seen) == 2
+        and len(mock2.seen) == 2,
+        f"each mock saw its own height+header requests "
+        f"({len(mock1.seen)}/{len(mock2.seen)}); 80-byte tuple hashed",
+    )
+    mock1.shutdown()
+    mock2.shutdown()
+
+    # G8: Arbitrum must-agree through A17 - chain-id guard per endpoint,
+    # agreement over the EXTRACTED tuple although the two committed replies
+    # are byte-different (D55 s3, demonstrated through antseal's own code).
+    def rpc_reply(fixture: bytes):
+        def reply(request_body: bytes) -> bytes:
+            method = json.loads(request_body or b"{}").get("method", "")
+            if method == "eth_chainId":
+                return b'{"jsonrpc":"2.0","id":1,"result":"0xa4b1"}'
+            return fixture
+
+        return reply
+
+    mock1, base1 = start_mock(
+        [{"method": "POST", "path_re": r"^/$", "status": 200, "body": rpc_reply(receipt_first), "ctype": "application/json"}]
+    )
+    mock2, base2 = start_mock(
+        [{"method": "POST", "path_re": r"^/$", "status": 200, "body": rpc_reply(receipt_second), "ctype": "application/json"}]
+    )
+    g8 = self_invoke(
+        [
+            "must-agree",
+            "--campaign",
+            str(root / "g8"),
+            "--consent",
+            "loopback selftest - no external action",
+            "--skip-esplora",
+            "--network",
+            "arbitrum-one",
+            "--tx",
+            tx_hash.removeprefix("0x"),
+            "--rpc-first",
+            base1,
+            "--rpc-second",
+            base2,
+        ],
+        plumbing,
+    )
+    g8_log = (
+        (root / "g8" / "MUSTAGREE-CAPTURE.log").read_text()
+        if g8.returncode == 0
+        else g8.stderr + g8.stdout
+    )
+    arm(
+        "G8 must-agree arbitrum: byte-different replies, tuple agreed",
+        g8.returncode == 0
+        and "outcome=agreed" in g8_log
+        and receipt_first != receipt_second
+        and len(mock1.seen) >= 2
+        and len(mock2.seen) >= 2,
+        "chain-id guard + receipt per endpoint; agreement over the extracted "
+        "tuple despite byte-different JSON (D55 s3)",
+    )
+    mock1.shutdown()
+    mock2.shutdown()
+
+    # R1: a wrong-size digest is refused BEFORE any request.
+    mock, base = start_mock(
+        [{"method": "POST", "path_re": r"^/digest$", "status": 200, "body": pending_fixture}]
+    )
+    r1 = self_invoke(
+        [
+            "submit",
+            "--campaign",
+            str(root / "r1"),
+            "--consent",
+            "loopback selftest - no external action",
+            "--digest",
+            "A=" + "ab" * 31,
+            "--calendar",
+            base,
+        ],
+        plumbing,
+    )
+    arm(
+        "R1 red arm: 31-byte digest refused before any request",
+        r1.returncode != 0
+        and "must be exactly 32 bytes" in r1.stderr
+        and "refusing before any request" in r1.stderr
+        and len(mock.seen) == 0,
+        f"message: {extract_line(r1.stderr, 'must be exactly 32 bytes')!r}; "
+        f"mock saw {len(mock.seen)} request(s)",
+    )
+    mock.shutdown()
+
+    # R2: the environment gate refusal fires for a non-loopback target. The
+    # named real calendar is never contacted - the refusal precedes any
+    # driver invocation, which is the point being proven.
+    r2 = self_invoke(
+        [
+            "submit",
+            "--campaign",
+            str(root / "r2"),
+            "--consent",
+            "loopback selftest - no external action",
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--calendar",
+            "https://a.pool.opentimestamps.org",
+        ],
+        {**plumbing, ENV_VAR: "1"},
+    )
+    arm(
+        "R2 red arm: ANTSEAL_NO_REAL_ANCHOR_NETWORK=1 refusal fires",
+        r2.returncode != 0
+        and ENV_VAR in r2.stderr
+        and "anchor-net-policy" in r2.stderr
+        and "Refusing before any request" in r2.stderr,
+        f"message: {extract_line(r2.stderr, ENV_VAR)!r}",
+    )
+
+    # R3: a missing --consent refuses.
+    r3 = self_invoke(
+        [
+            "submit",
+            "--campaign",
+            str(root / "r3"),
+            "--digest",
+            f"A={digest_a.hex()}",
+            "--calendar",
+            "http://127.0.0.1:1",
+        ],
+        plumbing,
+    )
+    arm(
+        "R3 red arm: missing --consent refuses (runbook s1)",
+        r3.returncode != 0
+        and "consent" in r3.stderr
+        and "s1" in r3.stderr
+        and "not consent for a new run" in r3.stderr,
+        f"message: {extract_line(r3.stderr, 'consent')!r}",
+    )
+
+    # R4: an incomplete record makes the run refuse to finish - proven
+    # against the same validate_records/format_finish_refusal the modes call.
+    complete = {
+        "url": "http://127.0.0.1:1/digest",
+        "http": "2xx",
+        "bytes": "172",
+        "sha256": sha256_hex(pending_fixture),
+        "utc": utc_iso(int(time.time())),
+        "outcome": "pending-accepted",
+    }
+    incomplete = dict(complete)
+    incomplete["sha256"] = "-"  # a body-bearing outcome without its hash
+    problems = validate_records([complete, incomplete], planned=2)
+    message = format_finish_refusal(problems) if problems else ""
+    arm(
+        "R4 red arm: incomplete log record refuses to finish",
+        bool(problems)
+        and "refusing to finish" in message
+        and "sha256" in message
+        and not validate_records([complete], planned=1),
+        f"message: {message.splitlines()[0]!r}",
+    )
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    total = passes + len(failures)
+    if failures:
+        fail(f"selftest FAILED: {len(failures)}/{total} arm(s) red: {', '.join(failures)}")
+    print(f"anchor-smoke: selftest PASS - {passes}/{total} arms green, no real contact")
+
+
+def extract_line(text: str, needle: str) -> str:
+    for line in text.splitlines():
+        if needle in line:
+            return line.strip()[:160]
+    return "<message line not found>"
+
+
+# --------------------------------------------------------------------------
+# CLI.
+# --------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="anchor-smoke",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="mode", required=True)
+
+    def common(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--consent",
+            help="the recorded in-session maintainer consent for THIS run, "
+            "verbatim (runbook s1); refused when absent or empty",
+        )
+        p.add_argument(
+            "--campaign",
+            required=True,
+            help="campaign directory under testdata/anchors/ (append-only: "
+            "the mode's capture log must not already exist)",
+        )
+
+    p_submit = sub.add_parser(
+        "submit",
+        help="day-1 OTS submits via antseal's A13 client (runbook s3.1 step 1)",
+    )
+    common(p_submit)
+    p_submit.add_argument(
+        "--digest",
+        action="append",
+        metavar="LABEL=HEX",
+        help="a 32-byte digest to stamp (repeatable); throwaway or "
+        "already-public digests only (runbook s1)",
+    )
+    p_submit.add_argument(
+        "--calendar",
+        action="append",
+        help="calendar base URL (repeatable); default: DEFAULT_OTS_CALENDARS "
+        "read from the code",
+    )
+
+    p_upgrade = sub.add_parser(
+        "upgrade",
+        help="day-2 OTS upgrades via antseal's A14 client (runbook s3.1 step 3)",
+    )
+    common(p_upgrade)
+    p_upgrade.add_argument(
+        "--digest",
+        action="append",
+        metavar="LABEL=HEX",
+        help="digest per label; default: parsed from the campaign's day-1 "
+        "CAPTURE.log digest_<LABEL>= lines",
+    )
+    p_upgrade.add_argument(
+        "--pending",
+        action="append",
+        help="pending capture file (repeatable); default: every *.timestamp "
+        "in the campaign directory",
+    )
+    p_upgrade.add_argument(
+        "--loopback-base",
+        help="selftest plumbing: poll this loopback base instead of the "
+        "pending URI (validated to be a loopback IP literal; A42's allowlist "
+        "governs every real URI)",
+    )
+
+    p_tsa = sub.add_parser(
+        "tsa",
+        help="RFC 3161 tokens via antseal's A10 client against the pinned "
+        "store (runbook s3.2)",
+    )
+    common(p_tsa)
+    p_tsa.add_argument("--digest", action="append", metavar="LABEL=HEX")
+    p_tsa.add_argument(
+        "--tsa",
+        action="append",
+        help="TSA URL (repeatable); default: DEFAULT_TSA_URLS read from the code",
+    )
+
+    p_ma = sub.add_parser(
+        "must-agree",
+        help="live esplora + Arbitrum must-agree rounds over extracted "
+        "tuples (runbook s3.3, D55 s3)",
+    )
+    common(p_ma)
+    p_ma.add_argument("--height", type=int, help="esplora round block height")
+    p_ma.add_argument("--first", help="esplora endpoint 1 (default from the code)")
+    p_ma.add_argument("--second", help="esplora endpoint 2 (default from the code)")
+    p_ma.add_argument("--skip-esplora", action="store_true")
+    p_ma.add_argument(
+        "--network",
+        default="arbitrum-one",
+        choices=["arbitrum-one", "arbitrum-sepolia"],
+    )
+    p_ma.add_argument("--tx", help="32-byte transaction hash hex for the RPC round")
+    p_ma.add_argument("--rpc-first", help="RPC endpoint 1 (default from the code)")
+    p_ma.add_argument("--rpc-second", help="RPC endpoint 2 (default from the code)")
+    p_ma.add_argument("--skip-arbitrum", action="store_true")
+
+    sub.add_parser(
+        "selftest",
+        help="loopback-only proof of every mode's code path + the four red "
+        "arms, verified by message; contacts no real endpoint",
+    )
+
+    args = parser.parse_args()
+    {
+        "submit": mode_submit,
+        "upgrade": mode_upgrade,
+        "tsa": mode_tsa,
+        "must-agree": mode_mustagree,
+        "selftest": mode_selftest,
+    }[args.mode](args)
+
+
+if __name__ == "__main__":
+    main()

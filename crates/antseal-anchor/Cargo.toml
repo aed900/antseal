@@ -71,3 +71,20 @@ sha2.workspace = true
 
 [lints]
 workspace = true
+
+# The wire half of `scripts/anchor-smoke` (A25/Q99/V7.1): the smallest
+# surface through which the smoke script drives THIS crate's own clients
+# against real endpoints, so the capture is antseal speaking and not curl
+# (D118 §1.5). `required-features = ["test-util"]` keeps it out of every
+# default build (required CI is default-features-only, D90 Decision 1) and
+# out of every shipped artifact, while riding the EXISTING tier-1 gate
+# feature rather than minting a new one gate-features.sh would demand a
+# tier for. test-util is needed for real: the selftest's loopback upgrade
+# poll uses `UpgradeTarget::loopback_for_tests`, the sanctioned escape
+# hatch from A42's allowlist. This block sits after [lints], not between
+# dependency tables, so no dependency-section scanner reads its lines as
+# part of one.
+[[bin]]
+name = "anchor-smoke-driver"
+path = "src/bin/anchor_smoke_driver.rs"
+required-features = ["test-util"]

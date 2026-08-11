@@ -1045,12 +1045,40 @@ fn the_test_seam_has_no_production_call_sites() {
          artifact with an allowlist of its own choosing (D99 R5, A42)"
     );
 
+    // The one permitted caller outside `testing/`: the anchor-smoke driver
+    // binary (A25), whose `--loopback-base` flag exists so
+    // `scripts/anchor-smoke selftest` can reach a 127.0.0.1 stub — exactly
+    // the seam's documented purpose, and the script validates the flag's
+    // value is a loopback IP literal before passing it. The exemption is
+    // earned, not granted: the file is production-invisible only while the
+    // manifest keeps it `required-features = ["test-util"]` — the same
+    // feature that gates the seam itself — so that gating is asserted here
+    // and the exemption dies with it.
+    let manifest = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+    )
+    .expect("antseal-anchor Cargo.toml is readable");
+    let driver_block = manifest
+        .split("[[bin]]")
+        .find(|block| block.contains("anchor-smoke-driver"))
+        .expect("the anchor-smoke-driver [[bin]] block exists in the manifest");
+    assert!(
+        driver_block.contains(r#"required-features = ["test-util"]"#),
+        "anchor-smoke-driver has lost `required-features = [\"test-util\"]`: without that gate \
+         it is a production target whose `loopback_for_tests` call bypasses A42's allowlist \
+         (A25; D99 R5), and this test's exemption for it no longer holds"
+    );
+
     for (label, dir) in [("antseal-anchor", anchor_src()), ("antseal-cli", cli_src())] {
-        let (named, visited) = production_call_sites(&dir, "loopback_for_tests");
+        let (mut named, visited) = production_call_sites(&dir, "loopback_for_tests");
         assert!(
             visited > 15,
             "{label}: the scan visited only {visited} sources"
         );
+        if label == "antseal-anchor" {
+            // Exempt under the manifest pin asserted above, and only there.
+            named.retain(|path| path != "bin/anchor_smoke_driver.rs");
+        }
         assert!(
             named.is_empty(),
             "{label}: `UpgradeTarget::loopback_for_tests` mints a target over an ARBITRARY base, \
