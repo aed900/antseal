@@ -2,7 +2,7 @@
 //!
 //! Per docs/decisions/D34-seal-pipeline-placement.md this library target is
 //! where the seal pipeline (S12), the journal state machine (S10), resume
-//! (S11), restore (S14) and — at M3 — the reveal flow live, written over
+//! (S11), restore (S14) and the reveal flow (R16) live, written over
 //! injected backend/gate/journal/consent interfaces so the M1 E2E drives
 //! sealing via library APIs, never by spawning the binary. The binary
 //! (`src/main.rs`) is a thin argv→[`main_entry`] driver.

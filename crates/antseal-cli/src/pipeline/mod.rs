@@ -3,8 +3,8 @@
 //!
 //! Per `docs/decisions/D34-seal-pipeline-placement.md` this module tree is
 //! the **orchestration home**: the seal journal and its state machine (S10),
-//! the seal pipeline (S12), resume (S11), restore (S14) and — at M3 — the
-//! reveal flow. It is library code inside `antseal-cli`'s `[lib]` target so
+//! the seal pipeline (S12), resume (S11), restore (S14) and the reveal flow
+//! (R16). It is library code inside `antseal-cli`'s `[lib]` target so
 //! the M1 E2E drives sealing through library APIs (MVP-SPEC.md line 154),
 //! never by spawning the binary.
 //!
@@ -29,6 +29,7 @@ pub mod journal;
 pub mod receipt_sink;
 pub mod restore;
 pub mod resume;
+pub mod reveal;
 pub mod seal;
 pub mod vault_journal;
 
@@ -51,6 +52,10 @@ pub use restore::{
     RestoreEngine, RestoreError, RestoreReport, VerifiedFile, hex32,
 };
 pub use resume::{Pipeline, SealOutcome, canonical_order};
+pub use reveal::{
+    PreparedReveal, RevealEngine, RevealError, RevealOutput, RevealRequest, RevealSummary,
+    UnitSelection,
+};
 pub use seal::{
     AEAD_TAG_LEN, DryRunReport, SealFile, SealRequest, SealResult, projected_ciphertext_len,
 };

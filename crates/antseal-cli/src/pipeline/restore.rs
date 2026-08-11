@@ -939,12 +939,17 @@ enum FetchFailure {
     AddressMismatch,
 }
 
-fn address_matches(bytes: &[u8], expected: &ContentAddress) -> bool {
+/// Does `bytes` hash to `expected` (S4's BLAKE3-256 recompute, D32)?
+/// Shared with the reveal engine (`pub(super)`) — one recompute rule for
+/// every byte either engine accepts.
+pub(super) fn address_matches(bytes: &[u8], expected: &ContentAddress) -> bool {
     compute_storage_address(bytes).is_ok_and(|actual| actual.as_bytes() == expected.as_bytes())
 }
 
 /// A storage failure's class as short text — never bytes, never a key.
-fn storage_detail(err: &StorageError) -> String {
+/// Shared with the reveal engine (`pub(super)`), same reason as
+/// [`address_matches`].
+pub(super) fn storage_detail(err: &StorageError) -> String {
     match err {
         StorageError::NotFound { .. } => "the network has no data at this address".to_owned(),
         other => other.to_string(),
