@@ -2297,6 +2297,33 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
   matters most this wave: it executes the same status gate that now covers
   **27 rows** rather than 22, so the milestone bump is verified remotely and
   not merely locally.
+- **Run `31627097358` on `fbf70e4` (the wave-18 range, `3c8095a..fbf70e4`,
+  3 commits): 19 of 19 GREEN** — `completed success`, job conclusions counted
+  from the API (`{"success": 19}`, zero skipped), started
+  2026-08-12T18:19:56Z, concluded 2026-08-12T18:46:50Z, recorded within the
+  hour of the verdict. **The tenth consecutive all-green remote run**, and
+  the first carrying a **zero-hole M2** — `ACCEPTED_NON_COVERED` is empty
+  again, `V7.1` reads `covered`, and the status gate's 27 rows at or before
+  M2 are all `covered` with no exception standing — together with the whole
+  CLI half of M3 (R19–R22, U27–U30) and the fifth crate, `antseal-wasm`.
+  **What this run proves that the local gate could not**: `core-dep-graph`
+  passed with a new workspace member in the tree, so D18's central claim —
+  that a target-gated `wasm-bindgen` edge in a separate crate leaves the
+  core's reviewed graph untouched **by construction** — is verified remotely
+  and not merely by the lane that asserted it.
+- **What this run does NOT prove, and it is the sharpest such gap yet
+  recorded.** `heavy-features` is **not a CI job** — Q153 ruled it local-only
+  (475 packages against the default 120) and it is additionally
+  diff-triggered — so this green says nothing whatever about the
+  `--features ant-backend` build. That build's `machine_mode` suite is **red
+  right now** and was red at `3c8095a` before wave 18 began: one committed
+  `json-envelopes.txt` cannot hold the two different texts
+  `backend::unavailable`'s two `#[cfg]` arms emit, so whichever build the
+  snapshot documents, the other's machine surface is asserted by nothing.
+  **R82** owns it. This is the exact shape Q43's rule warns about pointing
+  the other way — a lane that has never run on the remote is not evidence —
+  except here the lane runs locally, is red, and the remote's green is
+  silent rather than contradictory.
 - **What this run does NOT prove, stated because the range invites the
   inference**: it says nothing about the anchor endpoints. The A25
   wave-17-cycle submissions (2026-08-11T23:39Z, eight `pending-accepted`
