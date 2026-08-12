@@ -2280,3 +2280,31 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
   20 is deprecated and is being forced onto Node 24 by the runner — an
   upstream-action deprecation to absorb at the next deliberate workflow
   touch, not a failure and not this wave's to chase.
+
+## Remote verdicts — 2026-08-12 (recorded at wave-17 close, ~00:05Z)
+
+- **Run `31546885357` on `3c8095a` (the wave-17 range, `e50bb1a..3c8095a`,
+  10 commits): 19 of 19 GREEN** — `completed success`, job conclusions
+  counted from the API (`{"success": 19}`, zero skipped), started
+  2026-08-11T23:32:52Z, concluded 2026-08-12T00:03:28Z, recorded within the
+  hour of the verdict. **The ninth consecutive all-green remote run**, and
+  the first carrying **M2's passed gate** — `CURRENT_MILESTONE = "M2"` and
+  the register's first-ever `ACCEPTED_NON_COVERED` entry (`V7.1`, ruled by
+  D127) — together with R16's reveal-flow API, R17's verdict aggregation
+  and online overlay, and R18's frozen wording set with its snapshot.
+  The wasm32 lanes ran on the diff selection (the range touches
+  `antseal-core` heavily), and the `traceability` job is the one that
+  matters most this wave: it executes the same status gate that now covers
+  **27 rows** rather than 22, so the milestone bump is verified remotely and
+  not merely locally.
+- **What this run does NOT prove, stated because the range invites the
+  inference**: it says nothing about the anchor endpoints. The A25
+  wave-17-cycle submissions (2026-08-11T23:39Z, eight `pending-accepted`
+  through A13's own client) landed **after** this run's commit and are
+  excluded from CI by policy in any case — no lane may contact a real
+  anchor endpoint (`docs/testing/anchor-ci-policy.md`, Q16), and
+  `check-anchor-net.py` is what asserts that, not this verdict.
+- One non-verdict observation, unchanged from the eighth run:
+  `actions/checkout@v4` still warns that Node.js 20 is deprecated and is
+  being forced onto Node 24 by the runner — an upstream-action deprecation
+  to absorb at the next deliberate workflow touch, not a failure.
