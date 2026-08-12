@@ -16,9 +16,24 @@ pub const fn code(&self) -> &'static str
 ```
 
 returning a **lowercase kebab-case** identifier. The code is the
-machine-readable name of the failure: tamper rows bind to it, `--json`
-output carries it, and third-party verifiers compare against it. The
-`Display` text may be reworded freely; the code may not.
+machine-readable name of the failure: tamper rows bind to it, and
+third-party verifiers compare against it. The `Display` text may be
+reworded freely; the code may not.
+
+**What `--json` actually carries** (corrected 2026-08-12 by D65 — this
+paragraph previously read *"`--json` output carries it"*, which envelope v1
+cannot satisfy): the error object's key set is exactly
+`class`/`exit_code`/`message`, and `namespace_disjointness.rs` machine-forbids
+spelling a code into `class` — the two namespaces have been checked disjoint
+since Q77, and merging them is *"reading the contract wrong"* in this
+document's own words. So a `--json` consumer sees `error.class`, and sees the
+code only inside `message`, which the sentence above declares freely
+rewordable. Whether the error object should gain a key carrying the code is
+D65 §9.3's recorded open question, and it expires at **Q34**: minting it costs
+`ENVELOPE_VERSION` 1→2, which is cheap only until the release ships. The
+envelope's own contract lives in `crates/antseal-cli/src/machine.rs`; this
+document owns the `error` object's identifier semantics and nothing else of
+the envelope (D65 §8.1).
 
 Codes are **variant-level, not type-level**: where a variant carries a kind
 discriminator that a tamper row must distinguish — a salt kind, a signature
@@ -106,8 +121,13 @@ The decode layer is **failure context only**. It is not a field of
 `VerificationReport` and never will be: the report exists only for a
 bundle that passed (D27 §4), and `layer` is already the report's word for
 the evidence layer and the storage-linkage layer (MVP-SPEC.md lines
-118/119). If U30's `--json` failure envelope carries it (D65's call, M3),
-the field is named `decode_layer`.
+118/119). **D65 (2026-08-12) ruled NO for envelope v1** — the error object's
+key set is exactly `class`/`exit_code`/`message` and a fourth key costs
+`ENVELOPE_VERSION`; the layer, where a consumer needs it, is expressible in
+the class partition. The field is not minted. If a future envelope version
+carries one it is still named `decode_layer` and still lives outside
+`VerificationReport`, which D86 makes permanent either way. The same
+resolution is recorded at `tasks/Q.md`'s gate block.
 
 ### Recorded exception: the `fine-root-` family (ratified 2026-07-28)
 

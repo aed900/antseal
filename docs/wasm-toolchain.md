@@ -45,6 +45,18 @@ This is the same technique the **C11** signature probe used to get an
 executed (not compile-level) native↔wasm byte match on the pinned signature
 crates — `docs/research/C11-signature-probe.md` §5.
 
+**[D18, 2026-08-12] Scope of the zero-import property.** It is a property of
+the **test** and **bit-match** modules — the two built here — and it does
+**not** extend to the shipped verifier-page module. That module carries a
+`#[wasm_bindgen]` surface, and one exported function measurably yields **4**
+imports (D18 §1 e), so the page's module necessarily has an import table and
+is governed instead by **D18 §5 R7's allow-list**: the imports must be exactly
+the wasm-bindgen runtime shim set, every name matched against a committed
+pattern. The property changes from *"asserts nothing"* to *"asserts exactly
+this list"*, which is why the two runners here can keep refusing any import
+(`scripts/wasm-test-runner.mjs`, `scripts/wasm-bitmatch.mjs`) without that
+refusal ever reaching the page.
+
 ### What the runner can and cannot observe
 
 `wasm32-unknown-unknown` has **no stdio**: `std` sends stdout to a sink, so
@@ -221,7 +233,12 @@ Both getrandom entries in `Cargo.lock` (0.3.4 and 0.4.3) therefore trace to
 > either way, and D13's "single getrandom-0.4 line" argument still holds via
 > `ml-dsa`/`chacha20poly1305`.
 
-## 4. wasm-pack / wasm-bindgen: deliberately not pinned yet
+## 4. wasm-pack / wasm-bindgen: the M0 no-pin arrangement, and the pins D18 ruled
+
+*(Retitled 2026-08-12 by **D18**. This section was headed **"wasm-pack /
+wasm-bindgen: deliberately not pinned yet"**; that title and the three reasons
+below stay verbatim as the historical record of the M0 arrangement, and the
+dated closing note is what changed.)*
 
 `docs/dependency-policy.md` §5 requires **wasm-pack** and
 **wasm-bindgen-cli** to be exact-pinned *wherever they are installed*, with
@@ -249,6 +266,47 @@ lanes.
 **What the M0 arrangement does NOT commit:** no `crate-type` change to
 `antseal-core`, no `wasm-bindgen` dependency, no `#[wasm_bindgen]` export
 anywhere, no wrapper crate carrying a JS surface. D18 remains entirely free.
+
+**[D18, 2026-08-12] Reason 2 is discharged.** D18 rules the surface location —
+a new workspace member `crates/antseal-wasm`, target-gated `wasm-bindgen`,
+closed export list — so the pin no longer pre-empts anything.
+`wasm-bindgen = "=0.2.126"` (the version `Cargo.lock` already carries via the
+ant-core subtree) and an equal `wasm-bindgen-cli` land **with R22**, in one
+commit; `wasm-pack`'s own version is a maintainer install decision.
+
+That last sentence is now answered, and both tools are installed on the
+maintainer's machine at exact versions (2026-08-12):
+
+```sh
+cargo install wasm-bindgen-cli --locked --version 0.2.126
+cargo install wasm-pack        --locked --version 0.15.0
+```
+
+`0.2.126` and **not** the newest CLI (0.2.127), because D18 rules the CLI pin
+**equal** to the crate pin and the committed lock carries `wasm-bindgen
+0.2.126`; `wasm-pack 0.15.0` is crates.io's `max_stable_version` as queried
+2026-08-12. `docs/dependency-policy.md` §5's *"exact-pinned wherever
+installed"* is therefore satisfied on this machine. Reason 3 is discharged
+with them: the CLI↔crate equality now has both sides, and
+`scripts/wasm-toolchain-audit.sh` moves off `N/A` the moment the **committed**
+half lands — the single-line `[workspace.dependencies]` entry plus the CI/script
+install line, which are one atomic edit because the audit is green only while
+both are absent.
+
+Two build-time hazards stay open and are **R22's first act to measure, not to
+assume** (D18 §7 P5): whether the installed `wasm-pack`'s release path fetches
+its own `wasm-bindgen-cli` when one is not on `PATH`, and whether it runs a
+downloaded `binaryen`/`wasm-opt`. Either would breach D63 §5 R5's *"no network
+access during the build"* fence and §5's pin-wherever-installed rule, and
+`wasm-opt` is named nowhere else in this repository.
+
+**§4's final paragraph above — "What the M0 arrangement does NOT commit" —
+remains true of `antseal-core` PERMANENTLY, not merely until M3.** D18 §5 R10
+makes *"no `crate-type` change, no `wasm-bindgen` dependency, no
+`#[wasm_bindgen]` export in `antseal-core`"* the **ruling** rather than the
+deferral. What is no longer true is only the last clause: D18 is no longer
+free, and the wrapper crate carrying the JS surface is exactly what ships —
+above core, never inside it.
 
 ## 5. ML-DSA / fips204 on wasm32 — the C-facing probe result (P14 accept)
 

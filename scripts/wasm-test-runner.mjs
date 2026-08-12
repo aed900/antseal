@@ -12,8 +12,16 @@
 // Why this and not wasm-bindgen-test: a Rust libtest binary built for
 // wasm32-unknown-unknown has **zero imports** and exports `main` plus
 // `memory`, so `WebAssembly.instantiate` runs it with no JS glue, no
-// wasm-bindgen crate/CLI pin, and no browser — and therefore commits
-// nothing about D18 (wasm-bindgen surface location, due M3). The same
+// wasm-bindgen crate/CLI pin, and no browser.
+//
+// **[R22/D18, 2026-08-12]** That last clause used to read "and therefore
+// commits nothing about D18 (wasm-bindgen surface location, due M3)". D18 is
+// resolved, and it turned this runner's provisional choice into a permanent
+// one: §5 R10 rules that **wasm-bindgen-test is not adopted**, because the
+// `runner` key in .cargo/config.toml is per TARGET rather than per package —
+// replacing it would take `wasm32-core-tests` down with it. The shipped page
+// module lives in `crates/antseal-wasm` and is loaded by its own scripts; it
+// never comes through here. The same
 // technique is the C11 probe's executed native<->wasm bit-match
 // (docs/research/C11-signature-probe.md §5). Full rationale, including what
 // this runner can and cannot observe: docs/wasm-toolchain.md.
@@ -49,7 +57,10 @@
 //      <file>:<line>:<col>:` followed by the payload.
 //
 // Both are read from the exported `memory`, so the module still has ZERO
-// imports (asserted below), no wasm-bindgen is involved, and D18 stays open.
+// imports (asserted below) and no wasm-bindgen is involved. (Until
+// 2026-08-12 this line ended "and D18 stays open"; D18 is resolved, and the
+// zero-import property of THIS module is unaffected — the shipped page module
+// is a different artifact with its own allow-list, D18 §5 R7.)
 //
 // `__heap_base` (exported by wasm-ld) separates live heap allocations from
 // the data section, which holds every test name *and* the panic format

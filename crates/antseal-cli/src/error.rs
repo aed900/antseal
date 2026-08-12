@@ -41,7 +41,27 @@
 //! | 33   | `import-auth-failed` | D47: wrong passphrase or tampered/truncated export file |
 //! | 34   | `import-newer-version` | D47: export written by a newer antseal |
 //! | 35   | `restore-verification-failed` | D48 §6: restore fetched bytes that did not open their manifest commitment; nothing written for those files |
-//! | 40–49 | *reserved* | **bundle**-verification verdict classes, finalized in U30 (M3) — do not mint here |
+//! | 36   | `reveal-inputs-unusable` | D69 §5 group 3: a manifest, vault record, ciphertext or anchor artifact disagrees with the manifest, so no bundle can be built — no argv change and no retry fixes it (reveal's sibling of 35) |
+//! | 40   | `verify-bundle-rejected` | D69 §3 R2 `‡`: the `Err` arm of `verify_bundle` — tamper, forgery, malformation, over-cap and non-canonical bytes are **one** class; the specific `VerifyError::code()` rides in the message, never in the integer |
+//! | 41   | `verify-anchor-refuted` | D69 §3 R2 rung 1: ≥1 anchor slot is `invalid` (MVP-SPEC.md line 134 — *"signature/op check fails"*), offline or by agreed online refutation |
+//! | 42   | `verify-headline-divergence` | D69 §3 R2 rung 2: headline-eligible anchors disagree by strictly more than 48 h (MVP-SPEC.md line 137) |
+//! | 43   | `verify-unanchored` | D69 §3 R2 rung 3: zero headline-eligible anchors — **deliberately nonzero and deliberately distinct**, so a caller who accepts undated bundles opts back in with one line |
+//! | 44–49 | *reserved* | D69 §3 R9: a future storage-linkage rung (only if R6 is ever overturned), a `sig_policy` split, or report-v2 growth — **do not mint here** |
+//!
+//! # The three verdict rungs are not errors (D69 §3 R1's third arm)
+//!
+//! 41, 42 and 43 have **no [`CliError`] variant on purpose**. They are the
+//! fold of a verification that *succeeded* — every commitment opened, a
+//! report exists — so they ride on
+//! [`Outcome::exit_class`](crate::commands::Outcome) and the run still emits
+//! its `--json` **success** envelope. `ok` means *a result document is
+//! present*, never *the exit code is 0*
+//! ([`crate::machine`]). Only 40 is an error: `verify_bundle` returned
+//! `Err`, and D27 §4 means no report exists to carry.
+//!
+//! [`ErrorClass::for_rung`] is the one mapping from D69's rung to this
+//! table; the rung's own name is `antseal-core`'s, so the two spellings are
+//! asserted equal rather than typed twice.
 //!
 //! Codes stay below 125 (126/127/128+n carry shell/signal meanings).
 //! When one run hits several per-file classes, the reported class follows
@@ -69,6 +89,7 @@
 
 use std::path::PathBuf;
 
+use antseal_core::verify::rung::VerdictExitRung;
 use thiserror::Error;
 
 /// Display helper: `" (pid N)"` when the lock holder's pid is known.
@@ -124,13 +145,26 @@ pub enum ConsentOutcome {
 }
 
 impl ConsentOutcome {
+    /// The message, for both of this class's gates.
+    ///
+    /// **The tail names every consequence a declined consent avoided**, and
+    /// it lists four rather than three because this class has two consumers,
+    /// not one: U14's permanence gate (nothing was paid, anchored or
+    /// uploaded) and **U29's irreversible-disclosure gate** (nothing was
+    /// disclosed — no bundle was written, and no whole-file commitment was
+    /// opened). A user who has just declined a `reveal` needs to be told
+    /// about the disclosure, not only about a payment their command was
+    /// never going to make; the seal-only tail was true for them but silent
+    /// on the one thing they were deciding.
     fn describe(self) -> &'static str {
         match self {
-            ConsentOutcome::Declined => "consent declined: nothing was paid, anchored, or uploaded",
+            ConsentOutcome::Declined => {
+                "consent declined: nothing was paid, anchored, uploaded, or disclosed"
+            }
             ConsentOutcome::MachineModeWithoutYes => {
                 "consent required but not obtainable: machine mode (--json, non-TTY stdin, \
                  or --passphrase-fd 0) never prompts — pass --yes to consent in advance; \
-                 nothing was paid, anchored, or uploaded"
+                 nothing was paid, anchored, uploaded, or disclosed"
             }
         }
     }
@@ -248,7 +282,9 @@ impl ResumeSafetyReason {
 }
 
 /// One error class per exit code (the table above). `CliError` variants
-/// map many-to-one onto classes where a decision says so.
+/// map many-to-one onto classes where a decision says so — and D69's three
+/// verdict rungs map onto classes with **no variant at all**, because they
+/// are the outcome of a run that produced a report (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorClass {
     Internal,
@@ -279,11 +315,16 @@ pub enum ErrorClass {
     ImportAuthFailed,
     ImportNewerVersion,
     RestoreVerificationFailed,
+    RevealInputsUnusable,
+    VerifyBundleRejected,
+    VerifyAnchorRefuted,
+    VerifyHeadlineDivergence,
+    VerifyUnanchored,
 }
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 28] = [
+    pub const ALL: [ErrorClass; 33] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -312,6 +353,11 @@ impl ErrorClass {
         ErrorClass::VaultKeyfileMissing,
         ErrorClass::VaultWrapModeUnsupported,
         ErrorClass::RestoreVerificationFailed,
+        ErrorClass::RevealInputsUnusable,
+        ErrorClass::VerifyBundleRejected,
+        ErrorClass::VerifyAnchorRefuted,
+        ErrorClass::VerifyHeadlineDivergence,
+        ErrorClass::VerifyUnanchored,
     ];
 
     /// The documented exit code (the table in the module docs).
@@ -346,6 +392,40 @@ impl ErrorClass {
             ErrorClass::ImportAuthFailed => 33,
             ErrorClass::ImportNewerVersion => 34,
             ErrorClass::RestoreVerificationFailed => 35,
+            // D69 §5: the first free code after restore's band, and
+            // deliberately OUTSIDE the reserved 40–49 — a reveal failure is
+            // not a bundle-verification verdict and the band's own wording
+            // forbids borrowing it.
+            ErrorClass::RevealInputsUnusable => 36,
+            // D69 §3 R2's verdict band. The **numeric** order runs opposite
+            // to the severity rank (41 is the worst rung and 43 the mildest),
+            // which is exactly why the ladder is
+            // `VerdictExitRung`'s `Ord` derive and never a comparison of
+            // these integers.
+            ErrorClass::VerifyBundleRejected => 40,
+            ErrorClass::VerifyAnchorRefuted => 41,
+            ErrorClass::VerifyHeadlineDivergence => 42,
+            ErrorClass::VerifyUnanchored => 43,
+        }
+    }
+
+    /// The class D69's severity rung maps onto — the **one** place a rung
+    /// becomes an integer (D69 §3 R1: *"exactly one code table in the
+    /// product"*, and §3 R7's "the CLI has no second route to a verdict
+    /// code").
+    ///
+    /// Wildcard-free, so a fourth rung in `antseal-core` fails to compile
+    /// here rather than silently taking one of these three codes. The rung's
+    /// stable name is core's, and
+    /// `the_rung_classes_carry_the_cores_own_names` asserts the two
+    /// spellings are equal — the names are not typed twice by hand and
+    /// checked by eye.
+    #[must_use]
+    pub const fn for_rung(rung: VerdictExitRung) -> Self {
+        match rung {
+            VerdictExitRung::AnchorRefuted => ErrorClass::VerifyAnchorRefuted,
+            VerdictExitRung::HeadlineDivergence => ErrorClass::VerifyHeadlineDivergence,
+            VerdictExitRung::Unanchored => ErrorClass::VerifyUnanchored,
         }
     }
 
@@ -382,6 +462,16 @@ impl ErrorClass {
             ErrorClass::ImportAuthFailed => "import-auth-failed",
             ErrorClass::ImportNewerVersion => "import-newer-version",
             ErrorClass::RestoreVerificationFailed => "restore-verification-failed",
+            ErrorClass::RevealInputsUnusable => "reveal-inputs-unusable",
+            // D69 §3 R8. The `verify-` stem is reserved against the
+            // verifier's *rejection-code* namespace by the same rule —
+            // `docs/testing/error-code-contract.md` §2 rules the two
+            // namespaces disjoint, and `tests/namespace_disjointness.rs`
+            // machine-checks it.
+            ErrorClass::VerifyBundleRejected => "verify-bundle-rejected",
+            ErrorClass::VerifyAnchorRefuted => "verify-anchor-refuted",
+            ErrorClass::VerifyHeadlineDivergence => "verify-headline-divergence",
+            ErrorClass::VerifyUnanchored => "verify-unanchored",
         }
     }
 }
@@ -681,6 +771,76 @@ pub enum CliError {
          build supports up to v{supported}): upgrade antseal to import it"
     )]
     ImportNewerVersion { found: u64, supported: u32 },
+
+    /// D68 §3 R7: `reveal`'s output path is occupied, so nothing was
+    /// written.
+    ///
+    /// **Class, not number**: D68 fixes this at D48 §6's `refused-overwrite`
+    /// rung — a local, user-fixable conflict, below evidence problems and
+    /// above transient network ones — and leaves the numeric code to U2,
+    /// which already has that rung at 30. Hence a distinct variant sharing
+    /// [`ErrorClass::RefusedOverwrite`]: the message a bundle owes is not
+    /// restore's (which counts files), and the two failures are the same
+    /// *class* of problem with the same remedy.
+    ///
+    /// The way-forward clause names only what exists: move the file, or
+    /// choose another path. There is deliberately no `--force` and no
+    /// prompt (D48 §5 replaced that convention; a second prompt would
+    /// dilute U29's irreversible-disclosure gate).
+    #[error(
+        "refusing to overwrite the existing {} — a proof bundle is never replaced: you may \
+         already have sent this one, and rebuilding it can produce different bytes as its \
+         anchors are upgraded. Move that file aside, or write this bundle elsewhere with -o \
+         (D68)",
+        .path.display()
+    )]
+    RefusedBundleOverwrite { path: PathBuf },
+
+    /// D69 §5 group 3: something a bundle would have to embed disagrees
+    /// with the manifest, so no bundle can be built.
+    ///
+    /// The reveal-side sibling of [`Self::RestoreVerificationFailed`]:
+    /// bytes that do not hash to their recorded address, ciphertext that
+    /// will not open, a manifest that does not decode or does not belong to
+    /// this work, a vault record that cannot drive a reveal, an anchor
+    /// artifact that cannot be embedded, or a builder refusal. **No argv
+    /// change and no retry fixes any of them**, which is exactly what
+    /// separates this class from `usage` (2) and `network-failure` (23).
+    ///
+    /// `detail` is the underlying typed error's own sentence: ids, states
+    /// and failure classes — never key material, content bytes or receipt
+    /// fields (R16's own discipline, carried through unchanged).
+    #[error(
+        "this work cannot produce a proof bundle: {detail} — no change of arguments and no \
+         retry fixes this; the vault's records and the sealed evidence disagree"
+    )]
+    RevealInputsUnusable { detail: String },
+
+    /// D69 §3 R2's `‡` row: `verify_bundle` returned `Err`, so **no report
+    /// exists** (D27 §4 — *"a report exists only for a bundle that passed the
+    /// evidence pipeline"*) and there is nothing to fold into a rung.
+    ///
+    /// **One class for all 248 rejection codes, deliberately.** Tamper,
+    /// forgery, malformation, over-cap and non-canonical bytes are the same
+    /// answer to a third party's question — *do not rely on this* — and the
+    /// two namespaces are ruled disjoint
+    /// (`docs/testing/error-code-contract.md` §2: an exit class is a
+    /// **process outcome**, a code is a **rejection class**). So the specific
+    /// `VerifyError::code()` rides in `code` and therefore in the message,
+    /// where a human and a tamper-matrix row both read it, and never in the
+    /// integer.
+    ///
+    /// `code` is `&'static str` because it comes from the frozen
+    /// `VerifyError::code()` table, never from bundle bytes; `detail` is the
+    /// typed error's own sentence, which carries stage names, counts and
+    /// ids — never content bytes or key material.
+    #[error("this bundle did not verify: {detail} [{code}]")]
+    VerifyBundleRejected {
+        /// The frozen rejection code from `VerifyError::code()`.
+        code: &'static str,
+        /// The typed error's own sentence.
+        detail: String,
+    },
 }
 
 impl CliError {
@@ -715,7 +875,13 @@ impl CliError {
             CliError::ResumeOverlapNotExact { .. } => ErrorClass::ResumeOverlapNotExact,
             CliError::ResumeFlagMismatch { .. } => ErrorClass::ResumeFlagMismatch,
             CliError::InvalidSealArgument { .. } => ErrorClass::InvalidSealArgument,
-            CliError::RefusedOverwrite { .. } => ErrorClass::RefusedOverwrite,
+            // D68 §3 R7: one rung, two messages — restore counts files, a
+            // reveal names the one path it refused.
+            CliError::RefusedOverwrite { .. } | CliError::RefusedBundleOverwrite { .. } => {
+                ErrorClass::RefusedOverwrite
+            }
+            CliError::RevealInputsUnusable { .. } => ErrorClass::RevealInputsUnusable,
+            CliError::VerifyBundleRejected { .. } => ErrorClass::VerifyBundleRejected,
             CliError::MalformedRestoreRecord { .. } => ErrorClass::MalformedRestoreRecord,
             CliError::RestoreVerificationFailed { .. } => ErrorClass::RestoreVerificationFailed,
             CliError::ExportSelfVerifyFailed => ErrorClass::ExportSelfVerifyFailed,
@@ -784,7 +950,36 @@ mod tests {
             ErrorClass::VaultKeyfileMissing => 25,
             ErrorClass::VaultWrapModeUnsupported => 26,
             ErrorClass::RestoreVerificationFailed => 27,
+            ErrorClass::RevealInputsUnusable => 28,
+            ErrorClass::VerifyBundleRejected => 29,
+            ErrorClass::VerifyAnchorRefuted => 30,
+            ErrorClass::VerifyHeadlineDivergence => 31,
+            ErrorClass::VerifyUnanchored => 32,
         }
+    }
+
+    /// D69 §3 R8's names are `antseal-core`'s, and this crate must not spell
+    /// a second copy of them: the rung → class mapping is asserted against
+    /// [`VerdictExitRung::name`] rather than against a literal, so a rename
+    /// on either side reddens instead of producing two surfaces that
+    /// disagree (R27's parity gate compares CLI and page strings).
+    #[test]
+    fn the_rung_classes_carry_the_cores_own_names() {
+        for rung in super::VerdictExitRung::ALL {
+            assert_eq!(
+                super::ErrorClass::for_rung(rung).name(),
+                rung.name(),
+                "the rung's name and its class's must be one string"
+            );
+        }
+        // The mapping is injective: three rungs, three distinct codes, none
+        // of them 0 and none of them 40 (which is the `Err` arm, not a rung).
+        let codes: std::collections::HashSet<u8> = super::VerdictExitRung::ALL
+            .into_iter()
+            .map(|rung| super::ErrorClass::for_rung(rung).exit_code())
+            .collect();
+        assert_eq!(codes.len(), 3, "one code per rung");
+        assert!(!codes.contains(&40), "40 is the Err arm, never a rung");
     }
 
     #[test]

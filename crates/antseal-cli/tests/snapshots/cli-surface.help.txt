@@ -277,7 +277,7 @@ Options:
           Reveal exactly these units (work-global ordinals as printed by `show`), e.g. --units 3,5
 
   -o <FILE>
-          Write the proof bundle here
+          Write the proof bundle here (default `./antseal-reveal-<work-id>.sealproof`; an existing file is never overwritten)
 
       --passphrase-fd <FD>
           Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment

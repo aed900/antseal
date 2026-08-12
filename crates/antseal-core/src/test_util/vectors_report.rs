@@ -473,6 +473,37 @@ fn check_no_secret_material(case: &CaseArtifacts) -> Result<(), VectorError> {
 /// Returns the value **and** the per-case artifacts, so the behavioural
 /// assertions reuse one build + one verify per case.
 ///
+/// # The options tuple is stated here, and that is the point (D128 §3 R3)
+///
+/// These 21 cases pin `verify_bundle`'s output, so they are a function of the
+/// **options** it ran under as much as of the bundle — exactly as A22's
+/// sibling `anchor` kind already declares `verify_at_unix` in its own
+/// `inputs`, *because a verify option determines its pinned bytes*. This
+/// executor has always built its own [`VerifyOptions`] rather than observing
+/// an ambient default; since D128 it says which one, and why:
+///
+/// - **The layer is suppressed.** Every bundle here is an R6 `Placeholder`
+///   fixture whose recorded addresses were chosen at M0, when nothing
+///   recomputed them (`bundle_fixtures::fixture_address`, and a
+///   `0x5E`/`0x5A`/`0x5C` storage record). Running the layer over them would
+///   pin 21 identical `Evaluated { 0, N, false }` values — permanent,
+///   fixture-only failures asserting something false about the product, where
+///   `not-evaluated` "says nothing in either direction". That is worse
+///   content, not merely more expensive to land.
+/// - **The layer's coverage does not live here.** It lives at
+///   `EXPECTED_CANONICAL_JSON_WITH_LINKAGE` (D105 ruling 4's whole-report
+///   rendering, dual-target through A90's `--lib` route),
+///   `tests/storage_linkage.rs`'s four address modes, and
+///   `verify::storage_linkage`'s unit tests. Suppressing it here costs the
+///   layer no assertion.
+/// - **The tuple is explicit precisely so a future change to
+///   [`VerifyOptions::new`] cannot move a frozen digest by accident.** That is
+///   the whole reason D128 pays no FIXTURE EVENT and designs no freeze class:
+///   the default and what the exhibits pin are two knobs, and only the first
+///   moved.
+///
+/// [`VerifyOptions::new`]: crate::verify::VerifyOptions::new
+///
 /// # Errors
 ///
 /// [`VectorError::Check`] for a case naming an unknown shape, a bundle the
@@ -488,7 +519,9 @@ fn build_expect(inputs: &Inputs) -> Result<(serde_json::Value, Vec<CaseArtifacts
             )
         })?;
         let built = build(&case.spec, &case.selection);
-        let report = verify_bundle(&built.bytes, &VerifyOptions::new()).map_err(|e| {
+        // The stated tuple, not a default — see this function's docs.
+        let options = VerifyOptions::new().without_storage_linkage();
+        let report = verify_bundle(&built.bytes, &options).map_err(|e| {
             check_err(
                 "bundle-verifies",
                 format!(

@@ -136,11 +136,23 @@ NATIVE="${OUT_DIR}/native.transcript.json"
 # stem is not a shorthand — it is a wider pattern: `bitmatch` alone would pull
 # in `docs/decisions/D87-bitmatch-vector-carriage.md`, a docs-only edit that
 # cannot change a single byte of the transcript (negative arm, trap 2).
+#   crates/antseal-wasm/         R22's shipped page module, whose IMPORT TABLE
+#                                this job also checks since D18 §5 R7/R8 — the
+#                                allow-list rides this lane rather than getting
+#                                a required context of its own, because this
+#                                job already builds a wasm32 artifact and
+#                                instantiates it in node. A change to the
+#                                boundary can add an import; that is exactly
+#                                what the check exists to see.
+#   scripts/wasm-imports.mjs     the allow-list itself — the check's own
+#                                inputs, same rule as the two entries above it.
 BITMATCH_TRIGGER_PATHS='testdata/vectors/
 crates/wasm-bitmatch/
 crates/antseal-core/
+crates/antseal-wasm/
 scripts/wasm-bitmatch.sh
 scripts/wasm-bitmatch.mjs
+scripts/wasm-imports.mjs
 Cargo.toml
 Cargo.lock
 .cargo/config.toml
@@ -274,6 +286,8 @@ trigger_self_test() {
   for path in crates/wasm-bitmatch/build.rs \
               crates/wasm-bitmatch/src/bin/bitmatch-emit.rs \
               crates/antseal-core/src/test_util/vectors_anchor.rs \
+              crates/antseal-wasm/src/boundary.rs \
+              scripts/wasm-imports.mjs \
               scripts/wasm-bitmatch.mjs \
               scripts/wasm-bitmatch.sh \
               Cargo.lock .cargo/config.toml rust-toolchain.toml; do
@@ -432,7 +446,37 @@ cmd_lane() {
 
   status=0
   node scripts/wasm-bitmatch.mjs "${WASM}" "${NATIVE}" || status=$?
-  return "${status}"
+  [ "${status}" -eq 0 ] || return "${status}"
+
+  # ── R22's import allow-list, riding this job (D18 §5 R7/R8) ─────────────
+  #
+  # A SECOND artifact, a SEPARATE property, and deliberately NOT a second
+  # required context: CI minutes are a stated constraint and this job already
+  # has the toolchain, the wasm32 target and node. The bit-match above proves
+  # the two builds AGREE; this proves the shipped module cannot ASK THE HOST
+  # for anything R22 says it must not.
+  #
+  # It runs against the artifact `cargo` emits, not the one `wasm-pack` does,
+  # and that is a deliberate scoping: `wasm-pack` and `wasm-bindgen-cli` are
+  # not installed in CI and installing them here would cost the minutes this
+  # rule was told not to spend. The import table is a function of the DECLARED
+  # bindings, not of the post-processing step — measured at R22's landing: the
+  # cargo artifact carries the same three shims in their pre-CLI placeholder
+  # spelling plus the describe/xform pair the CLI resolves away, and
+  # `scripts/wasm-imports.mjs` enumerates both spellings. The wasm-pack
+  # artifact is checked by `scripts/wasm-pack-build.sh`, which is the only
+  # thing that produces one.
+  echo
+  echo "== R22: the shipped module's import table (D18 §5 R7) =="
+  # Self-test FIRST, always — an allow-list that has never refused anything is
+  # a list with a `console.log` in it.
+  node scripts/wasm-imports.mjs --self-test || return 1
+  cargo build -p antseal-wasm --target "${TARGET}" --locked || {
+    echo "::error::the antseal-wasm wasm32 build failed — there is no import table to check."
+    return 1
+  }
+  node scripts/wasm-imports.mjs "target/${TARGET}/debug/antseal_wasm.wasm" || return 1
+  return 0
 }
 
 # `|| rc=$?` on every branch: errexit is suspended for a function invoked on

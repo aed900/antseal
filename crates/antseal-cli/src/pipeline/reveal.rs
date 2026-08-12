@@ -155,6 +155,7 @@ use super::journal::{
 };
 use super::receipt_sink::{encode_receipt, recorded_receipt};
 use super::restore::{BlobOrigin, address_matches, storage_detail};
+use crate::error::CliError;
 use crate::preview::{
     DisclosurePreview, PreviewError, SealedPlaintexts, all_normal_units, disclosure_preview,
 };
@@ -465,6 +466,84 @@ impl From<StoreError> for RevealError {
         match err {
             StoreError::WorkNotFound => RevealError::WorkNotFound,
             other => RevealError::Store(Box::new(other)),
+        }
+    }
+}
+
+/// The exit-code mapping, ruled by
+/// `docs/decisions/D69-verify-exit-code-mapping.md` §5 over all 23 variants
+/// and written here (U28's, because R16 is a library API that maps nothing).
+///
+/// None of these is a *verdict* — every one is a **process outcome** — so
+/// the mapping reuses U2's shipped classes and mints exactly one. The cut is
+/// **what the user does next**:
+///
+/// | group | variants | class |
+/// | --- | --- | --- |
+/// | fix the command | the eight request-shaped refusals | `usage` (2) |
+/// | retry later | the two fetch failures | `network-failure` (23) |
+/// | nothing fixes it | the ten manifest-disagreement cases | `reveal-inputs-unusable` (36) |
+/// | delegated | `AnchorsUnreadable`, `Store` | the shipped `From` impls |
+/// | a bug | `Preview` | `internal` (1) |
+///
+/// Two flags D69 §5 records rather than absorbs silently:
+/// `ReceiptBlockNumberUnknown` is `usage` on the message it carries (*"cannot
+/// be embedded **yet**"* — drop the flag), which U67 measured to be permanent
+/// for a work whose enrichment failed once; and [`BuildError`] covers both
+/// R13's input validation *and* its mandatory self-check failing — the second
+/// is a bug, classed with group 3 because a damaged input is the likelier
+/// cause and the user-facing consequence is identical. If `BuildError` is
+/// ever split, that arm moves to `internal`.
+impl From<RevealError> for CliError {
+    fn from(err: RevealError) -> Self {
+        match err {
+            // ── Group 1: fix the command (D69 §5) ──────────────────────
+            // The shipped precedent, verbatim: `StoreError::WorkNotFound`
+            // already maps to `usage` with this sentence.
+            RevealError::WorkNotFound => CliError::Usage {
+                message: "no work with this id exists in the vault (see `antseal list`)".to_owned(),
+            },
+            RevealError::NotRevealable { .. }
+            | RevealError::EmptySelection
+            | RevealError::UnknownUnitId { .. }
+            | RevealError::RawMirrorNotUnitSelectable { .. }
+            | RevealError::ReceiptUnavailable { .. }
+            | RevealError::ReceiptUnusable { .. }
+            | RevealError::ReceiptBlockNumberUnknown => CliError::Usage {
+                message: err.to_string(),
+            },
+
+            // ── Group 2: retry later (D48 §6's transient floor) ────────
+            RevealError::Unfetchable { .. } | RevealError::ManifestUnfetchable { .. } => {
+                CliError::NetworkFailure {
+                    detail: err.to_string(),
+                }
+            }
+
+            // ── Group 3: nothing the user types fixes it ───────────────
+            RevealError::ManifestUnavailable
+            | RevealError::StorageRecordUnavailable
+            | RevealError::ManifestDecrypt
+            | RevealError::ManifestMalformed { .. }
+            | RevealError::ManifestIdentityMismatch { .. }
+            | RevealError::MalformedRecord { .. }
+            | RevealError::AddressMismatch { .. }
+            | RevealError::UnitDecrypt { .. }
+            | RevealError::AnchorUnembeddable { .. }
+            | RevealError::Build { .. } => CliError::RevealInputsUnusable {
+                detail: err.to_string(),
+            },
+
+            // ── Delegated, so one record has one mapping ───────────────
+            // D100's `NewerRecord` ≠ `Corrupt` distinction is preserved by
+            // going through the journal's own impl rather than restating it.
+            RevealError::AnchorsUnreadable { source } => source.into(),
+            RevealError::Store(inner) => (*inner).into(),
+
+            // ── A documented-unreachable seam: reaching it is a bug ─────
+            RevealError::Preview { .. } => CliError::Internal {
+                detail: err.to_string(),
+            },
         }
     }
 }

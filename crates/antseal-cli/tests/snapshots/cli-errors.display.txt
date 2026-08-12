@@ -3,13 +3,13 @@
 [usage] class=usage code=2
   usage error: --wallet import requires --wallet-key-fd in machine mode
 [not-implemented-m3] class=not-implemented code=3
-  `antseal reveal` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
+  `antseal verify` is not implemented until M3: the command surface is frozen from day one so scripts written today keep parsing, and handlers land milestone by milestone
 [io-error] class=io-error code=4
   I/O error: reading ./notes.txt: denied
 [consent-declined] class=consent-not-obtained code=10
-  consent declined: nothing was paid, anchored, or uploaded
+  consent declined: nothing was paid, anchored, uploaded, or disclosed
 [consent-machine-mode] class=consent-not-obtained code=10
-  consent required but not obtainable: machine mode (--json, non-TTY stdin, or --passphrase-fd 0) never prompts — pass --yes to consent in advance; nothing was paid, anchored, or uploaded
+  consent required but not obtainable: machine mode (--json, non-TTY stdin, or --passphrase-fd 0) never prompts — pass --yes to consent in advance; nothing was paid, anchored, uploaded, or disclosed
 [import-refused-existing-vault] class=consent-not-obtained code=10
   refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)
 [passphrase-no-channel] class=passphrase-unavailable code=11
@@ -78,3 +78,9 @@
   this export file was written by a newer antseal (export format v3; this build supports up to v1): upgrade antseal to import it
 [restore-verification-failed] class=restore-verification-failed code=35
   restore could not verify 1 file(s) against the manifest (the canonical bytes of notes.txt); nothing was written for them — the sealed evidence and the bytes on the network disagree
+[refused-bundle-overwrite] class=refused-overwrite code=30
+  refusing to overwrite the existing antseal-reveal-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.sealproof — a proof bundle is never replaced: you may already have sent this one, and rebuilding it can produce different bytes as its anchors are upgraded. Move that file aside, or write this bundle elsewhere with -o (D68)
+[verify-bundle-rejected] class=verify-bundle-rejected code=40
+  this bundle did not verify: file 0: the disclosed canonical bytes do not open the manifest's canon_commit [manifest-canon-commit-mismatch]
+[reveal-inputs-unusable] class=reveal-inputs-unusable code=36
+  this work cannot produce a proof bundle: unit 3: the bytes served do not hash to the address the manifest records — no change of arguments and no retry fixes this; the vault's records and the sealed evidence disagree

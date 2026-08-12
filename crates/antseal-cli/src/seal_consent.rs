@@ -261,48 +261,69 @@ pub trait ConsentPrompt {
     fn ask(&mut self) -> Result<bool, CliError>;
 }
 
-/// The real prompt: `/dev/tty`, never stdin and never stdout.
+/// The permanence gate's question (U14), asked verbatim.
+pub const PERMANENCE_QUESTION: &str = "Proceed with this permanent upload? [y/N] ";
+
+/// Ask one yes/no consent question on `/dev/tty` — never stdin, never
+/// stdout.
 ///
-/// Reached only when [`crate::machine::machine_mode_for`] already said
-/// interactive (D51 forbids `/dev/tty` as a *detection* mechanism; using
-/// it as the read/write device once stdin-isatty has spoken is the same
-/// discipline U7's passphrase prompt follows).
+/// **One implementation, every consent-class prompt (U29).** The device
+/// handling and the answer rule are the same wherever the product asks for
+/// consent, and the answer rule is the part that must never drift:
+/// affirmative is opt-in and explicit, so EOF, an empty line and anything
+/// unrecognised all mean **no**. The default on an irreversible step is
+/// never yes. Only the question differs — U14 asks
+/// [`PERMANENCE_QUESTION`], U29's disclosure gate asks
+/// [`DISCLOSURE_QUESTION`] — so the question is the parameter and the
+/// mechanism is not.
+///
+/// Reached only when [`crate::machine::machine_mode_for`] has already said
+/// *interactive*: D51 forbids `/dev/tty` as a **detection** mechanism, and
+/// using it as the read/write device once stdin-isatty has spoken is the
+/// discipline U7's passphrase prompt follows too.
+///
+/// # Errors
+///
+/// [`CliError::Io`] when the *channel* fails — never for a plain "no",
+/// which is `Ok(false)`.
+///
+/// [`DISCLOSURE_QUESTION`]: crate::reveal_consent::DISCLOSURE_QUESTION
+pub fn ask_on_tty(question: &str) -> Result<bool, CliError> {
+    use std::io::BufRead as _;
+
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|source| CliError::Io {
+            context: "opening /dev/tty to ask for consent".to_owned(),
+            source,
+        })?;
+    write!(tty, "{question}").map_err(|source| CliError::Io {
+        context: "writing the consent prompt".to_owned(),
+        source,
+    })?;
+    tty.flush().map_err(|source| CliError::Io {
+        context: "writing the consent prompt".to_owned(),
+        source,
+    })?;
+
+    let mut answer = String::new();
+    std::io::BufReader::new(tty)
+        .read_line(&mut answer)
+        .map_err(|source| CliError::Io {
+            context: "reading the consent answer".to_owned(),
+            source,
+        })?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
+}
+
+/// The permanence gate's real prompt: [`ask_on_tty`] with U14's question.
 pub struct TtyConsentPrompt;
 
 impl ConsentPrompt for TtyConsentPrompt {
     fn ask(&mut self) -> Result<bool, CliError> {
-        use std::io::BufRead as _;
-
-        let mut tty = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-            .map_err(|source| CliError::Io {
-                context: "opening /dev/tty to ask for permanence consent".to_owned(),
-                source,
-            })?;
-        write!(tty, "Proceed with this permanent upload? [y/N] ").map_err(|source| {
-            CliError::Io {
-                context: "writing the consent prompt".to_owned(),
-                source,
-            }
-        })?;
-        tty.flush().map_err(|source| CliError::Io {
-            context: "writing the consent prompt".to_owned(),
-            source,
-        })?;
-
-        let mut answer = String::new();
-        std::io::BufReader::new(tty)
-            .read_line(&mut answer)
-            .map_err(|source| CliError::Io {
-                context: "reading the consent answer".to_owned(),
-                source,
-            })?;
-        // Affirmative is opt-in and explicit: EOF, an empty line, and
-        // anything unrecognised all mean no. The default on the one
-        // irreversible step is never yes.
-        Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
+        ask_on_tty(PERMANENCE_QUESTION)
     }
 }
 

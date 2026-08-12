@@ -38,9 +38,17 @@
 //! # What this crate does NOT commit
 //!
 //! No wasm-bindgen anywhere: the wasm entry points are a raw C ABI over two
-//! integers, and the module has zero imports. Decision **D18**
-//! (feature-gated wasm-bindgen surface inside `antseal-core` vs a thin
-//! wrapper crate) is untouched and remains free until M3.
+//! integers, and the module has zero imports.
+//!
+//! **[R22/D18, 2026-08-12]** This paragraph used to add that decision **D18**
+//! "remains free until M3". It is resolved: the shipped wasm-bindgen surface
+//! is the workspace member `crates/antseal-wasm`, and `antseal-core` gains no
+//! feature, no dependency and no `#[wasm_bindgen]` attribute — permanently
+//! (D18 §5 R10), not merely until M3. This crate is unaffected in every
+//! respect, and its zero-import property is unaffected too: D18 §5 R7 gives
+//! the *shipped page module* an enumerated import allow-list instead, because
+//! a panic hook and a typed JS error need a host. The zero-import assertion
+//! here still means exactly what it always did.
 
 use antseal_core::test_util::vectors::execute_vector_bytes;
 use serde::Serialize;

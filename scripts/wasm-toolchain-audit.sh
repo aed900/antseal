@@ -24,13 +24,19 @@
 #
 # docs/dependency-policy.md §5 requires wasm-pack and wasm-bindgen-cli to be
 # exact-pinned wherever installed, with the CLI version EQUAL to the
-# `wasm-bindgen` crate pin (a mismatch breaks the generated glue). Neither is
-# installed anywhere yet: the M0 wasm lanes deliberately use no wasm-bindgen
-# at all (see docs/wasm-toolchain.md), and where the shipped wasm-bindgen
-# surface will live is decision **D18**, not due until M3. Pinning a version
-# now would pre-empt D18 and R22's reproducible-build pin. So the check is
-# written now and reports "not applicable" until the first pin appears, at
-# which point it starts enforcing equality with no further wiring.
+# `wasm-bindgen` crate pin (a mismatch breaks the generated glue). The check
+# was written at P14 against an empty state and reports "not applicable" while
+# BOTH sides are absent, at which point it starts enforcing equality with no
+# further wiring.
+#
+# **[R22/D18, 2026-08-12] The paragraph this replaces read false.** It said the
+# surface location "is decision D18, not due until M3" and that "pinning a
+# version now would pre-empt D18". D18 is RESOLVED (2026-08-12): the surface is
+# the workspace member `crates/antseal-wasm`, the pin is
+# `wasm-bindgen = "=0.2.126"` — the version the committed Cargo.lock already
+# carried — and the CLI is installed equal to it. The N/A state below is
+# therefore no longer the live one; it is kept because "both absent" remains a
+# reachable state (someone removing both), not because it describes today.
 #
 #   ./scripts/wasm-toolchain-audit.sh
 #
@@ -158,9 +164,11 @@ cli_pins="$(grep -rhoE 'wasm-bindgen-cli[^\n]*--version [0-9]+\.[0-9]+\.[0-9]+' 
 
 if [ -z "${crate_pin}" ] && [ -z "${cli_pins}" ]; then
   echo "  N/A   no \`wasm-bindgen\` crate pin and no wasm-bindgen-cli install anywhere."
-  echo "        The M0 wasm lanes use no wasm-bindgen (docs/wasm-toolchain.md); the"
-  echo "        surface location is decision D18, due M3. This check starts"
-  echo "        enforcing the moment either pin lands — no wiring needed then."
+  echo "        This was the M0 state and it is NO LONGER the expected one:"
+  echo "        [R22/D18, 2026-08-12] the surface landed as crates/antseal-wasm and"
+  echo "        the pin is \`wasm-bindgen = \"=0.2.126\"\` in [workspace.dependencies]."
+  echo "        Reaching this branch today means BOTH sides were removed — check"
+  echo "        the root Cargo.toml before believing it."
 elif [ -z "${crate_pin}" ]; then
   echo "::error::wasm-bindgen-cli is pinned (${cli_pins}) but no \`wasm-bindgen\` crate pin exists in the root Cargo.toml — the two must be equal and the crate pin must live in [workspace.dependencies] (dependency-policy §2/§5)."
   fail=1

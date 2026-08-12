@@ -1,0 +1,52 @@
+antseal — the redaction view (R19), rendered by the CLI
+Every revealed and blacked-out row states size, offset and the file's declared total
+(MVP-SPEC.md line 121). Sizes are the sealer's declared figures throughout.
+
+════ partial reveal — one unit of three ════
+  disclosure map — what this bundle reveals, and where each revealed range sits in its file
+      every size below is the sealer's declared figure, not a measurement by this run
+  file #0 "notes/split.md" — 34 declared byte(s), partially revealed
+      unit 0 blacked out: 12 byte(s) at offset 0 of 34 declared — sealed, and not revealed by this bundle
+      unit 1 revealed: 12 byte(s) at offset 12 of 34 declared
+      unit 2 blacked out: 10 byte(s) at offset 24 of 34 declared — sealed, and not revealed by this bundle
+  disclosure totals: 12 of 34 declared byte(s) revealed, across 1 of 1 file(s)
+  withheld: 22 byte(s) blacked out inside revealed files; 0 byte(s) across 0 wholly unrevealed file(s)
+
+════ full reveal — whole file, mirror rides along ════
+  disclosure map — what this bundle reveals, and where each revealed range sits in its file
+      every size below is the sealer's declared figure, not a measurement by this run
+  file #0 "notes/intro.md" — 34 declared byte(s), fully revealed
+      unit 0 revealed: 34 byte(s) at offset 0 of 34 declared
+      raw mirror: the original file, byte-for-byte (37 bytes) — its bytes open the raw commitment and canonicalize to the sealed canonical form
+  disclosure totals: 34 of 34 declared byte(s) revealed, across 1 of 1 file(s)
+  withheld: 0 byte(s) blacked out inside revealed files; 0 byte(s) across 0 wholly unrevealed file(s)
+
+════ multi-file — full, partial, and a withheld file ════
+  disclosure map — what this bundle reveals, and where each revealed range sits in its file
+      every size below is the sealer's declared figure, not a measurement by this run
+  file #0 "notes/intro.md" — 34 declared byte(s), fully revealed
+      unit 0 revealed: 34 byte(s) at offset 0 of 34 declared
+      raw mirror: the original file, byte-for-byte (37 bytes) — its bytes open the raw commitment and canonicalize to the sealed canonical form
+  file #1 "data/blob.bin" — 30 declared byte(s), partially revealed
+      unit 2 blacked out: 10 byte(s) at offset 0 of 30 declared — sealed, and not revealed by this bundle
+      unit 3 revealed: 10 byte(s) at offset 10 of 30 declared
+      unit 4 blacked out: 10 byte(s) at offset 20 of 30 declared — sealed, and not revealed by this bundle
+  file #2 — 35 declared byte(s), path withheld: this bundle reveals nothing of this file and names it only by ordinal
+  disclosure totals: 44 of 99 declared byte(s) revealed, across 2 of 3 file(s)
+  withheld: 20 byte(s) blacked out inside revealed files; 35 byte(s) across 1 wholly unrevealed file(s)
+
+════ --no-fine-tree — one whole-file unit ════
+  disclosure map — what this bundle reveals, and where each revealed range sits in its file
+      every size below is the sealer's declared figure, not a measurement by this run
+  file #0 "archive/old.txt" — 35 declared byte(s), fully revealed
+      unit 0 revealed: 35 byte(s) at offset 0 of 35 declared
+  disclosure totals: 35 of 35 declared byte(s) revealed, across 1 of 1 file(s)
+  withheld: 0 byte(s) blacked out inside revealed files; 0 byte(s) across 0 wholly unrevealed file(s)
+
+════ empty file — a zero-width block at offset 0 ════
+  disclosure map — what this bundle reveals, and where each revealed range sits in its file
+      every size below is the sealer's declared figure, not a measurement by this run
+  file #0 "data/empty.bin" — 0 declared byte(s), fully revealed
+      unit 0 revealed: 0 byte(s) at offset 0 of 0 declared
+  disclosure totals: 0 of 0 declared byte(s) revealed, across 1 of 1 file(s)
+  withheld: 0 byte(s) blacked out inside revealed files; 0 byte(s) across 0 wholly unrevealed file(s)

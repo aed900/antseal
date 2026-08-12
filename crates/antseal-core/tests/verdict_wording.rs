@@ -15,6 +15,22 @@
 //! …and then justify the diff in review: after R18 the strings are frozen, so
 //! a moved byte here is a **wording-snapshot event**, never a tidy-up.
 //!
+//! # Additions are not edits
+//!
+//! Section 11 (R19's redaction rows) is the first block added after the
+//! freeze, and it moved **no byte of sections 1–10**: R18 froze the verdict
+//! block before R19 authored the disclosure block, so the rows arrived as new
+//! sentences rather than as respellings of existing ones. That is the cheap
+//! case, and the distinction is worth keeping in view — a *new* section is a
+//! reviewable addition, whereas changing a sentence above rewrites what the
+//! product has already said.
+//!
+//! What nothing here enforces is that every `pub` row of
+//! `antseal_core::verify::wording` **reaches** this document: the renderer
+//! below is hand-written, so a row added to the table and not added here
+//! ships unsnapshotted and this file's "renders every row" claim quietly
+//! stops being true. R19 measured that gap rather than closing it.
+//!
 //! # Positioning checklist (MVP-SPEC.md line 28) — reviewed, and swept below
 //!
 //! Line 28: *"never call it a 'notary' in legal copy — and never claim
@@ -92,6 +108,13 @@ const FIXTURE_HEIGHT: u64 = 700_113;
 const FIXTURE_TSA_SOURCE: &str = "CN=antseal mock TSA signer,O=antseal fixtures";
 const FIXTURE_OTS_SOURCE: &str = "bitcoin-block-700113";
 const FIXTURE_RECEIPT_BLOCK: u64 = 377_262_147;
+// R19's redaction rows. The path is deliberately ordinary: the table's slot
+// takes text the *renderer* has already escaped for its surface (D67 §3 R6),
+// so a hostile path belongs in the renderer's own suite
+// (`crates/antseal-cli/tests/redaction_view.rs`), not here.
+const FIXTURE_PATH: &str = "pitch/chapter-1.md";
+const FIXTURE_FILE_SIZE: u64 = 1024;
+const FIXTURE_WITHHELD_SIZE: u64 = 49_152;
 
 // ─────────────────────────────────────────────────────────────────────
 // the document
@@ -304,6 +327,57 @@ fn render_document() -> String {
     out.push_str(&format!(
         "{}\n",
         divergence_newly_flagged_line(FIXTURE_EARLIER_TIME, FIXTURE_TIME)
+    ));
+
+    section(&mut out, "11. the redaction view (R19)");
+    out.push_str(
+        "MVP-SPEC.md line 121's anti-out-of-context guardrail, as sentences. Both renderers\n\
+         draw them: the CLI's `redaction_out` and R23's page. The `path` slot arrives already\n\
+         escaped for the caller's surface (D67 §3 R6), which is why the fixture below carries\n\
+         a plain one — the escaping is the renderer's, the sentence is the table's.\n",
+    );
+    out.push_str(&format!("{REDACTION_VIEW_LABEL}\n"));
+    out.push_str(&format!("{DECLARED_SIZE_NOTE}\n"));
+    subsection(&mut out, "a partially revealed file");
+    out.push_str(&format!(
+        "{}\n",
+        redacted_file_line(0, FIXTURE_PATH, FIXTURE_FILE_SIZE, false)
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        blackout_span_line(0, 0, 256, FIXTURE_FILE_SIZE)
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        revealed_span_line(1, 256, 384, FIXTURE_FILE_SIZE)
+    ));
+    subsection(&mut out, "a fully revealed file, and its riding mirror");
+    out.push_str(&format!(
+        "{}\n",
+        redacted_file_line(1, FIXTURE_PATH, FIXTURE_FILE_SIZE, true)
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        revealed_span_line(2, 0, FIXTURE_FILE_SIZE, FIXTURE_FILE_SIZE)
+    ));
+    out.push_str(&format!("{}\n", mirror_full_reveal_line(FIXTURE_FILE_SIZE)));
+    subsection(&mut out, "a wholly unrevealed file, and the work totals");
+    out.push_str(&format!(
+        "{}\n",
+        withheld_file_line(2, FIXTURE_WITHHELD_SIZE)
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        redaction_totals_line(
+            u128::from(FIXTURE_FILE_SIZE) + 384,
+            u128::from(FIXTURE_FILE_SIZE) * 2 + u128::from(FIXTURE_WITHHELD_SIZE),
+            2,
+            3
+        )
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        withheld_totals_line(640, u128::from(FIXTURE_WITHHELD_SIZE), 1)
     ));
 
     out
@@ -645,6 +719,34 @@ fn single_sourced() -> Vec<(String, &'static str)> {
         (
             signature_scheme_label(SignatureScheme::Ed25519Only).to_owned(),
             "the Ed25519-only signature label",
+        ),
+        // R19's redaction rows. Needles are the fixed tails and labels
+        // rather than the whole formatted sentence: a row carrying four
+        // interpolated numbers has no literal form to search for, and the
+        // tail is the part a copy would carry over verbatim.
+        (
+            REDACTION_VIEW_LABEL.to_owned(),
+            "the redaction view's section label",
+        ),
+        (
+            DECLARED_SIZE_NOTE.to_owned(),
+            "the declared-not-measured note",
+        ),
+        (
+            "sealed, and not revealed by this bundle".to_owned(),
+            "the blackout block's tail",
+        ),
+        (
+            "path withheld: this bundle reveals nothing of this file".to_owned(),
+            "the committed placeholder",
+        ),
+        (
+            "disclosure totals:".to_owned(),
+            "the work-level revealed total",
+        ),
+        (
+            "byte(s) blacked out inside revealed files".to_owned(),
+            "the work-level withheld total",
         ),
     ]
 }

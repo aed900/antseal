@@ -1,0 +1,58 @@
+antseal — `reveal <work-id>` (U29), the screen shown before any bundle exists
+
+════ --all: every unit, every file promoted, the one mirror riding ════
+These units will be irreversibly disclosed to everyone who is ever shown this bundle:
+  file #0 "notes.txt" — revealed whole
+      unit 0   normal   25 byte(s) at offset 0   "café notes\n\nsecond para\n"
+      unit 1   raw-mirror   32 byte(s) at offset 0   hex:efbbbf63616665cc81206e6f7465730d…
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+    its raw mirror is included with it: the file's exact original bytes, byte-order marks, line endings and all
+  file #1 "data/blob.bin" — revealed whole
+      unit 2   normal   9 byte(s) at offset 0   hex:000102fffe7f800042
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+  file #2 "long.txt" — revealed whole
+      unit 3   normal   99 byte(s) at offset 0   "A paragraph long enough that the preview must cut it..........."…
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+  file #3 "split.txt" — revealed whole
+      unit 4   normal   11 byte(s) at offset 0   "alpha one\n\n"
+      unit 5   normal   10 byte(s) at offset 11   "beta two\n\n"
+      unit 6   normal   12 byte(s) at offset 21   "gamma three\n"
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+  Disclosing 7 unit(s), 198 byte(s), across 4 file(s); 4 of those file(s) revealed whole.
+  Once this bundle leaves your machine you cannot unsend it, restrict who reads it, or narrow what it discloses. There is no revocation.
+
+════ --units 5: one unit of one file, nothing promoted ════
+These units will be irreversibly disclosed to everyone who is ever shown this bundle:
+  file #3 "split.txt" — partly revealed
+      unit 5   normal   10 byte(s) at offset 11   "beta two\n\n"
+  Disclosing 1 unit(s), 10 byte(s), across 1 file(s); 0 of those file(s) revealed whole.
+  Once this bundle leaves your machine you cannot unsend it, restrict who reads it, or narrow what it discloses. There is no revocation.
+
+════ --units 4,5,6: the D28 promotion, on a file with no mirror ════
+These units will be irreversibly disclosed to everyone who is ever shown this bundle:
+  file #3 "split.txt" — revealed whole
+      unit 4   normal   11 byte(s) at offset 0   "alpha one\n\n"
+      unit 5   normal   10 byte(s) at offset 11   "beta two\n\n"
+      unit 6   normal   12 byte(s) at offset 21   "gamma three\n"
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+  Disclosing 3 unit(s), 33 byte(s), across 1 file(s); 1 of those file(s) revealed whole.
+  Once this bundle leaves your machine you cannot unsend it, restrict who reads it, or narrow what it discloses. There is no revocation.
+
+════ --units 0 --include-receipt: the wallet-exposure warning ════
+These units will be irreversibly disclosed to everyone who is ever shown this bundle:
+  file #0 "notes.txt" — revealed whole
+      unit 0   normal   25 byte(s) at offset 0   "café notes\n\nsecond para\n"
+      unit 1   raw-mirror   32 byte(s) at offset 0   hex:efbbbf63616665cc81206e6f7465730d…
+    this also discloses the file's whole-file commitments (its file salt, and its byte-range tree seed where one exists), which a partial reveal withholds
+    its raw mirror is included with it: the file's exact original bytes, byte-order marks, line endings and all
+  Disclosing 2 unit(s), 57 byte(s), across 1 file(s); 1 of those file(s) revealed whole.
+  Once this bundle leaves your machine you cannot unsend it, restrict who reads it, or narrow what it discloses. There is no revocation.
+  WARNING: --include-receipt puts the Arbitrum payment receipt in this bundle. It names the wallet that paid for this seal, and it links this work to every other seal that wallet ever paid for — to everyone who is shown the bundle, permanently. Leave it out unless a recipient specifically needs it.
+
+════ the arms a seal cannot produce: the absent snippet, the empty unit, and a crafted path ════
+These units will be irreversibly disclosed to everyone who is ever shown this bundle:
+  file #0 "ok.txt\u{202e}\u{7}\n      unit 99   normal   1 byte(s) at offset 0" — partly revealed
+      unit 0   normal   7 byte(s) at offset 0   (snippet unavailable)
+      unit 1   normal   0 byte(s) at offset 7   ""
+  Disclosing 2 unit(s), 7 byte(s), across 1 file(s); 0 of those file(s) revealed whole.
+  Once this bundle leaves your machine you cannot unsend it, restrict who reads it, or narrow what it discloses. There is no revocation.

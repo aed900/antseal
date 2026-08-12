@@ -208,6 +208,95 @@ fn reveal_requires_exactly_one_of_all_or_units() {
     assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
+/// **U68 / D68 §3 R3**: a range-shaped `--units` value is refused by a
+/// message that names the comma form and `show`, not by clap's bare
+/// `invalid digit found in string`.
+///
+/// Asserted **by message content, never by exit code** — a bare clap digit
+/// error also exits 2, so a code-only assertion would pass against the very
+/// defect this row exists to fix.
+#[test]
+fn a_range_shaped_units_value_is_refused_by_a_message_naming_the_comma_form() {
+    for spelling in ["3-5", "3..5", "3..=5", "10-40"] {
+        let err = parse(&["antseal", "reveal", "w1", "--units", spelling])
+            .expect_err("ranges are refused for MVP");
+        let rendered = err.render().to_string();
+        assert!(
+            rendered.contains(spelling),
+            "the refusal names the offending value: {rendered}"
+        );
+        assert!(
+            rendered.contains("ranges are not supported"),
+            "the refusal says ranges are out: {rendered}"
+        );
+        assert!(
+            rendered.contains("--units 3,4,5"),
+            "the refusal shows the supported comma form: {rendered}"
+        );
+        assert!(
+            rendered.contains("antseal show"),
+            "the refusal points at where the ids come from: {rendered}"
+        );
+        assert!(
+            !rendered.contains("invalid digit found in string"),
+            "the generic digit message is exactly what this row replaces: {rendered}"
+        );
+    }
+}
+
+/// D68 §3 R2's acceptance envelope, kept **byte for byte** by the U68
+/// parser: everything that is not range-shaped still gets `u64`'s own
+/// message, and everything that parsed before still parses.
+///
+/// The rows are the ones D68 §1 (g) measured against the shipped binary.
+#[test]
+fn the_units_acceptance_envelope_is_unchanged_outside_the_range_case() {
+    // Accepted, unchanged.
+    for (argv, expected) in [
+        (vec!["--units", "3,5"], vec![3u64, 5]),
+        // clap `Append`: the repeated flag is the ARG_MAX escape hatch.
+        (vec!["--units", "3", "--units", "5"], vec![3, 5]),
+        // Duplicates reach R16, which dedups them (a typo with no
+        // disclosure consequence).
+        (vec!["--units", "3,3,5"], vec![3, 3, 5]),
+        // Rust's `u64::FromStr` takes a leading `+`; refusing it would mint
+        // a custom integer parser for zero safety gain.
+        (vec!["--units", "+3"], vec![3]),
+        (vec!["--units", "0"], vec![0]),
+    ] {
+        let mut args = vec!["antseal", "reveal", "w1"];
+        args.extend(argv.iter().copied());
+        let cli = parse(&args).unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+        match cli.command {
+            Command::Reveal(reveal) => assert_eq!(reveal.units, expected, "{argv:?}"),
+            other => panic!("expected reveal, got {other:?}"),
+        }
+    }
+
+    // Refused, each with `u64`'s own sentence — NOT the range message.
+    for (value, expected) in [
+        ("0x3", "invalid digit found in string"),
+        (" 3", "invalid digit found in string"),
+        ("", "cannot parse integer from empty string"),
+        ("3,,5", "cannot parse integer from empty string"),
+        ("3,5,", "cannot parse integer from empty string"),
+        (
+            "99999999999999999999",
+            "number too large to fit in target type",
+        ),
+    ] {
+        let rendered = parse(&["antseal", "reveal", "w1", "--units", value])
+            .expect_err(value)
+            .render()
+            .to_string();
+        assert!(rendered.contains(expected), "`{value}`: {rendered}");
+        assert!(
+            !rendered.contains("ranges are not supported"),
+            "`{value}` is not range-shaped: {rendered}"
+        );
+    }
+}
+
 #[test]
 fn passphrase_fd_rejects_non_numeric_values() {
     let cli = parse(&["antseal", "--passphrase-fd", "3", "list"]).expect("numeric fd");
@@ -436,20 +525,25 @@ fn antseal_bin() -> Process {
 }
 
 #[test]
-fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
-    // `show` (U27, M3) is the exemplar stub. The row has moved five
-    // times as handlers landed — `vault export|import` at U12,
-    // `list`/`restore` at U19/U20, `init` at U11, `seal` at U13, and
-    // `status` at U23, which was the last **M2** stub and took the M2
-    // spelling with it. It must always point at a command that is
-    // *actually* still stubbed: an exemplar that quietly stopped
-    // exercising the stub path would pass for the wrong reason.
+fn a_dispatched_command_keeps_stdout_clean_and_traces_only_to_stderr() {
+    // **This row used to be the stub exemplar, and it has run out of
+    // stubs.** It moved seven times as handlers landed — `vault
+    // export|import` at U12, `init` at U11, `seal` at U13, `list`/`restore`
+    // at U19/U20, `status` at U23 (which emptied M2), `show` at U27,
+    // `reveal` at U28/U29 — and **U30 empties M3**, so no dispatch arm can
+    // produce the not-implemented class any more.
+    //
+    // What the row was always really about survives unchanged: stdout stays
+    // reserved for command output, and `RUST_LOG` tracing is env-filtered
+    // and stderr-only. The vehicle is `verify`, which needs no vault and
+    // never prompts, so it reaches dispatch on any machine; its bundle path
+    // does not exist, so it stops in the ordinary I/O class.
     let out = antseal_bin()
-        .args(["show", "w1"])
+        .args(["verify", "b.sealproof"])
         .env("RUST_LOG", "debug")
         .output()
         .expect("spawn antseal");
-    assert_eq!(out.status.code(), Some(3), "not-implemented exit code");
+    assert_eq!(out.status.code(), Some(4), "io-error exit code");
     assert!(
         out.stdout.is_empty(),
         "stdout must stay reserved for command output; got {:?}",
@@ -457,8 +551,8 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("not implemented until M3"),
-        "stub error names its milestone; stderr was {stderr:?}"
+        stderr.contains("b.sealproof"),
+        "the refusal names the file it could not read; stderr was {stderr:?}"
     );
     // RUST_LOG=debug: the dispatch trace event must land on stderr —
     // proving tracing is wired, env-filtered, and stderr-only.
@@ -469,22 +563,32 @@ fn stub_command_exits_with_the_not_implemented_code_and_clean_stdout() {
 }
 
 #[test]
-fn stub_milestones_are_named_per_command() {
-    // Rows shrink as real handlers land (U1's arrival map): `vault
-    // export|import` left this list at U12, `list` and `restore` at
-    // U19/U20, and `status` at U23 — which emptied the M2 row entirely,
-    // so every surviving stub names M3.
-    for (args, milestone) in [
-        (vec!["show", "w1"], "M3"),
-        (vec!["reveal", "w1", "--all"], "M3"),
-        (vec!["verify", "b.sealproof"], "M3"),
+fn no_command_names_a_milestone_any_more() {
+    // The inverse of the row above, kept so a shrinking list cannot
+    // silently accept a regression. `verify` was the last stub of the
+    // frozen surface (U30) and `reveal` the one before it (U28/U29); both
+    // reach a real handler without a vault, so both can be driven here on
+    // any machine. A stub message from either would mean a dispatch arm
+    // came undone.
+    //
+    // The class itself is deliberately NOT deleted: `CliError::NotImplemented`
+    // still exists for the type's own exhaustive matches and for a future
+    // surface addition. What is asserted is that nothing *reaches* it.
+    for args in [
+        ["verify", "b.sealproof", ""].as_slice(),
+        ["reveal", "w1", "--all"].as_slice(),
     ] {
+        let args: Vec<&str> = args.iter().copied().filter(|a| !a.is_empty()).collect();
         let out = antseal_bin().args(&args).output().expect("spawn antseal");
-        assert_eq!(out.status.code(), Some(3), "{args:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains(&format!("not implemented until {milestone}")),
-            "{args:?} must name {milestone}; stderr was {stderr:?}"
+            !stderr.contains("not implemented"),
+            "`{args:?}` is no longer a stub; stderr was {stderr:?}"
+        );
+        assert_ne!(
+            out.status.code(),
+            Some(3),
+            "`{args:?}` must not exit in the not-implemented class; stderr was {stderr:?}"
         );
     }
 }

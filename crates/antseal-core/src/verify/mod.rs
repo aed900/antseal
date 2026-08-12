@@ -75,14 +75,48 @@
 //!   wording source every aggregate/overlay display string is drawn
 //!   from. Structure per D64 §8; every spelling provisional until R18's
 //!   snapshot table lands over it.
+//!
+//! - [`redaction`] (task R19) — the shared redaction view: R5's per-file
+//!   revealed and unrevealed spans **interleaved** into one ordered run of
+//!   sized blocks, the committed placeholders, and the work-level totals
+//!   (MVP-SPEC.md line 121). Derived data only, like [`aggregate`] and
+//!   [`verdict`] — every input is a field report v1 already serializes, so
+//!   the CLI renderer and R23's page DOM build the same view from the same
+//!   bytes and no field was added to buy it.
+//!
+//! - [`orchestration`] (task R21) — the composition every host makes:
+//!   [`verify_offline`] / [`verify_with_host`] run the pipeline, hold the
+//!   report **and its canonical bytes**, render R18's offline verdict block,
+//!   compute D69's rung, and attach D64's overlay and R11's live section as
+//!   siblings. Ships no CLI surface (flags, exit codes and the `--json`
+//!   envelope are U30's) and does no I/O: every network-derived datum enters
+//!   through the single [`VerifyHost`] seam.
+//!
+//! - [`rung`] (task R21; D69 §3 R4) — the verdict-rung classifier: the
+//!   severity fold over the whole anchor set that U30's exit-code mapping
+//!   reads, plus the **separate** refuted-slot pass D69 requires it to take
+//!   rather than growing a field on [`verdict`]'s aggregate. Names only, no
+//!   integers — the code table is U2's.
+//!
+//! - [`storage_linkage`] (task R20) — the offline storage-linkage **layer**
+//!   (MVP-SPEC.md line 119), beside the evidence layer and never inside it:
+//!   BLAKE3-256 of every embedded ciphertext against the address the signed
+//!   manifest records, and of the blob the storage record's own `{nonce,
+//!   k_m}` rebuild against the address it claims. Pure, offline, and
+//!   incapable of failing a bundle — [`check_storage_linkage`] returns no
+//!   `Result`, because "storage is the product's bonus, not its proof".
 
 pub mod aggregate;
 pub mod coherence;
 pub mod error;
 pub mod file_stages;
+pub mod orchestration;
 pub mod overlay;
 pub mod pipeline;
+pub mod redaction;
 pub mod report;
+pub mod rung;
+pub mod storage_linkage;
 pub mod structural;
 pub mod unit_stages;
 pub mod verdict;
@@ -105,6 +139,12 @@ pub use file_stages::{
     check_fine_root_rebuild, check_full_reveal_content, check_raw_mirror, classify_file_reveal,
     concat_non_mirror_bytes, participates_in_concat, resolve_raw_mirror,
 };
+pub use orchestration::{
+    LiveBlobOutcome, LiveBlobRow, LiveCounts, LiveInputs, LiveLayerVerdict, LiveSection,
+    OnlineInputs, RenderedAnchorSlot, RenderedLiveRow, RenderedSupportingEvidence, RenderedVerdict,
+    SiblingEncodeError, VerdictClass, VerifyHost, VerifyModes, VerifyOutcome, VerifyRunError,
+    offline_verdicts, verify_offline, verify_with_host,
+};
 pub use overlay::{
     AggregateDelta, BlockProbe, EndpointProbeFailure, EndpointsDisclosure, HeadlineImpact,
     NotPromotedReason, OnlineOverlay, OverlayAnchorOutcome, OverlayDelta, OverlayEncodeError,
@@ -112,12 +152,18 @@ pub use overlay::{
     ReceiptEchoOutcome, ReceiptProbe, build_online_overlay,
 };
 pub use pipeline::{VerifyOptions, VerifyStage, verify_bundle, verify_bundle_collecting};
+pub use redaction::{FileRedaction, RedactionBlock, RedactionTotals, RedactionView};
 pub use report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
     REPORT_VERSION, RawMirrorReveal, ReportEncodeError, RevealSet, SignatureScheme,
     StorageLinkageResult, SupportingEvidenceResult, UnitSpan, UnrevealedFilePlaceholder,
     VerificationReport, WorkMetadata,
 };
+pub use rung::{
+    RefutedCount, VerdictExitRung, count_refuted, is_refutation, refuted_in_report_slots,
+    refuted_in_verdicts, verdict_exit_rung,
+};
+pub use storage_linkage::{ManifestLinkageSubject, UnitLinkageSubject, check_storage_linkage};
 pub use structural::{
     BundleView, DisclosedField, FileEntry, ManifestView, TouchedFile, UnitEntry, UnitKind,
     check_disclosed_lengths, check_field_length, check_manifest_refs, check_path_commits,
@@ -295,6 +341,37 @@ mod tests {
         }
     }
 
+    /// [`fully_populated_report`] with R20's storage-linkage arm rendered,
+    /// and **differing from it in nothing else** (D105 ruling 4).
+    ///
+    /// The obligation the receipt arm did not discharge, discharged for this
+    /// one on the day it lands: an arm added to a report enum must arrive
+    /// with a committed assertion that renders it *inside a whole canonical
+    /// report*, because a standalone pin cannot show the `"storage_linkage":`
+    /// key, the object sitting where a string sat, or the sibling ordering
+    /// `evidence → storage_linkage → anchors` that D29 rule 1 is about.
+    ///
+    /// The values are the failing mixture on purpose — three units matched,
+    /// one not, and a manifest that did not — because an all-zero, all-true
+    /// arm renders bytes that a defaulted field would also render. The
+    /// control keeps rendering `"storage_linkage":"not-evaluated"` in
+    /// composition and is what this twin is differential against, so **do not
+    /// mutate the control into a linkage-bearing one**.
+    ///
+    /// Operands are `report.rs`'s `LINKAGE_FIXTURE_*` consts, deliberately
+    /// shared rather than re-typed, so the standalone pin, the `ALL` sweep
+    /// and this one cannot be satisfied separately.
+    fn fully_populated_report_with_linkage() -> VerificationReport {
+        VerificationReport {
+            storage_linkage: StorageLinkageResult::Evaluated {
+                units_matched: report::LINKAGE_FIXTURE_UNITS_MATCHED,
+                units_mismatched: report::LINKAGE_FIXTURE_UNITS_MISMATCHED,
+                manifest_matched: report::LINKAGE_FIXTURE_MANIFEST_MATCHED,
+            },
+            ..fully_populated_report()
+        }
+    }
+
     /// D29: two serializations — of the same instance and of two
     /// independently built equal reports — are byte-identical.
     #[test]
@@ -394,6 +471,60 @@ mod tests {
         );
     }
 
+    /// The same snapshot with R20's linkage arm rendered — the tree's only
+    /// artifact that shows `evaluated` **in composition**.
+    ///
+    /// What reddens it: deleting the arm (a compile error first), renaming or
+    /// reordering `units_matched`/`units_mismatched`/`manifest_matched`,
+    /// collapsing the unit counters and the manifest flag into one field,
+    /// changing the enum's serde representation or its kebab-case spelling,
+    /// and moving `storage_linkage` relative to its siblings. Like its
+    /// control this is a `#[cfg(test)]` unit test, so it runs on wasm32 too
+    /// — where a failure is a bare trap with no test name, and this native
+    /// run is the readable reproduction.
+    #[test]
+    fn snapshot_with_linkage_bytes_are_stable() {
+        let bytes = fully_populated_report_with_linkage()
+            .to_canonical_json()
+            .expect("report serializes");
+        let actual = String::from_utf8(bytes).expect("canonical JSON is UTF-8");
+        assert_eq!(
+            actual, EXPECTED_CANONICAL_JSON_WITH_LINKAGE,
+            "canonical report bytes drifted (linkage-bearing twin)"
+        );
+    }
+
+    /// Control and linkage twin are a **differential pair**: literal against
+    /// literal, with no serializer in the loop — the receipt pair's
+    /// discipline, for the reason that pair records. A lane that re-pins a
+    /// snapshot by pasting the new output satisfies the test above while
+    /// learning nothing; it cannot satisfy this one, which fails unless the
+    /// *only* difference between the two constants is the `storage_linkage`
+    /// value.
+    ///
+    /// +64 bytes: `"not-evaluated"` is 15 bytes and the rendered arm is 79.
+    #[test]
+    fn linkage_snapshot_differs_from_the_control_only_at_storage_linkage() {
+        let control_slot = r#""storage_linkage":"not-evaluated""#;
+        let linkage_slot = r#""storage_linkage":{"evaluated":{"units_matched":3,"units_mismatched":1,"manifest_matched":false}}"#;
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON.matches(control_slot).count(),
+            1,
+            "the control snapshot no longer renders exactly one `not-evaluated` slot"
+        );
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON.replace(control_slot, linkage_slot),
+            EXPECTED_CANONICAL_JSON_WITH_LINKAGE,
+            "the twin differs from the control somewhere other than \
+             `storage_linkage` — fix the fixture, not the constant"
+        );
+        assert_eq!(
+            EXPECTED_CANONICAL_JSON_WITH_LINKAGE.len() - EXPECTED_CANONICAL_JSON.len(),
+            64,
+            "the arm must cost +64 bytes at one value and nowhere else"
+        );
+    }
+
     /// The empty-anchor / UNANCHORED shape is representable from day one
     /// (MVP-SPEC.md line 153: empty-anchor vectors are an M0
     /// requirement; R17 aggregates UNANCHORED from zero
@@ -449,6 +580,20 @@ mod tests {
         .expect("canonical JSON is UTF-8");
         let receipt_debug = format!("{receipt_report:?}");
 
+        // The linkage twin likewise. R20's arm is three counters, but the
+        // stage that produces it holds `k_m` and a nonce while it works, so
+        // "none of that reached the slot" is exactly the property to assert
+        // rather than to reason about once — the key-name sweep below is what
+        // catches a later lane widening the arm to carry its inputs.
+        let linkage_report = fully_populated_report_with_linkage();
+        let linkage_json = String::from_utf8(
+            linkage_report
+                .to_canonical_json()
+                .expect("report serializes"),
+        )
+        .expect("canonical JSON is UTF-8");
+        let linkage_debug = format!("{linkage_report:?}");
+
         let mut failures = VerifyFailures::new(VerifyError::UnitDecryptFailed { unit_id: 1 });
         for e in all_error_exemplars() {
             failures.push(e);
@@ -463,8 +608,10 @@ mod tests {
         for surface in [
             &json,
             &receipt_json,
+            &linkage_json,
             &report_debug,
             &receipt_debug,
+            &linkage_debug,
             &failures_debug,
             &failures_display,
             &error_text,
@@ -480,7 +627,7 @@ mod tests {
         // The wire form must not even *name* secret-bearing concepts as
         // keys — a regression tripwire against someone adding a salt or
         // key field to the report model.
-        for wire_form in [&json, &receipt_json] {
+        for wire_form in [&json, &receipt_json, &linkage_json] {
             for forbidden in ["salt", "seed", "k_u", "k_m", "secret", "nonce"] {
                 assert!(
                     !wire_form.contains(forbidden),
@@ -500,4 +647,11 @@ mod tests {
     /// asserted, not asserted-by-eye, in
     /// `receipt_snapshot_differs_from_the_control_only_at_supporting_evidence`.
     const EXPECTED_CANONICAL_JSON_WITH_RECEIPT: &str = r#"{"report_version":1,"work":{"work_id":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","title":"Chapter 1 — \"draft\"","format_version":1,"app_version":"0.0.0-test","claimed_time_informational_only":"2026-07-27T00:00:00Z","signature_scheme":"hybrid-pq"},"evidence":{"passed":true,"units_verified":3},"storage_linkage":"not-evaluated","anchors":[{"kind":"tsa","state":"proven","verified_time_unix":1785000000,"source":"https://freetsa.org/tsr","fetch_date":"2026-07-27"},{"kind":"tsa","state":"valid-at-stamping-cert-since-expired","verified_time_unix":1785000600,"source":"http://timestamp.digicert.com","fetch_date":"2026-07-27"},{"kind":"ots","state":"attested","verified_time_unix":null,"source":"calendar.example","fetch_date":"2026-07-27"},{"kind":"ots","state":"pending","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"internally-consistent-only","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"ots","state":"invalid","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"absent","verified_time_unix":null,"source":null,"fetch_date":null}],"supporting_evidence":{"arbitrum-receipt":{"block_number":271828182,"transaction_count":2}},"reveal":{"files":[{"file_id":0,"path":"pitch/chapter-1.md","total_size":1024,"fully_revealed":false,"revealed_spans":[{"unit_id":1,"start":256,"end":640}],"unrevealed_spans":[{"unit_id":0,"start":0,"end":256},{"unit_id":2,"start":640,"end":1024}],"raw_mirror":null},{"file_id":1,"path":"notes.txt","total_size":300,"fully_revealed":true,"revealed_spans":[{"unit_id":3,"start":0,"end":300}],"unrevealed_spans":[],"raw_mirror":{"unit_id":4,"raw_size":305}}],"unrevealed_files":[{"file_id":2,"size":49152}]}}"#;
+
+    /// Pinned canonical bytes of `fully_populated_report_with_linkage()`
+    /// (see `snapshot_with_linkage_bytes_are_stable`). Identical to
+    /// [`EXPECTED_CANONICAL_JSON`] but for the `storage_linkage` value —
+    /// asserted, not asserted-by-eye, in
+    /// `linkage_snapshot_differs_from_the_control_only_at_storage_linkage`.
+    const EXPECTED_CANONICAL_JSON_WITH_LINKAGE: &str = r#"{"report_version":1,"work":{"work_id":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","title":"Chapter 1 — \"draft\"","format_version":1,"app_version":"0.0.0-test","claimed_time_informational_only":"2026-07-27T00:00:00Z","signature_scheme":"hybrid-pq"},"evidence":{"passed":true,"units_verified":3},"storage_linkage":{"evaluated":{"units_matched":3,"units_mismatched":1,"manifest_matched":false}},"anchors":[{"kind":"tsa","state":"proven","verified_time_unix":1785000000,"source":"https://freetsa.org/tsr","fetch_date":"2026-07-27"},{"kind":"tsa","state":"valid-at-stamping-cert-since-expired","verified_time_unix":1785000600,"source":"http://timestamp.digicert.com","fetch_date":"2026-07-27"},{"kind":"ots","state":"attested","verified_time_unix":null,"source":"calendar.example","fetch_date":"2026-07-27"},{"kind":"ots","state":"pending","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"internally-consistent-only","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"ots","state":"invalid","verified_time_unix":null,"source":null,"fetch_date":null},{"kind":"tsa","state":"absent","verified_time_unix":null,"source":null,"fetch_date":null}],"supporting_evidence":"none","reveal":{"files":[{"file_id":0,"path":"pitch/chapter-1.md","total_size":1024,"fully_revealed":false,"revealed_spans":[{"unit_id":1,"start":256,"end":640}],"unrevealed_spans":[{"unit_id":0,"start":0,"end":256},{"unit_id":2,"start":640,"end":1024}],"raw_mirror":null},{"file_id":1,"path":"notes.txt","total_size":300,"fully_revealed":true,"revealed_spans":[{"unit_id":3,"start":0,"end":300}],"unrevealed_spans":[],"raw_mirror":{"unit_id":4,"raw_size":305}}],"unrevealed_files":[{"file_id":2,"size":49152}]}}"#;
 }

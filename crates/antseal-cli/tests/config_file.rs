@@ -346,15 +346,22 @@ fn binary_resolves_network_through_the_config() {
     let layout = layout_with_config(&dir, Some("default_network = \"devnet\"\n"));
     let root = layout.root().to_path_buf();
 
-    // Config supplies the network. The vehicle has to be a command that is
-    // still a stub, so the exit code is the *envelope's* rather than a
-    // handler's: `list` played this role until U19 gave it a real handler and
-    // `status` until U23 gave it one — at which point this row started reading
-    // exit 2 (`Usage`: no vault at this layout) instead of 3. `show` is the
-    // next stub; when U27 lands, move this to whichever one is left and say so
-    // here.
-    let out = spawn(&root, &["--json", "show", "w1"]);
-    assert_eq!(out.status.code(), Some(3));
+    // **The stub rotation ends at U30, and this row's premise expires with
+    // it.** `list` played this vehicle until U19 gave it a real handler,
+    // `status` until U23, `show` until U27 (at which point the row read
+    // exit 2 rather than 3), and `verify` until U30 — the last stub of the
+    // frozen surface. There is no stub left to borrow, so the row now
+    // asserts **a real handler's own code**, and it keeps `verify` as the
+    // vehicle for a better reason than availability: it needs no vault and
+    // never prompts, so the code it reports is a fact about the *config
+    // resolution* and not about whatever a vault-opening command met first.
+    //
+    // `b.sealproof` does not exist in this layout, so the code is
+    // `io-error` (4) — a process outcome, before any verification. What the
+    // row measures is unchanged: the envelope's `network` field, which is
+    // resolved by `main_entry` before dispatch either way.
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(out.status.code(), Some(4), "a real handler's own code");
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
             .expect("one JSON document");
@@ -367,7 +374,13 @@ fn binary_resolves_network_through_the_config() {
     // Explicit flag beats the config.
     let out = spawn(
         &root,
-        &["--json", "--network", "arbitrum-one", "show", "w1"],
+        &[
+            "--json",
+            "--network",
+            "arbitrum-one",
+            "verify",
+            "b.sealproof",
+        ],
     );
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
@@ -384,10 +397,10 @@ fn binary_resolves_network_through_the_config() {
         "default_network = \"devnet\"\nshiny = \"yes\"\n",
     )
     .expect("rewrite config");
-    let out = spawn(&root, &["--json", "show", "w1"]);
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
     assert_eq!(
         out.status.code(),
-        Some(3),
+        Some(4),
         "warnings never change the outcome"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -399,7 +412,7 @@ fn binary_resolves_network_through_the_config() {
         "default_network = 42\n",
     )
     .expect("rewrite config");
-    let out = spawn(&root, &["--json", "show", "w1"]);
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
     assert_eq!(out.status.code(), Some(17), "malformed-config code");
     let doc: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))

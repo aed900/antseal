@@ -61,12 +61,21 @@
 //! `status_command.rs`'s Q120 suite — so the next variant reddens instead
 //! of quietly falsifying this paragraph a second time.
 //!
-//! Adding `nag` to the `--json` row is permitted now: **D65 is not in
-//! force.** It has no `docs/decisions/D65-*.md`, its register row is
-//! unchecked under "Due M3", its own text scopes it *"from M3"*, and U50
-//! exists to draw its scope (D98, "smaller measured facts"). The in-force
-//! machine contract is `ENVELOPE_VERSION`, about the envelope wrapper.
-//! Recorded here so a future reader does not re-derive it.
+//! Adding `nag` to the `--json` row was permitted, and remains correct —
+//! but not for the reason this paragraph used to give. It read **"D65 is
+//! not in force"**, resting on three facts that were all true when written
+//! and are all false since **2026-08-12**: D65 has a record
+//! (`docs/decisions/D65-json-schema-stability-commitment.md`), its register
+//! row is checked, and it is in force. The addition survives its own
+//! justification because D65 ruled `--json` **stability by member**, and
+//! this row is **tier C** — reviewed, not promised, until U32 (M4) freezes
+//! the CLI surface. What did not change is the in-force machine contract:
+//! `ENVELOPE_VERSION`, about the envelope wrapper, whose scope D65 §3
+//! tier B now states — and which D65 §4 rules is the document's *only*
+//! schema version, with `REPORT_VERSION` not one and neither derived from
+//! the other. Dated here rather than deleted, because a paragraph that
+//! recorded a reasoned "not yet" is evidence about when the reasoning
+//! stopped holding.
 //!
 //! ## Four predicates share the word UNANCHORED (D98 rider 3c)
 //!

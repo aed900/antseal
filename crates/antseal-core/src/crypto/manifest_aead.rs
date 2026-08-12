@@ -59,6 +59,13 @@
 //! test-only mis-encryptor. XChaCha20's 192-bit random nonce makes collision
 //! probability negligible.
 //!
+//! One crate-internal door takes a nonce, and it is not an encryption:
+//! `recompute_manifest_blob` reproduces a blob that already exists, from a
+//! bundle's own plaintext manifest and its own recorded `{nonce, k_m}`, so
+//! R20's offline storage-linkage stage can hash it into an address. It is
+//! `pub(crate)` precisely so the sentence above stays true of the API this
+//! crate exports; its own docs carry the argument.
+//!
 //! # AEAD is confidentiality-only (spec line 103)
 //!
 //! XChaCha20-Poly1305 is not key-committing (invisible-salamanders /
@@ -272,6 +279,58 @@ pub fn decrypt_manifest_with_key(
             },
         )
         .map_err(|_| CryptoError::AeadDecryptFailed)
+}
+
+/// Reproduce the network blob from the plaintext manifest bytes a bundle
+/// already embeds, under that bundle's recorded `{nonce, k_m}` — the
+/// **crate-internal** primitive R20's offline storage-linkage stage hashes to
+/// recover the manifest's Autonomi address (`super::super::verify`).
+///
+/// # Why this is not an encryption, and does not breach the invariant
+///
+/// The module's `(k_m, nonce)` rule is about *minting* a second ciphertext
+/// under a pair that has already been spent. This mints nothing: every input
+/// is read out of one `.sealproof` that already exists, the output is the
+/// blob that was uploaded at seal time, it is hashed and dropped, and no byte
+/// of it is stored, transmitted, or handed to a caller who could store it.
+/// XChaCha20-Poly1305 is deterministic in `(key, nonce, aad, plaintext)`, so
+/// "re-encrypt and compare the address" is the only way to check a recorded
+/// address offline — the bundle carries the *plaintext* manifest, and the
+/// address is a hash of the *ciphertext* (spec line 98: anchored bytes ≠
+/// stored bytes).
+///
+/// **`pub(crate)`, deliberately.** The module docs' structural claim — *no
+/// public API accepts a caller-supplied encryption nonce* — is what keeps
+/// `(k_m, nonce)` single-use, and it stays literally true: a nonce-taking
+/// door exists for exactly one caller inside this crate and for no consumer
+/// of it. A `pub` version of this function would be a general
+/// encrypt-under-a-chosen-nonce API wearing a verification name.
+///
+/// Returns `None` if the cipher refuses the plaintext — reachable only above
+/// XChaCha20-Poly1305's `P_MAX` (≈ 256 GiB), which no decoded manifest can
+/// reach under F11's caps. It is an `Option` rather than an `expect` because
+/// the input is adversary-supplied on this path (unlike
+/// [`encrypt_manifest`]'s, which is the sealer's own), and library code that
+/// a browser verifier runs must not panic on any input; and it is an
+/// `Option` rather than a new [`CryptoError`] arm because the failure is not
+/// a verification finding — the caller's only honest reading is *these bytes
+/// have no address, so they cannot be the bytes at the recorded one*.
+pub(crate) fn recompute_manifest_blob(
+    k_m: &ManifestKey,
+    nonce: &Nonce24,
+    manifest_bytes: &[u8],
+) -> Option<Vec<u8>> {
+    let cipher = cipher_for_key(k_m);
+    let xnonce = XNonce::from(*nonce.as_bytes());
+    cipher
+        .encrypt(
+            &xnonce,
+            Payload {
+                msg: manifest_bytes,
+                aad: MANIFEST_AAD,
+            },
+        )
+        .ok()
 }
 
 /// Test-only mis-encryptor for the empty-AAD conformance test (`test-util`

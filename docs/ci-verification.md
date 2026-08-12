@@ -2308,3 +2308,140 @@ than no figure — the rule is `local-gate.sh`'s own, and Q160's.
   `actions/checkout@v4` still warns that Node.js 20 is deprecated and is
   being forced onto Node 24 by the runner — an upstream-action deprecation
   to absorb at the next deliberate workflow touch, not a failure.
+
+# R22/D18 — the verifier-page module's build, and the profile its Accept row ran at (2026-08-12, M3 wave 18)
+
+## The context set does not change: still 19
+
+Both structural checks D18 §5 R6/R7 require ride jobs that already exist, and
+that is a ruling rather than a convenience (§5 R8: *"CI minutes are a stated
+constraint and neither check needs a runner of its own"*):
+
+- **the graph rule** (§5 R6) is a second block inside `lane_dep_graph`, so it
+  runs in the **`core-dep-graph`** job, which already bootstraps the toolchain
+  and runs `cargo tree`;
+- **the import allow-list** (§5 R7) runs at the end of
+  `scripts/wasm-bitmatch.sh`, so it runs in the **`wasm-bitmatch`** job, which
+  already builds a wasm32 artifact and instantiates one in node.
+
+No job id, no `name:`, and no required-status context is added or renamed.
+
+## Which artifact the import allow-list runs against in CI, and why not the other one
+
+`scripts/wasm-imports.mjs` enumerates **two** spellings of the same import
+table, because the module is checked at two points in its life:
+
+| where | artifact | imports (measured 2026-08-12) |
+| --- | --- | --- |
+| `wasm-bitmatch` job (CI) | `cargo build -p antseal-wasm --target wasm32-unknown-unknown` | 5 — `__wbindgen_placeholder__.{__wbindgen_describe, __wbg___wbindgen_throw_*, __wbg_Error_*}` + `__wbindgen_externref_xform__.{table_grow, table_set_null}` |
+| `scripts/wasm-pack-build.sh` (local / R25) | `wasm-pack build --release --target web` | 3 — `./antseal_wasm_bg.js.{__wbg___wbindgen_throw_*, __wbg_Error_*, __wbindgen_init_externref_table}` |
+
+CI checks the **cargo** artifact deliberately: neither `wasm-pack` nor
+`wasm-bindgen-cli` is installed in any CI job, and installing them there would
+spend the minutes this wave was told not to spend. The property is not
+weakened by the choice — a module's imports are generated from its **declared
+bindings**, and the CLI's post-processing renames the placeholder module
+rather than adding or removing a capability; both spellings are enumerated in
+one committed list, so a new capability appears in whichever artifact is
+checked first. The `wasm-pack` artifact is checked by the script that is the
+only thing which produces one, and that script is R25's build entry point.
+
+## Accept row 2 ran at the SHIPPED profile
+
+D18 §5 R9 splits the `--release` question so neither half is unowned, and
+gives R22 the boundary comparison at the shipped profile. Executed
+2026-08-12 on the 2-core dev host:
+
+- artifact: `wasm-pack build crates/antseal-wasm --release --target web
+  --no-pack --no-opt --mode no-install`, i.e. **the `release` profile**, 1.84 MB;
+- corpus: all **21** cases of `testdata/vectors/v1/report/verification-reports.json`,
+  rebuilt and verified natively by `crates/antseal-wasm/examples/boundary-emit.rs`
+  under `VerifyOptions::new()`;
+- result: **21/21 byte-identical** through the JS boundary
+  (`scripts/wasm-boundary.mjs`), plus typed `Error` throws for four hostile
+  inputs, the closed five-name export surface, and `storage_linkage` evaluated.
+
+This is the first comparison this project has run over the **shipped codegen
+path**. F29 keeps only its own remaining question — whether the Q5 *vector*
+bit-match gains a second pass at the release profile — and now has
+`[profile.release.package.antseal-wasm]` to scope it with (unused today; the
+crate declares no profile stanza).
+
+## The build is hermetic, and it is hermetic only because two flags say so
+
+D18 §7 P5 flagged two build-time hazards as *"R22's first act to measure, not
+to assume"*. Measured, with every proxy variable pointed at a dead port:
+
+- **`wasm-pack build --dev`** — no download, no `wasm-opt`, 1.2 s. It emits one
+  warning, `failed to get wasm-pack version`, which is its own self-update
+  check being denied egress: harmless, but evidence that the tool reaches for
+  the network unprompted.
+- **`wasm-pack build --release`** — **downloaded a `wasm-opt` binary and ran
+  it**. The proxy variables did not stop it. The cache directory
+  `~/.cache/.wasm-pack/` did not exist before the run and afterwards held
+  `wasm-opt-1ceaaea8b7b5f7e0/bin/wasm-opt`, which reports **`wasm-opt version
+  117`** and is dated **2024-02-28**. Nothing in this repository pins binaryen
+  and `which wasm-opt` is empty.
+
+That is a network fetch of an unpinned, unreviewed program that then **edits
+the artifact whose SHA-256 the page publishes about itself** — a breach of both
+D63 §5 R5's *"no network access during the build"* fence and
+`docs/dependency-policy.md` §5's *"exact-pinned wherever installed"*. So
+`scripts/wasm-pack-build.sh` passes **`--no-opt --mode no-install`**, and the
+flags carry that measurement at the site. Cost of the choice, measured: 1.84 MB
+unoptimized against 1.53 MB optimized, and 2.8 s against 3 m 05 s. Re-enabling
+the optimizer needs a **pinned** binaryen first; it is F29/R25's question and
+not a flag an implementation lane may flip.
+
+## Where the toolchain pins are asserted
+
+`scripts/wasm-toolchain-audit.sh` (in the `wasm32-core-tests` job) compares the
+`wasm-bindgen` crate pin against every recorded `wasm-bindgen-cli --version`
+line. Before R22 it was **RED** —
+`::error::wasm-bindgen-cli is pinned (0.2.126) but no wasm-bindgen crate pin
+exists in the root Cargo.toml` — because the maintainer's install line landed
+in `docs/wasm-toolchain.md` before the committed crate pin did. With the pin in
+`[workspace.dependencies]` it reports `OK    wasm-bindgen crate and CLI both
+pinned at 0.2.126`. `scripts/wasm-pack-build.sh` additionally asserts the
+**installed** binaries equal their pins before it builds anything, which the
+audit cannot do (it reads files, never `--version`).
+
+## The panic hook is load-bearing, and that was measured rather than assumed
+
+R22's Accept row asks for a panic hook *and* a typed JS error object. The
+second half is asserted by `scripts/wasm-boundary.mjs` over four hostile
+inputs. The first half cannot be asserted against the shipped module — nothing
+in it panics by design — so it was measured on a four-line probe built OUTSIDE
+the repository with the same pinned toolchain (`wasm-bindgen =0.2.126`,
+`rustc 1.92.0`, release, `--target web`), the same technique D18's own planning
+lane used:
+
+| build | what JS catches when a Rust panic fires |
+| --- | --- |
+| **no hook** | `RuntimeError: unreachable` — an opaque trap naming nothing |
+| **the hook `crates/antseal-wasm/src/boundary.rs` installs** | `Error: antseal verifier panicked: panicked at src/lib.rs:18:5:\nplanted panic` — `instanceof Error`, catchable, carrying the message and the location |
+
+A control call after the caught panic still returned its value, so the panic
+does not poison the instance for the page's next drop. This is why the hook is
+four hand-written lines calling `wasm_bindgen::throw_str` rather than the
+`console_error_panic_hook` crate: the crate would be a seventh name in a
+dependency graph whose entire point is that every name in it was argued for
+(D18 §5 R6), and it logs where this throws.
+
+## Why the amended Accept row was not a formality
+
+D128 §9.3 amended R22's Accept row 2 from "byte-identical to the R9 vectors" to
+"byte-identical to the report **native `verify_bundle` produces for the same
+bundle under the same options**". Measured at R22's landing, over all 21 cases:
+
+```
+cases: 21   identical to the committed vector: 0   different: 21
+first differing case: single-text-with-mirror/full
+  vector file (suppressed tuple): …"storage_linkage":"not-evaluated","anchors":[]…
+  R22 corpus  (default tuple)   : …"storage_linkage":{"evaluated":{"units_matched":0,…
+```
+
+The pre-amendment row would have failed **21 of 21**, every one of them at
+`storage_linkage` and none of them for a reason about the boundary. The
+comparison this row actually needs — native ≡ wasm32 for one input under one
+options value — passes 21 of 21.

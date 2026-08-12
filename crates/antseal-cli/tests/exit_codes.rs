@@ -33,7 +33,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 28] = [
+const TABLE: [(ErrorClass, u8, &str); 33] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -94,6 +94,27 @@ const TABLE: [(ErrorClass, u8, &str); 28] = [
         35,
         "restore-verification-failed",
     ),
+    (
+        ErrorClass::RevealInputsUnusable,
+        36,
+        "reveal-inputs-unusable",
+    ),
+    // D69's verdict band. 40 is the `Err` arm of `verify_bundle`; 41/42/43
+    // are the severity rungs of a run that SUCCEEDED, and have no `CliError`
+    // variant at all — they ride on `Outcome::exit_class` and the run still
+    // emits its `--json` result.
+    (
+        ErrorClass::VerifyBundleRejected,
+        40,
+        "verify-bundle-rejected",
+    ),
+    (ErrorClass::VerifyAnchorRefuted, 41, "verify-anchor-refuted"),
+    (
+        ErrorClass::VerifyHeadlineDivergence,
+        42,
+        "verify-headline-divergence",
+    ),
+    (ErrorClass::VerifyUnanchored, 43, "verify-unanchored"),
 ];
 
 #[test]
@@ -121,11 +142,24 @@ fn codes_are_nonzero_distinct_and_avoid_reserved_ranges() {
             "{}: exit code {code} is not distinct",
             class.name()
         );
+        // D69 §7.2's amendment, which rides U30's change: 40–43 are now
+        // MINTED as the verification-verdict classes and 44–49 stay
+        // reserved (D69 §3 R9 — a future storage-linkage rung only if R6 is
+        // overturned, a `sig_policy` split, or report-v2 growth). Without
+        // this narrowing a correct implementation of D69 turns the guard red
+        // for the right reason at the wrong time.
         assert!(
-            !(40..=49).contains(&code),
-            "{}: 40–49 are reserved for U30's verification-verdict classes",
+            !(44..=49).contains(&code),
+            "{}: 44–49 stay reserved (D69 §3 R9)",
             class.name()
         );
+        if (40..=43).contains(&code) {
+            assert!(
+                class.name().starts_with("verify-"),
+                "{}: the minted verdict band is `verify-`-named (D69 §3 R8)",
+                class.name()
+            );
+        }
         assert!(
             code < 125,
             "{}: codes stay below shell/signal territory (125+)",
@@ -167,10 +201,16 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
         // variant and its row are gone — the anchored-seal refusal a user
         // can still meet is `anchor-gate-abort` below (code 22), which is
         // the gate's, not plan validation's.
+        // Re-pointed from `reveal` to `verify` at **U29** (2026-08-12): the
+        // dispatch arm flipped to a real handler, so no build emits this
+        // text for `reveal` any more, and a registered fixture that
+        // documents text nothing emits is worse than none (U19's rule).
+        // `verify` (U30) is the last stub of the frozen surface; when it
+        // lands, this row goes the way `not-implemented-m2` went at U23.
         (
             "not-implemented-m3",
             CliError::NotImplemented {
-                command: "reveal",
+                command: "verify",
                 milestone: Milestone::M3,
             },
         ),
@@ -392,6 +432,44 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 detail: "the canonical bytes of notes.txt".into(),
             },
         ),
+        // D68 §3 R7: reveal's output-collision refusal shares D48 §6's
+        // `refused-overwrite` rung (and therefore U2's code 30) with a
+        // message of its own — a bundle names the one path it refused,
+        // where restore counts files.
+        (
+            "refused-bundle-overwrite",
+            CliError::RefusedBundleOverwrite {
+                path: PathBuf::from(
+                    "antseal-reveal-\
+                     a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.sealproof",
+                ),
+            },
+        ),
+        // D69 §5 group 3: the class minted for reveal's ten
+        // manifest-disagreement cases. The exemplar is an address mismatch
+        // — the one a user is likeliest to meet — carried as the underlying
+        // typed error's own sentence.
+        (
+            // D69 §3 R2's `‡` row. ONE class for every rejection code, with
+            // the specific `VerifyError::code()` in the message — the two
+            // namespaces are disjoint, and this exemplar is where a reader
+            // sees the code travelling in the text rather than the integer.
+            "verify-bundle-rejected",
+            CliError::VerifyBundleRejected {
+                code: "manifest-canon-commit-mismatch",
+                detail: "file 0: the disclosed canonical bytes do not open the manifest's \
+                         canon_commit"
+                    .into(),
+            },
+        ),
+        (
+            "reveal-inputs-unusable",
+            CliError::RevealInputsUnusable {
+                detail: "unit 3: the bytes served do not hash to the address the manifest \
+                         records"
+                    .into(),
+            },
+        ),
     ]
 }
 
@@ -541,22 +619,29 @@ fn json_error_object_carries_class_code_and_message() {
 
 #[test]
 fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
-    // `show` is the exemplar stub (M3); `list` played this role until U19
-    // gave it a real handler, and `status` until U23 gave it one. The
-    // exemplar must name a command that is genuinely still stubbed — the
-    // envelope shape asserted below is the *not-implemented* one, and a
-    // command with a handler would reach the vault instead.
+    // **The stub-exemplar rotation ends here.** `list` played this role
+    // until U19 gave it a real handler, `status` until U23, `show` until
+    // U27, `reveal` until U28 and `verify` until **U30** — and U30 was the
+    // last stub of the frozen surface, so there is no not-implemented
+    // envelope left for any build to emit. The vehicle is now a real
+    // handler's own refusal, and `verify`'s is the cleanest one in the
+    // product: it needs no vault, never prompts, and a bundle path that
+    // does not exist is `io-error` (4) — a process outcome, deterministic
+    // on any machine.
+    //
+    // What this row is about is unchanged: D51 invariant 2 (the same code
+    // in both modes) and the one-document contract.
     let plain = spawn::antseal()
-        .args(["show", "w1"])
+        .args(["verify", "definitely-not-here.sealproof"])
         .output()
         .expect("spawn antseal");
     let json = spawn::antseal()
-        .args(["--json", "show", "w1"])
+        .args(["--json", "verify", "definitely-not-here.sealproof"])
         .output()
         .expect("spawn antseal");
 
     assert_eq!(plain.status.code(), json.status.code(), "D51: same code");
-    assert_eq!(json.status.code(), Some(3), "not-implemented class code");
+    assert_eq!(json.status.code(), Some(4), "io-error class code");
 
     // stdout parses as exactly one JSON document, no stray bytes — the
     // U3 envelope around U2's error object.
@@ -564,10 +649,10 @@ fn json_mode_emits_exactly_one_json_document_with_the_same_exit_code() {
     let doc: serde_json::Value =
         serde_json::from_str(stdout.trim_end_matches('\n')).expect("single JSON document");
     assert_eq!(doc["v"], serde_json::json!(1));
-    assert_eq!(doc["command"], serde_json::json!("show"));
+    assert_eq!(doc["command"], serde_json::json!("verify"));
     assert_eq!(doc["ok"], serde_json::json!(false));
-    assert_eq!(doc["error"]["class"], "not-implemented");
-    assert_eq!(doc["error"]["exit_code"], serde_json::json!(3));
+    assert_eq!(doc["error"]["class"], "io-error");
+    assert_eq!(doc["error"]["exit_code"], serde_json::json!(4));
 
     // Human copy stays on stderr in both modes.
     assert!(!json.stderr.is_empty(), "human message on stderr");

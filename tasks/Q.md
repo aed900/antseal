@@ -264,8 +264,14 @@ half-land.**
   registry §7.6.3 is **failure context only**: `VerificationReport` exists only
   for a bundle that passed (D27 §4), so a decode layer can never have a report
   to appear in. This is not "not yet" — it is closed for v1 and every future
-  report version. If U30's `--json` **failure** envelope carries it (D65's call,
-  M3), the field is named `decode_layer` and lives outside `VerificationReport`.
+  report version. **D65 (2026-08-12) ruled NO for envelope v1** — the error
+  object's key set is exactly `class`/`exit_code`/`message`, finalized from U2
+  unchanged and asserted exactly, so a fourth key is a breaking change to the
+  envelope wrapper and costs `ENVELOPE_VERSION`; the layer, where a consumer
+  needs it, is expressible in the **class partition** (U2's and D69's namespace)
+  and in the human `message`. If a future envelope version ever carries one, it
+  is still named `decode_layer` and still lives outside `VerificationReport`,
+  which D86 makes permanent either way.
   The gate records this as **decided, not open**, so no later reader
   re-litigates it as a gap.
 
@@ -480,6 +486,7 @@ question).**
   - Lint green repo-wide including extracted CLI/page strings
   - Exactly one canonical URL value found by grep across all surfaces
   - Signed-off audit checklist committed; violations fixed before Q34 release
+- Notes: **[D62, 2026-08-12]** This row's *"exactly one canonical URL value"* Accept is the **ruled** predicate and D62 adopts it verbatim over R26's looser *"no other verifier URL literal"* phrasing. The value is `https://antseal.org/`; the scan is pattern-anchored (`antseal\.[a-z]+` plus any product-name-bearing `https?://`) with a named allow-list for the records that legitimately discuss other names (D62 §3 R8). This row's `Do` also lists the **page footer** as a URL surface, which spec line 139 does not (it says *"used in all docs and printed by the CLI in `reveal` output"*) — harmless under value-identity, noted so it is not read as a spec citation.
 
 ### Q29 — Choose the license and add license files
 - Milestone: M4

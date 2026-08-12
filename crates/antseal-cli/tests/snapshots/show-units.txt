@@ -1,0 +1,55 @@
+antseal — `show <work-id>` (U27), the unit table `reveal --units` is chosen from
+
+════ the D43 cache intact — exact sealed bytes ════
+33ba5a85c70aef6f6de2a18b347ae0781bdc6ead780fea4c4529c7837217b9e9  complete
+  u27 fixture   devnet
+  7 unit(s) across 4 file(s); 123 byte(s) sealed
+  the unit ids below are the ones `reveal --units` takes; snippets are shown from your own copy and are not part of any proof
+  file #0 "notes.txt" — text, 25 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 0   normal   25 byte(s) at offset 0 of 25   "café notes\n\nsecond para\n"   [sealed bytes]
+      unit 1   raw-mirror   32 byte(s) at offset 0 of 32   hex:efbbbf63616665cc81206e6f7465730d…   [sealed bytes]
+          unit 1 is this file's raw mirror and cannot be selected by id; raw mirrors are included only by revealing the whole file (select all of its units) or by --all
+  file #1 "data/blob.bin" — binary, 9 byte(s); unit offsets are raw bytes; fine tree present
+      unit 2   normal   9 byte(s) at offset 0 of 9   hex:000102fffe7f800042   [sealed bytes]
+  file #2 "split.txt" — text, 33 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 3   normal   11 byte(s) at offset 0 of 33   "alpha one\n\n"   [sealed bytes]
+      unit 4   normal   10 byte(s) at offset 11 of 33   "beta two\n\n"   [sealed bytes]
+      unit 5   normal   12 byte(s) at offset 21 of 33   "gamma three\n"   [sealed bytes]
+  file #3 "plain.md" — text, 24 byte(s); unit offsets are canonical bytes; no fine tree — whole-file reveal only
+      unit 6   normal   24 byte(s) at offset 0 of 24   "first para\n\nsecond para\n"   [sealed bytes]
+
+════ cache gone, the files still on disk — current-file fallback ════
+33ba5a85c70aef6f6de2a18b347ae0781bdc6ead780fea4c4529c7837217b9e9  complete
+  u27 fixture   devnet
+  7 unit(s) across 4 file(s); 123 byte(s) sealed
+  the unit ids below are the ones `reveal --units` takes; snippets are shown from your own copy and are not part of any proof
+  file #0 "notes.txt" — text, 25 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 0   normal   25 byte(s) at offset 0 of 25   "café notes\n\nsecond para\n"   [current file — may differ if modified since sealing]
+      unit 1   raw-mirror   32 byte(s) at offset 0 of 32   hex:efbbbf63616665cc81206e6f7465730d…   [current file — may differ if modified since sealing]
+          unit 1 is this file's raw mirror and cannot be selected by id; raw mirrors are included only by revealing the whole file (select all of its units) or by --all
+  file #1 "data/blob.bin" — binary, 9 byte(s); unit offsets are raw bytes; fine tree present
+      unit 2   normal   9 byte(s) at offset 0 of 9   hex:000102fffe7f800042   [current file — may differ if modified since sealing]
+  file #2 "split.txt" — text, 33 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 3   normal   11 byte(s) at offset 0 of 33   "alpha one\n\n"   [current file — may differ if modified since sealing]
+      unit 4   normal   10 byte(s) at offset 11 of 33   "beta two\n\n"   [current file — may differ if modified since sealing]
+      unit 5   normal   12 byte(s) at offset 21 of 33   "gamma three\n"   [current file — may differ if modified since sealing]
+  file #3 "plain.md" — text, 24 byte(s); unit offsets are canonical bytes; no fine tree — whole-file reveal only
+      unit 6   normal   24 byte(s) at offset 0 of 24   "first para\n\nsecond para\n"   [current file — may differ if modified since sealing]
+
+════ neither — the absent arm, and never an error ════
+33ba5a85c70aef6f6de2a18b347ae0781bdc6ead780fea4c4529c7837217b9e9  complete
+  u27 fixture   devnet
+  7 unit(s) across 4 file(s); 123 byte(s) sealed
+  the unit ids below are the ones `reveal --units` takes; snippets are shown from your own copy and are not part of any proof
+  file #0 "notes.txt" — text, 25 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 0   normal   25 byte(s) at offset 0 of 25   (snippet unavailable)
+      unit 1   raw-mirror   32 byte(s) at offset 0 of 32   (snippet unavailable)
+          unit 1 is this file's raw mirror and cannot be selected by id; raw mirrors are included only by revealing the whole file (select all of its units) or by --all
+  file #1 "data/blob.bin" — binary, 9 byte(s); unit offsets are raw bytes; fine tree present
+      unit 2   normal   9 byte(s) at offset 0 of 9   (snippet unavailable)
+  file #2 "split.txt" — text, 33 byte(s); unit offsets are canonical bytes; fine tree present
+      unit 3   normal   11 byte(s) at offset 0 of 33   (snippet unavailable)
+      unit 4   normal   10 byte(s) at offset 11 of 33   (snippet unavailable)
+      unit 5   normal   12 byte(s) at offset 21 of 33   (snippet unavailable)
+  file #3 "plain.md" — text, 24 byte(s); unit offsets are canonical bytes; no fine tree — whole-file reveal only
+      unit 6   normal   24 byte(s) at offset 0 of 24   (snippet unavailable)

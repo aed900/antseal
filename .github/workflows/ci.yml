@@ -182,15 +182,22 @@ jobs:
   # How it runs (docs/wasm-toolchain.md): a Rust libtest binary built for this
   # target has ZERO imports and exports `main` + `memory`, so
   # `scripts/wasm-test-runner.mjs` executes it under plain
-  # `WebAssembly.instantiate` in node — no wasm-bindgen, no browser, nothing
-  # that would pre-empt decision D18. cargo invokes it automatically via the
-  # `runner` in .cargo/config.toml. Stdout does not exist on this target, so
-  # the runner also asserts the in-memory execution witness (non-vacuity:
-  # "all tests passed" and "zero tests ran" are otherwise indistinguishable).
+  # `WebAssembly.instantiate` in node — no wasm-bindgen and no browser. cargo
+  # invokes it automatically via the `runner` in .cargo/config.toml. Stdout
+  # does not exist on this target, so the runner also asserts the in-memory
+  # execution witness (non-vacuity: "all tests passed" and "zero tests ran"
+  # are otherwise indistinguishable).
   #
-  # Second step: the getrandom-recipe + wasm-bindgen-pin audit. It is green
-  # and inert today (no wasm32 graph pulls getrandom, nothing installs
-  # wasm-bindgen-cli) and goes red the moment either arrives unconfigured.
+  # [R22/D18, 2026-08-12] This comment used to say the arrangement avoided
+  # "anything that would pre-empt decision D18", and that the audit below was
+  # "green and inert today (… nothing installs wasm-bindgen-cli)". Both went
+  # out of date the day D18 resolved: the shipped surface is the workspace
+  # member crates/antseal-wasm, `wasm-bindgen = "=0.2.126"` is pinned in the
+  # root [workspace.dependencies], and the audit's pin-equality half is now
+  # LIVE rather than inert — it compares that pin against the recorded
+  # wasm-bindgen-cli install version and fails if they diverge. The getrandom
+  # half remains inert (no wasm32 graph pulls getrandom) and still goes red
+  # the moment one does.
   wasm32-core-tests:
     name: wasm32-core-tests
     runs-on: ubuntu-latest

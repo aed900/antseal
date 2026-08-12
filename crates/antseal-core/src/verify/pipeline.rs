@@ -63,10 +63,17 @@
 //!
 //! # What this stage does *not* do
 //!
-//! - **Storage linkage** (MVP-SPEC.md line 119) is a separate later stage
-//!   (R20) and must never gate the evidence verdict — "storage is the
-//!   product's bonus, not its proof". The report slot stays
-//!   [`StorageLinkageResult::NotEvaluated`].
+//! - **Gate the verdict on storage linkage** (MVP-SPEC.md line 119). R20's
+//!   layer runs *after* the table above — by default, since D128 — and
+//!   [`check_storage_linkage`] returns no `Result`, so no evidence stage
+//!   can be sequenced behind it and nothing it finds can fail a bundle.
+//!   "Storage is the product's bonus, not its proof": a `.sealproof` whose
+//!   every recorded address is wrong still verifies, and its report says
+//!   both things. A caller that suppresses the layer
+//!   ([`VerifyOptions::without_storage_linkage`]) gets
+//!   [`StorageLinkageResult::NotEvaluated`], which is what a run that did
+//!   not do the work can honestly say — and that caller list is closed at
+//!   the two committed-exhibit generators.
 //! - **Online anchor evidence.** Stage 6 runs A18's machine *offline*: core
 //!   fetches nothing and `verify_bundle` is handed nothing fetched, so an
 //!   upgraded `.ots` renders `attested` and never the `--online`-only
@@ -149,6 +156,7 @@ use super::report::{
     RevealSet, SignatureScheme, StorageLinkageResult, SupportingEvidenceResult, UnitSpan,
     UnrevealedFilePlaceholder, VerificationReport, WorkMetadata,
 };
+use super::storage_linkage::{ManifestLinkageSubject, UnitLinkageSubject, check_storage_linkage};
 use super::structural::{
     BundleView, DisclosedField, FileEntry as StructuralFileEntry, ManifestView, TouchedFile,
     UnitEntry as StructuralUnitEntry, UnitKind, check_structural,
@@ -254,7 +262,7 @@ impl core::fmt::Display for VerifyStage {
 /// distinct from it; carrying evidence here would need a borrowed field and
 /// would put a network-shaped input in the type every WASM caller builds. The
 /// host-supplied route is R16/R21/R22's.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct VerifyOptions {
     /// The caller's verification time, POSIX seconds. See the type docs.
@@ -262,15 +270,32 @@ pub struct VerifyOptions {
     /// The TSA root store T3 validates against; `None` is
     /// [`TsaRootStore::pinned`].
     tsa_roots: Option<&'static TsaRootStore>,
+    /// Whether the R20 storage-linkage layer runs. See the type docs and
+    /// [`Self::without_storage_linkage`].
+    storage_linkage: bool,
+}
+
+/// Hand-written rather than derived, because a derived `Default` would give
+/// `storage_linkage: false` and therefore **disagree with [`Self::new`]**
+/// (D128 §3.1). The two must be one value; the way to make that structural
+/// rather than remembered is to define one in terms of the other.
+impl Default for VerifyOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VerifyOptions {
-    /// The default options: no verification time, the pinned root store.
+    /// The default options: no verification time, the pinned root store, and
+    /// the storage-linkage layer **on** — suppressible only through
+    /// [`Self::without_storage_linkage`], which two committed-exhibit
+    /// generators are the entire caller list for.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             verify_at_unix: None,
             tsa_roots: None,
+            storage_linkage: true,
         }
     }
 
@@ -290,6 +315,67 @@ impl VerifyOptions {
         self
     }
 
+    /// **Suppress** the offline storage-linkage layer (R20), so
+    /// [`VerificationReport::storage_linkage`] reports
+    /// [`StorageLinkageResult::NotEvaluated`] — the literal truth about a run
+    /// that did not do the work.
+    ///
+    /// Not a product surface. [`Self::new`] runs the layer (D128 §3 R1), and
+    /// **this method's caller list is closed at two**, both committed-exhibit
+    /// generators (D128 §3 R2/R3):
+    ///
+    /// - `test_util::vectors_report`'s `build_expect`, behind R9's 21 frozen
+    ///   report cases and their regenerator;
+    /// - `test_util::bundle_fixtures`'s `verify()` helper, behind R30's 26
+    ///   `REPORT_DIGEST_BY_SHAPE` rows.
+    ///
+    /// A third call site is a red arm — the literal scan
+    /// `without_storage_linkage_has_exactly_two_callers` asserts the
+    /// closure — because a third suppressor is either a product surface that
+    /// must not suppress (D128 §3 R5: R21's orchestration and R22's binding
+    /// may not call this, so U30 has no `--no-storage-linkage` flag and R23's
+    /// page no toggle) or an exhibit nobody ruled.
+    ///
+    /// # Why the switch exists at all
+    ///
+    /// All 21 R9 report vectors are `verify_bundle`'s own output over R6
+    /// fixtures whose recorded addresses are recognisable placeholders
+    /// (`bundle_fixtures::fixture_address`, and a `0x5E`/`0x5A`/`0x5C`
+    /// storage record) — chosen at M0, when nothing recomputed them. Running
+    /// the layer over *those* would re-value **every** case at once, and
+    /// `scripts/vector-freeze.sh --update --verdict-event` refuses exactly
+    /// that: *"all 21 cases moved. A format event moves every case at once;
+    /// a verdict event does not"*. D105 §2.4 says the same in the other
+    /// direction — a value addition that moves all the pins is a claim that
+    /// is false.
+    ///
+    /// That is a fact about the **exhibits**, not about the stage, and D128
+    /// separates the two knobs the earlier reading fused. There are three
+    /// ways out, not the two this doc used to enumerate — a FIXTURE EVENT
+    /// (give R6's fixtures real S4 addresses, moving the frozen bundle and
+    /// manifest vectors too, D94 §5); a new freeze class (and D105 §10's
+    /// declined one is a *different* hole, since it admits an **added** case
+    /// and this adds none); and the one taken, **pinning the exhibits to a
+    /// stated options tuple**. The exhibits never observed a default: both
+    /// generators already built their own [`VerifyOptions`], so naming the
+    /// value they pass changes a spelling and not a byte. Zero frozen digests
+    /// moved, zero `REPORT_DIGEST_BY_SHAPE` rows moved, zero files under
+    /// `testdata/`, `REPORT_VERSION` unchanged at 1.
+    ///
+    /// The layer's own coverage is unaffected by the suppression, because it
+    /// never lived in these exhibits: `EXPECTED_CANONICAL_JSON_WITH_LINKAGE`
+    /// (D105 ruling 4's whole-report rendering, dual-target through A90's
+    /// `--lib` route), `tests/storage_linkage.rs`'s four address modes, and
+    /// `verify::storage_linkage`'s unit tests.
+    ///
+    /// [`VerificationReport::storage_linkage`]:
+    ///     super::report::VerificationReport::storage_linkage
+    #[must_use]
+    pub const fn without_storage_linkage(mut self) -> Self {
+        self.storage_linkage = false;
+        self
+    }
+
     /// The verification time, or `None` if the caller supplied no clock.
     #[must_use]
     pub const fn verify_at_unix(&self) -> Option<u64> {
@@ -303,6 +389,13 @@ impl VerifyOptions {
             Some(roots) => roots,
             None => TsaRootStore::pinned(),
         }
+    }
+
+    /// Whether the storage-linkage layer runs — `true` unless the caller
+    /// suppressed it ([`Self::without_storage_linkage`]).
+    #[must_use]
+    pub const fn storage_linkage(&self) -> bool {
+        self.storage_linkage
     }
 }
 
@@ -520,6 +613,12 @@ fn run(
     // ── Stage 6: anchors (A18 via R12) ─────────────────────────────────
     let (anchors, supporting_evidence) = anchor_stage(&proof, options);
 
+    // ── The storage-linkage layer (R20) — beside, never inside ─────────
+    // Last, and after every evidence stage has finished, so nothing in the
+    // evidence layer can be sequenced behind it; `check_storage_linkage`
+    // returns no `Result`, so nothing here can fail the bundle either.
+    let storage_linkage = storage_linkage_layer(bundle, rows.rows(), options);
+
     Ok(VerificationReport {
         report_version: REPORT_VERSION,
         work: WorkMetadata {
@@ -538,7 +637,7 @@ fn run(
             passed: true,
             units_verified: u64::try_from(verified.len()).unwrap_or(u64::MAX),
         },
-        storage_linkage: StorageLinkageResult::NotEvaluated,
+        storage_linkage,
         anchors,
         supporting_evidence,
         reveal: reveal_set(body, bundle, &rows, &revealed_ids, &summaries)?,
@@ -1086,6 +1185,76 @@ fn anchor_stage(
         });
 
     (verdicts.project_anchor_results(), supporting)
+}
+
+// ---------------------------------------------------------------------------
+// the storage-linkage layer (R20)
+// ---------------------------------------------------------------------------
+
+/// Assemble [`check_storage_linkage`]'s subjects out of the decoded bundle
+/// and manifest, and run it — or report
+/// [`StorageLinkageResult::NotEvaluated`] for the one caller shape that
+/// suppressed it ([`VerifyOptions::without_storage_linkage`]).
+///
+/// Subjects are visited in **manifest unit order**, like every other stage:
+/// the counts are order-independent, but a future per-unit rendering built on
+/// this must not inherit an order the sealer chose by laying its sections out
+/// one way rather than another.
+///
+/// Both halves of a unit subject come from opposite sides of the bundle — the
+/// ciphertext from the reveal section, the address from the *signed* manifest
+/// — which is what makes the comparison a statement rather than a tautology.
+/// Units the bundle does not embed are skipped, not counted: they have no
+/// bytes here to recompute anything from.
+fn storage_linkage_layer(
+    bundle: &BundleV1<'_>,
+    rows: &[UnitRow<'_>],
+    options: &VerifyOptions,
+) -> StorageLinkageResult {
+    if !options.storage_linkage() {
+        return StorageLinkageResult::NotEvaluated;
+    }
+
+    let embedded: BTreeMap<u64, &[u8]> = bundle
+        .covered_reveals()
+        .iter()
+        .map(|reveal| (reveal.unit_id(), reveal.ciphertext().as_slice()))
+        .chain(
+            bundle
+                .noncovered_reveals()
+                .iter()
+                .map(|reveal| (reveal.unit_id(), reveal.ciphertext().as_slice())),
+        )
+        .collect();
+
+    let subjects: Vec<UnitLinkageSubject<'_>> = rows
+        .iter()
+        .filter_map(|row| {
+            embedded
+                .get(&row.unit_id())
+                .map(|ciphertext| UnitLinkageSubject {
+                    unit_id: row.unit_id(),
+                    ciphertext,
+                    recorded_address: row.entry.address(),
+                })
+        })
+        .collect();
+
+    let record = bundle.storage_record();
+    // The wire nonce and the AEAD nonce are deliberately distinct types; the
+    // crossing is explicit here, as it is everywhere else in the tree.
+    let nonce = AeadNonce::from_bytes(*record.nonce().as_bytes());
+    check_storage_linkage(
+        &subjects,
+        &ManifestLinkageSubject {
+            // The bytes **as received** — the pre-image the sealer encrypted,
+            // never a re-encoding (module docs, line 74).
+            manifest_bytes: bundle.manifest_bytes(),
+            nonce: &nonce,
+            k_m: record.k_m(),
+            recorded_address: record.address(),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1966,7 +2135,21 @@ mod tests {
         assert_eq!(report.work.title, "R5 pipeline fixture");
         assert_eq!(report.work.format_version, 1);
         assert_eq!(report.work.signature_scheme, SignatureScheme::HybridPq);
-        assert_eq!(report.storage_linkage, StorageLinkageResult::NotEvaluated);
+        // D128 §3 R1: the default **runs** the storage-linkage layer, so this
+        // is no longer "the stage did not run" but what the stage found. This
+        // fixture's recorded addresses are M0 placeholders (`[0x77; 32]` for
+        // the storage record, `salt16`-patterned entries for the units), so
+        // nothing links — and the four assertions above it, the evidence
+        // layer, do not move by one field. "Storage is the product's bonus,
+        // not its proof" (MVP-SPEC.md line 118), asserted rather than said.
+        assert_eq!(
+            report.storage_linkage,
+            StorageLinkageResult::Evaluated {
+                units_matched: 0,
+                units_mismatched: 4,
+                manifest_matched: false,
+            }
+        );
         assert_eq!(report.supporting_evidence, SupportingEvidenceResult::None);
 
         // `work_id` is SHA-256 over the received body bytes.
@@ -2432,28 +2615,232 @@ mod tests {
         }
     }
 
-    /// [`Default`] and [`VerifyOptions::new`] agree, and the defaults are the
-    /// conservative ones: no caller-supplied clock, and the **pinned** root
-    /// store rather than whatever was last injected.
+    /// [`Default`] and [`VerifyOptions::new`] agree, and the defaults are: no
+    /// caller-supplied clock, the **pinned** root store rather than whatever
+    /// was last injected, and the storage-linkage layer **on**.
     ///
-    /// The second half became load-bearing at R12: `tsa_roots` defaults
+    /// Two of the three are conservative in the "do less" sense and the third
+    /// is deliberately not — which is why this test's title no longer calls
+    /// the defaults *the conservative ones*, as it did until D128. §3 R1 rules
+    /// the layer on by default, on spec line 38 (*"the page's storage story is the
+    /// offline address-recomputation of the storage-linkage layer"*) read
+    /// against R22's options-free `verify(bundle_bytes)`: the page cannot opt
+    /// in, so the default must already be in.
+    ///
+    /// The first assertion is D128 §3.1's red arm. [`Default`] is hand-written
+    /// precisely because the `derive` would give `storage_linkage: false` and
+    /// disagree with [`VerifyOptions::new`] silently — a `verify_bundle` called
+    /// through `VerifyOptions::default()` would then skip a layer the spec
+    /// mandates, with nothing red anywhere.
+    ///
+    /// The root-store half became load-bearing at R12: `tsa_roots` defaults
     /// through a `match` rather than a stored value, so a bug that made the
     /// override sticky — or that defaulted to an empty store, under which
     /// every token would render `internally-consistent-only` and no test
     /// asserting a *failure* would notice — shows up here.
     #[test]
-    fn default_options_are_the_conservative_ones() {
-        assert_eq!(VerifyOptions::default(), VerifyOptions::new());
+    fn the_defaults_are_no_clock_the_pinned_roots_and_the_layer_on() {
+        assert_eq!(
+            VerifyOptions::default(),
+            VerifyOptions::new(),
+            "`Default` and `new()` disagree. If `storage_linkage` is the field that \
+             differs, the `#[derive(Default)]` is back: it yields `false` where \
+             `new()` says `true`, so `verify_bundle` reached through \
+             `VerifyOptions::default()` would skip a layer MVP-SPEC.md line 38 \
+             mandates, silently (D128 §3.1)"
+        );
         assert_eq!(VerifyOptions::new().verify_at_unix(), None);
         assert!(std::ptr::eq(
             VerifyOptions::new().tsa_roots(),
             TsaRootStore::pinned()
         ));
+        assert!(
+            VerifyOptions::new().storage_linkage(),
+            "the default stopped running the storage-linkage layer (D128 §3 R1)"
+        );
+        assert!(
+            VerifyOptions::default().storage_linkage(),
+            "`Default` and `new()` disagree about the storage-linkage layer — \
+             the `derive` is back (D128 §3.1)"
+        );
+        assert!(
+            !VerifyOptions::new()
+                .without_storage_linkage()
+                .storage_linkage(),
+            "the suppression switch stopped suppressing"
+        );
         assert_eq!(
             VerifyOptions::new()
                 .with_verify_at_unix(1_785_000_000)
                 .verify_at_unix(),
             Some(1_785_000_000)
+        );
+    }
+
+    /// Every file in the tree that names
+    /// [`VerifyOptions::without_storage_linkage`], enumerated — **D128 §3 R2's
+    /// red arm**, in D123's literal-scan shape.
+    ///
+    /// R2 closes the suppressing-caller list at **two**, both
+    /// committed-exhibit generators, because a third suppressor is either a
+    /// product surface that must not suppress (§3 R5: R21's orchestration,
+    /// R22's binding, and through them U30 and R23) or an exhibit nobody
+    /// ruled. Documenting that closure is not the same as holding it, so it
+    /// is asserted here.
+    ///
+    /// The table has a **third** row, and the reason is worth stating rather
+    /// than discovering. §3 R2's own sentence — *"exactly those two files plus
+    /// its own definition and rustdoc"* — omits the site §3.2 row 3 mandates
+    /// in the same ruling: `tests/storage_linkage.rs`'s
+    /// `the_layer_is_silent_only_when_it_is_suppressed`, whose whole subject
+    /// **is** the suppression. That file suppresses nothing committed and is no
+    /// product surface; it is the switch's instrument, and §3.2 calls it *"the
+    /// property R2's closed caller list depends on"*. So the closure R2 means
+    /// is asserted separately and exactly: **two** suppressors under any
+    /// `src/`, and the switch's own test outside it.
+    ///
+    /// The call **count** is pinned per file as well as the file set, so a
+    /// *second* suppression inside an already-listed file reddens too — a
+    /// file-level scan alone would let R9's executor grow a second suppressed
+    /// call without a word.
+    ///
+    /// What is scanned for is the **call** form, `…()`, not the bare
+    /// identifier: a rustdoc sentence saying R21 never suppresses is a
+    /// sentence, not a suppression, and an instrument that reddened on prose
+    /// would be one nobody could write prose around.
+    ///
+    /// Skipped on wasm32, which has no filesystem, exactly as
+    /// `crypto::domain`'s crate-wide tag scan is. The property is about the
+    /// source tree, not about a target.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn without_storage_linkage_has_exactly_two_callers() {
+        use std::path::{Path, PathBuf};
+
+        /// The switch's definition, its rustdoc, and this scan itself.
+        const DEFINITION: &str = "crates/antseal-core/src/verify/pipeline.rs";
+        /// `(path, calls, why it may suppress)` — the closed list.
+        const CALLERS: [(&str, usize, &str); 3] = [
+            (
+                "crates/antseal-core/src/test_util/vectors_report.rs",
+                1,
+                "R9's report-vector executor: the 21 frozen cases (D128 §3 R3)",
+            ),
+            (
+                "crates/antseal-core/src/test_util/bundle_fixtures.rs",
+                1,
+                "R30's digest-table helper: the 26 REPORT_DIGEST_BY_SHAPE rows (D128 §3 R3)",
+            ),
+            (
+                "crates/antseal-core/tests/storage_linkage.rs",
+                1,
+                "the switch's own test — the layer is silent only when suppressed (D128 §3.2)",
+            ),
+        ];
+        /// The call form. Built by `concat!` so this scan's own source does
+        /// not have to contain the thing it hunts for — `pipeline.rs` is
+        /// exempt from the count either way, but a scanner that matches
+        /// itself is one nobody trusts on sight.
+        const CALL: &str = concat!("without_storage_linkage", "()");
+
+        fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+            let entries = std::fs::read_dir(dir)
+                .unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));
+            for entry in entries {
+                let path = entry
+                    .unwrap_or_else(|e| panic!("cannot read an entry under {}: {e}", dir.display()))
+                    .path();
+                // `target/` is build output and `.git/` is not source; both
+                // exist at more than one depth (`fuzz/target/`).
+                let skip = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n == "target" || n == ".git");
+                if skip {
+                    continue;
+                }
+                if path.is_dir() {
+                    collect(&path, out);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("the crate sits two levels under the workspace root")
+            .to_path_buf();
+        let mut files = Vec::new();
+        collect(&root, &mut files);
+        assert!(
+            files.len() > 300,
+            "the walker found only {} files — it is not reaching the tree",
+            files.len()
+        );
+
+        let mut found: BTreeMap<String, usize> = BTreeMap::new();
+        let mut saw_definition = false;
+        for file in &files {
+            let text = std::fs::read_to_string(file)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+            let relative = file
+                .strip_prefix(&root)
+                .expect("every scanned file is under the root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative == DEFINITION {
+                saw_definition = true;
+                continue;
+            }
+            let count = text.matches(CALL).count();
+            if count > 0 {
+                found.insert(relative, count);
+            }
+        }
+        assert!(
+            saw_definition,
+            "the scan did not reach the switch's own definition file — walker broken?"
+        );
+
+        // 1. No file outside the closed list may call the switch.
+        let listed: BTreeSet<&str> = CALLERS.iter().map(|(path, _, _)| *path).collect();
+        let strays: Vec<&String> = found
+            .keys()
+            .filter(|path| !listed.contains(path.as_str()))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "a third caller of `{CALL}` appeared: {strays:?}. D128 §3 R2 closes the \
+             suppressing-caller list at the two committed-exhibit generators — a further \
+             suppressor is either a product surface that must not suppress (§3 R5: R21, \
+             R22, U30, R23) or an exhibit nobody ruled. Kill criterion 3; this is a \
+             decision, not an edit."
+        );
+
+        // 2. Every listed entry is real and suppresses exactly as often as
+        //    stated — so the list cannot rot, and cannot hide a second call.
+        for (path, calls, why) in CALLERS {
+            let seen = found.get(path).copied().unwrap_or(0);
+            assert_eq!(
+                seen, calls,
+                "`{path}` calls `{CALL}` {seen} time(s), not {calls}. It is on D128 §3 R2's \
+                 closed list as: {why}. A count that moved is a suppression nobody ruled, or \
+                 a listed site that stopped suppressing."
+            );
+        }
+
+        // 3. R2's closure, stated as the number it is about: exactly two
+        //    suppressors under a crate's `src/`. The switch's own test is
+        //    outside every `src/` by construction.
+        let in_src = CALLERS
+            .iter()
+            .filter(|(path, _, _)| path.contains("/src/"))
+            .count();
+        assert_eq!(
+            in_src, 2,
+            "D128 §3 R2's caller list is closed at two library-side suppressors"
         );
     }
 
@@ -2763,7 +3150,14 @@ mod tests {
                 r#""claimed_time_informational_only":"1767225600","#,
                 r#""signature_scheme":"hybrid-pq"},"#,
                 r#""evidence":{"passed":true,"units_verified":2},"#,
-                r#""storage_linkage":"not-evaluated","anchors":[],"#,
+                // D128 §3 R1: the default runs the layer, so this whole-report
+                // literal now carries the evaluated object rather than the
+                // string. Re-expressed, not re-blessed — the fixture's
+                // addresses are R6 `Placeholder`s, so the two embedded
+                // ciphertexts and the manifest all mismatch, and every other
+                // byte of the pin is unchanged.
+                r#""storage_linkage":{"evaluated":{"units_matched":0,"#,
+                r#""units_mismatched":2,"manifest_matched":false}},"anchors":[],"#,
                 r#""supporting_evidence":"none","reveal":{"files":[{"file_id":0,"#,
                 r#""path":"notes/split.md","total_size":34,"fully_revealed":false,"#,
                 r#""revealed_spans":[{"unit_id":1,"start":12,"end":24}],"#,

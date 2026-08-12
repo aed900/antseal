@@ -129,19 +129,21 @@ use crate::content::unit::ByteRange as ContentByteRange;
 use crate::crypto::commit::{CommitmentDigest, canon_commit, path_commit, raw_commit, unit_commit};
 use crate::crypto::disclosure::UnitBinding;
 use crate::crypto::hkdf::{
-    FileId, UnitId, derive_file_salt, derive_fine_seed, derive_path_salt, derive_unit_key,
-    derive_unit_salt,
+    FileId, UnitId, derive_file_salt, derive_fine_seed, derive_manifest_key, derive_path_salt,
+    derive_unit_key, derive_unit_salt,
 };
-use crate::crypto::material::{MasterSecretRef, NodeHash32, Salt16, Seed32};
+use crate::crypto::manifest_aead::recompute_manifest_blob;
+use crate::crypto::material::{Key32, MasterSecretRef, NodeHash32, Salt16, Seed32};
 use crate::crypto::secrets::SealId;
 use crate::crypto::sig_policy::{SigPolicy, public_keys, sign_body};
-use crate::crypto::unit_aead::encrypt_unit;
+use crate::crypto::unit_aead::{Nonce24 as AeadNonce, encrypt_unit};
 use crate::manifest::body::{
     ByteRange, CanonMode, ContentAddress, FileEntry, FineTree, ManifestBodyV1,
     Nonce24 as ManifestNonce, UnitEntry, encode_body,
 };
 use crate::manifest::registry::UnitKind;
 use crate::manifest::{SigAlgMap, SigMaterial, encode_envelope};
+use crate::storage::compute_storage_address;
 
 use super::TEST_MASTER_SECRET_W;
 use super::fixture_rng::FixtureRng;
@@ -310,6 +312,38 @@ pub enum AnchorSet {
     },
 }
 
+/// What the fixture records as the Autonomi address of each blob — R20's
+/// substrate.
+///
+/// The default is [`Placeholder`](Self::Placeholder) and **must stay** the
+/// default: every committed vector and every frozen bundle in `testdata/` was
+/// generated under it, and the recorded addresses are load-bearing bytes of
+/// the *signed manifest*, so a changed default is a FIXTURE EVENT that moves
+/// the frozen bundle and manifest vectors as well as the report ones (D94 §5).
+/// The other three modes exist so a fixture that *does* link can be built
+/// beside them without moving a byte of what already exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StorageAddresses {
+    /// Recognisable constants — per-unit `0xAD…`, and a `0x5E`/`0x5A`/`0x5C`
+    /// storage record. Chosen at M0, when nothing recomputed an address;
+    /// `verify_fuzz.rs` locates the record's 88 unauthenticated bytes by
+    /// searching for those three patterns.
+    #[default]
+    Placeholder,
+    /// S4's real rule throughout: each unit entry records BLAKE3-256 of that
+    /// unit's ciphertext, and the storage record carries the real
+    /// `k_m = HKDF(W, "manifest-key")` with the address of the blob it
+    /// produces — what a bundle from the seal pipeline (S12) looks like.
+    Real,
+    /// [`Real`](Self::Real), except that this unit's **manifest entry**
+    /// records an address one bit away from the right one.
+    RealExceptUnit(u64),
+    /// [`Real`](Self::Real), except that the **storage record** claims an
+    /// address one bit away from the right one — the manifest unit table is
+    /// untouched, so the two failures are separable.
+    RealExceptManifest,
+}
+
 /// A whole synthetic work.
 #[derive(Debug, Clone)]
 pub struct WorkSpec {
@@ -324,6 +358,8 @@ pub struct WorkSpec {
     pub anchors: AnchorSet,
     /// Seeds the deterministic fixture RNG the AEAD nonces come from.
     pub seed: u64,
+    /// What the manifest and the storage record record as addresses.
+    pub storage_addresses: StorageAddresses,
 }
 
 impl WorkSpec {
@@ -337,7 +373,16 @@ impl WorkSpec {
             policy: SigPolicy::hybrid(),
             anchors: AnchorSet::Empty,
             seed: DEFAULT_SEED,
+            storage_addresses: StorageAddresses::Placeholder,
         }
+    }
+
+    /// Record addresses under `mode` instead of
+    /// [`StorageAddresses::Placeholder`] — R20's substrate.
+    #[must_use]
+    pub const fn with_storage_addresses(mut self, mode: StorageAddresses) -> Self {
+        self.storage_addresses = mode;
+        self
     }
 
     /// Re-seed the fixture RNG.
@@ -677,8 +722,22 @@ fn flip(digest: &CommitmentDigest) -> CommitmentDigest {
     out
 }
 
-/// A recognisable per-unit content address. Fixtures never fetch, so the
-/// address only has to be a well-formed 32-byte value that differs per unit.
+/// The one manifest-AEAD nonce every fixture records, in every mode — fixed
+/// so a bundle stays locatable by content (`verify_fuzz.rs` finds the storage
+/// record by searching for this pattern) and so nothing here depends on the
+/// fixture RNG's position.
+const FIXTURE_MANIFEST_NONCE: [u8; 24] = [0x5A; 24];
+
+/// A recognisable per-unit content address, under
+/// [`StorageAddresses::Placeholder`] only.
+///
+/// It is not BLAKE3 of anything, and that was fine while nothing recomputed
+/// an address: this doc said *"fixtures never fetch, so the address only has
+/// to be a well-formed 32-byte value that differs per unit"* until R20, which
+/// recomputes them **offline** — no fetching required. A fixture built this
+/// way now renders a storage-linkage mismatch on every unit, correctly and
+/// permanently; [`StorageAddresses::Real`] is the mode for a bundle that
+/// links.
 fn fixture_address(unit_id: u64) -> ContentAddress {
     let mut bytes = [0xADu8; 32];
     bytes[..8].copy_from_slice(&unit_id.to_le_bytes());
@@ -1040,7 +1099,7 @@ fn encode_manifest(
                 fine_tree,
                 file_units
                     .into_iter()
-                    .map(|index| manifest_entry(&units[index], tweak))
+                    .map(|index| manifest_entry(&units[index], tweak, spec.storage_addresses))
                     .collect(),
             )
             .expect("fixture file entry is well formed")
@@ -1069,7 +1128,7 @@ fn encode_manifest(
     encode_envelope(&body_bytes, &signatures).expect("fixture envelope encodes")
 }
 
-fn manifest_entry(unit: &PlannedUnit, tweak: &Tweak) -> UnitEntry {
+fn manifest_entry(unit: &PlannedUnit, tweak: &Tweak, mode: StorageAddresses) -> UnitEntry {
     let binding = if unit.covered {
         UnitBinding::FineTreeCovered
     } else {
@@ -1088,8 +1147,66 @@ fn manifest_entry(unit: &PlannedUnit, tweak: &Tweak) -> UnitEntry {
         unit.true_length,
         binding,
         unit.nonce,
-        fixture_address(unit.unit_id),
+        recorded_unit_address(unit, mode),
     )
+}
+
+/// The address this unit's **manifest entry** records, under `mode`.
+fn recorded_unit_address(unit: &PlannedUnit, mode: StorageAddresses) -> ContentAddress {
+    let real = || {
+        compute_storage_address(&unit.ciphertext).expect("a fixture ciphertext is under the cap")
+    };
+    match mode {
+        StorageAddresses::Placeholder => fixture_address(unit.unit_id),
+        StorageAddresses::RealExceptUnit(unit_id) if unit_id == unit.unit_id => {
+            flip_address(&real())
+        }
+        StorageAddresses::Real
+        | StorageAddresses::RealExceptUnit(_)
+        | StorageAddresses::RealExceptManifest => real(),
+    }
+}
+
+/// Flip the low bit of an address — "right shape, wrong value", as [`flip`]
+/// does for a digest.
+fn flip_address(address: &ContentAddress) -> ContentAddress {
+    let mut bytes = *address.as_bytes();
+    bytes[0] ^= 0x01;
+    ContentAddress::from_bytes(bytes)
+}
+
+/// The storage record this bundle carries, under `mode`.
+///
+/// Under the three real modes the record is built the way the seal pipeline
+/// builds it — `k_m = HKDF(W, "manifest-key")`, the blob reproduced from the
+/// exact manifest envelope bytes the bundle embeds, and its BLAKE3-256
+/// address — with only the recorded address bent, and only under
+/// [`StorageAddresses::RealExceptManifest`]. The nonce stays the recognisable
+/// `0x5A` constant in every mode so a bundle remains locatable by content.
+fn storage_record(manifest_bytes: &[u8], mode: StorageAddresses) -> StorageRecord {
+    let nonce = ManifestNonce::from_bytes(FIXTURE_MANIFEST_NONCE);
+    if mode == StorageAddresses::Placeholder {
+        return StorageRecord::new(
+            ContentAddress::from_bytes([0x5E; 32]),
+            nonce,
+            Key32::from_bytes([0x5C; 32]),
+        );
+    }
+
+    let k_m = derive_manifest_key(w());
+    let blob = recompute_manifest_blob(
+        &k_m,
+        &AeadNonce::from_bytes(FIXTURE_MANIFEST_NONCE),
+        manifest_bytes,
+    )
+    .expect("a fixture manifest is far below P_MAX");
+    let address = compute_storage_address(&blob).expect("a fixture manifest blob is under the cap");
+    let address = if mode == StorageAddresses::RealExceptManifest {
+        flip_address(&address)
+    } else {
+        address
+    };
+    StorageRecord::new(address, nonce, k_m)
 }
 
 /// Assemble and encode the bundle.
@@ -1355,11 +1472,7 @@ fn assemble(
 
     let bundle = BundleV1::new(BundleParts {
         manifest: manifest_bytes,
-        storage_record: StorageRecord::new(
-            ContentAddress::from_bytes([0x5E; 32]),
-            ManifestNonce::from_bytes([0x5A; 24]),
-            crate::crypto::material::Key32::from_bytes([0x5C; 32]),
-        ),
+        storage_record: storage_record(manifest_bytes, spec.storage_addresses),
         ots_anchors,
         tsa_anchors,
         receipt,
@@ -1875,8 +1988,26 @@ mod tests {
     use crate::content::ggm::depth_for_leaf_count;
     use crate::verify::{VerifyOptions, verify_bundle};
 
+    /// Verify a fixture under the **stated** options tuple behind R30's 26
+    /// `REPORT_DIGEST_BY_SHAPE` rows (D128 §3 R3).
+    ///
+    /// The storage-linkage layer is suppressed, and the tuple is written down
+    /// rather than inherited from `VerifyOptions::new()`, for the reason
+    /// `vectors_report::build_expect` states at length: every fixture here is
+    /// a `Placeholder` bundle whose addresses were chosen at M0, so the layer
+    /// can only ever find `Evaluated { 0, N, false }` — 26 identical,
+    /// permanent, fixture-only failures, where `not-evaluated` claims nothing
+    /// in either direction. The layer's own coverage lives at
+    /// `EXPECTED_CANONICAL_JSON_WITH_LINKAGE`, `tests/storage_linkage.rs` and
+    /// `verify::storage_linkage`'s unit tests, none of which this touches.
+    ///
+    /// Stating it here is what makes a future change to
+    /// [`VerifyOptions::new`](crate::verify::VerifyOptions::new) unable to
+    /// move these 26 digests by accident — the knob that moved at D128 is the
+    /// default, and these rows never observed it.
     fn verify(built: &BuiltFixture) -> crate::verify::VerificationReport {
-        match verify_bundle(&built.bytes, &VerifyOptions::new()) {
+        let options = VerifyOptions::new().without_storage_linkage();
+        match verify_bundle(&built.bytes, &options) {
             Ok(report) => report,
             Err(err) => panic!("fixture must verify, got `{}`: {err}", err.code()),
         }

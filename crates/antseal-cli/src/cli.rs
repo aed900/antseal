@@ -357,10 +357,17 @@ pub struct RevealArgs {
 
     /// Reveal exactly these units (work-global ordinals as printed by
     /// `show`), e.g. --units 3,5
-    #[arg(long, value_delimiter = ',', value_name = "UNIT")]
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "UNIT",
+        value_parser = parse_unit_id
+    )]
     pub units: Vec<u64>,
 
-    /// Write the proof bundle here
+    /// Write the proof bundle here (default
+    /// `./antseal-reveal-<work-id>.sealproof`; an existing file is never
+    /// overwritten)
     #[arg(short = 'o', value_name = "FILE")]
     pub output: Option<PathBuf>,
 
@@ -372,6 +379,71 @@ pub struct RevealArgs {
     /// Consent in advance to the disclosure confirmation (for scripts)
     #[arg(long)]
     pub yes: bool,
+}
+
+/// One `--units` value: a decimal work-global unit id, and nothing else
+/// (D68 §3 R1–R3).
+///
+/// The grammar is the shipped one, **ratified verbatim** by D68: one or
+/// more decimal `u64` ids separated by `,` (clap's `value_delimiter`), with
+/// no whitespace, no radix prefix, no ranges, no negation and no wildcards.
+/// Ids are 0-based and are exactly the ids `show` prints — spec line 149
+/// designates `show` *"the preview for `reveal --units`"*.
+///
+/// This parser exists for **one** reason, and it is a defect fix (row
+/// **U68**): a range-shaped value used to be refused by clap's bare
+/// `invalid digit found in string`, which never names the supported form —
+/// on a flag whose own spec example is a comma list, so reaching for `3-5`
+/// is the expected mistake rather than an exotic one. Every other
+/// disposition in D68 §3 R2's envelope table is preserved **byte for
+/// byte** by deferring to [`u64`]'s own `FromStr` message: `+3` still
+/// parses (≡ 3), `0x3` and `' 3'` still say *"invalid digit found in
+/// string"*, an empty value still says *"cannot parse integer from empty
+/// string"*, and an over-large one still says *"number too large to fit in
+/// target type"*.
+///
+/// **Lexis only.** Nothing here judges an id against a manifest it cannot
+/// see: an id past the work's unit count and a raw mirror's id both parse
+/// here and are refused by R16's resolution, which is where the ids, the
+/// kinds and the typed errors already live (D68 §3 R2's two-layer split).
+///
+/// # Errors
+///
+/// The range-naming message for a range-shaped value; otherwise `u64`'s own
+/// parse error, unchanged.
+fn parse_unit_id(value: &str) -> Result<u64, String> {
+    value.parse::<u64>().map_err(|err| {
+        if looks_like_a_range(value) {
+            format!(
+                "`{value}` looks like a range, and ranges are not supported: give the ids as a \
+                 comma-separated list — e.g. --units 3,4,5 — using the unit ids that `antseal \
+                 show <work-id>` prints"
+            )
+        } else {
+            err.to_string()
+        }
+    })
+}
+
+/// Is this value a range *in shape* — a `-` or `..` (optionally `..=`)
+/// between digits?
+///
+/// Deliberately narrow: it decides only which **message** an
+/// already-failing parse gets, so a false positive costs a slightly odd
+/// sentence and a false negative costs the old generic one. It can never
+/// make a value parse that would not have, and it is consulted only after
+/// `u64` parsing has already failed.
+fn looks_like_a_range(value: &str) -> bool {
+    ["..", "-"].into_iter().any(|separator| {
+        value.match_indices(separator).any(|(at, _)| {
+            let before = &value[..at];
+            let rest = &value[at + separator.len()..];
+            // `..=` is a `..` with one byte to step over.
+            let after = rest.strip_prefix('=').unwrap_or(rest);
+            before.ends_with(|c: char| c.is_ascii_digit())
+                && after.starts_with(|c: char| c.is_ascii_digit())
+        })
+    })
 }
 
 /// `vault` subcommands (D47: single re-encrypted file, no flags).

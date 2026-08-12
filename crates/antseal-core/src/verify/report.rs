@@ -32,8 +32,9 @@
 //! literal, so a lane that grows `ALL` is stopped a second time until the new
 //! value's spelling is written down. The first half is discharged by the
 //! whole-report artifacts: the 21 pinned R9 report vectors and, for values no
-//! bundle produces, D29's fixed-fixture snapshots in `super::tests`
-//! (`EXPECTED_CANONICAL_JSON` and its receipt-bearing twin). Standalone bytes
+//! committed vector produces, D29's fixed-fixture snapshots in `super::tests`
+//! (`EXPECTED_CANONICAL_JSON` and its receipt-bearing and linkage-bearing
+//! twins). Standalone bytes
 //! cannot show a value's key, the sibling ordering rule 1 is about, or an
 //! object sitting where a string sat (D105 §5.3), which is why the rule says
 //! *in composition* rather than *somewhere*.
@@ -156,7 +157,9 @@ pub struct VerificationReport {
     pub evidence: EvidenceLayerResult,
     /// Storage-linkage-layer slot (MVP-SPEC.md line 119) — distinct from
     /// the evidence layer; "storage is the product's bonus, not its
-    /// proof". [`StorageLinkageResult::NotEvaluated`] until R20 (M3).
+    /// proof". R20 (M3) added the evaluated arm; a run that does not ask
+    /// for the stage still reports
+    /// [`StorageLinkageResult::NotEvaluated`].
     pub storage_linkage: StorageLinkageResult,
     /// Per-anchor result slots, absent-tolerant from day one: an empty
     /// list (the empty-anchor golden vector, MVP-SPEC.md line 153) and
@@ -365,11 +368,27 @@ pub struct EvidenceLayerResult {
 /// Storage-linkage-layer result slot (MVP-SPEC.md line 119), rendered
 /// distinctly from the evidence layer and never gating it.
 ///
-/// The slot has one variant and reports not-evaluated in every report
-/// emitted to date. **Not-evaluated is neither a claim nor a verdict**:
-/// the stage has not run, so this says nothing in either direction about
-/// where the work is stored — and nothing here ever gates the evidence
-/// layer, because "storage is the product's bonus, not its proof".
+/// **Not-evaluated is neither a claim nor a verdict**: the stage did not
+/// run, so this says nothing in either direction about where the work is
+/// stored — and nothing here ever gates the evidence layer, because
+/// "storage is the product's bonus, not its proof".
+///
+/// # What the evaluated arm counts, and what it deliberately does not
+///
+/// [`Evaluated`](Self::Evaluated) is R20's arm: for each unit ciphertext the
+/// **bundle embeds**, BLAKE3-256 of those bytes against the address the
+/// signed manifest records for that unit; and once for the manifest, the
+/// address of the blob its own `{nonce, k_m}` reproduce. Three fields, and
+/// the split between them is load-bearing: a unit-address mismatch and a
+/// manifest-address mismatch are different findings about different bytes,
+/// so they must be different *values* here, not one shared counter that
+/// renders alike. See [`super::storage_linkage`] for the stage.
+///
+/// Unrevealed units are not counted at all. They have no ciphertext in the
+/// bundle, so there is nothing to recompute — the layer's claim is about the
+/// bytes present, and the reveal set in the same report already says how many
+/// units those are. A count of what was *not* checked would be a new field
+/// carrying information the report can already derive.
 ///
 /// # Adding an arm here is a value addition, not a field addition
 ///
@@ -396,35 +415,103 @@ pub struct EvidenceLayerResult {
 ///
 /// Whatever lands here must arrive with a committed assertion that
 /// renders it inside a whole canonical report — D105 ruling 4; the
-/// receipt arm did not, and that is the whole of why R69 exists.
+/// receipt arm did not, and that is the whole of why R69 exists. R20's arm
+/// arrives with one: `EXPECTED_CANONICAL_JSON_WITH_LINKAGE` in
+/// `super::tests`, the third of D29's fixed-fixture literals, differential
+/// against the control at this value and nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageLinkageResult {
-    /// Stage not implemented/run yet (M0–M2).
+    /// The stage did not run: this build did not evaluate storage linkage
+    /// (every report emitted before R20, and any run that does not ask for
+    /// the stage). Says nothing about where the work is stored.
     NotEvaluated,
+    /// The offline stage ran (R20): every embedded ciphertext, and the
+    /// manifest, recomputed and compared against the addresses the bundle
+    /// records.
+    ///
+    /// **Not a verdict.** Any combination of these values leaves the
+    /// evidence layer exactly as it was; the pipeline enforces that by
+    /// running the stage after every evidence stage and by giving it no way
+    /// to report failure (see [`super::storage_linkage`]).
+    Evaluated {
+        /// Embedded unit ciphertexts whose BLAKE3-256 address equals the
+        /// address the manifest records for that unit.
+        units_matched: u64,
+        /// Embedded unit ciphertexts whose recomputed address differs from
+        /// the recorded one — including any whose bytes are over the chunk
+        /// cap and therefore have no v1 address at all (D32).
+        units_mismatched: u64,
+        /// Whether the blob rebuilt from the embedded plaintext manifest
+        /// under the storage record's own `{nonce, k_m}` addresses to the
+        /// address that record claims.
+        manifest_matched: bool,
+    },
 }
+
+/// The one `units_matched` operand every artifact that renders
+/// [`StorageLinkageResult::Evaluated`] is built from (D105 §5.3's sharing
+/// rule, applied to this arm): the standalone byte pin, the `ALL` sweep and
+/// the whole-report snapshot cannot be satisfied separately.
+#[cfg(test)]
+pub(crate) const LINKAGE_FIXTURE_UNITS_MATCHED: u64 = 3;
+
+/// The shared `units_mismatched` operand — see
+/// [`LINKAGE_FIXTURE_UNITS_MATCHED`]. Non-zero on purpose: an all-zero
+/// fixture would render the same bytes whether the field were populated or
+/// left at its default.
+#[cfg(test)]
+pub(crate) const LINKAGE_FIXTURE_UNITS_MISMATCHED: u64 = 1;
+
+/// The shared `manifest_matched` operand — see
+/// [`LINKAGE_FIXTURE_UNITS_MATCHED`].
+#[cfg(test)]
+pub(crate) const LINKAGE_FIXTURE_MANIFEST_MATCHED: bool = false;
 
 impl StorageLinkageResult {
     /// Every storage-linkage value, in declaration order.
     ///
-    /// One element today, and the degenerate case is the point: R20's
-    /// `evaluated` arm is the next value expected to land in report v1, and
-    /// it lands against scaffolding that already reddens for it rather than
-    /// against nothing. See [`Self::wire_name`] and the module docs, R-VAL.
-    pub const ALL: [Self; 1] = [Self::NotEvaluated];
-
-    /// This value's serialized spelling — the kebab-case name `serde` emits.
+    /// **`#[cfg(test)]` since R20, and for [`SupportingEvidenceResult::ALL`]'s
+    /// reason rather than a new one.** [`Self::Evaluated`] is a struct
+    /// variant, so an array of *values* needs operands, and the tree has
+    /// exactly one linkage operand triple — the `LINKAGE_FIXTURE_*` consts
+    /// above, shared precisely so this sweep, the standalone byte pin and the
+    /// whole-report snapshot cannot be satisfied separately. Minting
+    /// non-test operands to keep the const public would create a *second*
+    /// linkage fixture, which is the drift sharing exists to prevent.
     ///
-    /// Wildcard-free, so R20's arm cannot be added here without also being
-    /// spelled here, and cannot be spelled without
-    /// `storage_linkage_wire_names_are_the_serialized_spellings` demanding the
-    /// spelling be written down (R-VAL). The type doc above already requires
-    /// whatever lands to arrive with an assertion rendering it inside a whole
-    /// canonical report; this is the half a compiler can enforce.
+    /// Removing it from the public API costs no caller: like the other `ALL`
+    /// arrays here, this one's only consumer is its own sweep, and a sweep of
+    /// the whole tree at R20 found no other reference.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 2] = [
+        Self::NotEvaluated,
+        Self::Evaluated {
+            units_matched: LINKAGE_FIXTURE_UNITS_MATCHED,
+            units_mismatched: LINKAGE_FIXTURE_UNITS_MISMATCHED,
+            manifest_matched: LINKAGE_FIXTURE_MANIFEST_MATCHED,
+        },
+    ];
+
+    /// This value's serialized **tag** — kebab-case, as `serde` emits it.
+    ///
+    /// Deliberately not "the value's spelling", for
+    /// [`SupportingEvidenceResult::wire_name`]'s reason: since R20 this enum
+    /// has both shapes, a bare string for the unit variant and an externally
+    /// tagged object for the struct variant, and the tag is the part common
+    /// to both that a value-space sweep can assert.
+    ///
+    /// Wildcard-free, so a third value cannot land unnamed here, and cannot
+    /// be named without `storage_linkage_wire_names_are_the_serialized_spellings`
+    /// demanding the spelling be written down (R-VAL). The type doc above
+    /// requires whatever lands to arrive with an assertion rendering it
+    /// inside a whole canonical report; this is the half a compiler can
+    /// enforce.
     #[must_use]
     pub const fn wire_name(self) -> &'static str {
         match self {
             Self::NotEvaluated => "not-evaluated",
+            Self::Evaluated { .. } => "evaluated",
         }
     }
 }
@@ -1024,12 +1111,16 @@ mod tests {
         }
     }
 
-    /// Every [`StorageLinkageResult`] value is swept.
+    /// Every [`StorageLinkageResult`] value is swept — and the sweep did
+    /// what it was built for.
     ///
-    /// One value, so the sweep is trivially exhaustive today and that is
-    /// exactly its worth: R20's `evaluated` arm arrives at a slot that
-    /// already has the triple, and the literal below is what will refuse to
-    /// stay green when it does.
+    /// It held one value from Q127 until R20, and the degenerate case was the
+    /// point: the `evaluated` arm arrived at a slot that already had the
+    /// triple, and this literal is what refused to stay green when it did.
+    /// The name is kept from that era deliberately — three records cite it —
+    /// even though the assertion is now the tag-or-object one
+    /// [`SupportingEvidenceResult`]'s sweep uses, exhaustive without being
+    /// uniform (Q127).
     #[test]
     fn storage_linkage_wire_names_are_the_serialized_spellings() {
         let spellings: Vec<&str> = StorageLinkageResult::ALL
@@ -1038,12 +1129,72 @@ mod tests {
             .collect();
         assert_eq!(
             spellings,
-            ["not-evaluated"],
+            ["not-evaluated", "evaluated"],
             "the storage-linkage value space moved; a new value must be \
              written down here and rendered in a whole report (R-VAL)"
         );
         for slot in StorageLinkageResult::ALL {
-            assert_serializes_as_bare_spelling(&slot, slot.wire_name());
+            let json = serde_json::to_string(&slot).expect("value serializes");
+            let tag = slot.wire_name();
+            let bare = format!("\"{tag}\"");
+            let tagged = format!("{{\"{tag}\":");
+            assert!(
+                json == bare || (json.starts_with(&tagged) && json.ends_with('}')),
+                "{slot:?}: serde emits {json}, which is neither the bare \
+                 spelling {bare} nor an object keyed by `{tag}`"
+            );
+        }
+    }
+
+    /// **The layer separation through the report's own bytes** (R20).
+    ///
+    /// The arm's three fields exist so that "a unit ciphertext does not
+    /// address to its recorded address" and "the manifest blob does not" are
+    /// different *values*, not one shared counter. Collapsing them into a
+    /// single `mismatches` total — the natural tidy-up — makes R20's
+    /// unit-mismatch and manifest-mismatch fixtures render identically, and
+    /// fails here before it reaches a renderer.
+    ///
+    /// The second claim is the one that has to be checked on the serialized
+    /// form: nothing in this arm's rendering claims a verdict. A field named
+    /// `passed`, `verified` or `proven` would read as one beside
+    /// `evidence.passed` in the same object, which is exactly the confusion
+    /// MVP-SPEC.md line 118 forbids.
+    ///
+    /// This is the **standalone** pin: it can never show the
+    /// `"storage_linkage":` key, the object sitting where a string sat, or
+    /// the sibling ordering D29 rule 1 is about. Those need a whole-report
+    /// literal, and that is `EXPECTED_CANONICAL_JSON_WITH_LINKAGE` in
+    /// `verify/mod.rs` — built on the same three operands.
+    #[test]
+    fn the_evaluated_arm_separates_the_manifest_from_the_units() {
+        let json = serde_json::to_string(&StorageLinkageResult::Evaluated {
+            units_matched: LINKAGE_FIXTURE_UNITS_MATCHED,
+            units_mismatched: LINKAGE_FIXTURE_UNITS_MISMATCHED,
+            manifest_matched: LINKAGE_FIXTURE_MANIFEST_MATCHED,
+        })
+        .expect("slot serializes");
+        assert_eq!(
+            json,
+            r#"{"evaluated":{"units_matched":3,"units_mismatched":1,"manifest_matched":false}}"#
+        );
+
+        // The same total, split the other way: a distinct value, so a
+        // renderer cannot present the two findings alike.
+        let manifest_only = serde_json::to_string(&StorageLinkageResult::Evaluated {
+            units_matched: LINKAGE_FIXTURE_UNITS_MATCHED + LINKAGE_FIXTURE_UNITS_MISMATCHED,
+            units_mismatched: 0,
+            manifest_matched: false,
+        })
+        .expect("slot serializes");
+        assert_ne!(json, manifest_only);
+
+        for forbidden in ["passed", "verified", "proven", "valid", "evidence"] {
+            assert!(
+                !json.contains(forbidden),
+                "the storage-linkage rendering names `{forbidden}` — MVP-SPEC.md \
+                 line 118 gives this layer no verdict to carry"
+            );
         }
     }
 

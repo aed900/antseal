@@ -207,7 +207,7 @@ impl Snippet {
         match &self.window {
             SnippetWindow::Text(text) => {
                 out.push('"');
-                out.push_str(&escape_text_window(text));
+                out.push_str(&escape_for_terminal(text));
                 out.push('"');
             }
             SnippetWindow::Hex(bytes) => {
@@ -307,9 +307,9 @@ const fn starts_code_point(byte: u8) -> bool {
     (byte & 0xC0) != 0x80
 }
 
-/// Apply D67 §3 R3's **closed, frozen** escape set to a text window, per
-/// code point. Everything outside the set passes through unmodified —
-/// the user's prose renders as prose.
+/// Apply D67 §3 R3's **closed, frozen** escape set to sealer-authored text
+/// bound for a terminal, per code point. Everything outside the set passes
+/// through unmodified — the user's prose renders as prose.
 ///
 /// The set: `\\`, `\"`, `\n`/`\r`/`\t`, and `\u{…}` (minimal-length
 /// lowercase hex) for the remaining **C0** controls, **DEL**, **C1**
@@ -319,7 +319,22 @@ const fn starts_code_point(byte: u8) -> bool {
 /// printability table: those track Unicode data across toolchains,
 /// whereas this set is closed and version-independent, so the M3
 /// snapshots that freeze the rendering cannot rot under a pin bump.
-fn escape_text_window(window: &str) -> String {
+///
+/// # Two callers, one set
+///
+/// D67 minted this for the snippet window ([`Snippet::render`]). R19's
+/// redaction view is the second caller: it renders **file paths taken from
+/// a bundle**, and the bundle's author is an adversary by MVP-SPEC.md line
+/// 121's own statement (*"the sealer is an adversary too"*). D67 §9 (ii)
+/// recorded that the seal-time consent surfaces escape nothing and called
+/// that an observation rather than a defect *because their values are the
+/// user's own arguments* — self-injection only. That reasoning does not
+/// reach a verify-side rendering of someone else's path, so the set is
+/// public rather than copied: escaping LF is what makes a path exactly one
+/// line, and therefore what stops a crafted path from forging additional
+/// rows in a redaction view.
+#[must_use]
+pub fn escape_for_terminal(window: &str) -> String {
     let mut out = String::with_capacity(window.len());
     for c in window.chars() {
         match c {

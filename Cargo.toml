@@ -5,6 +5,17 @@ members = [
     "crates/antseal-anchor",
     "crates/antseal-net",
     "crates/antseal-cli",
+    # The verifier page's wasm-bindgen boundary (R22), ruled by D18
+    # (docs/decisions/D18-wasm-bindgen-surface-location.md §5 R1). A PRODUCT
+    # crate and therefore `antseal-*`, but `publish = false`: it ships as a
+    # hosted page, not as a registry release. A member for the reason
+    # `wasm-bitmatch` below is one — R22's Accept row 2 compares wasm32 report
+    # bytes against native ones, and a comparison across two lockfiles
+    # compares two different programs. It is a FIFTH `crates/antseal-*` entry
+    # against the MVP-SPEC Architecture tree's four (lines 44-58): a recorded
+    # deviation, flagged at D18 §9 and annotated on P5's Accept row, with no
+    # spec edit made.
+    "crates/antseal-wasm",
     # Test infrastructure, never published (Q5). A member — not a standalone
     # crate like probes/sig-probe — because a bit-match between builds
     # resolved from different lockfiles would be meaningless: it must share
@@ -604,6 +615,32 @@ clap = { version = "4", default-features = false, features = ["std", "derive", "
 # exactly the fmt writer + RUST_LOG filtering.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
+# The verifier page's JS boundary (R22), consumed by `antseal-wasm` ONLY, and
+# there only under `[target.'cfg(target_arch = "wasm32")'.dependencies]` — so
+# no native gate command compiles it (D18 §5 R3).
+#
+# EXACT-PIN, and NOT a free choice: `=0.2.126` is the version the committed
+# Cargo.lock already resolves through the ant-core subtree (chrono, getrandom,
+# js-sys, reqwest, uuid, wasm-bindgen-futures, wasm-streams, wasmtimer,
+# web-sys, web-time), so this pin is COUPLED to the upstream payment stack —
+# an ant-core bump that raises the floor above it fails the resolve rather
+# than silently duplicating, and S20's bump procedure must name wasm-bindgen
+# as a coupled pin (the alloy<->evmlib lockstep shape; D18 §7 P1/P6).
+#
+# SINGLE LINE, deliberately: `scripts/wasm-toolchain-audit.sh`'s extractor is
+# a line grep (`^wasm-bindgen\b` then a `"=x.y.z"` sed), so a multi-line table
+# entry would yield an empty crate pin while the CLI pin exists and the audit
+# would print the WRONG diagnosis (D18 §7 P2). The installed
+# `wasm-bindgen-cli` must equal it exactly (dependency-policy §5) — the two
+# land in one commit, because the audit is green only while BOTH are absent.
+#
+# `default-features = false, features = ["std"]` equals wasm-bindgen 0.2.126's
+# own default set (`default = ["std"]`) and is immune to a future default-set
+# change. `serde-serialize` is a DECIDED PROHIBITION (D18 §5 R5): the module
+# returns `to_canonical_json()`'s bytes, never a structured JS value, because
+# a second serialization path would put the report outside D29's one-path rule
+# and outside the bit-match contract.
+wasm-bindgen = { version = "=0.2.126", default-features = false, features = ["std"] }
 # Test infrastructure only, never format-affecting: property testing
 # (C3/C18; conventions in docs/testing/proptest-conventions.md, Q3).
 # Resolved version frozen by Cargo.lock (1.11.0 at Q3). Reaches test code

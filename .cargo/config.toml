@@ -23,9 +23,17 @@
 # signature crates on wasm32 exactly this way and got a byte-identical
 # transcript.
 #
-# This is a TEST-EXECUTION choice only. It commits nothing about D18
-# (whether the shipped wasm-bindgen surface lives inside antseal-core or in
-# a wrapper crate) — no wasm-bindgen surface exists yet in either place.
+# This is a TEST-EXECUTION choice only.
+#
+# **[R22/D18, 2026-08-12]** It used to add that it "commits nothing about D18
+# … no wasm-bindgen surface exists yet in either place". Both halves are now
+# out of date: D18 is resolved (the surface is the workspace member
+# `crates/antseal-wasm`), and this `runner` is what makes one half of it
+# permanent — D18 §5 R10 rules that `wasm-bindgen-test` is NOT adopted,
+# precisely because this key is per TARGET rather than per package, so
+# replacing it would take the `wasm32-core-tests` lane down with it. The
+# shipped page module is built by `scripts/wasm-pack-build.sh` and never runs
+# through this runner.
 runner = ["node", "../../scripts/wasm-test-runner.mjs"]
 
 # ── The getrandom recipe (MVP-SPEC.md line 153) ─────────────────────────────

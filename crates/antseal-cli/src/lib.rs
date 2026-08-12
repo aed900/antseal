@@ -21,6 +21,7 @@
 //! risk 4). Consume it from outside this workspace at your own risk.
 
 pub mod backend;
+pub mod brand;
 pub mod cli;
 mod commands;
 pub mod config;
@@ -31,7 +32,10 @@ pub mod machine;
 pub mod passphrase;
 pub mod pipeline;
 pub mod preview;
+pub mod redaction_out;
 pub mod restore_out;
+pub mod reveal_consent;
+pub mod reveal_out;
 pub mod rng;
 mod run;
 pub mod seal_consent;
@@ -40,9 +44,12 @@ pub mod seal_resume;
 pub mod seal_run;
 pub mod seal_session;
 pub mod seal_warnings;
+pub mod show;
 pub mod status;
 pub mod upgrade_hook;
 pub mod vault;
+pub mod verify_host;
+pub mod verify_out;
 
 use std::process::ExitCode;
 
@@ -137,15 +144,33 @@ where
     // whichever handler unlocks — through the one expression that both unlocks
     // and arms, so no handler can hold a vault the hook never sees.
     let vault_slot = upgrade_hook::VaultSlot::default();
+    // D69 §3 R1's THREE arms. `Ok` no longer implies exit 0: a verdict
+    // command folds its anchor set into a severity rung and reports it in
+    // the process code **while still emitting its result document**, because
+    // `ok` means "a result document is present", not "the exit code is 0"
+    // (maintainer-confirmed 2026-08-12; `ENVELOPE_VERSION` unchanged).
+    //
+    // The code is computed on both sides of the `--json` branch, never
+    // inside it — D51 invariant 2: plain and machine runs exit identically.
     let code = match run::run(&cli, &vault_slot) {
         Ok(outcome) => {
             if cli.globals.json {
-                println!(
-                    "{}",
-                    machine::success_envelope(command, network, outcome.json)
-                );
+                match outcome.json {
+                    commands::MachineResult::Value(json) => {
+                        println!("{}", machine::success_envelope(command, network, json));
+                    }
+                    // D65 §5: `verify`'s report member is byte-verbatim, so
+                    // its result never becomes a `serde_json::Value` — the
+                    // parse is where D29 rule 1's declaration order is lost.
+                    commands::MachineResult::Raw(result) => {
+                        println!(
+                            "{}",
+                            machine::success_envelope_raw(command, network, &result)
+                        );
+                    }
+                }
             }
-            ExitCode::SUCCESS
+            ExitCode::from(outcome.exit_class.map_or(0, error::ErrorClass::exit_code))
         }
         Err(err) => fail(network, &err),
     };

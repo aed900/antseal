@@ -125,3 +125,26 @@ receipt: online confirmation failed (no endpoint detail recorded) — supporting
 endpoints: https://blockstream.example/api, https://mempool.example/api (pinned defaults)
 endpoints: https://blockstream.example/api, https://mempool.example/api (override — departing from pinned defaults)
 newly flagged: headline-eligible anchors now disagree by more than 48 h (earliest 1780000000, latest 1785000000)
+
+════ 11. the redaction view (R19) ════
+MVP-SPEC.md line 121's anti-out-of-context guardrail, as sentences. Both renderers
+draw them: the CLI's `redaction_out` and R23's page. The `path` slot arrives already
+escaped for the caller's surface (D67 §3 R6), which is why the fixture below carries
+a plain one — the escaping is the renderer's, the sentence is the table's.
+disclosure map — what this bundle reveals, and where each revealed range sits in its file
+every size below is the sealer's declared figure, not a measurement by this run
+
+── a partially revealed file ──
+file #0 "pitch/chapter-1.md" — 1024 declared byte(s), partially revealed
+unit 0 blacked out: 256 byte(s) at offset 0 of 1024 declared — sealed, and not revealed by this bundle
+unit 1 revealed: 384 byte(s) at offset 256 of 1024 declared
+
+── a fully revealed file, and its riding mirror ──
+file #1 "pitch/chapter-1.md" — 1024 declared byte(s), fully revealed
+unit 2 revealed: 1024 byte(s) at offset 0 of 1024 declared
+raw mirror: the original file, byte-for-byte (1024 bytes) — its bytes open the raw commitment and canonicalize to the sealed canonical form
+
+── a wholly unrevealed file, and the work totals ──
+file #2 — 49152 declared byte(s), path withheld: this bundle reveals nothing of this file and names it only by ordinal
+disclosure totals: 1408 of 51200 declared byte(s) revealed, across 2 of 3 file(s)
+withheld: 640 byte(s) blacked out inside revealed files; 49152 byte(s) across 1 wholly unrevealed file(s)

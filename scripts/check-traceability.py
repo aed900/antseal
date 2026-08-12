@@ -300,27 +300,29 @@ STATUS_VOCABULARY = ("covered", "gap", "deferred")
 # §5 set: a decision document, a named closure trigger, and machine-enforced
 # removal. That price is the precedent - an entry for work the project can
 # perform itself is not covered by it (D127 §3 iii).
-ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {
-    # The register's first entry, ruled by D127 (2026-08-11) at the M2
-    # review. Bump-atomic by construction: before the M1 -> M2 bump this
-    # entry reds on the unused-exemption arm below, and the bump without it
-    # reds on the status arm - one change, both directions (D127 §1e).
-    "V7.1": (
-        "gap",
-        "M2 ships with the submit half owed (D127, 2026-08-11): antseal's "
-        "A13 submit path has never spoken to a real calendar - every "
-        "committed pending was hand-submitted, and the 2026-08-11 consented "
-        "run's scope excluded fresh submissions. Bounded residue: the "
-        "loopback selftest pins the request shape and the upgrade/TSA/"
-        "must-agree legs proved the client's real branch, but the four "
-        "DEFAULT_OTS_CALENDARS pool hosts have never been contacted by the "
-        "product in any mode, and the composed cycle (client-submitted "
-        "pending -> client-upgraded) has never run. Closes on the first "
-        "consented script-driven submit->upgrade pair (maintainer action, "
-        "fresh consent per half): the V7.1 cell flips covered and this "
-        "entry is removed in the same change.",
-    ),
-}
+# EMPTY AGAIN AS OF 2026-08-12, and the register's first entry lasted one
+# day. `V7.1` was entered here at the M2 review (D127, 2026-08-11) because
+# antseal's A13 submit path had never spoken to a real calendar; D127 §5 set
+# the closure predicate - submits accepted through the client AND >=1
+# CLIENT-SUBMITTED commitment upgraded through the client - and required the
+# cell's flip and this entry's removal to land in ONE change, which is what
+# removed it.
+#
+# Both halves ran under separate, freshly recorded maintainer consent, and
+# the composed cycle D127 §2 said had never run is the thing that closed it:
+# 2026-08-11T23:39-23:40Z, 8 of 8 pending-accepted through A13's own
+# `submit_to_calendars` at all four DEFAULT_OTS_CALENDARS pool hosts - the
+# set D127 measured the product had never contacted in any mode - and
+# 2026-08-12, 6 of those same 8 upgraded through A14's `poll_upgrade`
+# (alice, bob, catallaxy for both golden-vector digests; the two eternitywall
+# pendings honestly `not-yet-confirmed` and left re-pollable). Captures:
+# `testdata/anchors/A25-wave17-cycle/` and its `upgraded/` subdirectory.
+#
+# The mechanism outlived its first use, which was the point of paying D118
+# §5's price for it: a decision document, a named closure trigger, and
+# machine-enforced removal. An entry for work the project can perform itself
+# is still not covered by that precedent (D127 §3 iii).
+ACCEPTED_NON_COVERED: dict[str, tuple[str, str]] = {}
 
 
 def split_row(line: str) -> list[str] | None:

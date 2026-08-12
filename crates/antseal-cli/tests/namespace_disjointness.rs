@@ -46,14 +46,32 @@ const SNAPSHOT: &str = concat!(
     "/../../testdata/error-codes/v1/CODES.txt"
 );
 
-/// Q80's measurement, pinned. `ErrorClass::ALL` is `[ErrorClass; 28]`, so this
+/// Q80's measurement, pinned. `ErrorClass::ALL` is `[ErrorClass; 29]`, so this
 /// is a second, independent statement of the same number: the array's own
 /// length is a compile-time fact the module can change silently, and a
 /// disjointness test over a shrunken set is a test that passes more easily.
-const PINNED_CLASS_COUNT: usize = 28;
+///
+/// **28 → 29 at U28** (2026-08-12): D69 §5 minted `reveal-inputs-unusable`
+/// (exit 36) for reveal's ten manifest-disagreement cases. The bump is the
+/// deliberate event this constant exists to force, and the gate below
+/// re-measured the intersection at the new size — still empty.
+///
+/// **29 → 33 at U30** (2026-08-12): D69 §3 R2 consumed U2's reserved 40–49
+/// band with `verify-bundle-rejected` (40), `verify-anchor-refuted` (41),
+/// `verify-headline-divergence` (42) and `verify-unanchored` (43). Three of
+/// the four have no `CliError` variant — they are severity rungs of a run
+/// that *succeeded* — which is exactly why the count is stated here as well
+/// as in `ErrorClass::ALL`: the class table is no longer the same thing as
+/// the error-variant table, and a reader counting variants would get 30.
+/// Re-measured at the new size: still empty.
+const PINNED_CLASS_COUNT: usize = 33;
 
 /// The spelling §2 reserves against the A domain.
 const RESERVED_STEM: &str = "anchor-gate-abort";
+
+/// The stem D69 §3 R8 reserves against the **code** namespace, mirroring
+/// §2's `anchor-gate-abort` reservation in the other direction.
+const RESERVED_VERIFY_STEM: &str = "verify-";
 
 /// Members of `a` that are also in `b`. Pure, so the planted-fault test below
 /// needs neither a scratch file nor a fabricated `ErrorClass`.
@@ -113,6 +131,47 @@ fn error_codes_and_exit_class_names_are_disjoint() {
          `--json` consumer reads `error.class` while a verdict consumer reads the code. One \
          string meaning both is the one case where that distinction silently fails \
          (docs/testing/error-code-contract.md §2)."
+    );
+}
+
+/// **D69 §3 R8's reservation, enforced.** The whole `verify-` stem belongs to
+/// the exit-class namespace and must never appear in the code universe.
+///
+/// The stem was chosen on measurement — when D69 was written, zero of the
+/// 248 committed codes carried it across 23 prefixes — so this row is what
+/// keeps that free choice free. It is stated as a stem rather than as four
+/// names because the reservation is about the prefix: a future
+/// `verify-something-else` code would create exactly the cross-namespace
+/// near-miss the choice avoided.
+#[test]
+fn the_reserved_verify_stem_never_appears_in_the_code_universe() {
+    let text = std::fs::read_to_string(SNAPSHOT)
+        .unwrap_or_else(|e| panic!("cannot read testdata/error-codes/v1/CODES.txt: {e}"));
+    let codes = committed_codes(&text);
+
+    let trespassers: Vec<&str> = codes
+        .iter()
+        .copied()
+        .filter(|code| code.starts_with(RESERVED_VERIFY_STEM))
+        .collect();
+    assert!(
+        trespassers.is_empty(),
+        "these rejection codes take the `{RESERVED_VERIFY_STEM}` stem, which D69 §3 R8 \
+         reserves for verify's exit classes: {trespassers:?}\n\n\
+         An exit class is a process outcome; a code is a rejection class. If R or A needs \
+         to name one of these outcomes as a rejection class, it mints a distinct spelling \
+         (docs/testing/error-code-contract.md §2)."
+    );
+
+    // Not vacuous: the class side really does use the stem.
+    let classes = class_names();
+    let owners = classes
+        .iter()
+        .filter(|name| name.starts_with(RESERVED_VERIFY_STEM))
+        .count();
+    assert_eq!(
+        owners, 4,
+        "the four D69 verdict classes must carry the reserved stem"
     );
 }
 

@@ -130,8 +130,11 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // U23's handler joined this arm rather than gaining one of its
         // own: `status` reads the vault and nothing else, so it stops
         // exactly where `list` and `vault export` stop, for the reason
-        // they stop there.
-        "vault export" | "list" | "status" => (11, "passphrase-unavailable"),
+        // they stop there. **U27's `show` joined it for the same reason**
+        // — it reads the vault and, by construction, nothing else (it
+        // holds no backend at all, D67 §1 j), so machine mode with no
+        // passphrase channel stops it at the same gate.
+        "vault export" | "list" | "status" | "show" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
         // U11's handler refuses over the fixture vault, absolutely and
         // before it would ask for anything (D39 Decision 4) — so the
@@ -142,14 +145,26 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // U20's handler refuses at the backend seam before it would ask
         // for a passphrase — a build with no network cannot restore, and
         // collecting a secret first would be rude as well as pointless.
-        "restore" => (23, "network-failure"),
+        // **U28/U29's `reveal` joined it at the same seam**: unlike `show`,
+        // which holds no backend at all (D67 §1 j), a reveal may have to
+        // fetch a ciphertext this vault no longer caches, so it stops where
+        // `restore` stops — before the passphrase and before U29's
+        // irreversible-disclosure screen could be painted.
+        "restore" | "reveal" => (23, "network-failure"),
         // U13's handler validates the plan FIRST, before the seam, the
         // vault and any secret. The minimal argv names `x.txt`, which
         // does not exist, so what it exhibits here is D46 rule 4's
         // ordinary I/O class — and that is the point: an argument problem
         // is answerable without a network, a vault or a passphrase.
-        "seal" => (4, "io-error"),
-        _ => (3, "not-implemented"),
+        // U30's handler needs no vault and never prompts, so what it
+        // exhibits under the minimal argv is the same shape `seal` does:
+        // the bundle path it was given does not exist, which is D46 rule
+        // 4's ordinary I/O class. **This arm was `not-implemented` (3)
+        // until U30**, which was the last stub of the frozen surface — no
+        // build can emit that class for any command now, and the wildcard
+        // is gone with it so a new subcommand must state its own row here.
+        "seal" | "verify" => (4, "io-error"),
+        other => panic!("{other} has no registered machine-mode expectation"),
     }
 }
 
@@ -307,8 +322,8 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// `ANTSEAL_BLESS=1` and justify the diff — envelope drift is a
 /// machine-interface event.
 fn render_fixture() -> String {
-    use antseal_cli::error::{CliError, Milestone, PassphraseFailure};
-    use antseal_cli::machine::{error_envelope, success_envelope};
+    use antseal_cli::error::{CliError, PassphraseFailure};
+    use antseal_cli::machine::{error_envelope, success_envelope, success_envelope_raw};
 
     let mut out = String::new();
     for name in ALL_COMMAND_NAMES {
@@ -342,6 +357,12 @@ fn render_fixture() -> String {
             // (U36's, shared) — rendered by the real producer rather than
             // hand-copied, per U19's rule.
             "seal" => antseal_cli::backend::unavailable("seal"),
+            // U28's flow and U29's consent gate are complete, so the
+            // not-implemented exemplar this row carried is gone: what a
+            // default-feature build actually meets is `restore`'s seam,
+            // rendered by the real producer rather than hand-copied (U19's
+            // rule).
+            "reveal" => antseal_cli::backend::unavailable("reveal"),
             // U23's handler is complete. Like `list`, it must unlock the
             // vault, so in machine mode without a channel that is exactly
             // where it stops — rendered by the real producer rather than
@@ -349,14 +370,22 @@ fn render_fixture() -> String {
             "status" => CliError::PassphraseUnavailable {
                 reason: PassphraseFailure::NoChannel,
             },
-            _ => CliError::NotImplemented {
-                command: match name {
-                    "show" => "show",
-                    "reveal" => "reveal",
-                    _ => "verify",
-                },
-                milestone: Milestone::M3,
+            // U27's handler is complete and reaches no backend at all, so
+            // like `list` and `status` it stops at the passphrase gate.
+            "show" => CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::NoChannel,
             },
+            // U30's handler is complete, and it was the LAST stub of the
+            // frozen surface — so the not-implemented envelope this row
+            // carried for five milestones is gone, and no build can emit
+            // one for any command. `verify` needs no vault and never
+            // prompts, so its registered refusal is a verdict one: D69's
+            // `verify-bundle-rejected` (40), rendered by the real producer
+            // over a genuinely tampered bundle rather than hand-copied
+            // (U19's rule). It is the shape a consumer branches on — one
+            // class for every rejection code, with the specific code in the
+            // freely-rewordable message.
+            _ => verify_rejection(),
         };
         out.push_str(&format!(
             "[{name}] error\n{}\n",
@@ -375,6 +404,16 @@ fn render_fixture() -> String {
     out.push_str(&format!(
         "[list] result\n{}\n",
         success_envelope("list", "arbitrum-one", fixture_listing().json())
+    ));
+    // U27's, rendered by `WorkUnits::json` — the real producer. The
+    // registered document is the shape a `reveal --units` chooser branches
+    // on: the per-unit `selectable` flag (spec line 92's rule, machine
+    // form), the byte-range in its own committed domain, and the D67 §3 R6
+    // snippet **value** — form, raw window, truncation, provenance — with
+    // the absent arm as an explicit `null` rather than a missing key.
+    out.push_str(&format!(
+        "[show] result\n{}\n",
+        success_envelope("show", "arbitrum-one", fixture_show().json())
     ));
     // U23's, rendered by `WorkStatus::json` — the real producer. The
     // registered document is the shape a consumer branches on: a per-anchor
@@ -409,6 +448,19 @@ fn render_fixture() -> String {
         "[restore] result\n{}\n",
         success_envelope("restore", "arbitrum-one", fixture_restore().json())
     ));
+    // U28's, rendered by `RevealReport::json` — the real producer. The
+    // registered document is what a `reveal --json` caller branches on: the
+    // resolved bundle path (always present, and identical in every mode —
+    // D68 §3 R5), the disclosed unit ids, the receipt opt-in as a boolean,
+    // and the one canonical verifier URL (D62 §3 R8) so a wrapper never
+    // hard-codes an address of its own. The exemplar is a `--units`
+    // selection that PROMOTED its file to a full reveal, pulling the raw
+    // mirror in with it (D70) — a `--all` document would show the fields
+    // without showing the case a chooser has to notice.
+    out.push_str(&format!(
+        "[reveal] result\n{}\n",
+        success_envelope("reveal", "arbitrum-one", fixture_reveal().json())
+    ));
     out.push_str(&format!(
         "[vault export] result\n{}\n",
         success_envelope(
@@ -419,6 +471,24 @@ fn render_fixture() -> String {
                 "works": 5, "bytes": 4096, "self_verified": true,
             })
         )
+    ));
+    // U30's, rendered by `VerifyRun::json` — the real producer — and wrapped
+    // by `success_envelope_raw`, because D65 §5 carries `result.report`
+    // BYTE-VERBATIM and `success_envelope`'s `serde_json::Value` parameter
+    // cannot express that (a `Value` round trip alphabetizes the report's
+    // keys and destroys D29 rule 1's declaration order).
+    //
+    // The registered document is what a `verify --json` consumer branches
+    // on: the four always-present members (`report`, `overlay`, `live`,
+    // `verdict` — `null` where the mode was off, never omitted), and D69's
+    // verdict datum carrying the rung's stable name beside the exit code
+    // the process reports. The exemplar is an UNANCHORED bundle, which is
+    // the **nonzero-exit success envelope** — the shape nothing in the tree
+    // exercised before U30 and the one D69 §3 R1's third arm exists to make
+    // possible.
+    out.push_str(&format!(
+        "[verify] result\n{}\n",
+        success_envelope_raw("verify", "arbitrum-one", &fixture_verify())
     ));
     out.push_str(&format!(
         "[vault import] result\n{}\n",
@@ -432,6 +502,54 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// The tampered bundle `verify`'s registered refusal is produced from —
+/// R6's constructor with one manifest `canon_commit` bit flipped, which is a
+/// tamper-matrix row.
+fn tampered_bundle() -> Vec<u8> {
+    use antseal_core::test_util::bundle_fixtures::{Selection, Tweak, build_tweaked, shapes};
+    let mut tweak = Tweak::none();
+    tweak.corrupt_canon_commit = Some(0);
+    build_tweaked(
+        &shapes::single_text_with_mirror(),
+        &Selection::all(1),
+        &tweak,
+    )
+    .bytes
+}
+
+/// `verify`'s registered error, from the real producer.
+fn verify_rejection() -> antseal_cli::error::CliError {
+    use antseal_core::verify::VerifyOptions;
+    use antseal_core::verify::orchestration::VerifyModes;
+    match antseal_cli::verify_out::run_verify(
+        &tampered_bundle(),
+        &VerifyOptions::new(),
+        VerifyModes::OFFLINE,
+        &antseal_cli::verify_host::CollectedInputs::none(),
+    ) {
+        Ok(_) => panic!("the tampered fixture must not verify"),
+        Err(error) => error,
+    }
+}
+
+/// `verify`'s registered `result` document, from the real producer: an
+/// UNANCHORED bundle, so the envelope is a **success at a nonzero exit**.
+fn fixture_verify() -> String {
+    use antseal_core::test_util::bundle_fixtures::{Selection, build, shapes};
+    use antseal_core::verify::VerifyOptions;
+    use antseal_core::verify::orchestration::VerifyModes;
+    let bundle = build(&shapes::single_text_with_mirror(), &Selection::all(1)).bytes;
+    let run = antseal_cli::verify_out::run_verify(
+        &bundle,
+        &VerifyOptions::new(),
+        VerifyModes::OFFLINE,
+        &antseal_cli::verify_host::CollectedInputs::none(),
+    )
+    .expect("the R6 fixture verifies");
+    assert_eq!(run.exit_code(), 43, "the exemplar is the UNANCHORED rung");
+    run.json().expect("the result document renders")
 }
 
 /// A completed `seal`, rendered by U13's own report type. The cost is a
@@ -710,6 +828,172 @@ fn fixture_status() -> antseal_cli::status::WorkStatus {
     }
 }
 
+/// A `show` document covering every snippet shape a consumer must branch
+/// on, over two files: a text unit with the exact **sealed bytes**, its
+/// **raw mirror** (hex, truncated, `selectable: false` — spec line 92), a
+/// unit whose snippet came from the **current file** and carries that
+/// caveat, and a unit with **no** snippet at all, which rides as `null`
+/// rather than as a missing key (D65 §7).
+///
+/// Hand-built rather than gathered from a vault, for the reason
+/// [`fixture_status`] gives: this suite is about the envelope, and an
+/// Argon2id derivation plus a full seal per fixture would buy nothing. The
+/// *document* is still the real producer's — `WorkUnits::json` — so the
+/// registered shape cannot drift from what the command emits.
+///
+/// NON-SECRET: repeated-byte ids and the same fixture prose the U27 suite
+/// seals.
+fn fixture_show() -> antseal_cli::show::WorkUnits {
+    use antseal_cli::pipeline::ManifestSource;
+    use antseal_cli::preview::{
+        DisclosurePreview, FilePreview, PreviewRow, PreviewTotals, Snippet, SnippetProvenance,
+        SnippetWindow,
+    };
+    use antseal_cli::show::{FileRow, WorkUnits};
+    use antseal_cli::vault::store::WorkState;
+    use antseal_core::crypto::secrets::SealId;
+    use antseal_core::manifest::{ByteRange, DescriptorKind, FineTreeDomain, UnitKind};
+
+    let row = |unit_id: u64,
+               file_id: u64,
+               path: &str,
+               kind: UnitKind,
+               start: u64,
+               length: u64,
+               snippet: Option<Snippet>| PreviewRow {
+        unit_id,
+        file_id,
+        path: path.to_owned(),
+        kind,
+        range: ByteRange::new(start, length),
+        size: length,
+        // `show` selects every normal unit, so every file is fully
+        // revealed under D28's predicate and every mirror rides — which is
+        // exactly why the table is total over the manifest.
+        file_fully_revealed: true,
+        snippet,
+    };
+
+    WorkUnits {
+        work_id: Some([0xA1; 32]),
+        seal_id: SealId::from_bytes([0xE1; 16]),
+        title: Some("thesis draft".to_owned()),
+        network: "arbitrum-one".to_owned(),
+        state: WorkState::Complete,
+        // Never `network`: `show` holds no backend (D67 §1 j).
+        manifest_source: ManifestSource::VaultCopy,
+        files: vec![
+            FileRow {
+                file_id: 0,
+                path: "notes.txt".to_owned(),
+                kind: DescriptorKind::Text,
+                offset_domain: FineTreeDomain::Canonical,
+                fine_tree: true,
+                size: 25,
+                unicode_version: Some("unicode-17.0.0".to_owned()),
+                raw_mirror_unit_id: Some(1),
+            },
+            FileRow {
+                file_id: 1,
+                path: "data/blob.bin".to_owned(),
+                kind: DescriptorKind::Binary,
+                offset_domain: FineTreeDomain::Raw,
+                fine_tree: true,
+                size: 4096,
+                unicode_version: None,
+                raw_mirror_unit_id: None,
+            },
+            FileRow {
+                file_id: 2,
+                path: "archive.tar".to_owned(),
+                kind: DescriptorKind::Binary,
+                offset_domain: FineTreeDomain::Raw,
+                // `--no-fine-tree`: whole-file-reveal only, permanently
+                // (spec lines 18/85), and single-unit by D24 — which is
+                // why the shape below has exactly one unit.
+                fine_tree: false,
+                size: 8,
+                unicode_version: None,
+                raw_mirror_unit_id: None,
+            },
+        ],
+        preview: DisclosurePreview {
+            rows: vec![
+                row(
+                    0,
+                    0,
+                    "notes.txt",
+                    UnitKind::Normal,
+                    0,
+                    25,
+                    Some(Snippet {
+                        window: SnippetWindow::Text("café notes\n\nsecond para\n".to_owned()),
+                        truncated: false,
+                        provenance: SnippetProvenance::SealedBytes,
+                    }),
+                ),
+                row(
+                    1,
+                    0,
+                    "notes.txt",
+                    UnitKind::RawMirror,
+                    0,
+                    32,
+                    Some(Snippet {
+                        window: SnippetWindow::Hex(vec![
+                            0xEF, 0xBB, 0xBF, 0x63, 0x61, 0x66, 0x65, 0xCC, 0x81, 0x20, 0x6E, 0x6F,
+                            0x74, 0x65, 0x73, 0x0D,
+                        ]),
+                        truncated: true,
+                        provenance: SnippetProvenance::SealedBytes,
+                    }),
+                ),
+                row(
+                    2,
+                    1,
+                    "data/blob.bin",
+                    UnitKind::Normal,
+                    0,
+                    4096,
+                    Some(Snippet {
+                        window: SnippetWindow::Hex(vec![0x89, 0x50, 0x4E, 0x47]),
+                        truncated: true,
+                        provenance: SnippetProvenance::CurrentFile,
+                    }),
+                ),
+                row(3, 2, "archive.tar", UnitKind::Normal, 0, 8, None),
+            ],
+            files: vec![
+                FilePreview {
+                    file_id: 0,
+                    path: "notes.txt".to_owned(),
+                    fully_revealed: true,
+                    mirror_rides_along: true,
+                },
+                FilePreview {
+                    file_id: 1,
+                    path: "data/blob.bin".to_owned(),
+                    fully_revealed: true,
+                    mirror_rides_along: false,
+                },
+                FilePreview {
+                    file_id: 2,
+                    path: "archive.tar".to_owned(),
+                    fully_revealed: true,
+                    mirror_rides_along: false,
+                },
+            ],
+            totals: PreviewTotals {
+                units: 4,
+                bytes: 25 + 32 + 4096 + 8,
+                files_touched: 3,
+                files_fully_revealed: 3,
+                mirror_rides_along: true,
+            },
+        },
+    }
+}
+
 /// A three-row listing covering the shapes a consumer must handle: a
 /// finished work with a cost, an unfinished one carrying the D45 resume hint
 /// and the D37 clock, and one holding an anchor slot that will not read.
@@ -815,6 +1099,28 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 },
             },
         ],
+    }
+}
+
+/// A completed `reveal`, rendered by U28's own report type: a `--units 0`
+/// selection over the fixture work, which completes notes.txt and so
+/// promotes to a full reveal with its raw mirror riding along (D70), landed
+/// at D68's default path with the receipt left out (the default — it exposes
+/// the paying wallet).
+fn fixture_reveal() -> antseal_cli::reveal_out::RevealReport {
+    let work_id = [0xA1; 32];
+    antseal_cli::reveal_out::RevealReport {
+        work_id,
+        bundle_path: antseal_cli::reveal_out::default_bundle_path(&work_id),
+        bytes: 18_342,
+        files_touched: 1,
+        summary: antseal_cli::pipeline::RevealSummary {
+            revealed_unit_ids: vec![0, 1],
+            files_fully_revealed: vec![0],
+            receipt_included: false,
+            units_from_cache: 2,
+            units_from_network: 0,
+        },
     }
 }
 
@@ -937,6 +1243,54 @@ fn every_command_has_a_registered_fixture_with_the_v1_shape() {
             "{name} lacks a registered fixture — a command cannot ship without one"
         );
     }
+}
+
+/// D65 §5's carriage route cannot drift from the one nine commands use:
+/// over **every registered success document**, the hand-assembled
+/// `success_envelope_raw` and the `serde_json::json!`-built
+/// `success_envelope` produce byte-identical envelopes.
+///
+/// `verify` is the only command whose result reaches stdout through the raw
+/// constructor, and it does so because its `report` member must be
+/// byte-verbatim. That is a claim about the *result*; this row is a claim
+/// about the *wrapper*, and it is what stops a hand-built envelope from
+/// quietly growing a different key order, a missing escape or a stray
+/// space. Red against any drift, on nine real documents at once.
+#[test]
+fn the_raw_envelope_is_byte_identical_to_the_value_envelope() {
+    use antseal_cli::machine::{success_envelope, success_envelope_raw};
+
+    let rendered = render_fixture();
+    let mut lines = rendered.lines();
+    let mut checked = 0usize;
+    while let Some(header) = lines.next() {
+        let body = lines.next().expect("fixture body");
+        let doc: serde_json::Value = serde_json::from_str(body).expect("fixture parses");
+        if doc["ok"] != serde_json::json!(true) {
+            continue;
+        }
+        let command = doc["command"].as_str().expect("a command");
+        let network = doc["network"].as_str().expect("a network");
+        let result = doc["result"].clone();
+        assert_eq!(
+            success_envelope_raw(command, network, &result.to_string()),
+            success_envelope(command, network, result).to_string(),
+            "{header}: the two envelope constructors disagree"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 9,
+        "only {checked} success documents were checked"
+    );
+
+    // The escaping half, which no fixture exercises: a command or network
+    // carrying a quote or a backslash must not break the document.
+    let hostile = "arb\"one\\";
+    let raw = success_envelope_raw("verify", hostile, "null");
+    let parsed: serde_json::Value = serde_json::from_str(&raw).expect("still one JSON document");
+    assert_eq!(parsed["network"], serde_json::json!(hostile));
+    assert!(parsed["result"].is_null());
 }
 
 /// The prompt-class registry is complete and its declared channels are

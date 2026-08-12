@@ -33,9 +33,71 @@ use crate::vault::session::unlock_for_command;
 use crate::vault::store::WorkStore;
 
 /// A successfully-handled command: the machine-result document (printed
-/// on stdout under `--json`; U3's envelope wraps it).
+/// on stdout under `--json`; U3's envelope wraps it), and D69's **third
+/// arm**.
+///
+/// # The third arm (D69 §3 R1)
+///
+/// `main_entry` had exactly two arms until M3 — `Ok → 0 + ok:true + result`
+/// and `Err(CliError) → code + ok:false + error` — so *any* nonzero exit
+/// emitted **no result document at all**. That is fine for a failure and
+/// wrong for a verdict: `verify` folds a set of independently-stated anchor
+/// states into a severity rung, and a bundle whose every commitment opened
+/// still has a full report to hand over even when the rung is
+/// `verify-unanchored`.
+///
+/// So [`Self::exit_class`] carries an optional class that sets the process
+/// code **while the success envelope is still emitted**. `ok` means *a
+/// result document is present*, never *the exit code is 0*
+/// (maintainer-confirmed 2026-08-12; `ENVELOPE_VERSION` stays 1). D51
+/// invariant 2 is preserved because the code is computed before the mode
+/// branch.
+///
+/// `Option<ErrorClass>` rather than a fresh enum, deliberately: there is
+/// exactly **one** code table in the product, with one `exit_code()` and one
+/// `name()`, and U2 keeps ownership of the identifiers.
+///
+/// `restore` is the second consumer (U69, D69 §6.1) — a reviewer must not
+/// "fix" this by making `ok` follow the exit code again.
 pub(crate) struct Outcome {
-    pub json: serde_json::Value,
+    /// The command's machine-result document.
+    pub json: MachineResult,
+    /// The class whose code the process exits with, or `None` for 0.
+    pub exit_class: Option<crate::error::ErrorClass>,
+}
+
+/// How a command's `result` document reaches stdout.
+///
+/// Two variants because D65 §5 forbids one of them for `verify`: routing the
+/// report through `serde_json::Value` alphabetizes its keys (`Map` is a
+/// `BTreeMap` in this build) and destroys D29 rule 1's declaration order,
+/// and `success_envelope`'s only signature takes a `Value`. Nine commands
+/// build a `Value` and are unaffected; `verify` renders its whole `result`
+/// through serde on typed values and hands over the text.
+pub(crate) enum MachineResult {
+    /// A `serde_json::Value`, wrapped by [`crate::machine::success_envelope`].
+    Value(serde_json::Value),
+    /// A pre-rendered `result` document, spliced verbatim by
+    /// [`crate::machine::success_envelope_raw`].
+    Raw(String),
+}
+
+impl Outcome {
+    /// The ordinary outcome: a `Value` result at exit 0.
+    pub(crate) const fn value(json: serde_json::Value) -> Self {
+        Self {
+            json: MachineResult::Value(json),
+            exit_class: None,
+        }
+    }
+
+    /// A pre-rendered result, with D69's rung class when the run folded one.
+    pub(crate) const fn raw(result: String, exit_class: Option<crate::error::ErrorClass>) -> Self {
+        Self {
+            json: MachineResult::Raw(result),
+            exit_class,
+        }
+    }
 }
 
 /// Human-copy channel selector: plain mode prints to stdout; under
@@ -132,9 +194,7 @@ pub(crate) fn init(
     for line in report.render() {
         ui.line(&line);
     }
-    Ok(Outcome {
-        json: report.json(),
-    })
+    Ok(Outcome::value(report.json()))
 }
 
 /// `seal <PATH>…` (U13; plan validation in [`crate::seal_plan`], resume
@@ -296,9 +356,7 @@ fn seal_over_backend(
     for line in result.render() {
         ui.line(&line);
     }
-    Ok(Outcome {
-        json: result.json(),
-    })
+    Ok(Outcome::value(result.json()))
 }
 
 /// The devnet's exported environment, when one is present.
@@ -331,9 +389,36 @@ pub(crate) fn list(globals: &GlobalArgs, slot: &VaultSlot) -> Result<Outcome, Cl
     for line in listing.render() {
         ui.line(&line);
     }
-    Ok(Outcome {
-        json: listing.json(),
-    })
+    Ok(Outcome::value(listing.json()))
+}
+
+/// `show <WORK-ID>` (U27; the gather, the D43 snippet ladder and the
+/// rendering are [`crate::show`]).
+///
+/// Read-only, and — like `list` and `status` — deliberately **not** under
+/// the U5 single-writer lock: the command a user reaches for to decide what
+/// to reveal must not be the command that hangs behind a running seal. It
+/// touches no backend at all (D67 §1 j): every snippet comes from the D43
+/// cache or from the user's own current file, and neither can reach the
+/// network.
+pub(crate) fn show(
+    globals: &GlobalArgs,
+    work_id: &str,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
+    let store = WorkStore::new(&vault);
+
+    let seal_id = crate::pipeline::restore::resolve_work_id(&store, work_id)?;
+    let units = crate::show::WorkUnits::gather(&store, &seal_id)?;
+
+    for line in units.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome::value(units.json()))
 }
 
 /// `status <WORK-ID> [--upgrade]` (U23; the evaluation and rendering are
@@ -397,9 +482,7 @@ pub(crate) fn status(
     for line in status.render() {
         ui.line(&line);
     }
-    Ok(Outcome {
-        json: status.json(),
-    })
+    Ok(Outcome::value(status.json()))
 }
 
 /// `restore <WORK-ID> [-o DIR]` (U20; policy and engine in
@@ -418,6 +501,118 @@ pub(crate) fn restore(
     _slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
     Err(crate::backend::unavailable("restore"))
+}
+
+/// `reveal <WORK-ID> (--all | --units …) [-o FILE] [--include-receipt]
+/// [--yes]` (U28's flow in [`crate::reveal_out`], U29's
+/// irreversible-disclosure gate in [`crate::reveal_consent`]).
+///
+/// The backend seam is reached **first**, before the vault is opened and
+/// before any passphrase is asked for — `restore`'s order, for `restore`'s
+/// reason plus one of its own: R16 fetches any ciphertext this vault no
+/// longer caches (D43 §3's vault-import shape is the ordinary case), and a
+/// build that cannot reach the network should say so rather than collect a
+/// secret, paint an irreversible-disclosure screen and *then* refuse. Under
+/// D68 §3 R8's ordering the cheapest refusal goes first, and this is it.
+///
+/// Everything above the seam is complete and is driven end to end over a
+/// [`StorageBackend`](antseal_net::StorageBackend) by
+/// `tests/reveal_output.rs` (U28) and `tests/reveal_consent.rs` (U29) —
+/// which is how D34 says these paths are exercised. What is missing is the
+/// same thing missing for `restore`: this command's own live wiring on top
+/// of U36's seam, recorded in [`crate::backend`].
+pub(crate) fn reveal(
+    _globals: &GlobalArgs,
+    _args: &crate::cli::RevealArgs,
+    // Nothing is unlocked before the seam refuses, so nothing is ever armed
+    // (D42 / D99 R2) — `restore`'s position exactly.
+    _slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    Err(crate::backend::unavailable("reveal"))
+}
+
+/// `verify <BUNDLE> [--online] [--live]` (U30; the run, its rendering and
+/// its `--json` document are [`crate::verify_out`], the network hosts are
+/// [`crate::verify_host`], the rulings are D69/D65/D128).
+///
+/// **No vault, and it never prompts** — the frozen help says so and this
+/// handler proves it: nothing here resolves a layout, collects a passphrase
+/// or touches [`VaultSlot`]. `verify` is the third party's command
+/// (MVP-SPEC.md line 38), and a third party has no vault to open.
+///
+/// # Order of operations, and why `--live` refuses first
+///
+/// `--live` needs the storage-backend construction seam (U36's, shared with
+/// `seal`/`restore`/`reveal`). A build without one cannot attempt the check
+/// at all, so it refuses **before verification** in the transient network
+/// class (23) — D69 §3 R6's one carve-out, and a *process* outcome rather
+/// than a verdict. A build that *can* fetch behaves the other way entirely:
+/// the offline verdict renders in full, the live section reports R11's own
+/// `Inconclusive`, and the exit code is still the evidence verdict's.
+///
+/// `--online` probes before the run because R21's host seam is a pure
+/// accessor over already-collected data. A bundle that will not even decode
+/// is not probed — there is nothing to ask about — and the rejection its
+/// verification produces is the authoritative one.
+pub(crate) fn verify(
+    globals: &GlobalArgs,
+    bundle_path: &Path,
+    online: bool,
+    live: bool,
+    // D99 R2: `verify` opens no vault, so it never arms the upgrade hook.
+    _slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    use antseal_core::verify::VerifyOptions;
+    use antseal_core::verify::orchestration::VerifyModes;
+
+    let ui = Ui { json: globals.json };
+
+    // D69 §3 R2's non-verdict row: a bundle file that is missing or
+    // unreadable is `io-error` (4), not a verdict — nothing was verified.
+    let bytes = std::fs::read(bundle_path).map_err(|source| CliError::Io {
+        context: format!("reading {}", bundle_path.display()),
+        source,
+    })?;
+
+    if live {
+        // The seam, before any verification (D69 §3 R6). A default build
+        // compiles no storage backend at all; the message names the actual
+        // cause rather than implying an outage.
+        return Err(crate::backend::unavailable("verify"));
+    }
+
+    let mut modes = VerifyModes::OFFLINE;
+    let mut host = crate::verify_host::CollectedInputs::none();
+    if online {
+        modes = modes.with_online();
+        let config = crate::config::load()?;
+        let network = crate::config::effective_network(globals.network, &config);
+        if let Some(endpoints) = crate::verify_host::endpoints_from_config(&config, network)? {
+            let client =
+                antseal_anchor::http::HttpClient::new(antseal_anchor::http::HttpPolicy::verify());
+            if let Ok(decoded) = antseal_core::bundle::BundleV1::decode(&bytes) {
+                host = host.with_online(crate::verify_host::probe_online(
+                    &client, &decoded, &endpoints, network,
+                ));
+            }
+        }
+    }
+
+    // The clock is read once for the whole run: a verification that read the
+    // time twice could straddle a certificate expiry inside one output
+    // (`status`'s own rule, for the same reason).
+    let options = VerifyOptions::new().with_verify_at_unix(now_unix_secs());
+    let run = crate::verify_out::run_verify(&bytes, &options, modes, &host)?;
+
+    for line in run.render() {
+        ui.line(&line);
+    }
+
+    // D69 §3 R1's third arm: the rung sets the process code and the success
+    // envelope is still emitted, because `ok` means "a result document is
+    // present". D65 §5's carriage: the result is text, so `report` reaches
+    // stdout byte-for-byte as `to_canonical_json()` produced it.
+    Ok(Outcome::raw(run.json()?, run.exit_class()))
 }
 
 /// `vault export [FILE]` (U12; format and engine in
@@ -463,14 +658,12 @@ pub(crate) fn vault_export(
          holds the keys to every sealed work, forever.",
     );
 
-    Ok(Outcome {
-        json: serde_json::json!({
-            "file": summary.path.display().to_string(),
-            "works": summary.works,
-            "bytes": summary.bytes,
-            "self_verified": true,
-        }),
-    })
+    Ok(Outcome::value(serde_json::json!({
+        "file": summary.path.display().to_string(),
+        "works": summary.works,
+        "bytes": summary.bytes,
+        "self_verified": true,
+    })))
 }
 
 /// `vault import <FILE>` (U12).
@@ -512,14 +705,12 @@ pub(crate) fn vault_import(
         ui.line("config.toml was restored.");
     }
 
-    Ok(Outcome {
-        json: serde_json::json!({
-            "vault_dir": summary.vault_dir.display().to_string(),
-            "works": summary.works,
-            "wallet_restored": summary.wallet_present,
-            "config_restored": summary.config_present,
-        }),
-    })
+    Ok(Outcome::value(serde_json::json!({
+        "vault_dir": summary.vault_dir.display().to_string(),
+        "works": summary.works,
+        "wallet_restored": summary.wallet_present,
+        "config_restored": summary.config_present,
+    })))
 }
 
 /// This invocation's clock read, POSIX seconds UTC. Shared with U24's hook,

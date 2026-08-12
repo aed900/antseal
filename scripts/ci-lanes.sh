@@ -514,6 +514,154 @@ env_logger v0.10.2'
   printf 'OK: antseal-core normal graph is exactly the %s reviewed package(s). NOTE: this is a "nothing entered unreviewed" proof, NOT an I/O-freedom proof — see the scope note in this function.\n' \
     "$(grep -c . <<<"$core_names")"
 
+  # ── D18 §5 R6: the SHIPPED page module's graph (R22) ────────────────────
+  # The rule above guards `antseal-core`, which is what the page's WASM is
+  # BUILT FROM. This one guards `antseal-wasm`, which is what the page
+  # actually LOADS — the wasm-bindgen boundary D18 ruled into its own package
+  # so that none of the five lanes above had to change to accommodate it.
+  #
+  # It is the same Q74 idiom, deliberately, with three differences and a
+  # reason for each:
+  #
+  #   * `--target wasm32-unknown-unknown`, NOT `--target all`. Unlike
+  #     antseal-core this package ships to exactly ONE target, so the
+  #     over-reporting `--target all` buys nothing here and would admit names
+  #     no build contains (D18 §5 R6).
+  #   * the expected set is DERIVED from `$core_reviewed` above rather than
+  #     restated. A second copy of 84 names is a second copy that will
+  #     diverge; the boundary's contribution is the seven-name delta below.
+  #   * because the target is narrower than `--target all`, four names in the
+  #     set above are legitimately ABSENT here — and that absence is asserted
+  #     in BOTH directions, so the exclusion list cannot rot into a silent
+  #     permission (third check below).
+  #
+  # WHY THIS IS THE STRUCTURAL HALF OF "no I/O inside the WASM module": R22's
+  # `Do` says it and D18 §5 refuses to leave it to review. A dependency graph
+  # decides what CAN be reached; `scripts/wasm-imports.mjs` decides what the
+  # built artifact actually imports. Neither alone is the property, and
+  # together they are what makes the sentence enforced.
+  note "antseal-wasm's wasm32 graph: none of the DECIDED-prohibited crates (D18 §5 R3)"
+  # `js-sys`/`web-sys` are the crates through which host capability — fetch,
+  # XMLHttpRequest, localStorage, Date — becomes reachable from Rust, so they
+  # are named here to get the RIGHT DIAGNOSIS: "you added js-sys" rather than
+  # "an unreviewed package arrived". `wasm-bindgen` itself is NOT banned — it
+  # is the boundary — and the trailing space plus the `-` boundary keep the
+  # `wasm-bindgen-*` family it legitimately brings from matching `web-`/`js-`.
+  # The async/HTTP half repeats layer 1's names for the same reason it exists
+  # there: this graph ships to a browser, where a fetch is one edge away.
+  local wasm_forbidden='^(js-sys|web-sys|wasm-bindgen-futures|web-time|getrandom|rand|rand_chacha|tokio|async-std|smol|hyper|reqwest|ureq|http|rustls|native-tls|openssl|console_error_panic_hook|serde-wasm-bindgen|serde_wasm_bindgen) '
+  # Self-test FIRST, in BOTH directions (the house pattern, and the reason
+  # layer 1 above went two waves without anyone watching it bite): the
+  # detector must match the capability crate it exists to refuse, and must NOT
+  # match the boundary crate the decision admits. A pattern that swallowed
+  # `wasm-bindgen` could never be green for the right reason.
+  if ! printf 'js-sys v0.3.103\n' | grep -qE "$wasm_forbidden"; then
+    printf '::error::D18 R6 prohibition self-test FAILED: the detector does not match a planted `js-sys` tree line — js-sys is the crate through which `fetch` becomes reachable, so a detector that cannot see it makes every green verdict below meaningless\n'
+    return 1
+  fi
+  if printf 'wasm-bindgen v0.2.126\n' | grep -qE "$wasm_forbidden"; then
+    printf '::error::D18 R6 prohibition self-test FAILED: the detector ALSO matches `wasm-bindgen`, which D18 §5 R3 ADMITS as the boundary itself. The rule can then never be green for the right reason\n'
+    return 1
+  fi
+  local wasm_tree wasm_names wasm_offenders
+  wasm_tree="$(cargo tree -p antseal-wasm -e normal --target wasm32-unknown-unknown --prefix none --locked)" || return 1
+  printf '%s\n' "$wasm_tree"
+  wasm_offenders="$(printf '%s\n' "$wasm_tree" | grep -E "$wasm_forbidden" || true)"
+  if [ -n "$wasm_offenders" ]; then
+    printf '\n::error::D18 §5 R3 violation: a DECIDED-PROHIBITED crate entered the SHIPPED verifier-page module graph. js-sys/web-sys/wasm-bindgen-futures/web-time/getrandom are refused BY DECISION — refusing them is what makes R22 "No I/O inside the WASM module" a property of the graph rather than of a reviewer attention:\n'
+    printf '%s\n' "$wasm_offenders"
+    return 1
+  fi
+  printf 'OK: no decided-prohibited crate in the shipped page module graph.\n'
+
+  note "antseal-wasm's wasm32 graph is EXACTLY core's reviewed set + the boundary (D18 §5 R6)"
+  # The boundary's whole contribution, measured at D18 §1 (k) and re-measured
+  # at R22's landing. Six names plus the package itself; each argued here, in
+  # the Q74 style, because the point of the idiom is that a human makes the
+  # argument once, at the site, for every name admitted.
+  local wasm_added='antseal-wasm        # the package itself, as cargo tree roots it
+
+  # --- the wasm-bindgen boundary (D18 §5 R3/R4) ---
+  wasm-bindgen        # THE boundary. Admitted deliberately and alone: it is the
+                      #   crate that makes a typed JS error and a panic hook
+                      #   possible, which R22 Accept row 3 requires and a raw C
+                      #   ABI cannot deliver (D18 §4.1). Declared
+                      #   default-features = false, features = ["std"];
+                      #   `serde-serialize` is prohibited (D18 §5 R5).
+  wasm-bindgen-macro  # proc-macro; compile-time only, contributes no runtime code
+  wasm-bindgen-macro-support
+  wasm-bindgen-shared
+  bumpalo             # <- wasm-bindgen-macro-support; a bump ALLOCATOR. Arena
+                      #   allocation over memory the caller owns: no syscall, no
+                      #   file, no clock.
+  once_cell           # <- wasm-bindgen-macro-support; lazy initialization of
+                      #   in-memory statics. No I/O of any kind.'
+  # Names in the `--target all` set above that no wasm32 graph contains. Each
+  # is annotated in that set as target-conditional; listed here so the two
+  # sets can be compared at all, and asserted ABSENT below so this list can
+  # never become a quiet permission.
+  local wasm_absent='cpufeatures             # x86 CPU-feature detection; not compiled for wasm32
+  libc                    # <- cpufeatures, non-x86 only (already annotated as absent above)
+  fiat-crypto             # <- curve25519-dalek 32-bit backend (already annotated as absent above)
+  curve25519-dalek-derive # <- curve25519-dalek, 64-bit serial backend only'
+  wasm_names="$(printf '%s\n' "$wasm_tree" | names_of)"
+  # Anti-vacuity, same reason as above: the root is always in its own tree, so
+  # its absence means the parse broke rather than the graph being clean.
+  if ! grep -qxF 'antseal-wasm' <<<"$wasm_names" ; then
+    printf '::error::D18 R6: the parsed package set does not contain `antseal-wasm` itself, so `cargo tree` failed or its output shape changed — every verdict here would be vacuous. Parsed %s name(s)\n' \
+      "$(grep -c . <<<"$wasm_names")"
+    return 1
+  fi
+  local wasm_expected wasm_unknown wasm_stale wasm_present_absent
+  wasm_expected="$(cat <(printf '%s\n' "$core_reviewed" | strip_reviewed) \
+                       <(printf '%s\n' "$wasm_added" | strip_reviewed) |
+    sort -u | comm -23 - <(printf '%s\n' "$wasm_absent" | strip_reviewed))"
+  # Self-test FIRST, over a planted tree, in BOTH directions: the extractor
+  # must report an intruder and must NOT report names the expectation
+  # contains. `js-sys` is the intruder on purpose — it is the realistic one.
+  local wasm_planted wasm_planted_unknown
+  wasm_planted='antseal-wasm v0.0.0 (/x/crates/antseal-wasm)
+wasm-bindgen v0.2.126
+sha2 v0.11.0
+js-sys v0.3.103'
+  wasm_planted_unknown="$(printf '%s\n' "$wasm_planted" | names_of \
+    | comm -23 - <(printf '%s\n' "$wasm_expected") | tr '\n' ' ')"
+  if [ "$wasm_planted_unknown" != "js-sys " ]; then
+    printf '::error::D18 R6 reviewed-set self-test FAILED: over a planted tree of {antseal-wasm, wasm-bindgen, sha2, js-sys} the check reported [%s] — it must report exactly `js-sys`. Fix it before trusting any green verdict\n' "$wasm_planted_unknown"
+    return 1
+  fi
+  # The exclusion-list direction runs FIRST, and the order is the whole point:
+  # a name that is both excluded as "absent on wasm32" and actually present is
+  # ALSO an unreviewed arrival, so the generic check below would fire on it and
+  # send the reader to add it to `wasm_added` — the wrong repair for the wrong
+  # diagnosis. Ordered the other way this arm is unreachable, which is how a
+  # check quietly becomes decoration (measured at R22's landing: with the
+  # generic check first, a planted `blake3` in the exclusion list reddened as
+  # "package entered without review").
+  wasm_present_absent="$(comm -12 <(printf '%s\n' "$wasm_names") <(printf '%s\n' "$wasm_absent" | strip_reviewed))"
+  if [ -n "$wasm_present_absent" ]; then
+    printf '::error::D18 R6: package(s) excluded as "absent on wasm32" ARE in the wasm32 graph. The exclusion list is a statement about the target, not a permission; a name that arrived must be reviewed into `wasm_added` instead:\n'
+    printf '%s\n' "$wasm_present_absent" | sed 's/^/  ! /'
+    return 1
+  fi
+  wasm_unknown="$(comm -23 <(printf '%s\n' "$wasm_names") <(printf '%s\n' "$wasm_expected"))"
+  if [ -n "$wasm_unknown" ]; then
+    printf '::error::D18 §5 R6 violation: package(s) entered the SHIPPED verifier-page module NORMAL graph without review. This graph IS what the browser executes and R22 requires it to do no I/O; that property is argued per entry by a human, not detected by this lane. Read what each of these pulls in, then add it to `wasm_added` above IN THE SAME COMMIT:\n'
+    printf '%s\n' "$wasm_unknown" | sed 's/^/  + /'
+    printf 'Provenance: cargo tree -p antseal-wasm -e normal --target wasm32-unknown-unknown --locked -i <name>\n'
+    return 1
+  fi
+  wasm_stale="$(comm -13 <(printf '%s\n' "$wasm_names") <(printf '%s\n' "$wasm_expected"))"
+  if [ -n "$wasm_stale" ]; then
+    printf '::error::D18 R6: the expected set names package(s) that are no longer in the shipped graph. A list carrying names that are not there has stopped describing the graph — delete them from `wasm_added` (or move them to `wasm_absent` WITH a reason if they went target-conditional):\n'
+    printf '%s\n' "$wasm_stale" | sed 's/^/  - /'
+    return 1
+  fi
+  printf 'OK: antseal-wasm wasm32 normal graph is exactly the %s expected package(s) — core reviewed set + %s boundary name(s), minus %s absent on this target.\n' \
+    "$(grep -c . <<<"$wasm_names")" \
+    "$(printf '%s\n' "$wasm_added" | strip_reviewed | grep -c .)" \
+    "$(printf '%s\n' "$wasm_absent" | strip_reviewed | grep -c .)"
+
   # ── S6: ant-core adapter containment ────────────────────────────────────
   # Two rules from the S6 accept rows:
   #

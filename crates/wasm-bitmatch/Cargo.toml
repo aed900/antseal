@@ -1,13 +1,23 @@
 # Q5 — the native<->WASM bit-match harness.
 #
-# NOT A PRODUCT CRATE. The MVP-SPEC Architecture tree lists four `antseal-*`
-# crates plus `verifier-web/` and `testdata/`; this is test infrastructure,
-# never published (`publish = false`), never depended on by any product
-# crate, and deliberately NOT named `antseal-*` so it cannot be mistaken for
-# one. It exists because the bit-match needs a wasm artifact with a custom
-# export, and putting that export in `antseal-core` would edge into decision
-# **D18** (wasm-bindgen surface location, not due until M3). Nothing here
-# uses wasm-bindgen: the exports are a raw C ABI over two integers.
+# NOT A PRODUCT CRATE. This is test infrastructure, never published
+# (`publish = false`), never depended on by any product crate, and
+# deliberately NOT named `antseal-*` so it cannot be mistaken for one. It
+# exists because the bit-match needs a wasm artifact with a custom export, and
+# at M0 putting that export in `antseal-core` would have edged into decision
+# **D18** (wasm-bindgen surface location). Nothing here uses wasm-bindgen: the
+# exports are a raw C ABI over two integers.
+#
+# **[R22/D18, 2026-08-12] Two sentences above were corrected rather than left
+# to rot.** This header used to say the tree "lists four `antseal-*` crates"
+# and that D18 was "not due until M3". D18 is resolved and the wasm-bindgen
+# surface landed as a FIFTH `crates/antseal-*` member, `antseal-wasm` — a
+# recorded deviation from the MVP-SPEC Architecture tree (lines 44-58), flagged
+# at D18 §9 and annotated on P5's Accept row, with no spec edit made. The
+# raw-C-ABI technique here stays exactly as it was: D18 §4.1 measured it as the
+# strongest arm it refused, because a zero-import module cannot deliver R22's
+# panic hook or its typed JS error, and it remains the right answer for a
+# harness that needs neither.
 #
 # It IS a workspace member — that is the point. A bit-match between two
 # builds resolved from different lockfiles would be meaningless, so this

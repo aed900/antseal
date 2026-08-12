@@ -28,7 +28,13 @@
 //!   requires `--online` confirmation"*), with the height filled in;
 //! - line 97 — the signature labels *"hybrid (PQ)"* and *"Ed25519-only"*;
 //! - line 118 — *"storage is the product's bonus, not its proof"*, and
-//!   *"this alone carries the evidentiary verdict"*.
+//!   *"this alone carries the evidentiary verdict"*;
+//! - lines 95/121 — the redaction block's shape: *"every reveal displays
+//!   position + total size"*, *"unrevealed units render as sized blackout
+//!   blocks"*, and the committed placeholder *"file #3, 48 KB"* (size only,
+//!   path withheld). Line 95's figure is an illustration rather than a
+//!   template, and [`withheld_file_line`] records the two places it departs
+//!   from it.
 //!
 //! D64 (`docs/decisions/D64-online-overlay-headline-presentation.md` §8)
 //! freezes the overlay's **structure** — block order, the heading's
@@ -70,7 +76,7 @@
 
 use super::aggregate::headline_eligible;
 use super::overlay::{EndpointProbeFailure, ProbeFailureClass};
-use super::report::{AnchorKind, AnchorState, SignatureScheme};
+use super::report::{AnchorKind, AnchorState, SignatureScheme, StorageLinkageResult};
 use super::verdict::Headline;
 
 // ---------------------------------------------------------------------------
@@ -469,6 +475,132 @@ pub const MIRROR_PARTIAL_REVEAL_POLICY: &str = "a raw mirror revealed beside a p
      canonicalization binding run only on a full reveal";
 
 // ---------------------------------------------------------------------------
+// the redaction view (R19) — MVP-SPEC.md line 121's guardrail, as sentences
+// ---------------------------------------------------------------------------
+
+/// The redaction view's section label (MVP-SPEC.md line 121).
+///
+/// The rows below are on this table for the same reason every other row is:
+/// the CLI ([`super::redaction`] rendered by `antseal-cli`) and the page
+/// (R23) draw the *same* [`RedactionView`] and must not spell the guardrail
+/// two ways. They are an **addition** to R18's frozen set, not an edit to it
+/// — no row above moves — because R18 froze the verdict block before R19
+/// authored the disclosure block.
+///
+/// [`RedactionView`]: super::redaction::RedactionView
+pub const REDACTION_VIEW_LABEL: &str =
+    "disclosure map — what this bundle reveals, and where each revealed range sits in its file";
+
+/// The one honesty note the view carries about its own numbers.
+///
+/// Every size in this block is
+/// [`FileReveal::total_size`](super::report::FileReveal::total_size) or
+/// [`UnrevealedFilePlaceholder::size`](super::report::UnrevealedFilePlaceholder::size),
+/// whose own docs say *"Render it as declared, never as measured"*. Each row
+/// below carries the word `declared` beside its figure; this states once, in
+/// full, what that word means — so a reader is never left to infer that a
+/// verifier measured the part of a file it was never shown.
+pub const DECLARED_SIZE_NOTE: &str =
+    "every size below is the sealer's declared figure, not a measurement by this run";
+
+/// One touched file's header row.
+///
+/// `path` arrives **already escaped for the caller's surface** — the D67 §3
+/// R6 value-vs-rendering split, and load-bearing here: the path is
+/// sealer-authored text that reaches a terminal or a DOM, and the two
+/// surfaces neutralise different byte sets. This table spells the sentence;
+/// the renderer decides what a control character looks like in its own
+/// medium. The quotes are the delimiter, so a path containing spaces still
+/// reads as one field.
+#[must_use]
+pub fn redacted_file_line(
+    file_id: u64,
+    escaped_path: &str,
+    total_size: u64,
+    fully_revealed: bool,
+) -> String {
+    let shape = if fully_revealed {
+        "fully revealed"
+    } else {
+        "partially revealed"
+    };
+    format!("file #{file_id} \"{escaped_path}\" — {total_size} declared byte(s), {shape}")
+}
+
+/// One revealed unit: its size, **its position, and the file's declared
+/// total — unconditionally** (MVP-SPEC.md line 121's anti-out-of-context
+/// guardrail is a rule about this row and nothing else).
+///
+/// All three figures are stated and none is left to be derived: a reader who
+/// must subtract to learn where a quoted paragraph sat is the reader the
+/// guardrail exists for. The byte-range is `[start, start + size)` — the
+/// house's byte unit of account (D67 §3 R1), never a rounded `KB`, and the
+/// spelling that stays exact for a zero-length unit.
+#[must_use]
+pub fn revealed_span_line(unit_id: u64, start: u64, size: u64, total_size: u64) -> String {
+    format!("unit {unit_id} revealed: {size} byte(s) at offset {start} of {total_size} declared")
+}
+
+/// One unrevealed unit, as MVP-SPEC.md line 121's **sized blackout block**.
+///
+/// Same three figures as [`revealed_span_line`], because the position of
+/// what is *missing* is exactly as load-bearing as the position of what is
+/// shown: a reader can see that bytes 0–255 were withheld, and can name the
+/// unit when asking the sealer for them.
+#[must_use]
+pub fn blackout_span_line(unit_id: u64, start: u64, size: u64, total_size: u64) -> String {
+    format!(
+        "unit {unit_id} blacked out: {size} byte(s) at offset {start} of {total_size} declared — \
+         sealed, and not revealed by this bundle"
+    )
+}
+
+/// A wholly unrevealed file, as its **committed placeholder**: size only,
+/// path withheld (MVP-SPEC.md line 95's *"file #3, 48 KB"*, line 121).
+///
+/// Two departures from the spec's illustration, both deliberate. The size is
+/// in bytes rather than a rounded `KB`, because every neighbouring figure in
+/// this product is byte-denominated (D67 §3 R1) and a rounded denominator is
+/// a worse one. And the row says outright what is withheld: a bare
+/// `file #3 — 49152` invites the reading that the name was merely omitted
+/// for brevity, when in fact the bundle carries no name to print.
+#[must_use]
+pub fn withheld_file_line(file_id: u64, size: u64) -> String {
+    format!(
+        "file #{file_id} — {size} declared byte(s), path withheld: this bundle reveals nothing of \
+         this file and names it only by ordinal"
+    )
+}
+
+/// The work-level revealed total.
+#[must_use]
+pub fn redaction_totals_line(
+    revealed_bytes: u128,
+    declared_bytes: u128,
+    files_touched: u64,
+    files: u64,
+) -> String {
+    format!(
+        "disclosure totals: {revealed_bytes} of {declared_bytes} declared byte(s) revealed, across \
+         {files_touched} of {files} file(s)"
+    )
+}
+
+/// The work-level withheld total — printed **beside** the revealed one, so
+/// the two halves of the disclosure are never read apart.
+#[must_use]
+pub fn withheld_totals_line(
+    blacked_out_bytes: u128,
+    withheld_file_bytes: u128,
+    files_withheld: u64,
+) -> String {
+    format!(
+        "withheld: {blacked_out_bytes} byte(s) blacked out inside revealed files; \
+         {withheld_file_bytes} byte(s) across {files_withheld} wholly unrevealed file(s)"
+    )
+}
+
+// ---------------------------------------------------------------------------
 // the two proof layers, and the advisory live check
 // ---------------------------------------------------------------------------
 
@@ -481,14 +613,47 @@ pub const EVIDENCE_LAYER_LABEL: &str = "evidence — this alone carries the evid
 pub const STORAGE_LINKAGE_LAYER_LABEL: &str = "storage linkage — offline address recomputation; \
                                                storage is the product's bonus, not its proof";
 
-/// Storage linkage: the stage has not run (report v1's only arm today,
-/// [`StorageLinkageResult::NotEvaluated`]).
+/// The one row a [`StorageLinkageResult`] renders as — R20's renderer seam,
+/// and the reason no caller needs to know which of the three rows below
+/// applies.
+///
+/// Adds no sentence: it dispatches onto the frozen rows and does the counting
+/// they take, which is the arithmetic every renderer would otherwise repeat
+/// (the pass row counts embedded ciphertexts; the fail row counts *addresses*,
+/// so the manifest is one of them). Wildcard-free on the slot, so a fourth
+/// storage-linkage value cannot reach a screen without a row to render it in.
+///
+/// The **layer** framing is not here and must not move here:
+/// [`STORAGE_LINKAGE_LAYER_LABEL`] is a sibling row a renderer emits beside
+/// this one, because "storage is the product's bonus, not its proof" belongs
+/// to the section, not to whichever verdict the section happens to carry.
+#[must_use]
+pub fn storage_linkage_line(result: StorageLinkageResult) -> String {
+    match result {
+        StorageLinkageResult::NotEvaluated => storage_linkage_not_evaluated_line().to_owned(),
+        StorageLinkageResult::Evaluated {
+            units_matched,
+            units_mismatched,
+            manifest_matched,
+        } => {
+            let mismatch_count = units_mismatched.saturating_add(u64::from(!manifest_matched));
+            if mismatch_count == 0 {
+                storage_linkage_pass_line(units_matched)
+            } else {
+                let checked_count = units_matched
+                    .saturating_add(units_mismatched)
+                    .saturating_add(1);
+                storage_linkage_fail_line(mismatch_count, checked_count)
+            }
+        }
+    }
+}
+
+/// Storage linkage: the stage did not run
+/// ([`StorageLinkageResult::NotEvaluated`]).
 ///
 /// Says nothing in either direction about where the work is stored — the same
 /// discipline [`SignatureScheme::NotEvaluated`] carries.
-///
-/// [`StorageLinkageResult::NotEvaluated`]:
-///     super::report::StorageLinkageResult::NotEvaluated
 #[must_use]
 pub const fn storage_linkage_not_evaluated_line() -> &'static str {
     "storage linkage: not evaluated by this build — this says nothing about where the work is \

@@ -1,0 +1,27 @@
+# anchor-smoke capture log - OTS day-2 upgrades (runbook s3.1 step 3)
+#
+# Consent (runbook s1), recorded verbatim before the first request:
+# Maintainer authorisation for this capture was given in-session on 2026-08-12, in direct reply to the named request to run anchor-smoke upgrade at wave close: express consent, quote, you have my permission to do next steps when ready, unquote, re-confirming the earlier in-session grant, quote, you have my permission now for this whenever ready to run it: run anchor-smoke upgrade at wave close, unquote. Scope: run scripts/anchor-smoke upgrade --campaign testdata/anchors/A25-wave17-cycle, driving antseal own A14 client (pending_refs -> UpgradeTarget -> poll_upgrade, behind A42 allowlist) to issue GET /timestamp/<hex> against the calendar URIs recorded in the eight pendings themselves (alice.btc.calendar.opentimestamps.org, bob.btc.calendar.opentimestamps.org, finney.calendar.eternitywall.com, btc.calendar.catallaxy.com) for the two already-committed, already-public golden-vector digests A=083f87df00fd5c703d35b883d83535644c686f9e53f1584d7df126abdabd69df and B=3448b9f22d6d4de5b68e0c1ba28d56e8466aa5a01892835411f7c467b52e5e9c read from the day-1 CAPTURE.log. Reads only - no submission, no new digest sent, no account, no credentials, no secret material. Eight polls, one pass, no retries. Closes D127 section 5 predicate iff at least one of THESE commitments reaches upgraded through the client.
+#
+# Upgrade GETs for the pending captures beside this log, via antseal's
+# own A14 path (pending_refs -> UpgradeTarget -> poll_upgrade).
+# Calendar-behaviour classes preserved verbatim (runbook s3.1):
+# pending-42-byte-404 -> not-yet-confirmed (re-pollable),
+# hard-9-byte-404 -> not-found (hard), transport -> http=000
+# (re-pollable, NEVER promoted to the hard error).
+# Format notes: requests are issued by antseal's own clients via
+# anchor-smoke-driver; successes log http=2xx (the typed client
+# returns carry the response class, not the exact code); outcomes
+# whose bodies antseal's classifier/verifier consumed (D58 s7.4
+# 404s, unverifiable TSA replies) log bytes=- sha256=-; transport
+# failures log http=000 bytes=0 sha256= as in the bootstrap logs.
+utc_start=2026-08-12T17:43:17Z
+upgrade digest=A pending=A-apool calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a7bb3390b80b708cfb2118e803a6a1a773bf4f26388be818d4cd1c5908cd045706681a899df67ff5010fbd3 http=2xx bytes=965 sha256=43069d11b150100c3d18a77b2f13d27c30086e0f7f6e3d6e2564ed27cb585b60 utc=2026-08-12T17:43:18Z outcome=upgraded
+upgrade digest=A pending=A-bpool calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a7bb33e7ac088e82836e100eff4999b4254e77fb64eb771e2952f4e26f06b602ef4f2d785ca7998e05b1bf2 http=2xx bytes=1070 sha256=14dd566e8ced2dba68b071b735b327109ee26e7cc3f042d0db0c250bb27b8d29 utc=2026-08-12T17:43:22Z outcome=upgraded
+upgrade digest=A pending=A-catallaxy calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a7bb34698040bb1d137d503d905f3452565f8f9c5d6ff6d6d12c8a678e0ec43d41c0f043c1eb1c7fd7b2d92 http=2xx bytes=1070 sha256=9826fa328a0f7003b9e5ca0416757550cf38c549fcef82bb566125de24df31ef utc=2026-08-12T17:43:26Z outcome=upgraded
+upgrade digest=A pending=A-eternitywall calendar=eternitywall url=https://finney.calendar.eternitywall.com/timestamp/6a7bb342c88b105828f6eaf97b564427980d429c1d006692a89941e93a615055b99a20260981cbdf145a115a http=404 bytes=- sha256=- utc=2026-08-12T17:43:29Z outcome=not-yet-confirmed
+upgrade digest=B pending=B-apool calendar=alice url=https://alice.btc.calendar.opentimestamps.org/timestamp/6a7bb34a734b436983c26e41f0805ececcd5c872eb36c097c7af236fb54d4a2a04fc075755af74a89e7426f1 http=2xx bytes=965 sha256=0c1f35eddde6866eea187fe4a7b8b3186cd9f2df03ea13a8df5566d3fff4997b utc=2026-08-12T17:43:33Z outcome=upgraded
+upgrade digest=B pending=B-bpool calendar=bob url=https://bob.btc.calendar.opentimestamps.org/timestamp/6a7bb34ffdb9903a8a116d051c89e0941ef4bc1a92d2fe6855aad8f9a10077c022c35fd43cf8f30d5e5a179d http=2xx bytes=1070 sha256=ae021c0cf15eb1ee2f32bc9834022795641fc8df291701f5f051b00267b7bdd4 utc=2026-08-12T17:43:37Z outcome=upgraded
+upgrade digest=B pending=B-catallaxy calendar=catallaxy url=https://btc.calendar.catallaxy.com/timestamp/6a7bb357845e53bfa0a9a33080aee9484626acc9702edf608b830cbc1380140e6b3818b2f9c0d56436b9d1ef http=2xx bytes=1070 sha256=5c1d200f16d48f62f21a3cc222be1a4e3e92b0952d9ab0efd8623d41a73b0e15 utc=2026-08-12T17:43:40Z outcome=upgraded
+upgrade digest=B pending=B-eternitywall calendar=eternitywall url=https://finney.calendar.eternitywall.com/timestamp/6a7bb353d7d7de472dc37e68f03c6fe0b72e5a066834031a66303b39c56c6712e2e8f95a9436b915ddad35e6 http=404 bytes=- sha256=- utc=2026-08-12T17:43:44Z outcome=not-yet-confirmed
+utc_end=2026-08-12T17:43:44Z

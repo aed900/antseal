@@ -783,8 +783,10 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
         ("list", true, "unlocks through `unlock_for_command`"),
         (
             "show",
-            false,
-            "M3: the handler does not exist yet, so nothing is unlocked",
+            true,
+            "U27 unlocks through the same `unlock_for_command` expression as `list` — and, like \
+             `status`, arms BEFORE resolving the work id, so an unknown id still leaves the \
+             invocation armed",
         ),
         (
             "status",
@@ -798,7 +800,13 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
             "U20 reaches the storage-backend seam before the vault, and this build has no \
              backend — so no passphrase is collected and nothing is unlocked",
         ),
-        ("reveal", false, "M3: the handler does not exist yet"),
+        (
+            "reveal",
+            false,
+            "U28/U29's handler exists now, and — like `restore`, whose seam it shares — it \
+             reaches the storage-backend seam before the vault, so no passphrase is collected \
+             and nothing is unlocked",
+        ),
         (
             "verify",
             false,

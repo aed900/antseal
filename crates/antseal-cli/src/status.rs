@@ -1092,7 +1092,12 @@ const fn kind_name(kind: AnchorKind) -> &'static str {
 }
 
 /// The coarse state identifier a user sees.
-const fn work_state_name(state: WorkState) -> &'static str {
+///
+/// `pub(crate)` so `show` states a work's state in the **same** words its
+/// sibling read surface does (U27). The tree already carries a second,
+/// wordier spelling in `pipeline/restore.rs` and a third as
+/// `listing::WorkRow::state_name`; a fourth is what this visibility avoids.
+pub(crate) const fn work_state_name(state: WorkState) -> &'static str {
     match state {
         WorkState::IncompletePrePay | WorkState::IncompletePostPay => "incomplete",
         WorkState::Complete => "complete",

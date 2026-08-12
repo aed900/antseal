@@ -1,0 +1,115 @@
+# R22 — the verifier page's wasm-bindgen boundary.
+#
+# WHAT THIS CRATE IS: the ONLY place in the workspace where a
+# `#[wasm_bindgen]` attribute exists. It contributes a boundary and no
+# verification logic — every decision the page renders is computed by
+# `antseal-core` (MVP-SPEC.md line 127: "all verification, anchors included"),
+# and page JS does layout only (tasks/R.md R23).
+#
+# WHY IT IS ITS OWN PACKAGE, not a feature on `antseal-core`: decision D18
+# (docs/decisions/D18-wasm-bindgen-surface-location.md). Every consumer of the
+# shipped artifact addresses it BY PACKAGE — `wasm-pack`'s only argument,
+# D63's "the deployed .wasm", R25's SHA256SUMS, F29's profile, a `cargo tree
+# -p` lane, R27's parity gate — and a feature is a compilation switch, not an
+# artifact. Keeping the surface out of `antseal-core` is also what leaves
+# `core-dep-graph`, `gate-features --check-partition`, `wasm32-core`,
+# `wasm32-core-tests` and `wasm-bitmatch` untouched BY CONSTRUCTION rather
+# than by re-testing: `antseal-core` gains no feature, no dependency, no
+# `crate-type` change and no `#[wasm_bindgen]` attribute (D18 §5 R10).
+#
+# THE NAME IS FROZEN BY D18 §5 R1 and may not be changed by an implementation
+# lane. `wasm-pack` derives the emitted filename from the package name
+# (`antseal_wasm_bg.wasm`) and the name appears inside the artifact's own
+# bytes, so it is a byte-level input to the SHA-256 D63 §5 R2 publishes in the
+# page footer.
+#
+# IT IS A WORKSPACE MEMBER for the reason `crates/wasm-bitmatch` is one: R22's
+# Accept row 2 compares this module's report bytes against native ones, and a
+# comparison between two builds resolved from different lockfiles compares two
+# different programs. One root Cargo.lock, one set of exact pins.
+#
+# Build it:  ./scripts/wasm-pack-build.sh   (README.md in this directory)
+
+[package]
+name = "antseal-wasm"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+# Stamps the source commit D63 §5 R3's footer renders. It reads ONE
+# environment variable and runs no process: the commit is supplied by
+# scripts/wasm-pack-build.sh, never discovered, so the build stays a pure
+# function of its inputs (D63 §5 R5's fence). Build-dependencies are a
+# different edge kind from `-e normal`, and this script has none, so the
+# shipped graph the R6 lane asserts is unaffected.
+build = "build.rs"
+# M3 ships a hosted page, not a registry release; nothing requires publishing
+# these bindings and D5/Q31's release-time naming question stays untouched.
+# A deferral about distribution, not a decision about it (D18 §10).
+publish = false
+
+[lib]
+# cdylib: the wasm32-unknown-unknown artifact `wasm-pack` post-processes and
+# the browser loads. rlib: native `cargo test`/`clippy` over the boundary-free
+# half of this crate, and any future in-workspace consumer — the committed
+# `crates/wasm-bitmatch/Cargo.toml` precedent, at no measured cost.
+crate-type = ["cdylib", "rlib"]
+
+# Versions live ONLY in the root [workspace.dependencies]
+# (docs/dependency-policy.md §2).
+[dependencies]
+# DEFAULT features only. `test-vectors`/`test-util` are test-support tiers and
+# must never enter the shipped graph; the R6 dep-graph rule in
+# scripts/ci-lanes.sh asserts the resulting wasm32 normal graph is exactly
+# antseal-core's reviewed set plus the six wasm-bindgen-side names.
+antseal-core.workspace = true
+# Three names that are ALREADY in antseal-core's reviewed normal graph, so
+# declaring them here adds no package to the shipped graph — the R6 lane's set
+# equality is unmoved, which is the property that made these free to use.
+#
+# `serde`/`serde_json` are used for exactly two things and NEITHER is the
+# report: parsing the page's online-evidence document (input, adversary-shaped,
+# `deny_unknown_fields`), and serializing the build-info document. The report,
+# the overlay and the verdict datum are handed over as the bytes core's own
+# `to_canonical_json()` produced — one serialization path, per D29/D65, and
+# `tests/carriage.rs` scans this crate's sources to keep it that way.
+serde.workspace = true
+serde_json.workspace = true
+# Library code returns typed errors and never unwraps (the house rule).
+thiserror.workspace = true
+
+# TARGET-GATED, never feature-gated (D18 §5 R3). Consequences, each deliberate:
+#
+#   * `cargo clippy --workspace --all-targets` and `cargo test --workspace`
+#     run on the host, so they compile NO wasm-bindgen — the boundary costs
+#     the native gate nothing;
+#   * this crate declares NO feature, so `gate-features.sh --check-partition`
+#     stays at seven declared features and neither tier list moves;
+#   * the `#[wasm_bindgen]` items carry `#[cfg(target_arch = "wasm32")]`, so
+#     the host build still type-checks everything behind the boundary.
+#
+# DECIDED PROHIBITIONS for this crate's graph (D18 §5 R3), enforced by the
+# `dep-graph` lane rather than by review: `js-sys`, `web-sys`,
+# `wasm-bindgen-futures`, `web-time`, `getrandom`, and any HTTP,
+# async-runtime or storage crate. `js-sys`/`web-sys` are the crates through
+# which host capability — `fetch`, `XMLHttpRequest`, `localStorage`, `Date` —
+# becomes reachable from Rust; refusing them is what makes R22's "No I/O
+# inside the WASM module" a property of the graph. The built module's import
+# table is checked separately (scripts/wasm-imports.mjs).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
+# A DEV edge, and the distinction is load-bearing: dev-dependencies are a
+# different edge kind from `-e normal`, so the R6 dep-graph rule's set is
+# unaffected and the fixture catalogue never reaches the shipped page module.
+#
+# `test-vectors` is antseal-core's WASM-safe tier and activates ZERO optional
+# dependencies, so this adds no package to any graph. It exists for
+# `examples/boundary-emit.rs`, which rebuilds R9's corpus so the boundary can
+# be compared against native. An example rather than a `[[bin]]` because a bin
+# cannot use dev-dependencies and a `required-features` bin would make this
+# crate declare a feature — which D18 §5 R3 forbids outright.
+[dev-dependencies]
+antseal-core = { workspace = true, features = ["test-vectors"] }
+
+[lints]
+workspace = true
