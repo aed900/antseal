@@ -363,7 +363,12 @@ files, compute digests, substitute pre-declared tokens in committed
 templates, and emit the sums manifest — **and nothing else**. No minifying,
 bundling, transpiling, templating language, or page-code generation. The
 committed template must itself be a loadable page, so template→artifact is a
-one-token diff any reviewer can eyeball. Without that fence, "line 139 lets
+one-token diff any reviewer can eyeball. *(→ **NARROWED, 2026-08-12, by D129**,
+at the same scope and for the same reason as the §5 R5 rider recorded after
+`## Outcome`: this is the sentence D129 §4.2 and §11.4 actually quote, and the
+narrowing applies here too. The purpose — a mechanically reviewable
+template→artifact step — is preserved and replaced, not withdrawn; the fence
+and its prohibitions are untouched.)* Without that fence, "line 139 lets
 me add a step" becomes a warrant for a toolchain, and line 137 stops meaning
 anything.
 
@@ -554,7 +559,13 @@ pinned versions with `--locked`; (ii) copy files; (iii) compute digests;
 bundling, transpiling, templating languages, generating page code, and any
 network access during the build. The committed template must be a valid,
 loadable page on its own, with the placeholder visible, so template→artifact
-is a one-token diff.
+is a one-token diff. — **RIDER + NARROWING, 2026-08-12, by
+[D129](D129-verifier-page-file-shape-and-the-in-artifact-csp.md)**: operation
+(iii) is read as *"compute digests and deterministic textual encodings of
+build inputs"*, with **base64** named, and the *one-token diff* clause is
+**narrowed** for the single-file page D129 §5 R1 rules. Nothing above is
+withdrawn or restated; see "Amendment — §5 R5's operation list and its
+one-token-diff clause, 2026-08-12" below.
 
 **R6 — The advice line: spec-owned, page-resident, drift-tested — and not
 added to R18's frozen table.** The exact sentence, from `MVP-SPEC.md`
@@ -972,3 +983,97 @@ hash:
   measuring what the installed `wasm-pack` actually does about fetching a
   `wasm-bindgen-cli` and running a downloaded `wasm-opt` **R22's first act**,
   because either would breach §5 R5's no-network-during-build fence here.
+
+---
+
+## Amendment — §5 R5's operation list and its one-token-diff clause, 2026-08-12
+
+**This section withdraws no ruling of D63 and corrects no measurement of it.**
+It records one clarifying **rider** on §5 R5's closed operation list and one
+**narrowing** of that rule's closing clause, both required by a decision taken
+after this record and both quoted for the registrar in that record's §11.4.
+The original wording of §5 R5 survives verbatim at the site (D117 §2.1 (a));
+what stands there is a pointer to this section, not an argument.
+
+**1. The clauses, quoted verbatim, with their section identifiers.**
+§5 R5's list reads:
+
+> (i) invoke `wasm-pack` at the pinned versions with `--locked`; (ii) copy
+> files; (iii) compute digests; (iv) substitute pre-declared tokens in
+> committed templates; (v) emit `SHA256SUMS` and delete non-served
+> byproducts.
+
+and §5 R5 closes:
+
+> The committed template must be a valid, loadable page on its own, with the
+> placeholder visible, so template→artifact is a one-token diff.
+
+The same promise is made more fully in **§3.2**, and that is the sentence
+[D129](D129-verifier-page-file-shape-and-the-in-artifact-csp.md) §4.2 quotes:
+
+> The committed template must itself be a loadable page, so template→artifact
+> is a one-token diff any reviewer can eyeball.
+
+**Registrar's note, so the difference is not read as a change**: §5 R5's
+sentence has never carried the words *"any reviewer can eyeball"* — they are
+§3.2's — while D129 §4.2 and §11.4 attribute the fuller sentence to R5. The
+two sentences state **one** promise, the narrowing below is of that promise,
+and it therefore applies at **both** sites.
+
+**2. What changed.** D129 (2026-08-12) rules the published verifier page to be
+**one file**, `index.html`, with the `wasm-pack --target web` glue inlined
+verbatim and the module inlined as base64 (its §5 R1–R2). Two consequences
+land on this rule and neither was settled by it.
+
+- **(1) Scope of operation (iii) — a rider, not a new class.** *"compute
+  digests"* is read as *"compute digests **and deterministic textual encodings
+  of build inputs**"*, with **base64** named. Base64 sits beside a digest
+  rather than forming a new operation class: it is total, deterministic, and —
+  unlike a digest — **exactly invertible**, so it is strictly *more* reviewable
+  (D129 §1 (o): 29 ms to recover the module from the artifact byte-for-byte).
+  **The fence of §3.2 is untouched**: base64 resolves no module graph, rewrites
+  no identifier, generates no code the author did not write, and reaches no
+  network — and the prohibitions of §5 R5 (minifying, bundling, transpiling,
+  templating languages, generating page code, network access) are unchanged and
+  unengaged. The distinction is testable rather than rhetorical: D129 §5 R9
+  assertion 1 requires the glue to appear in the built page **verbatim, as a
+  contiguous substring**, which is exactly the line between concatenation and
+  bundling.
+- **(2) The *"one-token diff"* clause is NARROWED.** Under D129 §5 R1 the
+  template→artifact diff is 2.47 MB, so the clause cannot be honoured in
+  letter. Its **purpose** — a reviewer can confirm the artifact is the template
+  plus declared substitutions, **without trusting the build script** — is
+  preserved and strengthened, and the replacement is mechanical rather than
+  visual: (a) the **authored** text remains a one-token-per-substitution diff
+  and measures **2 858 bytes** of a 2 470 000-byte artifact, which is the part
+  a human was ever going to read; (b) the two large tokens are checked by
+  **byte-equality with the build inputs** — the base64 token must decode to the
+  `wasm-pack` module byte-for-byte and its SHA-256 must equal the injected
+  footer digest, and the glue file's bytes must appear verbatim (D129 §5 R9
+  assertions 1–3) — which is a stronger review of 1.8 MB of WebAssembly than
+  eyeballing was ever going to be; and (c) the committed template stays
+  **loadable**, rendering its chrome with its placeholders visible. It does not
+  verify — `<script>__ANTSEAL_GLUE__</script>` is a `ReferenceError` — and
+  *"loadable"* is what this rule asked for, not *"functional"*.
+
+**3. Authority, and whether this lands separately from its subject.** The
+authority is **D129** (wave 19's planning round, D129 lane), whose *Registrar's
+edit set* item 4 instructs this rider and whose §11.4 supplies its wording; the
+registrar applied it. As with the amendment above, it lands in a **different
+commit from the text it amends** — D63 was committed earlier in 2026-08-12 —
+so D117 §2.1 (c)'s same-commit disclosure is not needed.
+
+**4. Which rulings still stand.** **All of them.** §5 R1–R4 and §5 R6 are
+untouched; §5 R5's closed list, its prohibitions and its loadable-template
+requirement are untouched. §5 R2's digest is unaffected and is now measured
+**invariant under the target choice** as well: D129 §1 (b) built the module at
+one commit under `--target web` and `--target no-modules` and got the same
+SHA-256, so the file-shape decision moves no number this record names. §5 R4 is
+**applied, not amended** — its subject is the *complete served closure*, and
+D129 §5 R1 makes that closure one file, so the manifest has one entry and the
+*"the sums list **is** the deploy list"* invariant holds exactly; the
+pre-packaging `.wasm` becomes a build **input** and is published as a named
+artifact of the signed release instead (D129 §5 R7). And §7 rule 1's remaining
+preconditions are **unchanged**: D129 §1 (o) measures the *packaging* step
+deterministic, which is not the module's determinism, and the optimizer stays
+the open one.
