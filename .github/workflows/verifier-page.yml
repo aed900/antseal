@@ -1,0 +1,57 @@
+# Q19 — the verifier page's browser lane: load the BUILT artifact from a
+# `file://` origin, assert it fetches nothing, and drop real bundles onto it.
+#
+# AUTHORED AND COMMITTED, BUT NOT A REQUIRED CONTEXT. Ruled by the maintainer
+# 2026-08-12: the browser gate runs LOCALLY (`scripts/verifier-page-browser.sh`,
+# wired beside the other `--self-test`-then-lane pairs), and this file exists so
+# the lane is reviewable and one setting away from enabled — at zero Actions
+# minutes until someone enables it. `workflow_dispatch` only; adding it to the
+# required-contexts matrix is a separate, deliberate act.
+#
+# The honest cost of that choice is the R82 pattern: a lane CI never runs is a
+# surface no green remote verdict says anything about. Recorded here rather than
+# discovered later — `heavy-features` is the precedent (Q153), and R82 is what
+# it looks like when the gap goes unwatched.
+#
+# WHY THERE IS NO BROWSER DOWNLOAD STEP. The driver is raw Chrome DevTools
+# Protocol over node's global WebSocket (`scripts/verifier-page-browser.mjs`);
+# the repo has no `package.json` and no `node_modules`, and D129 drove both
+# Chromium and Firefox this way. `ubuntu-latest` ships a usable chromium, so
+# this lane pulls no ~150 MB browser bundle into a metered minute — which is
+# most of the reason it is cheap enough to be worth enabling later.
+name: verifier-page
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Armed at WORKFLOW level, like every other workflow here, so a job added later
+# inherits the policy instead of quietly opting out (docs/testing/
+# anchor-ci-policy.md; asserted by `scripts/ci-lanes.sh anchor-net-policy`).
+# Doubly apt for this lane: the browser assertions require the page to reach
+# the network for NOTHING, so a real anchor probe here would be the defect.
+env:
+  ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+
+jobs:
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: build the page and run its browser assertions
+        run: ./scripts/verifier-page-browser.sh --check
+      - name: artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-page
+          path: target/verifier-web/
+          if-no-files-found: ignore

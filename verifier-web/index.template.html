@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __ANTSEAL_CSP_SCRIPT_HASHES__ 'wasm-unsafe-eval'; style-src __ANTSEAL_CSP_STYLE_HASH__; img-src 'none'; connect-src https:; base-uri 'none'; form-action 'none'">
+<title>antseal verifier</title>
+<style>
+:root { color-scheme: light dark; --edge: currentColor; }
+body { font: 16px/1.6 system-ui, -apple-system, Segoe UI, sans-serif; margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem; }
+h1 { font-size: 1.4rem; }
+h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .06em; margin: 2rem 0 .5rem; opacity: .75; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+#drop { border: 2px dashed var(--edge); border-radius: .5rem; padding: 2.5rem 1rem; text-align: center; }
+#drop.over { background: rgba(127, 127, 127, .18); }
+#drop-hint { margin-top: 0; }
+#status { font-style: italic; opacity: .8; }
+.headline { font-size: 1.25rem; font-weight: 600; border-left: .3rem solid var(--edge); padding-left: .75rem; }
+.headline.unanchored { border-left-width: .5rem; text-transform: uppercase; }
+#anchors { list-style: none; padding: 0; }
+#anchors li { border-left: 2px solid var(--edge); padding: .25rem 0 .25rem .75rem; margin: 0 0 1rem; }
+#anchors p { margin: .15rem 0; }
+.slot { font-weight: 600; }
+.headline-eligible { text-decoration: underline; }
+.guidance, .subordinate { opacity: .78; font-size: .93em; }
+#claimed { opacity: .78; font-size: .93em; font-style: italic; }
+#redaction-files article { border-top: 1px solid var(--edge); padding-top: .5rem; margin-top: 1rem; }
+.file-header { font-weight: 600; }
+#redaction-files ol { margin: .25rem 0; }
+.mirror { opacity: .78; font-size: .93em; }
+#failure-title { text-transform: none; letter-spacing: 0; opacity: 1; }
+#failure-detail { white-space: pre-wrap; word-break: break-word; border-left: .3rem solid var(--edge); padding-left: .75rem; }
+/* R24's online mode: dashed wherever the offline block is solid, so the
+   advisory overlay cannot be read as the cryptographic verdict (D64 §3). */
+#online { margin-top: 2.5rem; border: 1px dashed var(--edge); border-radius: .5rem; padding: 0 1rem 1rem; }
+.endpoint-row { margin: .35rem 0; display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.endpoint-row label { flex: 0 0 9.5rem; font-size: .93em; opacity: .78; }
+.endpoint { flex: 1 1 18rem; font: inherit; font-size: .9em; padding: .2rem .4rem; color: inherit; background: transparent; border: 1px solid var(--edge); border-radius: .25rem; }
+.endpoint.departed { border-width: 2px; border-style: dashed; font-weight: 600; }
+#confirm-online { font: inherit; margin-top: .5rem; padding: .35rem .9rem; color: inherit; background: transparent; border: 1px solid var(--edge); border-radius: .25rem; }
+#online-status { font-style: italic; opacity: .8; }
+#online-refusal { white-space: pre-wrap; word-break: break-word; border-left: .3rem dashed var(--edge); padding-left: .75rem; }
+#overlay { margin-top: 1.25rem; border-top: 1px dashed var(--edge); padding-top: .75rem; }
+#overlay-framing { font-style: italic; opacity: .85; }
+.impact { font-weight: 600; }
+.impact.supplies { font-size: 1.15rem; border-left: .3rem dashed var(--edge); padding-left: .75rem; }
+#overlay-outcomes, #overlay-deltas { list-style: none; padding: 0; }
+#overlay-outcomes li, #overlay-deltas li { border-left: 2px dashed var(--edge); padding: .1rem 0 .1rem .75rem; margin: 0 0 .5rem; }
+.outcome.refuted { font-weight: 600; }
+footer { margin-top: 3rem; border-top: 1px solid var(--edge); padding-top: 1rem; font-size: .88em; opacity: .8; }
+footer p { margin: .3rem 0; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>antseal verifier</h1>
+
+<div id="drop">
+  <p id="drop-hint">Drop a <code>.sealproof</code> bundle here</p>
+  <input type="file" id="pick" accept=".sealproof">
+</div>
+
+<p id="status" hidden></p>
+
+<section id="failure" hidden>
+  <h2 id="failure-title"></h2>
+  <pre id="failure-detail"></pre>
+</section>
+
+<section id="result" hidden>
+  <p id="headline"></p>
+  <p id="divergence" hidden></p>
+
+  <h2 id="evidence-label"></h2>
+  <ol id="anchors"></ol>
+  <p id="claimed" hidden></p>
+
+  <section id="supporting" hidden>
+    <p id="supporting-class"></p>
+    <p id="supporting-detail"></p>
+  </section>
+
+  <h2 id="storage-label"></h2>
+  <p id="storage-line"></p>
+
+  <p id="scheme"></p>
+  <p id="format-version"></p>
+  <p id="meaning"></p>
+
+  <section id="redaction">
+    <h2 id="redaction-label"></h2>
+    <p id="redaction-note"></p>
+    <div id="redaction-files"></div>
+    <ul id="redaction-withheld"></ul>
+    <p id="redaction-totals"></p>
+    <p id="redaction-withheld-totals"></p>
+  </section>
+</section>
+
+<!-- R24's online mode. Strictly additive: no element above is rewritten,
+     reordered or hidden when the overlay renders, because the overlay is a
+     sibling document and never a correction of the verdict (D64 §2). The
+     endpoint fields are prefilled from the pinned pairs by boot(), so those
+     URLs have one home and it is the script below. Nothing here is automatic:
+     a fetch happens only when the button is pressed. There is no Autonomi and
+     no --live affordance on this page. -->
+<section id="online" hidden>
+  <h2 id="online-label">online confirmation</h2>
+
+  <div id="endpoints">
+    <p class="endpoint-row"><label for="esplora-0">esplora endpoint 1</label><input type="url" id="esplora-0" class="endpoint" autocomplete="off" spellcheck="false"></p>
+    <p class="endpoint-row"><label for="esplora-1">esplora endpoint 2</label><input type="url" id="esplora-1" class="endpoint" autocomplete="off" spellcheck="false"></p>
+    <p class="endpoint-row"><label for="arbitrum-0">Arbitrum RPC 1</label><input type="url" id="arbitrum-0" class="endpoint" autocomplete="off" spellcheck="false"></p>
+    <p class="endpoint-row"><label for="arbitrum-1">Arbitrum RPC 2</label><input type="url" id="arbitrum-1" class="endpoint" autocomplete="off" spellcheck="false"></p>
+  </div>
+
+  <p><button type="button" id="confirm-online">confirm online</button></p>
+  <p id="online-status" hidden></p>
+  <p id="online-refusal" hidden></p>
+
+  <section id="overlay" hidden>
+    <p id="overlay-framing"></p>
+    <p id="overlay-impact"></p>
+    <ol id="overlay-outcomes"></ol>
+    <p id="overlay-receipt" hidden></p>
+    <p id="overlay-endpoints" class="subordinate"></p>
+    <ul id="overlay-deltas"></ul>
+  </section>
+</section>
+
+<footer>
+  <p id="build"></p>
+  <!-- MVP-SPEC.md line 139's advice sentence, verbatim. R25 drift-tests this
+       element's text against the spec (D63 §5 R6); the comma is normative and
+       SPEC-REVIEW.md:287's comma-less variant is not. -->
+  <p id="advice">for high-stakes verification, run <code>antseal verify</code> and compare verdicts</p>
+  <p id="page-build">page build <code>__ANTSEAL_MODULE_SHA256__</code></p>
+</footer>
+
+<script>
+const ANTSEAL_MODULE_B64 = "__ANTSEAL_MODULE_BASE64__";
+</script>
+<script type="module">
+__ANTSEAL_GLUE__
+
+// ── the page ───────────────────────────────────────────────────────────────
+//
+// Layout only. Every sentence below the headline comes from the module's
+// rendered document (D130 §5); this file authors no verdict wording and the
+// source scan enforces that. Every bundle-derived string reaches the DOM by
+// textContent (D129 §7), never by innerHTML.
+
+const $ = (id) => document.getElementById(id);
+
+// D129 §5 R4 — the portable path, once, no feature detection.
+function decodeBase64(text) {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function clear(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+// One line, one element: a control character in sealer-authored text cannot
+// forge a row when each row is its own node (D130 §5 R23.5).
+function line(tag, text, parent) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+
+function setLine(el, text) {
+  el.textContent = text === null || text === undefined ? "" : text;
+  el.hidden = text === null || text === undefined;
+}
+
+function renderAnchors(slots) {
+  const list = $("anchors");
+  clear(list);
+  for (const slot of slots) {
+    const item = document.createElement("li");
+    // The [H] tag is structural: the module says which slots carry it and the
+    // page never computes eligibility (D130 §5 R23.4).
+    const head = line("p", slot.headline_tag ? `${slot.slot} ${slot.headline_tag}` : slot.slot, item);
+    head.className = slot.headline_tag ? "slot headline-eligible" : "slot";
+    line("p", slot.state_line, item);
+    for (const guidance of slot.guidance_lines) line("p", guidance, item).className = "guidance";
+    if (slot.source_line) line("p", slot.source_line, item).className = "subordinate";
+    if (slot.fetch_date_line) line("p", slot.fetch_date_line, item).className = "subordinate";
+    list.appendChild(item);
+  }
+}
+
+function renderRedaction(redaction) {
+  $("redaction-label").textContent = redaction.view_label;
+  $("redaction-note").textContent = redaction.declared_size_note;
+
+  const files = $("redaction-files");
+  clear(files);
+  for (const file of redaction.files) {
+    const block = document.createElement("article");
+    line("p", file.header_line, block).className = "file-header";
+    const blocks = document.createElement("ol");
+    for (const text of file.block_lines) line("li", text, blocks);
+    block.appendChild(blocks);
+    if (file.mirror_line) line("p", file.mirror_line, block).className = "mirror";
+    files.appendChild(block);
+  }
+
+  const withheld = $("redaction-withheld");
+  clear(withheld);
+  for (const entry of redaction.withheld_files) line("li", entry.line, withheld);
+
+  $("redaction-totals").textContent = redaction.totals_line;
+  $("redaction-withheld-totals").textContent = redaction.withheld_totals_line;
+}
+
+function render(document_) {
+  const rendered = document_.rendered;
+
+  const headline = $("headline");
+  headline.textContent = rendered.headline_line;
+  headline.className = rendered.unanchored ? "headline unanchored" : "headline";
+
+  setLine($("divergence"), rendered.divergence_line);
+  $("evidence-label").textContent = rendered.evidence_layer_label;
+  renderAnchors(rendered.anchors);
+  setLine($("claimed"), rendered.claimed_time_line);
+
+  const supporting = $("supporting");
+  if (rendered.supporting_evidence) {
+    $("supporting-class").textContent = rendered.supporting_evidence.class_line;
+    $("supporting-detail").textContent = rendered.supporting_evidence.detail_line;
+    supporting.hidden = false;
+  } else {
+    supporting.hidden = true;
+  }
+
+  $("storage-label").textContent = rendered.storage_linkage_label;
+  $("storage-line").textContent = rendered.storage_linkage_line;
+  $("scheme").textContent = rendered.signature_scheme_line;
+  // The only datum the page reads from the report member rather than from the
+  // rendered block: R18 froze no sentence for it (D130 §5 R23.2).
+  $("format-version").textContent = `bundle format version ${document_.report.work.format_version}`;
+  $("meaning").textContent = rendered.seal_meaning_line;
+
+  renderRedaction(document_.redaction);
+
+  $("failure").hidden = true;
+  $("result").hidden = false;
+}
+
+function renderFailure(error) {
+  // A rejection carries antseal-core's frozen code in front of the sentence; a
+  // panic carries the binding's own prefix. Neither is this file's to author,
+  // so both are shown verbatim and the label above them is structural.
+  const message = error && error.message ? error.message : String(error);
+  $("failure-title").textContent = "This bundle was refused.";
+  $("failure-detail").textContent = message;
+  $("result").hidden = true;
+  $("failure").hidden = false;
+}
+
+// R54: verification is synchronous on the main thread and no Web Worker is
+// admissible under this page's CSP (D129 §5 R10), so the busy state is painted
+// and the frame yielded before the call that blocks. Both the offline drop and
+// R24's online confirmation block that way, so both paint through here.
+async function paint(el, text) {
+  el.textContent = text;
+  el.hidden = false;
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+async function run(file) {
+  await paint($("status"), `Verifying ${file.name}…`);
+  // A new bundle withdraws the previous one's online affordance and overlay
+  // before anything is decoded: an overlay outlives no verdict.
+  disarmOnline();
+  let bytes;
+  try {
+    // A File's arrayBuffer() is an ArrayBuffer; the boundary wants a view over
+    // it, and an ArrayBuffer coerces to garbage bytes rather than being refused.
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    renderFailure(error);
+    $("status").hidden = true;
+    return;
+  }
+  try {
+    const parsed = JSON.parse(verify_rendered(bytes));
+    render(parsed);
+    // D132 §5 R24 item 1: ONE verify_rendered per drop, and the document is
+    // kept for the session. The online path re-uses these bytes and takes its
+    // fetch plan from the document's `plan` member; it never verifies again to
+    // discover what to ask for, and never calls verify_online to bootstrap.
+    armOnline(bytes, parsed.plan);
+  } catch (error) {
+    renderFailure(error);
+  }
+  $("status").hidden = true;
+}
+
+// ── online mode (R24) ──────────────────────────────────────────────────────
+//
+// The page fetches; the module decides. Every sentence the overlay shows is a
+// final string `verify_online` returned — including the endpoints line that
+// states whether the run departed from the pinned defaults, which D64 §8
+// edit 5 reserves to the shared table. The page's own text here is chrome
+// only: field labels, a busy line, and the refusal of an override it will not
+// fetch with (D66 §3 R4's "may offer", the same rule that forbids the page
+// naming any cause for a failed fetch).
+
+// The pinned pairs, one home, copied from A16/A17's own constants:
+// `DEFAULT_ESPLORA_ENDPOINTS` (antseal-anchor/src/esplora.rs) and
+// `ARBITRUM_ONE_VERIFY_RPCS` (antseal-anchor/src/arbitrum/endpoints.rs).
+// Bitcoin pair first, then the Arbitrum pair: that is the CLI's disclosure
+// order, and all four are disclosed whether or not a receipt is probed
+// (D132 §5 R5) — otherwise the two surfaces disclose different things.
+const ENDPOINT_SOURCES = [
+  ["esplora-0", "esplora-1"],
+  ["arbitrum-0", "arbitrum-1"],
+];
+const PINNED = new Map([
+  ["esplora-0", "https://blockstream.info/api"],
+  ["esplora-1", "https://mempool.space/api"],
+  ["arbitrum-0", "https://arb1.arbitrum.io/rpc"],
+  ["arbitrum-1", "https://arbitrum.drpc.org"],
+]);
+
+// Arbitrum One's chain id (antseal_net::network::ARBITRUM_ONE_CHAIN_ID). The
+// page pins mainnet because the pinned RPC pair is mainnet's — D132 §5 R5's
+// "four entries on mainnet" — and an endpoint reporting another chain is the
+// wrong-chain class, never a disagreement (arbitrum/confirm.rs::guard_chain_id).
+const ARBITRUM_CHAIN_ID = 42161;
+
+// D66 §3 R1, and it is fragile: esplora has NO OPTIONS route, so one extra
+// request header preflights, 404s, and breaks BOTH endpoints at once — a
+// failure a curl probe cannot see. `Accept: text/plain` is CORS-safelisted and
+// is byte-identical to A16's own request (esplora.rs), so the two surfaces ask
+// the same question. Nothing may be added to this object.
+const ESPLORA_INIT = {
+  method: "GET",
+  mode: "cors",
+  credentials: "omit",
+  headers: { Accept: "text/plain" },
+};
+
+// The one 404 body that may refute (D56 rule O7; esplora.rs's
+// ESPLORA_NO_SUCH_BLOCK_BODY), compared trimmed and ASCII-caseless.
+const NO_SUCH_BLOCK_BODY = "block not found";
+
+// The session's bundle and its probe plan. In memory, which is the whole of a
+// session on a page that never navigates; the fields below hold the endpoint
+// values themselves, so an override survives every further bundle drop without
+// the page reaching for a storage API from a file:// origin.
+let sessionBundle = null;
+let sessionPlan = { blocks: [], txHash: null };
+
+// D132's fifth document member, read defensively for two reasons: it does not
+// exist in the module yet, so the page must not break before it lands; and
+// once it does, R9's boundary rows are the check rather than this. A height
+// this rejects is simply not probed, which the module renders as no agreed
+// evidence for that anchor — truthful, and fail-closed.
+function readPlan(plan) {
+  const blocks = [];
+  if (plan && Array.isArray(plan.blocks)) {
+    for (const height of plan.blocks) {
+      if (Number.isSafeInteger(height) && height >= 0) blocks.push(height);
+    }
+  }
+  const target = plan ? plan.receipt : null;
+  const txHash =
+    target && typeof target.tx_hash === "string" && /^[0-9a-f]{64}$/.test(target.tx_hash)
+      ? target.tx_hash
+      : null;
+  return { blocks, txHash };
+}
+
+function armOnline(bytes, plan) {
+  sessionBundle = bytes;
+  sessionPlan = readPlan(plan);
+  // NOT gated on a non-empty plan: an empty plan is zero fetches and an
+  // overlay that still renders, which is what `antseal verify --online` does
+  // with the same bundle, so parity requires it (D132 §5 R24 item 2).
+  $("online").hidden = false;
+}
+
+function disarmOnline() {
+  sessionBundle = null;
+  sessionPlan = { blocks: [], txHash: null };
+  $("online").hidden = true;
+  $("overlay").hidden = true;
+  $("online-refusal").hidden = true;
+  $("online-status").hidden = true;
+}
+
+// JSON.stringify quotes the value and escapes every control character in it,
+// so a pasted newline cannot forge a second row in a page whose rows are
+// one-line-one-element.
+function quoted(text) {
+  return JSON.stringify(text);
+}
+
+function fieldName(input) {
+  const label = input.labels && input.labels[0];
+  return label ? label.textContent : input.id;
+}
+
+function markDeparture(input) {
+  input.className = input.value.trim() === PINNED.get(input.id) ? "endpoint" : "endpoint departed";
+}
+
+// A49 / D66 §3 R5.1, at the page: https:// only, exactly two per source,
+// refused with the endpoint named BEFORE any fetch. The browser's
+// mixed-content blocking is not the mitigation — it produces the same opaque
+// TypeError a CORS rejection does, and it does not apply from file:// at all.
+// The same-origin refusal is `EndpointPair::new`'s (antseal-anchor/agree.rs):
+// two URLs on one origin is one endpoint agreeing with itself, which is
+// indistinguishable from corroboration at every layer above.
+function readEndpoints() {
+  const sources = [];
+  for (const ids of ENDPOINT_SOURCES) {
+    const pair = [];
+    for (const id of ids) {
+      const input = $(id);
+      const value = input.value.trim();
+      if (!value.startsWith("https://")) {
+        return { refusal: `${fieldName(input)} must be an https:// URL; ${quoted(value)} is not one.` };
+      }
+      let origin = null;
+      try {
+        const parsed = new URL(value);
+        if (parsed.hostname && !parsed.username && !parsed.password) origin = parsed.origin;
+      } catch {
+        origin = null;
+      }
+      if (origin === null) {
+        return {
+          refusal: `${fieldName(input)}: ${quoted(value)} is not a usable endpoint — a host is required and embedded credentials are not accepted.`,
+        };
+      }
+      pair.push({ url: value, origin });
+    }
+    if (pair[0].origin === pair[1].origin) {
+      return {
+        refusal: `${ids.map((id) => fieldName($(id))).join(" and ")} are the same origin (${pair[0].origin}); a pair of one endpoint agrees with itself.`,
+      };
+    }
+    sources.push(pair.map((entry) => entry.url));
+  }
+  return { esplora: sources[0], arbitrum: sources[1] };
+}
+
+// Over the identities being DISCLOSED, not over the fields they came from:
+// `identities` and `overridden` are then two statements about one array, and
+// cannot drift into disclosing one pair while flagging another.
+function departsFromPinned(identities) {
+  const pinned = [];
+  for (const ids of ENDPOINT_SOURCES) for (const id of ids) pinned.push(PINNED.get(id));
+  return identities.length !== pinned.length || identities.some((url, at) => url !== pinned[at]);
+}
+
+// ASCII-caseless, deliberately not toLowerCase(): this is the one comparison
+// whose true result can REFUTE an anchor, and Unicode case folding is a wider
+// relation than the Rust side's `eq_ignore_ascii_case`
+// (esplora.rs::is_no_such_block).
+function equalsAsciiCaseless(text, lower) {
+  if (text.length !== lower.length) return false;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    const folded = code >= 65 && code <= 90 ? code + 32 : code;
+    if (folded !== lower.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+// `base` + "/" + path with exactly one separator however the base was written
+// (esplora.rs::join): a trailing slash is a normal thing for a human to type.
+function join(base, path) {
+  return `${base.replace(/\/+$/, "")}/${path}`;
+}
+
+function failed(endpoint, failureClass) {
+  return { outcome: "failed", endpoint, class: failureClass };
+}
+
+// One GET, classified but never diagnosed. A thrown fetch is `transport` and
+// nothing else: the browser returns an identical TypeError for a CORS
+// rejection, a failed preflight, a refused connection and a DNS failure, so
+// the page cannot tell them apart and must not guess (D66 §3 R2/R4). It is
+// also why a throw can never reach `no-such-block`: rule O7's evidence is a
+// 404's body, and a throw has no body.
+async function esploraGet(url) {
+  let response;
+  try {
+    response = await fetch(url, ESPLORA_INIT);
+  } catch {
+    return { thrown: true };
+  }
+  try {
+    return { thrown: false, status: response.status, text: await response.text() };
+  } catch {
+    return { thrown: true };
+  }
+}
+
+// One endpoint's own answer: height -> hash -> header, with no input from the
+// other endpoint at any step. The pair is never asked "here is A's hash, B —
+// what is its header?", which is what stops one endpoint choosing the other's
+// question (agree.rs's note on A16).
+async function probeBlock(base, height) {
+  const first = await esploraGet(join(base, `block-height/${height}`));
+  if (first.thrown) return failed(base, "transport");
+  if (first.status === 404 && equalsAsciiCaseless(first.text.trim(), NO_SUCH_BLOCK_BODY)) {
+    return { outcome: "no-such-block" };
+  }
+  if (first.status < 200 || first.status > 299) return failed(base, "transport");
+  const hash = first.text.trim();
+  if (!/^[0-9a-f]{64}$/.test(hash)) return failed(base, "payload");
+
+  const second = await esploraGet(join(base, `block/${hash}/header`));
+  if (second.thrown) return failed(base, "transport");
+  // A 404 HERE is not an absent block: step 1 just said this hash exists at
+  // this height, so the endpoint has contradicted itself (esplora.rs).
+  if (second.status < 200 || second.status > 299) return failed(base, "transport");
+  const header = second.text.trim();
+  if (!/^[0-9a-fA-F]{160}$/.test(header)) return failed(base, "payload");
+  return { outcome: "header", header_hex: header };
+}
+
+// Arbitrum's preflight is mandatory and works on all four pinned RPCs (D66,
+// D55 re-confirmed), so a JSON content type is admissible here — and only here.
+async function rpc(endpoint, method, params) {
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+  } catch {
+    return { class: "transport" };
+  }
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    return { class: "transport" };
+  }
+  if (!response.ok) return { class: "transport" };
+  let envelope;
+  try {
+    envelope = JSON.parse(text);
+  } catch {
+    return { class: "payload" };
+  }
+  if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return { class: "payload" };
+  }
+  // A JSON-RPC error is a 200 carrying an `error` member: classified here, or
+  // silently read as a missing result (confirm.rs::rpc).
+  if (envelope.error !== undefined && envelope.error !== null) return { class: "payload" };
+  if (!("result" in envelope)) return { class: "payload" };
+  return { result: envelope.result };
+}
+
+// A 0x-prefixed EVM quantity. Leading zeros and mixed case are accepted, so
+// 0x1, 0x01, 0xA4B1 and 0xa4b1 compare equal (confirm.rs::hex_u64). A value a
+// JS number cannot hold exactly is refused rather than rounded: two rounded
+// values could "agree" on a figure neither endpoint sent.
+function quantity(value) {
+  if (typeof value !== "string" || !/^0[xX][0-9a-fA-F]{1,16}$/.test(value)) return null;
+  const parsed = Number.parseInt(value.slice(2), 16);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+// A 0x-prefixed 32-byte hash, as the 64 lowercase hex characters the evidence
+// document carries — the module decodes exactly 64 and no prefix.
+function bytes32(value) {
+  if (typeof value !== "string" || !/^0[xX][0-9a-fA-F]{64}$/.test(value)) return null;
+  return value.slice(2).toLowerCase();
+}
+
+async function probeReceipt(endpoint, txHash) {
+  // The chain-id guard first, exactly as A17 issues it: an endpoint answering
+  // for another chain is `wrong-chain`, a failure of that endpoint, and never
+  // a disagreement between the pair (confirm.rs::guard_chain_id).
+  const guard = await rpc(endpoint, "eth_chainId", []);
+  if (guard.class) return failed(endpoint, guard.class);
+  const reported = quantity(guard.result);
+  if (reported === null) return failed(endpoint, "payload");
+  if (reported !== ARBITRUM_CHAIN_ID) return failed(endpoint, "wrong-chain");
+
+  const reply = await rpc(endpoint, "eth_getTransactionReceipt", [`0x${txHash}`]);
+  if (reply.class) return failed(endpoint, reply.class);
+  if (reply.result === null) return { outcome: "not-on-chain" };
+  if (typeof reply.result !== "object" || Array.isArray(reply.result)) {
+    return failed(endpoint, "payload");
+  }
+  // The endpoint must be answering about the transaction we asked about. A
+  // substitution is that endpoint's own defect and deliberately NOT a
+  // disagreement, which would read as "the other one might be lying"
+  // (confirm.rs).
+  if (bytes32(reply.result.transactionHash) !== txHash) return failed(endpoint, "payload");
+
+  const status = quantity(reply.result.status);
+  const blockNumber = quantity(reply.result.blockNumber);
+  const blockHash = bytes32(reply.result.blockHash);
+  if (status === null || status > 255 || blockNumber === null || blockHash === null) {
+    return failed(endpoint, "payload");
+  }
+  return { outcome: "confirmed", status, block_number: blockNumber, block_hash: blockHash };
+}
+
+// The document `verify_online` parses, whose shape is
+// crates/antseal-wasm/README.md's and which is deny_unknown_fields throughout.
+// Each `responses` array is exactly two entries — a pair of one agrees with
+// itself and proves nothing — and `receipt` is OMITTED, not null, when no
+// probe was attempted: that is what makes this document and the CLI's
+// NotAttempted agree (D132 §5 R5).
+async function gatherEvidence(esplora, arbitrum) {
+  const blocks = [];
+  for (const height of sessionPlan.blocks) {
+    // Concurrent because the two endpoints are independent by construction;
+    // `map` keeps the answers in endpoint order.
+    const responses = await Promise.all(esplora.map((base) => probeBlock(base, height)));
+    blocks.push({ height, responses });
+  }
+  const identities = [...esplora, ...arbitrum];
+  const evidence = {
+    schema: "antseal.online-evidence.v1",
+    endpoints: { identities, overridden: departsFromPinned(identities) },
+    blocks,
+  };
+  if (sessionPlan.txHash !== null) {
+    evidence.receipt = {
+      responses: await Promise.all(
+        arbitrum.map((endpoint) => probeReceipt(endpoint, sessionPlan.txHash)),
+      ),
+    };
+  }
+  return evidence;
+}
+
+// An externally-tagged serde enum: a unit variant is its name, a struct
+// variant is a one-key object. The token is a datum the page may style by; the
+// sentence beside it is the module's and is rendered verbatim.
+function token(value) {
+  if (typeof value === "string") return value;
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value);
+    if (keys.length === 1) return keys[0];
+  }
+  return "";
+}
+
+// Maps, not object literals: a lookup keyed by a string that arrived as JSON
+// must not be able to reach Object.prototype.
+const IMPACT_CLASS = new Map([["supplies", "impact supplies"]]);
+const OUTCOME_CLASS = new Map([
+  ["promoted", "outcome promoted"],
+  ["refuted", "outcome refuted"],
+]);
+
+function renderOverlay(overlay) {
+  $("overlay-framing").textContent = overlay.framing_line;
+  const impact = $("overlay-impact");
+  impact.textContent = overlay.headline_impact_line;
+  impact.className = IMPACT_CLASS.get(token(overlay.headline_impact)) ?? "impact";
+
+  const outcomes = $("overlay-outcomes");
+  clear(outcomes);
+  for (const outcome of overlay.anchor_outcomes) {
+    line("li", outcome.line, outcomes).className =
+      OUTCOME_CLASS.get(token(outcome.class)) ?? "outcome";
+  }
+
+  setLine($("overlay-receipt"), overlay.receipt ? overlay.receipt.line : null);
+  // The line that discloses which endpoints were used and whether they
+  // departed from the pinned pairs. It is the module's (D64 §8 edit 5,
+  // D66 §3 R5.4), which is why the fields above carry a marker and no wording.
+  $("overlay-endpoints").textContent = overlay.endpoints.line;
+
+  const deltas = $("overlay-deltas");
+  clear(deltas);
+  for (const delta of overlay.aggregate_deltas) line("li", delta.line, deltas);
+
+  $("overlay").hidden = false;
+}
+
+async function confirmOnline() {
+  if (sessionBundle === null) return;
+  const refusal = $("online-refusal");
+  const button = $("confirm-online");
+  try {
+    const endpoints = readEndpoints();
+    if (endpoints.refusal) {
+      setLine(refusal, endpoints.refusal);
+      return;
+    }
+    refusal.hidden = true;
+    // A stale overlay is withdrawn before the new answers are fetched. Nothing
+    // in the offline block above is touched here or anywhere below it.
+    $("overlay").hidden = true;
+    button.disabled = true;
+    await paint($("online-status"), "Asking both endpoints per source…");
+    const evidence = await gatherEvidence(endpoints.esplora, endpoints.arbitrum);
+    await paint($("online-status"), "Folding the answers…");
+    // One call. The page hands over raw answers and reads back final strings;
+    // what agreement means is decided in there, never here.
+    renderOverlay(JSON.parse(verify_online(sessionBundle, JSON.stringify(evidence))));
+  } catch (error) {
+    // A refusal from the module — a malformed document, a pair that is not
+    // two — carries its own text, shown verbatim rather than turned into a
+    // sentence about anchors.
+    setLine(refusal, error && error.message ? error.message : String(error));
+  } finally {
+    button.disabled = false;
+    $("online-status").hidden = true;
+  }
+}
+
+function boot() {
+  initSync({ module: decodeBase64(ANTSEAL_MODULE_B64) });
+
+  const info = JSON.parse(build_info());
+  $("build").textContent =
+    `antseal-core ${info.core_version} · formats ${info.supported_format_versions.join(", ")} · source ${info.source_commit}`;
+
+  const drop = $("drop");
+  drop.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    drop.className = "over";
+  });
+  drop.addEventListener("dragleave", () => {
+    drop.className = "";
+  });
+  drop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    drop.className = "";
+    const file = event.dataTransfer && event.dataTransfer.files[0];
+    if (file) run(file);
+  });
+  $("pick").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (file) run(file);
+  });
+
+  // Session-scoped endpoint overrides (spec line 137, D66 §3 R5.4): the fields
+  // start at the pinned pairs and hold whatever is typed for as long as the
+  // page is open, across every further bundle drop. A field that departs from
+  // its pinned value is marked; the sentence that says the RUN departed is the
+  // module's endpoints line, rendered with the overlay and composed nowhere
+  // here.
+  for (const ids of ENDPOINT_SOURCES) {
+    for (const id of ids) {
+      const input = $(id);
+      input.value = PINNED.get(id);
+      markDeparture(input);
+      input.addEventListener("input", () => markDeparture(input));
+    }
+  }
+  // Explicit, user-triggered, never automatic and never on load: no fetch
+  // happens on this page until this button is pressed.
+  $("confirm-online").addEventListener("click", () => {
+    confirmOnline().catch((error) => setLine($("online-refusal"), String(error)));
+  });
+}
+
+boot();
+</script>
+</body>
+</html>

@@ -487,4 +487,28 @@ crosscheck_lane() {
 crosscheck_lane cross-check-st --self-test
 crosscheck_lane cross-check    --check
 
+# R25 — the verifier page's packaging step, over the BUILT artifact (D131 §5
+# R8 (c)). Self-test first, as everywhere above: three planted faults — a
+# one-byte edit to the inlined payload, a glue that was transformed rather than
+# concatenated, and a footer digest that is not the module's — must each go red
+# for their own reason before the green verdict means anything. The `--check`
+# arm then also proves the injector REFUSES its own output (D63 §5 R1: a second
+# injection is a hard error, never a silent no-op).
+#
+# The browser half of D129 §5 R9 — assertion 8, the zero-network file:// run —
+# is deliberately NOT here: it is `scripts/verifier-page-browser.mjs`, run by
+# R27's entry point, because it needs a browser and this gate must stay
+# runnable on a host without one.
+#
+# COST, measured here 2026-08-12, two runs each on this 2-core host with the
+# module already built: `--self-test` 0.13 s / 0.15 s, `--check` 0.39 s / 0.37 s.
+# Two samples, one host, one day — the weaker kind of figure, and it says so.
+# A COLD first run measured 5.11 s, essentially all of it page-cache faults on
+# the 1.84 MB module. The figure that is NOT in this range is a run where the
+# module is absent: `--check` then calls `wasm-pack-build.sh --build-only`
+# itself, and pays that lane's cargo build. That is the honest reason this sits
+# after the wasm lanes rather than before them.
+run page-selftest scripts/verifier-page-build.sh --self-test
+run verifier-page scripts/verifier-page-build.sh --check
+
 exit $fail

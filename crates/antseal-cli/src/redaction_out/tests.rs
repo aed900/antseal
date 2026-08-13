@@ -15,6 +15,11 @@
 use antseal_core::verify::report::{
     FileReveal, RawMirrorReveal, RevealSet, UnitSpan, UnrevealedFilePlaceholder,
 };
+// The module under test names `wording` nowhere after D130 §3 R6 — it folds
+// over the assembly instead — so the pins below import the table directly. A
+// test naming a frozen sentence is a pin, not a second source of truth, which
+// is why this file is out of line and outside `verdict_wording.rs`'s scan.
+use antseal_core::verify::wording;
 
 use super::*;
 

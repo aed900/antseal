@@ -1119,3 +1119,52 @@ built module may import. The second one is the honest heir to the zero-import
 property this decision spends: the shipped page cannot keep an empty import
 table, but it can keep an enumerated one, and an enumerated import table is a
 complete statement of everything the module can ask the browser to do.
+
+---
+
+## Amendment — §5 R4's closed list opens from four to five, 2026-08-12
+
+**This section is the single home of the new fact.** Per D117 §2.2 the sites are
+named here and the argued body is not edited; per D117 §2.6 they are cited by
+section and quoted clause rather than by line number.
+
+**What changes.** *"at most four entries"* becomes ***"at most five entries"***,
+and *"closed at four"* becomes ***"closed at five"***, at **five sites**:
+
+1. the **Status** line — *"a **closed** export list of at most four entries
+   returning the report's canonical BYTES"*;
+2. **§5 R4**'s rule heading — *"R4 — The public JS surface is a CLOSED list of at
+   most four entries."*;
+3. **§12**'s quoted entry note for R22 — *"a **closed** JS surface (at most four
+   exports) returning canonical report …"*;
+4. **§12**'s quoted entry note carrying *"The JS surface is **closed at four**"*;
+5. **§12**'s closing note — *"a closed list of at most four exports that return
+   the report's canonical bytes …"*.
+
+**Entry 5 is appended to R4's numbered list:**
+
+> 5. **the offline rendered document** — `verify_rendered(bundle_bytes)`,
+>    returning the document D130 §3 R3 fixes. Added by **D130**, 2026-08-12, on
+>    the measurement that the module already computes `RenderedVerdict` on every
+>    run and discards it, that exposing it costs 0.20 % of the module, and that
+>    the import table does not move. **The list closes again here**: additions
+>    beyond five remain a decision, not a code change.
+
+**Authority.** [D130](D130-r18-wording-route-to-the-verifier-page.md) §3 R1 and
+§9.6, wave 19 planning round, D130 lane; landed in the same commit as its
+subject. **The list was tested against a sixth request one wave later and held**:
+[D132](D132-the-pages-probe-plan.md) built and priced a sixth export at **146 B
+and 0.0199 ms** and **refused it**, routing the page's probe plan to a fifth
+*member* of the document instead — expressly citing R4's own re-closing clause.
+That is the first evidence that this amendment's *"closes again here"* is load
+bearing rather than decorative.
+
+**What still stands.** Every other ruling of R4 is unchanged and the addition
+moves them in the direction that **strengthens** them: the fifth entry returns
+`to_canonical_json()`'s bytes as a JS string like the other four, adds no
+dependency, and was measured to leave the wasm32 dependency graph unmoved and the
+built module's import table at exactly **3** allow-listed shims — so §5 R6/R7's
+structural *"no I/O"* halves are untouched, and a widened export list is **not** a
+widened capability surface. The decided prohibitions (`js-sys`, `web-sys`,
+`wasm-bindgen-futures`, `web-time`, `getrandom`), the `serde-wasm-bindgen`
+refusal and the one-serialization-path rule are all unaffected.

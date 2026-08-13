@@ -1184,3 +1184,42 @@ byte-for-byte. Nobody was ever going to read 1.8 MB of WebAssembly. A machine
 comparing it to the file `wasm-pack` wrote is the review that clause wanted, and
 it is the same check the reader performs, on the same bytes, to recover the
 number the footer shows.
+
+---
+
+## Correction — the committed template's filename, at §7 and §11.1, 2026-08-12
+
+**One filename is corrected; no ruling of this record is changed.**
+
+**The sentences.** §7 gives the committed template the name
+`verifier-web/index.html.template`, marked *"(name is R23's)"*, and §11.1's
+quoted `Notes` repeats it verbatim in its final clause.
+
+**The measured fact.** `Path::new("index.html.template").extension()` is
+`Some("template")`, and `crates/antseal-core/tests/verdict_wording.rs`'s walk
+collects only `rs`, `html`, `js` and `css`. Established by planting the fault
+twice and reading each failure's own message: a frozen verdict sentence planted
+in a template under **this record's** name leaves all nine tests **green**, and
+the same sentence under `index.template.html` turns the scan **red**, naming the
+file. `index.html.tpl` and `index.htm` escape identically. **That name is
+invisible to the very scan this record's own §10 (iv) says will be scanning it.**
+
+**The correction.** The template is **`verifier-web/index.template.html`**. This
+keeps §7's intent — a name that distinguishes template from artifact in every
+citation — and adds the property it lacked.
+
+**Authority.** [D131](D131-the-verifier-web-directory-footprint.md) §1 (a) and
+(b), wave 19 planning round, D131 lane; landed in the same commit as its subject.
+The registrar applied the same correction to `tasks/R.md` R23's D129 `Notes`,
+which carried the escaping name.
+
+**What still stands.** **Everything else in §7 and §11.1 is unchanged**: the four
+placeholders, the verbatim CSP, the single inline `<style>`, the absence of
+`style=` attributes, the `data:` icon and the `initSync({ module })` rule. Every
+ruling of this record stands, and the error runs in the direction that
+**strengthens** them — the ruled name is the one under which this record's
+no-page-authored-wording guarantee is actually enforceable. §10 (iv)'s open
+question is now answered in full by D131, which additionally rules that the built
+page is **never** committed and never written into `verifier-web/` (it is built
+to `target/verifier-web/index.html`), that the base64 is **one line**, and that
+this record's §5 R9 assertions live in a build script rather than a `cargo test`.

@@ -85,6 +85,42 @@ fn options() -> VerifyOptions {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// the rendering policy (D130 §3 R5/R9)
+// ─────────────────────────────────────────────────────────────────────
+
+/// The identity neutralisation policy.
+///
+/// D130 §3 R5 keeps the escape **sets** in the surfaces — `antseal-cli`'s
+/// terminal set (D67 §3 R3) and `antseal-wasm`'s DOM one — and this crate has
+/// none. Every row below asserts composition, ordering, pairing or
+/// mode-invariance, and no neutralisation can change any of those; each
+/// surface asserts its own escape in its own suite, which is exactly what
+/// D130 §7.3 says a parity gate cannot do for it.
+fn plain(text: &str) -> String {
+    text.to_owned()
+}
+
+/// [`super::verify_offline`] under [`plain`] — a local shim, so the rows
+/// below read as the entry point's own call shape and the policy appears
+/// once.
+fn verify_offline(bundle: &[u8], options: &VerifyOptions) -> Result<VerifyOutcome, VerifyRunError> {
+    super::verify_offline(bundle, options, &plain)
+}
+
+/// [`super::verify_with_host`] under [`plain`].
+fn verify_with_host<H>(
+    bundle: &[u8],
+    options: &VerifyOptions,
+    modes: VerifyModes,
+    host: &H,
+) -> Result<VerifyOutcome, VerifyRunError>
+where
+    H: VerifyHost + ?Sized,
+{
+    super::verify_with_host(bundle, options, modes, host, &plain)
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // hosts
 // ─────────────────────────────────────────────────────────────────────
 

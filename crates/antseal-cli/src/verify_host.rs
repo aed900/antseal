@@ -48,11 +48,15 @@ use antseal_core::verify::orchestration::{
 use antseal_core::verify::overlay::{
     BlockProbe, EndpointProbeFailure, ProbeEndpoints, ProbeFailureClass, ProbeLog, ReceiptProbe,
 };
+use antseal_core::verify::plan::ProbePlan;
 use antseal_net::{
     Address, LiveSubject, NetworkId, StorageBackend, StorageRecord, UnitKindTag, live_check,
 };
 
 use crate::error::CliError;
+
+#[cfg(test)]
+mod tests;
 
 /// What one `verify` run's hosts collected — R21's seam, as a value.
 ///
@@ -113,11 +117,21 @@ impl VerifyHost for CollectedInputs {
 
 /// Run the `--online` probes for one bundle.
 ///
-/// One esplora probe per **distinct** upgrade height the bundle's `.ots`
-/// anchors record — distinct because two anchors committed in the same block
-/// are one question, and the probe log is keyed by height. The receipt, when
-/// the bundle carries one, gets one Arbitrum probe against `network`'s RPC
-/// pair.
+/// **What to ask is not decided here.** Both halves come from
+/// [`ProbePlan::from_bundle`], which is the same function R22's page reaches
+/// through `verify_rendered`'s `plan` member (D132 §3 R4). One esplora probe
+/// per height in `plan.blocks` — distinct and ascending, because two anchors
+/// committed in the same block are one question and the probe log is keyed by
+/// height — and one Arbitrum probe for `plan.receipt`, when the bundle carries
+/// a receipt and this network has an RPC pair.
+///
+/// The rewrite changed no behaviour and that is the point: after it, *"the two
+/// surfaces ask the same question"* is a property of there being **one
+/// function** rather than of two lists agreeing today. It also means a defect
+/// in that function is a defect in both surfaces at once and is invisible to a
+/// gate that compares their renderings — see this module's `tests`, which
+/// drives this collector against stub endpoints and reads what went out on the
+/// wire (D132 §3 R9.2, §7.4).
 ///
 /// Endpoints are the caller's: U4's `[verify] bitcoin_endpoints` /
 /// `arbitrum_endpoints` overrides, or A16/A17's pinned defaults. `overridden`
@@ -139,15 +153,9 @@ pub fn probe_online(
         endpoints.overridden,
     ));
 
-    let mut heights: Vec<u64> = bundle
-        .ots_anchors()
-        .iter()
-        .filter_map(|anchor| anchor.upgrade().map(upgrade_height))
-        .collect();
-    heights.sort_unstable();
-    heights.dedup();
+    let plan = ProbePlan::from_bundle(bundle);
 
-    for height in heights {
+    for height in plan.blocks {
         let agreement = fetch_agreed_header(client, &endpoints.bitcoin, height);
         // Only agreement crosses into the evidence path (D56 §3). The two
         // are recorded together so an `Agreed` probe whose evidence never
@@ -158,12 +166,13 @@ pub fn probe_online(
         probes = probes.with_block(height, block_probe(&agreement));
     }
 
+    // The receipt half comes from the same plan. `ReceiptTarget` carries the
+    // 32 bytes beside the hex the page reads, so this path re-decodes nothing
+    // and cannot disagree with what the page was told to fetch.
     if let Some(pair) = &endpoints.arbitrum
-        && let Some(tx_hash) = bundle
-            .receipt()
-            .and_then(|record| record.tx_hashes().first().copied())
+        && let Some(target) = &plan.receipt
     {
-        let confirmation = confirm_arbitrum_tx(client, pair, network, &tx_hash);
+        let confirmation = confirm_arbitrum_tx(client, pair, network, target.tx_hash_bytes());
         if let Some(agreed) = confirmation.into_receipt_confirmation() {
             evidence = evidence.with_receipt(agreed);
         }
@@ -171,12 +180,6 @@ pub fn probe_online(
     }
 
     OnlineInputs::new(evidence, probes)
-}
-
-/// One anchor's upgrade height, as a free function so the `filter_map` above
-/// reads as one expression.
-fn upgrade_height(upgrade: &antseal_core::bundle::schema::OtsUpgrade) -> u64 {
-    upgrade.block_height()
 }
 
 /// The endpoint pairs one `--online` run uses, and whether they departed from

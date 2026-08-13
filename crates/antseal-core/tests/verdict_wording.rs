@@ -802,15 +802,22 @@ const RESIDUE: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Every file the scan covers: `antseal-cli`'s renderer sources and the
-/// verifier page, excluding test files (see the header).
-fn renderer_sources() -> Vec<(String, String)> {
+/// The roots the scan covers, each with the floor its own file count must
+/// clear.
+///
+/// The floors are per-root and that is the point (D131 §5 R2). A single
+/// threshold over the union is green whenever *either* root is populated, so
+/// with `verifier-web/` contributing nothing the scan reported 54 files, all
+/// from the CLI, and page coverage was **zero** with nothing red. A guard over
+/// a union of roots is not a guard on any of them.
+const SCAN_ROOTS: [(&str, usize); 2] = [("crates/antseal-cli/src", 40), ("verifier-web", 1)];
+
+/// The files one root contributes, excluding test files (see the header).
+fn sources_under(relative: &str) -> Vec<(String, String)> {
     let root = Path::new(WORKSPACE_ROOT);
     let mut files = Vec::new();
-    for dir in [
-        root.join("crates/antseal-cli/src"),
-        root.join("verifier-web"),
-    ] {
+    {
+        let dir = root.join(relative);
         for path in walk(&dir) {
             let name = path
                 .file_name()
@@ -832,6 +839,17 @@ fn renderer_sources() -> Vec<(String, String)> {
             ));
         }
     }
+    files.sort();
+    files
+}
+
+/// Every file the scan covers: `antseal-cli`'s renderer sources and the
+/// verifier page's template.
+fn renderer_sources() -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = SCAN_ROOTS
+        .iter()
+        .flat_map(|(relative, _)| sources_under(relative))
+        .collect();
     files.sort();
     files
 }
@@ -858,12 +876,20 @@ fn occurrences(sources: &[(String, String)], needle: &str) -> Vec<String> {
 
 #[test]
 fn no_renderer_source_spells_a_frozen_verdict_string() {
+    // Per-root, before anything is asserted about contents: a root that
+    // contributes nothing is a scan that covers nothing, and it must say which
+    // root went quiet (D131 §5 R2).
+    for (relative, floor) in SCAN_ROOTS {
+        let found = sources_under(relative).len();
+        assert!(
+            found >= floor,
+            "the scan collected {found} file(s) under {relative}, below its floor of {floor} — \
+             coverage of that root has gone to zero and the walk is broken, not the tree clean. \
+             A file whose extension is outside `walk`'s list is invisible here: that is how \
+             `index.html.template` would have been (D131 §1 a)."
+        );
+    }
     let sources = renderer_sources();
-    assert!(
-        sources.len() > 10,
-        "the source walk found {} files — the walk is broken, not the tree clean",
-        sources.len()
-    );
 
     let mut offenders = Vec::new();
     for (needle, what) in single_sourced() {
@@ -882,7 +908,13 @@ fn no_renderer_source_spells_a_frozen_verdict_string() {
 
 #[test]
 fn every_recorded_residue_is_still_there() {
-    let sources = renderer_sources();
+    // The CLI root and nothing else (D131 §5 R3). `RESIDUE`'s own definition
+    // says these are sentences that still live in **`antseal-cli`**, and over
+    // the union a page-side copy of a needle keeps this test green through a
+    // deletion of the CLI's copy — masking exactly the rot it exists to catch.
+    // The two file-walking tests want opposite domains: the ban is about
+    // everywhere, this is about one place.
+    let sources = sources_under(SCAN_ROOTS[0].0);
     let mut vanished = Vec::new();
     for (needle, reason, question) in RESIDUE {
         if occurrences(&sources, needle).is_empty() {

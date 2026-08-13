@@ -1,0 +1,72 @@
+# R26 — publish the verifier page to the ONE canonical URL, https://antseal.org/
+#
+# TRIGGER IS MANUAL, DELIBERATELY. `workflow_dispatch` and nothing else, for two
+# reasons that are not the same reason:
+#
+#   1. Actions minutes are metered on this account and this job is the most
+#      expensive one the repository could gain — it provisions wasm-bindgen-cli
+#      and wasm-pack by `cargo install`, which no other job does. A push trigger
+#      would pay that on changes that cannot affect the page.
+#   2. A deploy is an outward-facing act at a real domain. It should happen when
+#      a maintainer decides it happens, not as a side effect of a merge.
+#
+# PREREQUISITES, none of which this workflow can create (D62 §3):
+#   * Settings -> Pages -> Source: GitHub Actions, custom domain antseal.org
+#   * the apex A records pointing at Pages, and Porkbun's parking records GONE
+#     — until they are, the URL serves a third party's scripted page over
+#     plaintext, which is worse than failing closed (D62 §3 R7)
+#   * Enforce HTTPS, which only becomes available once the certificate issues
+#
+# The page's Content-Security-Policy is NOT here and must never be: the ruled
+# host emits no security headers and has no configuration surface, so every
+# security property lives inside the hashed artifact (D62 §3 R6, D129 §5 R6).
+# A second policy at the host would intersect with the in-artifact one silently.
+name: pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Armed at WORKFLOW level, like every other workflow in this repository, so a
+# job added here later inherits the policy rather than quietly opting out of it
+# (docs/testing/anchor-ci-policy.md; asserted by `scripts/ci-lanes.sh
+# anchor-net-policy`). It costs this workflow nothing — the page build touches
+# no calendar, esplora or RPC — and the deploy and its Content-Type/encoding
+# verification are ordinary HTTP to the host, which this variable does not gate.
+env:
+  ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+
+# One deploy at a time; never cancel one in flight, because a half-replaced
+# canonical URL is worse than a late one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: build and check the page
+        run: ./scripts/pages-publish.sh --build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/verifier-web
+      - id: deploy
+        uses: actions/deploy-pages@v4
+      - name: verify what the host actually serves
+        run: ./scripts/pages-publish.sh --verify "${{ steps.deploy.outputs.page_url }}"

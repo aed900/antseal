@@ -1077,3 +1077,43 @@ artifact of the signed release instead (D129 §5 R7). And §7 rule 1's remaining
 preconditions are **unchanged**: D129 §1 (o) measures the *packaging* step
 deterministic, which is not the module's determinism, and the optimizer stays
 the open one.
+
+---
+
+## Amendment — §10 (iv) answered and closed, 2026-08-12
+
+**§10 (iv)** — *"`verifier-web/` has no lane, no membership, and no scan root"* —
+is **ANSWERED and CLOSED** by
+[D131](D131-the-verifier-web-directory-footprint.md). Per D117 §2.2 this section
+is the single home of the fact; §10's own text is not edited.
+
+`verifier-web/` becomes a **source-only** directory holding exactly one committed
+file, the template `index.template.html`; the built page is **never** committed
+and is built to `target/verifier-web/`. The injector and packaging assertions
+live in `scripts/verifier-page-build.sh` (`--self-test`, in
+`scripts/wasm-pack-build.sh`'s shape, wired through `scripts/local-gate.sh`); the
+§7 rule 5 drift test and the template-side assertions in
+`crates/antseal-wasm/tests/page_template.rs`; and the browser assertions in a
+`scripts/*.mjs` driver under R27/Q19. The directory gains a **second** scan —
+`check-traceability.py`, with `verifier-web` as a `CITATION_SCAN` root plus
+`.html` in `CITATION_SUFFIXES`, measured **+1 file and zero collateral** — which
+is the Q210-adjacent half of this observation.
+
+**The *ban* scan root this paragraph names was additionally found to be about to
+go vacuous.** D131 §1 (c) measures page coverage falling to **zero**, with all
+nine tests green, under the template name D129 §7 had minted — because the walk's
+extension filter does not reach it and the anti-vacuity guard counts a union
+fifty-four CLI files satisfy on their own. So the answer to §10 (iv) is not only
+*"a lane now owns it"* but *"the scan that was assumed to cover it did not"*.
+
+**Registrar's note, 2026-08-12 — one clause of the answer is NOT yet true.** The
+**§7 rule 5 drift test** routed above into
+`crates/antseal-wasm/tests/page_template.rs` **does not exist** as of R25's
+landing: that file carries five tests (placeholders, the directory's exact
+contents, the ruled CSP, no `style=` attribute, no default init) and none of them
+compares the page's advice line against `MVP-SPEC.md` line 139. The advice line
+is present in the template and correctly spelled, comma included — which is
+exactly the condition under which a string drifts unnoticed, and exactly what
+rule 5 exists to prevent. Recorded on **R25**, whose Accept row 3 is therefore
+not satisfied on its assertion half. §10 (iv) is closed as a *venue* question;
+this is an unmet obligation of the venue, not a re-opening of it.

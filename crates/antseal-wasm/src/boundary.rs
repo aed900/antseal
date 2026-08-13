@@ -75,6 +75,23 @@ pub fn verify_online(bundle_bytes: &[u8], evidence_json: &str) -> Result<String,
     crate::api::verify_online_json(bundle_bytes, evidence_json).map_err(|error| thrown(&error))
 }
 
+/// The whole offline document the page displays, as canonical JSON — the
+/// fifth entry of D18 §5 R4's list, opened to five by D130 and closed again
+/// there.
+///
+/// Takes no options and no evidence document (D130 §3 R2), and the page calls
+/// it **once per drop**: every export re-verifies from bytes, and the
+/// document's `report` member is byte-identical to [`verify`]'s, so nothing
+/// else is needed offline.
+///
+/// # Errors
+///
+/// Throws for every rejected bundle, carrying the stable code.
+#[wasm_bindgen]
+pub fn verify_rendered(bundle_bytes: &[u8]) -> Result<String, JsError> {
+    crate::api::verify_rendered_json(bundle_bytes).map_err(|error| thrown(&error))
+}
+
 /// D69's rung datum as canonical JSON — offline, or online-augmented when
 /// `evidence_json` is supplied.
 ///

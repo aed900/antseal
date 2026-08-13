@@ -425,14 +425,44 @@ impl RenderedVerdict {
     /// pair is not detectable here and would render a headline that does not
     /// belong to the slots beneath it. [`verify_with_host`] pairs them by
     /// construction and is the only production caller.
+    ///
+    /// # The escape is the caller's, and it covers every authored value
+    ///
+    /// `escape` is the **caller's surface's** neutralisation policy (D130 §3
+    /// R5/R9): the CLI passes D67 §3 R3's terminal set, `antseal-wasm` passes
+    /// its own DOM policy, and no escape set moves into this crate — the two
+    /// surfaces neutralise different byte sets, which is why
+    /// [`wording::redacted_file_line`] takes an already-escaped path and says
+    /// so.
+    ///
+    /// It is applied to **every** sealer- or artifact-authored value this
+    /// block embeds. Measured on this tree, that is **four**, not the three
+    /// D130 §1 (j) enumerated:
+    ///
+    /// | value | where it comes from |
+    /// | --- | --- |
+    /// | the headline's source slot | the winning verdict's `source()` — a TSA subject or an OTS block name, read out of the artifact |
+    /// | `claimed_time_line` | `work.claimed_time_informational_only`, sealer-written |
+    /// | `source_line` | `AnchorResult::source`, read out of the artifact |
+    /// | `fetch_date_line` | `AnchorResult::fetch_date`, sealer-recorded |
+    ///
+    /// Every other string here is a table constant, an enum label, or a
+    /// number this crate computed, and none of them can carry authored bytes.
     #[must_use]
-    pub fn new(report: &VerificationReport, aggregate: &VerdictAggregate) -> Self {
+    pub fn new(
+        report: &VerificationReport,
+        aggregate: &VerdictAggregate,
+        escape: &impl Fn(&str) -> String,
+    ) -> Self {
         let (headline_line, unanchored) = match aggregate.headline() {
             Some(headline) => (
                 wording::headline_sentence(
                     headline.time_unix(),
                     headline.kind(),
-                    &wording::source_slot(headline.source()),
+                    // The headline's source slot is artifact-authored too —
+                    // the same class as the per-slot `source_line` below, and
+                    // the one D130 §1 (j)'s survey of three missed.
+                    &escape(&wording::source_slot(headline.source())),
                 ),
                 false,
             ),
@@ -459,7 +489,7 @@ impl RenderedVerdict {
                         tsa_seen
                     }
                 };
-                rendered_slot(anchor, ordinal)
+                rendered_slot(anchor, ordinal, escape)
             })
             .collect();
 
@@ -467,7 +497,7 @@ impl RenderedVerdict {
             .work
             .claimed_time_informational_only
             .as_deref()
-            .map(wording::claimed_time_line);
+            .map(|claimed| wording::claimed_time_line(&escape(claimed)));
 
         let supporting_evidence = match report.supporting_evidence {
             SupportingEvidenceResult::None => None,
@@ -494,6 +524,22 @@ impl RenderedVerdict {
             seal_meaning_line: wording::SEAL_MEANING_NOTE,
         }
     }
+
+    /// The block's canonical bytes, for the rendered document's `rendered`
+    /// member (D130 §3 R3) — the same [`SiblingEncodeError`] idiom
+    /// [`LiveSection::to_canonical_json`] and
+    /// [`VerdictClass::to_canonical_json`] already use.
+    ///
+    /// Deterministic by construction — compact JSON, declaration order, no
+    /// maps — but **tier C** under D65 §3: reviewed, not promised until U32.
+    ///
+    /// # Errors
+    ///
+    /// [`SiblingEncodeError`] — structurally unreachable for this type, and
+    /// typed rather than unwrapped because library code never unwraps.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, SiblingEncodeError> {
+        serde_json::to_vec(self).map_err(SiblingEncodeError)
+    }
 }
 
 /// One slot's rows.
@@ -515,7 +561,11 @@ impl RenderedVerdict {
 ///   `--upgrade` one: `verify` needs no vault and never prompts (the frozen
 ///   help text), so the audience that could run `antseal status --upgrade` is
 ///   not the one reading this.
-fn rendered_slot(anchor: &AnchorResult, ordinal_within_kind: usize) -> RenderedAnchorSlot {
+fn rendered_slot(
+    anchor: &AnchorResult,
+    ordinal_within_kind: usize,
+    escape: &impl Fn(&str) -> String,
+) -> RenderedAnchorSlot {
     let guidance_lines = match anchor.state {
         AnchorState::Proven | AnchorState::ValidAtStampingCertSinceExpired => anchor
             .verified_time_unix
@@ -539,9 +589,17 @@ fn rendered_slot(anchor: &AnchorResult, ordinal_within_kind: usize) -> RenderedA
         source_line: anchor.source.as_deref().map(|identity| {
             // "verified" is exactly headline eligibility, read off the same
             // tag the row above prints — never a second table (D53 §4).
-            wording::source_line(identity, !wording::headline_tag(anchor.state).is_empty())
+            // The identity itself is artifact-authored and reaches a terminal
+            // or a DOM, so it goes through the caller's escape (D130 §3 R9).
+            wording::source_line(
+                &escape(identity),
+                !wording::headline_tag(anchor.state).is_empty(),
+            )
         }),
-        fetch_date_line: anchor.fetch_date.as_deref().map(wording::fetch_date_line),
+        fetch_date_line: anchor
+            .fetch_date
+            .as_deref()
+            .map(|fetch_date| wording::fetch_date_line(&escape(fetch_date))),
     }
 }
 
@@ -785,9 +843,14 @@ impl VerdictClass {
 ///
 /// Structurally unreachable for these types (no maps, no non-string keys) but
 /// surfaced as a typed error, because library code never unwraps.
+///
+/// The field is `pub(crate)` rather than private so
+/// [`RenderedRedaction`](super::redaction::RenderedRedaction) — which D130 §3
+/// R4 places beside [`RedactionView`], not here — can report the same failure
+/// through the same type. It stays invisible outside this crate.
 #[derive(Debug, thiserror::Error)]
 #[error("a verify sibling document could not be encoded as canonical JSON")]
-pub struct SiblingEncodeError(#[source] serde_json::Error);
+pub struct SiblingEncodeError(#[source] pub(crate) serde_json::Error);
 
 // ---------------------------------------------------------------------------
 // the run's error
@@ -969,8 +1032,15 @@ impl VerifyOutcome {
 pub fn verify_offline(
     bundle: &[u8],
     options: &VerifyOptions,
+    escape: &impl Fn(&str) -> String,
 ) -> Result<VerifyOutcome, VerifyRunError> {
-    verify_with_host(bundle, options, VerifyModes::OFFLINE, &NoNetworkHost)
+    verify_with_host(
+        bundle,
+        options,
+        VerifyModes::OFFLINE,
+        &NoNetworkHost,
+        escape,
+    )
 }
 
 /// Verify a `.sealproof` and compose whatever advisory layers `modes` asks
@@ -988,12 +1058,22 @@ pub fn verify_offline(
 /// overlay outcome, and a live fetch that failed is a row — neither can fail
 /// a bundle.
 ///
+/// # The rendering policy is the caller's, and it arrives here
+///
+/// [`RenderedVerdict`] is built on this path, unconditionally, under every
+/// mode — so the escape its authored values need has to arrive with the call
+/// (D130 §3 R5/R9). `escape` is the caller's surface's set and nothing else:
+/// no escape set lives in this crate, and the alternative — a block built
+/// unescaped and neutralised later — is the seam D130 §1 (j) measured open
+/// and this parameter closes.
+///
 /// [`verify_bundle`]: super::pipeline::verify_bundle
 pub fn verify_with_host<H>(
     bundle: &[u8],
     options: &VerifyOptions,
     modes: VerifyModes,
     host: &H,
+    escape: &impl Fn(&str) -> String,
 ) -> Result<VerifyOutcome, VerifyRunError>
 where
     H: VerifyHost + ?Sized,
@@ -1013,7 +1093,7 @@ where
     let inputs = AnchorInputs::of(&proof);
     let offline_verdicts = inputs.evaluate(options, &OnlineEvidence::new());
     let offline_verdict = VerdictAggregate::from_verdicts(&offline_verdicts);
-    let rendered = RenderedVerdict::new(&report, &offline_verdict);
+    let rendered = RenderedVerdict::new(&report, &offline_verdict, escape);
 
     // ── `--online`: a second evaluation, into a sibling document ───────
     let (overlay, exit_verdict, refuted) = if modes.online() {

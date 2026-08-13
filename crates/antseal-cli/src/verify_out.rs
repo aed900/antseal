@@ -87,6 +87,7 @@ use antseal_core::verify::rung::VerdictExitRung;
 use antseal_core::verify::{VerifyOptions, wording};
 
 use crate::error::{CliError, ErrorClass};
+use crate::preview::escape_for_terminal;
 
 /// Indent of a row inside a layer's block (the house's two spaces, as in
 /// `status::WorkStatus::render` and `redaction_out`).
@@ -352,6 +353,17 @@ fn live_lines(live: &LiveSection) -> Vec<String> {
 ///
 /// [`CliError::Internal`] (1) — the verified report could not be serialized,
 /// which is an antseal bug on the verify path and not an input problem.
+///
+/// # The escape this surface renders under
+///
+/// R21 builds the offline block on this call, so the neutralisation policy
+/// its sealer- and artifact-authored values need arrives with it (D130 §3
+/// R5/R9): D67 §3 R3's terminal set, the same one
+/// [`redaction_out`](crate::redaction_out) hands the disclosure block. This
+/// is the **only** place the CLI names it for the verdict block, so the
+/// claimed time, the anchor sources and the sealer-recorded fetch dates
+/// cannot reach a terminal raw — which, measured, is what they did before
+/// D130 (§1 j).
 pub fn run_verify<H>(
     bundle: &[u8],
     options: &VerifyOptions,
@@ -361,7 +373,7 @@ pub fn run_verify<H>(
 where
     H: VerifyHost + ?Sized,
 {
-    let outcome = verify_with_host(bundle, options, modes, host)?;
+    let outcome = verify_with_host(bundle, options, modes, host, &escape_for_terminal)?;
     Ok(VerifyRun { outcome })
 }
 

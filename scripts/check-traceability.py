@@ -617,6 +617,13 @@ CITATION_SCAN = [
     "docs/format",
     "docs/testing",
     "scripts",
+    # R23 lands the first citation-bearing file here: the page template cites
+    # the decisions that shaped it, and before this entry nothing checked those
+    # citations resolve (D131 §5 R7.4 — the fourth unswept directory Q210
+    # observed). A DIRECTORY entry, so D123's per-entry rule filters it by
+    # suffix; measured cost of the pair of additions is 420 -> 421 files with
+    # zero collateral, against D123's refused .toml route at 359 -> 377 with 15.
+    "verifier-web",
     # Root-level files, swept as themselves (Q176).
     "CHANGELOG.md",
     "README.md",
@@ -640,7 +647,7 @@ CITATION_SCAN = [
     ".gitattributes",
     ".gitignore",
 ]
-CITATION_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs"}
+CITATION_SUFFIXES = {".rs", ".md", ".json", ".py", ".sh", ".mjs", ".html"}
 
 # This file names task AND decision ids as literals in its registers and plants
 # them in `--self-test`. Sweeping it reports its own fixtures.

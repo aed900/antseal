@@ -76,6 +76,15 @@
 //!   from. Structure per D64 §8; every spelling provisional until R18's
 //!   snapshot table lands over it.
 //!
+//! - [`plan`] (tasks R21/R22; D132) — what an `--online` run would fetch,
+//!   derived from the bundle and from nothing else: the distinct upgraded OTS
+//!   anchors' block heights and, when the bundle carries a receipt, the
+//!   transaction hash. **One derivation, two surfaces** — the CLI's probe
+//!   collector and R22's page both take their probe set from
+//!   [`ProbePlan::from_bundle`], so "the two surfaces ask the same question"
+//!   is a property of there being one function rather than of two lists
+//!   agreeing today. Derived data only, and never a verdict input.
+//!
 //! - [`redaction`] (task R19) — the shared redaction view: R5's per-file
 //!   revealed and unrevealed spans **interleaved** into one ordered run of
 //!   sized blocks, the committed placeholders, and the work-level totals
@@ -113,6 +122,7 @@ pub mod file_stages;
 pub mod orchestration;
 pub mod overlay;
 pub mod pipeline;
+pub mod plan;
 pub mod redaction;
 pub mod report;
 pub mod rung;
@@ -152,7 +162,11 @@ pub use overlay::{
     ReceiptEchoOutcome, ReceiptProbe, build_online_overlay,
 };
 pub use pipeline::{VerifyOptions, VerifyStage, verify_bundle, verify_bundle_collecting};
-pub use redaction::{FileRedaction, RedactionBlock, RedactionTotals, RedactionView};
+pub use plan::{ProbePlan, ReceiptTarget};
+pub use redaction::{
+    FileRedaction, RedactionBlock, RedactionTotals, RedactionView, RenderedRedaction,
+    RenderedRedactionFile, RenderedWithheldFile,
+};
 pub use report::{
     AnchorKind, AnchorResult, AnchorState, Digest32, EvidenceLayerResult, FileReveal,
     REPORT_VERSION, RawMirrorReveal, ReportEncodeError, RevealSet, SignatureScheme,

@@ -48,15 +48,31 @@
 //! because R3's tiling invariant makes the spans exactly tile
 //! `[0, total_size)`.
 //!
+//! # One assembly, two surfaces (D130 §3 R4/R6)
+//!
+//! [`RedactionView`] is the *model*; [`RenderedRedaction`] is the one
+//! **assembly** of it into final display strings, and both surfaces call it —
+//! the CLI's `redaction_out` folds over it, and R22's fifth export ships it
+//! to the page inside the rendered document. Before D130 the CLI composed the
+//! block itself out of [`wording`] rows and the page would have had to compose
+//! it a second time; after it, MVP-SPEC.md line 121's guardrail has exactly
+//! one rendering path, so there is no path on which a position could be
+//! dropped.
+//!
 //! # WASM-safe
 //!
 //! Pure data, borrowed from the report: no clock, no I/O, no allocation
 //! beyond the block vectors, and no ordering that depends on anything but the
-//! report's own values.
+//! report's own values. [`RenderedRedaction`] adds ordinary `serde` code and
+//! no dependency, no feature and no `crate-type` (D130 §3 R10).
 
+use serde::Serialize;
+
+use super::orchestration::SiblingEncodeError;
 use super::report::{
     FileReveal, RawMirrorReveal, RevealSet, UnitSpan, UnrevealedFilePlaceholder, VerificationReport,
 };
+use super::wording;
 
 /// One block of a file's tiling domain: a whole unit, revealed or blacked
 /// out, at its position in `[0, total_size)`.
@@ -297,6 +313,201 @@ impl<'a> RedactionView<'a> {
 /// lossless and has no failure arm to design.
 const fn count(n: usize) -> u64 {
     n as u64
+}
+
+// ---------------------------------------------------------------------------
+// the rendered disclosure block (D130 §3 R4)
+// ---------------------------------------------------------------------------
+
+/// One touched file's disclosure block, as final display strings.
+///
+/// The R19-shaped half of the contract
+/// [`RenderedVerdict`](super::orchestration::RenderedVerdict) already
+/// satisfies: every string is drawn from [`wording`], which R18 froze; a
+/// renderer adds indentation, its own surface's markup and **nothing else**;
+/// and **field declaration order is render order**.
+///
+/// # The value half is raw, and that is the split
+///
+/// [`Self::path`] is the *value*: sealer-authored text, carried unaltered
+/// exactly as [`FileRedaction::path`] carries it and exactly as the report's
+/// own `reveal.files[].path` — which rides in the same document — carries it.
+/// [`Self::header_line`] is the *rendering*, and the caller's escape has
+/// already run through it (D67 §3 R6's value-vs-rendering split). **A surface
+/// renders the line, never the value.**
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RenderedRedactionFile {
+    /// `file_id` — LE64 index into the manifest file table.
+    pub file_id: u64,
+    /// The disclosed path, **raw**: the value, not the rendering.
+    pub path: String,
+    /// The file's declared total size — the guardrail's denominator.
+    pub total_size: u64,
+    /// Whether every non-mirror unit of the file is revealed.
+    pub fully_revealed: bool,
+    /// The file's header row ([`wording::redacted_file_line`]), with the
+    /// path already neutralised by the caller's escape.
+    pub header_line: String,
+    /// One row per block, revealed and blacked out interleaved in **position
+    /// order** — [`wording::revealed_span_line`] and
+    /// [`wording::blackout_span_line`], which take the same three figures, so
+    /// no row can omit a position (MVP-SPEC.md line 121).
+    pub block_lines: Vec<String>,
+    /// The riding raw mirror's row, when a full reveal carried one
+    /// ([`wording::mirror_full_reveal_line`]).
+    pub mirror_line: Option<String>,
+}
+
+/// One wholly unrevealed file, as its committed placeholder: an ordinal, a
+/// declared size, and the row that says outright what is withheld.
+///
+/// No third value can travel here, for [`UnrevealedFilePlaceholder`]'s own
+/// reason: the bundle carries no name to print.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RenderedWithheldFile {
+    /// The placeholder's ordinal.
+    pub file_id: u64,
+    /// Its declared size.
+    pub size: u64,
+    /// The row ([`wording::withheld_file_line`]).
+    pub line: String,
+}
+
+/// The disclosure block of one verified bundle, as final display strings —
+/// the document R22's fifth export carries to the page and the CLI's
+/// `redaction_out` folds over (D130 §3 R3/R4/R6).
+///
+/// Field declaration order is render order: the label, the honesty note, the
+/// touched files in manifest order, the placeholders as a run, then the two
+/// halves of the totals.
+///
+/// # The work-level totals are not JSON numbers
+///
+/// [`RedactionTotals::declared_bytes`] and its siblings accumulate in `u128`,
+/// and D65 §7 forbids a JSON number that can exceed 2⁵³. They therefore ride
+/// **inside** [`Self::totals_line`] and [`Self::withheld_totals_line`] and
+/// appear nowhere else — this document introduces no integer the report does
+/// not already carry in the same form.
+///
+/// # Tier C
+///
+/// D65 §3: the *shape* here is reviewed, not promised, until U32. The
+/// *strings* are R18's and are frozen. Absence is `null`, never a missing
+/// key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RenderedRedaction {
+    /// The section label ([`wording::REDACTION_VIEW_LABEL`]).
+    pub view_label: &'static str,
+    /// The one honesty note about the figures
+    /// ([`wording::DECLARED_SIZE_NOTE`]).
+    pub declared_size_note: &'static str,
+    /// The touched files, in the view's own order (manifest file order).
+    pub files: Vec<RenderedRedactionFile>,
+    /// The wholly unrevealed files, as a run after the touched ones.
+    pub withheld_files: Vec<RenderedWithheldFile>,
+    /// The work-level revealed total.
+    pub totals_line: String,
+    /// The work-level withheld total, stated beside the revealed one so
+    /// neither half is read alone.
+    pub withheld_totals_line: String,
+}
+
+impl RenderedRedaction {
+    /// Assemble the block from a derived view.
+    ///
+    /// `escape` is the **caller's surface's** neutralisation policy (D130 §3
+    /// R5): the CLI passes D67 §3 R3's terminal set, `antseal-wasm` passes
+    /// its own DOM policy. No escape set moves into this crate — the two
+    /// surfaces neutralise different byte sets, which is precisely why
+    /// [`wording::redacted_file_line`] takes an already-escaped path and says
+    /// so. It is applied to every sealer-authored value this block renders,
+    /// which here is exactly the path.
+    #[must_use]
+    pub fn new(view: &RedactionView<'_>, escape: &impl Fn(&str) -> String) -> Self {
+        let files = view
+            .files
+            .iter()
+            .map(|file| RenderedRedactionFile {
+                file_id: file.file_id,
+                path: file.path.to_owned(),
+                total_size: file.total_size,
+                fully_revealed: file.fully_revealed,
+                header_line: wording::redacted_file_line(
+                    file.file_id,
+                    &escape(file.path),
+                    file.total_size,
+                    file.fully_revealed,
+                ),
+                block_lines: file
+                    .blocks
+                    .iter()
+                    .map(|block| block_line(*block, file.total_size))
+                    .collect(),
+                // `raw_mirror` is `Some` only for a full reveal (R53,
+                // enforced by the report's producer), which is the one state
+                // in which the table's "the original file" phrasing is
+                // earned.
+                mirror_line: file
+                    .raw_mirror
+                    .map(|mirror| wording::mirror_full_reveal_line(mirror.raw_size)),
+            })
+            .collect();
+
+        let withheld_files = view
+            .withheld_files
+            .iter()
+            .map(|placeholder| RenderedWithheldFile {
+                file_id: placeholder.file_id,
+                size: placeholder.size,
+                line: wording::withheld_file_line(placeholder.file_id, placeholder.size),
+            })
+            .collect();
+
+        let totals = &view.totals;
+        Self {
+            view_label: wording::REDACTION_VIEW_LABEL,
+            declared_size_note: wording::DECLARED_SIZE_NOTE,
+            files,
+            withheld_files,
+            totals_line: wording::redaction_totals_line(
+                totals.revealed_bytes,
+                totals.declared_bytes,
+                totals.files_touched,
+                totals.files,
+            ),
+            withheld_totals_line: wording::withheld_totals_line(
+                totals.blacked_out_bytes,
+                totals.withheld_file_bytes,
+                totals.files_withheld,
+            ),
+        }
+    }
+
+    /// The block's canonical bytes, for the rendered document's `redaction`
+    /// member (D130 §3 R3).
+    ///
+    /// Deterministic by construction — compact JSON, declaration order, no
+    /// maps — but **tier C** under D65 §3: reviewed, not promised until U32.
+    ///
+    /// # Errors
+    ///
+    /// [`SiblingEncodeError`] — structurally unreachable for this type (no
+    /// map, no non-string key, no float), and typed rather than unwrapped
+    /// because library code never unwraps.
+    pub fn to_canonical_json(&self) -> Result<Vec<u8>, SiblingEncodeError> {
+        serde_json::to_vec(self).map_err(SiblingEncodeError)
+    }
+}
+
+/// One block's row. The revealed and blacked-out arms take the **same three
+/// figures** — size, offset, declared total — so no rendering path exists on
+/// which a position could be dropped (MVP-SPEC.md line 121).
+fn block_line(block: RedactionBlock, total_size: u64) -> String {
+    if block.revealed {
+        wording::revealed_span_line(block.unit_id, block.start, block.size(), total_size)
+    } else {
+        wording::blackout_span_line(block.unit_id, block.start, block.size(), total_size)
+    }
 }
 
 #[cfg(test)]
@@ -615,6 +826,163 @@ mod tests {
             u128::from(u64::MAX) * 2,
             "the sum exceeds u64 and must not wrap"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // the rendered block (D130 §3 R4)
+    // ─────────────────────────────────────────────────────────────────
+
+    /// The identity policy: these rows assert composition and order, which
+    /// no neutralisation can change. The escape's own behaviour is each
+    /// surface's to assert (D130 §3 R5).
+    fn plain(text: &str) -> String {
+        text.to_owned()
+    }
+
+    #[test]
+    fn the_assembly_renders_every_row_from_the_frozen_table() {
+        let reveal = reveal_set();
+        let block = RenderedRedaction::new(&RedactionView::from_reveal_set(&reveal), &plain);
+
+        assert_eq!(block.view_label, wording::REDACTION_VIEW_LABEL);
+        assert_eq!(block.declared_size_note, wording::DECLARED_SIZE_NOTE);
+        assert_eq!(block.files.len(), 2);
+        assert_eq!(block.withheld_files.len(), 1);
+
+        let partial = &block.files[0];
+        assert_eq!(
+            partial.header_line,
+            wording::redacted_file_line(0, "pitch/chapter-1.md", 1024, false)
+        );
+        // Position order, and the same three figures in both arms — the
+        // guardrail is a property of this fold, so no surface can drop one.
+        assert_eq!(
+            partial.block_lines,
+            vec![
+                wording::blackout_span_line(0, 0, 256, 1024),
+                wording::revealed_span_line(1, 256, 384, 1024),
+                wording::blackout_span_line(2, 640, 384, 1024),
+            ]
+        );
+        assert_eq!(partial.mirror_line, None);
+
+        let full = &block.files[1];
+        assert_eq!(
+            full.mirror_line,
+            Some(wording::mirror_full_reveal_line(305))
+        );
+        assert_eq!(
+            block.withheld_files[0].line,
+            wording::withheld_file_line(2, 49_152)
+        );
+        assert_eq!(
+            block.totals_line,
+            wording::redaction_totals_line(684, 1024 + 300 + 49_152, 2, 3)
+        );
+        assert_eq!(
+            block.withheld_totals_line,
+            wording::withheld_totals_line(640, 49_152, 1)
+        );
+    }
+
+    #[test]
+    fn the_path_is_the_raw_value_and_the_header_is_the_escaped_rendering() {
+        // D67 §3 R6's value-vs-rendering split: the caller's policy runs on
+        // the rendering, and only on it. A surface renders the line.
+        let reveal = reveal_set();
+        let view = RedactionView::from_reveal_set(&reveal);
+        let shout = |text: &str| text.to_uppercase();
+        let block = RenderedRedaction::new(&view, &shout);
+        assert_eq!(
+            block.files[0].path, "pitch/chapter-1.md",
+            "the value is raw"
+        );
+        assert!(
+            block.files[0].header_line.contains("PITCH/CHAPTER-1.MD"),
+            "the rendering went through the caller's policy: {}",
+            block.files[0].header_line
+        );
+    }
+
+    #[test]
+    fn no_work_level_total_is_ever_a_json_number() {
+        // D65 §7: `RedactionTotals`' figures are `u128` and can exceed 2⁵³,
+        // so they ride INSIDE their rendered lines and appear nowhere else.
+        let reveal = reveal_set();
+        let block = RenderedRedaction::new(&RedactionView::from_reveal_set(&reveal), &plain);
+        let json = String::from_utf8(block.to_canonical_json().expect("encodes"))
+            .expect("serde_json emits UTF-8");
+        for key in [
+            "declared_bytes",
+            "revealed_bytes",
+            "blacked_out_bytes",
+            "withheld_file_bytes",
+            "files_touched",
+            "files_withheld",
+            "raw_mirrors",
+        ] {
+            assert!(
+                !json.contains(key),
+                "`{key}` must not be a member of the document: {json}"
+            );
+        }
+        // The per-file figures that DO ride as numbers are `u64` — the same
+        // form the report already carries them in.
+        assert!(json.contains("\"total_size\":1024"), "{json}");
+        assert!(json.contains("\"size\":49152"), "{json}");
+    }
+
+    #[test]
+    fn declaration_order_is_render_order_in_the_canonical_bytes() {
+        let reveal = reveal_set();
+        let block = RenderedRedaction::new(&RedactionView::from_reveal_set(&reveal), &plain);
+        let json = String::from_utf8(block.to_canonical_json().expect("encodes"))
+            .expect("serde_json emits UTF-8");
+        let mut at = 0usize;
+        for key in [
+            "\"view_label\"",
+            "\"declared_size_note\"",
+            "\"files\"",
+            "\"withheld_files\"",
+            "\"totals_line\"",
+            "\"withheld_totals_line\"",
+        ] {
+            let found = json[at..]
+                .find(key)
+                .unwrap_or_else(|| panic!("{key} is missing or out of order: {json}"));
+            at += found + key.len();
+        }
+        // …and within a file, the values precede their renderings.
+        let file = json
+            .split("\"files\":[")
+            .nth(1)
+            .expect("the files array is present");
+        let order: Vec<usize> = [
+            "\"file_id\"",
+            "\"path\"",
+            "\"total_size\"",
+            "\"fully_revealed\"",
+            "\"header_line\"",
+            "\"block_lines\"",
+            "\"mirror_line\"",
+        ]
+        .iter()
+        .map(|key| file.find(key).unwrap_or_else(|| panic!("{key}: {file}")))
+        .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+    }
+
+    #[test]
+    fn an_empty_view_renders_the_labels_and_the_two_totals() {
+        // The vacuum is a rendering, not an absence: a bundle that reveals
+        // nothing still states what it does not reveal.
+        let reveal = RevealSet {
+            files: Vec::new(),
+            unrevealed_files: Vec::new(),
+        };
+        let block = RenderedRedaction::new(&RedactionView::from_reveal_set(&reveal), &plain);
+        assert!(block.files.is_empty() && block.withheld_files.is_empty());
+        assert!(!block.totals_line.is_empty() && !block.withheld_totals_line.is_empty());
     }
 
     #[test]

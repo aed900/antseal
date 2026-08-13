@@ -177,7 +177,7 @@ fn the_carriage_scan_catches_a_planted_round_trip() {
 }
 
 #[test]
-fn the_js_surface_stays_closed_at_four_exports_plus_the_panic_hook() {
+fn the_js_surface_stays_closed_at_five_exports_plus_the_panic_hook() {
     // D18 §5 R4 closes the public JS surface and says additions are "a
     // decision, not a code change". `scripts/wasm-boundary.mjs` asserts the
     // same thing against the built module — but that runs only where node and
@@ -191,14 +191,15 @@ fn the_js_surface_stays_closed_at_four_exports_plus_the_panic_hook() {
     );
     // Comment lines are skipped for the same reason the carriage scan skips
     // them, and it is not hypothetical here: this file's own module doc names
-    // the attribute in prose, so a raw substring count reports five.
+    // the attribute in prose, so a raw substring count reports six.
     let exports = occurrences("boundary.rs", &text, "#[wasm_bindgen]").len();
     assert_eq!(
-        exports, 4,
-        "the JS surface is CLOSED at four entries plus the panic hook (D18 §5 R4): \
-         `verify`, the online-evidence entry, the rung datum and the build info. \
-         A fifth export is a decision, not a code change — and a self-hash entry \
-         point is forbidden outright (D63 §11.3)."
+        exports, 5,
+        "the JS surface is CLOSED at five entries plus the panic hook (D18 §5 R4, \
+         opened by one and closed again by D130 §3 R1): `verify`, the \
+         online-evidence entry, the rung datum, the build info and the rendered \
+         document. A SIXTH export is a decision, not a code change — and a \
+         self-hash entry point is forbidden outright (D63 §11.3)."
     );
     // The whole surface must be target-gated: an item that escaped the gate
     // would put wasm-bindgen into the native gate's compilation (D18 §5 R3).

@@ -76,12 +76,21 @@ function hexToBytes(hex) {
   return Buffer.from(hex, "hex");
 }
 
-// ── 1. the closed export list (D18 §5 R4) ──────────────────────────────────
+// ── 1. the closed export list (D18 §5 R4, as amended by D130 §3 R1) ────────
 //
-// Four entries plus the panic-hook start function, and NOTHING ELSE. The
+// Five entries plus the panic-hook start function, and NOTHING ELSE. The
 // upper bound is the half that matters: additions are a decision, not a code
-// change, and a fifth export is how that rule would quietly stop holding.
-const EXPECTED_EXPORTS = ["verify", "verify_online", "verdict_class", "build_info", "start"];
+// change, and a sixth export is how that rule would quietly stop holding.
+// D130 opened the list by one — `verify_rendered`, the offline document the
+// page displays — on a recorded measurement, and closed it again there.
+const EXPECTED_EXPORTS = [
+  "verify",
+  "verify_online",
+  "verify_rendered",
+  "verdict_class",
+  "build_info",
+  "start",
+];
 const actualExports = Object.keys(module_).filter((name) => typeof module_[name] === "function");
 const unexpected = actualExports.filter(
   (name) => !EXPECTED_EXPORTS.includes(name) && !["initSync", "default"].includes(name),
@@ -90,7 +99,7 @@ const missing = EXPECTED_EXPORTS.filter((name) => !actualExports.includes(name))
 check(
   "the JS surface is the closed export list",
   unexpected.length === 0 && missing.length === 0,
-  `unexpected: [${unexpected}] missing: [${missing}] — D18 §5 R4 closes the surface at four entries plus the panic hook`,
+  `unexpected: [${unexpected}] missing: [${missing}] — D18 §5 R4 closes the surface at five entries plus the panic hook`,
 );
 
 // ── 2. build info (D63 §5 R3) ──────────────────────────────────────────────
@@ -247,10 +256,121 @@ check(
   `got ${evidenceError === null ? "NO THROW" : JSON.stringify(evidenceError.message)}`,
 );
 
+// ── 8. the rendered document (D130 §3 R3/R8.1) ─────────────────────────────
+//
+// After D130 the page calls `verify_rendered` and NOT `verify`. Without the
+// second row here the gate's subject and the page's path would silently
+// diverge: every row above would keep describing an export the page no longer
+// calls. The comparison is textual on purpose — `JSON.parse` then
+// `JSON.stringify` would re-serialize the report and prove nothing about the
+// bytes that were spliced.
+const firstBundle = hexToBytes(corpus.cases[0].bundle_hex);
+const documentText = module_.verify_rendered(firstBundle);
+const rendered = JSON.parse(documentText);
+check(
+  "verify_rendered() carries all five document members",
+  ["plan", "redaction", "rendered", "report", "verdict"].every((member) =>
+    Object.prototype.hasOwnProperty.call(rendered, member),
+  ) &&
+    typeof rendered.rendered.headline_line === "string" &&
+    rendered.rendered.headline_line.length > 0 &&
+    Array.isArray(rendered.redaction.files) &&
+    typeof rendered.redaction.totals_line === "string" &&
+    Object.prototype.hasOwnProperty.call(rendered.verdict, "rung") &&
+    !Object.prototype.hasOwnProperty.call(rendered.verdict, "exit_code"),
+  `got members [${Object.keys(rendered)}] — the page renders R18's frozen strings from this document and authors none itself (D130 §3 R3/R7); the verdict member carries the rung's NAME and no exit code (D69 §3 R1); the probe plan rides as a fifth member rather than a sixth export (D132 §3 R1)`,
+);
+check(
+  "verify_rendered(b).report is byte-identical to verify(b)",
+  documentText.includes(`"report":${module_.verify(firstBundle)},"verdict":`),
+  "the `report` member is tier A and byte-verbatim — if it is not, the page and this gate are looking at two different reports",
+);
+
+// ── 9. the probe plan (D132 §3 R3/R9.1) ────────────────────────────────────
+//
+// R24 fetches from this member and from nothing else, so its shape is the
+// page's fetch contract. Both keys are checked for PRESENCE separately from
+// their values: D65 §7's null rule rides tier C here — absence is `null`,
+// never a missing key — and a page that read `plan.receipt` off a document
+// without the key would silently take the no-receipt path for a bundle that
+// has one.
+//
+// Every case is walked, not just the first. D132 §1 (g) measured that all 21
+// R9 report vectors yield an EMPTY plan — twenty carry no anchors and the one
+// that does carries no upgrade group, and none carries a receipt — so through
+// this boundary these rows exercise the empty shape only. The non-empty
+// heights and the receipt half are covered natively over the F13 bundle
+// fixtures, against the same `api::verify_rendered_json` these exports shim
+// (`crates/antseal-wasm/tests/boundary.rs`). Recorded here so the coverage is
+// not mistaken for more than it is.
+// Each row keeps its OWN failure list: a row that reported another row's
+// diagnosis would send a reader to the wrong half of the shape.
+let plansChecked = 0;
+const blockFailures = [];
+const receiptFailures = [];
+for (const entry of corpus.cases) {
+  let plan;
+  try {
+    plan = JSON.parse(module_.verify_rendered(hexToBytes(entry.bundle_hex))).plan;
+  } catch (error) {
+    blockFailures.push(`${entry.shape}: verify_rendered threw — ${error?.message ?? error}`);
+    receiptFailures.push(`${entry.shape}: verify_rendered threw — ${error?.message ?? error}`);
+    continue;
+  }
+  if (plan === undefined || plan === null) {
+    blockFailures.push(`${entry.shape}: the plan member is absent`);
+    receiptFailures.push(`${entry.shape}: the plan member is absent`);
+    continue;
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(plan, "blocks") || !Array.isArray(plan.blocks)) {
+    blockFailures.push(`${entry.shape}: plan.blocks is ${JSON.stringify(plan.blocks)}, not an array`);
+  } else {
+    const bad = plan.blocks.find((h) => !Number.isSafeInteger(h) || h < 0);
+    const ascending = plan.blocks.every((h, i) => i === 0 || plan.blocks[i - 1] < h);
+    if (bad !== undefined) {
+      blockFailures.push(`${entry.shape}: plan.blocks carries ${JSON.stringify(bad)}`);
+    } else if (!ascending) {
+      blockFailures.push(
+        `${entry.shape}: plan.blocks is not ascending and duplicate-free: ${JSON.stringify(plan.blocks)}`,
+      );
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(plan, "receipt")) {
+    receiptFailures.push(
+      `${entry.shape}: the receipt key is ABSENT — absence is null, never a missing key`,
+    );
+  } else if (plan.receipt !== null && !/^[0-9a-f]{64}$/.test(plan.receipt?.tx_hash ?? "")) {
+    receiptFailures.push(
+      `${entry.shape}: plan.receipt is ${JSON.stringify(plan.receipt)}, neither null nor a 64-hex tx_hash`,
+    );
+  }
+  plansChecked += 1;
+}
+check(
+  `plan.blocks is an ascending duplicate-free integer array in all ${corpus.cases.length} cases`,
+  blockFailures.length === 0 && plansChecked === corpus.cases.length,
+  `${blockFailures.slice(0, 3).join("; ")} — R24 routes its esplora fetches off these heights, one GET pair each`,
+);
+check(
+  "plan.receipt is present in every case, and is null or a 64-hex tx_hash",
+  receiptFailures.length === 0 && plansChecked === corpus.cases.length,
+  `${receiptFailures.slice(0, 3).join("; ")} — the page reads plan.receipt unconditionally (D132 §3 R3, D65 §7)`,
+);
+check(
+  "the plan member sorts FIRST, so no existing member moved",
+  documentText.startsWith('{"plan":'),
+  `the document begins ${documentText.slice(0, 40)}… — D132 §3 R2 prepends the member precisely so D130's four keep their offsets`,
+);
+
 if (failures > 0) {
   fail(`${failures} boundary row(s) failed`);
 }
 console.log(
   `  OK: ${corpus.cases.length} vector(s) byte-identical through the JS boundary, ` +
-    `typed errors for hostile input, closed export list, build info present.`,
+    `typed errors for hostile input, closed export list at ${EXPECTED_EXPORTS.length - 1} ` +
+    `entries plus the panic hook, rendered document verbatim in its report member, ` +
+    `probe plan well-formed in ${plansChecked} case(s) (all empty in this corpus — ` +
+    `the non-empty and receipt-bearing shapes are covered natively), build info present.`,
 );
