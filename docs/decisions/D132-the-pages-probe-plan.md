@@ -772,7 +772,8 @@ that is R25's to record. No mechanism moves.
    two-engine method is the precedent.
 6. **The working tree moved under this lane and will move again.** §1 (k)'s
    reading of `verify_rendered_json` is timestamped 2026-08-12T21:51Z, mid-flight;
-   §1 (f)'s 14 677 B discrepancy against the on-disk artifact is unexplained.
+   ~~§1 (f)'s 14 677 B discrepancy against the on-disk artifact is unexplained.~~
+   — **EXPLAINED 2026-08-15 (staleness), see the note below**;
    An implementer must re-measure both before splicing a fifth member.
 7. **`plan.blocks` is wider than the overlay renders, and a reader may report
    that as a bug** — the page fetches a height that produces no row. Measured
@@ -807,7 +808,10 @@ that is R25's to record. No mechanism moves.
 5. **A from-HEAD build is 14 677 B smaller than the artifact in `target/`**
    with the same four exports (§1 f). Either the committed artifact is not from
    HEAD, or the build is not reproducible from source alone. R25's whole
-   premise is that it is. Worth one measurement.
+   premise is that it is. ~~Worth one measurement.~~ — **MEASURED 2026-08-15
+   by R25/R83: the second disjunct is REFUTED and the first is the
+   explanation**; see "Note — §1 (f)'s honest discrepancy, and the disjunct
+   §7.6 and §8.5 left open, 2026-08-15" below.
 6. **The empty-evidence `verify_online` is a legal call with a surprising
    reading.** It is accepted, it renders *"no agreed online evidence for block
    H"* for every attested anchor, and a page that made it by accident would
@@ -1022,3 +1026,63 @@ bytes makes the artifact twelve kilobytes larger, because the formatter it
 avoids is already linked. Both are the same lesson this project keeps paying
 for: the answer depends on the medium of the measurement, and reading the code
 would have given the opposite result in each case.
+
+---
+
+## Note — §1 (f)'s honest discrepancy, and the disjunct §7.6 and §8.5 left open, 2026-08-15
+
+**This section corrects no statement of D132 and withdraws no ruling.** It is
+the single home of one new fact: the question §1 (f) recorded as unresolved,
+and §7 item 6 and §8 item 5 carried forward as open, has been measured. The
+heading is not `Correction` in D117 §2.2's sense — nothing here was false —
+and it is not `Amendment`, because no ruling is added.
+
+**The open sentence, quoted verbatim** (§8, discovered work, item 5):
+
+> **A from-HEAD build is 14 677 B smaller than the artifact in `target/`**
+> with the same four exports (§1 f). Either the committed artifact is not from
+> HEAD, or the build is not reproducible from source alone. R25's whole
+> premise is that it is. Worth one measurement.
+
+**The measurement, made by the R25 lane on 2026-08-15 at `08c074c`.** Four
+release builds of the module, differing only in the checkout path, in
+`$CARGO_HOME`, and in whether the path remap was applied:
+
+| build | checkout path | `CARGO_HOME` | remap | SHA-256 |
+| --- | --- | --- | --- | --- |
+| baseline | 25 characters | `/home/deb/.cargo` | on | `baee3fc9…22a3` |
+| second runner, path only | 122 characters | `/home/deb/.cargo` | on | `baee3fc9…22a3` |
+| second runner, both roots | 122 characters | scratch | on | `baee3fc9…22a3` |
+| control | 122 characters | `/home/deb/.cargo` | **off** | `e7b722ff…d4c4` |
+
+The three remapped builds are byte-identical in module **and** glue, and the
+un-remapped control **reproduced the pre-change in-tree artifact exactly, from
+a checkout path 97 characters longer than the one that produced it**.
+
+**So the second disjunct is refuted.** At `08c074c` this build is reproducible
+from source alone, across two checkout paths and two `CARGO_HOME`s, to the
+byte — which leaves *"the committed artifact is not from HEAD"* as the
+explanation, and is the same conclusion this record's own §1 (f) reached as a
+hypothesis (*"consistent with that artifact having been built from a working
+tree already carrying the concurrent D130 implementation's core edits"*).
+
+**Two boundaries on that inference, stated so it is not over-read.** (1) It is
+a property of *this build at this commit*, not a re-measurement of the two
+historic artifacts, which no longer exist — the 14 677 B here and the 14 066 B
+at **R83** are explained by it, not re-derived from it. (2) It says nothing
+about the environment axes the four builds shared (locale, `TZ`, `HOME`, user,
+host); D63 §7 rule 2's list is only partly discharged, and D63's own 2026-08-15
+correction says which part.
+
+**Where the mechanism is owned.** Not here. **R83** is the row that makes a
+stale artifact impossible to package — `scripts/verifier-page-build.sh` now
+rebuilds unconditionally and requires byte-equality with whatever module was
+present, failing with a message naming `STALE ARTIFACT` — and it is closed on
+that mechanism, not on this measurement. This note exists because D132 is where
+a reader meets the number first.
+
+**Authority.** The R25/R83 lane, 2026-08-15; recorded by the registrar in the
+act that closes R83 and mints **R86**. §3's ruling (the plan rides
+`verify_rendered` as a fifth member), §1 (c)'s inertness and every refused arm
+are untouched — and §1 (c)'s inertness now has the witness in artifacts that
+**D133** built, which no measurement here supplies.

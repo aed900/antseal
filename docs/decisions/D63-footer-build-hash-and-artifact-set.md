@@ -565,7 +565,13 @@ is a one-token diff. — **RIDER + NARROWING, 2026-08-12, by
 build inputs"*, with **base64** named, and the *one-token diff* clause is
 **narrowed** for the single-file page D129 §5 R1 rules. Nothing above is
 withdrawn or restated; see "Amendment — §5 R5's operation list and its
-one-token-diff clause, 2026-08-12" below.
+one-token-diff clause, 2026-08-12" below. — **CORRECTION, 2026-08-15 (R25):
+operation (i)'s `--locked` is NECESSARY BUT NOT SUFFICIENT.** Measured with
+the lock file deleted, `wasm-pack build … -- --locked` exits **0** and
+**recreates `Cargo.lock`**, because wasm-pack runs `cargo metadata` before the
+build and that call re-resolves; the flag then binds a build against a lock it
+has just regenerated. See "Correction — §5 R5 (i)'s `--locked`, and §7 rule 1's
+forward-cited path counts, 2026-08-15" below.
 
 **R6 — The advice line: spec-owned, page-resident, drift-tested — and not
 added to R18's frozen table.** The exact sentence, from `MVP-SPEC.md`
@@ -615,19 +621,27 @@ page.
 
 ## 7. What R25 must implement (verbatim for the implementation lane)
 
-1. **Preconditions, ~~none of which exist today~~ three of which remain unmet
+1. **Preconditions, ~~none of which exist today~~ ~~three of which remain
+   unmet~~ of which the path remap is now discharged too
    (§1 h, i).** Before any hash is
    published: ~~**D18** ruled;~~ — **DISCHARGED 2026-08-12 by
    [D18](D18-wasm-bindgen-surface-location.md)**; see "Amendment — §7 rule 1's
-   first precondition, discharged, 2026-08-12" below. The remaining three
-   stand: `wasm-pack` and `wasm-bindgen-cli` exact-pinned
+   first precondition, discharged, 2026-08-12" below. ~~The remaining three
+   stand~~ — **the remap is DISCHARGED 2026-08-15 by R25 (below); the pin and
+   optimizer items are dispositioned on their own rows (R25, R83's `Notes`) and
+   are not re-adjudicated here**: `wasm-pack` and `wasm-bindgen-cli` exact-pinned
    with the CLI equal to the `wasm-bindgen` crate pin
    (`docs/dependency-policy.md` §5 — `scripts/wasm-toolchain-audit.sh` starts
    enforcing the equality automatically the moment either appears, no wiring
    needed); `--remap-path-prefix` for **both** the workspace root and
-   `$CARGO_HOME/registry` (§1 j measured 300 and 1 274 absolute-path
+   `$CARGO_HOME/registry` ~~(§1 j measured 300 and 1 274 absolute-path
    occurrences respectively, and §1 k proves the flag removes them at
-   `debuginfo=0`); and **any post-`wasm-pack` optimizer either pinned by
+   `debuginfo=0`)~~ — **DISCHARGED 2026-08-15 by R25**, and the two counts
+   carried into this precondition are the **debug** artifact's, which §1 (j)
+   says of itself and this sentence does not: on the release module this build
+   ships, the workspace root occurs **zero** times and `$CARGO_HOME/registry`
+   **52**; see "Correction — §5 R5 (i)'s `--locked`, and §7 rule 1's
+   forward-cited path counts, 2026-08-15" below; and **any post-`wasm-pack` optimizer either pinned by
    exact version or disabled** — `wasm-opt`/`binaryen` is named **nowhere**
    in this repo (§1 i), and an unpinned binary in the chain makes the
    published number unreproducible by construction. Whichever is chosen,
@@ -1117,3 +1131,127 @@ exactly the condition under which a string drifts unnoticed, and exactly what
 rule 5 exists to prevent. Recorded on **R25**, whose Accept row 3 is therefore
 not satisfied on its assertion half. §10 (iv) is closed as a *venue* question;
 this is an unmet obligation of the venue, not a re-opening of it.
+
+---
+
+## Correction — §5 R5 (i)'s `--locked`, and §7 rule 1's forward-cited path counts, 2026-08-15
+
+Two statements in this record are wrong in the way that matters most for a
+build whose whole purpose is that two machines agree: one names a mechanism
+that does not enforce what its name says, and one carries a count for the
+wrong artifact into the precondition a lane executes. Both were measured by
+the **R25** lane closing Accept row 1's first clause, and both are recorded
+here rather than at the sites, per D117 §2.2.
+
+### 1. §5 R5 (i) — `--locked` through `wasm-pack` is necessary but NOT sufficient
+
+The clause, quoted verbatim:
+
+> (i) invoke `wasm-pack` at the pinned versions with `--locked` — §5 **R5**.
+
+Measured on cargo 1.92.0, in a scratch copy of the tree with `Cargo.lock`
+deleted:
+
+| invocation | exit | lock recreated |
+| --- | --- | --- |
+| `cargo build --target wasm32-unknown-unknown --release --locked` | **101** — *"the lock file … needs to be updated but `--locked` was passed"* | no |
+| `wasm-pack build … -- --locked` | **0** | **yes** |
+
+Extra options *do* reach cargo — a deliberately bogus one is rejected — so the
+flag is not being dropped on the way through. **`wasm-pack` runs `cargo
+metadata` before the build**; that call re-resolves and writes `Cargo.lock`,
+and the `--locked` build then trivially agrees with the lock it has just
+regenerated. In the probe, the re-resolution picked `thiserror 2.0.20` where
+the committed lock names `2.0.19` — a different dependency graph, silently,
+which is exactly what R25's Accept row 1 forbids and exactly what a reader of
+R5 (i) would believe could not happen.
+
+**What this correction does and does not do.** It states that the named
+mechanism does not deliver the property attributed to it. It mints no
+replacement rule: how R25 closes the gap is R25's, and what shipped —
+`scripts/wasm-pack-build.sh` recording `sha256(Cargo.lock)` before and after
+the build and failing by name if it moved — is recorded on that row and in
+`docs/wasm-toolchain.md` §4.1, not here. `--locked` is still passed: it binds
+the build step, and measured, it does not move the digest.
+
+### 2. §7 rule 1 — the 300 / 1 274 occurrence counts are the DEBUG artifact's
+
+The precondition, quoted verbatim:
+
+> `--remap-path-prefix` for **both** the workspace root and
+> `$CARGO_HOME/registry` (§1 j measured 300 and 1 274 absolute-path
+> occurrences respectively, and §1 k proves the flag removes them at
+> `debuginfo=0`) — §7 **rule 1**.
+
+**§1 (j) is not wrong and is not corrected.** It measures
+`target/wasm32-unknown-unknown/debug/wasm_bitmatch.wasm` and says so in its own
+closing sentence: *"This is the debug profile (DWARF-bearing), so (k) isolates
+how much of it survives without debug info."* The defect is the **forward
+citation**: §7 rule 1 carries the two numbers into the precondition for the
+**release** module the page ships, where they do not hold. Measured on that
+module at `08c074c`:
+
+| root | occurrences in the release module | §7 rule 1 leads a reader to expect |
+| --- | --- | --- |
+| workspace root (`/home/deb/Documents/code0`) | **0** | 300 |
+| `$CARGO_HOME/registry` | **52** | 1 274 |
+
+The workspace root is absent because cargo already hands the crate being built
+a **relative** path — §1 (k)'s own first table row, measured there on a probe
+crate and confirmed here on the shipped artifact. Corroborated from the other
+direction by the registrar, on the built module in `target/`: the workspace
+remap's **placeholder** never appears either, and the strings that do are
+relative (`crates/antseal-core/src/manifest/body.rs`, and the emitted
+`./antseal_wasm_bg.js`), against **52** `/cargo/registry` placeholders and
+**zero** occurrences of this machine's `$CARGO_HOME` or checkout path. The
+registry paths survive in
+the `#[track_caller]`/panic-location strings of registry dependencies
+(`crypto-bigint` 17, `der` 5, `ml-dsa` 4, …).
+
+**The consequence is nil for the ruling and real for the reader.** Both roots
+are remapped anyway — the workspace one costs nothing today and is precisely
+what starts leaking the moment any profile turns `debuginfo` back on — so the
+precondition as executed is exactly the precondition as written. What a reader
+would have got wrong is the **size** of the defect, and therefore the size of
+the evidence needed to believe it fixed: 52 strings, not 1 574.
+
+### 3. The precondition is DISCHARGED, and this is what discharged it
+
+`scripts/wasm-pack-build.sh` derives both prefixes from the environment doing
+the building — never hard-coded, which is the property under test — and passes
+them on the one `wasm-pack` command through
+`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS`, the only one of four candidate
+channels that **merges** with `.cargo/config.toml`'s getrandom `--cfg` instead
+of replacing it (`RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS` and
+`--config target.cfg(…).rustflags` all measured the cfg count to **0**;
+`[profile.release] trim-paths` is not stabilized in cargo 1.92.0). Three
+builds at `08c074c` — baseline, a 122-character checkout path, and a different
+`$CARGO_HOME` — produced **byte-identical** module and glue,
+`baee3fc9125a04429232dcb8510985b570bb682f81cc1f54ef54f8dab54522a3`, module
+1 853 031 B, page 2 516 397 B.
+
+**The footer digest this moves** is a consequence of the discharge, not a
+correction of §5 R2: the number is a function of the module and the module
+changed on purpose, so any page deployed before this change carries the old
+digest until it is redeployed.
+
+**The per-occurrence arithmetic is NOT the evidence, and the record should not
+be read as if it were.** 52 × 3 B of path-length difference predicts 156 B
+against the 192 B two-runner delta measured, and the local fix predicts 520 B
+against 512 B measured; the residual is data-section and offset encoding. The
+claim rests on the byte-identity above — which is why it was measured on two
+roots rather than counted in characters.
+
+**Authority.** The R25 lane, 2026-08-15, closing Accept row 1's first clause;
+recorded by the registrar in the act that registers **R86** (the row for that
+Accept clause's *second* half, which no CI job performs). Lands in the same
+commit as its subject.
+
+**Which rulings still stand.** All of them, and both errors run in the
+direction that **understates** the discipline rather than licensing a shortcut.
+§5 R5's closed operation list is unchanged, including (i) — the flag is still
+invoked, it is merely not self-enforcing. §7 rule 1's remap requirement is
+unchanged in substance and is now met. §7 rule 2's remaining environment axes
+(locale, `TZ`, `HOME`, user, host) are **not** proven independent by the three
+builds above, which shared all of them, and this correction claims nothing
+about them.

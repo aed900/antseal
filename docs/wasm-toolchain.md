@@ -308,6 +308,150 @@ deferral. What is no longer true is only the last clause: D18 is no longer
 free, and the wrapper crate carrying the JS surface is exactly what ships —
 above core, never inside it.
 
+### 4.1 Path remapping: why the shipped module carries no builder path (R25/R83)
+
+**[2026-08-15, R25 Accept row 1.]** The tool pins above fix *which programs*
+run. This subsection fixes the other half of a reproducible build: which
+*machine* they ran on must not be visible in the output.
+
+**What was wrong, measured on two runners at `08c074c`.** GitHub Actions
+produced a 1 853 735 B module; this machine produced 1 853 543 B. The cause was
+the builder's absolute `$CARGO_HOME` — `/home/runner/.cargo/registry` against
+`/home/deb/.cargo/registry` — embedded **52 times** in each artifact, in the
+`#[track_caller]`/panic-location strings of registry dependencies
+(`crypto-bigint` 17, `der` 5, `ml-dsa` 4, …). Base64-expanded into D129's
+single-file page, the module delta is the whole of the page delta.
+
+**Two counts D63 §7 rule 1 leads a reader to expect are wrong for this
+artifact, and both were re-measured here.** §1 (j)'s *300 checkout-path* and
+*1 274 registry* occurrences were taken on the **debug** `wasm_bitmatch.wasm`.
+On the **release** module `scripts/wasm-pack-build.sh` ships, the registry
+count is **52** and the checkout-path count is **zero** — cargo already hands
+the crate being built a relative path, so `crates/antseal-core/src/…` is what
+appears. The workspace root is remapped anyway: it costs nothing today and is
+exactly what starts leaking if any profile turns debuginfo back on.
+
+**The mechanism.** `scripts/wasm-pack-build.sh` derives both prefixes from the
+environment doing the building and passes them on the one `wasm-pack` command:
+
+```
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=
+    "--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry=/cargo/registry
+     --remap-path-prefix=<workspace root>=/antseal"
+```
+
+Nothing is hard-coded — that is the property under test — and the physically
+resolved form of each root is added when a symlink makes it differ.
+
+**Why that channel and not the three obvious ones.** Measured on cargo 1.92.0:
+
+| channel | result |
+| --- | --- |
+| `RUSTFLAGS` / `CARGO_ENCODED_RUSTFLAGS` | **REPLACES** the whole rustflags selection — `.cargo/config.toml`'s getrandom `--cfg` (§3) silently disappears. Measured cfg count: 0. |
+| `--config 'target.cfg(target_arch="wasm32").rustflags=[…]'` | **also replaces it.** The cargo book's *"all matching `target.*` entries joined together"* does not survive a `--config` override. Measured cfg count: 0. This is the one that looks safe and is not. |
+| `[profile.release] trim-paths = "all"` | derives both remaps by itself and is **not stabilized**: cargo 1.92.0 refuses it in `Cargo.toml` and in `.cargo/config.toml` alike — *"feature `trim-paths` is required … not stabilized in this version of Cargo"*. Nightly is not this toolchain. |
+| `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` | **MERGES** with the config file's entry for the same target — the getrandom `--cfg` survives beside both remaps in one `rustc` invocation. **Adopted.** |
+
+The replacement values are `trim-paths`'s own (`/cargo/registry`), so adopting
+it once it stabilizes would not move the published footer digest.
+
+**Why the flags are NOT in `.cargo/config.toml`.** D18 §10's rider warned that
+config-level flags are per **target**, so they would move `wasm_bitmatch.wasm`'s
+bytes too (§6), and asked R25 to verify rather than assume. Verified by not
+touching that input at all: scoping to the invocation leaves the wasm32 **debug**
+cache (the `wasm32-core-tests` lane and Q5's bit-match) and the entire **native**
+cache seeing no flag change. The cost is one wasm32-release rebuild, measured at
+**57 s** on the 2-core host.
+
+Two rebuild figures, measured here because **R83** needs them for the gate's
+budget: `wasm-pack-build.sh --build-only` costs **1 m 08 s** cold and
+**19.2 s** warm with no source change (cargo itself 1.2 s of that; the rest is
+`wasm-bindgen` and the out-dir rewrite). An always-rebuild arm for
+`scripts/verifier-page-build.sh` prices at the warm figure on the common path.
+
+**Whitespace is refused, not tolerated.** Cargo splits
+`CARGO_TARGET_*_RUSTFLAGS` on spaces and offers no encoded form for the
+per-target key, so a build path containing whitespace would be truncated into a
+half-remapped artifact. The script dies naming the path instead.
+
+**`--locked` is passed and separately verified, because passing it does not
+work.** D63 §5 R5 (i) rules the build *"invoke `wasm-pack` … with `--locked`"*.
+Measured in a scratch copy of the tree, with `Cargo.lock` deleted:
+
+| invocation | exit | lock recreated |
+| --- | --- | --- |
+| `cargo build --target wasm32-unknown-unknown --release --locked` | **101** — *"the lock file … needs to be updated but `--locked` was passed"* | no |
+| `wasm-pack build … -- --locked` | **0** | **yes** |
+
+Extra options *do* reach cargo — a bogus one is rejected — so the flag is not
+being dropped. **`wasm-pack` runs `cargo metadata` before the build**, that call
+re-resolves and writes `Cargo.lock`, and the `--locked` build then trivially
+agrees with the lock it just regenerated. In the probe the re-resolution picked
+`thiserror 2.0.20` where the committed lock names `2.0.19` — a different
+dependency graph, silently, which is precisely what Accept row 1 forbids.
+
+The flag is passed anyway (it binds the build step and, measured, does not move
+the digest), and the property it was meant to buy is asserted directly:
+`scripts/wasm-pack-build.sh` records `sha256(Cargo.lock)` before and after the
+build and fails naming the `cargo metadata` mechanism if it moved. **D63 §5
+R5 (i)'s named mechanism is therefore necessary but not sufficient, and this is
+the correction it needs.**
+
+**The enforcement, and its planted fault.** `--check` and `--build-only` scan
+the module *and* the glue for `$repo`, `$CARGO_HOME`, `/home/`, `/Users/` and
+`/root/`, and print the count of remapped placeholders (printed, not asserted:
+a dependency that stopped emitting paths is not a defect). `--self-test`'s
+**third** planted fault appends the builder's `$CARGO_HOME` to a copy of the
+real module and requires the scan to go red on its own message.
+
+**The evidence for Accept row 1** (2026-08-15, all at `08c074c`):
+
+| build | checkout path | `CARGO_HOME` | remap | SHA-256 |
+| --- | --- | --- | --- | --- |
+| baseline | `/home/deb/Documents/code0` (25 ch) | `/home/deb/.cargo` | on | `baee3fc9…22a3` |
+| second runner, path only | scratchpad, 122 ch | `/home/deb/.cargo` | on | `baee3fc9…22a3` |
+| second runner, both roots | scratchpad, 122 ch | scratchpad | on | `baee3fc9…22a3` |
+| control | scratchpad, 122 ch | `/home/deb/.cargo` | **off** | `e7b722ff…d4c4` |
+
+The three remapped builds are **byte-identical**, module and glue. The control
+reproduces the pre-change in-tree artifact **exactly**, from a checkout path
+97 characters longer.
+
+That control settles one half of the disjunct D132 §1 (f) and R83 left open —
+*"either the committed artifact is not from HEAD, or the build is not
+reproducible from source alone"*. **The second disjunct is refuted**: at
+`08c074c` the module is reproducible from source alone, on two checkout paths,
+to the byte. Which leaves the first as the explanation of R83's 14 066 B — a
+stale artifact — and is why R83's own mechanism, not this subsection, is what
+closes it.
+
+Sizes: module 1 853 543 B → **1 853 031 B**; page 2 517 081 B → **2 516 397 B**,
+the 684 B being exactly the base64 expansion of the module's 512 B. The
+per-occurrence arithmetic does not close exactly in either direction and is not
+relied on: 52 × (25 − 15) predicts 520 B against 512 B measured, and the
+two-runner delta first reported as *entirely* path length predicts 52 × 3 =
+156 B against 192 B measured. The residual is data-section and offset encoding.
+**The claim rests on the byte-identity above, not on the arithmetic** — which is
+the point of measuring two runners rather than counting characters.
+
+**The footer digest this moves** (D63 §5 R2 — untruncated, 64 ungrouped
+lowercase hex), and the page it is injected into:
+
+```
+module  baee3fc9125a04429232dcb8510985b570bb682f81cc1f54ef54f8dab54522a3   1 853 031 B
+page    5d4703a2920546b18114f3e8dcd23b509e33b00665602f4574793cba5ee1dbc8   2 516 397 B
+```
+
+A deployed page built before this change carries the old digest and will not
+match a fresh build until it is redeployed. That is expected: the number is a
+function of the module, and the module changed on purpose.
+
+**Not measured, and therefore not claimed.** The three builds shared a locale,
+a `TZ`, a `HOME`, a user and a host. The axes proven independent are the
+checkout path and `$CARGO_HOME`; the rest of D63 §7 rule 2's list
+(timestamps aside — three builds minutes apart agreeing rules those out at
+second granularity) is untested here.
+
 ## 5. ML-DSA / fips204 on wasm32 — the C-facing probe result (P14 accept)
 
 Input to C's `sig_policy = [ed25519]` fallback decision:

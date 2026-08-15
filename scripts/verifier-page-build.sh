@@ -35,16 +35,54 @@ note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::verifier-page-build: %s\033[0m\n' "$*" >&2; exit 1; }
 
 PKG="target/wasm-pack/antseal-wasm"
+MODULE="${PKG}/antseal_wasm_bg.wasm"
 TEMPLATE="verifier-web/index.template.html"
 OUT="target/verifier-web"
 
+# R83, arm (b): REBUILD, then require byte-equality with whatever was there.
+#
+# This script used to build only when `target/wasm-pack/`'s two files were
+# ABSENT, so `--check` — the mode the gate runs, and the default — packaged,
+# hashed and asserted whatever artifact happened to be sitting in `target/`.
+# Every one of D129 §5 R9's assertions still passed, and that is not a bug in
+# them: each compares the built page against **the module it was built from**,
+# which is exactly the property a stale module preserves. Nothing compared the
+# artifact against the sources.
+#
+# Arm (b) rather than a bare "always rebuild" (arm (a)) because the difference
+# IS R25's Accept row 1. A rebuild alone makes the packaged bytes current; the
+# comparison makes the build's reproducibility an assertion rather than a
+# precondition for one, so two runners each re-using their own stale `target/`
+# can no longer agree with themselves and prove nothing. Measured, un-remapped
+# against remapped: this check goes red where every R9 assertion stayed green.
+#
+# Arm (c) — an mtime or commit-stamp predicate — is refused: neither handle
+# sees an uncommitted edit, which is the case a developer is actually in.
+stale_guard() {
+  local before after
+  before=""
+  [ -f "$MODULE" ] && before="$(sha256sum "$MODULE" | awk '{print $1}')"
+
+  note "rebuild the module, so the packaged bytes are the tree's (R83)"
+  ./scripts/wasm-pack-build.sh --build-only || return 1
+  [ -f "$MODULE" ] || die "the module is absent after a green build"
+  after="$(sha256sum "$MODULE" | awk '{print $1}')"
+
+  if [ -n "$before" ] && [ "$before" != "$after" ]; then
+    printf '::error::verifier-page-build: STALE ARTIFACT — the module in %s was not built from this tree.\n' "$PKG" >&2
+    printf '  was:   %s\n  is:    %s\n' "$before" "$after" >&2
+    printf '  Everything packaged from the old bytes — the page, its CSP hashes and the footer digest\n' >&2
+    printf '  the page publishes about itself — described an artifact the sources do not produce.\n' >&2
+    printf '  The rebuild has corrected it; re-run to package the current module.\n' >&2
+    return 1
+  fi
+  [ -n "$before" ] && printf '  module unchanged by the rebuild: %s\n' "${after:0:16}…"
+  return 0
+}
+
 cmd_build() {
   [ -f "$TEMPLATE" ] || die "the committed template $TEMPLATE does not exist — R23 authors it"
-
-  if [ ! -f "${PKG}/antseal_wasm_bg.wasm" ] || [ ! -f "${PKG}/antseal_wasm.js" ]; then
-    note "the module is not built yet — running scripts/wasm-pack-build.sh --build-only"
-    ./scripts/wasm-pack-build.sh --build-only || return 1
-  fi
+  stale_guard || return 1
 
   note "package the page into ONE file (D129 §5 R1-R2, ordering R8)"
   node scripts/verifier-page-pack.mjs "$PKG" "$TEMPLATE" "$OUT" || return 1
@@ -86,9 +124,39 @@ cmd_check() {
   note "PASS — one file, decomposable to the template, policy over real hashes"
 }
 
+# R83's Accept row 1: a planted STALE artifact must turn --check red, and be
+# seen to do it for the right reason. A nonzero exit is not the evidence — a
+# crash exits nonzero too — so this matches on the message.
+cmd_stale_self_test() {
+  local out status saved
+  [ -f "$MODULE" ] || ./scripts/wasm-pack-build.sh --build-only >/dev/null 2>&1 || return 1
+  saved="$(mktemp)"
+  cp "$MODULE" "$saved"
+
+  # A module that is not this tree's. One flipped byte in a data section is
+  # enough and is exactly the shape of the real defect: a plausible artifact,
+  # from a different build, that every page-level assertion would still accept.
+  printf 'stale' | dd of="$MODULE" bs=1 seek=1024 conv=notrunc status=none
+
+  out="$(cmd_build 2>&1)"; status=$?
+  cp "$saved" "$MODULE"; rm -f "$saved"
+
+  if [ "$status" -eq 0 ]; then
+    printf '::error::the stale-artifact guard stayed GREEN over a planted module — a green --check is not evidence the packaged bytes came from the tree (R83)\n' >&2
+    return 1
+  fi
+  if ! grep -q 'STALE ARTIFACT' <<<"$out"; then
+    printf '::error::the guard went red for the WRONG reason:\n%s\n' "$(grep '::error::' <<<"$out" | head -3)" >&2
+    return 1
+  fi
+  printf '  planted fault: a module not built from this tree      -> RED (STALE ARTIFACT)\n'
+}
+
 case "${1:---check}" in
   --check | "")  cmd_check 0 ;;
   --build-only)  cmd_check 1 ;;
-  --self-test)   node scripts/verifier-page-pack.mjs --self-test "$PKG" "$TEMPLATE" ;;
+  --self-test)
+    node scripts/verifier-page-pack.mjs --self-test "$PKG" "$TEMPLATE" || exit 1
+    cmd_stale_self_test ;;
   *) die "usage: scripts/verifier-page-build.sh [--check | --build-only | --self-test]" ;;
 esac

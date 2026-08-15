@@ -500,14 +500,20 @@ crosscheck_lane cross-check    --check
 # R27's entry point, because it needs a browser and this gate must stay
 # runnable on a host without one.
 #
-# COST, measured here 2026-08-12, two runs each on this 2-core host with the
-# module already built: `--self-test` 0.13 s / 0.15 s, `--check` 0.39 s / 0.37 s.
-# Two samples, one host, one day — the weaker kind of figure, and it says so.
-# A COLD first run measured 5.11 s, essentially all of it page-cache faults on
-# the 1.84 MB module. The figure that is NOT in this range is a run where the
-# module is absent: `--check` then calls `wasm-pack-build.sh --build-only`
-# itself, and pays that lane's cargo build. That is the honest reason this sits
-# after the wasm lanes rather than before them.
+# COST — RE-MEASURED 2026-08-15, after R83 made the module rebuild
+# UNCONDITIONAL (it previously built only when `target/wasm-pack/` was empty,
+# so this lane could pass over an artifact no source produced). Two runs each on
+# this 2-core host: `--check` 1.49 s / 1.42 s, `--self-test` 1.29 s. Two
+# samples, one host, one day — the weaker kind of figure, and it says so.
+#
+# The rebuild is far cheaper than its description suggests because cargo
+# recompiles nothing when the tree has not moved: wasm-pack relinks in 0.65 s.
+# The figure NOT in this range is a run after a source change, which pays the
+# wasm32-release build — measured 1 m 08 s cold. That is the honest reason this
+# sits after the wasm lanes rather than before them.
+#
+# The superseded figures are kept for the record, because the delta IS R83:
+# `--check` 0.39 s / 0.37 s when it was allowed to skip the build entirely.
 run page-selftest scripts/verifier-page-build.sh --self-test
 run verifier-page scripts/verifier-page-build.sh --check
 
