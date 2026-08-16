@@ -193,22 +193,30 @@ impl VerificationReport {
 /// Work-level metadata read from the manifest embedded in the bundle
 /// (MVP-SPEC.md line 98).
 ///
-/// # Six fields; one of them is a verifier statement
+/// # Six fields; two of them are verifier statements
 ///
 /// This doc said *"verified from the manifest"* and the field that holds
-/// it said *"as verified from the bundle"* until R73 measured the group:
-/// of the six children, exactly one is a verified statement **about the
-/// work**.
+/// it said *"as verified from the bundle"* until R73 measured the group
+/// and found **one** verified statement **about the work**. C14's landing
+/// made it **two**, and this heading is corrected here rather than left as
+/// arithmetic for the reader (R87) — the count sat one paragraph above the
+/// field whose doc falsified it.
 ///
 /// - [`WorkMetadata::work_id`] is **recomputed**, not read.
+/// - [`WorkMetadata::signature_scheme`] is **checked**: the pipeline's
+///   stage 5 runs on every verify, so the label reports a `sig_policy`
+///   whose signatures were verified and passed.
 /// - [`WorkMetadata::format_version`] is **decoder-enforced**: a body
 ///   declaring any other version never reaches a report.
 /// - [`WorkMetadata::title`], [`WorkMetadata::app_version`] and
 ///   [`WorkMetadata::claimed_time_informational_only`] are the sealer's
 ///   own text, reproduced verbatim and checked against nothing.
-/// - [`WorkMetadata::signature_scheme`] is a stage that has not run
-///   (`NotEvaluated` until C14), so it asserts nothing in either
-///   direction.
+///
+/// Both verifier statements are **self-consistency** results until they are
+/// compared with something the bundle did not supply: `work_id` digests
+/// bytes the bundle handed over, and the signatures are checked against
+/// pubkeys the same body declares. That is a real check and it is not an
+/// external binding — the same distinction `work_id`'s own doc draws.
 ///
 /// Every one of these lives inside the body that `work_id` digests, so
 /// none can be edited without moving the work identity. That binds their
@@ -268,18 +276,26 @@ pub struct WorkMetadata {
     /// at the type level; R18 renders it subordinate, labeled "asserted
     /// by sealer — NOT verified" (MVP-SPEC.md line 137).
     pub claimed_time_informational_only: Option<String>,
-    /// Signature-scheme label slot (MVP-SPEC.md line 97: verdicts label
-    /// "hybrid (PQ)" vs "Ed25519-only"). C14 supplies the datum at
-    /// integration; [`SignatureScheme::NotEvaluated`] until then.
+    /// Signature-scheme label (MVP-SPEC.md line 97: verdicts label
+    /// "hybrid (PQ)" vs "Ed25519-only").
     ///
-    /// **Not-evaluated is neither a claim nor a verdict**: the stage has
-    /// not run, so this says nothing in either direction about the
-    /// bundle's signatures, and a renderer must not let it read as
-    /// "unsigned" or as "signatures failed". Once C14 lands it becomes a
-    /// genuine verifier statement — the label of a `sig_policy` whose
-    /// signatures were checked and passed — which is precisely why
-    /// [`SignatureScheme::Other`] exists rather than collapsing into
-    /// [`SignatureScheme::NotEvaluated`].
+    /// **C14 has landed and supplies the datum on every verify.** The
+    /// pipeline's stage 5 calls `check_signatures` unconditionally — no
+    /// option, no `cfg`, no branch — and its result is this field, so what
+    /// is recorded here is a **verifier statement**: the label of a
+    /// `sig_policy` whose signatures were checked and passed. That is
+    /// precisely why [`SignatureScheme::Other`] exists rather than
+    /// collapsing into [`SignatureScheme::NotEvaluated`].
+    ///
+    /// **No production path writes [`SignatureScheme::NotEvaluated`] into
+    /// this field.** It stays representable and serialized because
+    /// [`SignatureScheme::ALL`] and [`SignatureScheme::wire_name`] are
+    /// frozen report-v1 surface (D105); see that variant's own doc for what
+    /// it is and which tests construct it. A renderer that does meet the
+    /// value must still not let it read as "unsigned" or as "signatures
+    /// failed" — it says nothing in either direction — but no report this
+    /// pipeline emits carries it. This paragraph replaces a promise that
+    /// C14 was still pending, which outlived C14 by the length of R87.
     pub signature_scheme: SignatureScheme,
 }
 
@@ -287,7 +303,22 @@ pub struct WorkMetadata {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SignatureScheme {
-    /// Signature stage not yet wired (pre-C14 integration slot).
+    /// **Representable, serialized, and produced by no production path.**
+    ///
+    /// This was the pre-C14 integration slot. C14 wired the stage, the
+    /// pipeline runs it on every verify, and no code path outside
+    /// `#[cfg(test)]` assigns this value — measured across `crates/` for
+    /// R87, which also found the count wrong on its own row: **three** test
+    /// sites construct it, not one.
+    ///
+    /// - `verify::tests::empty_anchor_report_is_representable`
+    /// - `verify::overlay::tests::report_bytes_are_byte_identical_whether_or_not_the_overlay_computation_runs`
+    /// - `verify::verdict::tests::a_claimed_time_earlier_than_every_anchor_cannot_move_the_headline`
+    ///
+    /// So do not read "unreachable" as "dead" and delete it:
+    /// [`Self::ALL`] and [`Self::wire_name`] are frozen report-v1 surface,
+    /// removing a variant is a **format event** under D105 rather than a
+    /// tidy-up, and the three tests above would fail to compile.
     NotEvaluated,
     /// Hybrid Ed25519 + ML-DSA-65 per `sig_policy` ("hybrid (PQ)").
     HybridPq,

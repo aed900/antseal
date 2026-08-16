@@ -414,11 +414,19 @@ pub fn receipt_detail_line(block_number: u64, transaction_count: u64) -> String 
 /// (PQ)"* vs *"Ed25519-only"*).
 ///
 /// Wildcard-free, so a fifth scheme cannot ship unspelled.
-/// [`SignatureScheme::NotEvaluated`]'s spelling is dictated by its own field
-/// doc — the stage has not run, so the label must not read as "unsigned" or
-/// as "signatures failed" — and [`SignatureScheme::Other`]'s says only what
-/// the report can support: report v1 carries the scheme and **no algorithm
-/// list**, so no row here may name algorithms it cannot read.
+///
+/// [`SignatureScheme::NotEvaluated`]'s spelling is dictated by **that
+/// variant's own doc**, cited here by symbol and deliberately not restated:
+/// the sentence this comment used to copy — that the stage had not run — was
+/// falsified by C14 and went on instructing a renderer for as long as the
+/// copy survived, which is the whole of R87. Read the state there; what
+/// binds this row is only that the value asserts nothing in either
+/// direction, so the string may not read as "unsigned" or as "signatures
+/// failed". The string itself is frozen (R18) and R87 moved no byte of it.
+///
+/// [`SignatureScheme::Other`]'s row says only what the report can support:
+/// report v1 carries the scheme and **no algorithm list**, so no row here
+/// may name algorithms it cannot read.
 #[must_use]
 pub const fn signature_scheme_label(scheme: SignatureScheme) -> &'static str {
     match scheme {

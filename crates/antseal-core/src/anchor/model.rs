@@ -547,7 +547,20 @@ pub struct ReceiptFacts {
 pub enum ReceiptConfirmation {
     /// Both endpoints agreed on these facts.
     Agreed(ReceiptFacts),
-    /// Both endpoints agreed the transaction is not on chain.
+    /// Both endpoints answered with **no receipt for this transaction
+    /// hash**.
+    ///
+    /// Not *"not on chain"*, which is what this doc said until R87: that
+    /// asserts absence from **every** chain, and it is false for a receipt
+    /// sealed on another one — the universal claim D137 §3 R1 ruled out and
+    /// §3 R8 already corrected on the wasm evidence token, in this same
+    /// wording. What the agreeing pair established is absence from the one
+    /// chain the host's guard pinned.
+    ///
+    /// **This variant does not record which chain that is.** The overlay
+    /// supplies the id beside it (`verify::overlay`'s `receipt_echo`), which
+    /// is why the rendered sentence can name a chain that appears nowhere in
+    /// this type — and why a reader must not infer the scope from here.
     NotOnChain,
 }
 
