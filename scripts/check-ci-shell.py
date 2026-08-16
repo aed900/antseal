@@ -234,25 +234,37 @@ def self_test() -> int:
     # cannot make a planted fault look red for the wrong reason.
     scratch = WORKFLOWS_DIR / ".ci-shell-selftest.yml"
     siblings = [w for w in workflows() if w != WORKFLOW]
+    # THE ANCHORS ARE ASSERTED, NOT ASSUMED (see the `assert` in the loop
+    # below). All three used to plant against the `secret-guard` job, which
+    # D138/Q239 MOVED out of ci.yml into ci-always.yml — and this self-test went
+    # red on the very next gate run with `self-test fault … did not apply`,
+    # which is the assertion working: a planted fault that cannot be planted is
+    # reported, never silently skipped. Re-anchored on `golden-vectors`, chosen
+    # because it is a plain single-step lane in ci.yml with no matrix, no
+    # `defaults:` and no `if:`, so it is the least likely of the fifteen to move
+    # again. If it ever does, this comment is the instruction: re-anchor, do not
+    # weaken the assert.
+    anchor_step = "      - name: Run the golden-vector suite (vector_ reserved-name marker)"
+    anchor_run = "        run: ./scripts/ci-lanes.sh golden-vectors"
     faults = [
         (
             "a NEW inline run: block with logic",
             original.replace(
-                "      - name: Vault-export / wallet-key signature guard (self-test, then scan)",
+                anchor_step,
                 "      - name: planted fault\n"
                 "        run: |\n"
                 "          matched=\"$(cargo test --locked -- --list | grep -c ': test$')\"\n"
                 "          if [ \"$matched\" -eq 0 ]; then exit 1; fi\n"
-                "      - name: Vault-export / wallet-key signature guard (self-test, then scan)",
+                + anchor_step,
                 1,
             ),
         ),
         (
             "logic wrapped around a script call",
             original.replace(
-                "        run: ./scripts/ci-lanes.sh secret-guard",
+                anchor_run,
                 "        run: |\n"
-                "          ./scripts/ci-lanes.sh secret-guard\n"
+                "          ./scripts/ci-lanes.sh golden-vectors\n"
                 "          echo 'and now some logic' && exit 0",
                 1,
             ),
@@ -260,8 +272,8 @@ def self_test() -> int:
         (
             "a run: block calling a script that does not exist",
             original.replace(
-                "        run: ./scripts/ci-lanes.sh secret-guard",
-                "        run: ./scripts/does-not-exist.sh secret-guard",
+                anchor_run,
+                "        run: ./scripts/does-not-exist.sh golden-vectors",
                 1,
             ),
         ),

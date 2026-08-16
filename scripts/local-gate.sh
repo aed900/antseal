@@ -7,11 +7,22 @@
 # "the wasm32 tests pass" when the lane was a `cargo build`, and the resulting
 # blind spot cost a CI red at `6f69e1a` (a 64-bit-only `size_of` assertion in
 # `antseal-core/src/anchor/caps.rs`). So, explicitly — what a green run of
-# THIS script does NOT tell you, as of 2026-08-09 (19 required contexts from
-# 17 jobs in `.github/workflows/ci.yml`):
+# THIS script does NOT tell you, as of 2026-08-16 (19 required contexts, from
+# 15 jobs in `.github/workflows/ci.yml`, 2 in `ci-always.yml` and 1 two-arm
+# matrix in `cross-os-extended.yml` — D138/Q239 split them; the CONTEXT SET is
+# unchanged at 19 and no job was added or removed):
 #
 #   cross-os-macos, cross-os-windows  no such host exists here. The Linux leg
 #                                     is covered in substance by `test`.
+#                                     SINCE D138 these two no longer run on a
+#                                     push at all — weekly plus every pull
+#                                     request, in cross-os-extended.yml — so
+#                                     the window between introducing an
+#                                     OS-conditional divergence and hearing
+#                                     about it is now up to seven days. That
+#                                     is the cost side of the ruling and this
+#                                     is the file a contributor reads before a
+#                                     push.
 #   core-dep-graph                    `./scripts/ci-lanes.sh dep-graph`
 #   secret-guard                      `./scripts/ci-lanes.sh secret-guard`
 #   audit-deny                        `./scripts/ci-lanes.sh audit-deny`
@@ -410,6 +421,38 @@ run format-freeze scripts/format-freeze.sh
 # remote is not evidence, and neither is one that never runs locally.
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
+
+# D138/Q239 — the guard over CI's path filter, which is the one CI mechanism
+# with no failure mode of its own. When `ci.yml`'s `on.push.paths-ignore` is
+# wrong the job simply does not run, and the absence of a red is
+# indistinguishable from a green; no lane, local or remote, can notice. This
+# check is the only thing that can, so it runs here for the same reason
+# `ci-shell` does — and with more force, because the mistake it catches is
+# invisible rather than merely late.
+#
+# It reads committed files only: no cargo, no network, no git. Its `--self-test`
+# plants EIGHTEEN faults, one per rule and two per direction on the registers,
+# and each must go red BY ITS OWN RULE TAG rather than by exit status
+# (scripts/lib/red-arm.sh). Its first version failed its own self-test — the
+# MVP-SPEC.md arm stayed green because both readers spell the path as an offset
+# from `CARGO_MANIFEST_DIR` rather than from the source file — which is the best
+# evidence available that the arms are not fitted to the check.
+#
+# MEASURED on this 2-core host 2026-08-16, 3 runs each: the check
+# 0.59/0.57/0.58 s (it walks 2 141 tracked files and scans 422 readers) and
+# `--self-test` 8.12/7.97/7.96 s (it runs the whole check 19 times). ~8.6 s for
+# the pair. Those numbers are ~4x lower than the first working version, and the
+# reason is worth knowing before anyone extends this file: `translate_pattern`
+# was compiling a fresh regex on all 132 166 calls, which cost 4.0 s of a 5.6 s
+# run. It is `functools.lru_cache`d now. A caching pass over file READS bought
+# nothing at all (21.9 s -> 21.5 s) — the cost was never I/O, and the measured
+# profile said so where a guess had not.
+#
+# In CI it rides as two steps of `ci-always.yml`'s `traceability` job (~19 s
+# today, so this roughly halves again into a job that is already seconds) and
+# adds ZERO required-status contexts — the set stays at 19.
+run ci-paths-selftest scripts/check-ci-paths.py --self-test
+run ci-paths          scripts/check-ci-paths.py
 
 # D124/Q182 — the test-of-the-test for the guard that asserts CI's
 # `traceability` job runs no cargo. The ASSERTION is two steps on that job and

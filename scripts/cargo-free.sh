@@ -3,8 +3,16 @@
 #
 # ── THE PROPERTY. STATED ONCE, HERE ────────────────────────────────────────
 #
-#   NO STEP OF `.github/workflows/ci.yml`'s `traceability` JOB INVOKES cargo,
-#   rustc OR rustup — INCLUDING STEPS THAT ARE NOT YET WRITTEN.
+#   NO STEP OF THE `traceability` JOB INVOKES cargo, rustc OR rustup —
+#   INCLUDING STEPS THAT ARE NOT YET WRITTEN.
+#
+# [D138/Q239, 2026-08-16] That job now lives in
+# `.github/workflows/ci-always.yml`, not `ci.yml`. This sentence used to name
+# the file and no longer does, on purpose: the property is about a JOB, the job
+# id and `name:` are unchanged, and pinning the sentence to a workflow filename
+# is what made it go stale the moment the job moved. `--arm`/`--verdict` take
+# the job NAME as their argument and never read a workflow file, so nothing
+# below changed. `core-dep-graph` is still in `ci.yml`.
 #
 #   And its converse, asserted by the same instrument so the two cannot drift
 #   apart:

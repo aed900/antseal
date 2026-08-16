@@ -77,6 +77,21 @@
 #                                 propagates and fails the harness rather than
 #                                 satisfying an arm. Its lesser weakness is
 #                                 recorded at its own `self_test`.
+#   scripts/check-ci-paths.py     the same in-process shape, and it CLOSES that
+#                                 lesser weakness: every failure carries a RULE
+#                                 TAG (R1..R6, R4a/R4c/R4e) and each of its
+#                                 eighteen arms requires its own tag, so a
+#                                 finding unrelated to the planted fault cannot
+#                                 satisfy an arm. Nine arms plant in the tree
+#                                 and restore in a `finally`; the rest pass a
+#                                 mutated exclusion list as an argument, which
+#                                 touches no file at all. Its own first version
+#                                 FAILED this self-test — the MVP-SPEC.md arm
+#                                 stayed green because both readers spell that
+#                                 path as an offset from CARGO_MANIFEST_DIR and
+#                                 the resolver anchored on the source file —
+#                                 which is the evidence that the arms were not
+#                                 fitted to the check. D138/Q239.
 #
 # Python instruments cannot source this file. The rule is the same for them
 # and the shape is `check()`-returns-a-list, as `check-ci-shell.py` does it:

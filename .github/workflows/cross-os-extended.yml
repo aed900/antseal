@@ -1,0 +1,120 @@
+# The two expensive cross-platform arms, off the per-push path (D138/Q239).
+#
+# ── WHAT MOVED AND WHY ──────────────────────────────────────────────────────
+#
+# `ci.yml`'s `cross-os` matrix ran three OSes on every push. Two of them are
+# billed at a multiplier and together they were 88 % of that lane's cost and
+# 27 % of the whole per-push bill. Measured on run 31873411737:
+#
+#   arm                wall      multiplier   weighted minutes
+#   cross-os-macos     1 min 19 s    x10          13.2
+#   cross-os-windows   4 min 51 s     x2           9.7
+#   cross-os-linux     2 min 15 s     x1           2.2
+#
+# The multiplier is the whole story — macOS is the FASTEST of the three in real
+# time and the most expensive by a factor of six. The Linux arm stays on every
+# push in `ci.yml`, where it costs 2.2 and covers the substance of the suite;
+# these two run here.
+#
+# ── THE TRIGGERS, AND THE TRAP THEY AVOID ───────────────────────────────────
+#
+# `pull_request:` IS PRESENT AND UNFILTERED, and that is not an oversight — it
+# is the thing that makes this safe. `cross-os-macos` and `cross-os-windows`
+# are required status contexts. A required context whose workflow never starts
+# leaves the pull request pending for ever; GitHub does not read "the workflow
+# was filtered out" as "the check passed". Keeping `pull_request:` here means
+# all 19 contexts still report on a pull request exactly as they did before,
+# and the branch-protection payload in docs/ci-verification.md is untouched.
+# `scripts/check-ci-paths.py` R3 fails if either context stops being produced
+# on `pull_request`.
+#
+# `push:` IS ABSENT, deliberately. That is the entire saving.
+#
+# WHAT IT COSTS: this repository is pushed to directly, so the per-push run was
+# the only gate these arms had. Their coverage drops from every push to weekly
+# plus every pull request, and a platform divergence introduced on a Monday can
+# sit undetected until Sunday. The Linux arm and the `test` lane still run on
+# every push, so the divergence class this narrows is specifically the
+# OS-conditional one — `size_of` differences, path separators, line endings,
+# filesystem case-sensitivity. That class has bitten this project before
+# (Q125's `size_of::<x509_cert::Certificate>()`, though on wasm32 rather than
+# macOS), so the risk is not theoretical. It is the maintainer's instruction
+# and it is a real trade, not a free win.
+#
+# ── CADENCE ─────────────────────────────────────────────────────────────────
+#
+# Sunday 04:53 UTC. Off-hour and off-minute like every other cron here, and
+# chosen to collide with none of them: advisory-cron is Mon 06:17, fuzz-nightly
+# Mon+Thu 03:41, devnet-e2e-cron Wed 05:37. GitHub delays scheduled runs under
+# load — measured at ~2.5 h on this repository's fuzz lane (D61) — so treating
+# a cron instant as exact is a mistake; the spacing is for cost, not precision.
+#
+# COST OF THE CADENCE, since the whole row is a budget: 22.9 weighted minutes
+# per run, 52 runs a year, 4.33 runs a month = ~99 weighted minutes a month.
+# `scripts/ci-lanes.sh fuzz-budget` prices only fuzz-nightly and does not see
+# this file (Q78 owns the whole-allowance accounting); this comment is the
+# record until it does.
+#
+# ── NO LOGIC IN THIS FILE (Q43) ─────────────────────────────────────────────
+#
+# `scripts/check-ci-shell.py` scans every workflow in this directory. The one
+# `run:` below is the same committed-script call `ci.yml` makes.
+name: cross-os-extended
+
+on:
+  # No `push:`. See above — that absence is the saving.
+  pull_request:
+  schedule:
+    - cron: "53 4 * * 0"
+  # So a maintainer can force the two arms without waiting for Sunday, e.g.
+  # before a release or after a platform-sensitive change.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Armed at WORKFLOW level, like every other workflow in this repository, so a
+# job added here later inherits the policy rather than quietly opting out of it
+# (docs/testing/anchor-ci-policy.md). `scripts/ci-lanes.sh anchor-net-policy`
+# requires this key in EVERY workflow file and turns red on a new one without
+# it — which is the only reason this line is not an easy thing to forget.
+env:
+  ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+
+jobs:
+  # THE JOB ID, THE `name:` TEMPLATE AND THE `label` VALUES ARE COPIED FROM
+  # ci.yml UNCHANGED. The rendered contexts must stay `cross-os-macos` and
+  # `cross-os-windows` byte-identically — they are required status contexts and
+  # ci.yml's header rule is absolute: never rename a job once it has landed on
+  # main. Moving one between workflow FILES does not rename it; renaming it
+  # here would.
+  cross-os:
+    name: cross-os-${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Never cancel sibling OSes: a divergence report needs both verdicts, not
+      # just the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos
+            runner: macos-latest
+          - label: windows
+            runner: windows-latest
+    defaults:
+      run:
+        # One portable script for both OSes (Git Bash on the Windows runner);
+        # also gives pipefail semantics everywhere.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Run cross-platform-sensitive suites (corpus_/vector_ filters; allowed-empty)
+        # `bash <script>` rather than `./<script>`: this job also runs on the
+        # Windows runner under Git Bash, where the executable bit is not the
+        # thing that decides.
+        run: bash scripts/ci-lanes.sh cross-os

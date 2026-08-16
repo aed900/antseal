@@ -1026,8 +1026,9 @@ lane_anchor_net_policy() {
 # every LATER STEP OF THE SAME JOB, which is a runner mechanism with no local
 # equivalent; running it from this script would mask one process and prove
 # nothing about a job. So the two halves land in the two venues that can hold
-# them: the assertion is two steps on `ci.yml`'s `traceability` job, and the
-# TEST OF THAT ASSERTION is this lane, runnable before a push.
+# them: the assertion is two steps on the `traceability` job (which since
+# D138/Q239 lives in `.github/workflows/ci-always.yml`, unchanged in id and
+# `name:`), and the TEST OF THAT ASSERTION is this lane, runnable before a push.
 #
 # `--self-test` runs thirteen checks — nine red arms, two direct property
 # assertions and two green controls. Each red arm plants one fault (a verdict

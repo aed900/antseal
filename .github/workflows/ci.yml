@@ -86,9 +86,46 @@
 name: ci
 
 on:
+  # ── D138/Q239: FILTERED ON `push` ONLY, AND THAT ASYMMETRY IS THE RULING ──
+  #
+  # `pull_request:` STAYS UNFILTERED, deliberately and permanently. A required
+  # status context whose workflow is skipped by path filtering never reports at
+  # all — GitHub leaves the check pending rather than treating a workflow that
+  # never started as a pass — so a filtered `pull_request:` here would hang
+  # every protected pull request for ever. Branch protection is not enabled
+  # today and every run of this workflow so far has been `event: push`, but the
+  # trap must not be BUILT IN against the day it is. Filtering `push` alone has
+  # no such failure mode: a push has nothing to gate.
+  #
+  # `scripts/check-ci-paths.py` R2 fails if a `paths`/`paths-ignore` key ever
+  # appears under `pull_request:` in any workflow in this directory.
   pull_request:
   push:
     branches: [main]
+    # THE EXCLUSION IS NOT MAINTAINED HERE. It is defined once, in
+    # `scripts/check-ci-paths.py`'s DOCS_ONLY, and that checker fails (R1)
+    # unless this list is equal to it, in order — the BOUNDARY_COPIES idiom of
+    # check-traceability.py. Edit both in the same commit or the filter and the
+    # guard are describing different repositories.
+    #
+    # WHY IT IS THREE ENTRIES AND NOT `docs/**`: a blanket docs exclusion is
+    # WRONG here and the measurement is not subtle. `docs/decisions/D18-wasm-
+    # bindgen-surface-location.md` carries `wasm-bindgen-cli --version 0.2.126`
+    # on lines 752 and 976, and `scripts/wasm-toolchain-audit.sh` greps
+    # `docs` for exactly that literal to assert CLI/crate pin equality in the
+    # `wasm32-core-tests` job below. Seven more docs under `docs/format/**` and
+    # `docs/testing/**` are opened by tests in `test`. Excluding them would
+    # stop the only jobs that read them, and a job that does not run looks
+    # precisely like a job that passed. Rules R4a/R4b/R4c of the checker
+    # re-derive that on every push instead of trusting this comment.
+    #
+    # NOTE these three are still fully checked on a docs push: `traceability`
+    # and `secret-guard` live in `.github/workflows/ci-always.yml`, which
+    # carries no filter — and `traceability`'s own inputs ARE these files.
+    paths-ignore:
+      - TODO.md
+      - tasks/**
+      - docs/ci-verification.md
 
 permissions:
   contents: read
@@ -291,21 +328,39 @@ jobs:
       - name: Q153 — every declared feature is on exactly one gate tier
         run: ./scripts/gate-features.sh --check-partition
 
+  # D138/Q239 — THIS MATRIX IS NOW ONE ARM. `cross-os-macos` and
+  # `cross-os-windows` moved to `.github/workflows/cross-os-extended.yml`,
+  # which runs them WEEKLY and on every `pull_request`, and never on a push.
+  #
+  # The two arms are 88 % of this lane's bill and 27 % of the whole per-push
+  # bill: measured on run 31873411737, macOS billed 13.2 weighted minutes
+  # (1 min 19 s wall at the 10x multiplier) and Windows 9.7 (4 min 51 s at 2x),
+  # against Linux's 2.2 at 1x. The multiplier, not the wall clock, is what made
+  # them worth moving — macOS is the FASTEST of the three in real time.
+  #
+  # WHAT THIS COSTS, stated plainly rather than buried: on a repository that is
+  # pushed to directly, the per-push run WAS the gate, so macOS and Windows
+  # coverage drops from every push to once a week plus every pull request. A
+  # platform divergence introduced on a Monday can now sit undetected until the
+  # Sunday cron. That is the maintainer's explicit instruction and the tradeoff
+  # is real; it is not a free saving.
+  #
+  # The job id, the `name:` template and the `label` values are unchanged, so
+  # the rendered contexts are still `cross-os-linux` / `cross-os-macos` /
+  # `cross-os-windows` byte-identically and branch protection's payload
+  # (docs/ci-verification.md) is untouched. `check-ci-paths.py` R3 fails if any
+  # of the three stops being produced on `pull_request`.
   cross-os:
     name: cross-os-${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     strategy:
-      # Never cancel sibling OSes: a divergence report needs all three
-      # verdicts, not just the first failure.
+      # Kept as a matrix of one rather than flattened into a plain job: the
+      # `name:` template IS the context name, and flattening would rename it.
       fail-fast: false
       matrix:
         include:
           - label: linux
             runner: ubuntu-latest
-          - label: macos
-            runner: macos-latest
-          - label: windows
-            runner: windows-latest
     defaults:
       run:
         # One portable script for all three OSes (Git Bash on the Windows
@@ -675,153 +730,20 @@ jobs:
       - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
         run: ./scripts/ci-lanes.sh audit-deny
 
-  # Q2: secret-material guard (testdata/README.md, "Secret-material
-  # convention"; project rule 6). Greps the checkout for vault-export /
-  # wallet-key file signatures; each run FIRST proves the detector works by
-  # planting fakes in a temp dir (test-of-the-test — never committed).
-  # The implementation is scripts/ci-lanes.sh (Q43): it was 60 lines of
-  # inline shell here, which meant nobody could run it before a push.
-  # Moving it TIGHTENED the scan — the exclusion is now the single file that
-  # carries the planted literals, so .github/ (this file) is scanned again.
-  # A future legit source literal (e.g. a keystore-import parser) extends the
-  # exclusions in the same PR as a reviewed event.
-  secret-guard:
-    name: secret-guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Vault-export / wallet-key signature guard (self-test, then scan)
-        run: ./scripts/ci-lanes.sh secret-guard
-
-  # Q13 (live) + Q37: the two checks over documented claims that nothing else
-  # verifies. This lane is seconds, not minutes. The cargo-free property that
-  # buys those seconds is no longer claimed here: it is ASSERTED, by the
-  # `--arm`/`--verdict` pair on this job, and stated once in
-  # scripts/cargo-free.sh's header (D124/Q182).
+  # ── MOVED, NOT DELETED (D138/Q239) ───────────────────────────────────────
   #
-  #   --matrix           docs/testing/verification-matrix.md maps every
-  #                      Verification-section bullet (MVP-SPEC.md lines
-  #                      165-175) to named tests. The check asserts every
-  #                      reference RESOLVES: a named Rust test is defined in
-  #                      the named file, a doc-test line lands on a fence, a
-  #                      named path exists. Rows are referenced BY NAME, never
-  #                      by line number, because D83 will move the GGM
-  #                      cover-node encoding and its tests with it.
-  #   --freeze-boundary  D84 section 7's v1-freeze-boundary rows are carried
-  #                      byte-identically by tasks/Q.md (the Q14 checklist)
-  #                      and docs/format/anchor-artifact-limits.md (what A5
-  #                      and A11 read). The check re-cuts the text from the
-  #                      decision record and byte-compares every copy.
+  # `secret-guard` (Q2) and `traceability` (Q13/Q37/Q81/Q16/Q20/Q153/D124)
+  # were the last two jobs of this file and now live, byte-identically and
+  # under the same `name:` values, in `.github/workflows/ci-always.yml`.
   #
-  # Like secret-guard, vector-freeze and wasm-bitmatch, the lane SELF-TESTS
-  # FIRST: it corrupts each target in a scratch copy of the tree and requires
-  # red, so a green run is trustworthy rather than merely green.
-  traceability:
-    name: traceability
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # D124/Q182 — this job's cargo-free property, ASSERTED instead of
-      # stated. Installs failing `cargo`/`rustc`/`rustup` shims ahead of the
-      # real ones for every step below, INCLUDING STEPS NOT YET WRITTEN, and
-      # self-tests first. The property itself is stated once, in
-      # scripts/cargo-free.sh's header — this comment does not restate it.
-      # Measured 2026-08-11: all five steps below run BYTE-IDENTICALLY with
-      # cargo, rustc and rustup masked, which is what makes this installable
-      # today rather than a migration.
-      - name: Q182 — self-test the cargo-free guard, then arm it
-        run: ./scripts/cargo-free.sh --arm traceability
-      - name: Self-test (prove both checks can fail), then check
-        run: ./scripts/ci-lanes.sh traceability
-      - name: Q43 — every workflow `run:` block is a committed script or an allowlisted line
-        run: ./scripts/ci-lanes.sh ci-shell
-      # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its
-      # named 700-minute ceiling. It rides HERE, as a step of an existing
-      # job, for the reason `ci-shell` does: it needs no network, and the
-      # cargo half of that argument is asserted by this job's `--arm`/
-      # `--verdict` pair rather than claimed here (D124/Q182). So folding it
-      # in costs SECONDS and ZERO new required-status contexts (the set stays
-      # at 19; Q56's generated context list is untouched). A separate job
-      # would have added a context for a check that reads four literals out
-      # of committed files.
-      - name: Q81 — the scheduled fuzz lane fits its named minutes ceiling
-        run: ./scripts/ci-lanes.sh fuzz-budget
-      # Q16 — the no-real-anchor-network policy's static half. It rides HERE
-      # for the same reason `ci-shell` and `fuzz-budget` do: Python only, no
-      # network, and cargo-free by this job's asserted property rather than by
-      # this comment (D124/Q182). So it costs SECONDS and ZERO new
-      # required-status contexts (the set stays at 19; Q56's generated context
-      # list is untouched). The policy's *enforcing* half is a runtime gate inside
-      # the anchor HTTP substrate and is executed by the `test` lane above;
-      # this step checks the parts of the policy that live outside Rust —
-      # the workflow-level arming three lines from the top of this file, the
-      # single-HTTP-client rule, and endpoint-constant coverage.
-      - name: Q16 — the no-real-anchor-network policy is armed, not merely stated
-        run: ./scripts/ci-lanes.sh anchor-net-policy
-      # Q153 — Q128's TRIGGER self-test, which had never run on the remote.
-      # The `wasm-bitmatch` job below runs the lane and the lane's own
-      # `--self-test`; neither is this. This is the test of the PREDICATE
-      # that decides whether the lane runs at all — and its most important
-      # case is a vectors-only change, which must fire `wasm-bitmatch` and
-      # must NOT fire `wasm32-tests`. A predicate that silently stopped
-      # matching `testdata/vectors/` would render the M2 exit-criterion lane
-      # `n/a` for ever, and nothing downstream of the predicate could ever
-      # say so. Arm 4 additionally reads scripts/wasm-tests.sh's own trigger
-      # list and asserts the asymmetry between the two, so this step is also
-      # what stops those two lists drifting apart.
-      #
-      # It rides HERE for exactly the reason `ci-shell`, `fuzz-budget` and
-      # `anchor-net-policy` do, and this one earns the claim the other two
-      # Q153 lanes could not: it is genuinely GIT-free as well, which nothing
-      # asserts and which is still a 2026-08-10 measurement in this comment.
-      # Its cargo-freeness is no longer a measurement recorded here — it is
-      # asserted on every run by this job's `--arm`/`--verdict` pair
-      # (D124/Q182), which is where the one-off "verified with cargo off
-      # PATH, rc 0" became permanent. ZERO new required-status contexts (the
-      # set stays at 19). Measured locally, 3 runs, 2-core host:
-      # 0.08 s / 0.08 s / 0.08 s.
-      - name: Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change
-        run: ./scripts/wasm-bitmatch.sh --trigger-self-test
-      # Q20/U31 — MVP-SPEC.md line 28's positioning constraints over the
-      # product's user-facing copy, against the rules in
-      # docs/positioning-copy-style.md. It rides HERE, as two steps of an
-      # existing job, for exactly the reason `ci-shell`, `fuzz-budget`,
-      # `anchor-net-policy` and the bitmatch trigger do, and Q153 ruled for
-      # three cheap lanes: Python only, no network, no cargo (asserted by this
-      # job's `--arm`/`--verdict` pair, D124/Q182), no git. So it costs SECONDS
-      # and ZERO new required-status contexts — the set stays at 19 and Q56's
-      # generated context list is untouched. A separate job would have added a
-      # branch-protection change for a check that reads 14 committed files.
-      #
-      # SELF-TEST FIRST, EVERY RUN, like every other instrument here: fourteen
-      # planted violations (at least one per rule, including Q20's own Accept
-      # case — "legal notary" in a docs file) must each go red naming the RULE
-      # that fired, and four GREEN arms must stay quiet over lawful copy —
-      # `ReceiptSinkFault::NotArmed`, the X.509 noun "certificate", a
-      # disclaimed notary sentence, and a qualified priority block. A ban that
-      # reddens on legitimate text is worse than no ban. A third family plants
-      # a violation in EVERY file the scan names and requires each to be
-      # reported against that path — D123 R6's discipline generalised, because
-      # a scan blind to its own target is this repo's dominant defect class.
-      #
-      # Measured locally 2026-08-15 on a 2-core host under load from three
-      # concurrent lanes, 5 runs each in this final form: `--self-test`
-      # 0.77-3.38 s (median ~1.2 s — it runs the whole check 30 times over a
-      # staged copy of the 14 files, and the spread is host contention rather
-      # than input size); the check itself 0.05-0.06 s steady, with two
-      # contention outliers at 0.34 and 0.77 s. Call it ~1.5 s of runner time
-      # for the pair, against this lane's existing seconds.
-      - name: Q20 — self-test the positioning-copy lint (prove every rule can go red)
-        run: ./scripts/check-copy-style.py --self-test
-      - name: Q20/U31 — product copy satisfies MVP-SPEC.md line 28's positioning rules
-        run: ./scripts/check-copy-style.py
-      # D124/Q182 — reads the marker back, and MUST STAY LAST. Red if any step
-      # above invoked cargo, red if the arming step above is gone, and red if
-      # the shims are not what PATH resolves — so the two steps guard each
-      # other and a $GITHUB_PATH mechanism that quietly stopped working cannot
-      # read as a green property. The marker file exists because a callee can
-      # redirect the shim's stderr to /dev/null and one measurably does
-      # (scripts/gate-features.sh:116), so the exit status survives and the
-      # message does not.
-      - name: Q182 — no step of this job invoked cargo
-        run: ./scripts/cargo-free.sh --verdict traceability
+  # They had to move because a GitHub path filter is WORKFLOW-level: there is
+  # no per-job `paths:`. The `paths-ignore` this file gained at the top would
+  # therefore have skipped these two on exactly the pushes whose contents they
+  # read — TODO.md, tasks/**, docs/decisions/** ARE `traceability`'s inputs, so
+  # a docs-only push is its busiest case, not its emptiest. Skipping it there
+  # would have been strictly worse than having no filter at all.
+  #
+  # Nothing about the required-status set changed: still 19 contexts, still one
+  # producer each. Do not re-add either job here — `check-ci-paths.py` R3 fails
+  # on a context produced by two workflows, and R6 fails if either stops being
+  # produced by an unfiltered `push`.
