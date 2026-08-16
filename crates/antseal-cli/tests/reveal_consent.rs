@@ -568,3 +568,296 @@ fn the_receipt_warning_rides_with_the_receipt_and_only_with_it() {
         "{with}"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U71: the gate has a production caller, and nothing else does
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U71**: `run_reveal`'s consent seam has exactly **one** production
+/// caller, and that caller supplies the real [`DisclosureConsent`].
+///
+/// # Why every other test in this file fails to discharge this row
+///
+/// They assert that the gate *behaves*: it renders the screen, it honours
+/// `--yes`, it aborts in machine mode, a decline writes no bundle. Nineteen
+/// of them, all green, and every one of them would stay green if the
+/// production path never called the gate at all — which is exactly the state
+/// the U29 lane self-reported. `run_reveal` takes `consent: G` where
+/// `G: FnOnce(&PreparedReveal) -> Result<(), CliError>`: an arbitrary
+/// closure, with no type, trait bound or construction rule tying it to
+/// `DisclosureConsent`. Spec line 36 makes the confirmation **constitutive**
+/// of the command, so a call whose consent argument is `|_| Ok(())` is not a
+/// degraded `reveal` — it is a *different command*, one that writes a
+/// `.sealproof` full of irreversibly disclosed plaintext without asking, and
+/// it compiles, passes every row above, and reads as ordinary.
+///
+/// (This paragraph deliberately does **not** spell the call form. The scan
+/// below matches text, so a rustdoc sentence that wrote it would be counted
+/// as a call — which is how this very doc first reddened the check, and is
+/// worth leaving recorded rather than rediscovering.)
+///
+/// The suite proves the gate **works**. This proves it is **called**. The
+/// two are not the same claim and no amount of the first produces the
+/// second.
+///
+/// # The shape, and why it is (b) rather than (a)
+///
+/// U71 offered two: (a) close the seam so the production entry cannot accept
+/// an arbitrary closure, or (b) pin the call site with a red-capable source
+/// assertion in the shape of D128 §3 R2's
+/// `without_storage_linkage_has_exactly_two_callers`. (b) is taken, on
+/// measurement rather than preference, and the measurement is worth stating
+/// because (a) is the shape U71 says to prefer.
+///
+/// (a) is **possible** — it is not blocked, and this is not a claim that it
+/// is. Every scripted gate in the tree could be rebuilt from a real
+/// `DisclosureConsent` over a scripted `ConsentPrompt`, which is what the
+/// rows in *this* file already do. What it costs, measured today: `run_reveal`
+/// takes `consent: G` at **eleven** call sites (1 production + 3 here + 7 in
+/// `tests/reveal_output.rs` + 3 in `tests/reveal_vault_local.rs`), so a
+/// narrowed parameter is a public-signature change plus ten harness rewrites,
+/// and U71 is an S row about reachability. The escape hatch a narrowed
+/// parameter would want cannot be `#[cfg(test)]` — `tests/` are separate
+/// crates and never see it — so it would have to be a `pub` constructor
+/// (which re-opens the seam it just closed) or a new cargo feature on this
+/// package (a feature-graph change, a far larger blast radius than the
+/// defect).
+///
+/// And (a) would **cost** something the suites currently have: U28's rows
+/// assert D68 §3 R11's ordering by inspecting the `PreparedReveal` *at the
+/// moment the gate is asked* — that the gate sees a preview and nothing
+/// bundle-shaped — which is a property of being handed a closure. Shape (b)
+/// holds the reachability property, keeps that observation, and costs one
+/// test.
+///
+/// # What is asserted
+///
+/// 1. Exactly one file under any crate's `src/` calls `run_reveal`, it is
+///    `commands.rs`, and it calls it **once**. A second production caller —
+///    the way a permissive closure would arrive — reddens on the count, per
+///    file, so a second call *inside* an already-listed file reddens too.
+/// 2. That call's own argument list contains `DisclosureConsent::gate`'s
+///    invocation, matched by walking the parentheses rather than a fixed
+///    window, so reformatting cannot silently disarm it. Replacing the real
+///    gate with `|_| Ok(())` at the existing site therefore reddens even
+///    though the count did not move.
+/// 3. `DisclosureConsent` is constructed exactly once in production, so the
+///    gate cannot be built, left unused, and the closure passed by hand.
+///
+/// The call form is assembled with `concat!` so this scan's own source does
+/// not contain the token it hunts for: a scanner that matches itself is one
+/// nobody trusts on sight (D128 §3 R2's own precaution, adopted).
+#[test]
+fn the_reveal_consent_gate_has_exactly_one_production_caller() {
+    use std::collections::BTreeMap;
+
+    /// `(path, calls, warrant)` — the closed list of callers.
+    const CALLERS: [(&str, usize, &str); 4] = [
+        (
+            "crates/antseal-cli/src/commands.rs",
+            1,
+            "the ONE production caller: `reveal`'s handler, wired at U72",
+        ),
+        (
+            "crates/antseal-cli/tests/reveal_consent.rs",
+            3,
+            "U29's suite — drives the REAL gate (declining, granting, machine mode)",
+        ),
+        (
+            "crates/antseal-cli/tests/reveal_output.rs",
+            7,
+            "U28's suite — scripted test doubles that COUNT whether the gate was asked",
+        ),
+        (
+            "crates/antseal-cli/tests/reveal_vault_local.rs",
+            3,
+            "U72's suite — cache-served, cache-missing, and the collision-first order",
+        ),
+    ];
+    /// The call form (see the rustdoc: built so this file does not contain
+    /// it literally).
+    const CALL: &str = concat!("run_reveal", "(");
+    /// The production caller's warrant, as a token in its argument list.
+    const GATE: &str = concat!("gate", ".", "gate", "()");
+    /// The gate's construction.
+    const BUILD: &str = concat!("DisclosureConsent", "::new", "(");
+    /// The definition, exempt: `pub async fn run_reveal<B, G>(` does not
+    /// contain the call form, but the file is named so a reader can see the
+    /// exemption is deliberate rather than accidental.
+    const DEFINITION: &str = "crates/antseal-cli/src/reveal_out.rs";
+
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|e| panic!("cannot read an entry under {}: {e}", dir.display()))
+                .path();
+            let skip = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == "target" || n == ".git");
+            if skip {
+                continue;
+            }
+            if path.is_dir() {
+                collect(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Production source: under a crate's `src/`, and **not** one of the
+    /// `#[cfg(test)]` sibling modules that live there
+    /// (`src/reveal_consent/tests.rs` is eight scripted gates, and counting
+    /// them as production would make this check unpassable rather than
+    /// strict).
+    fn is_production_source(relative: &str) -> bool {
+        relative.contains("/src/")
+            && !relative.ends_with("/tests.rs")
+            && !relative.contains("/src/tests/")
+    }
+
+    /// The text inside the parentheses of the call starting at `start`.
+    fn argument_list(text: &str, start: usize) -> String {
+        let bytes: Vec<char> = text[start..].chars().collect();
+        let mut depth = 0usize;
+        let mut out = String::new();
+        for character in bytes {
+            match character {
+                '(' => {
+                    depth += 1;
+                    if depth == 1 {
+                        continue;
+                    }
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return out;
+                    }
+                }
+                _ => {}
+            }
+            if depth >= 1 {
+                out.push(character);
+            }
+        }
+        out
+    }
+
+    // The production filter must admit the one real site and reject the
+    // `#[cfg(test)]` sibling, or it proves nothing.
+    assert!(is_production_source("crates/antseal-cli/src/commands.rs"));
+    assert!(!is_production_source(
+        "crates/antseal-cli/src/reveal_consent/tests.rs"
+    ));
+    assert!(!is_production_source(
+        "crates/antseal-cli/tests/reveal_consent.rs"
+    ));
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("the crate sits two levels under the workspace root")
+        .to_path_buf();
+    let mut files = Vec::new();
+    collect(&root, &mut files);
+    assert!(
+        files.len() > 300,
+        "the walker found only {} files — it is not reaching the tree",
+        files.len()
+    );
+
+    let mut found: BTreeMap<String, usize> = BTreeMap::new();
+    let mut builds: BTreeMap<String, usize> = BTreeMap::new();
+    let mut saw_definition = false;
+    let mut production_arguments: Vec<(String, String)> = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+        let relative = file
+            .strip_prefix(&root)
+            .expect("every scanned file is under the root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if relative == DEFINITION {
+            saw_definition = true;
+        }
+        let count = text.matches(CALL).count();
+        if count > 0 {
+            found.insert(relative.clone(), count);
+        }
+        let built = text.matches(BUILD).count();
+        if built > 0 {
+            builds.insert(relative.clone(), built);
+        }
+        if is_production_source(&relative) {
+            for (offset, _) in text.match_indices(CALL) {
+                production_arguments.push((relative.clone(), argument_list(&text, offset)));
+            }
+        }
+    }
+    assert!(
+        saw_definition,
+        "the scan did not reach `run_reveal`'s own definition file — walker broken?"
+    );
+
+    // 1. No file outside the closed list calls the seam, and every listed
+    //    one calls it exactly as often as its warrant says.
+    let listed: std::collections::BTreeSet<&str> =
+        CALLERS.iter().map(|(path, _, _)| *path).collect();
+    let strays: Vec<&String> = found
+        .keys()
+        .filter(|path| !listed.contains(path.as_str()))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "an unlisted caller of `{CALL}` appeared: {strays:?}. `reveal`'s consent gate is \
+         constitutive of the command (spec line 36) — a caller that supplies a permissive \
+         closure is a DIFFERENT command that writes irreversibly disclosed plaintext without \
+         asking. Add the site here with its warrant, or do not add the site (U71)."
+    );
+    for (path, calls, why) in CALLERS {
+        let seen = found.get(path).copied().unwrap_or(0);
+        assert_eq!(
+            seen, calls,
+            "`{path}` calls `{CALL}` {seen} time(s), not {calls}. It is on U71's closed list \
+             as: {why}. A count that moved is a consent seam nobody ruled, or a listed site \
+             that stopped calling."
+        );
+    }
+
+    // 2. Exactly one production call, and it passes the REAL gate.
+    assert_eq!(
+        production_arguments.len(),
+        1,
+        "expected exactly one `{CALL}` under a `src/`; found {:?}",
+        production_arguments
+            .iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>()
+    );
+    let (path, arguments) = &production_arguments[0];
+    assert_eq!(path, "crates/antseal-cli/src/commands.rs", "{path}");
+    assert!(
+        arguments.contains(GATE),
+        "the one production call to `{CALL}` in `{path}` does not pass `{GATE}`. Its consent \
+         argument is an arbitrary closure, so `|_| Ok(())` compiles here and produces a reveal \
+         that never asks — which spec line 36 makes a different command, not a degraded one \
+         (U71).\n  argument list: {arguments}"
+    );
+
+    // 3. The gate is constructed exactly once in production, so it cannot be
+    //    built and then bypassed.
+    let production_builds: usize = builds
+        .iter()
+        .filter(|(path, _)| is_production_source(path))
+        .map(|(_, count)| *count)
+        .sum();
+    assert_eq!(
+        production_builds, 1,
+        "`{BUILD}` appears {production_builds} time(s) under a `src/`, not once: {builds:?}"
+    );
+}

@@ -1091,15 +1091,75 @@ const fn kind_name(kind: AnchorKind) -> &'static str {
     }
 }
 
-/// The coarse state identifier a user sees.
+/// The coarse state identifier a user sees — **the** one, since U70.
 ///
-/// `pub(crate)` so `show` states a work's state in the **same** words its
-/// sibling read surface does (U27). The tree already carries a second,
-/// wordier spelling in `pipeline/restore.rs` and a third as
-/// `listing::WorkRow::state_name`; a fourth is what this visibility avoids.
-pub(crate) const fn work_state_name(state: WorkState) -> &'static str {
+/// # The census this doc used to carry was wrong (U70)
+///
+/// It read *"the tree already carries a second, wordier spelling in
+/// `pipeline/restore.rs` and a third as `listing::WorkRow::state_name`; a
+/// fourth is what this visibility avoids"* — and undercounted by one:
+/// `pipeline/reveal.rs` held a byte-identical twin of the restore engine's
+/// spelling, so there were **four** productions in three vocabularies, and
+/// the same vault state answered in different words depending on which
+/// command was typed (`status` said `incomplete`, `restore` said
+/// `incomplete (paid, not finalized)`). That is the D100 §1.2 class exactly:
+/// one fact, several homes, each documented as obviously right and none
+/// citing the others.
+///
+/// U70 reduced the coarse word to this function and nothing else. The three
+/// other producers are gone: `listing::WorkRow::state_name` calls this,
+/// and the two engine copies did not want the coarse word at all — they
+/// wanted the pre-pay/post-pay distinction, which now has exactly one
+/// production of its own in [`detail_state_name`] below.
+///
+/// `tests/work_state_word.rs` fails if a second producer appears. An
+/// assertion that the words currently *agree* would not do: it goes green
+/// again the moment somebody adds a fourth that happens to agree, which is
+/// precisely how the fourth arrived.
+///
+/// The match is **wildcard-free** so a fifth [`WorkState`] variant breaks at
+/// this table rather than rendering as something plausible. The exact copy
+/// is U31/Q20's; this owns the count.
+/// `pub` rather than `pub(crate)` since U70, for the reason
+/// [`crate::backend::unavailable`] is: the property the row is about — that
+/// there is exactly **one** of these — is asserted by an integration test,
+/// and `tests/` is an external crate. The crate root's stability note
+/// sanctions exactly this widening (*"it exists for the binary and the
+/// workspace's own harnesses"*).
+#[must_use]
+pub const fn work_state_name(state: WorkState) -> &'static str {
     match state {
         WorkState::IncompletePrePay | WorkState::IncompletePostPay => "incomplete",
+        WorkState::Complete => "complete",
+        WorkState::Abandoned => "abandoned",
+    }
+}
+
+/// The **finer** state identifier: the pre-pay/post-pay distinction, in the
+/// kebab spelling `list --json` already publishes as `detail_state`.
+///
+/// One production, deliberately beside the coarse one (U70). The two are
+/// **not** two spellings of one fact and must not be collapsed: the coarse
+/// word answers *what state is this work in*, and this one answers the
+/// question a user who has to act needs answered — the difference between
+/// *"you owe nothing"* and *"you have paid and the proofs expire"*. That is
+/// why `restore` and `reveal` reach for it: at the moment they refuse, it is
+/// the actionable fact. What U70 forbids is re-spelling the coarse word with
+/// a parenthetical, which is how four producers happened.
+///
+/// This is the fallback half of `listing::WorkRow::detail_state_name` — the
+/// arm used when the vault no longer carries S10's finer journal tag — and
+/// it is the whole answer for a caller that holds only a [`WorkState`].
+/// `detail_state`'s kebab pair stays the shipped machine form; nothing about
+/// the `--json` key moves.
+///
+/// Wildcard-free, for [`work_state_name`]'s reason.
+/// `pub` for [`work_state_name`]'s reason.
+#[must_use]
+pub const fn detail_state_name(state: WorkState) -> &'static str {
+    match state {
+        WorkState::IncompletePrePay => "incomplete-pre-pay",
+        WorkState::IncompletePostPay => "incomplete-post-pay",
         WorkState::Complete => "complete",
         WorkState::Abandoned => "abandoned",
     }

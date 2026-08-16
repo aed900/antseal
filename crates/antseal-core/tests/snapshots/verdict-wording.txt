@@ -117,9 +117,11 @@ ots-1: online check for block 700113 failed (no endpoint detail recorded) — no
 ots-1: no agreed online evidence for block 700113 — no promotion; the offline state stands
 
 ── receipt echo, endpoints, change-only deltas ──
-receipt: both RPC endpoints confirm the recorded transaction on Arbitrum (block 377262147) — supporting evidence only
-receipt: both RPC endpoints confirm the recorded transaction on Arbitrum (block 377262147; the transaction reverted) — supporting evidence only
-receipt: both RPC endpoints agree the recorded transaction is not on chain — supporting evidence only
+receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 42161 (block 377262147) — supporting evidence only
+receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 42161 (block 377262147; the transaction reverted) — supporting evidence only
+receipt: both RPC endpoints agree the recorded transaction is not on Arbitrum chain 42161 — supporting evidence only
+receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 421614 (block 377262147) — supporting evidence only
+receipt: both RPC endpoints agree the recorded transaction is not on Arbitrum chain 421614 — supporting evidence only
 receipt: the two RPC endpoints disagreed — no confirmation; supporting evidence only
 receipt: online confirmation failed (no endpoint detail recorded) — supporting evidence only
 endpoints: https://blockstream.example/api, https://mempool.example/api (pinned defaults)

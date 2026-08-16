@@ -275,7 +275,14 @@ MILESTONE_ORDER = ("M0", "M1", "M2", "M3", "M4")
 # landed in the same change as the register's first ACCEPTED_NON_COVERED
 # entry, because the checker reds either half without the other
 # (bump-atomic by construction, D127 §1e).
-CURRENT_MILESTONE = "M2"
+# M2 -> M3 on 2026-08-16 (Q237) — the second bump owned by a gate row, and
+# the first that exempts nothing: every row at or before M3 already read
+# `covered` when the review ran, so ACCEPTED_NON_COVERED is empty on both
+# sides of this move and no cell was re-read to make the bump possible. It
+# gates M3's four rows forever alongside M0's, M1's and M2's; M4's three
+# stay free to read `deferred` until Q34's review, which is the cumulative
+# rule doing exactly what it is for.
+CURRENT_MILESTONE = "M3"
 
 # The full vocabulary, per the matrix's own "Status vocabulary" note. Anything
 # else is a typo, and a typo'd status at a not-yet-gated milestone would

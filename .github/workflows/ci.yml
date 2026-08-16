@@ -782,6 +782,39 @@ jobs:
       # 0.08 s / 0.08 s / 0.08 s.
       - name: Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change
         run: ./scripts/wasm-bitmatch.sh --trigger-self-test
+      # Q20/U31 — MVP-SPEC.md line 28's positioning constraints over the
+      # product's user-facing copy, against the rules in
+      # docs/positioning-copy-style.md. It rides HERE, as two steps of an
+      # existing job, for exactly the reason `ci-shell`, `fuzz-budget`,
+      # `anchor-net-policy` and the bitmatch trigger do, and Q153 ruled for
+      # three cheap lanes: Python only, no network, no cargo (asserted by this
+      # job's `--arm`/`--verdict` pair, D124/Q182), no git. So it costs SECONDS
+      # and ZERO new required-status contexts — the set stays at 19 and Q56's
+      # generated context list is untouched. A separate job would have added a
+      # branch-protection change for a check that reads 14 committed files.
+      #
+      # SELF-TEST FIRST, EVERY RUN, like every other instrument here: fourteen
+      # planted violations (at least one per rule, including Q20's own Accept
+      # case — "legal notary" in a docs file) must each go red naming the RULE
+      # that fired, and four GREEN arms must stay quiet over lawful copy —
+      # `ReceiptSinkFault::NotArmed`, the X.509 noun "certificate", a
+      # disclaimed notary sentence, and a qualified priority block. A ban that
+      # reddens on legitimate text is worse than no ban. A third family plants
+      # a violation in EVERY file the scan names and requires each to be
+      # reported against that path — D123 R6's discipline generalised, because
+      # a scan blind to its own target is this repo's dominant defect class.
+      #
+      # Measured locally 2026-08-15 on a 2-core host under load from three
+      # concurrent lanes, 5 runs each in this final form: `--self-test`
+      # 0.77-3.38 s (median ~1.2 s — it runs the whole check 30 times over a
+      # staged copy of the 14 files, and the spread is host contention rather
+      # than input size); the check itself 0.05-0.06 s steady, with two
+      # contention outliers at 0.34 and 0.77 s. Call it ~1.5 s of runner time
+      # for the pair, against this lane's existing seconds.
+      - name: Q20 — self-test the positioning-copy lint (prove every rule can go red)
+        run: ./scripts/check-copy-style.py --self-test
+      - name: Q20/U31 — product copy satisfies MVP-SPEC.md line 28's positioning rules
+        run: ./scripts/check-copy-style.py
       # D124/Q182 — reads the marker back, and MUST STAY LAST. Red if any step
       # above invoked cargo, red if the arming step above is gone, and red if
       # the shims are not what PATH resolves — so the two steps guard each

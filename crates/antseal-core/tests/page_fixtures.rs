@@ -33,6 +33,14 @@
 //! passed, so the bytes the browser is handed are the bytes this file just
 //! checked. One emitter, one source of truth.
 //!
+//! Three fixtures are emitted, and each carries one thing the others do not:
+//! `attested-ots-960767` is the single real attested anchor R27's four online
+//! block cases drive; `attested-plus-invalid-ots` exhibits the wide-versus-
+//! narrow difference (D133 §3 R11); `attested-ots-960767-with-receipt` is
+//! D137 §7's receipt-bearing twin, whose `plan.receipt` is non-null. **None of
+//! R27's four block cases needs the twin** — D133 §1 (f) proved one fixture
+//! serves all four — and R27 cites it rather than owning it.
+//!
 //! # The material is real, already committed, and binds by construction
 //!
 //! A25's consented calendar campaign stamped
@@ -62,7 +70,8 @@ use std::path::PathBuf;
 
 use antseal_core::anchor::model::AnchorArtifacts;
 use antseal_core::bundle::{
-    AnchorStatus, BundleV1, OpaqueBytes, OtsAnchor, OtsUpgrade, SealProof, encode_bundle,
+    AnchorStatus, BundleV1, OpaqueBytes, OtsAnchor, OtsUpgrade, ReceiptRecord, SealProof,
+    encode_bundle,
 };
 use antseal_core::manifest::anchor_digest;
 use antseal_core::verify::{
@@ -109,6 +118,14 @@ const BASE_CASE: &str = "empty-anchor-unanchored";
 /// anchor.
 const PLACEHOLDER_CASE: &str = "every-anchor-kind-no-receipt";
 
+/// The F13 case (index 5) whose `receipt` the third fixture borrows **whole**
+/// (D137 §7 R13). Nothing about the receipt is invented here: its three
+/// fields — `tx_hashes`, `block_number`, `payload` — are lifted from the
+/// frozen document as one value, so the emitter has no bytes of its own on
+/// the receipt half either, which is the same move D133 §2 made for the
+/// anchor half.
+const RECEIPT_CASE: &str = "every-anchor-kind-with-receipt";
+
 /// The real merged-and-upgraded `.ots`, expected state `attested`.
 const UPGRADED_CASE: &str = "ots-upgraded-offline";
 
@@ -126,17 +143,35 @@ const ATTESTED_HEIGHT: u64 = 960_767;
 /// fixtures.
 const INERT_HEIGHT: u64 = 960_768;
 
+/// The transaction hash D137 §7 R13 names, and the only literal in this file
+/// that restates a value the frozen document carries.
+///
+/// It is asserted **against** the receipt lifted from that document rather
+/// than used to build one — see
+/// `vector_page_fixture_receipt_twin_plans_the_frozen_transaction_hash`, which
+/// would go red if the vector's first hash ever moved. Thirty-two repetitions
+/// of `0xe1` is manifestly synthetic: it is not a Keccak hash, nobody will
+/// look it up, and a live probe against the pinned mainnet pair returns *no
+/// such transaction* — which after D137 §3 R1 is a **true** rendered sentence
+/// rather than a demonstration of the defect D133 §3 R9 deferred it over.
+const RECEIPT_TX_HASH: &str = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1";
+
 /// D133 §1 (d)'s measured size of the assembled attested bundle.
 const ATTESTED_FIXTURE_LEN: usize = 4_846;
 
 /// Measured here, at R84, on the same assembly plus the second anchor.
 const WIDE_FIXTURE_LEN: usize = 4_978;
 
-/// The emitted file names (D133 §3 R5, R11). The name states the state and the
-/// height, so a route interception and the file it belongs to cannot drift
-/// silently apart.
+/// Measured here, at R27/D137, on the attested assembly plus the frozen
+/// receipt record.
+const RECEIPT_FIXTURE_LEN: usize = 4_968;
+
+/// The emitted file names (D133 §3 R5, R11; D137 §7 R13). The name states the
+/// state and the height, so a route interception and the file it belongs to
+/// cannot drift silently apart.
 const ATTESTED_FIXTURE: &str = "attested-ots-960767.sealproof";
 const WIDE_FIXTURE: &str = "attested-plus-invalid-ots.sealproof";
+const RECEIPT_FIXTURE: &str = "attested-ots-960767-with-receipt.sealproof";
 
 // ---------------------------------------------------------------------------
 // reading the committed documents
@@ -246,6 +281,23 @@ fn captured_header(endpoint: &str, height: u64) -> [u8; 80] {
     header_80(hex.trim(), &path)
 }
 
+/// The committed `ReceiptRecord` of one F13 case, lifted **whole**.
+///
+/// Taking the decoded value rather than re-reading the JSON's three fields is
+/// deliberate: a hand-rebuilt receipt would be the emitter inventing bytes,
+/// which is exactly what D133 §2's winning shape refuses, and it would need
+/// this file to know `payload`'s 41 bytes independently of the document that
+/// already carries them.
+fn f13_receipt(name: &str) -> ReceiptRecord {
+    let bytes = f13_bundle(name);
+    let bundle = BundleV1::decode(&bytes)
+        .unwrap_or_else(|e| panic!("the committed `{name}` vector decodes: {e}"));
+    bundle
+        .into_parts()
+        .receipt
+        .unwrap_or_else(|| panic!("{BUNDLE_VECTOR}: case `{name}` carries no receipt to borrow"))
+}
+
 /// The first placeholder `.ots` blob F13 embeds — bytes the anchor stage
 /// cannot finish reading, which is why it renders `invalid`
 /// (`vector_every_anchor_kind_bundle_is_all_invalid_and_unanchored_at_m2`
@@ -266,20 +318,31 @@ fn f13_placeholder_ots() -> Vec<u8> {
 // the assembly (D133 §3 R4) — public API only, manifest untouched
 // ---------------------------------------------------------------------------
 
-/// Substitute a bundle's OTS anchor section wholesale and re-encode.
+/// Substitute a bundle's OTS anchor section wholesale — and, for the twin, its
+/// receipt — then re-encode.
 ///
 /// The manifest is **not touched**, which is what keeps `anchor_digest` where
 /// A25 stamped it. Re-encoding through `encode_bundle` re-runs the tier-`[X]`
 /// layer-1 rules on the way back in, as every fixture in this tree is required
 /// to do — nothing here hand-builds a wire shape.
-fn substitute_ots_anchors(base: &[u8], anchors: Vec<OtsAnchor>) -> Vec<u8> {
+///
+/// `tsa_anchors` stays empty on every fixture. `receipt` was `None` on every
+/// fixture until D137: D133 §3 R9 deferred the twin to R85 because *"its
+/// transaction hash would point at whatever R85 has not yet ruled"*, and
+/// **D137 §3 R1 ruled it** — a hash that points at nothing now renders a true
+/// chain-scoped absence sentence rather than a false confirmation, so the
+/// deferral discharged itself and the twin is buildable from the same frozen
+/// material (D137 §7 R13).
+fn substitute_sections(
+    base: &[u8],
+    anchors: Vec<OtsAnchor>,
+    receipt: Option<ReceiptRecord>,
+) -> Vec<u8> {
     let mut parts = BundleV1::decode(base)
         .unwrap_or_else(|e| panic!("the committed `{BASE_CASE}` vector decodes to the model: {e}"))
         .into_parts();
     parts.ots_anchors = anchors;
-    // `tsa_anchors` stays empty and `receipt` stays `None`: the receipt-bearing
-    // twin is R85's, deferred because its transaction hash would point at
-    // whatever R85 has not yet ruled.
+    parts.receipt = receipt;
     let bundle =
         BundleV1::new(parts).unwrap_or_else(|e| panic!("the rebuilt bundle is well-formed: {e}"));
     encode_bundle(&bundle).unwrap_or_else(|e| panic!("the rebuilt bundle re-encodes: {e}"))
@@ -309,7 +372,31 @@ fn attested_fixture() -> Vec<u8> {
         anchor_artifact(UPGRADED_CASE),
         anchor_upgrade(UPGRADED_CASE),
     );
-    substitute_ots_anchors(&f13_bundle(BASE_CASE), vec![anchor])
+    substitute_sections(&f13_bundle(BASE_CASE), vec![anchor], None)
+}
+
+/// **The receipt-bearing twin** (D137 §7 R13). The fixture above, plus the
+/// frozen F13 receipt record, lifted whole.
+///
+/// The anchor half is byte-for-byte the first fixture's, so the twin exercises
+/// the *receipt* half of `ProbePlan` and nothing else: `plan.blocks` stays
+/// `[960767]` and `plan.receipt` becomes the `e1e1…` target
+/// (`ReceiptTarget` takes `record.tx_hashes().first()`).
+///
+/// **Not one of R27's four block cases.** D133 §1 (f) proved one fixture
+/// serves all four and none of them carries a receipt; this twin exists for
+/// D137's own two cases — the chain-scoped absence line and the `wrong-chain`
+/// fail-closed path — and R27 cites it rather than owning it.
+fn attested_plus_receipt_fixture() -> Vec<u8> {
+    let anchor = ots_anchor(
+        anchor_artifact(UPGRADED_CASE),
+        anchor_upgrade(UPGRADED_CASE),
+    );
+    substitute_sections(
+        &f13_bundle(BASE_CASE),
+        vec![anchor],
+        Some(f13_receipt(RECEIPT_CASE)),
+    )
 }
 
 /// The wide-versus-narrow witness (D133 §3 R11): the fixture above plus one
@@ -335,7 +422,7 @@ fn attested_plus_invalid_fixture() -> Vec<u8> {
             anchor_upgrade(UPGRADED_CASE).fetch_date(),
         ),
     );
-    substitute_ots_anchors(&f13_bundle(BASE_CASE), vec![attested, inert])
+    substitute_sections(&f13_bundle(BASE_CASE), vec![attested, inert], None)
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +440,15 @@ fn anchor_states(bytes: &[u8]) -> Vec<AnchorState> {
 fn plan_blocks(bytes: &[u8]) -> Vec<u64> {
     let bundle = BundleV1::decode(bytes).unwrap_or_else(|e| panic!("the fixture decodes: {e}"));
     ProbePlan::from_bundle(&bundle).blocks
+}
+
+/// `ProbePlan`'s receipt target as the page reads it: the lowercase hex the
+/// document's `plan.receipt.tx_hash` member carries, or `None`.
+fn plan_receipt_tx_hash(bytes: &[u8]) -> Option<String> {
+    let bundle = BundleV1::decode(bytes).unwrap_or_else(|e| panic!("the fixture decodes: {e}"));
+    ProbePlan::from_bundle(&bundle)
+        .receipt
+        .map(|target| target.tx_hash)
 }
 
 /// How many rows D64's overlay would carry — the **narrow** set.
@@ -438,6 +534,45 @@ fn emit(name: &str, bytes: &[u8]) {
     println!("  emitted {} ({} B)", path.display(), bytes.len());
 }
 
+/// Write `<fixture>.plan.json` beside a fixture, if and only if the emitter was
+/// asked for.
+///
+/// **Why the browser lane needs this file, and why it carries two halves.**
+/// D132 §5 R27 item 1 requires the route interceptions to be derived from the
+/// plan, *"so the fixture and the intercepts cannot drift"*, and D133 §5.2
+/// forbids a hard-coded height. `blocks` is that: `ProbePlan::from_bundle`'s
+/// own output, the same value `verify_rendered(b).plan` carries into the page.
+///
+/// `vector_heights` is the **independent** half, and it is the reason this file
+/// exists rather than the driver reading the plan alone. Both surfaces derive
+/// their probe set from one function, so a defect in `ProbePlan::from_bundle`
+/// is a defect in *both* and is invisible to any gate that compares their
+/// renderings (D132 §7.4; D133's obligation 1). These heights are read straight
+/// out of the frozen anchor vector's `upgrade` object — what went *in* to the
+/// fixture — so the browser row that compares the heights the page actually
+/// requested against them is measuring the function's output against its input,
+/// which is the only shape of comparison that can see such a defect.
+fn emit_plan(name: &str, bytes: &[u8], vector_heights: &[u64]) {
+    let Some(dir) = std::env::var_os("ANTSEAL_EMIT_PAGE_FIXTURES").map(PathBuf::from) else {
+        return;
+    };
+    let bundle = BundleV1::decode(bytes).unwrap_or_else(|e| panic!("the fixture decodes: {e}"));
+    let plan = ProbePlan::from_bundle(&bundle);
+    let document = serde_json::json!({
+        "blocks": plan.blocks,
+        "receipt_tx_hash": plan.receipt.map(|target| target.tx_hash),
+        "vector_heights": vector_heights,
+    });
+    let path = dir.join(format!("{name}.plan.json"));
+    fs::write(
+        &path,
+        serde_json::to_vec(&document)
+            .unwrap_or_else(|e| panic!("the plan sidecar serializes: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("{}: writing the plan sidecar: {e}", path.display()));
+    println!("  emitted {}", path.display());
+}
+
 // ---------------------------------------------------------------------------
 // the tests
 // ---------------------------------------------------------------------------
@@ -477,6 +612,11 @@ fn vector_page_fixture_verifies_attested_offline() {
 
     assert_no_attested_anchor_at_the_inert_height(&bytes, ATTESTED_FIXTURE);
     emit(ATTESTED_FIXTURE, &bytes);
+    emit_plan(
+        ATTESTED_FIXTURE,
+        &bytes,
+        &[anchor_upgrade(UPGRADED_CASE).block_height()],
+    );
 }
 
 /// The binding is a **mechanism**, not a coincidence of these bytes.
@@ -528,12 +668,13 @@ fn vector_page_fixture_negative_controls_are_not_attested() {
         "the unmodified base case must carry no anchor slot"
     );
 
-    let wrong_seal = substitute_ots_anchors(
+    let wrong_seal = substitute_sections(
         &f13_bundle(BASE_CASE),
         vec![ots_anchor(
             anchor_artifact(WRONG_SEAL_CASE),
             anchor_upgrade(UPGRADED_CASE),
         )],
+        None,
     );
     assert_eq!(
         anchor_states(&wrong_seal),
@@ -592,6 +733,75 @@ fn vector_page_fixture_wide_plan_exceeds_the_narrow_overlay_set() {
 
     assert_no_attested_anchor_at_the_inert_height(&bytes, WIDE_FIXTURE);
     emit(WIDE_FIXTURE, &bytes);
+    emit_plan(
+        WIDE_FIXTURE,
+        &bytes,
+        &[anchor_upgrade(UPGRADED_CASE).block_height(), INERT_HEIGHT],
+    );
+}
+
+/// **The receipt-bearing twin** (D137 §7 R13, discharging D133 §3 R9).
+///
+/// The twin exists so the receipt half of the plan has a *file* the browser
+/// venue can drop, the way D133 gave the block half one. Everything asserted
+/// here is differential against the receipt-free fixture beside it, so a
+/// change that silently dropped the receipt section would go red rather than
+/// leave a twin that is a copy:
+///
+/// 1. the anchor half is untouched — same state, same `plan.blocks`;
+/// 2. `plan.receipt` is `Some`, and its hex is the **first** of the frozen
+///    document's two transaction hashes, which is the narrowing
+///    `ReceiptTarget` applies (`plan.rs`);
+/// 3. the receipt-free fixture's `plan.receipt` is `None`, so clause 2 is not
+///    something every fixture would satisfy.
+///
+/// The `e1e1…` value is not chosen by this file: it is read out of the frozen
+/// F13 case and *compared* against the constant D137 §7 names. If the vector's
+/// first hash ever moved, this row would name both sides and fail.
+#[test]
+fn vector_page_fixture_receipt_twin_plans_the_frozen_transaction_hash() {
+    let bytes = attested_plus_receipt_fixture();
+
+    assert_eq!(
+        anchor_states(&bytes),
+        vec![AnchorState::Attested],
+        "adding a receipt must not disturb the anchor half — the twin differs \
+         from the fixture beside it in exactly one section"
+    );
+    assert_eq!(
+        plan_blocks(&bytes),
+        vec![ATTESTED_HEIGHT],
+        "and its block plan is still the one real height"
+    );
+
+    assert_eq!(
+        plan_receipt_tx_hash(&bytes).as_deref(),
+        Some(RECEIPT_TX_HASH),
+        "the twin's plan must name the frozen F13 receipt's FIRST transaction \
+         hash — the emitter invents no bytes on the receipt half (D137 §7 R13)"
+    );
+    assert_eq!(
+        plan_receipt_tx_hash(&attested_fixture()),
+        None,
+        "and the receipt-free fixture plans no receipt, which is what makes \
+         the row above differential rather than a property of every fixture"
+    );
+
+    assert_eq!(
+        bytes.len(),
+        RECEIPT_FIXTURE_LEN,
+        "measured at R27/D137; a different size means the codec, the base \
+         vector or the receipt-bearing vector moved under the fixture — \
+         investigate before re-pinning the number"
+    );
+
+    assert_no_attested_anchor_at_the_inert_height(&bytes, RECEIPT_FIXTURE);
+    emit(RECEIPT_FIXTURE, &bytes);
+    emit_plan(
+        RECEIPT_FIXTURE,
+        &bytes,
+        &[anchor_upgrade(UPGRADED_CASE).block_height()],
+    );
 }
 
 /// The embedded header **is** what mainnet answered, from both endpoints.

@@ -32,13 +32,16 @@
 //!   every expectation naming them; distinct addresses are visited in
 //!   first-appearance order, so the call sequence is deterministic and
 //!   assertable.
-//! - **Lengths and offsets only.** Report values are counts, lengths and
-//!   byte offsets — never blob bytes and never key material (project
-//!   rule 6). The compared values are AEAD ciphertext the caller already
-//!   holds and the network already serves, so the comparison is a plain
-//!   `==`: nothing secret is being tested, and constant-time comparison
-//!   would buy nothing here (contrast the tag/commitment checks in
-//!   `antseal-core`).
+//! - **Lengths, offsets and closed classes only.** Report values are
+//!   counts, lengths, byte offsets and [`FetchFailureClass`] — never blob
+//!   bytes, never key material (project rule 6), and **never free-form
+//!   text from the storage boundary** (R79: a report row reaches a
+//!   display line, and an adversary must not choose its bytes any more
+//!   than one may at the online boundary). The compared values are AEAD
+//!   ciphertext the caller already holds and the network already serves,
+//!   so the comparison is a plain `==`: nothing secret is being tested,
+//!   and constant-time comparison would buy nothing here (contrast the
+//!   tag/commitment checks in `antseal-core`).
 //!
 //! # Consumers
 //!
@@ -55,6 +58,165 @@ pub mod manifest;
 use std::collections::BTreeMap;
 
 use crate::{Address, StorageBackend, StorageError};
+
+/// Why a live fetch could not be completed — a **closed** class over the
+/// [`StorageError`] variants a read can produce.
+///
+/// # R79's ruling: one discipline governs both network boundaries
+///
+/// antseal has two boundaries at which a remote party's failure becomes a
+/// line a user reads, and until this row they followed opposite rules for the
+/// same hazard.
+///
+/// - The **online** boundary closes the channel: `antseal-anchor`'s
+///   `EndpointFailure` carries a `&'static str` reason and two `u64`s and
+///   nothing else (*"no adversary-controlled bytes can reach a log line
+///   through it"*, `agree.rs`), and it narrows again to core's closed
+///   [`ProbeFailureClass`], whose doc states the rule in the strongest
+///   available form.
+/// - The **storage** boundary did the opposite: [`StorageError::Network`]'s
+///   free-form `reason` travelled four hops to a display line with no
+///   taxonomy, no cap and no classification key.
+///
+/// **The ruling is R79 arm (a): the closed class wins, and it is closed
+/// here, at the source.** Three measurements decide it:
+///
+/// 1. **The provenance is the reverse of what it looks like.** On the online
+///    side the only free-form text that reaches a line is
+///    `EndpointProbeFailure::endpoint` — *the verifier's own configured URL*.
+///    On the storage side, `AntCoreBackend::get_data` maps upstream through
+///    `map_ant_error`, whose **final arm is a wildcard**: `other =>
+///    StorageError::Network { reason: format!("{other}") }`. That renders the
+///    whole of `ant_core::data::Error`, several of whose variants carry
+///    remote-supplied `String`s (`Protocol`, `InvalidData`, `Network`,
+///    `RemotePut { source: ProtocolError }`). So the channel the online layer
+///    refuses is the one the storage layer had, and R79's arm (c) — *"the
+///    storage boundary is the verifier's own client"* — is refuted by
+///    measurement rather than merely unchosen.
+/// 2. **[`StorageBackend`] is a public trait.** Any implementation, present
+///    or future, chooses these bytes. A bound that depends on one adapter's
+///    good behaviour is not a bound.
+/// 3. **Escaping answers the wrong question.** D67 §3 R6's value-vs-rendering
+///    split answers *"can this forge a row"*; it never answers *"should this
+///    channel exist"*, which is what the online layer already answered `no`
+///    to, in the same tree, for the same reason. Arm (b) would have kept two
+///    rules for one hazard with one of them merely softened.
+///
+/// # What this ruling costs, stated rather than hidden
+///
+/// One bit of information is lost, and it is worth naming: today
+/// `AntCoreBackend::get_data` reports its own BLAKE3 re-check failure
+/// (*"network returned bytes whose … address does not match … — integrity
+/// failure"*) through the same [`StorageError::Network`] variant as a plain
+/// timeout, so the two are indistinguishable **by variant** and this class
+/// cannot separate them. That distinction existed only inside the free-form
+/// string; recovering it needs a [`StorageError`] variant of its own, which
+/// is an S2-taxonomy event and not this row's. Recorded here so the next
+/// reader does not mistake the loss for an oversight — and note that for a
+/// live row the two mean the same thing: no usable answer arrived.
+///
+/// # The other half of the ruling, and what is still owed
+///
+/// The remaining widening is a **type-precision** debt, not an open channel:
+/// core's `LiveBlobOutcome::FetchFailed` still holds a `String`, which after
+/// this change can only ever hold [`Self::label`]'s output. Tightening it to
+/// carry this class — and moving the label into `verify::wording` beside
+/// [`ProbeFailureClass`]'s — belongs in `antseal-core` and is named on
+/// R79's row.
+///
+/// [`ProbeFailureClass`]: antseal_core::verify::overlay::ProbeFailureClass
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FetchFailureClass {
+    /// No usable answer arrived from the network: transport failure, timeout,
+    /// unreachable peers, or an answer this client refused
+    /// ([`StorageError::Network`]).
+    Transport,
+    /// The backend refused the read for a reason that is not about reaching
+    /// the network at all — a quote, payment or store-path failure surfacing
+    /// from an operation that neither quotes, pays nor stores. It is a
+    /// statement about the backend, never about the address.
+    BackendRefused,
+}
+
+impl FetchFailureClass {
+    /// Every class, in declaration order — the sweep operand for the label
+    /// test ([`ProbeFailureClass::ALL`]'s pattern).
+    ///
+    /// [`ProbeFailureClass::ALL`]:
+    ///     antseal_core::verify::overlay::ProbeFailureClass::ALL
+    pub const ALL: [Self; 2] = [Self::Transport, Self::BackendRefused];
+
+    /// Classify one storage-boundary failure, **while the variant is still in
+    /// hand** — never by re-parsing a rendered string.
+    ///
+    /// `None` means the error is a negative *answer* rather than a failure to
+    /// get one ([`StorageError::NotFound`]): the network said "no such
+    /// chunk", which is evidence-relevant and gets
+    /// [`PersistenceOutcome::NotFound`], not a failure class. Returning the
+    /// split from one function is deliberate — it is the only match over
+    /// [`StorageError`] on this path, so the two outcomes cannot drift apart
+    /// and a new variant forces one decision rather than two.
+    ///
+    /// **Wildcard-free** (the discipline R11 applied to
+    /// [`UnitKindTag`](crate::UnitKindTag)): a new [`StorageError`] variant
+    /// fails to compile here rather than falling into a catch-all — which is
+    /// exactly how the free-form channel this class replaces was opened, one
+    /// layer up, by `map_ant_error`'s `other =>` arm.
+    #[must_use]
+    pub const fn of(error: &StorageError) -> Option<Self> {
+        match error {
+            // An answer, not a failure to get one.
+            StorageError::NotFound { .. } => None,
+            StorageError::Network { .. } => Some(Self::Transport),
+            StorageError::Quote { .. }
+            | StorageError::Payment { .. }
+            | StorageError::InsufficientAnt { .. }
+            | StorageError::InsufficientGas { .. }
+            | StorageError::Finalize { .. }
+            | StorageError::StrandedPayment { .. }
+            | StorageError::ProofsExpired => Some(Self::BackendRefused),
+        }
+    }
+
+    /// The display word for this class — the **one** place a live fetch
+    /// failure is spelled, wildcard-free so a third class cannot land
+    /// unnamed.
+    ///
+    /// It lives here rather than in `antseal-core`'s `verify::wording`
+    /// because the class is this crate's own taxonomy over this crate's own
+    /// error type, exactly as
+    /// [`probe_failure_class_label`] is core's over core's; the courier
+    /// between them (`verify_host.rs`'s `blob_outcome`) authors nothing. The
+    /// end state named on R79's row moves both the class and this function
+    /// into core beside `LiveBlobOutcome`; until then this is the single
+    /// spelling and the label is a `&'static str` so no other value can
+    /// occupy the slot.
+    ///
+    /// `Transport`'s word is `probe_failure_class_label`'s for the same
+    /// class, and the R18-frozen row already renders it
+    /// (`tests/snapshots/verdict-wording.txt`, via
+    /// `live_blob_fetch_error_line("unit 7", "transport failure")`), so this
+    /// ruling moves no frozen byte.
+    ///
+    /// [`probe_failure_class_label`]:
+    ///     antseal_core::verify::wording::probe_failure_class_label
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Transport => "transport failure",
+            Self::BackendRefused => "the backend refused the read",
+        }
+    }
+
+    /// This class's stable machine token — wildcard-free (the L2 discipline).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Transport => "transport",
+            Self::BackendRefused => "backend-refused",
+        }
+    }
+}
 
 /// How one expected blob fared against the network.
 ///
@@ -94,12 +256,26 @@ pub enum PersistenceOutcome {
     /// The fetch could not be completed (transport class, or any other
     /// backend failure that is not a negative answer).
     ///
-    /// `reason` is the backend error's diagnostic rendering — never a
-    /// classification key (callers match on the outcome, not the string)
-    /// and, per the taxonomy's hygiene rules, never secret material.
+    /// **Carries a closed class, never free-form detail — R79's ruling, and
+    /// the whole of it is argued on [`FetchFailureClass`].** The taxonomy is
+    /// the contract: this is what a caller matches on, this is what renders,
+    /// and no byte chosen by the far end of the connection can occupy the
+    /// slot. It is the same discipline core's
+    /// [`ProbeFailureClass`](antseal_core::verify::overlay::ProbeFailureClass)
+    /// states for the online boundary — **read the two together; neither doc
+    /// is complete without the other, and that is why each names the other.**
+    ///
+    /// Until R79 the field was a `String` holding whatever the backend
+    /// adapter's error `Display` produced, which on the ant-core path is
+    /// `format!("{other}")` over a wildcard arm. The hostile-string test
+    /// `crates/antseal-net/tests/live_display_channel.rs` is what keeps this
+    /// closed: it drives a backend whose error `Display` carries an LF, a
+    /// frozen verdict sentence and a long byte run all the way to the
+    /// rendered line, and asserts none of it arrives.
     FetchError {
-        /// Diagnostic detail from the storage boundary.
-        reason: String,
+        /// Which class of failure — the classification key *and* the only
+        /// thing that renders.
+        class: FetchFailureClass,
     },
 }
 
@@ -218,9 +394,14 @@ pub async fn check_persistence<B: StorageBackend>(
         for &row in rows {
             let outcome = match &fetched {
                 Ok(bytes) => compare(bytes, expected[row].1),
-                Err(StorageError::NotFound { .. }) => PersistenceOutcome::NotFound,
-                Err(error) => PersistenceOutcome::FetchError {
-                    reason: error.to_string(),
+                // R79: classified from the VARIANT, while it is still in
+                // hand. `FetchFailureClass::of` owns both halves of the
+                // answer-vs-failure split, so there is one wildcard-free
+                // match over `StorageError` on this path and the error's
+                // `Display` is never consulted at all.
+                Err(error) => match FetchFailureClass::of(error) {
+                    None => PersistenceOutcome::NotFound,
+                    Some(class) => PersistenceOutcome::FetchError { class },
                 },
             };
             outcomes[row] = Some(outcome);
@@ -236,9 +417,13 @@ pub async fn check_persistence<B: StorageBackend>(
             // Every row belongs to exactly one group and every group was
             // visited, so this is total by construction; the fallback
             // keeps the primitive panic-free regardless (project rule:
-            // library code does not unwrap).
+            // library code does not unwrap). Under R79 the fallback can no
+            // longer smuggle a bespoke sentence into a display line either —
+            // there is no free-form slot to put one in, so an unreachable
+            // internal state renders as the ordinary "nothing was
+            // established" row rather than as prose no wording table owns.
             outcome: outcome.unwrap_or(PersistenceOutcome::FetchError {
-                reason: "internal: no outcome recorded for this expectation".into(),
+                class: FetchFailureClass::Transport,
             }),
         })
         .collect();

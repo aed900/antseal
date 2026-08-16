@@ -28,10 +28,15 @@
 - **M0 rows must be complete before the `format-v1-freeze` tag** — that is a
   Q14 gate condition, and Q14's checklist cites this file.
 - **M1/M2/M3/M4 rows are checked at their own milestone reviews** (M4 via
-  Q34, which requires the whole matrix green). **M1's review has happened and
-  M1 is gated from 2026-08-10** (D118); M2's has not. A later milestone's row
-  reading `NONE` is correct, not a gap — but only while the crates it tests
-  are stubs, and that sentence outlived its truth here by eight days.
+  Q34, which requires the whole matrix green). **Which reviews have passed is
+  deliberately not restated here.** The sentence that stood in this position
+  said M1 was gated and M2's review had not happened; M2's review ran the
+  next day and the sentence went on saying it for five more days, which is
+  **Q230**'s class exactly — a second, unchecked copy of a value that changes
+  at the one event it describes. The script's constant is the only copy; read
+  it there. A later milestone's row reading `NONE` is correct, not a gap —
+  but only while the crates it tests are stubs, and that sentence outlived
+  its truth here by eight days.
 - Status vocabulary: **`covered`** (a test exists and is named here);
   **`gap`** (the milestone owns the bullet and no test exists — this blocks
   that milestone's gate); **`deferred`** (a later milestone owns it). Nothing
@@ -48,8 +53,13 @@
   it — the constant moved underneath them, or rather failed to.
 - **The gate that enforces the first two bullets** is
   `scripts/check-traceability.py --matrix`, and the milestone it enforces is
-  the constant `CURRENT_MILESTONE` in that script — **the line a milestone
-  review bumps.** It is a constant and not a required flag on purpose: a gate
+  the constant `CURRENT_MILESTONE` in that script. **It names the last
+  milestone whose review has passed, and what moves it is that milestone's
+  own gate row** (`Q14` did it for M0, `Q236` for M2, `Q237` for M3; `Q34`
+  will for M4) — `TODO.md` rule 4. It is deliberately **one behind**
+  `TODO.md`'s Current-focus block, which names the milestone in progress:
+  nothing compares the two, and D122 rules that nothing should. It is a
+  constant and not a required flag on purpose: a gate
   that runs only when someone remembers to pass `--milestone` is the same
   unenforced prose the gate replaces. The rule is cumulative — at the M1
   review, M0's rows must *still* read `covered`, so a milestone cannot
@@ -135,8 +145,10 @@ sense V3.4's note records for `fuzz-smoke`.
 ## M2 — anchors (line 173)
 
 Checked at the M2 review, which ran 2026-08-11 (Q236).
-`CURRENT_MILESTONE` is `M2`, so every row here is gated by the ordinary
-flagless run, cumulatively with M0's and M1's. **All five rows now read `covered`.** `V7.1` read `gap`
+**M2's review has passed**, so every row here is gated by the ordinary
+flagless run, cumulatively with M0's and M1's — and it stays gated as later
+reviews pass, which is what *cumulative* means. The constant's current value
+is the script's to state and is not repeated here (Q230). **All five rows now read `covered`.** `V7.1` read `gap`
 under the register's first `ACCEPTED_NON_COVERED` entry (D127) from the M2
 review until **2026-08-12**, when the consented submit→upgrade pair ran and
 D127 §5's predicate was met — so the cell flipped and the entry was removed
@@ -159,15 +171,32 @@ holds **88 files** across three real capture campaigns (`A25-bootstrap/` 61,
 
 ## M3 — reveal and verifier page (line 174)
 
-Checked at the M3 review. `verifier-web/` holds a 484-byte `index.html`;
-there is no playwright configuration.
+**Checked at the M3 review, which ran 2026-08-16 (Q237).** All four rows
+below read `covered` when it ran, `ACCEPTED_NON_COVERED` was empty on both
+sides of the bump, and the section is gated from that date cumulatively with
+M0's, M1's and M2's. Two of the four carry a venue caveat rather than a
+coverage one — V8.2 and the page half of V8.4 were proven on a local host and
+by no hosted runner — and the gate records that at its own site rather than
+here. **Both halves of the sentence that stood here are replaced,
+2026-08-16.** `verifier-web/` does **not** hold a 484-byte
+`index.html`: **D131** ruled the built page is never committed and never written
+there — it is built to `target/verifier-web/index.html`, which `.gitignore`
+already covers — so the directory holds exactly one file, the committed
+template `index.template.html` (37 497 B, measured at this review). And *"there
+is no playwright configuration"* has stopped being an observation and become a
+**ruling**: **D133 §5.4** refuses playwright outright and **D136 §2 R1**
+replaces all three of Q19's playwright clauses verbatim — the page is loaded
+from a `file://` origin and the online cases are driven by CDP
+`Fetch.enable`/`requestPaused`/`fulfillRequest` over the existing session, with
+no stub server and no listening socket. A future reader must not "fix" the
+absence.
 
 | id | spec line | spec bullet | milestone | owner | status | tests / evidence | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| V8.1 | 174 | Reveal subset, verified offline via the **CLI** | M3 | R + U | deferred | NONE at M0 | |
-| V8.2 | 174 | Reveal subset, verified offline via the **WASM page** in a headless browser | M3 | R27 + Q19 | deferred | NONE at M0 | Offline enforcement (external requests blocked, verdict still renders) is part of the row. |
+| V8.1 | 174 | Reveal subset, verified offline via the **CLI** | M3 | R + U | covered | `crates/antseal-cli/tests/reveal_flow.rs::a_unit_subset_stays_partial_and_opens_no_whole_file_commitment`, `crates/antseal-cli/tests/reveal_flow.rs::a_subset_completing_a_file_promotes_and_its_mirror_rides`, `crates/antseal-cli/tests/reveal_flow.rs::reveal_all_builds_a_verifying_bundle_matching_its_preview`, `crates/antseal-cli/tests/verify_command.rs::verify_runs_on_a_vault_less_machine_without_prompting`, `crates/antseal-cli/tests/redaction_view.rs::the_redaction_view_matches_the_committed_snapshot`, `scripts/verifier-page-browser.sh` | **Moved `deferred` → `covered` 2026-08-16, at the wave that closed R16/R27/U28-U30.** Three layers, deliberately, because the bullet names both a reveal and a verify: the subset reveals go through the reveal engine and are verified offline by its own `reveal_verified` helper (`verify_bundle` under `VerifyOptions::new()`, with the preview asserted against the built bundle's actual content set); the binary row proves the same verdict is reachable **through `antseal verify` on a vault-less machine without prompting**; and the redaction row covers the partial-reveal shape the M3 gate names. The last reference is the parity baseline — `verifier-page-browser.sh` captures `antseal verify <fixture>`'s own stdout per fixture from a binary built in the same run, which is the CLI side of V8.2's comparison. **Venue: `test` lane for the first four, this local host only for the script (see V8.2).** |
+| V8.2 | 174 | Reveal subset, verified offline via the **WASM page** in a headless browser | M3 | R27 + Q19 | covered | `scripts/verifier-page-browser.sh`, `scripts/verifier-page-browser.mjs`, `crates/antseal-core/tests/page_fixtures.rs`, `.github/workflows/verifier-page.yml` | **Moved `deferred` → `covered` 2026-08-16 (R27), with its venue named rather than assumed.** `--check` drives **13 fixtures** and asserts **86 rows** (100 after R85), string-identically against the CLI capture; the fixtures are **materialised into `target/`, never committed**, and asserted on every `cargo test` by `page_fixtures.rs`. Offline enforcement is the stronger form D136 §2 R1 ruled: the page loads from a `file://` origin and the driver asserts it **attempts** zero further requests — *"a page that asked and was refused has still asked"* — rather than blocking requests at the network layer. **There is no playwright and none is to be added** (D133 §5.4, D136 §2 R1). **The venue caveat is load-bearing and Q237 must carry it: every row here was proven on the LOCAL host.** `verifier-page.yml` is `workflow_dispatch:`-only and `gh run list --workflow verifier-page.yml` returned `[]` at this review — the lane has never executed on a hosted runner, which is why **Q19 is still open** under D136 §2 R6. |
 | V8.3 | 174 | Verdict-wording snapshot tests | M3 | R18 | covered | `crates/antseal-core/tests/verdict_wording.rs::the_wording_document_matches_the_committed_snapshot`, `crates/antseal-core/tests/verdict_wording.rs::every_anchor_state_has_a_snapshotted_row_and_a_slot_block`, `crates/antseal-core/tests/verdict_wording.rs::the_fetch_date_row_is_exercised_beneath_a_refuted_anchor`, `crates/antseal-core/tests/verdict_wording.rs::no_renderer_source_spells_a_frozen_verdict_string`, `crates/antseal-core/tests/verdict_wording.rs::the_wording_set_satisfies_the_positioning_checklist`, `crates/antseal-core/tests/snapshots/verdict-wording.txt`, `crates/antseal-core/src/verify/wording.rs` | One authoritative wording set, per spec line 127. **Moved `deferred` → `covered` 2026-08-11, the hour R18 landed** — the eight-day lag D118 §6 measured on M1's six rows is the failure this timing exists to avoid. The snapshot is the repo's own idiom (committed `.txt` + `ANTSEAL_BLESS=1`, the `cli-surface.help.txt` pattern), **no snapshot dependency added**. Two properties beyond the row's words, both load-bearing: the enumeration test is a **wildcard-free match over `AnchorState`**, so an eighth state fails the build rather than silently lacking a row, and `no_renderer_source_spells_a_frozen_verdict_string` scans `antseal-cli/src/**` + `verifier-web/**` for 21 needles so "shared verbatim by CLI and page" is asserted rather than assumed. Both proven fallible by real failures (a one-character snapshot drift; a deleted state row), the scan additionally by a planted corpus. **Recorded limitation**: the scan excludes test files by ruling (a test naming a frozen string is an independent pin, not a second source), and six `antseal-cli` sentences whose adoption would move shipped U23 output bytes are **enumerated as declared residue** with their open questions and pinned *present* by `every_recorded_residue_is_still_there`, so the list cannot rot into silence — R18's row carries them, U30 is their first natural consumer. |
-| V8.4 | 174 | Online-mode endpoint-disagreement case | M3 | A16 + R | deferred | NONE at M0 | Built on A16's typed disagreement outcome. |
+| V8.4 | 174 | Online-mode endpoint-disagreement case | M3 | A16 + R | covered | `crates/antseal-cli/tests/verify_command.rs::disagreeing_endpoints_render_the_advisory_and_move_nothing`, `crates/antseal-core/src/verify/orchestration/tests.rs::disagreement_is_advisory_and_leaves_the_offline_verdict_untouched`, `crates/antseal-core/src/verify/overlay/tests.rs::endpoint_disagreement_suppresses_promotion_for_that_anchor_alone`, `scripts/verifier-page-browser.sh` | **Moved `deferred` → `covered` 2026-08-16.** Built on A16's typed disagreement outcome, and asserted on **both surfaces** as the M3 gate clause requires: the CLI row drives **two real loopback stub servers** through the production collector `probe_online`, the two core rows pin that the disagreement is advisory and moves neither the offline verdict nor the report bytes (and run on `wasm32-unknown-unknown` too, via the `wasm32-core-tests` lane's `--lib` run), and the page row is one of R27's four online cases over CDP-mocked routes carrying **real captured mainnet bytes**. **One correction the reader needs**: the sibling *mismatch* case does **not** reach `Refuted` — D133 §3 R8 and §5.2 predict it and the corpus cannot produce it, because the only committed upgraded `.ots` carries pending branches and D56's O5 out-ranks O6/O7, so the render is `NotPromoted{RefutationSuppressed}`. That is **R88**, and it is not this row. Venue: `test` lane for the three Rust rows, **this local host only** for the script. |
 
 ## M4 — the release gate (line 175)
 
@@ -269,3 +298,25 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
   exempted, because exempting an in-progress milestone's row would mute it at
   the review that is supposed to read it. The M1 and M2 section preambles
   were rewritten: both described a tree that stopped existing on 2026-08-02.
+- **2026-08-11 / 12 (M2 wave 17, Q236 / D127)** — *entry added retroactively
+  by Q237 on 2026-08-16; the M2 review made its edits here and left this log
+  unchanged, which is why the entry is dated to the events and attributed to
+  the row that noticed.* M2's review ran and **`CURRENT_MILESTONE` moved
+  `M1` → `M2`**, bump-atomic with the register's first
+  `ACCEPTED_NON_COVERED` entry (`V7.1`, D127), because the check reds either
+  half without the other. The entry lasted one day: the consented
+  submit→upgrade pair ran 2026-08-12 through antseal's own clients, so the
+  cell flipped `covered` and the entry was removed in one change. The
+  register has been empty since.
+- **2026-08-16 (M3 wave 21, Q237)** — M3's review ran and
+  **`CURRENT_MILESTONE` moved `M2` → `M3`**. **This bump exempted nothing**:
+  all 31 rows at or before M3 already read `covered` when it was taken, and
+  `ACCEPTED_NON_COVERED` was `{}` on both sides of it — the first gate-row
+  bump of which that is true. The four M3 rows had moved `deferred` →
+  `covered` earlier the same day as their work closed (V8.1, V8.2, V8.3,
+  V8.4), so what this review adjudicated was **venue rather than coverage**:
+  two of the four are witnessed only by a local host, and that is recorded at
+  the rows and at the gate rather than as a status. Three preamble copies of
+  the constant's value were retired to the rule in the same act (**Q230**'s
+  class), and D122 §7.2's replacement for the *"how the gate uses this"*
+  bullet landed with them.

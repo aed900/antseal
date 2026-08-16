@@ -54,6 +54,8 @@
   no RFC 3161 timestamp token could be obtained, so the seal aborts before anything is paid or uploaded (the anchor gate); re-run when a TSA is reachable, or pass --force-degraded to proceed with a loudly recorded degraded anchor set
 [network-failure] class=network-failure code=23
   network failure: quote_batch: no peers reachable
+[network-failure (vault-local reveal, cache incomplete)] class=network-failure code=23
+  network failure: unit 3 could not be fetched from the network (network error: `reveal` needs a live Autonomi connection, and this build has no storage backend compiled in (the `ant-backend` feature is off by default). The command itself is complete — rebuild with `--features ant-backend` to reach the network) and no verified local copy exists
 [resume-source-changed] class=resume-safety-abort code=24
   resume safety abort: a source file changed since the interrupted seal: resume never re-encrypts (re-using a journaled nonce on new plaintext would break the encryption), so this seal is abandoned; re-run `antseal seal` to start a fresh one
 [resume-staged-bytes-missing] class=resume-safety-abort code=24

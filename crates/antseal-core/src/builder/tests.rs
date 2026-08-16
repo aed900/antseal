@@ -20,11 +20,27 @@ use crate::crypto::unit_aead::{Nonce24 as AeadNonce, decrypt_unit};
 use crate::test_util::TEST_MASTER_SECRET_W;
 use crate::test_util::bundle_fixtures::{
     BuiltFixture, FileSelection as FixtureFileSelection, FileSpec, Selection as FixtureSelection,
-    WorkSpec, build as fixture_build, shapes,
+    StorageAddresses, WorkSpec, build as fixture_build, shapes,
 };
 
 fn w() -> MasterSecretRef<'static> {
     MasterSecretRef::from_bytes(&TEST_MASTER_SECRET_W)
+}
+
+/// Every donor this suite feeds [`build_bundle`] records **real** addresses
+/// (R78).
+///
+/// R6's default [`StorageAddresses::Placeholder`] fill patterns are BLAKE3 of
+/// nothing, so a placeholder-addressed work is a *total* storage-linkage
+/// mismatch and R78's assertion refuses it. `Real` is what a seal-pipeline
+/// bundle actually looks like (S12 addresses every ciphertext and the
+/// manifest blob), so this is the production shape rather than a workaround —
+/// and the placeholder refusal is asserted, not merely avoided, in
+/// `tests/builder_storage_linkage.rs`. Applied here rather than at twenty
+/// call sites so a new test cannot forget it; nothing in this suite reads an
+/// address, so no other assertion moves.
+fn real_addressed(spec: &WorkSpec) -> WorkSpec {
+    spec.clone().with_storage_addresses(StorageAddresses::Real)
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +64,7 @@ struct Harness {
 
 impl Harness {
     fn new(spec: &WorkSpec) -> Self {
+        let spec = &real_addressed(spec);
         let donor = fixture_build(spec, &FixtureSelection::all(spec.files.len()));
         let ciphertexts = ciphertexts_from(&donor.bytes);
         let contents = contents_from(&donor.manifest, &ciphertexts);
@@ -214,7 +231,11 @@ fn parity_r13_matches_r6_for_every_expressible_catalogue_case() {
         if case_promoted {
             promoted.push(case.name);
         }
-        let expected: BuiltFixture = fixture_build(&case.spec, &FixtureSelection(reference));
+        // The R6 side takes the same `real_addressed` donor the harness took
+        // (R78) — parity is byte equality, so both sides must record the same
+        // addresses or the comparison measures the mode, not the builder.
+        let expected: BuiltFixture =
+            fixture_build(&real_addressed(&case.spec), &FixtureSelection(reference));
 
         let built = build_bundle(harness.inputs(&plan))
             .unwrap_or_else(|error| panic!("case `{}` must build: {error}", case.name));

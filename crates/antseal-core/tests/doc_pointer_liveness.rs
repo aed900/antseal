@@ -135,6 +135,23 @@ const ALLOWED: &[(&str, &str)] = &[
          no_allowlist_entry_is_stale will fail until it is deleted. The \
          pointer is real and was verified by hand on 2026-08-09 (A110/D107)",
     ),
+    (
+        "chain_id_mismatch_is_unavailable_not_agreed",
+        "cross-crate reference: lives in the antseal-anchor crate at \
+         src/arbitrum/confirm/tests.rs:438, cited by verify/wording/tests.rs \
+         as the test that asserts the two chain-id literals D137 §3 R2 makes \
+         this crate carry (42161 / 421614) against the real \
+         `antseal_net::network` constants — which antseal-core provably \
+         cannot see (D137 §1 (h)), and which is the whole reason the wording \
+         parameter is a `u64` and not a network name. It cannot resolve here \
+         because this sweep is scoped to this crate; widening it is Q70, and \
+         when Q70 lands this entry starts resolving and \
+         no_allowlist_entry_is_stale will fail until it is deleted. The \
+         pointer is real and was verified by hand on 2026-08-16 (R85/D137); \
+         the citing doc originally called it \"the CLI's own\", which is \
+         wrong — the CLI renders the guard's outcome and owns none of it — \
+         and that is corrected at the citation in the same act",
+    ),
 ];
 
 /// The one file the sweep skips: this one, which must quote example pointers

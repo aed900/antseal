@@ -66,6 +66,19 @@
 //! `pub(crate)` precisely so the sentence above stays true of the API this
 //! crate exports; its own docs carry the argument.
 //!
+//! **The crate does export a nonce-taking *reproduction*, and it is not this
+//! module's (R81).** `verify::storage_linkage::recompute_manifest_storage_blob`
+//! is `pub`, because `verify --live` must byte-compare the network's copy of
+//! the manifest blob against the bundle's own. Read literally, the claim
+//! above is unmoved — it governs **encryption** APIs, and no public function
+//! of this module accepts a nonce — and the widening was argued rather than
+//! assumed: that door takes a `ManifestLinkageSubject`, whose four fields are
+//! already `pub` because `check_storage_linkage` is a public stage, so a
+//! caller gains no material they could not already read out of the bundle
+//! (`k_m` ships in every bundle and opens only the plaintext the bundle
+//! already embeds). It is named here so this paragraph cannot be read as
+//! promising more than it says; the full ruling lives on that function.
+//!
 //! # AEAD is confidentiality-only (spec line 103)
 //!
 //! XChaCha20-Poly1305 is not key-committing (invisible-salamanders /
@@ -301,10 +314,28 @@ pub fn decrypt_manifest_with_key(
 ///
 /// **`pub(crate)`, deliberately.** The module docs' structural claim — *no
 /// public API accepts a caller-supplied encryption nonce* — is what keeps
-/// `(k_m, nonce)` single-use, and it stays literally true: a nonce-taking
-/// door exists for exactly one caller inside this crate and for no consumer
-/// of it. A `pub` version of this function would be a general
-/// encrypt-under-a-chosen-nonce API wearing a verification name.
+/// `(k_m, nonce)` single-use, and it stays literally true: this module
+/// exports no nonce-taking encryption door. A `pub` version of *this*
+/// function would be a general encrypt-under-a-chosen-nonce API wearing a
+/// verification name.
+///
+/// **R81 asked for exactly that widening and it was refused here.** `verify
+/// --live` needs these bytes to compare the network's copy of the manifest
+/// blob against the bundle's, and the cheap fix was one word on this line.
+/// Instead the door is
+/// [`verify::storage_linkage::recompute_manifest_storage_blob`], which takes
+/// a [`ManifestLinkageSubject`] rather than a free `(key, nonce, plaintext)`
+/// triple and lives in the verification layer, so the shape a careless future
+/// caller reaches for is not the shape this offers. That function carries the
+/// whole argument, including why the widening costs no material: its
+/// parameter's four fields are already `pub`. Two callers now, both inside
+/// the offline linkage layer's own vocabulary, and still no consumer of this
+/// module.
+///
+/// [`verify::storage_linkage::recompute_manifest_storage_blob`]:
+///     crate::verify::storage_linkage::recompute_manifest_storage_blob
+/// [`ManifestLinkageSubject`]:
+///     crate::verify::storage_linkage::ManifestLinkageSubject
 ///
 /// Returns `None` if the cipher refuses the plaintext — reachable only above
 /// XChaCha20-Poly1305's `P_MAX` (≈ 256 GiB), which no decoded manifest can

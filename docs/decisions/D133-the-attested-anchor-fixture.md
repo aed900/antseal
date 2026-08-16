@@ -1178,3 +1178,65 @@ narrow sets differ — is exactly what shipped. The classification in **R12**
 (not a format, verdict or fixture event) is unaffected: `git status --
 testdata/` is empty after the change and `./scripts/vector-freeze.sh` is green
 without `--update`.
+
+---
+
+## Correction — the mismatch case's promised outcome cannot be produced by any committed material, 2026-08-16
+
+**The corrected clauses, quoted verbatim.** From **§5.2**, the R27 case table:
+
+> | mismatch → invalid | both fulfilled with 960768's header | overlay row
+> `Refuted` with code `anchor-ots-online-header-mismatch`; report bytes unmoved |
+
+and from **§3 R8**, the perturbation table, whose row is headed with the same
+prediction:
+
+> | mismatch → invalid | **both** endpoints return the header for **960768**
+> (also captured, also real) — an agreed header that is not the embedded one |
+
+**The measured fact.** The R27 lane built exactly that case — both endpoints
+fulfilled with block **960768**'s real captured header against the embedded
+960767 header — and the rendered row is:
+
+```
+ots-1: agreed online evidence contradicts the embedded header
+(anchor-ots-online-header-mismatch), but a pending attestation out-votes the
+refutation; recorded, not promoted
+```
+
+That is `NotPromoted{RefutationSuppressed}`, class **`outcome`** — **not**
+`refuted`, and never `invalid` at the bundle layer. The mechanism is
+`classify_ots`'s own precedence: the artifact is A25's **merged** `.ots`, so it
+carries evaluable **pending** calendar branches, and **D56's O5 out-ranks
+O6/O7** saying so in as many words. The frozen corpus had already recorded the
+same mechanism and this record did not notice it — `ots-upgraded-online-block-absent`
+is pinned at `state: pending, suppressed: ["anchor-ots-online-block-absent"]`.
+
+**It is not a fixture choice, and that is what makes it a correction rather than
+a test defect.** `testdata/vectors/v1/anchor/anchor.json` holds exactly **one**
+upgraded OTS artifact, so **no committed material can drive an agreed refutation
+to `invalid` at the bundle layer**. §3 R8's own instruction — replay a different
+real captured header — is followed exactly and still cannot reach the promised
+row.
+
+**Authority.** The **R27** lane, 2026-08-16, by building §5.2's case and
+measuring what it renders rather than asserting what this record predicted;
+registered by the registrar at the wave-21 close. **The product half is the row
+R88**, which carries the three arms (mint a no-pending-branch artifact at the
+cost of a freeze event; accept `RefutationSuppressed` as the strongest outcome
+the corpus can exhibit; or reach O6/O7 at the classifier layer only) and is the
+place a decision about them belongs. **This correction rules nothing** — it
+states what is false.
+
+**Which rulings still stand.** Every one, and the error runs in the direction of
+**over-predicting the verdict** rather than mis-specifying the mechanism. §3 R8's
+substance — the mocked responses are the committed real captures, replayed
+verbatim, and the mismatch case uses 960768's real header — is exactly what
+shipped and is what makes the case exercise O6 with bytes an attacker could
+actually produce; only its outcome column is wrong. §5.2's other three rows
+(agreement → promotion, disagreement, one-endpoint-down) are unaffected and are
+green. §3 R2 (materialised, never committed), R7, R9, R10, R11 and R12 are
+untouched, and `git status -- testdata/` is empty after R27's work. The clause
+this record forwards to R27's `Do`, to R27's Accept and to the M3 `Gate:` line
+carries the same error and is corrected at each of those sites; **Q237** carries
+the gate line.

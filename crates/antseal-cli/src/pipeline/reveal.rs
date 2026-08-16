@@ -589,8 +589,14 @@ impl<'i, 'v, B: StorageBackend> RevealEngine<'i, 'v, B> {
     ) -> Result<PreparedReveal, RevealError> {
         let record = self.store.load_meta(seal_id)?;
         if record.state != WorkState::Complete {
+            // U70: the finer word, from the one production of it — the
+            // restore engine's call site, reached the same way rather than
+            // by a byte-identical private twin of its table (the twin's own
+            // doc said it copied that spelling "so `reveal` and `restore`
+            // name states identically", which was true of those two and of
+            // nothing else in the tree).
             return Err(RevealError::NotRevealable {
-                state: work_state_name(record.state),
+                state: crate::status::detail_state_name(record.state),
             });
         }
         let w = record.w.secret_ref();
@@ -1232,17 +1238,6 @@ fn decrypt_manifest_bytes(
 ) -> Result<Vec<u8>, RevealError> {
     antseal_core::crypto::manifest_aead::decrypt_manifest(w, nonce, blob)
         .map_err(|_| RevealError::ManifestDecrypt)
-}
-
-/// The coarse work state as a stable identifier for messages (the restore
-/// engine's spelling, so `reveal` and `restore` name states identically).
-const fn work_state_name(state: WorkState) -> &'static str {
-    match state {
-        WorkState::IncompletePrePay => "incomplete (nothing paid)",
-        WorkState::IncompletePostPay => "incomplete (paid, not finalized)",
-        WorkState::Complete => "complete",
-        WorkState::Abandoned => "abandoned",
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

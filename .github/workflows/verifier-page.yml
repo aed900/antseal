@@ -1,28 +1,65 @@
 # Q19 — the verifier page's browser lane: load the BUILT artifact from a
 # `file://` origin, assert it fetches nothing, and drop real bundles onto it.
 #
-# AUTHORED AND COMMITTED, BUT NOT A REQUIRED CONTEXT. Ruled by the maintainer
-# 2026-08-12: the browser gate runs LOCALLY (`scripts/verifier-page-browser.sh`,
-# wired beside the other `--self-test`-then-lane pairs), and this file exists so
-# the lane is reviewable and one setting away from enabled — at zero Actions
-# minutes until someone enables it. `workflow_dispatch` only; adding it to the
-# required-contexts matrix is a separate, deliberate act.
+# AUTHORED AND COMMITTED, BUT NOT A REQUIRED CONTEXT. `workflow_dispatch` only,
+# CONFIRMED by D136 §2 R4 on measured cost: one `ci` push run is 83.7 weighted
+# minutes across 19 jobs, the repository spent 3 154 weighted minutes in the
+# first fortnight of 2026-08, and 45 jobs were refused a runner in that window
+# for an exhausted allowance. A per-push addition is the wrong direction
+# whatever it costs. `schedule:` is refused too, on the inversion that decides
+# the trigger: a rarely-run lane is always a COLD lane, and cold is measured —
+# the first-ever `pages` run cost 8.30 min, the second, nine hours later, 1.72.
 #
-# The honest cost of that choice is the R82 pattern: a lane CI never runs is a
-# surface no green remote verdict says anything about. Recorded here rather than
-# discovered later — `heavy-features` is the precedent (Q153), and R82 is what
-# it looks like when the gap goes unwatched.
+# THIS LANE HAS NEVER RUN ON THE REMOTE — zero runs, measured 2026-08-15 and
+# re-measured by the lane that wrote these steps. Until a dispatch happens it
+# is not evidence (`docs/ci-verification.md:1080`), and Q19 may not be ticked
+# on it (D136 §2 R6). One dispatch costs ~8.3 weighted minutes, a tenth of one
+# push, and it is the MAINTAINER'S act to authorise, not an implementer's.
 #
-# WHY THERE IS NO BROWSER DOWNLOAD STEP. The driver is raw Chrome DevTools
-# Protocol over node's global WebSocket (`scripts/verifier-page-browser.mjs`);
-# the repo has no `package.json` and no `node_modules`, and D129 drove both
-# Chromium and Firefox this way. `ubuntu-latest` ships a usable chromium, so
-# this lane pulls no ~150 MB browser bundle into a metered minute — which is
-# most of the reason it is cheap enough to be worth enabling later.
+# ── WHAT WAS WRONG WITH THIS FILE, AND WHY THE FIX IS THREE STEPS ──────────
+#
+# As committed it could not have gone green (D136 §1 c/d), and the reason was
+# never the browser:
+#
+#   * it installed neither `wasm-pack` nor `wasm-bindgen-cli`; `ubuntu-latest`
+#     ships neither (zero hits in the image manifest, re-checked today); and
+#     `scripts/wasm-pack-build.sh` `die`s when either is absent. `pages.yml`'s
+#     header said it provisions them "which no other job does" — a true
+#     sentence describing a defect. Fixed by the provisioning step below, which
+#     CALLS the same script `pages-publish.sh` calls rather than copying its
+#     two `cargo install` lines (D136 §2 R5, §3's refused shape).
+#   * on a cold checkout `target/wasm-pack/` is empty, and
+#     `verifier-page-build.sh --check` runs the packaging self-test BEFORE it
+#     builds anything — so the first thing a hosted run would produce is an
+#     unhandled node `ENOENT` stack trace with no `::error::` annotation, and
+#     the browser would never launch. The build step below gives that self-test
+#     a subject.
+#   * the `if: failure()` step uploaded `target/verifier-web/` with
+#     `if-no-files-found: ignore`, a directory that does not exist in that
+#     failure — so it succeeded having uploaded nothing. Even after a green
+#     build it held one 2.5 MB page byte-reproducible from the commit under
+#     test and ZERO bits about why the run failed. Replaced below (D136 §2 R14).
+#
+# The one environmental claim anybody had written down is the one that is TRUE:
+# `ubuntu-latest` really does carry chromium — `install-google-chrome.sh` ends
+# `ln -s $chromium_bin /usr/bin/chromium` and `/usr/bin/chromium-browser`, and
+# the image lists Chromium 151.0.7922.0 (both re-read from `actions/runner-images`
+# today). So this lane still pulls no ~150 MB browser bundle into a metered
+# minute — the driver is raw CDP over node's global WebSocket, no
+# `package.json`, no `node_modules` (D133 refuses playwright outright).
 name: verifier-page
 
 on:
   workflow_dispatch:
+    inputs:
+      seed_failure:
+        description: >-
+          Leave EMPTY for an ordinary witnessing run. Set to a row name
+          (boot | network | csp | bundle) to force that assertion to fail with
+          its own message — D136 §2 R13's seeded failure, which is the only
+          thing that has ever exercised the failure-artifact path below.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,6 +71,15 @@ permissions:
 # the network for NOTHING, so a real anchor probe here would be the defect.
 env:
   ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+  # PINNED BY NAME (D136 §2 R7), and to `chromium-browser` rather than to the
+  # script's local default of `chromium`, because the image creates BOTH
+  # symlinks to the same binary and upstream's own image tests
+  # (`Browsers.Tests.ps1`) assert only `chromium-browser --version`. If the
+  # unguarded name is ever dropped, upstream stays green and this lane exits 2
+  # with a `::notice::`, which reads as informational while the job fails. Same
+  # engine, guarded name; this is NOT a switch to `google-chrome`, which D136
+  # §3 refuses because every measurement on record is against Chromium.
+  ANTSEAL_BROWSER: chromium-browser
 
 jobs:
   browser:
@@ -46,12 +92,51 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup show
       - uses: Swatinem/rust-cache@v2
+      - name: install the pinned wasm tools this image does not ship
+        run: ./scripts/wasm-tools-provision.sh
+      # Also the deliberate answer to D136 §5's one open mechanism — whether
+      # `Swatinem/rust-cache@v2` restores `target/wasm-pack/` across commits and
+      # so reddens `STALE ARTIFACT` for a non-defect. This step makes the
+      # question MOOT rather than leaving it to the witnessing run: `build()` in
+      # `wasm-pack-build.sh` does `rm -rf` on its own output directory before
+      # invoking wasm-pack, so whatever a cache restored is deleted and rebuilt
+      # from this tree, and R83's guard then compares this tree's module with
+      # this tree's module. If this step is ever removed the hazard returns, and
+      # the ruled cure is then `cache-targets: false` on the action above —
+      # never a quieter guard (D136 §3).
+      - name: build the module from this tree (a cold checkout has none)
+        run: ./scripts/wasm-pack-build.sh --build-only
       - name: build the page and run its browser assertions
+        env:
+          ANTSEAL_PAGE_SEED_FAILURE: ${{ inputs.seed_failure }}
         run: ./scripts/verifier-page-browser.sh --check
-      - name: artifacts on failure
+      # THE DIAGNOSIS, not the page (D136 §2 R14). `target/verifier-web/` held
+      # the 2.5 MB `index.html` and its one-line SHA256SUMS — byte-reproducible
+      # from the commit under test (R25/R86), so uploading it spent storage to
+      # convey nothing. What the assertions actually read is the event log and
+      # the screenshot, written by the driver's `--diagnosis <dir>` ONLY when a
+      # row failed. `if-no-files-found` is `error` on a SEEDED run and `ignore`
+      # otherwise: on the run that is supposed to produce a diagnosis, "the
+      # upload step succeeded having uploaded nothing" is exactly the false
+      # green §1 e measured, and it must be impossible.
+      - name: diagnosis on failure (screenshot + event log)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: verifier-page
-          path: target/verifier-web/
+          name: verifier-page-diagnosis
+          # `scripts/verifier-page-browser.sh`'s `DIAGNOSIS` — READ FROM THAT
+          # FILE 2026-08-15, not agreed in a conversation. If the two ever
+          # disagree, a seeded run reds at this step with "no files found"
+          # rather than uploading nothing quietly, which is the point.
+          path: target/verifier-page-diagnosis/
+          if-no-files-found: ${{ inputs.seed_failure != '' && 'error' || 'ignore' }}
+      # Context rather than diagnosis, and kept separate so its presence can
+      # never satisfy the assertion above: these are the twelve materialised
+      # bundles the run drove, which say WHAT was tested and not why it failed.
+      - name: the fixtures the run drove
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verifier-page-fixtures
+          path: target/verifier-web-fixtures/
           if-no-files-found: ignore

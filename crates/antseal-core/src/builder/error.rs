@@ -83,9 +83,13 @@ impl core::fmt::Display for ForbiddenMaterial {
 /// 3. **The mandatory self-check and the internal assertions** — the built
 ///    bytes failed [`verify_bundle`](crate::verify::verify_bundle), or one
 ///    of the D70 §7.3 structural assertions the self-check *cannot* make
-///    fired. The assertion variants are unreachable through the public API
+///    fired. Most assertion variants are unreachable through the public API
 ///    by construction; the [`forcing`](super::forcing) seam exists so tests
 ///    can prove each one can fail (its negative control).
+///    [`BuildError::StorageLinkageMismatch`] is the one exception and needs
+///    no seam: it accuses the **caller's inputs** rather than the builder's
+///    emission, so a caller can reach it with material this API accepts
+///    (R78).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum BuildError {
@@ -274,4 +278,28 @@ pub enum BuildError {
     /// slice borrows the decoded input — but kept total.
     #[error("the embedded manifest's span could not be located in the encoded bundle")]
     ManifestSpanUntracked,
+
+    /// Internal assertion (R78): the self-check's storage-linkage layer
+    /// found that what this bundle embeds does not address to what its
+    /// **signed** manifest records. Both halves are reported together, so a
+    /// bent unit address and a bent manifest address render distinctly.
+    ///
+    /// Unlike its four siblings this one is reachable through the public
+    /// API; `assert_beyond_self_check`'s docs carry R78's ruling on why it
+    /// is a refusal and not a warning.
+    #[error(
+        "internal assertion: the built bundle does not address to what its signed manifest \
+         records — {units_mismatched} of {units_checked} embedded unit ciphertext(s) mismatched, \
+         manifest blob matched: {manifest_matched}"
+    )]
+    StorageLinkageMismatch {
+        /// Embedded unit ciphertexts whose recomputed address differs from
+        /// the address the manifest records for that unit.
+        units_mismatched: u64,
+        /// How many embedded unit ciphertexts were checked.
+        units_checked: u64,
+        /// Whether the blob rebuilt from the embedded plaintext manifest
+        /// addresses to the storage record's claimed address.
+        manifest_matched: bool,
+    },
 }

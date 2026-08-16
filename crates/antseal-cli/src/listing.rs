@@ -410,27 +410,29 @@ impl AnchorDamage {
 impl WorkRow {
     /// The coarse state identifier a user sees: `complete`, `incomplete`
     /// or `abandoned`.
+    ///
+    /// **U70**: this used to hold a third implementation of the same table.
+    /// It holds none now — the one production is
+    /// [`crate::status::work_state_name`], so `list`, `status`, `show`,
+    /// `restore` and `reveal` cannot drift apart by one of them being
+    /// edited.
     #[must_use]
     pub const fn state_name(&self) -> &'static str {
-        match self.state {
-            WorkState::IncompletePrePay | WorkState::IncompletePostPay => "incomplete",
-            WorkState::Complete => "complete",
-            WorkState::Abandoned => "abandoned",
-        }
+        crate::status::work_state_name(self.state)
     }
 
     /// The finest state identifier available: S10's journal tag when the
     /// vault still carries it, otherwise the coarse mirror's own spelling.
+    ///
+    /// **U70**: the fallback arm's kebab pair moved to
+    /// [`crate::status::detail_state_name`] — the single finer production —
+    /// and is called from here rather than re-spelled. `detail_state`'s wire
+    /// value is byte-unchanged.
     #[must_use]
     pub const fn detail_state_name(&self) -> &'static str {
         match self.fine_state {
             Some(state) => state.name(),
-            None => match self.state {
-                WorkState::IncompletePrePay => "incomplete-pre-pay",
-                WorkState::IncompletePostPay => "incomplete-post-pay",
-                WorkState::Complete => "complete",
-                WorkState::Abandoned => "abandoned",
-            },
+            None => crate::status::detail_state_name(self.state),
         }
     }
 

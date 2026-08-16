@@ -37,20 +37,24 @@ use std::collections::BTreeMap;
 
 use antseal_anchor::agree::{Agreement, EndpointFailure, EndpointPair};
 use antseal_anchor::arbitrum::confirm::{ArbitrumConfirmation, confirm_arbitrum_tx};
+use antseal_anchor::arbitrum::endpoints::expected_chain_id;
 use antseal_anchor::esplora::{fetch_agreed_header, into_online_block_result};
 use antseal_anchor::http::HttpClient;
 use antseal_core::anchor::model::OnlineEvidence;
 use antseal_core::bundle::BundleV1;
+use antseal_core::crypto::unit_aead::Nonce24 as AeadNonce;
 use antseal_core::manifest::Manifest;
-use antseal_core::verify::orchestration::{
-    LiveBlobOutcome, LiveBlobRow, LiveInputs, OnlineInputs, VerifyHost,
-};
+use antseal_core::verify::orchestration::{LiveInputs, OnlineInputs, VerifyHost};
 use antseal_core::verify::overlay::{
     BlockProbe, EndpointProbeFailure, ProbeEndpoints, ProbeFailureClass, ProbeLog, ReceiptProbe,
 };
 use antseal_core::verify::plan::ProbePlan;
+use antseal_core::verify::storage_linkage::{
+    ManifestLinkageSubject, recompute_manifest_storage_blob,
+};
 use antseal_net::{
     Address, LiveSubject, NetworkId, StorageBackend, StorageRecord, UnitKindTag, live_check,
+    live_inputs,
 };
 
 use crate::error::CliError;
@@ -169,14 +173,32 @@ pub fn probe_online(
     // The receipt half comes from the same plan. `ReceiptTarget` carries the
     // 32 bytes beside the hex the page reads, so this path re-decodes nothing
     // and cannot disagree with what the page was told to fetch.
+    //
+    // **D137 §3 R7 — the CLI's real lever.** The chain id enters the probe log
+    // here and nowhere else; `verify_out.rs` only prints
+    // `overlay.receipt.line` and authors nothing. It is
+    // `expected_chain_id(network)` rather than a pin, because unlike the page
+    // the CLI's chain genuinely varies: `--network arbitrum-sepolia` renders
+    // 421614, and that is the case that gives the differential in
+    // `wording/tests.rs` its teeth.
+    //
+    // The id is taken in the SAME `let` chain as the pair and the target, so
+    // "probed, chain unknown" is unreachable rather than merely unwritten —
+    // the same move `ProbeLog::with_receipt` makes in core. The `None` arm is
+    // devnet, where `verify_rpcs` is also `None` and `endpoints.arbitrum` is
+    // therefore already `None`; that is two tables agreeing, and
+    // `a_network_with_no_expected_chain_id_has_no_pair_to_probe_with`
+    // (`antseal-anchor`'s `arbitrum/endpoints.rs`) is what asserts the
+    // implication rather than leaving it to be noticed.
     if let Some(pair) = &endpoints.arbitrum
         && let Some(target) = &plan.receipt
+        && let Some(chain_id) = expected_chain_id(network)
     {
         let confirmation = confirm_arbitrum_tx(client, pair, network, target.tx_hash_bytes());
         if let Some(agreed) = confirmation.into_receipt_confirmation() {
             evidence = evidence.with_receipt(agreed);
         }
-        probes = probes.with_receipt(receipt_probe(&confirmation));
+        probes = probes.with_receipt(receipt_probe(&confirmation), chain_id);
     }
 
     OnlineInputs::new(evidence, probes)
@@ -426,7 +448,6 @@ where
         .collect();
 
     let mut records: Vec<StorageRecord<'_>> = Vec::with_capacity(embedded.len() + 1);
-    let mut subjects: Vec<String> = Vec::with_capacity(embedded.len() + 1);
     for (unit_id, ciphertext) in embedded {
         // A unit the manifest does not list cannot have a recorded address,
         // so there is nothing to fetch and nothing to compare. Skipped, not
@@ -442,28 +463,49 @@ where
             *address,
             ciphertext,
         ));
-        subjects.push(subject_label(LiveSubject::Unit {
-            unit_id,
-            kind: *kind,
-        }));
     }
 
-    // ── the encrypted-manifest row is NOT here, and the reason is a
-    //    measured gap rather than a choice ──────────────────────────────
+    // ── the encrypted-manifest row (R81) ───────────────────────────────
     //
-    // R11's `LiveSubject::EncryptedManifest` exists and R20's *offline*
-    // linkage layer checks exactly that blob — by rebuilding it with
-    // `antseal_core::crypto::manifest_aead::recompute_manifest_blob`, which
-    // is `pub(crate)` and therefore unreachable from this crate. There is no
-    // other public route: `encrypt_manifest` draws a fresh random nonce, so
-    // it cannot reproduce the blob the sealer uploaded.
+    // The fourth subject, and the one the offline layer has always checked
+    // while `--live` could not: the sealer uploaded
+    // `XChaCha20-Poly1305(k_m, nonce, MANIFEST_AAD, manifest_bytes)`, and
+    // reproducing it is R20's manifest arm. It reached here through
+    // `recompute_manifest_blob`, which was `pub(crate)`; R81 ruled **arm
+    // (b)** — a verification-shaped public door taking the linkage subject —
+    // rather than widening the crypto module's nonce-taking function, so the
+    // encrypt-door stays shut. The argument lives on
+    // `verify::storage_linkage::recompute_manifest_storage_blob`; the
+    // measured gap this replaces was recorded here, and R81's own rule is
+    // that a documented gap must not outlive its fix.
     //
-    // The consequence is bounded and stated rather than hidden: `--live`
-    // proves persistence for every **unit** ciphertext the bundle embeds and
-    // says nothing about the encrypted manifest. It is reported for a row;
-    // the fix is one visibility change in a crate this lane may not write.
-    // Guessing at the blob, or checking a different address, would be worse
-    // than an honest absence.
+    // Both halves of the section now speak about the same four subjects, and
+    // they speak from one computation: the blob below is produced by the same
+    // function `check_storage_linkage` hashes.
+    let storage_record = bundle.storage_record();
+    // The wire nonce and the AEAD nonce are deliberately distinct types; the
+    // crossing is explicit here, as it is everywhere else in the tree.
+    let manifest_nonce = AeadNonce::from_bytes(*storage_record.nonce().as_bytes());
+    let manifest_blob = recompute_manifest_storage_blob(&ManifestLinkageSubject {
+        // The bytes **as received** — the pre-image the sealer encrypted,
+        // never a re-encoding.
+        manifest_bytes: bundle.manifest_bytes(),
+        nonce: &manifest_nonce,
+        k_m: storage_record.k_m(),
+        recorded_address: storage_record.address(),
+    });
+    // `None` only above the AEAD's P_MAX (≈ 256 GiB), unreachable for a
+    // decoded manifest under F11's caps. There is then no blob and so no
+    // address, and a row with nothing to compare against would be a claim
+    // about the network made out of nothing — so the subject is dropped
+    // rather than guessed, exactly as an unlisted unit is above.
+    if let Some(blob) = manifest_blob.as_deref() {
+        records.push(StorageRecord::new(
+            LiveSubject::EncryptedManifest,
+            Address::from(*storage_record.address()),
+            blob,
+        ));
+    }
 
     if records.is_empty() {
         // R11 refuses an empty check outright; the section reports
@@ -478,48 +520,17 @@ where
             detail: format!("the live check could not be composed: {source}"),
         })?;
 
-    Ok(LiveInputs::from_rows(
-        report
-            .rows
-            .iter()
-            .zip(subjects)
-            .map(|(row, subject)| LiveBlobRow {
-                subject,
-                outcome: blob_outcome(&row.persistence.outcome),
-            })
-            .collect(),
-    ))
-}
-
-/// One live row's subject label.
-///
-/// The label is the **host's**, by R21's own design: `LiveBlobRow::subject`
-/// is documented as host-supplied because the subject vocabulary is R11's
-/// [`LiveSubject`], which lives in `antseal-net` and cannot be named from
-/// WASM-safe core. Nothing here is a frozen verdict sentence — the sentence
-/// this label is dropped into is `wording::live_blob_*_line`'s.
-fn subject_label(subject: LiveSubject) -> String {
-    match subject {
-        LiveSubject::Unit {
-            unit_id,
-            kind: UnitKindTag::Normal,
-        } => format!("unit {unit_id}"),
-        LiveSubject::Unit {
-            unit_id,
-            kind: UnitKindTag::RawMirror,
-        } => format!("unit {unit_id} (raw mirror)"),
-        LiveSubject::EncryptedManifest => "encrypted manifest".to_owned(),
-    }
-}
-
-/// S15's per-blob outcome, projected onto core's WASM-safe four.
-fn blob_outcome(outcome: &antseal_net::PersistenceOutcome) -> LiveBlobOutcome {
-    match outcome {
-        antseal_net::PersistenceOutcome::Identical => LiveBlobOutcome::Identical,
-        antseal_net::PersistenceOutcome::Different { .. } => LiveBlobOutcome::Different,
-        antseal_net::PersistenceOutcome::NotFound => LiveBlobOutcome::NotFound,
-        antseal_net::PersistenceOutcome::FetchError { reason } => LiveBlobOutcome::FetchFailed {
-            reason: reason.clone(),
-        },
-    }
+    // The projection is `antseal-net`'s, not this file's (R80's placement
+    // ruling, argued on `antseal_net::live_inputs`): both source types are
+    // that crate's, and one home is what keeps U30's wiring and the bridge
+    // test from drifting. What stays here is the half that needs the
+    // **bundle** — the reveal ciphertexts and the signed manifest's
+    // addresses, a vocabulary `antseal-net` must never grow.
+    //
+    // R79 note, for a reader who arrives at the fetch-failure row: the string
+    // that lands in `LiveBlobOutcome::FetchFailed` is now
+    // `FetchFailureClass::label`'s `&'static str`, drawn from a closed class
+    // mapped wildcard-free over `StorageError` at the network boundary. This
+    // file is a courier and authors none of it.
+    Ok(live_inputs(&report))
 }

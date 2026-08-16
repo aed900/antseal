@@ -65,7 +65,7 @@ must-agree comparison**, so the page never decides what "agreement" means.
         { "outcome": "header", "header_hex": "…160 hex characters…" },
         { "outcome": "header", "header_hex": "…160 hex characters…" } ] }
   ],
-  "receipt": { "responses": [
+  "receipt": { "chain_id": 42161, "responses": [
       { "outcome": "confirmed", "status": 1, "block_number": 123, "block_hash": "…64 hex…" },
       { "outcome": "not-on-chain" } ] }
 }
@@ -77,6 +77,28 @@ one agrees with itself and proves nothing. Every entry is one of
 `confirmed` / `not-on-chain` / `failed` (receipt), where `failed` carries
 `endpoint` and a `class` of `transport`, `payload` or `wrong-chain`. Omit
 `receipt` entirely when no probe was attempted.
+
+`receipt.chain_id` is **required whenever `receipt` is present** (D137 §3 R6).
+It is the chain id the page's own guard **read off the wire** before it asked
+for a receipt — not the page's pinned constant restated — and it is what the
+overlay's two receipt sentences name: *"…confirm the recorded transaction on
+Arbitrum chain 42161…"*, *"…agree the recorded transaction is not on Arbitrum
+chain 42161…"*. Without it a page could only say *"is not on chain"*, which
+asserts absence from **every** chain from a measurement that reached one, and
+is false for a receipt sealed on another (R85).
+
+One number for the pair, not one per response: an endpoint that reported a
+different chain never reaches the receipt query at all — it is a `failed` entry
+of class `wrong-chain` — so every response that carries a receipt answer was
+served by an endpoint that positively answered `eth_chainId` with this value.
+A per-response field would invent a disagreement the guard already excludes.
+
+The token `not-on-chain` **inside a response is unchanged and gains nothing**
+(D137 §3 R8): it names what one already-guarded endpoint answered. The
+identically spelled token on the *output* side — `overlay.receipt.outcome` —
+did change, from the bare string `"not-on-chain"` to
+`{"not-on-chain":{"chain_id":42161}}`, because that one is the module asserting
+something and needs the same scope its sentence has.
 
 The fold mirrors the CLI's `must_agree` exactly, because R27's parity gate
 compares the two renderings: **failure first** (either endpoint failed → the

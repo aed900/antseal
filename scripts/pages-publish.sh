@@ -3,6 +3,7 @@
 #
 #   ./scripts/pages-publish.sh --build     provision, build, check, stage
 #   ./scripts/pages-publish.sh --verify URL  check what a host actually serves
+#   ./scripts/pages-publish.sh --help
 #
 # The canonical URL is `https://antseal.org/` (D62 §3 R1) — apex, https,
 # trailing slash, no www, no subdomain, no path. It is ONE constant and this
@@ -29,6 +30,21 @@
 #     requests — a request-based check goes red on a correct deploy. R23
 #     declaring no icon removes the request entirely, but this must be right
 #     without that.
+#
+# ── THE DEPLOY IS WHERE REPRODUCIBILITY IS ENFORCED (R86/D135 §3 R1) ───────
+#
+# `cmd_build` below runs `scripts/reproducible-build.sh --compare` between
+# build A and the packaging step, and `pages.yml` calls `--build` BEFORE
+# `actions/configure-pages`, `upload-pages-artifact` and `deploy-pages`. So a
+# red there ends the job with nothing staged: *a deploy cannot publish a digest
+# two builds disagree on* is a property of the committed files, not a promise.
+#
+# The tier is DEPLOY-GATED and RAISE-ONLY BY DECISION; the price, the refused
+# arms and the pre-priced promotion arm are at the top of that script. What the
+# gate does NOT cover, stated here so no reader assumes it: nothing between
+# deploys — a commit that breaks reproducibility is caught at the next deploy,
+# not at the push that broke it, and this repository's whole history contains
+# two deploys.
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,32 +56,25 @@ OUT="target/verifier-web"
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::pages-publish: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# The pins are READ from where they are declared, never restated here — the
-# same rule scripts/wasm-pack-build.sh follows, so a version literal cannot
-# drift into a second copy that agrees today (Q130).
-recorded_pin() {
-  grep -rhoE "$1[^\n]*--version [0-9]+\.[0-9]+\.[0-9]+" docs scripts .github/workflows 2>/dev/null |
-    sed -nE 's/.*--version ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | sort -u | head -n1
-}
-
 cmd_build() {
-  local pack bindgen
-  pack="$(recorded_pin wasm-pack)"
-  bindgen="$(recorded_pin wasm-bindgen-cli)"
-  [ -n "$pack" ]    || die "no wasm-pack version is recorded anywhere (docs/dependency-policy.md §5)"
-  [ -n "$bindgen" ] || die "no wasm-bindgen-cli version is recorded anywhere (docs/dependency-policy.md §5)"
-
-  if [ "$(wasm-bindgen --version 2>/dev/null | awk '{print $2}')" != "$bindgen" ]; then
-    note "installing the pinned wasm-bindgen-cli ${bindgen}"
-    cargo install wasm-bindgen-cli --locked --version "$bindgen" || return 1
-  fi
-  if [ "$(wasm-pack --version 2>/dev/null | awk '{print $2}')" != "$pack" ]; then
-    note "installing the pinned wasm-pack ${pack}"
-    cargo install wasm-pack --locked --version "$pack" || return 1
-  fi
+  # The pins are READ from where they are declared and the two `cargo install`
+  # lines live in ONE place, because `verifier-page.yml` needs the same two
+  # tools and a second copy of the derivation would agree today and drift
+  # afterwards (D136 §2 R5, §3's refused shape; Q130).
+  note "provision the pinned wasm tools"
+  ./scripts/wasm-tools-provision.sh || return 1
 
   note "build and check the module (R22)"
   ./scripts/wasm-pack-build.sh --check || return 1
+
+  # AFTER build A and BEFORE packaging (D135 §5 R4): the comparison must not
+  # write into `~/.cargo` or `./target`, or the post-job rust-cache save would
+  # store a tree contaminated by the second environment and the next deploy
+  # would restore it. Build B gets its own checkout path and its own
+  # $CARGO_HOME, which is the axis and also the reason it cannot reach this
+  # job's cache (D135 §5 R1).
+  note "two ENVIRONMENTS, one commit: is the digest this deploy publishes reproducible? (R86)"
+  ./scripts/reproducible-build.sh --compare || return 1
 
   note "package and check the page (R25)"
   ./scripts/verifier-page-build.sh --check || return 1
@@ -141,5 +150,6 @@ cmd_verify() {
 case "${1:---build}" in
   --build | "") cmd_build ;;
   --verify)     shift; cmd_verify "${1:-$CANONICAL_URL}" ;;
-  *) die "usage: scripts/pages-publish.sh [--build | --verify [url]]" ;;
+  --help | -h)  sed -n '3,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) die "usage: scripts/pages-publish.sh [--build | --verify [url] | --help]" ;;
 esac

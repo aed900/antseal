@@ -145,12 +145,21 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // U20's handler refuses at the backend seam before it would ask
         // for a passphrase — a build with no network cannot restore, and
         // collecting a secret first would be rude as well as pointless.
-        // **U28/U29's `reveal` joined it at the same seam**: unlike `show`,
-        // which holds no backend at all (D67 §1 j), a reveal may have to
-        // fetch a ciphertext this vault no longer caches, so it stops where
-        // `restore` stops — before the passphrase and before U29's
-        // irreversible-disclosure screen could be painted.
-        "restore" | "reveal" => (23, "network-failure"),
+        "restore" => (23, "network-failure"),
+        // **U72 moved `reveal` OFF that arm and onto the passphrase one.**
+        // It joined `restore` at U28/U29 on the reasoning that a reveal
+        // *may* have to fetch a ciphertext this vault no longer caches —
+        // right about *may*, wrong about *must*. R16's gathering is
+        // cache-first by D43's ruling, so a work whose retained cache is
+        // intact discloses with zero network access, and refusing at entry
+        // made the default build refuse on bytes already on the user's own
+        // disk. The handler now unlocks like `show`, `list` and `status`,
+        // and the refusal (when one is needed at all) lands at the first
+        // genuinely-required fetch. So what it exhibits here — machine mode,
+        // no channel, over the fixture vault — is the same gate they stop
+        // at. **This row is the process-level witness that the wiring is
+        // real**: it fails on the old handler with 23.
+        "reveal" => (11, "passphrase-unavailable"),
         // U13's handler validates the plan FIRST, before the seam, the
         // vault and any secret. The minimal argv names `x.txt`, which
         // does not exist, so what it exhibits here is D46 rule 4's
@@ -321,7 +330,47 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// `tests/snapshots/json-envelopes.txt`; regenerate deliberately with
 /// `ANTSEAL_BLESS=1` and justify the diff — envelope drift is a
 /// machine-interface event.
+///
+/// # One file, two feature builds — R82's ruling, arm (b)
+///
+/// `backend::unavailable` has two `#[cfg]` arms with different text, and
+/// this is a **single** committed file compared byte-for-byte. So until R82
+/// the document rendered differently under `--features ant-backend`, that
+/// build's `envelope_fixtures_match_the_committed_snapshot` failed, and
+/// whichever build the file documented, the other build's machine surface
+/// was pinned by nothing at all. `heavy-features` is local-only by Q153's
+/// ruling and runs in no CI job, so the red could — and did — sit through
+/// any number of green waves.
+///
+/// **The arm taken is (b): the fixture is feature-parameterised.**
+/// [`antseal_cli::backend::BackendArm`] makes both sentences exist in both
+/// builds, and the feature-varying documents below are rendered **per arm**
+/// through [`antseal_cli::backend::unavailable_arm`] — the real producer
+/// `backend::unavailable` itself delegates to (U3's rule; no arm of this row
+/// may be satisfied by hand-copying the second build's text into a file).
+/// Three consequences, and the third is the one that closes the row:
+///
+/// 1. one committed file carries both texts;
+/// 2. the two builds render **byte-identical** documents, so the snapshot
+///    test is green in both rather than in whichever one was blessed last;
+/// 3. the **default** build — the only one any CI job runs — is what
+///    witnesses the feature-ON sentence. R82's title says that surface is
+///    "witnessed by nothing"; after this it is witnessed by every run.
+///
+/// Arm (a) (a second `#[cfg]`-selected snapshot) was rejected because it
+/// answers R82's own question badly: given Q153, nobody but a local
+/// developer would ever compare the second file, so it would rot exactly as
+/// the unwitnessed text did. Arm (c) (one feature-invariant sentence) is a
+/// **retraction of a recorded design choice** — `unavailable`'s rustdoc
+/// argues both arms in the strongest form (*"a message blaming the missing
+/// feature would be a lie in a build that has it"*) — and R82 says it may
+/// not be slipped in as a snapshot repair.
+///
+/// `reveal` is no longer one of the feature-varying documents. U72 moved it
+/// off the seam entirely; its registered exemplar is the passphrase gate,
+/// which is feature-invariant.
 fn render_fixture() -> String {
+    use antseal_cli::backend::{BackendArm, unavailable_arm};
     use antseal_cli::error::{CliError, PassphraseFailure};
     use antseal_cli::machine::{error_envelope, success_envelope, success_envelope_raw};
 
@@ -344,7 +393,11 @@ fn render_fixture() -> String {
             // the real producer — a hand-copied string here went stale the
             // first time the message changed, and a fixture that documents
             // text no build emits is worse than none (U19's rule).
-            "restore" => antseal_cli::backend::unavailable("restore"),
+            //
+            // R82: the arm is **named** rather than inherited from the
+            // build, so these bytes are the same in both. The other arm is
+            // registered below.
+            "restore" => unavailable_arm("restore", BackendArm::NotCompiled),
             // U11's handler is complete. Its registered error exemplar is
             // the D39 absolute refusal — the one a user actually hits —
             // rendered by the real producer rather than hand-copied
@@ -355,14 +408,20 @@ fn render_fixture() -> String {
             // plain `antseal seal notes.txt` meets in a default-feature
             // build is the same storage-backend seam `restore` reaches
             // (U36's, shared) — rendered by the real producer rather than
-            // hand-copied, per U19's rule.
-            "seal" => antseal_cli::backend::unavailable("seal"),
-            // U28's flow and U29's consent gate are complete, so the
-            // not-implemented exemplar this row carried is gone: what a
-            // default-feature build actually meets is `restore`'s seam,
-            // rendered by the real producer rather than hand-copied (U19's
-            // rule).
-            "reveal" => antseal_cli::backend::unavailable("reveal"),
+            // hand-copied, per U19's rule. R82: the arm is named, and the
+            // other one is registered below.
+            "seal" => unavailable_arm("seal", BackendArm::NotCompiled),
+            // **U72**: `reveal` left the backend seam. Its gathering is
+            // cache-first by D43, so a work whose cache is intact needs no
+            // network at all and the handler now unlocks the vault instead
+            // of refusing at entry. What a default-feature build actually
+            // meets under the minimal argv, in machine mode with no
+            // channel, is therefore `show`'s gate — and, like `show`'s, it
+            // is feature-invariant, so this document is no longer one of the
+            // two R82 has to render per arm.
+            "reveal" => CliError::PassphraseUnavailable {
+                reason: PassphraseFailure::NoChannel,
+            },
             // U23's handler is complete. Like `list`, it must unlock the
             // vault, so in machine mode without a channel that is exactly
             // where it stops — rendered by the real producer rather than
@@ -390,6 +449,25 @@ fn render_fixture() -> String {
         out.push_str(&format!(
             "[{name}] error\n{}\n",
             error_envelope(name, "arbitrum-one", &err)
+        ));
+    }
+    // R82 arm (b): the **other** feature build's refusal, for every command
+    // that still routes through the seam. Rendered here — in the default
+    // build as much as the feature one — so the `ant-backend` machine
+    // surface is documented by the file every CI job compares, instead of by
+    // a file only a local `--features ant-backend` run would ever read
+    // (Q153). `seal` and `restore` are the two; `reveal` left the seam at
+    // U72 and `verify --live` refuses before it has a command envelope of
+    // its own registered here.
+    for name in ["seal", "restore"] {
+        out.push_str(&format!(
+            "[{name}] error [arm: {}]\n{}\n",
+            BackendArm::Compiled.name(),
+            error_envelope(
+                name,
+                "arbitrum-one",
+                &unavailable_arm(name, BackendArm::Compiled)
+            )
         ));
     }
     // Success examples for the commands with real handlers today.
@@ -444,8 +522,30 @@ fn render_fixture() -> String {
         "[seal] result (--dry-run over a resumable work)\n{}\n",
         success_envelope("seal", "arbitrum-one", fixture_dry_run_resume().json())
     ));
+    // U20's, rendered by `RestoreOutput::json` — the real producer.
+    //
+    // **U69 (D69 §6.1): a success envelope at a NONZERO exit.** The fixture
+    // work carries a `refused-overwrite` row and a `verification-failed`
+    // one, and until U69 that pairing was one **no build could emit**: D48
+    // §3 requires such a run to exit 35, `main_entry` had only two arms, and
+    // the success one was `ExitCode::SUCCESS`. The document is unchanged and
+    // was always right — what changed is underneath it. `RestoreOutput`'s
+    // fold now produces `exit_class()`, D69 §3 R1's third arm, so the
+    // complete per-file array is emitted *and* the process exits on the most
+    // severe row present — which is exactly the half D48 §6 promised to
+    // keep. The exit code the header names is asserted from
+    // `RestoreOutput::exit_class`, over a mixed set, in
+    // `the_restore_document_is_a_success_envelope_at_its_d48_exit_code`.
+    //
+    // `ok` means *a result document is present*, never *the exit code is 0*
+    // — the same reading `verify`'s entry below carries. Do not "fix" this
+    // by making `ok` follow the exit code.
     out.push_str(&format!(
-        "[restore] result\n{}\n",
+        "[restore] result (at exit {} — the most severe row present)\n{}\n",
+        fixture_restore()
+            .exit_class()
+            .expect("the registered restore fixture carries a failing row")
+            .exit_code(),
         success_envelope("restore", "arbitrum-one", fixture_restore().json())
     ));
     // U28's, rendered by `RevealReport::json` — the real producer. The
@@ -1204,6 +1304,278 @@ fn envelope_fixtures_match_the_committed_snapshot() {
         "the JSON envelope drifted from the committed fixture {} — machine-interface \
          changes are reviewed, versioned events (regenerate with ANTSEAL_BLESS=1)",
         path.display()
+    );
+}
+
+/// **R82**: the refusal a user reads names no task row — in **both** builds.
+///
+/// The feature-ON sentence used to end *"connecting it to this command's
+/// argument handling lands with **U13**"*, and U13 has shipped, so the
+/// message sent a user to closed work. Three independent lanes (U28, U29,
+/// R22) reported that same sentence before it moved, which is what makes it
+/// a standing defect rather than a stale comment — and R82 requires a
+/// **test**, not a review, to hold it, because a review has now failed three
+/// times.
+///
+/// The rule asserted is stronger than *"names only rows that are open"*, and
+/// deliberately: an open row closes. A refusal a user reads cannot cite an
+/// identifier only this repository can resolve, whatever its state. So no
+/// row-shaped token may appear at all.
+///
+/// Scanned over **both** arms, so the default build is what witnesses the
+/// feature-ON text (R82's whole point — `heavy-features` is local-only by
+/// Q153 and runs in no CI job).
+#[test]
+fn the_refusal_messages_name_no_task_row() {
+    use antseal_cli::backend::BackendArm;
+
+    /// The identifier prefixes this repository's rows and decisions use.
+    const PREFIXES: [char; 7] = ['U', 'R', 'Q', 'D', 'A', 'S', 'P'];
+
+    /// Every `<prefix><digits>` token that stands as a word — so `SHA256`
+    /// (the `A` is preceded by an alphanumeric) and `arbitrum-one` are not
+    /// hits, and `U13` is.
+    fn row_tokens(text: &str) -> Vec<String> {
+        let chars: Vec<char> = text.chars().collect();
+        let mut found = Vec::new();
+        let mut index = 0;
+        while index < chars.len() {
+            let candidate = chars[index];
+            let starts_word = index == 0 || !chars[index - 1].is_alphanumeric();
+            if starts_word && PREFIXES.contains(&candidate) {
+                let mut end = index + 1;
+                while end < chars.len() && chars[end].is_ascii_digit() {
+                    end += 1;
+                }
+                let has_digits = end > index + 1;
+                let ends_word = end >= chars.len() || !chars[end].is_alphanumeric();
+                if has_digits && ends_word {
+                    found.push(chars[index..end].iter().collect());
+                    index = end;
+                    continue;
+                }
+            }
+            index += 1;
+        }
+        found
+    }
+
+    // The scanner has to be able to see one, or it proves nothing.
+    assert_eq!(
+        row_tokens("connecting it lands with U13, per D48 and SHA256 at u9"),
+        vec!["U13".to_owned(), "D48".to_owned()],
+        // Not written as a marked token: an id inside a backtick span is a
+        // CITATION to `scripts/check-traceability.py`, and this one names no
+        // row (it is the letter-plus-digits tail of a hash name).
+        "the scanner must find real row ids, skip the A-then-digits inside SHA256, and skip \
+         lowercase"
+    );
+
+    for arm in BackendArm::ALL {
+        for command in ["seal", "restore", "reveal", "verify"] {
+            let message = arm.message(command);
+            let tokens = row_tokens(&message);
+            assert!(
+                tokens.is_empty(),
+                "the `{}` refusal for `{command}` names {tokens:?}. A refusal a user reads \
+                 cannot cite a task identifier: they cannot look it up, and it points at closed \
+                 work the moment the row ships — which is exactly what `U13` did here, reported \
+                 by three separate lanes (R82). Name the pending work in prose.\n  message: \
+                 {message}",
+                arm.name()
+            );
+        }
+    }
+}
+
+/// **R82**: `unavailable` really is this build's arm.
+///
+/// The per-arm fixture above is feature-invariant by construction, which is
+/// its purpose and also its one blind spot: it would stay green if
+/// `unavailable` selected the *wrong* arm, because the fixture never asks it
+/// which one this build is. This does, and it is the one assertion in the
+/// file whose expected value differs between the two builds.
+#[test]
+fn unavailable_selects_this_builds_arm() {
+    use antseal_cli::backend::{BackendArm, unavailable, unavailable_arm};
+
+    assert_eq!(
+        unavailable("seal").to_string(),
+        unavailable_arm("seal", BackendArm::THIS_BUILD).to_string(),
+        "`unavailable` must be `unavailable_arm(.., THIS_BUILD)`"
+    );
+    #[cfg(not(feature = "ant-backend"))]
+    {
+        assert_eq!(BackendArm::THIS_BUILD, BackendArm::NotCompiled);
+        assert!(
+            unavailable("seal")
+                .to_string()
+                .contains("no storage backend compiled in"),
+            "the default build says it has none: {}",
+            unavailable("seal")
+        );
+    }
+    #[cfg(feature = "ant-backend")]
+    {
+        assert_eq!(BackendArm::THIS_BUILD, BackendArm::Compiled);
+        assert!(
+            unavailable("seal")
+                .to_string()
+                .contains("has a storage backend compiled in"),
+            "the feature build says it has one: {}",
+            unavailable("seal")
+        );
+    }
+    // Two arms that said the same thing would make the whole per-arm
+    // apparatus pointless.
+    assert_ne!(
+        BackendArm::NotCompiled.message("seal"),
+        BackendArm::Compiled.message("seal"),
+        "the divergence is deliberate and load-bearing (R82 Notes)"
+    );
+}
+
+/// **U69**: the `restore` document is a success envelope whose run exits on
+/// D48 §6's most severe row — the two halves asserted **together**, over a
+/// **mixed** set.
+///
+/// Either half alone leaves the defect standing. A complete per-file array
+/// at exit 0 is the impossible pairing the fixture used to document
+/// (`ok:true` beside `"verification-failed":1` in a run D48 §3 requires to
+/// exit 35); the right exit code with the array replaced by a one-line
+/// `error:` is what the old `into_error()` fold would have produced, and it
+/// is what D48 §6 promised not to do.
+///
+/// **What this does not assert, and why**: the exit code is read from
+/// `RestoreOutput::exit_class` — the value `main_entry`'s third arm turns
+/// into the process code — and **not** from a spawned `antseal restore`.
+/// U69's Accept asks for the latter and no build can supply it:
+/// `commands::restore` still returns `backend::unavailable("restore")` at
+/// U36's seam, so no process reaches the fold. The process-level half of
+/// this row is blocked on that seam, not on this fold. What *is* pinned
+/// process-level today is the same third arm under `verify`, which does
+/// reach it (`[verify] result` above is a nonzero-exit success envelope, and
+/// `tests/verify_command.rs` reads that code off the process).
+#[test]
+fn the_restore_document_is_a_success_envelope_at_its_d48_exit_code() {
+    use antseal_cli::error::ErrorClass;
+    use antseal_cli::machine::success_envelope;
+    use antseal_cli::pipeline::ManifestSource;
+    use antseal_cli::restore_out::{FileReport, FileStatus, RestoreOutput};
+
+    fn output(statuses: &[FileStatus]) -> RestoreOutput {
+        RestoreOutput {
+            work_id: [0xA1; 32],
+            output_dir: PathBuf::from("out"),
+            manifest_source: ManifestSource::Network,
+            files: statuses
+                .iter()
+                .enumerate()
+                .map(|(index, status)| FileReport {
+                    file_id: index as u64,
+                    recorded_path: format!("f{index}.txt"),
+                    target: PathBuf::from(format!("out/f{index}.txt")),
+                    status: *status,
+                    detail: None,
+                    bytes: None,
+                    source: None,
+                })
+                .collect(),
+        }
+    }
+
+    // The rank over MIXED sets, not over one example each: every row below
+    // carries at least one milder failure and at least one success, so a
+    // fold that returned "the first failure" or "the last" would disagree.
+    let cases: [(&[FileStatus], Option<ErrorClass>, u8); 6] = [
+        (
+            &[FileStatus::Restored, FileStatus::AlreadyRestored],
+            None,
+            0,
+        ),
+        (
+            &[
+                FileStatus::Restored,
+                FileStatus::VerificationFailed,
+                FileStatus::RefusedOverwrite,
+                FileStatus::FetchFailed,
+                FileStatus::WriteError,
+                FileStatus::MalformedRecord,
+            ],
+            Some(ErrorClass::RestoreVerificationFailed),
+            35,
+        ),
+        (
+            &[
+                FileStatus::Restored,
+                FileStatus::MalformedRecord,
+                FileStatus::RefusedOverwrite,
+                FileStatus::FetchFailed,
+            ],
+            Some(ErrorClass::MalformedRestoreRecord),
+            31,
+        ),
+        (
+            &[
+                FileStatus::AlreadyRestored,
+                FileStatus::RefusedOverwrite,
+                FileStatus::WriteError,
+                FileStatus::FetchFailed,
+            ],
+            Some(ErrorClass::RefusedOverwrite),
+            30,
+        ),
+        (
+            &[
+                FileStatus::Restored,
+                FileStatus::WriteError,
+                FileStatus::FetchFailed,
+            ],
+            Some(ErrorClass::IoError),
+            4,
+        ),
+        (
+            &[FileStatus::Restored, FileStatus::FetchFailed],
+            Some(ErrorClass::NetworkFailure),
+            23,
+        ),
+    ];
+    for (statuses, want_class, want_code) in cases {
+        let out = output(statuses);
+        let class = out.exit_class();
+        assert_eq!(class, want_class, "D48 §6's rank over {statuses:?}");
+        assert_eq!(
+            class.map_or(0, ErrorClass::exit_code),
+            want_code,
+            "D48 §3's code for {statuses:?}"
+        );
+
+        // The other half, in the same act: whatever the code, the envelope
+        // is a SUCCESS envelope carrying every row.
+        let envelope = success_envelope("restore", "arbitrum-one", out.json()).to_string();
+        let doc: serde_json::Value = serde_json::from_str(&envelope).expect("parses");
+        assert_eq!(
+            doc["ok"],
+            serde_json::json!(true),
+            "`ok` means a result document is present, never that the code is 0 — at exit \
+             {want_code} for {statuses:?}"
+        );
+        assert_eq!(
+            doc["result"]["files"]
+                .as_array()
+                .expect("the per-file array")
+                .len(),
+            statuses.len(),
+            "D48 §6: per-file detail always available in the --json result, at exit {want_code}"
+        );
+        assert_eq!(doc["v"], serde_json::json!(1), "ENVELOPE_VERSION stays 1");
+    }
+
+    // And the registered fixture itself is one of those nonzero rows.
+    assert_eq!(
+        fixture_restore().exit_class(),
+        Some(ErrorClass::RestoreVerificationFailed),
+        "the registered document's own run exits 35 — the pairing that had no build"
     );
 }
 

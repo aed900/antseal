@@ -85,6 +85,40 @@ use super::wording;
 /// not get a byte channel into a display line (the same rule `agree.rs`
 /// applies to its `Payload.reason`), and the wording for each class is
 /// core's ([`wording::probe_failure_class_label`]), never the host's.
+///
+/// # The rule above is project-wide, and R79 is where that was settled
+///
+/// **This doc used to assert a discipline the project did not hold.** antseal
+/// has a second boundary of exactly this shape — the storage boundary, whose
+/// failures reach the `--live` rows of [`LiveSection`] — and until R79 it did
+/// the opposite: `antseal-net`'s `StorageError::Network { reason }` travelled
+/// four hops into a display line with no taxonomy, no cap and no
+/// classification key, and its *own* free-form text was the wildcard
+/// rendering of an upstream error several of whose variants carry
+/// remote-supplied strings. So the sentence above described one layer while a
+/// sibling layer contradicted it, one crate away, in the same rendered
+/// verdict.
+///
+/// **R79 ruled the closed class governs both** (its arm (a)), and
+/// `antseal-net`'s `FetchFailureClass` is the storage half: a closed class,
+/// mapped wildcard-free over `StorageError` while the variant is still in
+/// hand, whose label is a `&'static str`. The complete argument — including
+/// the measurement that reverses the intuition about which side is the more
+/// exposed one — is recorded once, on that type, and is **not** restated
+/// here: a second copy of a threat model is a second thing to keep true.
+/// Read the two docs together; each names the other so neither can be found
+/// alone.
+///
+/// One deliberate difference survives, and it is the reason `antseal-net`
+/// spells its own labels: this class is `pub` in a **WASM-safe** crate
+/// because the verifier page authors probe failures, whereas the page runs no
+/// live check at all (`LiveSection` is CLI-only), so nothing forces the live
+/// class into core. What is still owed there is type precision, not an open
+/// channel — see [`LiveBlobOutcome::FetchFailed`].
+///
+/// [`LiveSection`]: super::orchestration::LiveSection
+/// [`LiveBlobOutcome::FetchFailed`]:
+///     super::orchestration::LiveBlobOutcome::FetchFailed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProbeFailureClass {
@@ -202,8 +236,33 @@ impl ProbeEndpoints {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeLog {
     blocks: BTreeMap<u64, BlockProbe>,
-    receipt: ReceiptProbe,
+    /// The receipt probe **and the chain it ran against**, or `None` when no
+    /// receipt was probed (D137 §3 R4/R5).
+    ///
+    /// One field rather than two, and private: there is no way to write a
+    /// probed receipt without its chain id, so the illegal state is
+    /// *unrepresentable* rather than merely unwritten. A `chain_id: Option<u64>`
+    /// beside a `ReceiptProbe` would have been the same convention with the
+    /// hole still open — registry §7.6.2's move, applied to a runtime type.
+    receipt: Option<ProbedReceipt>,
     endpoints: ProbeEndpoints,
+}
+
+/// A receipt probe and the chain id the guard enforced on every endpoint whose
+/// answer contributed to it (D137 §3 R4).
+///
+/// The chain travels beside the **endpoints**, never beside the facts:
+/// [`ReceiptFacts`] and [`ReceiptConfirmation`] feed [`OnlineEvidence`], which
+/// anchor rules read (D55 §4), and a chain id must never become reachable from
+/// an anchor rule.
+///
+/// [`ReceiptFacts`]: crate::anchor::model::ReceiptFacts
+/// [`ReceiptConfirmation`]: crate::anchor::model::ReceiptConfirmation
+/// [`OnlineEvidence`]: crate::anchor::model::OnlineEvidence
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProbedReceipt {
+    probe: ReceiptProbe,
+    chain_id: u64,
 }
 
 impl ProbeLog {
@@ -212,7 +271,7 @@ impl ProbeLog {
     pub const fn new(endpoints: ProbeEndpoints) -> Self {
         Self {
             blocks: BTreeMap::new(),
-            receipt: ReceiptProbe::NotAttempted,
+            receipt: None,
             endpoints,
         }
     }
@@ -228,10 +287,18 @@ impl ProbeLog {
         self
     }
 
-    /// Record the receipt probe's outcome.
+    /// Record the receipt probe's outcome **and the chain it ran against**
+    /// (D137 §3 R5).
+    ///
+    /// `chain_id` is the value the chain-id guard enforced — page:
+    /// `probeReceipt`'s `reported`, measured off the wire; CLI:
+    /// `expected_chain_id(network)`. It is a parameter and not an option
+    /// because the receipt query is unreachable from an endpoint that did not
+    /// answer `eth_chainId` with it, so a probed receipt *always* has one and
+    /// a caller that cannot supply it has not probed.
     #[must_use]
-    pub fn with_receipt(mut self, probe: ReceiptProbe) -> Self {
-        self.receipt = probe;
+    pub fn with_receipt(mut self, probe: ReceiptProbe, chain_id: u64) -> Self {
+        self.receipt = Some(ProbedReceipt { probe, chain_id });
         self
     }
 
@@ -241,10 +308,15 @@ impl ProbeLog {
         self.blocks.get(&height)
     }
 
-    /// The receipt probe's outcome.
+    /// The receipt probe's outcome and the chain id it ran against, or `None`
+    /// when no receipt was probed.
+    ///
+    /// The pair is returned together because it was stored together: a caller
+    /// that reads the outcome and not the chain is the divergence D137 §3 R5
+    /// closes.
     #[must_use]
-    pub const fn receipt(&self) -> &ReceiptProbe {
-        &self.receipt
+    pub fn receipt(&self) -> Option<(&ReceiptProbe, u64)> {
+        self.receipt.as_ref().map(|run| (&run.probe, run.chain_id))
     }
 
     /// The endpoints this run used.
@@ -427,14 +499,30 @@ pub struct OverlayAnchorOutcome {
 pub enum ReceiptEchoOutcome {
     /// Both RPCs agreed on the transaction's facts.
     Confirmed {
+        /// The chain id the guard enforced on both endpoints (D137 §3 R3).
+        chain_id: u64,
         /// The confirmed block number — display-only, as everywhere else
         /// the receipt appears (registry §7.10).
         block_number: u64,
         /// Whether the EVM receipt status byte was 1 (success).
         status_success: bool,
     },
-    /// Both RPCs agreed the transaction is not on chain.
-    NotOnChain,
+    /// Both RPCs agreed they hold no receipt for the transaction, **on the
+    /// chain named here** (D137 §3 R3).
+    ///
+    /// A struct variant, so the `--json` envelope carries
+    /// `{"not-on-chain":{"chain_id":42161}}` — which reads correctly as *"not
+    /// on chain 42161"*. The unit variant it replaces serialized as the bare
+    /// token `"not-on-chain"`, asserting to every `jq` consumer the same
+    /// unqualified falsehood the prose did; correcting only the sentence
+    /// corrects only the half a human reads, and D65 exists for the other
+    /// half. This is a `result.overlay` shape change — a D65 *scope* event,
+    /// never a `REPORT_VERSION` event, because the overlay is a sibling
+    /// document and never enters the report bytes.
+    NotOnChain {
+        /// The chain id the guard enforced on both endpoints.
+        chain_id: u64,
+    },
     /// The RPC pair disagreed.
     Disagreed,
     /// The confirmation probe failed, per endpoint.
@@ -632,7 +720,9 @@ pub fn build_online_overlay(
 
     // ── receipt echo (D64 §3: present iff a receipt exists AND was probed) ─
     let receipt = if online.receipt().is_some() {
-        receipt_echo(probes.receipt())
+        probes
+            .receipt()
+            .and_then(|(probe, chain_id)| receipt_echo(probe, chain_id))
     } else {
         None
     };
@@ -787,25 +877,40 @@ pub(crate) fn anchor_outcome_line(slot: &str, height: u64, class: &OverlayOutcom
 /// The receipt echo for a probed receipt — `None` for
 /// [`ReceiptProbe::NotAttempted`] (the "was probed" half of D64 §3's
 /// presence rule; the "receipt present" half is the caller's).
-fn receipt_echo(probe: &ReceiptProbe) -> Option<ReceiptEcho> {
+///
+/// `chain_id` reaches both the token and the sentence, from one datum: D137
+/// §3 R3's whole point is that they are two claims and must not be corrected
+/// separately. Only the two outcomes that assert *where* the transaction is
+/// carry it; `Disagreed` and `Failed` report the probe, not the transaction
+/// (D137 §3 R1's dividing rule).
+fn receipt_echo(probe: &ReceiptProbe, chain_id: u64) -> Option<ReceiptEcho> {
     let outcome = match probe {
         ReceiptProbe::Agreed(ReceiptConfirmation::Agreed(facts)) => ReceiptEchoOutcome::Confirmed {
+            chain_id,
             block_number: facts.block_number,
             status_success: facts.status == 1,
         },
-        ReceiptProbe::Agreed(ReceiptConfirmation::NotOnChain) => ReceiptEchoOutcome::NotOnChain,
+        ReceiptProbe::Agreed(ReceiptConfirmation::NotOnChain) => {
+            ReceiptEchoOutcome::NotOnChain { chain_id }
+        }
         ReceiptProbe::Disagreed => ReceiptEchoOutcome::Disagreed,
         ReceiptProbe::Failed(failures) => ReceiptEchoOutcome::Failed {
             failures: failures.clone(),
         },
         ReceiptProbe::NotAttempted => return None,
     };
+    // The line is rendered from the OUTCOME's own fields, not from the
+    // parameter, so the token and the sentence cannot name two different
+    // chains: there is one place the number is written down.
     let line = match &outcome {
         ReceiptEchoOutcome::Confirmed {
+            chain_id,
             block_number,
             status_success,
-        } => wording::receipt_confirmed_line(*block_number, *status_success),
-        ReceiptEchoOutcome::NotOnChain => wording::receipt_not_on_chain_line().to_owned(),
+        } => wording::receipt_confirmed_line(*chain_id, *block_number, *status_success),
+        ReceiptEchoOutcome::NotOnChain { chain_id } => {
+            wording::receipt_not_on_chain_line(*chain_id)
+        }
         ReceiptEchoOutcome::Disagreed => wording::receipt_disagreed_line().to_owned(),
         ReceiptEchoOutcome::Failed { failures } => wording::receipt_failed_line(failures),
     };

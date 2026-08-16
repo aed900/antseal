@@ -303,8 +303,21 @@ pub enum SignatureScheme {
     /// Collapsing that into [`Self::NotEvaluated`] would report "we did
     /// not check the signatures" about a bundle whose signatures were
     /// checked and passed — the one thing a verdict label must never do.
-    /// R18 renders it as the policy's own algorithm list rather than a
-    /// slogan.
+    /// **No renderer can name the algorithms, and the vagueness belongs to
+    /// report v1 rather than to the wording.** This label is the whole of
+    /// what the report carries about the policy — there is no algorithm
+    /// list beside it — so R18's row states the *shape* (neither of the two
+    /// named schemes; its signatures were checked and passed) and names no
+    /// algorithm, and its wildcard-free label match is the pin. **R77**
+    /// ruled it that way against the two alternatives: carrying the list
+    /// would add a [`WorkMetadata`] field, which is a FORMAT EVENT costing
+    /// `REPORT_VERSION` (D105 §2.4), refused on cost; and declaring a
+    /// CLI/page divergence was refused on a **false premise** — both
+    /// surfaces run this crate's verification over the same bundle bytes,
+    /// `VerifyOutcome` hands the manifest to neither of them, and either
+    /// could re-decode `sig_policy` through the public
+    /// [`SealProof`](crate::bundle::SealProof), so there is no asymmetry to
+    /// declare.
     ///
     /// [`PolicyLabel::Other`]: crate::crypto::sig_policy::PolicyLabel::Other
     Other,

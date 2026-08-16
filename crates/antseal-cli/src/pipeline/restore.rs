@@ -560,8 +560,15 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
     pub async fn restore(&self, seal_id: &SealId) -> Result<RestoreReport, RestoreError> {
         let record = self.store.load_meta(seal_id)?;
         if record.state != WorkState::Complete {
+            // U70: the finer word, from the one production of it. This
+            // refusal is exactly where the pre-pay/post-pay distinction is
+            // actionable — "you owe nothing" and "you have paid and the
+            // proofs expire" need different next steps — and the kebab it
+            // now names is the spelling `list --json` already publishes as
+            // `detail_state`, rather than a fourth parenthetical spelling
+            // of the coarse word.
             return Err(RestoreError::NotRestorable {
-                state: work_state_name(record.state),
+                state: crate::status::detail_state_name(record.state),
             });
         }
         let w = record.w.secret_ref();
@@ -960,16 +967,6 @@ pub(super) fn storage_detail(err: &StorageError) -> String {
 /// content-free).
 fn crypto_detail(err: &CryptoError) -> String {
     err.to_string()
-}
-
-/// The coarse work state as a stable identifier for messages.
-const fn work_state_name(state: WorkState) -> &'static str {
-    match state {
-        WorkState::IncompletePrePay => "incomplete (nothing paid)",
-        WorkState::IncompletePostPay => "incomplete (paid, not finalized)",
-        WorkState::Complete => "complete",
-        WorkState::Abandoned => "abandoned",
-    }
 }
 
 /// Parse exactly 64 hex characters into 32 bytes (D29's printed form;

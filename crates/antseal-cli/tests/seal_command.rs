@@ -20,6 +20,7 @@ mod spawn;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use antseal_cli::backend::BackendArm;
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
 use antseal_cli::listing::WorkListing;
@@ -1366,6 +1367,63 @@ fn antseal_bin() -> std::process::Command {
     cmd
 }
 
+/// U73: what a `seal` plan that *passes* validation meets next, into a
+/// vault-less `HOME` — this build's exit code, and a substring its stderr
+/// must carry.
+///
+/// The id is written **bare** on purpose, here and on `commands::seal`.
+/// U73 is above domain U's ceiling in TODO.md's register (72) at the time
+/// this landed, and `check-traceability.py --task-citations` fails a
+/// *marked* citation of an unallocated id. Bare is its documented tier-2
+/// blind spot and it is not a way of hiding: the moment the registrar
+/// allocates the row, the ceiling advances and every one of these drops
+/// into tier 1, where bare citations are checked like any other. Mark them
+/// if you like once the row exists.
+///
+/// # The disagreement this settles
+///
+/// The two spawned-binary assertions below hard-coded the default build's
+/// answer (exit 23, the word `ant-backend`). Under `--features ant-backend`
+/// both failed with exit 2, because `commands::seal_over_backend`'s
+/// feature-ON arm opens the vault first and this `HOME` has none. Test and
+/// code disagreed; U73 settled it for the **code** and its reasoning lives
+/// on `commands::seal`. The short form: U72 had just ruled the same
+/// ordering for `reveal` and paid its cost out loud; `seal`'s own recorded
+/// rule is *"the cheapest thing that can say no goes first"* and
+/// `open_layout` is one `stat`; and `BackendArm::Compiled`'s sentence is
+/// false for a `seal` U13 already wired, so there was no true seam refusal
+/// for this build to give.
+///
+/// # Why a `match`, not a `#[cfg]`
+///
+/// R82's arm (b), carried across to behaviour: both expectations are
+/// compiled into **both** builds, so the default build — the only one any
+/// CI job runs, since Q153 keeps `heavy-features` local — still
+/// type-checks and carries the feature build's answer instead of
+/// `#[cfg]`-ing it out of existence. Only the *selection* is per-build.
+fn next_stage_for_a_valid_seal_plan() -> (i32, String) {
+    // Load-bearing for U73's third witness, and fallible: if the
+    // compiled-in arm's sentence ever names the feature flag, the reason
+    // `contains("ant-backend")` was a default-only assertion stops holding
+    // and the ruling has to be re-read.
+    assert!(
+        !BackendArm::Compiled.message("seal").contains("ant-backend"),
+        "U73 rests on the compiled-in arm naming no feature flag — the feature is ON in that \
+         build, so naming it would be the wrong advice: {}",
+        BackendArm::Compiled.message("seal")
+    );
+    match BackendArm::THIS_BUILD {
+        // No adapter exists, so the seam refuses. The needle is the whole
+        // real message rather than one word of it: U3's rule, and it is
+        // what makes this stronger than the `contains("ant-backend")` it
+        // replaces.
+        BackendArm::NotCompiled => (23, BackendArm::NotCompiled.message("seal")),
+        // The adapter exists and `seal` constructs one, so the honest next
+        // answer is the vault this HOME does not have (`open_layout`).
+        BackendArm::Compiled => (2, "no vault exists".to_owned()),
+    }
+}
+
 /// Plan validation runs before the backend seam, the vault and any
 /// passphrase — so these refusals are reachable from a bare binary with
 /// no vault at all, which is exactly the claim.
@@ -1416,17 +1474,14 @@ fn the_binary_refuses_bad_plans_without_a_vault_a_network_or_a_passphrase() {
     );
 
     // **U22, from the binary.** A plain anchored seal no longer meets a
-    // milestone refusal at all: plan validation passes it through, and the
-    // next thing it meets is the storage-backend seam this default-feature
-    // build has no adapter for (exit 23). The two negative assertions are
-    // the point — the M1 sentence is gone, and nothing has replaced it with
-    // a differently-worded claim that anchoring is unavailable.
+    // milestone refusal at all: plan validation passes it through. What it
+    // meets *next* is this build's own next gate, which is U73's ruling and
+    // is argued on `next_stage_for_a_valid_seal_plan`. Everything U22 is
+    // actually about holds in **both** arms and is asserted outside the
+    // per-arm expectation: the M1 sentence is gone, nothing has replaced it
+    // with a differently-worded claim that anchoring is unavailable, and
+    // whatever did refuse was not plan validation.
     let out = run(&["seal", "a.txt", "--network", "devnet"]);
-    assert_eq!(
-        out.status.code(),
-        Some(23),
-        "a plain anchored seal must reach the backend seam, not a milestone gate"
-    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("anchoring arrives in M2"),
@@ -1436,7 +1491,24 @@ fn the_binary_refuses_bad_plans_without_a_vault_a_network_or_a_passphrase() {
         !stderr.contains("`antseal seal` is not implemented"),
         "seal IS implemented: {stderr}"
     );
-    assert!(stderr.contains("ant-backend"), "{stderr}");
+    // The sharper, arm-invariant half of U22: this argv got *past* the plan
+    // gate (27) and met no milestone stub (3), whichever build ran it.
+    assert!(
+        !matches!(out.status.code(), Some(27) | Some(3)),
+        "plan validation must pass a plain anchored seal through: {stderr}"
+    );
+    let (expected_code, needle) = next_stage_for_a_valid_seal_plan();
+    assert_eq!(
+        out.status.code(),
+        Some(expected_code),
+        "a valid plan must reach the {} arm's next gate: {stderr}",
+        BackendArm::THIS_BUILD.name()
+    );
+    assert!(
+        stderr.contains(&needle),
+        "the {} arm must say {needle:?}: {stderr}",
+        BackendArm::THIS_BUILD.name()
+    );
 
     // `--json`: exactly one envelope on stdout, same exit code.
     let out = run(&[
@@ -1483,8 +1555,18 @@ fn a_no_fine_tree_pattern_matching_nothing_is_refused_at_the_surface() {
     assert_eq!(out.status.code(), Some(2), "usage error");
     assert!(String::from_utf8_lossy(&out.stderr).contains("matched none"));
 
-    // The matching pattern is accepted and reaches the next stage (the
-    // backend seam, since this build has no network compiled in).
+    // The matching pattern is accepted and reaches the next stage, which
+    // is this build's own (U73, on `next_stage_for_a_valid_seal_plan`).
+    //
+    // This assertion shared the feature-ON red with the U22 block above but
+    // **not** its defect. It read `assert_ne!(code, Some(2))` — "accepted"
+    // proxied by "not a usage error" — and that proxy was weak in the
+    // default build too: it passes for *any* non-usage outcome, a panic
+    // (101) included. What broke it under `--features ant-backend` is that
+    // the next stage's own honest refusal is `usage` as well ("no vault
+    // exists"), so a correct run looked like a rejected pattern. Assert the
+    // property directly — the `matched none` sentence is absent — and pin
+    // the arm's exact code beside it, which is stronger in both builds.
     let out = antseal_bin()
         .current_dir(&work.dir)
         .env("HOME", &home)
@@ -1499,11 +1581,29 @@ fn a_no_fine_tree_pattern_matching_nothing_is_refused_at_the_surface() {
         ])
         .output()
         .expect("spawn antseal");
-    assert_ne!(
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Measured, not assumed (U73). Switch the pattern above back to a
+    // non-matching `*.bin` — the regression this test exists to catch —
+    // and in the **feature** build the exit code is 2 either way, so
+    // `assert_eq!(code, Some(expected_code))` stays green. It was measured
+    // green with both stderr assertions removed. This one and the needle
+    // below are each independently sufficient to redden it; this one names
+    // the cause, which is why it goes first.
+    assert!(
+        !stderr.contains("matched none"),
+        "a pattern that matches is not a --no-fine-tree refusal: {stderr}"
+    );
+    let (expected_code, needle) = next_stage_for_a_valid_seal_plan();
+    assert_eq!(
         out.status.code(),
-        Some(2),
-        "a matching pattern is not a usage error: {}",
-        String::from_utf8_lossy(&out.stderr)
+        Some(expected_code),
+        "an accepted pattern must reach the {} arm's next gate: {stderr}",
+        BackendArm::THIS_BUILD.name()
+    );
+    assert!(
+        stderr.contains(&needle),
+        "the {} arm must say {needle:?}: {stderr}",
+        BackendArm::THIS_BUILD.name()
     );
 }
 

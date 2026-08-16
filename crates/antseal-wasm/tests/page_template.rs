@@ -188,6 +188,105 @@ fn the_footer_advice_line_has_not_drifted_from_the_spec() {
     );
 }
 
+/// The inner HTML of `<p id="…">…</p>`, or a panic naming the missing id.
+fn paragraph(text: &str, id: &str) -> String {
+    let open = format!("<p id=\"{id}\">");
+    let start = text
+        .find(&open)
+        .unwrap_or_else(|| panic!("the template must carry #{id} as a <p> element"));
+    let rest = &text[start + open.len()..];
+    let end = rest
+        .find("</p>")
+        .unwrap_or_else(|| panic!("unterminated #{id}"));
+    rest[..end].to_owned()
+}
+
+/// The longest run of ASCII-hex characters in `text` — the shape a digest
+/// takes once the packaging step substitutes it.
+fn longest_hex_run(text: &str) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    for ch in text.chars() {
+        if ch.is_ascii_hexdigit() {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
+}
+
+/// **D136 §2 R12 — the footer digest is the MODULE's, and the label must say
+/// so.**
+///
+/// The element renders `sha256(the wasm module)`. Under the label it shipped
+/// with — `page build` — a reader performing the obvious check, comparing the
+/// footer against the `SHA256SUMS` published beside the page, got a mismatch
+/// on a **good** page: a file cannot contain its own hash, so page-carries-
+/// module and you-fetched-that-page are two separate links (D136 §2 R10.1 and
+/// R12) and the label is what tells a human which link this element is.
+///
+/// Two riders are asserted here rather than assumed:
+///
+/// - **the id does not move.** The CDP browser arm reads `#page-build` and is
+///   passed `sha256(module)` by its caller, so a rename here unhooks it
+///   silently.
+/// - **the element carries exactly one value slot.** That arm asserts the
+///   rendered text's *only* hex run is the module digest; a second hex-shaped
+///   run in the label would make the assertion ambiguous after substitution.
+///
+/// `MVP-SPEC.md` line 139's *"its own build hash"* is the source of the
+/// conflation. The spec is frozen, so this is recorded as a spec-versus-code
+/// divergence owed to Q237 or the M4 docs row — flagged, never silently
+/// diverged from.
+#[test]
+fn the_footer_names_the_module_not_the_page_as_the_subject_of_its_digest() {
+    let text = template();
+    assert!(
+        text.contains(r#"id="page-build""#),
+        "the footer digest element is no longer #page-build. The browser arm looks the element up \
+         by that id and would report a missing element rather than a wrong digest (D136 §2 R12 \
+         rider 1)."
+    );
+
+    let block = paragraph(&text, "page-build");
+    assert_eq!(
+        block.matches("<code>").count(),
+        1,
+        "the digest element must carry exactly one value slot, and it carries {}: {block}",
+        block.matches("<code>").count()
+    );
+    assert!(
+        block.contains("<code>__ANTSEAL_MODULE_SHA256__</code>"),
+        "the value slot must be the module-digest placeholder the packaging step substitutes: \
+         {block}"
+    );
+
+    let label = block.replace("<code>__ANTSEAL_MODULE_SHA256__</code>", "");
+    let lowered = label.to_lowercase();
+    assert!(
+        lowered.contains("module"),
+        "the label must name the MODULE, because that is whose digest this is. It reads `{}` \
+         (D136 §2 R12).",
+        label.trim()
+    );
+    assert!(
+        !lowered.contains("page build"),
+        "the label reads `{}` — `page build` is the shipped defect: it invites a comparison \
+         against SHA256SUMS that fails on a correct page (D136 §2 R12).",
+        label.trim()
+    );
+    assert!(
+        longest_hex_run(&label) < 8,
+        "the label around the value slot carries a {}-character hex run (`{}`). After \
+         substitution the element must hold exactly ONE hex run — the module digest — or the \
+         browser arm's \"its only hex run\" assertion has two candidates (D136 §2 R12 rider 1).",
+        longest_hex_run(&label),
+        label.trim()
+    );
+}
+
 #[test]
 fn the_template_never_calls_the_glues_default_init() {
     let text = template();

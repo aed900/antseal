@@ -86,7 +86,7 @@ use antseal_core::manifest::registry::UnitKind;
 use antseal_core::test_util::TEST_MASTER_SECRET_W;
 use antseal_core::test_util::bundle_fixtures::{
     AnchorSet, FileSelection as FixtureFileSelection, FileSpec, Selection as FixtureSelection,
-    Tweak, WorkSpec, build as fixture_build, build_tweaked, shapes,
+    StorageAddresses, Tweak, WorkSpec, build as fixture_build, build_tweaked, shapes,
 };
 use antseal_core::test_util::proptest::prelude::*;
 use antseal_core::test_util::strategies;
@@ -97,6 +97,22 @@ const REGRESSIONS: &str = "proptest-regressions/builder_properties.txt";
 
 fn w() -> MasterSecretRef<'static> {
     MasterSecretRef::from_bytes(&TEST_MASTER_SECRET_W)
+}
+
+/// Every donor this suite feeds [`build_bundle`] records **real** addresses
+/// (R78).
+///
+/// R6's default `StorageAddresses::Placeholder` fill patterns are BLAKE3 of
+/// nothing, so a placeholder-addressed work is a *total* storage-linkage
+/// mismatch and R78's assertion refuses the build; `Real` is the shape a
+/// seal-pipeline bundle actually has (S12). It applies only to the donors
+/// that reach the **production** builder: the planted-violation block below
+/// builds its bytes through R6's `Tweak`/fixture-only seams, which never
+/// enter `build_bundle`, and those keep the catalogue's own addresses. The
+/// placeholder refusal itself is asserted in
+/// `tests/builder_storage_linkage.rs`.
+fn real_addressed(spec: &WorkSpec) -> WorkSpec {
+    spec.clone().with_storage_addresses(StorageAddresses::Real)
 }
 
 /// Q3's integration config with a lowered local case count (see module docs;
@@ -146,6 +162,7 @@ struct Harness {
 
 impl Harness {
     fn new(spec: &WorkSpec) -> Self {
+        let spec = &real_addressed(spec);
         let donor = fixture_build(spec, &FixtureSelection::all(spec.files.len()));
         let ciphertexts = ciphertexts_from(&donor.bytes);
         let contents = contents_from(&donor.manifest, &ciphertexts);

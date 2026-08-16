@@ -26,12 +26,13 @@ mod spawn;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use antseal_anchor::arbitrum::endpoints::expected_chain_id;
 use antseal_anchor::testing::stub::{StubMatch, StubReply, StubScript, StubServer};
 use antseal_cli::error::ErrorClass;
 use antseal_cli::machine::ENVELOPE_VERSION;
 use antseal_cli::verify_host::CollectedInputs;
 use antseal_cli::verify_out::{VerifyRun, run_verify};
-use antseal_core::anchor::model::{OnlineBlockResult, OnlineEvidence};
+use antseal_core::anchor::model::{OnlineBlockResult, OnlineEvidence, ReceiptConfirmation};
 use antseal_core::anchor::testing::ots_writer::{FETCH_DATE, bitcoin, container, header_with};
 use antseal_core::bundle::schema::{OpaqueBytes, OtsAnchor, OtsUpgrade};
 use antseal_core::bundle::{AnchorStatus, BundleV1, SealProof, encode_bundle};
@@ -41,8 +42,9 @@ use antseal_core::verify::REPORT_VERSION;
 use antseal_core::verify::orchestration::{
     LiveBlobOutcome, LiveBlobRow, LiveInputs, OnlineInputs, VerifyModes,
 };
-use antseal_core::verify::overlay::{BlockProbe, ProbeEndpoints, ProbeLog};
+use antseal_core::verify::overlay::{BlockProbe, ProbeEndpoints, ProbeLog, ReceiptProbe};
 use antseal_core::verify::{VerifyOptions, wording};
+use antseal_net::NetworkId;
 use antseal_net::test_util::{Fault, MockBackend, block_on};
 
 // ─────────────────────────────────────────────────────────────────────
@@ -972,5 +974,126 @@ fn disagreeing_endpoints_render_the_advisory_and_move_nothing() {
             .any(|outcome| outcome.line.contains("disagree")),
         "the advisory names the disagreement distinctly: {:#?}",
         overlay.anchor_outcomes
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// the receipt echo, and the cross-surface single-source pin (D137)
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D137 §1 (f)/(g) — the CLI prints the module's receipt sentence verbatim,
+/// and authors none of it.**
+///
+/// Both surfaces render `overlay.receipt.line` and neither writes it: one
+/// edit to `antseal_core::verify::wording` is supposed to move the CLI and
+/// the verifier page together. That claim had **no** assertion on the CLI
+/// side. `no_renderer_source_spells_a_frozen_verdict_string` is the negative
+/// half — it forbids either renderer spelling the clause as a code literal,
+/// and D137 §3 R10 is what put these two sentences on its table — but a
+/// negative scan cannot see a renderer that stops printing the module's
+/// string, or prints it with something appended. This row is the positive
+/// half: byte equality against the table, and the same bytes surviving into
+/// the printed output.
+///
+/// The `--json` half is pinned in the same act, because a sentence and a
+/// token are two claims and D65 exists to let a scripter gate on the second.
+#[test]
+fn the_cli_prints_the_modules_receipt_sentence_and_carries_its_token() {
+    // A receipt-bearing bundle (F13's shape): without one, D64 §3's presence
+    // rule suppresses the echo and every assertion below would be vacuous.
+    let bundle = build(&shapes::multi_file_every_anchor_kind(), &Selection::all(3)).bytes;
+
+    // The chain id is read out of A17's own table rather than restated, so
+    // this row asserts what `probe_online` would actually have handed core on
+    // the default network (D137 §3 R7) instead of a number that happens to
+    // match today.
+    let chain_id =
+        expected_chain_id(NetworkId::ArbitrumOne).expect("a live network has an expected chain id");
+    let probes = ProbeLog::new(endpoints()).with_receipt(
+        ReceiptProbe::Agreed(ReceiptConfirmation::NotOnChain),
+        chain_id,
+    );
+    let host =
+        CollectedInputs::none().with_online(OnlineInputs::new(OnlineEvidence::new(), probes));
+    let run = run_verify(&bundle, &options(), VerifyModes::new().with_online(), &host)
+        .expect("the receipt-bearing fixture verifies");
+
+    let echo = run
+        .outcome()
+        .overlay()
+        .expect("--online renders an overlay")
+        .receipt
+        .clone()
+        .expect("a receipt present in the bundle and probed renders an echo");
+
+    // Byte-identical, never `contains`: the CLI does layout over R18's final
+    // strings and may not paraphrase, truncate, re-case or extend them.
+    assert_eq!(
+        echo.line,
+        wording::receipt_not_on_chain_line(chain_id),
+        "the overlay's receipt line is not the module's — one of the two surfaces has started \
+         authoring its own copy (R18; D137 §3 R10)"
+    );
+
+    // …and the same bytes reach the printed output. `overlay_lines` indents
+    // the row, so the leading whitespace is stripped and the REMAINDER is
+    // compared for equality: `contains` would pass on a line that appended a
+    // qualifier the page does not print.
+    let rendered = run.render();
+    let carriers: Vec<&String> = rendered
+        .iter()
+        .filter(|line| line.contains(&wording::receipt_not_on_chain_line(chain_id)))
+        .collect();
+    assert_eq!(
+        carriers.len(),
+        1,
+        "the receipt sentence must be printed exactly once: {rendered:#?}"
+    );
+    assert_eq!(
+        carriers[0].trim_start(),
+        wording::receipt_not_on_chain_line(chain_id),
+        "the printed row is the module's sentence plus indentation and NOTHING else"
+    );
+
+    // The machine-readable half (D65), **moved by D137 §3 R3**. The bare token
+    // `"not-on-chain"` asserted, to every `jq` consumer, the same unqualified
+    // claim the prose did — that the transaction is on no chain at all — and
+    // correcting only the prose corrects only the half a human reads. It is now
+    // a struct variant, `{"not-on-chain":{"chain_id":N}}`, matching the shape
+    // `Confirmed` always had.
+    //
+    // This edit was made only after the previous assertion was seen to go RED
+    // on the new shape (`left: Object {"not-on-chain": Object {"chain_id":
+    // Number(42161)}}`, `right: String("not-on-chain")`). A pin that is
+    // rewritten to match without first being observed to refuse the change is
+    // not a pin.
+    //
+    // A `result.overlay` shape change is a D65 **scope** event, never a
+    // `REPORT_VERSION` event: the overlay is a sibling document and its bytes
+    // never enter the report. `the_json_document_carries_the_report_bytes_
+    // verbatim` is the row that would say otherwise.
+    let document: serde_json::Value =
+        serde_json::from_str(&run.json().expect("the envelope renders")).expect("one JSON object");
+    assert_eq!(
+        document["overlay"]["receipt"]["line"],
+        serde_json::Value::String(wording::receipt_not_on_chain_line(chain_id)),
+        "the envelope carries the module's sentence too, not a second spelling"
+    );
+    assert_eq!(
+        document["overlay"]["receipt"]["outcome"],
+        serde_json::json!({ "not-on-chain": { "chain_id": chain_id } }),
+        "the receipt echo's token must carry the chain id the guard enforced (D137 §3 R3). \
+         Changing this shape is a deliberate D65 scope event, never a tidy-up."
+    );
+    // …and the number in the token is the same one in the sentence. Two
+    // renderings of one datum that could disagree would be worse than the
+    // defect this record fixes: a scripter and a reader would be told
+    // different things by one document.
+    assert!(
+        document["overlay"]["receipt"]["line"]
+            .as_str()
+            .is_some_and(|line| line.contains(&chain_id.to_string())),
+        "the sentence does not name the chain id the token carries: {}",
+        document["overlay"]["receipt"]["line"]
     );
 }

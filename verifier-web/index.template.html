@@ -133,7 +133,17 @@ footer p { margin: .3rem 0; word-break: break-all; }
        element's text against the spec (D63 §5 R6); the comma is normative and
        SPEC-REVIEW.md:287's comma-less variant is not. -->
   <p id="advice">for high-stakes verification, run <code>antseal verify</code> and compare verdicts</p>
-  <p id="page-build">page build <code>__ANTSEAL_MODULE_SHA256__</code></p>
+  <!-- D136 §2 R12: the digest below is the WASM MODULE's, not this page's, and
+       the label said "page build" from the day it shipped. A reader doing the
+       obvious thing - comparing this footer against the SHA256SUMS published
+       beside the page - got a mismatch on a GOOD page, because a file cannot
+       contain its own hash. The two links are separate: this element proves
+       page-carries-module, SHA256SUMS proves you-fetched-that-page. The id is
+       load-bearing (the browser arm reads #page-build) and does not move; only
+       the visible label does. MVP-SPEC.md line 139's "its own build hash" is
+       the source of the conflation and is a SPEC correction owed to Q237 or
+       the M4 docs row - flagged, not silently diverged from. -->
+  <p id="page-build">module build <code>__ANTSEAL_MODULE_SHA256__</code></p>
 </footer>
 
 <script>
@@ -334,6 +344,31 @@ const PINNED = new Map([
 // page pins mainnet because the pinned RPC pair is mainnet's — D132 §5 R5's
 // "four entries on mainnet" — and an endpoint reporting another chain is the
 // wrong-chain class, never a disagreement (arbitrum/confirm.rs::guard_chain_id).
+//
+// D137 §8, site 1 - what this pin licenses, and what it does not.
+//
+// The guard PASSING is the fact that licenses naming a chain: `probeReceipt`
+// returns on a mismatch before it ever asks for a receipt, so every endpoint
+// whose answer reaches the rendered line has positively answered eth_chainId
+// with this number. What it does NOT license is any conclusion about a chain
+// this page never probed. Two mainnet endpoints holding no receipt for a hash
+// is a true measurement about chain 42161 and says nothing about a receipt
+// that lives on Sepolia or a devnet - so D137 §3 R1 rules that the two receipt
+// lines which assert WHERE a transaction is must name the chain they were
+// probed on, and that the number they name is the one measured off the wire
+// here (`reported`), never this constant re-asserted. The lines that report
+// only what the endpoints did - disagreed, failed - name no chain. R85 carries
+// that edit, and it lands in `antseal_core::verify::wording` for both surfaces
+// at once: this page renders `overlay.receipt.line` and authors none of it.
+//
+// The bundle cannot supply this datum, and that is deliberate rather than an
+// oversight: docs/format/registry-v1.md §7.6.1 makes a receipt-side chain
+// identifier one of six CHECKED ABSENCES, and format_registry_freeze.rs bans
+// `chain_id`, `chain` and `network` on the receipt map by name. The reason is
+// the threat model (D137 §2 (a)): the assembler of a bundle is the sealer,
+// who is the adversary, and a sealer-written chain id would steer this page's
+// RPC choice - turning a false refutation into a purchasable false
+// confirmation on a chain where the sealer can mint transactions at will.
 const ARBITRUM_CHAIN_ID = 42161;
 
 // D66 §3 R1, and it is fragile: esplora has NO OPTIONS route, so one extra
@@ -586,35 +621,47 @@ function bytes32(value) {
   return value.slice(2).toLowerCase();
 }
 
+// Returns `{ chainId, response }`. `chainId` is the number this endpoint
+// ANSWERED the guard with, and it is non-null ONLY when the guard passed —
+// D137 §3 R6's "the page reports the chain id it measured". A wrong-chain
+// endpoint's `reported` is deliberately not carried out of here: it is the
+// number that got the endpoint excluded, and letting it reach the evidence
+// document would be reporting a chain nothing was probed on.
 async function probeReceipt(endpoint, txHash) {
+  const no = (response) => ({ chainId: null, response });
+
   // The chain-id guard first, exactly as A17 issues it: an endpoint answering
   // for another chain is `wrong-chain`, a failure of that endpoint, and never
   // a disagreement between the pair (confirm.rs::guard_chain_id).
   const guard = await rpc(endpoint, "eth_chainId", []);
-  if (guard.class) return failed(endpoint, guard.class);
+  if (guard.class) return no(failed(endpoint, guard.class));
   const reported = quantity(guard.result);
-  if (reported === null) return failed(endpoint, "payload");
-  if (reported !== ARBITRUM_CHAIN_ID) return failed(endpoint, "wrong-chain");
+  if (reported === null) return no(failed(endpoint, "payload"));
+  if (reported !== ARBITRUM_CHAIN_ID) return no(failed(endpoint, "wrong-chain"));
+
+  // Past the guard: every answer below was served by an endpoint that
+  // positively answered eth_chainId with `reported`, so `reported` scopes them.
+  const on = (response) => ({ chainId: reported, response });
 
   const reply = await rpc(endpoint, "eth_getTransactionReceipt", [`0x${txHash}`]);
-  if (reply.class) return failed(endpoint, reply.class);
-  if (reply.result === null) return { outcome: "not-on-chain" };
+  if (reply.class) return on(failed(endpoint, reply.class));
+  if (reply.result === null) return on({ outcome: "not-on-chain" });
   if (typeof reply.result !== "object" || Array.isArray(reply.result)) {
-    return failed(endpoint, "payload");
+    return on(failed(endpoint, "payload"));
   }
   // The endpoint must be answering about the transaction we asked about. A
   // substitution is that endpoint's own defect and deliberately NOT a
   // disagreement, which would read as "the other one might be lying"
   // (confirm.rs).
-  if (bytes32(reply.result.transactionHash) !== txHash) return failed(endpoint, "payload");
+  if (bytes32(reply.result.transactionHash) !== txHash) return on(failed(endpoint, "payload"));
 
   const status = quantity(reply.result.status);
   const blockNumber = quantity(reply.result.blockNumber);
   const blockHash = bytes32(reply.result.blockHash);
   if (status === null || status > 255 || blockNumber === null || blockHash === null) {
-    return failed(endpoint, "payload");
+    return on(failed(endpoint, "payload"));
   }
-  return { outcome: "confirmed", status, block_number: blockNumber, block_hash: blockHash };
+  return on({ outcome: "confirmed", status, block_number: blockNumber, block_hash: blockHash });
 }
 
 // The document `verify_online` parses, whose shape is
@@ -638,10 +685,25 @@ async function gatherEvidence(esplora, arbitrum) {
     blocks,
   };
   if (sessionPlan.txHash !== null) {
+    const probed = await Promise.all(
+      arbitrum.map((endpoint) => probeReceipt(endpoint, sessionPlan.txHash)),
+    );
+    // D137 §3 R6 — `chain_id` is the number an endpoint ANSWERED WITH, never
+    // ARBITRUM_CHAIN_ID re-asserted. They are provably equal whenever any
+    // endpoint got past the guard, which is exactly what the guard is for;
+    // sourcing it from the measurement is what keeps the datum a measurement
+    // rather than a page-side claim laundered through a wire format.
+    //
+    // The fallback is reachable only when NO endpoint passed the guard — every
+    // response is then a `failed` entry, the module's fold returns
+    // `ReceiptProbe::Failed` before it looks at a chain, and the rendered line
+    // is `receipt_failed_line`, which names no chain at all (D137 §3 R1's
+    // dividing rule). The field is required by the schema, so a number must be
+    // sent; it is this page's expectation, and no sentence is built from it.
+    const measured = probed.find((entry) => entry.chainId !== null);
     evidence.receipt = {
-      responses: await Promise.all(
-        arbitrum.map((endpoint) => probeReceipt(endpoint, sessionPlan.txHash)),
-      ),
+      chain_id: measured === undefined ? ARBITRUM_CHAIN_ID : measured.chainId,
+      responses: probed.map((entry) => entry.response),
     };
   }
   return evidence;

@@ -89,6 +89,13 @@
 //! | every `full(F)` file with a manifest mirror has its mirror emitted | the mirror-less full reveal is a frozen accepted vector | `forcing` seam, `omit_mirror` |
 //! | receipt present ⟺ opted | receipt presence is legal either way on the wire | `forcing` seam, `drop_receipt`/`inject_receipt` |
 //! | no `file_salt`/fine-seed/nonce **bytes** outside their sanctioned places | the verifier does not hold `W` and cannot derive the needles | `forcing` seam, `smuggle` |
+//! | what is embedded addresses to what the **signed** manifest records | the layer runs, but `check_storage_linkage` returns no `Result` — the accept/reject bit this gate reads is structurally silent about it | `tests/builder_storage_linkage.rs`, over R6's bent-address modes |
+//!
+//! The fifth row is R78's, and it is the one assertion here that accuses the
+//! **caller's inputs** rather than the builder's own emission; it is checked
+//! last and needs no `forcing` seam, because a caller can reach it with
+//! material this API accepts. `assert_beyond_self_check`'s docs carry the
+//! hard-versus-warning ruling and its grounds.
 //!
 //! Each assertion is re-derived from the emitted sections plus the decoded
 //! manifest — never from the assembly's own plan variables — so a forced
@@ -147,7 +154,7 @@ use crate::crypto::material::{MasterSecretRef, NodeHash32, Salt16, Seed32};
 use crate::manifest::Manifest;
 use crate::manifest::body::{FileEntry, FineTree, ManifestBodyV1, UnitEntry};
 use crate::manifest::registry::UnitKind;
-use crate::verify::{VerifyOptions, verify_bundle};
+use crate::verify::{StorageLinkageResult, VerifyOptions, verify_bundle};
 
 pub mod error;
 #[cfg(feature = "test-vectors")]
@@ -623,12 +630,23 @@ fn finish(
     // reads no clock, and the anchor stage's verdicts are slot-local and
     // never fail a bundle (D84 rule F2), so no option could change the
     // accept/reject bit this gate reads.
-    verify_bundle(&bytes, &VerifyOptions::new())
+    //
+    // The report is **kept** (R78): under D128 §3 R7 these options evaluate
+    // the storage-linkage layer, and the accept/reject bit alone is
+    // structurally silent about what it found.
+    let report = verify_bundle(&bytes, &VerifyOptions::new())
         .map_err(|source| BuildError::SelfCheck { source })?;
 
     // The internal assertions the self-check structurally cannot make
     // (D70 §7.3; module docs table).
-    assert_beyond_self_check(w, body, &bundle, &bytes, receipt_opted)?;
+    assert_beyond_self_check(
+        w,
+        body,
+        &bundle,
+        &bytes,
+        receipt_opted,
+        report.storage_linkage,
+    )?;
 
     Ok(bytes)
 }
@@ -641,12 +659,69 @@ fn finish(
 /// manifest — never from the assembly's plan variables — and refuse the
 /// build on any violation. See the module-docs table for what each guards
 /// and why the self-check cannot.
+///
+/// # The storage-linkage finding is a refusal, not a warning (R78)
+///
+/// `linkage` is the self-check's own [`StorageLinkageResult`], which
+/// D128 §3 R7 made a default run produce and §10 (iv) named as value the
+/// builder was leaving on the table. **R78 ruled it hard**, and the three
+/// grounds are recorded here so no reader has to re-derive why an *assert*
+/// home was used:
+///
+/// 1. **The case for a warning proves too much.** It runs *"a hard arm makes
+///    the builder refuse bundles that verify"* — which is true of all four
+///    assertions above it. The verifier tolerates a partial's mirror (R53),
+///    the mirror-less full reveal is a frozen **accepted** vector, receipt
+///    presence is legal either way on the wire, and the verifier holds no
+///    `W` to derive the byte-scan needles. Refusing bundles that verify is
+///    this function's whole subject (D70 §7.3); an argument that forbids it
+///    empties the function.
+/// 2. **The tree already rules this exact condition hard, at the production
+///    caller.** `RevealError::AddressMismatch`
+///    (`crates/antseal-cli/src/pipeline/reveal.rs`) refuses a reveal when a
+///    fetched unit ciphertext does not hash to the manifest's recorded
+///    address, for this row's own reason — *"embedding them would fail the
+///    recipient's storage-linkage check, so the reveal refuses instead"*. A
+///    warning here would leave antseal holding two opposite dispositions for
+///    one hazard, one crate apart, which is R79's defect class. That also
+///    makes the hard arm **unreachable from a real seal**, measured rather
+///    than assumed: S12 addresses every ciphertext and the manifest blob
+///    with `compute_storage_address`, so R16's acceptance suite passes
+///    unchanged with this assertion in place. What is left for it to catch
+///    is the half R16 does not check — a storage record whose
+///    `{nonce, k_m}` no longer rebuild the blob its address names.
+/// 3. **A warning costs more surface than the refusal.** [`build_bundle`]
+///    returns `Result<Vec<u8>, BuildError>`, this module states *"Nothing
+///    here logs"*, and it is pure and WASM-safe by contract — so a warning
+///    needs either a `tracing` call the module forbids itself or a changed
+///    public return type. The refusal is one variant on a `#[non_exhaustive]`
+///    enum deliberately outside the Q52 frozen code universe (`error.rs`).
+///
+/// **This does not contradict D84 rule F2 or the layer's own non-gating
+/// ruling**, and the distinction is the load-bearing one: F2 governs the
+/// *verifier*, which may never fail a stranger's bundle over addresses it
+/// cannot authenticate (project rule 4; `verify::storage_linkage`, which
+/// borrows F2's *shape* rather than its scope). This function governs
+/// whether the builder **emits** its own bundle, holding `W` and the
+/// caller's own inputs. Refusing to emit is not refusing to believe: any
+/// such bundle that did exist still verifies.
+///
+/// It is also the one member of this function that accuses the **caller**
+/// rather than the builder — two supplied inputs disagreeing, `BuildError`'s
+/// family 1 in nature — so it is checked **last**, after every assertion
+/// that would name a builder defect. It lives here rather than in family 1
+/// because the finding does not exist until the encoded bytes have been
+/// verified, and re-deriving it earlier would mean recomputing every address
+/// a second time.
+///
+/// [`StorageLinkageResult`]: crate::verify::report::StorageLinkageResult
 fn assert_beyond_self_check(
     w: MasterSecretRef<'_>,
     body: &ManifestBodyV1,
     bundle: &BundleV1<'_>,
     bytes: &[u8],
     receipt_opted: bool,
+    linkage: StorageLinkageResult,
 ) -> Result<(), BuildError> {
     let revealed: BTreeSet<u64> = bundle.revealed_unit_ids().into_iter().collect();
 
@@ -751,6 +826,27 @@ fn assert_beyond_self_check(
                 });
             }
         }
+    }
+
+    // ── the storage-linkage finding, consumed rather than discarded ─────
+    //
+    // R78 (D128 §10 (iv)); the ruling and its grounds are in this
+    // function's docs. `NotEvaluated` is not a finding — it means the layer
+    // did not run — and `finish` passes `VerifyOptions::new()`, which
+    // D128 §3 R7 runs it under, so the arm is a no-op the day some caller
+    // suppresses it rather than a silent pass this function invents.
+    if let StorageLinkageResult::Evaluated {
+        units_matched,
+        units_mismatched,
+        manifest_matched,
+    } = linkage
+        && (units_mismatched > 0 || !manifest_matched)
+    {
+        return Err(BuildError::StorageLinkageMismatch {
+            units_mismatched,
+            units_checked: units_matched.saturating_add(units_mismatched),
+            manifest_matched,
+        });
     }
 
     Ok(())

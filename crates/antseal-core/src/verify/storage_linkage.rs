@@ -104,6 +104,69 @@ pub struct ManifestLinkageSubject<'a> {
     pub recorded_address: &'a ContentAddress,
 }
 
+/// Reproduce the **encrypted-manifest blob** a bundle's storage record
+/// describes: `XChaCha20-Poly1305(k_m, nonce, MANIFEST_AAD, manifest_bytes)`,
+/// the bytes the sealer uploaded.
+///
+/// This is the manifest arm of [`check_storage_linkage`], exposed as its own
+/// function so a caller who needs the bytes rather than the verdict can have
+/// them — `verify --live`, which byte-compares what the network still serves
+/// at [`ManifestLinkageSubject::recorded_address`] against what this returns.
+///
+/// # R81's ruling: arm (b), and why not the one-word change
+///
+/// R81 asked for a route to these bytes and named four arms. **Arm (b) is
+/// taken: a verification-shaped `pub fn` here, while
+/// `recompute_manifest_blob` stays `pub(crate)` in
+/// [`crypto::manifest_aead`](crate::crypto::manifest_aead).** The reasoning,
+/// recorded so nobody re-derives it:
+///
+/// - **Arm (a) — widening `recompute_manifest_blob` to `pub` — was refused.**
+///   Its own rustdoc argues the `pub(crate)` deliberately: *"A `pub` version
+///   of this function would be a general encrypt-under-a-chosen-nonce API
+///   wearing a verification name."* That is a nonce-reuse guardrail on the
+///   `(k_m, nonce)` single-use invariant, not an oversight, and R81 refuses
+///   arm (a) unless the claim is rewritten in the same change. Taking (b)
+///   spends nothing: the crypto module still exports no nonce-taking
+///   encryption door, so the module's structural claim stays literally true
+///   of the API it exports.
+/// - **The material was already public, and only the computation was not.**
+///   Every input this takes is a field of [`ManifestLinkageSubject`], which
+///   is `pub` with `pub` fields because [`check_storage_linkage`] is a public
+///   stage. A caller who can call this could already read `k_m`, the nonce
+///   and the plaintext out of any bundle and drive `chacha20poly1305`
+///   directly — `k_m` ships in every bundle and *"decrypts exactly one thing
+///   — the manifest the bundle already embeds in plaintext"*. So this widens
+///   reachability of a computation, never disclosure of material.
+/// - **The parameter shape is the guardrail, not decoration.** The nonce
+///   arrives inside a named linkage subject whose every field is documented
+///   as bundle content, in the **verification** layer, rather than as a free
+///   `(key, nonce, plaintext)` triple in the crypto layer. A future caller
+///   reaching for "encrypt this under a nonce I chose" does not find this
+///   function, because it does not have that shape or that home.
+/// - **Arm (c)** (compare addresses instead of bytes) was not taken: R11's
+///   `StorageRecord` compares against a ciphertext copy, so (c) changes that
+///   type — R11-owning work, not this row's.
+/// - **Arm (d)** (render the absence permanently) is **not needed once this
+///   lands**, and that is the point: the live section reports the manifest
+///   subject instead of a sentence explaining why it cannot. The one residue
+///   is the `None` case below, and it is unreachable for any decoded
+///   manifest.
+///
+/// Returns `None` exactly when `recompute_manifest_blob` does — only above
+/// XChaCha20-Poly1305's `P_MAX` (≈ 256 GiB), which F11's caps put far out of
+/// reach. The honest reading of `None` is *these bytes have no blob and so no
+/// address*, which is why it is an `Option` and not a verification finding.
+///
+/// (`crypto::manifest_aead::recompute_manifest_blob` is named in plain text
+/// rather than linked: it is `pub(crate)`, and a public item linking to a
+/// private one is a rustdoc warning — which is itself the evidence that the
+/// encrypt-door was not widened.)
+#[must_use]
+pub fn recompute_manifest_storage_blob(subject: &ManifestLinkageSubject<'_>) -> Option<Vec<u8>> {
+    recompute_manifest_blob(subject.k_m, subject.nonce, subject.manifest_bytes)
+}
+
 /// Recompute every subject's address and count the agreements — R20's whole
 /// stage, as a pure function.
 ///
@@ -138,9 +201,13 @@ pub fn check_storage_linkage(
     // A manifest that cannot be rebuilt (only reachable above the AEAD's
     // P_MAX) is not a match: there are no blob bytes, so there is no address
     // to agree with the recorded one.
-    let manifest_matched =
-        recompute_manifest_blob(manifest.k_m, manifest.nonce, manifest.manifest_bytes)
-            .is_some_and(|blob| address_matches(&blob, manifest.recorded_address));
+    //
+    // Through the public door (R81), not around it: the offline stage and
+    // `--live` must reproduce the *same* blob from the *same* code, or the
+    // two halves of one storage section could disagree about their subject
+    // for a reason no test would show.
+    let manifest_matched = recompute_manifest_storage_blob(manifest)
+        .is_some_and(|blob| address_matches(&blob, manifest.recorded_address));
 
     StorageLinkageResult::Evaluated {
         units_matched,

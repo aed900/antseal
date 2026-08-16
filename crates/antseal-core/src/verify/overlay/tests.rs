@@ -36,6 +36,14 @@ const DIGICERT: &[u8] =
 const HEIGHT_A: u64 = 700_100;
 const HEIGHT_B: u64 = 700_200;
 
+/// The chain id these rows probe on (D137 §3 R4/R5).
+///
+/// A literal, because core cannot see `antseal_net::network` (D137 §1 (h)) —
+/// the same measurement that made the wording parameter a `u64`. What matters
+/// to these rows is not which number it is but that the probe log carries
+/// **one** and the echo renders **it**.
+const ARBITRUM_ONE: u64 = 42_161;
+
 fn opaque(bytes: &[u8]) -> OpaqueBytes {
     OpaqueBytes::from_vec(bytes.to_vec())
 }
@@ -556,7 +564,10 @@ fn the_receipt_echo_renders_only_when_a_receipt_is_present_and_was_probed() {
         block_number: 200_000_001,
         block_hash: [0xcd; 32],
     };
-    let probes = probe_log().with_receipt(ReceiptProbe::Agreed(ReceiptConfirmation::Agreed(facts)));
+    let probes = probe_log().with_receipt(
+        ReceiptProbe::Agreed(ReceiptConfirmation::Agreed(facts)),
+        ARBITRUM_ONE,
+    );
     let overlay = build_online_overlay(
         &artifacts_with,
         &with_receipt(&empty),
@@ -567,6 +578,7 @@ fn the_receipt_echo_renders_only_when_a_receipt_is_present_and_was_probed() {
     assert_eq!(
         echo.outcome,
         ReceiptEchoOutcome::Confirmed {
+            chain_id: ARBITRUM_ONE,
             block_number: 200_000_001,
             status_success: true,
         }
@@ -577,8 +589,10 @@ fn the_receipt_echo_renders_only_when_a_receipt_is_present_and_was_probed() {
 
     // A reverted transaction is confirmed-with-status-false, never success.
     let reverted = ReceiptFacts { status: 0, ..facts };
-    let probes =
-        probe_log().with_receipt(ReceiptProbe::Agreed(ReceiptConfirmation::Agreed(reverted)));
+    let probes = probe_log().with_receipt(
+        ReceiptProbe::Agreed(ReceiptConfirmation::Agreed(reverted)),
+        ARBITRUM_ONE,
+    );
     let overlay = build_online_overlay(
         &artifacts_with,
         &with_receipt(&empty),
@@ -605,9 +619,88 @@ fn the_receipt_echo_renders_only_when_a_receipt_is_present_and_was_probed() {
     // Probed, but no receipt in the bundle: no echo either.
     let without = verdicts_of(&ots, &[], None, &empty);
     let artifacts_without = AnchorArtifacts::from_parts(&ots, &[], None);
-    let probes = probe_log().with_receipt(ReceiptProbe::Disagreed);
+    let probes = probe_log().with_receipt(ReceiptProbe::Disagreed, ARBITRUM_ONE);
     let overlay = build_online_overlay(&artifacts_without, &without, &without, &probes);
     assert_eq!(overlay.receipt, None, "no receipt, nothing to echo");
+}
+
+/// **D137 §5's fourth assertion — a `wrong-chain` run is `Failed`, never
+/// `NotOnChain`.**
+///
+/// This is the distinction the whole record exists for, made machine-checkable
+/// rather than merely readable: a `--json` consumer must be able to tell *"we
+/// could not ask"* from *"we asked, on chain N, and there is nothing there"*.
+/// Before D137 both rendered a token with no chain in it and the difference
+/// lived only in the prose.
+///
+/// The `wrong-chain` path is unchanged **by construction** — the guard returns
+/// before the receipt query on both surfaces — so what is asserted here is
+/// that the unchanged path still lands on the outcome that carries no chain
+/// id, and that a genuine absence lands on the one that does.
+#[test]
+fn a_wrong_chain_probe_is_failed_and_never_the_chain_scoped_absence() {
+    let record = receipt_record();
+    let ots = [committed_ots(HEIGHT_A, HEADER_NTIME)];
+    let verdicts = verdicts_of(&ots, &[], Some(&record), &OnlineEvidence::new());
+    let artifacts = AnchorArtifacts::from_parts(&ots, &[], Some(&record));
+
+    let echo_of = |probe: ReceiptProbe| {
+        let probes = probe_log().with_receipt(probe, ARBITRUM_ONE);
+        build_online_overlay(&artifacts, &verdicts, &verdicts, &probes)
+            .receipt
+            .expect("a receipt present in the bundle and probed renders an echo")
+    };
+
+    // Every endpoint refused the guard: A17's `wrong-chain` class, per
+    // endpoint, exactly as `guard_chain_id` produces it.
+    let wrong_chain = echo_of(ReceiptProbe::Failed(vec![
+        EndpointProbeFailure {
+            endpoint: "https://arb1.example/rpc".to_owned(),
+            class: ProbeFailureClass::WrongChain,
+        },
+        EndpointProbeFailure {
+            endpoint: "https://arb2.example/rpc".to_owned(),
+            class: ProbeFailureClass::WrongChain,
+        },
+    ]));
+    assert!(
+        matches!(wrong_chain.outcome, ReceiptEchoOutcome::Failed { .. }),
+        "a guard refusal is a probe failure, not an agreed absence: {:?}",
+        wrong_chain.outcome
+    );
+    assert!(
+        !matches!(wrong_chain.outcome, ReceiptEchoOutcome::NotOnChain { .. }),
+        "a run that never reached `eth_getTransactionReceipt` may not report that the \
+         transaction is absent from a chain: {:?}",
+        wrong_chain.outcome
+    );
+
+    // …and the differential: the case that DID reach the query is the one that
+    // names a chain. Without this half the row above would be true of an
+    // implementation that never produced `NotOnChain` at all.
+    let absent = echo_of(ReceiptProbe::Agreed(ReceiptConfirmation::NotOnChain));
+    assert_eq!(
+        absent.outcome,
+        ReceiptEchoOutcome::NotOnChain {
+            chain_id: ARBITRUM_ONE
+        }
+    );
+    assert_ne!(
+        wrong_chain.line, absent.line,
+        "the two must not render the same sentence either — a reader of the line has the same \
+         question as a reader of the token"
+    );
+    assert!(
+        !wrong_chain.line.contains(&ARBITRUM_ONE.to_string()),
+        "the failure line names no chain (D137 §3 R1's dividing rule: it reports what the \
+         endpoints did, not where the transaction is): {}",
+        wrong_chain.line
+    );
+    assert!(
+        absent.line.contains(&ARBITRUM_ONE.to_string()),
+        "the absence line must name the chain it was probed on: {}",
+        absent.line
+    );
 }
 
 /// The endpoints disclosure echoes the identities and flips its label with
@@ -858,7 +951,7 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
     let echo_lines: Vec<String> = echo_probes
         .iter()
         .map(|probe| {
-            receipt_echo(probe)
+            receipt_echo(probe, ARBITRUM_ONE)
                 .expect("every probed outcome renders")
                 .line
         })
@@ -869,7 +962,10 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
             assert_ne!(a, b);
         }
     }
-    assert_eq!(receipt_echo(&ReceiptProbe::NotAttempted), None);
+    assert_eq!(
+        receipt_echo(&ReceiptProbe::NotAttempted, ARBITRUM_ONE),
+        None
+    );
 
     // The delta set (one member today, held closed).
     let delta = AggregateDelta::DivergenceNewlyFlagged {

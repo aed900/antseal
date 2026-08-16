@@ -102,10 +102,35 @@ enum BlockResponse {
     },
 }
 
-/// The receipt pair.
+/// The receipt pair, and the chain the page probed it on.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReceiptEntry {
+    /// **The chain id the page's guard read off the wire** (D137 §3 R6).
+    ///
+    /// Required, not optional: after D137 §3 R1 the rendered sentence names
+    /// this number, and a receipt probe with no chain to name has no honest
+    /// line available to it. `deny_unknown_fields` already makes adding it a
+    /// deliberate, versioned edit on both sides — a page built against the
+    /// older shape now fails loudly instead of shipping a sentence about a
+    /// chain nobody measured (D137 §11 risk 3).
+    ///
+    /// It is the value `probeReceipt` **measured**, never the page's
+    /// `ARBITRUM_CHAIN_ID` re-asserted. The two are provably equal whenever
+    /// the guard let an endpoint through — that is what the guard *is* — and
+    /// sourcing it from the measurement is what keeps the datum a measurement.
+    ///
+    /// One number for the pair, not one per endpoint: the guard already
+    /// excludes a pair that disagrees about its chain, and a per-response
+    /// field would invent that case and create a second place where "which
+    /// chain" is decided (D137 §3 R6's recorded refusal).
+    ///
+    /// **Not trusted, and not new**: core validates this field's shape, never
+    /// its truth. A hostile page could report `chain_id: 1` — but a hostile
+    /// page can already fabricate the whole evidence document, including
+    /// confirmations, and the overlay is advisory in both directions
+    /// (D137 §11 risk 4).
+    chain_id: u64,
     responses: Vec<ReceiptResponse>,
 }
 
@@ -120,7 +145,22 @@ enum ReceiptResponse {
         /// The block hash, hex-encoded (64 characters).
         block_hash: String,
     },
-    /// The endpoint answered, negatively: not on chain.
+    /// The endpoint answered with **no receipt for this transaction hash**.
+    ///
+    /// **This token does not change, and that is deliberate (D137 §3 R8).**
+    /// It names what *one endpoint* said, and the guard three lines earlier
+    /// already established which chain that endpoint serves — so it is scoped
+    /// by construction and needs no `chain_id` of its own. The identically
+    /// spelled token on the overlay's **output** side
+    /// (`ReceiptEchoOutcome::NotOnChain`) is a different value travelling the
+    /// other way, and only that one gained a chain id. Recorded here so the
+    /// next reader does not "finish the job".
+    ///
+    /// The wording is corrected, though: *"answered, negatively: not on
+    /// chain"* was the same over-claim R85 found in the rendered sentence.
+    /// `null` from `eth_getTransactionReceipt` is the method's defined
+    /// successful answer meaning *this node holds no receipt for that hash* —
+    /// a positive answer about one chain, not a statement about every chain.
     NotOnChain,
     /// The fetch or the parse failed at the page.
     Failed {
@@ -203,7 +243,10 @@ pub fn parse(document: &str) -> Result<OnlineInputs, BindingError> {
         if let Some(confirmation) = agreed {
             evidence = evidence.with_receipt(confirmation);
         }
-        probes = probes.with_receipt(probe);
+        // D137 §3 R4: the chain id travels with the PROBE, never with the
+        // agreed evidence. `OnlineEvidence` is what anchor rules read (D55 §4)
+        // and a chain id must never become reachable from one.
+        probes = probes.with_receipt(probe, entry.chain_id);
     }
 
     Ok(OnlineInputs::new(evidence, probes))

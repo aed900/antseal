@@ -121,10 +121,11 @@ pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
 pub use error::StorageError;
 pub use live::manifest::{
     LiveCheckError, LiveCheckReport, LiveCheckRow, LiveSubject, LiveVerdict, StorageRecord,
-    UnitKindTag, live_check, records_from_manifest,
+    UnitKindTag, blob_outcome, live_check, live_inputs, records_from_manifest, subject_label,
 };
 pub use live::{
-    BlobPersistence, PersistenceOutcome, PersistenceReport, PersistenceSummary, check_persistence,
+    BlobPersistence, FetchFailureClass, PersistenceOutcome, PersistenceReport, PersistenceSummary,
+    check_persistence,
 };
 pub use network::{
     DevnetEnv, DevnetEnvError, EvmAddress20, EvmAddressParseError, NetworkConfig,

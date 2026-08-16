@@ -108,6 +108,19 @@ const FIXTURE_HEIGHT: u64 = 700_113;
 const FIXTURE_TSA_SOURCE: &str = "CN=antseal mock TSA signer,O=antseal fixtures";
 const FIXTURE_OTS_SOURCE: &str = "bitcoin-block-700113";
 const FIXTURE_RECEIPT_BLOCK: u64 = 377_262_147;
+// **D137 §3 R9 — two chain ids, not one, and that is what gives the snapshot
+// teeth.** Both parameterised receipt lines are emitted TWICE below. Emitting
+// one instance each would let a hard-coded `42161` sit in the committed
+// snapshot indefinitely — the document would be byte-stable and the parameter
+// could be ignored entirely. Two instances make an implementation that
+// interpolates a constant show up as two identical rows, and redden
+// `every_single_sourced_needle_occurs_in_the_rendered_set`'s companion
+// differential in `wording/tests.rs`.
+//
+// Literals with the names they mirror: this crate cannot see `antseal-net`
+// (D137 §1 (h)).
+const FIXTURE_CHAIN_ID: u64 = 42_161; // antseal_net::network::ARBITRUM_ONE_CHAIN_ID
+const FIXTURE_CHAIN_ID_TWIN: u64 = 421_614; // …::ARBITRUM_SEPOLIA_CHAIN_ID
 // R19's redaction rows. The path is deliberately ordinary: the table's slot
 // takes text the *renderer* has already escaped for its surface (D67 §3 R6),
 // so a hostile path belongs in the renderer's own suite
@@ -309,13 +322,28 @@ fn render_document() -> String {
     subsection(&mut out, "receipt echo, endpoints, change-only deltas");
     out.push_str(&format!(
         "{}\n",
-        receipt_confirmed_line(FIXTURE_RECEIPT_BLOCK, true)
+        receipt_confirmed_line(FIXTURE_CHAIN_ID, FIXTURE_RECEIPT_BLOCK, true)
     ));
     out.push_str(&format!(
         "{}\n",
-        receipt_confirmed_line(FIXTURE_RECEIPT_BLOCK, false)
+        receipt_confirmed_line(FIXTURE_CHAIN_ID, FIXTURE_RECEIPT_BLOCK, false)
     ));
-    out.push_str(&format!("{}\n", receipt_not_on_chain_line()));
+    out.push_str(&format!(
+        "{}\n",
+        receipt_not_on_chain_line(FIXTURE_CHAIN_ID)
+    ));
+    // The Sepolia twins (D137 §3 R9). Same block, same status, one different
+    // chain id — so the pair reads as a differential in the committed file
+    // itself and a reviewer can see the parameter is honoured without running
+    // anything.
+    out.push_str(&format!(
+        "{}\n",
+        receipt_confirmed_line(FIXTURE_CHAIN_ID_TWIN, FIXTURE_RECEIPT_BLOCK, true)
+    ));
+    out.push_str(&format!(
+        "{}\n",
+        receipt_not_on_chain_line(FIXTURE_CHAIN_ID_TWIN)
+    ));
     out.push_str(&format!("{}\n", receipt_disagreed_line()));
     out.push_str(&format!("{}\n", receipt_failed_line(&[])));
     let endpoints = vec![
@@ -748,7 +776,82 @@ fn single_sourced() -> Vec<(String, &'static str)> {
             "byte(s) blacked out inside revealed files".to_owned(),
             "the work-level withheld total",
         ),
+        // D137 §3 R10 — the two receipt-echo lines that assert something
+        // about *where* the transaction is. D137 §1 (f) measured that neither
+        // was on this table: both surfaces render `overlay.receipt.line`
+        // verbatim — the CLI in `verify_out.rs`'s `overlay_lines`, the page in
+        // `renderOverlay` — and **nothing stopped either from growing its own
+        // copy**, because the sentences were snapshot-frozen without being
+        // scan-protected. This is the entry that makes one edit to
+        // `wording.rs` keep moving both surfaces.
+        //
+        // Needles are the fixed head clauses rather than whole sentences,
+        // following R19's precedent above: the confirmation line already
+        // interpolates a block number, and D137 §3 R1 makes both of them
+        // interpolate a chain id, at which point neither has a literal form to
+        // search for. `every_single_sourced_needle_occurs_in_the_rendered_set`
+        // is what keeps these two spelled correctly.
+        (
+            "both RPC endpoints agree the recorded transaction is not on Arbitrum chain "
+                .to_owned(),
+            "the receipt echo's absence line",
+        ),
+        (
+            "both RPC endpoints confirm the recorded transaction on Arbitrum chain ".to_owned(),
+            "the receipt echo's confirmation line",
+        ),
     ]
+}
+
+/// **D137 §3 R11 — a needle that cannot fire is an assertion that cannot
+/// fail.**
+///
+/// [`single_sourced`] is a table of literals compared against renderer
+/// sources. Nothing above checks that any given entry is spelled the way the
+/// wording module actually spells it, and a misspelled needle scans every
+/// renderer file for a string that can never occur: green for ever, catching
+/// nothing. `the_source_scan_catches_a_planted_copy_of_a_frozen_sentence`
+/// does not close this — it plants [`UNANCHORED_BANNER`] and so proves the
+/// *predicate* is fallible, which is a different claim from "this needle is
+/// the sentence it names".
+///
+/// The check is that each needle occurs in the rendered document — the same
+/// corpus the committed snapshot is taken from. Misspell a needle, or respell
+/// the sentence it targets without respelling the needle, and this reddens
+/// naming the entry.
+#[test]
+fn every_single_sourced_needle_occurs_in_the_rendered_set() {
+    let document = render_document();
+    let table = single_sourced();
+
+    // The loop below is vacuous over an empty or truncated table, which is
+    // this project's dominant defect class. The floor is asserted first and
+    // separately, so a table that shrank says so instead of passing quietly.
+    const NEEDLE_FLOOR: usize = 29;
+    assert!(
+        table.len() >= NEEDLE_FLOOR,
+        "the single-sourced table holds {} needle(s), below the {NEEDLE_FLOOR} this floor was \
+         written against. Entries are removed deliberately (a sentence deleted from the wording \
+         set), so lower the floor in the same act — an unnoticed shrink makes both this test and \
+         `no_renderer_source_spells_a_frozen_verdict_string` scan for less than they claim to.",
+        table.len()
+    );
+
+    let mut unfirable = Vec::new();
+    for (needle, what) in &table {
+        if !document.contains(needle.as_str()) {
+            unfirable.push(format!("{what} — `{needle}`"));
+        }
+    }
+    assert!(
+        unfirable.is_empty(),
+        "these single-sourced needles occur nowhere in the rendered wording set, so the source \
+         scan searches every renderer file for a string that cannot exist and can never catch a \
+         copy:\n  {}\n\
+         Either the needle is misspelled, or the sentence it targets was respelled and the needle \
+         was not (D137 §3 R11).",
+        unfirable.join("\n  ")
+    );
 }
 
 /// Verdict-shaped sentences that still live in `antseal-cli` and are **not**

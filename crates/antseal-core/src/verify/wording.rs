@@ -880,26 +880,70 @@ fn endpoint_failure_detail(failures: &[EndpointProbeFailure]) -> String {
     parts.join("; ")
 }
 
-/// Receipt echo: both RPCs confirmed the recorded transaction (supporting-
-/// evidence register — **no time, no state word**; D64 §5, D98 rider 4).
+// ── the two chain-scoped receipt lines (D137 §3 R1/R2; §8 site 3) ──────────
+//
+// **D137 §8, site 3 — why the parameter is a `u64` and not a network name.**
+//
+// `antseal-core`'s `[dependencies]` does not include `antseal-net`, so nothing
+// here can see `NetworkId`, `ARBITRUM_ONE_CHAIN_ID` or `NetworkId::as_str`. A
+// line reading "Arbitrum One" would need a name table *inside core*, which is a
+// second `NetworkId` with no compiler edge keeping the two honest — the shape
+// D107/D111 exist to prevent. So the parameter is a plain number and the
+// sentence names the number. That is forced by a dependency measurement rather
+// than chosen, and it has a second virtue: a chain id core has never heard of
+// still renders correctly, which a name table cannot promise.
+//
+// **Why only these two take one.** D137 §3 R1's dividing rule: a line that
+// asserts the transaction's *presence or absence* must name the chain it
+// asserts it about; a line that reports only what the endpoints did need not.
+// `receipt_disagreed_line` and `receipt_failed_line` report the probe, not the
+// transaction, so they name no chain and take no parameter.
+//
+// **What makes the number true rather than decorative.** The receipt query is
+// unreachable from an endpoint that did not positively answer `eth_chainId`
+// with the expected value: the chain-id guard returns first on both surfaces
+// (`index.template.html`'s `probeReceipt`, `arbitrum/confirm.rs`'s
+// `guard_chain_id`). At the moment either line renders, **every endpoint that
+// contributed to it has answered with exactly the number the line names.**
+//
+// The normative record is `docs/decisions/D137-…md`; nothing here restates its
+// argument, because a fourth copy of a threat model is a fourth thing to keep
+// true.
+
+/// Receipt echo: both RPCs confirmed the recorded transaction **on the chain
+/// they were probed on** (supporting-evidence register — **no time, no state
+/// word**; D64 §5, D98 rider 4; D137 §3 R1).
+///
+/// `chain_id` is the value the chain-id guard enforced on every endpoint whose
+/// answer was used — never a bundle-supplied datum, which registry §7.6.1
+/// makes a checked absence for exactly this reason.
 #[must_use]
-pub fn receipt_confirmed_line(block_number: u64, status_success: bool) -> String {
+pub fn receipt_confirmed_line(chain_id: u64, block_number: u64, status_success: bool) -> String {
     let status = if status_success {
         ""
     } else {
         "; the transaction reverted"
     };
     format!(
-        "receipt: both RPC endpoints confirm the recorded transaction on Arbitrum \
-         (block {block_number}{status}) — supporting evidence only"
+        "receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain \
+         {chain_id} (block {block_number}{status}) — supporting evidence only"
     )
 }
 
-/// Receipt echo: both RPCs agreed the transaction is not on chain.
+/// Receipt echo: both RPCs agreed the transaction is not on **the chain they
+/// were probed on** (D137 §3 R1).
+///
+/// The unqualified predecessor said *"is not on chain"*, which asserts absence
+/// from every chain and is false for a receipt sealed on another one. Two
+/// endpoints holding no receipt for a hash is a true, positively-answered
+/// measurement **about the chain the guard established** — so the sentence
+/// names it and stops there.
 #[must_use]
-pub const fn receipt_not_on_chain_line() -> &'static str {
-    "receipt: both RPC endpoints agree the recorded transaction is not on chain — supporting \
-     evidence only"
+pub fn receipt_not_on_chain_line(chain_id: u64) -> String {
+    format!(
+        "receipt: both RPC endpoints agree the recorded transaction is not on Arbitrum chain \
+         {chain_id} — supporting evidence only"
+    )
 }
 
 /// Receipt echo: the RPC pair disagreed — no confirmation either way.

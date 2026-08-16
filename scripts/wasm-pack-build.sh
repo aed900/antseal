@@ -215,7 +215,15 @@ build() {
   local commit lock_before lock_after
   remap_flags || return 1
   # `git` is this script's, never the crate's. A tree with no git still builds.
-  commit="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
+  #
+  # SUPPLIED, THEN DISCOVERED — in that order (D135 §4 R7). A caller that
+  # already knows the commit passes it, because a build from a COPY of the tree
+  # has no `.git`, would stamp `unknown`, and would then differ from the same
+  # commit built in place — measured at D135 §1.5, where that one 40-character
+  # string moved the module's digest without moving its size. Nothing in this
+  # repository sets the variable except `scripts/reproducible-build.sh`, so
+  # every existing caller still takes the `git rev-parse` branch below.
+  commit="${ANTSEAL_SOURCE_COMMIT:-$(git rev-parse HEAD 2>/dev/null || printf 'unknown')}"
   lock_before="$(lock_digest)"
   rm -rf "${OUT:?}"
   ANTSEAL_SOURCE_COMMIT="$commit" \

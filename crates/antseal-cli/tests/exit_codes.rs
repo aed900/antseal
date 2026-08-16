@@ -364,6 +364,30 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 detail: "quote_batch: no peers reachable".into(),
             },
         ),
+        // **U72**: the second thing this class now carries, and the row's
+        // "the refusal's message and class are stated" — a `reveal` in a
+        // build with no storage backend, on a work whose D43 cache is
+        // partial. The class is deliberately the SAME (23): from the
+        // caller's side this is bytes that cannot be obtained, and a second
+        // code would split one user-visible situation across two. What
+        // differs is the message, and it is worth reading beside the row
+        // above: the transient one blames the network, this one blames the
+        // build and names the unit it could not gather.
+        //
+        // Assembled through the real producers — the storage error the
+        // vault-local backend returns, wrapped by the reveal engine's own
+        // variant and mapped by D69 §5's `From` — rather than hand-written,
+        // so it cannot drift from what a user actually meets.
+        (
+            "network-failure (vault-local reveal, cache incomplete)",
+            CliError::from(antseal_cli::pipeline::reveal::RevealError::Unfetchable {
+                unit_id: 3,
+                detail: antseal_net::StorageError::Network {
+                    reason: antseal_cli::backend::BackendArm::NotCompiled.message("reveal"),
+                }
+                .to_string(),
+            }),
+        ),
         (
             "resume-source-changed",
             CliError::ResumeSafetyAbort {

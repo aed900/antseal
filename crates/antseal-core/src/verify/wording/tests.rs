@@ -601,9 +601,9 @@ fn state_words_appear_on_the_refutation_line_and_nowhere_else() {
 #[test]
 fn receipt_lines_carry_no_state_word_and_no_headline_shape() {
     let lines = [
-        receipt_confirmed_line(200_000_001, true),
-        receipt_confirmed_line(200_000_001, false),
-        receipt_not_on_chain_line().to_owned(),
+        receipt_confirmed_line(ARBITRUM_ONE, 200_000_001, true),
+        receipt_confirmed_line(ARBITRUM_ONE, 200_000_001, false),
+        receipt_not_on_chain_line(ARBITRUM_ONE),
         receipt_disagreed_line().to_owned(),
         receipt_failed_line(&[]),
     ];
@@ -614,6 +614,114 @@ fn receipt_lines_carry_no_state_word_and_no_headline_shape() {
                 "the receipt register admits no `{word}`: {line}"
             );
         }
+    }
+}
+
+// ── D137 §3 R1/R2 — the receipt lines name the chain they were probed on ───
+
+/// The two chain ids the surfaces can actually probe.
+///
+/// Literals, with the names they mirror: **core cannot see `antseal-net`**
+/// (D137 §1 (h)), which is the same measurement that makes the wording
+/// parameter a `u64` rather than a network name. If either ever disagrees with
+/// `antseal_net::network`, the guard's own test — which asserts against the
+/// real constants — is what says so: `chain_id_mismatch_is_unavailable_not_agreed`,
+/// in the **antseal-anchor** crate at `src/arbitrum/confirm/tests.rs:438`.
+/// Two corrections carried here rather than left to the next reader: it is not
+/// "the CLI's" (the CLI renders the guard's outcome and owns none of it), and
+/// this crate's `doc_pointer_liveness` sweep is scoped to `antseal-core`, so
+/// the pointer cannot resolve from here and is carried in that test's
+/// `ALLOWED` list with its reason, in the cross-crate form Q70 will one day
+/// retire.
+const ARBITRUM_ONE: u64 = 42_161; // antseal_net::network::ARBITRUM_ONE_CHAIN_ID
+const ARBITRUM_SEPOLIA: u64 = 421_614; // antseal_net::network::ARBITRUM_SEPOLIA_CHAIN_ID
+
+/// **D137 §3 R1 — the two receipt lines that assert *where* a transaction is
+/// must name the chain they were probed on.**
+///
+/// The defect this pins (R85): *"both RPC endpoints agree the recorded
+/// transaction is not on chain"* asserts absence from **every** chain, from a
+/// measurement that only ever reached one. Its neighbour was wrong in the
+/// worse direction — an unqualified *"on Arbitrum"* confirmation renders a
+/// **testnet** payment as evidence for the seal.
+///
+/// The first assertion is the one with teeth. On the page the chain id can only
+/// ever be 42161, so an implementation that interpolated the page's pinned
+/// constant instead of its own parameter would satisfy every `contains` check
+/// here and fail **only** the differential (D137 §2 (c)'s recorded trap).
+#[test]
+fn the_receipt_lines_name_the_chain_they_were_probed_on() {
+    const BLOCK: u64 = 200_000_001;
+
+    let absent_one = receipt_not_on_chain_line(ARBITRUM_ONE);
+    let absent_sepolia = receipt_not_on_chain_line(ARBITRUM_SEPOLIA);
+    let confirmed_one = receipt_confirmed_line(ARBITRUM_ONE, BLOCK, true);
+    let confirmed_sepolia = receipt_confirmed_line(ARBITRUM_SEPOLIA, BLOCK, true);
+
+    // 1. The differential: two chains must render two different lines.
+    assert_ne!(
+        absent_one, absent_sepolia,
+        "two chains must render two different lines, and the absence line rendered one string for \
+         both:\n  42161  -> {absent_one}\n  421614 -> {absent_sepolia}\nAn implementation that \
+         interpolates a pinned constant instead of its `chain_id` parameter fails here and \
+         nowhere else (D137 §6.1)"
+    );
+    assert_ne!(
+        confirmed_one, confirmed_sepolia,
+        "two chains must render two different lines, and the confirmation line rendered one \
+         string for both:\n  42161  -> {confirmed_one}\n  421614 -> {confirmed_sepolia}\nAn \
+         implementation that interpolates a pinned constant instead of its `chain_id` parameter \
+         fails here and nowhere else (D137 §6.1)"
+    );
+
+    // 2. Exact values, read back in full. NEVER `contains`: "42161" is a
+    //    prefix of "421614", so a containment check for the mainnet id passes
+    //    on the Sepolia line — an assertion that cannot fail in the one
+    //    direction it exists to catch.
+    assert_eq!(
+        absent_one,
+        "receipt: both RPC endpoints agree the recorded transaction is not on Arbitrum chain \
+         42161 — supporting evidence only"
+    );
+    assert_eq!(
+        absent_sepolia,
+        "receipt: both RPC endpoints agree the recorded transaction is not on Arbitrum chain \
+         421614 — supporting evidence only"
+    );
+    assert_eq!(
+        confirmed_one,
+        "receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 42161 \
+         (block 200000001) — supporting evidence only"
+    );
+    assert_eq!(
+        confirmed_sepolia,
+        "receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 421614 \
+         (block 200000001) — supporting evidence only"
+    );
+    assert_eq!(
+        receipt_confirmed_line(ARBITRUM_SEPOLIA, BLOCK, false),
+        "receipt: both RPC endpoints confirm the recorded transaction on Arbitrum chain 421614 \
+         (block 200000001; the transaction reverted) — supporting evidence only"
+    );
+
+    // 3. The old universal claim is gone. A "fix" that appended the chain id
+    //    while leaving "is not on chain" intact would read as two claims, the
+    //    first of them still false.
+    for line in [&absent_one, &absent_sepolia] {
+        assert!(
+            !line.contains("is not on chain "),
+            "the unqualified clause `is not on chain ` survives in: {line}"
+        );
+    }
+
+    // 4. Neither line names the other's chain. One direction only, and that is
+    //    the point: 42161 IS a substring of 421614, so the reverse check is
+    //    unwritable and assertion 2 is what covers it.
+    for line in [&absent_one, &confirmed_one] {
+        assert!(
+            !line.contains("421614"),
+            "a mainnet line names Sepolia's chain id: {line}"
+        );
     }
 }
 

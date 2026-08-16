@@ -45,8 +45,9 @@
 use std::collections::BTreeMap;
 
 use antseal_core::manifest::{ManifestBodyV1, UnitEntry, UnitKind};
+use antseal_core::verify::orchestration::{LiveBlobOutcome, LiveBlobRow, LiveInputs};
 
-use super::{BlobPersistence, PersistenceSummary, check_persistence};
+use super::{BlobPersistence, PersistenceOutcome, PersistenceSummary, check_persistence};
 use crate::{Address, StorageBackend};
 
 /// A live check could not be assembled or run.
@@ -345,6 +346,121 @@ pub async fn live_check<B: StorageBackend>(
         verdict: LiveVerdict::from_summary(summary),
         fetches: report.fetches,
     })
+}
+
+// ---------------------------------------------------------------------------
+// the bridge into R21's rendering (R80)
+// ---------------------------------------------------------------------------
+
+/// One live row's subject label — the string a rendered row is spoken about.
+///
+/// Closed over [`LiveSubject`], so a new subject cannot render unnamed. It is
+/// not a frozen verdict sentence: the sentence this label is *dropped into*
+/// is `wording::live_blob_*_line`'s, and the R18 table owns that half.
+///
+/// # The second half of R79's hazard, and why it is already closed
+///
+/// R79's register entry names `LiveBlobRow::subject` beside the fetch-failure
+/// `reason` — *"host-authored too, and equally unescaped"* — because both
+/// travel the same four hops to a display line and core's type for the
+/// subject is a bare `String`. That is true of the **type** and false of the
+/// **values**: this function's entire output grammar is
+///
+/// ```text
+/// unit <digits>  |  unit <digits> (raw mirror)  |  encrypted manifest
+/// ```
+///
+/// a `u64`'s decimal rendering inside static text, from a two-variant kind
+/// tag. No byte a bundle, a backend or a network chose can reach it. So the
+/// subject needs no escape for the same reason the class label needs none —
+/// it is a closed vocabulary — and
+/// `every_live_subject_label_is_drawn_from_the_closed_grammar` is what keeps
+/// that true rather than remembered.
+#[must_use]
+pub fn subject_label(subject: LiveSubject) -> String {
+    match subject {
+        LiveSubject::Unit {
+            unit_id,
+            kind: UnitKindTag::Normal,
+        } => format!("unit {unit_id}"),
+        LiveSubject::Unit {
+            unit_id,
+            kind: UnitKindTag::RawMirror,
+        } => format!("unit {unit_id} (raw mirror)"),
+        LiveSubject::EncryptedManifest => "encrypted manifest".to_owned(),
+    }
+}
+
+/// Project one blob's outcome onto core's WASM-safe four.
+///
+/// Wildcard-free in both directions: a fifth [`PersistenceOutcome`] fails to
+/// compile here. Under R79 the fetch-failure arm carries a **closed class**
+/// and renders [`FetchFailureClass::label`]'s `&'static str` — the courier
+/// authors nothing and no byte from the far end of the connection can occupy
+/// the slot.
+///
+/// [`FetchFailureClass::label`]: crate::FetchFailureClass::label
+#[must_use]
+pub fn blob_outcome(outcome: &PersistenceOutcome) -> LiveBlobOutcome {
+    match outcome {
+        PersistenceOutcome::Identical => LiveBlobOutcome::Identical,
+        PersistenceOutcome::Different { .. } => LiveBlobOutcome::Different,
+        PersistenceOutcome::NotFound => LiveBlobOutcome::NotFound,
+        PersistenceOutcome::FetchError { class } => LiveBlobOutcome::FetchFailed {
+            reason: class.label().to_owned(),
+        },
+    }
+}
+
+/// Convert a completed live check into R21's rendering input — **the one
+/// bridge between the storage primitive and the rendered live section**.
+///
+/// # Why this lives here, and not in the CLI (R80's placement ruling)
+///
+/// R80 offers two homes and asks for a deliberate choice. This is
+/// `antseal-net`'s, on three grounds:
+///
+/// 1. **Both source types are this crate's.** [`LiveCheckReport`],
+///    [`LiveSubject`] and [`PersistenceOutcome`] are all defined here, and
+///    the crate that owns the source type owns the projection — the same
+///    placement [`UnitKindTag`]'s `From<UnitKind>` already has, one struct
+///    up. The CLI held this mapping only because it was the first caller.
+/// 2. **The alternative manufactures the divergence R80 exists to prevent.**
+///    U30 already wrote a conversion (`verify_host.rs`'s `collect_live`);
+///    a second one in a test crate would be the *"and the two can disagree"*
+///    case in R80's own Accept. `collect_live` now delegates here, so there
+///    is exactly one projection and one label vocabulary, and it is
+///    reachable from a test outside `antseal-core`.
+/// 3. **The layering only works in this direction.** `antseal-net` already
+///    depends on `antseal-core`, so this adds **no dependency edge** — and
+///    critically `antseal-core` gains no dev-dependency on `antseal-net`,
+///    which is the cycle that stranded R21's Accept row 3 in the first
+///    place. The reverse placement is not merely worse, it is unbuildable
+///    from `crates/antseal-net/tests/`.
+///
+/// What stays in the CLI is the part that needs the **bundle**: reading the
+/// reveal section's ciphertexts and the signed manifest's addresses into
+/// [`StorageRecord`]s. `antseal-net` has no bundle vocabulary and must not
+/// grow one.
+///
+/// # What it does
+///
+/// One [`LiveBlobRow`] per report row, in report order, labelled from the
+/// row's own [`LiveSubject`]. The labels are derived here rather than carried
+/// in parallel with the records, so there is no second sequence that could
+/// fall out of step with the first.
+#[must_use]
+pub fn live_inputs(report: &LiveCheckReport) -> LiveInputs {
+    LiveInputs::from_rows(
+        report
+            .rows
+            .iter()
+            .map(|row| LiveBlobRow {
+                subject: subject_label(row.subject),
+                outcome: blob_outcome(&row.persistence.outcome),
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]

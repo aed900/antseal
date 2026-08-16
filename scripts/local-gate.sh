@@ -152,6 +152,36 @@
 #                                    because a per-PR copy would have put the
 #                                    self-test in one venue and the lane it
 #                                    guards in another.
+#   page-browser                     `verifier-page-browser.sh --check` — the
+#                                    zero-network `file://` run of D129 §5 R9
+#                                    assertion 8. ADDED HERE 2026-08-15 at
+#                                    D136 §2 R9, measured marginal cost ~12 s.
+#                                    Its remote home,
+#                                    .github/workflows/verifier-page.yml, is
+#                                    `workflow_dispatch`-only and HAS NEVER
+#                                    RUN (zero runs, measured), so NO
+#                                    push-triggered job covers the page
+#                                    surface. Q19's tick precondition is one
+#                                    witnessing dispatch, ~8.3 weighted
+#                                    minutes, which is the maintainer's to
+#                                    authorise. Exit 2 = no browser on this
+#                                    host = SKIP, never a red gate.
+#   repro-selftest                   `reproducible-build.sh --self-test` — the
+#                                    planted faults of R86's two-ENVIRONMENT
+#                                    comparison, 1.2 s. THE COMPARISON ITSELF
+#                                    IS NOT RUN ANYWHERE ON PUSH: its ruled
+#                                    tier is DEPLOY-GATED (D135 §3 R1), inside
+#                                    `pages-publish.sh --build`, which
+#                                    `pages.yml` runs before
+#                                    `actions/configure-pages`. It costs 152 s
+#                                    on this host (a third wasm32 release
+#                                    build under a second checkout path and a
+#                                    second $CARGO_HOME), so a green gate says
+#                                    nothing about reproducibility — only that
+#                                    the instrument can still go red. Run it
+#                                    by hand: `reproducible-build.sh
+#                                    --compare`, and `--plant-commit` for the
+#                                    expensive planted regression.
 #
 #   PROPTEST_CASES                   ci.yml:152 sets 1024 on the `test` job;
 #                                    this script sets nothing, so the `test`
@@ -164,6 +194,26 @@
 # CONTRIBUTING's "PR checklist" says which of these to run by hand for which
 # kind of change.
 set -uo pipefail
+
+# THIS SCRIPT TAKES A PATH, NOT FLAGS, and until 2026-08-15 that was a trap
+# rather than a fact: `scripts/local-gate.sh --help` handed `--help` to `cd`,
+# which printed the SHELL BUILTIN's usage — twenty-odd lines about `-L`, `-P`
+# and `CDPATH` — and returned 2, so the gate exited 1 having run nothing while
+# looking like it had answered. Measured on this host today. The lanes are not
+# individually selectable and this does not pretend otherwise; the four
+# ANTSEAL_GATE_* opt-ins in the header above are the only knobs.
+case "${1:-}" in
+  -h|--help)
+    printf 'usage: scripts/local-gate.sh [path-to-repo-or-worktree]\n'
+    printf '  Runs the local pre-merge gate over that tree (default: this repository).\n'
+    printf '  There are no lane flags. Opt-ins, all auto/1/0: ANTSEAL_GATE_WASM,\n'
+    printf '  ANTSEAL_GATE_BITMATCH, ANTSEAL_GATE_HEAVY, ANTSEAL_GATE_E2E; ANTSEAL_GATE_BASE\n'
+    printf '  overrides the base ref the diff-selected lanes compare against.\n'
+    printf '  The header of this file states what a green run does NOT cover, in both\n'
+    printf '  directions (lanes CI runs and this does not, and lanes only this runs).\n'
+    exit 0 ;;
+  -*) printf '::error::local-gate: `%s` is not a flag; this script takes a PATH. Try --help.\n' "$1" >&2; exit 1 ;;
+esac
 cd "${1:-$(git rev-parse --show-toplevel)}" || exit 1
 
 fail=0
@@ -401,6 +451,24 @@ run fuzz-budget scripts/ci-lanes.sh fuzz-budget
 # in its local dual).
 run traceability scripts/ci-lanes.sh traceability
 
+# Q20 — the positioning-copy lint over product copy (MVP-SPEC.md line 28's
+# rules, the dictated spellings, the one canonical verifier URL, R18's Class V
+# vocabulary). Self-test first, as everywhere above. Pure stdlib, no cargo, no
+# network, no git.
+#
+# THE CHECK IS THE FLAGLESS RUN. `--check` is NOT a flag: it exits 2 with a
+# usage line, deliberately matching `check-traceability.py`, whose flagless run
+# is likewise its check. (`--help` exits 2 as well — this script has no help
+# flag, only a usage line for anything it does not recognise.) MEASURED on this
+# 2-core host 2026-08-15: on an idle machine `--self-test` 0.78 s and the
+# flagless check 0.69 s, so ~1.5 s for the pair; with a wasm32 release build
+# running beside it, `--self-test` stretched to 2.7-3.7 s while the check held
+# at 0.05-0.06 s. Two samples per condition, one host, one day — the weaker
+# kind of figure, and it says so. `--inventory` exists too (it prints every
+# file the scan reads); it is a diagnostic and deliberately not a gate lane.
+run copy-style-selftest scripts/check-copy-style.py --self-test
+run copy-style          scripts/check-copy-style.py
+
 # S22 — TIER 2: the heavy feature paths, per package. Required, but only for
 # the changes that can break them — the same storage-touching path list the
 # D52 devnet E2E gate uses, because the two gates guard the same surface.
@@ -496,9 +564,24 @@ crosscheck_lane cross-check    --check
 # injection is a hard error, never a silent no-op).
 #
 # The browser half of D129 §5 R9 — assertion 8, the zero-network file:// run —
-# is deliberately NOT here: it is `scripts/verifier-page-browser.mjs`, run by
-# R27's entry point, because it needs a browser and this gate must stay
-# runnable on a host without one.
+# IS HERE, as of D136 §2 R9, and the sentence that used to sit in this place
+# ("deliberately NOT here … because it needs a browser and this gate must stay
+# runnable on a host without one") is now false in its first half and still
+# true in its second. Both halves are honoured by the `browser_lane` wrapper
+# below rather than by omission: exit 2 is a visible SKIP, so a host without a
+# browser is not blocked, and every other non-zero exit is a FAIL.
+#
+# COST — RE-MEASURED HERE 2026-08-15 and it is NOT the ~12.5 s D136 §1 h
+# priced, because the driver grew R27's work between that measurement and this
+# wiring. Four runs on this 2-core host, all with sibling lanes competing for
+# cargo's build lock: 3 m 48 s (green, sources had churned so cargo rebuilt,
+# four lock waits), 50 s (one lock wait), and two runs that never reached the
+# browser because R83's guard reddened on a genuinely stale module. The driver
+# itself reports 23.6-27.7 s of that. So budget ~50 s warm, minutes cold —
+# still less than `test` and comparable to the cross-check block's 70-80 s,
+# but four times what the decision assumed. The growth is real work: 13
+# fixtures compared string-for-string against `antseal verify` (which needs a
+# `cargo build -p antseal-cli`), four online cases and the reveal shapes.
 #
 # COST — RE-MEASURED 2026-08-15, after R83 made the module rebuild
 # UNCONDITIONAL (it previously built only when `target/wasm-pack/` was empty,
@@ -516,5 +599,42 @@ crosscheck_lane cross-check    --check
 # `--check` 0.39 s / 0.37 s when it was allowed to skip the build entirely.
 run page-selftest scripts/verifier-page-build.sh --self-test
 run verifier-page scripts/verifier-page-build.sh --check
+
+# D136 §2 R9 — the browser arm, placed AFTER the page lane above so it inherits
+# a freshly built page. It must NOT use `run()`: that helper treats every
+# non-zero exit as FAIL, and this script exits 2 when no browser is installed,
+# which would turn a browserless developer's gate red for a non-defect. The
+# shape is `crosscheck_lane`'s, which has carried the same distinction for
+# `cbor2` since Q141.
+#
+# What a green here does NOT cover, because the honest half of the old comment
+# survives: this is one lane on one host with one browser, and the remote
+# `verifier-page` workflow is `workflow_dispatch`-only, so NO PUSH-TRIGGERED
+# JOB covers this surface (D136 §2 R8 — the M3 gate cites the named dispatch
+# run, this lane naming its host and browser version, and that sentence).
+browser_lane() {
+  local label="$1"; shift
+  local out; out=$(scripts/verifier-page-browser.sh "$@" 2>&1); local rc=$?
+  case $rc in
+    0) printf '  %-16s PASS  (%s)\n' "$label" \
+         "$(printf '%s' "$out" | grep -E '^  OK:' | tail -1 | cut -c1-90)" ;;
+    2) printf '  %-16s SKIP  (no browser on this host — set ANTSEAL_BROWSER, or apt install chromium)\n' \
+         "$label" ;;
+    *) printf '  %-16s FAIL\n' "$label"
+       printf '%s\n' "$out" | tail -25
+       fail=1 ;;
+  esac
+}
+browser_lane page-browser --check
+
+# R86/D135 §7 R2 — the two-ENVIRONMENT comparison's own planted faults, which
+# cost 1.2 s and are the reason its green means anything. THE COMPARISON ITSELF
+# IS NOT HERE and is not a push-tier check: it builds this commit's module a
+# third time under a second checkout path and a second $CARGO_HOME, measured at
+# 152 s on this host, and its ruled tier is DEPLOY-GATED —
+# `scripts/pages-publish.sh --build`, before `configure-pages` (D135 §3 R1).
+# Run it by hand with `scripts/reproducible-build.sh --compare`; the expensive
+# planted regression is `--plant-commit`, local only, zero CI minutes.
+run repro-selftest scripts/reproducible-build.sh --self-test
 
 exit $fail

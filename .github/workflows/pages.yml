@@ -21,6 +21,21 @@
 # host emits no security headers and has no configuration surface, so every
 # security property lives inside the hashed artifact (D62 §3 R6, D129 §5 R6).
 # A second policy at the host would intersect with the in-artifact one silently.
+#
+# THIS JOB IS ALSO THE REPRODUCIBILITY GATE (R86, tier ruled by D135 §3 R1).
+# `pages-publish.sh --build` builds this commit's module a THIRD time under a
+# different checkout path and a different $CARGO_HOME and refuses to continue
+# if the two disagree. The STEP ORDER below is what makes that an enforcement
+# rather than a report: `build and check the page` precedes
+# `actions/configure-pages`, `upload-pages-artifact` and `deploy-pages`, so a
+# red ends the job with nothing staged and nothing published. Do not reorder it,
+# and do not move the build after `configure-pages` for tidiness.
+#
+# Measured price: +1 to +2 billed weighted minutes per deploy, ≤ 7 per month at
+# the measured cadence, and ZERO in a month with no deploy. The tier is
+# RAISE-ONLY BY DECISION — the pre-priced arm to promote to, and the reason a
+# required context is refused today, are at the top of
+# `scripts/reproducible-build.sh`.
 name: pages
 
 on:

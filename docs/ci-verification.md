@@ -1701,6 +1701,79 @@ reproducible, rather than on a quota figure, which is not readable.
 attempt billed minutes — which is also why re-running was the cheap decisive
 test rather than an expensive gamble.
 
+#### Correction — the refusal signature is `conclusion: failure` with `steps == []`, not "no runner assigned", 2026-08-16
+
+**The corrected clauses, quoted verbatim**, from the section above:
+
+> **Every one of the 19 jobs has zero steps, no runner assigned
+> (`runner_name: ""`), and the entire run completed in 13 s**
+
+> **The failed dispatches cost nothing.** No runner was assigned, so neither
+> attempt billed minutes
+
+**The finding stands whole. Its mechanism is one word off, and the word is the
+one a future reader will grep for.** Re-measured 2026-08-15 by the orchestrator
+over every workflow run created on or after 2026-08-01 in `aed900/antseal`
+(43 runs, 583 jobs), read-only `gh api` GETs only:
+
+- **45 jobs across exactly three runs executed ZERO steps** — `ci`
+  **#31407751482** (19/19), `ci` **#31412086640** (19/19), `ci`
+  **#31117310646** (7/19). The count and the runs are **exact**, and the two
+  08-10 runs are 51 minutes apart, which is the *"re-run 44 minutes later
+  reproduced it exactly"* pair the section above records.
+- **They WERE assigned runners.** All 45 carry real `started_at`/`completed_at`
+  stamps **3–12 s apart** and `conclusion: failure`. A query for jobs with **no
+  runner assignment returns zero** across the whole window.
+
+**So the signature this repository should look for is `conclusion: failure`
+with `steps == []` in seconds** — not *"no runner assigned"*, which never
+appears in the API and which a future reader grepping for it will not find,
+concluding wrongly that the episode did not happen. The diagnosis
+("an exhausted minute allowance or a reached spending limit") is unaffected and
+so is the *"a lane that has never run on the remote is not evidence"* rule the
+section exists to serve; only the query changes.
+
+**One clause is now unverifiable rather than corrected**: *"the failed
+dispatches cost nothing"* rested on the absence of a runner. With runners
+assigned for 3–12 s the claim needs the billing endpoint, which this token
+cannot read (see the paragraph above), so it should be read as **"cost at most
+one billed minute per job"** — GitHub billing whole minutes — and not as zero.
+Nothing downstream depends on it.
+
+**The independent re-measurement of the bill, recorded here because
+`docs/decisions/D135` §1.1 cites this document and this document should carry
+the number it is cited for.** Every job's wall clock rounded **up** to the whole
+minute as GitHub bills it, multiplied by the runner-OS factor (Linux ×1,
+Windows ×2, macOS ×10): **3 324 weighted minutes, 2026-08-01 → 2026-08-15.**
+D135 §1.1 independently computed **3 154** by the same method; the two agree to
+within 5 % and the difference is rounding convention and window edges. **Both
+are over a 3 000-minute allowance with 16 days of the month remaining.** Run mix
+in the window: `ci` ×30, `fuzz-nightly` ×8, `pages` ×2, `advisory-cron` ×2,
+`devnet-e2e-cron` ×1; job conclusions 517 success, 59 failure, 7 cancelled.
+
+**Where a push's ~84 weighted minutes go** (run `31873411737`, 19 jobs), because
+the shape matters more than the total when pricing a new required context:
+
+| job | wall | mult | billed |
+| --- | --- | --- | --- |
+| `test` | 32.0 min | ×1 | 32.0 |
+| `fuzz-smoke` | 11.2 min | ×1 | 11.2 |
+| `cross-os-macos` | 1.3 min | **×10** | **13.2** |
+| `cross-os-windows` | 4.8 min | **×2** | **9.7** |
+| `wasm32-core-tests` | 3.7 min | ×1 | 3.7 |
+| the other 14 jobs | 14.0 min | ×1 | 14.0 |
+| | **67.0 raw** | | **83.7 weighted** |
+
+**The two cross-OS jobs are 27 % of a push's bill for 9 % of its wall clock.**
+This is the arithmetic **Q238** must re-take before promoting R86's comparison
+to a required push context, and the reason **D135 §10 R2** chose a
+workflow-level `paths:` filter — evaluated *before any runner is assigned*, so a
+push touching no build input bills nothing at all.
+
+**Authority.** Orchestrator re-measurement 2026-08-15, recorded by the registrar
+at the wave-21 close 2026-08-16; the correction to `D135` §1.1's wording is
+already applied in that record, in both places the phrase appeared.
+
 ### What `1c702d4` is and is not verified by
 
 **Is:** the full local gate, green — **23 printed lanes, 21 PASS, zero reds,
@@ -2472,3 +2545,248 @@ The pre-amendment row would have failed **21 of 21**, every one of them at
 `storage_linkage` and none of them for a reason about the boundary. The
 comparison this row actually needs — native ≡ wasm32 for one input under one
 options value — passes 21 of 21.
+
+# R25/R26/R86 — the second deploy, the live bytes, and the reproducibility gate that has never run remotely (2026-08-16, M3 wave 21)
+
+## The context set does not change: still 19
+
+Nothing in this chapter adds, removes or renames a required status context.
+`pages.yml` and `verifier-page.yml` are both `workflow_dispatch:`-only and
+neither is a required context; **Q238** is the row that would change that, and
+its precondition is a re-measured bill under the allowance.
+
+## The deploy that is live, measured against the origin rather than the workflow
+
+Run **31873422229**, workflow `pages.yml`, event `workflow_dispatch`,
+`conclusion: success`, `run_attempt: 1`, `created_at 2026-08-15T08:01:00Z`,
+`updated_at 2026-08-15T08:02:50Z` — **1.8 min wall against 8.4 min for the
+first deploy** (`31847839638`), which is the cold-versus-warm difference
+`verifier-page.yml`'s own header cites as the reason a rarely-run lane is always
+a cold lane. `head_sha = 9317a35b3adaef56b03eaa22a80a2b76e232a7d9`, corroborated
+by the origin's `last-modified: Sat, 15 Aug 2026 08:02:40 GMT`.
+
+Measured from the local host by `curl` and read-only `gh api` GETs, **against
+the live origin and not against a workflow step** — which is the distinction
+this document exists to keep:
+
+- **2 516 397 B**, `sha256 ea7e9447584be131443a6948c70ea2f5a624882d6ea7d1f953e6c08d04f43951`.
+  That is the **post-remap** size R25 predicted; the pre-remap page was
+  2 517 337 B.
+- `content-type: text/html; charset=utf-8`; `cache-control: max-age=600`;
+  `access-control-allow-origin: *`; `etag "6a801d20-2665ad"`; **no security
+  header of any kind**, which is exactly why **D62 §3 R6** puts the CSP inside
+  the hashed artifact.
+- **Identity and gzip fetches decode to byte-identical bodies** — both
+  2 516 397 B, both `ea7e9447…3951` (`Accept-Encoding: identity` against
+  `--compressed`, `content-encoding: gzip` observed on the second). So the host
+  does not rewrite the body and is **not disqualified by D63 §10 (iii)**.
+- Site state (`GET repos/aed900/antseal/pages`): `cname antseal.org`,
+  `build_type workflow`, `protected_domain_state verified`,
+  `https_enforced true`, `https_certificate state=approved`,
+  `expires_at 2026-11-12`, `domains ['antseal.org']`.
+
+**Re-measured by the registrar at the wave-21 close, not transcribed.**
+`gh run list --workflow pages.yml --json databaseId,conclusion,headSha,createdAt,updatedAt`
+returns **exactly two runs, both `success`**, and every figure above is theirs:
+
+```
+31873422229  9317a35b3adaef56b03eaa22a80a2b76e232a7d9  2026-08-15T08:01:00Z → 08:02:50Z  (1.83 min)
+31847839638  08c074c4f8a1926a29ade95b299aee7a75b6187b  2026-08-14T22:45:19Z → 22:53:43Z  (8.40 min)
+```
+
+Two runs is the whole deploy history of this project. It is also the measurement
+behind two claims further down: that R86's reproducibility step has executed
+**zero** times remotely (both runs predate it), and that the cold-versus-warm
+gap on a rarely-run lane is real and is 4.6×.
+
+## R26's standing debt is discharged, and its reasoning is corrected rather than carried forward
+
+`TODO.md`'s R26 row and `tasks/R.md`'s R26 entry both carried **"STANDING DEBT:
+a redeploy is owed"**. It ran, at the run and time above.
+
+**But the note's reasoning must not be transcribed forward.** It said the live
+bytes *"no longer reproduce from HEAD"*. That framing is wrong in a way that
+misleads: the module carries an **`ANTSEAL_SOURCE_COMMIT`** stamp, and
+**D135 §1.5** measured what that means — `08c074c` and `9317a35` produce modules
+of **identical size, 1 853 031 B, with different digests**, and
+`git diff --name-only 08c074c..9317a35` over every compile input
+(`crates/antseal-core/src`, `crates/antseal-wasm`, `Cargo.lock`, `Cargo.toml`,
+`.cargo`, `rust-toolchain.toml`) is **empty**. Not one compile input changed;
+the only differing input is a 40-character hex string stamped through
+`cargo::rustc-env`.
+
+So the footer digest is a function of **the commit**, and the live artifact
+reproduces from **`9317a35` and from no other commit** — including every commit
+this wave adds. **The honest claim is "reproducible at the commit it was
+deployed from", never "reproducible from HEAD"**, and R25/R26 now say so.
+
+## What the served bytes say about themselves, and the one line a `curl` cannot read
+
+- Footer: `id="page-build">page build <code>70235b8b6192b983b1d1eb3b926e5e5925257cd806b6763eeb2aff76539403c0</code>`
+  — the **module's** digest, per D129 §5 R7, under a label that says "page".
+  This is precisely the conflation **D136 §2 R12** ruled repaired this wave
+  (`verifier-web/index.template.html:146` now reads `module build`), so the
+  **live page predates the repair** and the next deploy carries it.
+- `id="advice">for high-stakes verification, run <code>antseal verify</code> and compare verdicts`
+  — `MVP-SPEC.md` line 139's sentence, verbatim, in the served bytes.
+- **`id="build"` is EMPTY in the static bytes** (`id="build"></p>`): the
+  provenance line is filled by JS at run time from the module's build info, so a
+  static fetch cannot see it. **Any row claiming to have read the served
+  provenance line is claiming something a `curl` cannot produce** — only a
+  browser arm can, which is one more reason Q19's venue matters.
+
+## The reproducibility gate is real and has never run on a hosted runner
+
+**R86** landed as **a step, not a job**: `build and check the page`
+(`./scripts/pages-publish.sh --build`) inside `pages.yml`'s pre-existing
+`publish` job, positioned **before** `actions/configure-pages` so a red ends the
+job with nothing staged and nothing published. Searched at this review,
+`.github/workflows/` contains **no** two-build byte-identity job at all — the
+tier is D135 §3 R1's **deploy-gated**, chosen against the measured bill above,
+and a new job would have been a new metered runner.
+
+**What this run does NOT prove.** Both deploys on record — `31847839638`
+(2026-08-14, `08c074c`) and `31873422229` (2026-08-15, `9317a35`) — **predate
+that step**, so the gate has executed **zero** times on a hosted runner. Every
+clause of R86 was proven **on the local host** by driving
+`scripts/pages-publish.sh --build` and its planted-fault control directly. The
+exposure that follows is D135 §3 R4.1's, in its own words: *"Nothing between
+deploys. A commit that breaks reproducibility is detected at the next deploy,
+not at the push that broke it"* — measured at **days to weeks**, and acceptable
+only while the repository is private and nobody has been invited to reproduce
+anything. That is the whole content of **Q238**.
+
+## Q19's lane has also never run remotely, and two dispatches are owed
+
+`gh run list --workflow verifier-page.yml` returned **`[]`** at this review —
+re-run by the registrar at the wave-21 close and still `[]`, so this is a
+measurement and not a forwarded claim: the workflow is registered and active but
+has **zero runs in its existence**. Under
+**Q43**'s rule and **D136 §2 R6**, that is why **Q19 does not tick** — R6 makes
+one witnessing dispatch a tick precondition in as many words. Owed, at a stated
+**~8.30 weighted minutes each** (the measured first-ever `pages` run being the
+closest analogue):
+
+1. **`seed_failure` empty** — witnesses the lane on a hosted runner for the
+   first time, closing Q19's Accept row 1.
+2. **`seed_failure: bundle`** — the first execution ever of the `if: failure()`
+   artifact-upload path, closing Accept row 2's remote half.
+
+**Binding precondition**, set by the CI-venue lane: dispatch only after a green
+local `./scripts/verifier-page-browser.sh --check` **at the exact commit being
+dispatched**. A dispatch of a commit whose driver is red spends the same minutes
+and proves nothing. **Ordering**: commit → push → dispatch, because
+`workflow_dispatch` resolves a ref **on the remote**, so dispatching before the
+push witnesses the old commit.
+
+When they run, this document owes the same three things Q153's discharge
+carried: the run id and verdict, an explicit statement that **the
+required-context count is unchanged (still 19)**, and a *"what this run does NOT
+prove"* bullet naming the surfaces a dispatch-only lane leaves unwitnessed on
+every subsequent push.
+
+## Three local lanes prove things no CI run repeats, and the M3 gate must name them
+
+Recorded here so **Q237**'s evidence lines can cite a venue rather than a check:
+
+| lane | what it proves | why no CI run repeats it |
+| --- | --- | --- |
+| `heavy-features` | the `ant-backend` machine surface (R82/Q113/U73) — measured green 2026-08-16, `cargo test -p antseal-cli --features ant-backend --test seal_command` → 23 passed, 0 failed, 47.73 s | **Q153** rules it local-only: 475 packages resolved against the default build's 120, and it is additionally diff-triggered |
+| `page-browser` | R27's 13 fixtures / 86 rows and R85's 14 more, string-identical to the CLI capture | its workflow is `workflow_dispatch`-only and has **never been dispatched** |
+| the `pages.yml` reproducibility step | R86's two-environment byte-identity, including its planted regression | `pages.yml` runs only on deploy, and both deploys predate the step |
+
+---
+
+# Q237 — the M3 gate's venue, and the CI fact that decides it (2026-08-16, M3 wave 21)
+
+## The context set does not change: still 19
+
+Nothing in this chapter adds, removes or renames a required status context. The
+M3 gate ran no workflow and dispatched nothing; **Q238** is the row that would
+change the set, and **Q19**'s two owed dispatches change it not at all — a
+`workflow_dispatch` lane is not a context.
+
+## No hosted runner has seen a byte of wave 21, and that is a measurement
+
+This is the fact every clause of the M3 gate is qualified by, so it is recorded
+here rather than left in a row.
+
+`scripts/local-gate.sh:270` prints `git rev-parse --short HEAD` and the subject
+of that commit, and then runs every lane **against the working tree**. A log
+headed `gate: d8ce569 — …` therefore names the commit the tree happens to sit
+on. **It is a label, not the revision under test**, and reading it as the latter
+is the same class of error as reading a green `--check` as evidence the packaged
+bytes came from the tree (R83).
+
+Measured at this review, read-only:
+
+```
+gh run list --workflow ci.yml   → newest: 31873411737  push  success
+                                   9317a35…  2026-08-15T08:00:45Z
+git rev-list --left-right --count origin/main...HEAD   → 0  1
+git diff --stat 9317a35..HEAD -- crates/               → (empty)
+git diff --shortstat -- crates/    → 42 files changed, 3 560 insertions(+), 336 deletions(-)
+git status --porcelain | grep '^??' | grep '/tests/'   → 7 new test files
+```
+
+So: `origin/main` is `9317a35`; the one local commit ahead of it touches no
+crate file; and wave 21's code is **uncommitted**. The newest hosted `test` job
+ran over a tree that predates R27, R82–R88, U67–U73, Q20 and every D136 repair.
+
+**A note on how that fourth figure has to be taken, because the first attempt at
+it was wrong.** `git diff --stat -- 'crates/*/tests'` returns **empty** here —
+the pathspec does not match what it reads as though it should — so a run that
+reported "14 files" came from naming the test directories one by one and
+therefore measured a subset. The whole-`crates/` shortstat above is the figure
+that is not a subset, and the untracked count is listed separately **because no
+`git diff` counts an untracked file at all**: seven new test files exist in this
+tree that a diff-based measurement would silently value at zero. Same family as
+[[assertions-that-cannot-fail]], one level down — a command that returns nothing
+looks like a small number rather than like a mis-aimed query.
+
+**What follows, stated so no row inherits the opposite.** The register warned
+that three lanes prove things no CI run repeats — `heavy-features`,
+`page-browser`, and the `pages.yml` reproducibility step (table in the chapter
+above). At these bytes **the `test` lane is a fourth**: the R18 wording
+snapshot moved this wave, so the hosted `test` job at `9317a35` is not a witness
+for the clause that asserts it. Every clause of the M3 gate is proven on **this
+local host**. That is a statement about venue and not about strength — the
+evidence is real, the machine is one — and it is the reason each gate clause
+carries its machine rather than only its check.
+
+## The gate re-run the M3 verdict rests on
+
+`ANTSEAL_GATE_WASM=1 ANTSEAL_GATE_BITMATCH=1 ANTSEAL_GATE_HEAVY=1
+./scripts/local-gate.sh`, on this local host (Debian, Linux 6.1.0-51-amd64,
+x86_64, 2 cores, 7 GiB):
+
+```
+GATE_EXIT=0 — 30 lane lines: 29 PASS, 1 SKIP, 0 FAIL
+  SKIP: e2e-devnet (needs ANTSEAL_GATE_E2E=1)
+  test lane: 2 871 tests
+```
+
+**30 lane lines over 28 distinct names** — `features` and `format-freeze` each
+print twice. The wave-21 close recorded the *preceding* run as *"29 lanes: 26
+PASS"*; recounted from the log it was **30 lines, 27 PASS, 1 SKIP, 2 FAIL**, and
+both homes of that figure are struck and corrected. The finding that run carried
+is unaffected: `verifier-page` failed as **R83's guard working exactly as
+designed** (the wave moved the module's bytes; the guard named `STALE ARTIFACT`,
+rebuilt, and the re-run is green), and `heavy-features` failed on a genuine
+**pre-existing** red that no CI job has ever been able to see, because Q153
+keeps that lane local-only — minted **U73**, fixed, re-measured 23 passed /
+0 failed.
+
+## What this chapter does NOT prove
+
+- **Nothing here was witnessed remotely.** The gate is a local instrument by
+  construction; that is not a defect, but it means a push that breaks a lane
+  outside the 19 required contexts is found by someone running the gate, or not
+  at all.
+- **It does not discharge Q19.** The page browser arm is green on this host and
+  has still never executed on a hosted runner. The two owed dispatches, their
+  binding precondition and their ordering are recorded in the chapter above and
+  on Q19's row.
+- **It does not discharge Q238.** R86's step remains deploy-gated, and the
+  exposure D135 §3 R4.1 names — a reproducibility break sitting between deploys
+  for days to weeks — is unchanged by M3 passing.

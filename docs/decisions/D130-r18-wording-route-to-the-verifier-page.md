@@ -1174,3 +1174,55 @@ UNANCHORED banner, which the scan named at `verifier-web/index.template.html:39`
 every error above runs toward the ruling rather than away from it: the export is
 cheaper than argued, the escape rule caught more than it listed, and the guard
 hole is closed by a better mechanism than the one prescribed.
+
+---
+
+## Correction — the parity clause's comparison is not the one that holds, and it does not live where two documents cite it, 2026-08-16
+
+**The corrected sentence, quoted verbatim**, from **§5**, subsection
+`### R27 / Q19 — the parity gate`, clause 1:
+
+> for each R9 vector, `JSON.parse(verify_rendered(b))` on the page and the CLI's
+> `VerifyRun::render()` lines must agree **string for string** after the CLI's
+> indentation is stripped.
+
+**Two things are wrong, and the second is the expensive one.**
+
+**(1) The locator.** Both `docs/decisions/D133-the-attested-anchor-fixture.md`
+(its R27 note) and `tasks/R.md`'s R27 entry cite this clause as **"D130 §7.3"**.
+This record has no §7.3 clause of that content: §7 is `## Residual risk`, and its
+item 3 is a different claim — *"the parity gate can pass while the two surfaces
+disagree on hostile input"*. A lane sent to §7.3 to read the parity rule finds a
+sentence about escaping instead.
+
+**(2) The comparison.** Indentation is **not** the only difference between the
+two renderings. Measured 2026-08-16 by the **R27** lane while building the
+comparison the clause describes:
+
+```
+CLI  (crates/antseal-cli/src/verify_out.rs:156):
+     one line per slot — "{slot}: {state_line}{tag}"
+page (the rendered DOM):
+     "{slot} {tag}" in one <p>, and {state_line} in the next
+```
+
+So the page's text for one slot is **two elements** where the CLI's is **one
+line**, and the tag sits on the opposite side of the state text. **A lane taking
+the sentence literally builds a gate that reddens on a correct page** — which is
+what happened, and what the R27 lane had to work around before its 86-row
+comparison could go green.
+
+**Authority.** The **R27** lane, 2026-08-16, by constructing the parity
+extractor this clause specifies and measuring both surfaces; recorded by the
+registrar at the wave-21 close, in the same commit as R27's tick, because the
+corrected text is what the shipped extractor contradicts.
+
+**Which rulings still stand.** All of them, and the error runs in the direction
+that **understates the work** rather than overstating the guarantee. §3 R3's
+one-assembly ruling is untouched and is exactly why the comparison is meaningful:
+both surfaces read `verify_rendered`'s document, so a real difference is a defect
+and not a rendering opinion. §5's requirement that the gate compare rendered
+strings stands; only its description of the *shape* of the two renderings is
+corrected, and the correct comparison is per-slot rather than per-line. §7 item 3
+(hostile input) and §7.3 (i)'s `header_line` guidance are unaffected — R27's
+fixtures are not hostile-path fixtures and need no exclusion.

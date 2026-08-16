@@ -306,6 +306,15 @@ fn overlay_lines(overlay: &OnlineOverlay) -> Vec<String> {
         out.push(format!("{ROW_INDENT}{}", outcome.line));
     }
     if let Some(receipt) = &overlay.receipt {
+        // D137 §3 R10 — indentation and nothing else. This row and the
+        // verifier page's `#overlay-receipt` print the SAME `overlay.receipt
+        // .line`, so a correction to the sentence is one edit in
+        // `antseal_core::verify::wording` and both surfaces move together.
+        // The clause is on `single_sourced()`'s table (D137 §3 R10), so
+        // spelling it here as a literal reddens
+        // `no_renderer_source_spells_a_frozen_verdict_string`; and
+        // `verify_command.rs`'s cross-surface pin holds the other direction —
+        // that this row still prints the module's bytes, unextended.
         out.push(format!("{ROW_INDENT}{}", receipt.line));
     }
     for delta in &overlay.aggregate_deltas {
@@ -321,6 +330,27 @@ fn overlay_lines(overlay: &OnlineOverlay) -> Vec<String> {
 /// requested check that found nothing to check is a fact about the run —
 /// [`LiveSection`] reports `NothingChecked` rather than a vacuous pass, and
 /// suppressing the label would hide it.
+///
+/// # Why no `escape_for_terminal` here, after R79
+///
+/// This is the fourth and last hop R79's register entry names: the live rows
+/// arrive here finished and are pushed straight to the surface, with the
+/// escape used elsewhere in this file never applied to them. **After R79 both
+/// of a live row's authored parts are closed sets, so there is nothing left
+/// to escape**, and that is the ruling rather than an omission:
+///
+/// - the fetch-failure detail is `antseal_net::FetchFailureClass`'s
+///   `&'static str` label, from a closed class mapped wildcard-free over
+///   `StorageError` (R79 arm (a)); and
+/// - `row.subject` is `antseal_net::subject_label`'s output, whose whole
+///   grammar is `unit <digits>`, `unit <digits> (raw mirror)` and
+///   `encrypted manifest` — a `u64`'s decimal rendering inside static text.
+///
+/// Neither can carry a byte a bundle, a backend or a network chose. Adding an
+/// escape pass would neutralise nothing and would suggest the channel exists.
+/// If a future row ever renders a value from outside those two vocabularies,
+/// this is the site that must gain the escape, and `LiveSection::new`'s
+/// caller has one in scope to pass.
 fn live_lines(live: &LiveSection) -> Vec<String> {
     let mut out = vec![format!("{ROW_INDENT}{}", live.label)];
     if let Some(line) = &live.verdict_line {

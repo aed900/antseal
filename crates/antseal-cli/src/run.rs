@@ -28,14 +28,26 @@
 //! drives R16's `prepare → build`, writes with `create_new(true)` and
 //! renders the run (bundle path + the canonical verifier URL).
 //!
-//! Its handler stops where `restore`'s stops, and for the same reason:
-//! `reveal` fetches any ciphertext this vault no longer caches, so it needs
-//! the **storage-backend construction seam**, and a build without one
-//! refuses there rather than collecting a passphrase, rendering a
-//! disclosure screen and then refusing. Everything above that seam is
-//! complete and is driven end to end over a `StorageBackend`
-//! (`tests/reveal_output.rs`, `tests/reveal_consent.rs`) — U20's recorded
-//! shape, with U20's outstanding wiring.
+//! **U72 moved its stopping point.** It used to stop where `restore` stops
+//! — at the storage-backend construction seam, unconditionally, at entry —
+//! on the reasoning that a reveal may have to fetch a ciphertext this vault
+//! no longer caches. R16's gathering is cache-first by D43's ruling, so that
+//! reasoning is right about *may* and wrong about *must*: a work whose
+//! retained cache is intact discloses with **zero** network access, and the
+//! entry refusal made the default build refuse on bytes already on the
+//! user's own disk. The handler now unlocks like `show`, `list` and
+//! `status`, holds [`crate::backend::VaultLocalBackend`] (a backend that
+//! serves nothing and says why), and refuses only at the point a fetch is
+//! genuinely required — which R16's `prepare → build` split already places
+//! before the consent gate, exactly where D68 §3 R8 wants it. A partial
+//! cache refuses the **whole** reveal there rather than disclosing the
+//! cached subset. `tests/reveal_vault_local.rs` measures all of it at the
+//! seam.
+//!
+//! What a build *with* the feature does not yet have is its own live wiring
+//! on top of U36's seam, so a cache miss refuses there too — with the other
+//! arm's sentence. That is `restore`'s outstanding wiring, in `reveal`'s
+//! shape.
 
 use crate::cli::{Cli, Command, VaultCommand};
 use crate::commands::{self, Outcome};

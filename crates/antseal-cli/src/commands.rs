@@ -212,6 +212,66 @@ pub(crate) fn init(
 /// reaches its seam first because it has no argument validation to do —
 /// the shared rule is "the cheapest thing that can say no goes first",
 /// not "the seam goes first".)
+///
+/// # U73: what a **valid** plan meets next differs by build, and that is
+/// the correct answer
+///
+/// Past plan validation the two `seal_over_backend` arms diverge, and a
+/// spawned-binary test asserted the default build's answer for both:
+/// `seal a.txt --network devnet` into a vault-less `HOME` exits **23** on
+/// the default build (the seam has no adapter) and **2** under
+/// `--features ant-backend` (`open_layout` finds no vault). Nothing had
+/// ever seen the second, because `heavy-features` is local-only by Q153.
+/// U73 ruled the divergence **correct** and made the test arm-aware, on
+/// four witnesses:
+///
+/// 1. **U72**, hours older and the same shape. Moving `reveal`'s entry
+///    refusal to the seam left `open_layout` *first* and paid the cost out
+///    loud — *"the vault is the only place the work, its cache and its
+///    keys live, so there is nothing to decide before it is open"*. A
+///    `seal` that probed the seam ahead of the vault would contradict the
+///    ordering its sibling had just been given.
+/// 2. **The rule in the paragraph above.** `open_layout` is one `stat`;
+///    the wired seam is a tokio runtime, a wallet-key read out of an
+///    unlocked vault and a connect. Vault-first *is* cheapest-first, and
+///    it is the order `list`, `show`, `status` and (since U72) `reveal`
+///    already keep.
+/// 3. **This build has no true seam sentence for `seal`.**
+///    [`BackendArm::Compiled`]'s message says the command *"does not
+///    construct one yet"* — false here since U13 wired it — so satisfying
+///    the old assertion would have meant printing a falsehood.
+/// 4. **D89**, which settles the general form: *"a default build of
+///    antseal is an inspect-and-verify build"* is *"already true and
+///    already shipped"*. The two builds are capability-divergent **by
+///    design**, so when the next thing a command needs is the network,
+///    answering differently is the design working rather than a defect.
+///
+/// # The two records that look like precedent and are not
+///
+/// **D48 §6 and D69 §3 R3** are one rule, not two — D69 calls its rung
+/// rank *"D48 §6's severity fold, extended"* — and that rule is
+/// *most-severe-wins over facts established **together** in one run*
+/// (several per-file restore failures; several anchor slots). These two
+/// refusals are **sequential gates**: `open_layout` fails and the seam is
+/// never reached, so no second fact is ever established and there is
+/// nothing to fold. Note also that *"the cheapest thing that can say no
+/// goes first"* is this comment's own rule and appears in no decision
+/// record — witness 2 is code-local, and is offered as such.
+///
+/// **D65** partitions the `--json` schema by *stability over time* for one
+/// build; it rules on no cross-build question. Nothing here disturbs it
+/// anyway: both refusals are ordinary `CliError`s already in D69's
+/// committed table (`usage` 2, `network-failure` 23) with class and code
+/// agreeing, so no tier-B key moves and no tier-A member is touched.
+///
+/// One correction U73 owes R82, whose Accept read *"only the
+/// `error.message` string of the feature-ON arm is in scope"*: for `seal`
+/// the **exit code** diverges between the builds as well, not just the
+/// message. R82's own change did not cause that and its scope note is
+/// right about itself — but as a description of the two builds it is
+/// incomplete, and this is the row that measured it.
+///
+/// [`BackendArm::Compiled`]: crate::backend::BackendArm::Compiled
 pub(crate) fn seal(
     globals: &GlobalArgs,
     args: &crate::cli::SealArgs,
@@ -280,6 +340,13 @@ fn seal_over_backend(
     use crate::vault::wallet::load_wallet_key;
 
     let ui = Ui { json: globals.json };
+    // **U73 ruled this line stays first.** It is why this build answers
+    // `seal` into a vault-less HOME with "no vault exists" (2) where the
+    // default build answers with the seam refusal (23) — a divergence the
+    // spawned-binary suite now asserts per arm rather than assuming away.
+    // The full argument is on `seal` above; the short form is that this is
+    // one `stat`, the seam below is a runtime plus a connect, and the
+    // cheapest thing that can say no goes first.
     let layout = open_layout()?;
     let _lock =
         VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile)).map_err(CliError::from)?;
@@ -364,8 +431,12 @@ fn seal_over_backend(
 /// The devnet has no built-in definition anywhere by design (S5): its
 /// contract addresses are minted by the Anvil run that created it, so the
 /// only truthful source is the file that run wrote.
+/// `pub(crate)` since U67: [`crate::backend::payment_rpc`] resolves the same
+/// devnet definition when it opens a session for D33's block-number
+/// backfill, and a second reader of `ANTSEAL_DEVNET_ENV` is a second chance
+/// for one invocation to run against two devnets.
 #[cfg(feature = "ant-backend")]
-fn devnet_env() -> Option<antseal_net::DevnetEnv> {
+pub(crate) fn devnet_env() -> Option<antseal_net::DevnetEnv> {
     let path = std::env::var_os("ANTSEAL_DEVNET_ENV")?;
     let text = std::fs::read_to_string(path).ok()?;
     antseal_net::DevnetEnv::from_env_file(&text).ok()
@@ -468,6 +539,43 @@ pub(crate) fn status(
         });
     }
 
+    // ── U67: D33's block-number backfill, hosted here ──────────────────
+    //
+    // WHY THE SLOT CAN BE `None`, AND WHAT RE-FILLS IT. `TxRecord::block_number`
+    // is D33's enrichment slot: the payment landed but the receipt read did
+    // not (an interrupted await, an RPC blip, a crash in the post-pay window).
+    // The tx *hash* is the load-bearing capture and is always journaled, so
+    // the number is re-derivable from it forever — which is why D33 Decision 2
+    // lets enrichment be lazy and says *"every subsequent invocation retries
+    // idempotently"*. Until U67 nothing in the product performed that retry:
+    // `backfill_block_numbers` existed with no caller outside a devnet test,
+    // and a work whose enrichment failed once could never embed its receipt
+    // in a `.sealproof` again (registry §7.10 key 1 is required, so R16
+    // refuses `--include-receipt` with `ReceiptBlockNumberUnknown`). **This
+    // line is that retry.** Delete it and the refusal becomes permanent again;
+    // `the_block_number_backfill_has_exactly_one_production_caller` in
+    // `tests/receipt_backfill.rs` is what makes that a red rather than a
+    // rediscovery.
+    //
+    // WHY HERE. `status` is the only command that renders the block number at
+    // all, so the repair sits beside the display of the thing repaired, and —
+    // like `--upgrade`'s persist just above, and for the same reason — it runs
+    // *before* the gather, so one `status <id>` both closes the gap and shows
+    // it closed. The full argument, including why U67's own "natural" host
+    // (the A15/U24 hook) was measured and refused, is on the function.
+    //
+    // WHAT IT COSTS AND WHAT IT CANNOT DO. It returns no `Result` and no error
+    // — there is no expression here through which it could reach `status`'s
+    // exit code or a byte of its output (D33: enrichment never gates; U24:
+    // never delay, never fail, never prompt). It opens nothing unless an empty
+    // slot is actually found, so a healthy work pays one already-cached record
+    // read and a default build pays only that. Because this sits *before* the
+    // gather it can delay the **answer**, not merely the exit — a stricter
+    // position than U24's post-output hook — so the network legs carry a hard
+    // deadline (`backend.rs`'s `PAYMENT_RPC_BUDGET`, 10 s each), and a timeout is
+    // the same silent skip every other failure is.
+    let _backfill = crate::pipeline::receipt_backfill::enrich_recorded_receipt(&vault, &seal_id);
+
     // Gathered *after* the write, so one `--upgrade` run renders the state it
     // just produced rather than the state it started from — which is also
     // what makes U23's "a re-run shows the new state" a check of durability
@@ -507,28 +615,83 @@ pub(crate) fn restore(
 /// [--yes]` (U28's flow in [`crate::reveal_out`], U29's
 /// irreversible-disclosure gate in [`crate::reveal_consent`]).
 ///
-/// The backend seam is reached **first**, before the vault is opened and
-/// before any passphrase is asked for — `restore`'s order, for `restore`'s
-/// reason plus one of its own: R16 fetches any ciphertext this vault no
-/// longer caches (D43 §3's vault-import shape is the ordinary case), and a
-/// build that cannot reach the network should say so rather than collect a
-/// secret, paint an irreversible-disclosure screen and *then* refuse. Under
-/// D68 §3 R8's ordering the cheapest refusal goes first, and this is it.
+/// # U72: the backend seam is **not** reached first any more
 ///
-/// Everything above the seam is complete and is driven end to end over a
-/// [`StorageBackend`](antseal_net::StorageBackend) by
-/// `tests/reveal_output.rs` (U28) and `tests/reveal_consent.rs` (U29) —
-/// which is how D34 says these paths are exercised. What is missing is the
-/// same thing missing for `restore`: this command's own live wiring on top
-/// of U36's seam, recorded in [`crate::backend`].
+/// This handler used to return `backend::unavailable("reveal")`
+/// unconditionally, at entry — `restore`'s order, on the reasoning that a
+/// reveal may have to fetch a ciphertext this vault no longer caches. That
+/// reasoning is right about *may* and wrong about *must*. R16's gathering
+/// is cache-first by D43's ruling, so a work whose retained cache is intact
+/// is disclosable with zero network access, and the entry refusal made the
+/// default build refuse on bytes already on the user's own disk.
+///
+/// U72's ruling, argued in full on [`crate::backend::VaultLocalBackend`]:
+/// the handler resolves, unlocks, prepares and gathers as far as it can,
+/// and the refusal lands at the point a fetch is genuinely required. A
+/// partial cache refuses the **whole** reveal there rather than disclosing
+/// the cached subset, and — because R16 gathers inside `prepare` and
+/// [`crate::reveal_out::run_reveal`] gates on `prepare`'s result — that
+/// refusal is automatically *before* the consent gate, which is where D68
+/// §3 R8 wants it and what D68's own "nobody consents to a disclosure that
+/// cannot be written" implies for one that cannot be gathered.
+///
+/// The passphrase is therefore collected before the disclosure can be
+/// known to be possible, which is a real cost and the ordering `show`,
+/// `list` and `status` already pay: the vault is the only place the work,
+/// its cache and its keys live, so there is nothing to decide before it is
+/// open. What has *not* changed is that nothing irreversible happens before
+/// the gate: the output path is resolved and a collision refused first (D68
+/// §3 R8), and the gate is asked only when a bundle could actually be
+/// produced.
+///
+/// # The consent gate's one production call site (U71)
+///
+/// The `consent` argument [`crate::reveal_out::run_reveal`] takes is an
+/// arbitrary closure, so `|_| Ok(())` compiles and is a *different command*
+/// — one that writes irreversibly-disclosed plaintext without asking. This
+/// is the only production expression in the crate that supplies it, it
+/// supplies [`DisclosureConsent::gate`], and
+/// `the_reveal_consent_gate_has_exactly_one_production_caller` in
+/// `tests/reveal_consent.rs` holds both facts as a red-capable source
+/// assertion.
 pub(crate) fn reveal(
-    _globals: &GlobalArgs,
-    _args: &crate::cli::RevealArgs,
-    // Nothing is unlocked before the seam refuses, so nothing is ever armed
-    // (D42 / D99 R2) — `restore`'s position exactly.
-    _slot: &VaultSlot,
+    globals: &GlobalArgs,
+    args: &crate::cli::RevealArgs,
+    slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
-    Err(crate::backend::unavailable("reveal"))
+    use crate::reveal_consent::{DisclosureConsent, TtyDisclosurePrompt};
+
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
+    let store = WorkStore::new(&vault);
+
+    // U29's gate, assembled from the invocation's own context: D51's single
+    // machine-mode detection point, and the same stream selector every
+    // human line in this handler uses.
+    let mut prompt = TtyDisclosurePrompt;
+    let gate = DisclosureConsent::new(
+        args.yes,
+        crate::machine::machine_mode_for(globals),
+        globals.json,
+        &mut prompt,
+    );
+
+    // U72: a backend that serves nothing and says why, rather than no
+    // reveal at all. Its refusal is what a genuinely-required fetch meets.
+    let backend = crate::backend::VaultLocalBackend::new("reveal");
+    let report = crate::backend::block_on_vault_local(crate::reveal_out::run_reveal(
+        &backend,
+        &store,
+        args,
+        gate.gate(),
+    ))??;
+
+    for line in report.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome::value(report.json()))
 }
 
 /// `verify <BUNDLE> [--online] [--live]` (U30; the run, its rendering and

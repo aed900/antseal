@@ -26,6 +26,7 @@ pub mod anchors;
 pub mod consent;
 pub mod error;
 pub mod journal;
+pub mod receipt_backfill;
 pub mod receipt_sink;
 pub mod restore;
 pub mod resume;
@@ -45,6 +46,10 @@ pub use journal::{
     SEAL_JOURNAL_VERSION, STATE_ENTRY, SealJournal, SealPlan, SealState, StagedBlob,
     StagedBytesUnavailable, UNIT_ENTRY_BASE, WorkIdentity, check_staged_integrity,
     verify_all_staged,
+};
+pub use receipt_backfill::{
+    BackfillPass, BackfillSkip, BlockNumberSource, backfill_recorded_receipt,
+    enrich_recorded_receipt, unfilled_block_numbers,
 };
 pub use receipt_sink::{ReceiptSinkFault, VaultReceiptSink};
 pub use restore::{

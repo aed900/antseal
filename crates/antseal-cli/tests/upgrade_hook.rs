@@ -802,10 +802,17 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
         ),
         (
             "reveal",
-            false,
-            "U28/U29's handler exists now, and — like `restore`, whose seam it shares — it \
-             reaches the storage-backend seam before the vault, so no passphrase is collected \
-             and nothing is unlocked",
+            true,
+            "**U72 moved this row from `false` to `true`, and the old reason is why the row \
+             exists.** It read: *\"like `restore`, whose seam it shares — it reaches the \
+             storage-backend seam before the vault\"*. That stopped being true when U72 ruled \
+             the entry refusal wrong: R16's gathering is cache-first by D43, so a work whose \
+             cache is intact needs no network, and the handler now unlocks through the same \
+             `unlock_for_command` expression as `list`, `show` and `status` — which is the one \
+             expression that arms (D99 R2). Like `show` and `status` it arms BEFORE resolving \
+             the work id, so the minimal argv's unknown id still leaves the invocation armed. \
+             This row is a THIRD independent witness of the U72 wiring, and it is the one no \
+             grep for the seam would have found",
         ),
         (
             "verify",

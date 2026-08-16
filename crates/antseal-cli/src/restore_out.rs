@@ -47,7 +47,7 @@ use std::path::{Component, Path, PathBuf};
 
 use antseal_net::StorageBackend;
 
-use crate::error::CliError;
+use crate::error::{CliError, ErrorClass};
 use crate::pipeline::restore::{
     ByteSource, FailureKind, FileOutcome, ManifestSource, RestoreEngine, RestoreReport, hex32,
 };
@@ -195,38 +195,54 @@ impl RestoreOutput {
         counts
     }
 
-    /// The run's error, if any: D48 §6's severity-ordered class, carrying
-    /// the count of files in that class. `None` means exit 0.
+    /// The class whose code this run exits with, or `None` for 0 — D48 §6's
+    /// severity rank, folded to **D69 §3 R1's third arm** rather than to an
+    /// error (U69, D69 §6.1).
+    ///
+    /// # Why this replaced `into_error() -> Option<CliError>`
+    ///
+    /// D48 §6 froze a severity order and D48 §3 the codes it maps to; those
+    /// are untouched here, and only the **destination of the fold** changed.
+    /// The old destination was a whole-run `CliError`, and `main_entry` emits
+    /// an error envelope — never a `result` — on that arm. So a `restore` in
+    /// which one file failed to verify would have thrown away the per-file
+    /// array for the four files that did not, replacing it with a one-line
+    /// `error:`. That is exactly the half D48 §6 promised to keep: *"per-file
+    /// detail always available in output and in the `--json` result"*.
+    ///
+    /// The old shape was latent rather than shipped — `commands::restore`
+    /// still refuses at U36's seam, so nothing in production ever called
+    /// `into_error` — but the registered fixture had already been composed
+    /// around its impossible consequence: a `success_envelope` over a
+    /// `RestoreOutput` carrying a `verification-failed` row, i.e. `ok:true`
+    /// beside a run D48 §3 requires to exit 35, which **no build could
+    /// emit**, because `main_entry` had only two arms and the success one was
+    /// `ExitCode::SUCCESS`. U30 added the third arm; this is its second
+    /// consumer.
+    ///
+    /// `ok` means *a result document is present*, never *the exit code is 0*
+    /// (maintainer-confirmed 2026-08-12; `ENVELOPE_VERSION` stays 1). A
+    /// reviewer must not "fix" this by making `ok` follow the exit code
+    /// again — the two were coincident until M3 and are separated
+    /// deliberately.
+    ///
+    /// The map is wildcard-free so a seventh [`FileStatus`] has to state its
+    /// own rung here rather than inheriting a plausible one.
     #[must_use]
-    pub fn into_error(&self) -> Option<CliError> {
-        let worst = self.most_severe()?;
-        let affected: Vec<&FileReport> = self.files.iter().filter(|f| f.status == worst).collect();
-        let count = affected.len();
-        let detail = affected
-            .iter()
-            .map(|f| {
-                f.detail.as_ref().map_or_else(
-                    || f.recorded_path.clone(),
-                    |d| format!("{}: {d}", f.recorded_path),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        Some(match worst {
-            FileStatus::VerificationFailed => CliError::RestoreVerificationFailed {
-                failed_files: count,
-                detail,
-            },
-            FileStatus::MalformedRecord => CliError::MalformedRestoreRecord { detail },
-            FileStatus::RefusedOverwrite => CliError::RefusedOverwrite {
-                refused_files: count,
-            },
-            FileStatus::WriteError => CliError::Io {
-                context: format!("writing restored file(s): {detail}"),
-                source: std::io::Error::other("restore write failed"),
-            },
-            FileStatus::FetchFailed => CliError::NetworkFailure { detail },
-            FileStatus::Restored | FileStatus::AlreadyRestored => unreachable!("filtered above"),
+    pub fn exit_class(&self) -> Option<ErrorClass> {
+        Some(match self.most_severe()? {
+            FileStatus::VerificationFailed => ErrorClass::RestoreVerificationFailed,
+            FileStatus::MalformedRecord => ErrorClass::MalformedRestoreRecord,
+            FileStatus::RefusedOverwrite => ErrorClass::RefusedOverwrite,
+            FileStatus::WriteError => ErrorClass::IoError,
+            FileStatus::FetchFailed => ErrorClass::NetworkFailure,
+            FileStatus::Restored | FileStatus::AlreadyRestored => {
+                // `most_severe` filters both successes out, so this arm is
+                // unreachable — stated as a value rather than an
+                // `unreachable!`, because library code does not panic on a
+                // shape it can simply not have (working principle 2).
+                return None;
+            }
         })
     }
 

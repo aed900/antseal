@@ -157,7 +157,7 @@ fn restore_reproduces_the_originals_and_a_re_run_is_a_no_op() {
 
     let dir = scratch.join("out");
     let first = restore_into(&mock, &unlocked, &work_id, &dir);
-    assert!(first.into_error().is_none(), "a clean run exits 0");
+    assert!(first.exit_class().is_none(), "a clean run exits 0");
     assert_eq!(first.files.len(), 3);
     for file in &first.files {
         assert_eq!(file.status, FileStatus::Restored, "{}", file.recorded_path);
@@ -200,7 +200,7 @@ fn restore_reproduces_the_originals_and_a_re_run_is_a_no_op() {
         .and_then(|m| m.modified())
         .expect("mtime");
     let second = restore_into(&mock, &unlocked, &work_id, &dir);
-    assert!(second.into_error().is_none(), "a converged re-run exits 0");
+    assert!(second.exit_class().is_none(), "a converged re-run exits 0");
     for file in &second.files {
         assert_eq!(
             file.status,
@@ -262,14 +262,14 @@ fn the_three_target_states_behave_exactly_as_d48_says() {
         BINARY
     );
 
-    let err = out.into_error().expect("a non-success class is present");
-    assert_eq!(err.class(), ErrorClass::RefusedOverwrite);
-    assert_eq!(err.exit_code(), 30);
+    let class = out.exit_class().expect("a non-success class is present");
+    assert_eq!(class, ErrorClass::RefusedOverwrite);
+    assert_eq!(class.exit_code(), 30);
 
     // Moving the conflicting file aside and re-running converges.
     std::fs::remove_file(dir.join("split.txt")).expect("move aside");
     let again = restore_into(&mock, &unlocked, &work_id, &dir);
-    assert!(again.into_error().is_none(), "the run converges");
+    assert!(again.exit_class().is_none(), "the run converges");
     assert_eq!(status_of(&again, "split.txt"), FileStatus::Restored);
 }
 
@@ -294,7 +294,7 @@ fn a_directory_in_the_way_is_refused_not_removed() {
     assert_eq!(status_of(&out, "notes.txt"), FileStatus::RefusedOverwrite);
     assert!(dir.join("notes.txt/inner").is_dir(), "left alone");
     assert_eq!(
-        out.into_error().expect("nonzero").class(),
+        out.exit_class().expect("nonzero"),
         ErrorClass::RefusedOverwrite
     );
 }
@@ -442,9 +442,9 @@ fn an_unfetchable_file_is_never_written_and_sets_the_exit_class() {
         assert!(file.bytes.is_none(), "no bytes to write");
         assert!(!file.target.exists(), "nothing was written");
     }
-    let err = out.into_error().expect("nonzero");
-    assert_eq!(err.class(), ErrorClass::NetworkFailure);
-    assert_eq!(err.exit_code(), 23);
+    let class = out.exit_class().expect("nonzero");
+    assert_eq!(class, ErrorClass::NetworkFailure);
+    assert_eq!(class.exit_code(), 23);
 }
 
 /// **U20 accept**: when classes mix, the reported one follows D48 §6's
@@ -498,13 +498,13 @@ fn the_exit_class_is_the_most_severe_present() {
     );
     assert!(!dir.join("gone.txt").exists());
 
-    let err = out.into_error().expect("nonzero");
+    let class = out.exit_class().expect("nonzero");
     assert_eq!(
-        err.class(),
+        class,
         ErrorClass::RestoreVerificationFailed,
         "evidence outranks the transient class"
     );
-    assert_eq!(err.exit_code(), 35);
+    assert_eq!(class.exit_code(), 35);
 
     // With the verification row removed, the transient one reports.
     let out = RestoreOutput {
@@ -516,7 +516,7 @@ fn the_exit_class_is_the_most_severe_present() {
         ..out
     };
     assert_eq!(
-        out.into_error().expect("nonzero").class(),
+        out.exit_class().expect("nonzero"),
         ErrorClass::NetworkFailure
     );
 }

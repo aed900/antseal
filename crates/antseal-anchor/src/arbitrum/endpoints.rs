@@ -60,6 +60,35 @@ pub const fn verify_rpcs(network: NetworkId) -> Option<&'static [&'static str; 2
 /// re-typed: the payment path already carries this guard
 /// (`ant_backend.rs:217`) and two independently written chain ids that agree
 /// today is how they stop agreeing later.
+///
+/// # D137 §8, site 2 — this value reaches the rendered sentence
+///
+/// It is no longer only a comparand. After D137 §3 R1/R7 the CLI hands this
+/// number to `ProbeLog::with_receipt`, and `antseal_core::verify::wording`
+/// renders it into the two receipt lines that assert *where* a transaction
+/// is — *"…confirm the recorded transaction on Arbitrum chain 42161…"*,
+/// *"…agree the recorded transaction is not on Arbitrum chain 42161…"*.
+/// **Changing this table changes what `antseal verify --online` says**, on a
+/// surface a third party reads, so a row added or edited here is a wording
+/// event as much as a configuration one.
+///
+/// What licenses printing it: `guard_chain_id` returns before the receipt
+/// query, so every endpoint whose answer reached the line positively answered
+/// `eth_chainId` with exactly this number. The sentence is a report of what
+/// was asked and answered, never an inference about the transaction.
+///
+/// **R7's `None` arm is an implication, not a coincidence.** `None` here must
+/// mean *no receipt is probed at all*, because a probe with no expected chain
+/// id has nothing to name. Today that holds because [`verify_rpcs`] is `None`
+/// on the same network, so no pair exists — but that is two tables agreeing,
+/// which is exactly the shape this project does not leave unasserted:
+/// `a_network_with_no_expected_chain_id_has_no_pair_to_probe_with` below is
+/// the assertion, and `verify_host.rs`'s `probe_online` takes the id in the
+/// same `let` chain as the pair so the state cannot be reached even if the
+/// tables ever disagree.
+///
+/// The full argument is `docs/decisions/D137-what-the-page-may-say-about-an-\
+/// unresolvable-receipt.md`; nothing here restates it.
 #[must_use]
 pub const fn expected_chain_id(network: NetworkId) -> Option<u64> {
     match network {
@@ -158,6 +187,45 @@ mod tests {
                 assert!(!urls.contains(&reserve), "{reserve} is in {network}'s pair");
             }
         }
+    }
+
+    /// **D137 §3 R7 — a network with no expected chain id has no pair to
+    /// probe with, over EVERY network rather than the one that motivated it.**
+    ///
+    /// After D137 the expected chain id is not only the guard's comparand: it
+    /// is the number the rendered receipt sentence names. So `None` must imply
+    /// *nothing is probed* — a probe that reached the receipt query with no
+    /// chain id would have no honest sentence available to it.
+    ///
+    /// `devnet_has_no_overlay_and_the_guard_refuses_rather_than_defaults`
+    /// (`confirm/tests.rs`) pins both `None`s on devnet; this pins the
+    /// **implication**, over `NetworkId::ALL`, so a fourth network added with
+    /// a pair and no chain id reddens here rather than at whatever the page
+    /// prints. The converse is deliberately *not* asserted: a network may
+    /// perfectly well have a chain id and no vetted public pair.
+    #[test]
+    fn a_network_with_no_expected_chain_id_has_no_pair_to_probe_with() {
+        // The loop is over the closed enumeration, and the arm that makes it
+        // non-vacuous is asserted separately: an `ALL` that lost its devnet
+        // entry would leave every iteration in the other branch and this test
+        // green over nothing.
+        let mut without_id = 0;
+        for network in NetworkId::ALL {
+            if expected_chain_id(network).is_none() {
+                without_id += 1;
+                assert!(
+                    verify_rpcs(network).is_none(),
+                    "{network} has a default RPC pair but no expected chain id, so \
+                     `probe_online` could reach the receipt query with no chain to name in the \
+                     rendered sentence (D137 §3 R7)"
+                );
+            }
+        }
+        assert_eq!(
+            without_id, 1,
+            "exactly one network (devnet) has no expected chain id; {without_id} do, so the \
+             implication above was checked over the wrong set"
+        );
     }
 
     /// The two networks' pairs share no endpoint.
