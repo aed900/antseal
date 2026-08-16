@@ -42,17 +42,34 @@
   the dispatch-refusal signature `docs/ci-verification.md` diagnoses as an
   exhausted allowance. **There is no headroom to spend.** Every push-tier arm is
   refused on that number, not on plausibility.
-  *(Correction, orchestrator, 2026-08-16 — the count is exact, one word of the
-  description was not. An independent re-measurement reproduced **45 across
-  exactly three runs** — `ci#31407751482` 19/19, `ci#31412086640` 19/19,
-  `ci#31117310646` 7/19 — and put the whole-repository bill at **3 324**
-  weighted minutes, within 5 % of the 3 154 above. But those jobs **were**
-  assigned runners: each carries real `started_at`/`completed_at` stamps 3–12 s
-  apart, and a query for unassigned jobs returns **zero**. What is true of all
-  45 is `conclusion: failure` with `steps == []`. A future reader grepping the
-  API for "never assigned a runner" will find nothing and conclude wrongly; the
-  signature to look for is the empty step list. Neither the conclusion nor the
-  tier depends on which description is used.)*
+  *(Correction WITHDRAWN, orchestrator, 2026-08-16. An earlier note here claimed
+  this record's "never assigned a runner" was one word wrong because the 45 jobs
+  carry `started_at`/`completed_at` stamps. **That claim was itself wrong, and it
+  was wrong by measuring the wrong field.** Re-measured against `runner_name`:
+  all 45 — `ci#31407751482` 19/19, `ci#31412086640` 19/19, `ci#31117310646` 7/19
+  — have **`runner_name: ""`**. Both facts hold at once: a refused job is given
+  timestamps 3–12 s apart, is given **no runner**, and executes **zero steps**.
+  This record was right; the correction was the defect, and it is left here
+  struck rather than deleted because the failure mode it demonstrates — querying
+  `started_at` for a question about runner assignment and reporting the answer
+  as a correction to someone else's work — is worth more as a record than a
+  clean page. The independent bill re-measurement stands: **3 324** weighted
+  minutes, within 5 % of the 3 154 above.)*
+
+  **CONFIRMED IN PRODUCTION, 2026-08-16, by the very next push.** This record's
+  *"there is no headroom to spend"* stopped being a projection at 11:08 UTC.
+  The wave-21 push (`b253ae8`) triggered `ci` **`31943527193`**: **19 of 19 jobs,
+  `steps == []`, `runner_name: ""`, whole run 11:08:35Z → 11:08:42Z (7 s)**. The
+  maintainer-authorised Q19 witnessing dispatch that followed,
+  `verifier-page` **`31943600047`**, was refused identically: **1 of 1 job, zero
+  steps, no runner, 11:10:13Z → 11:10:18Z (5 s)**. Both workflow files parse
+  (checked), so this is not syntax. **The allowance is exhausted.** Two
+  consequences are already discharged: the **second** authorised dispatch was
+  **not** spent, because a refused run costs the same minutes and proves
+  nothing; and Q19 remains open owing a venue that cannot be bought this month.
+  This is also the first time the refusal has been observed **prospectively** —
+  every prior instance in `docs/ci-verification.md` was diagnosed after the
+  fact.*
 - **The lean survives on a mechanism, and the mechanism is step order**, not
   goodwill: `pages.yml` runs `./scripts/pages-publish.sh --build` **before**
   `actions/configure-pages`, `upload-pages-artifact` and `deploy-pages`, so a
@@ -122,11 +139,19 @@ minutes per job and this repository runs 583 jobs a fortnight.
 Runs `31412086640` (19 jobs), `31407751482` (19 jobs) and `31117310646`
 (7 jobs) contain **45 jobs that executed ZERO steps**.
 *(Orchestrator, 2026-08-16: independently reproduced — 45, across exactly those
-three runs, at those per-run splits. The description is corrected from "never
-assigned a runner": every one of the 45 carries real `started_at`/
-`completed_at` stamps 3–12 s apart and `conclusion: failure`, and a query for
-jobs with no runner assignment returns **zero** across the whole window. The
-grep-able signature is `steps == []`, not a missing assignment.)*
+three runs, at those per-run splits. An earlier version of this note also
+"corrected" the description away from "never assigned a runner"; **that
+correction is withdrawn and was wrong.** It rested on `started_at`/
+`completed_at` being populated, which is true and answers a different question.
+Re-measured against the field that actually carries the claim: **all 45 have
+`runner_name: ""`**. A refused job is stamped, unassigned, and stepless, all
+three at once — so this record's original wording was accurate and the grep-able
+signature is either `runner_name == ""` or `steps == []`.)*
+**Prospective confirmation, 2026-08-16.** The wave-21 push produced `ci`
+**`31943527193`** — 19/19 jobs, `steps == []`, `runner_name: ""`, 7 s wall — and
+the Q19 dispatch `verifier-page` **`31943600047`** — 1/1, same shape, 5 s. Both
+workflow files parse, so it is not syntax. **The allowance predicted here as
+exhausted was exhausted, on the next push after this record was written.**
 `docs/ci-verification.md` (the section on `1c702d4`) already diagnoses that
 signature, reproduced twice 44 minutes apart, as *"an exhausted minute allowance
 or a reached spending limit"*, and records that the failure mode is not a

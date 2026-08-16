@@ -1701,7 +1701,38 @@ reproducible, rather than on a quota figure, which is not readable.
 attempt billed minutes — which is also why re-running was the cheap decisive
 test rather than an expensive gamble.
 
-#### Correction — the refusal signature is `conclusion: failure` with `steps == []`, not "no runner assigned", 2026-08-16
+#### ~~Correction — the refusal signature is `conclusion: failure` with `steps == []`, not "no runner assigned"~~ — **WITHDRAWN 2026-08-16, the correction was the defect**
+
+> **Read this box before the section below it.** The correction that follows was
+> written by the orchestrator on 2026-08-16 and is **wrong**. It reported that
+> the 45 refused jobs *"WERE assigned runners"* on the strength of their
+> `started_at`/`completed_at` stamps being populated — which is true, and which
+> answers a different question from the one the original text asked.
+> **Re-measured against the field that actually carries the claim, all 45 have
+> `runner_name: ""`.** The section it "corrects" was accurate as written.
+>
+> A refused job is **stamped, unassigned, and stepless — all three at once**, so
+> either `runner_name == ""` or `steps == []` finds it and the original wording
+> misleads nobody. The correction below is struck rather than deleted because
+> the failure it demonstrates is worth keeping: *a claim about runner assignment
+> was checked by reading a timestamp field, and the wrong answer was then
+> published as a correction to somebody else's correct work.* That is the same
+> shape as the defects this document exists to catch, committed by the person
+> auditing them.
+>
+> **Its one surviving clause** is the last paragraph's: *"the failed dispatches
+> cost nothing"* is restored to its original reading — with `runner_name: ""`
+> there is no runner to bill, so **zero** stands and the "at most one billed
+> minute per job" hedge below is unnecessary.
+>
+> **Prospectively confirmed the same day.** The wave-21 push produced `ci`
+> **`31943527193`** — 19/19 jobs, `steps == []`, `runner_name: ""`, 7 s — and the
+> Q19 dispatch `verifier-page` **`31943600047`** — 1/1, same shape, 5 s. Both
+> workflow files parse. **The allowance is exhausted**, exactly as
+> `docs/decisions/D135` §1.1 predicted, and this is the first time the refusal
+> has been seen coming rather than diagnosed afterwards.
+
+#### Correction (superseded — see the box above), 2026-08-16
 
 **The corrected clauses, quoted verbatim**, from the section above:
 
