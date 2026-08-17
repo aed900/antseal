@@ -258,3 +258,58 @@ task's own criterion, not a spec deviation.
    vs scheduled 5–10). The script owns one config surface (env knobs)
    and prints it into the evidence line, so any divergence is recorded
    rather than ambient.
+
+## Addendum — 2026-08-17: the "reduced node count" this record specifies put the hosted lane below `CLOSE_GROUP_SIZE`, and it could never have passed
+
+The scheduled leg landed with `ANTSEAL_DEVNET_NODES: 5`, the count this
+record's Status line calls *"reduced node count"*. **Five is below
+`ant-protocol`'s close-group size, so the lane was structurally incapable of
+passing from the day it landed.**
+
+**Measured, not inferred.** `ant-protocol-2.3.0/src/chunk.rs:35` declares
+`pub const CLOSE_GROUP_SIZE: usize = 7`, documented one line above as *"Clients
+fetch quotes from the `CLOSE_GROUP_SIZE` closest nodes to a target"*. The one
+scheduled run this lane has ever had — **`31571938292`, `event: schedule`,
+`conclusion: failure`, 2026-08-12 on `3c8095a`** — failed **all four** suites,
+every failure carrying the same cause:
+
+```
+quote: Network { reason: "insufficient peers: ... witnessed close group
+initial lookup found 5 peers, need 7 for key ..." }
+```
+
+`evidence.txt` reads `e2e-devnet: FAIL … nodes=5 suites_run=4
+failed=[S6-S8,S17,S18,S19] secs=1374`. Note `secs=1374` is **22.9 minutes**,
+itself above the ≤ 15 min warm-runtime figure the promote-to-required trigger
+requires — so even a green run at this shape would not have satisfied it.
+
+**The tree already knew, in two places, and this record did not consult
+either.** `docs/research/P16-devnet-feasibility.md:138-146`: *"**10–14 nodes is
+the evidence-backed working size** (≥7 fills the close group; 14 is upstream's
+own e2e parity point). 5 nodes (upstream's `minimal()`) is below
+`CLOSE_GROUP_SIZE` and relies on the degraded-quorum floors — **usable for
+smoke, not for the flagship suite**."* And `docs/devnet/local-devnet.md:51`
+labels `--nodes 5` *"smoke preset (below CLOSE_GROUP_SIZE=7 — degraded
+quorums)"*. The hosted lane ran the flagship suite at the smoke count.
+
+**The reduction bought nothing measurable.** Boot is 1.4 s at 5 nodes
+(this run's own `local-up.log`) and 6.2 s at 14 (P16), against a **13 m 07 s**
+cold build in the same run. The saving was seconds; the cost was the lane's
+ability to pass. **Corrected to 14** — the count `scripts/e2e-devnet.sh` and
+`scripts/devnet/local-up` already default to, which also restores this
+record's own *"same script bytes"* principle: a different node count was
+itself a divergence from the local gate.
+
+**A second failure this exposes, and it is the more general one.** D52's
+TRIAGE rule (in the workflow header, *"a red scheduled run gets a tracking note
+in the next wave's bookkeeping"*) **was not followed** — the red sat unrecorded
+from 2026-08-12 until 2026-08-17, found only because a maintainer question
+about artifact retention led to reading the evidence file. `Q79` — *"read the
+scheduled lanes as a wave-close step"*, minted precisely because `fuzz-nightly`
+ran five times unobserved — is **ticked**, and the same class recurred on the
+next scheduled lane. A ticked process row is not a running process.
+
+**Not settled here**: whether 14 nodes fits the hosted runner's memory and the
+minutes budget is unmeasured on that runner class (P16 measured
+**10–14 nodes ≈ 0.5–1.7 GiB** on a 2-core dev host). The next scheduled or
+dispatched run is the measurement, and it should be read rather than assumed.

@@ -50,9 +50,9 @@ on:
   workflow_dispatch:
     inputs:
       nodes:
-        description: "Devnet node count (5..=25; 5 = smoke preset, the reduced count D52 specifies for the hosted runner)"
+        description: "Devnet node count (7..=25). MUST be >= ant-protocol CLOSE_GROUP_SIZE (7) or every paying test fails; 14 is the evidence-backed working size (P16). See the note on the env below."
         required: false
-        default: "5"
+        default: "14"
 
 permissions:
   contents: read
@@ -110,12 +110,32 @@ jobs:
           version: stable
 
       # The same script bytes the local gate runs (the ci-lanes.sh rule).
-      # With S17-S19 unwritten it runs the S6-S8 real-backend suite and
-      # reports PENDING for the rest — never a silent pass; the registry
+      # S17-S19 are written now and DO run (proven by run 31571938292, which
+      # executed all four suites); the PENDING path remains for any suite the
+      # registry still lists as unwritten — never a silent pass; the registry
       # rules that make that true are self-tested in scripts/local-gate.sh.
       - name: Devnet E2E (D52 scheduled leg — same script as the local gate)
         env:
-          ANTSEAL_DEVNET_NODES: ${{ github.event.inputs.nodes || '5' }}
+          # 14 — the scripts' OWN default, NOT the 5 D52 specified for this
+          # lane. `ant-protocol-2.3.0/src/chunk.rs:35` sets
+          # `CLOSE_GROUP_SIZE = 7` and a client fetches quotes from the 7
+          # closest nodes, so a 5-node devnet cannot quote AT ALL. The only
+          # scheduled run this lane has ever had (31571938292, 2026-08-12,
+          # `3c8095a`) failed ALL FOUR suites with `witnessed close group
+          # initial lookup found 5 peers, need 7`.
+          #
+          # The tree already knew: P16's research says *"10-14 nodes is the
+          # evidence-backed working size (>=7 fills the close group)"* and
+          # that 5 is *"usable for smoke, not for the flagship suite"*
+          # (docs/research/P16-devnet-feasibility.md:138-146), and
+          # docs/devnet/local-devnet.md:51 labels 5 *"degraded quorums"*.
+          # This lane ran the flagship suite at the smoke count anyway.
+          #
+          # The reduction bought nothing measurable: boot is 1.4s at 5 nodes
+          # and 6.2s at 14 (P16), against this run's 13m07s cold build. Using
+          # the scripts' default also restores the lane's own stated principle
+          # — the same script bytes the local gate runs.
+          ANTSEAL_DEVNET_NODES: ${{ github.event.inputs.nodes || '14' }}
         run: ./scripts/e2e-devnet.sh
 
       # `always()`, not `failure()`: on failure this is the node + Anvil log

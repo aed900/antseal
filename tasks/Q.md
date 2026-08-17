@@ -3004,3 +3004,70 @@ Exact line to add to Q65's Accept:
   - Any change to the `*.md` exclusion is exact-path shaped and the lane is green after it, or the exclusion is left alone with the reason recorded — the naive removal is not attempted and abandoned silently.
   - No real key material enters the repository to prove any of it; fakes stay in the temp directory the self-test already uses.
 - Notes: **This is a promotion, and the promotion test is what makes it a row.** Its subject is a checker, so protocol rule 8 sends it to `docs/instrument-ledger.md` — and it is there, with its two siblings. It is promoted because **Q30 is on the M4 ship path and is about to generate exactly the artifact the guard cannot see**, which is the rule's *"blocks an acceptance on the ship path"* condition met literally rather than by analogy. **The two sibling blind spots stay in the ledger and are deliberately not in this row**: the PEM rule's failure on `-----BEGIN PGP PRIVATE KEY BLOCK-----` (the trailing `[-]{5}` is anchored immediately after `PRIVATE KEY`, and OpenPGP interposes ` BLOCK`), and the `*.md` exclusion's coverage hole. Neither blocks a ship-path acceptance; both are one line from being fixed by whoever takes this row, and taking them is welcome — but they are not what licences the ID.
+
+### Q246 — The scheduled devnet lane ran below `CLOSE_GROUP_SIZE` and could never pass; the fix is landed and unwitnessed
+
+- Milestone: M4
+- Size: S
+- Deps: Q15, D52 (2026-08-17 addendum); P16 (node-count evidence)
+- Spec: Milestones M4 (line 157); the devnet E2E venue (D52)
+- Do: **The defect is already corrected in the tree; what this row owns is the
+  witness.** `.github/workflows/devnet-e2e-cron.yml` set
+  `ANTSEAL_DEVNET_NODES: 5`, and `ant-protocol-2.3.0/src/chunk.rs:35` sets
+  `CLOSE_GROUP_SIZE = 7`, so no quote could be obtained and every paying test
+  failed. Run `31571938292` (`event: schedule`, `conclusion: failure`,
+  2026-08-12 on `3c8095a`) failed **all four** suites, each with *"witnessed
+  close group initial lookup found 5 peers, need 7"*; `evidence.txt` reads
+  `e2e-devnet: FAIL … nodes=5 suites_run=4 failed=[S6-S8,S17,S18,S19]
+  secs=1374`. Corrected 2026-08-17 to **14**, the count `scripts/e2e-devnet.sh`
+  and `scripts/devnet/local-up` already default to. **This lane has never once
+  been green on the remote, so the correction is a prediction until a run
+  proves it** — the Q43/Q153 rule, on the row that most needs it. Take one
+  `workflow_dispatch` run (or read the next weekly), record the verdict line
+  verbatim, and read TWO numbers besides pass/fail: the **warm runtime** against
+  the ≤ 15 min promote-to-required threshold (this run was **22.9 min**, already
+  over it at 5 nodes), and whether 14 nodes fits the hosted runner's memory —
+  P16 measured 10–14 nodes ≈ 0.5–1.7 GiB on a 2-core dev host and that figure
+  has never been taken on `ubuntu-latest`.
+- Accept:
+  - One scheduled or dispatched run recorded with its `e2e-devnet:` verdict line quoted verbatim, naming the run id and the commit
+  - `nodes=14` appears in that line — the override is proven to take effect, not merely committed
+  - Warm runtime recorded and compared against the ≤ 15 min trigger, with the gap stated either way
+  - If red, the failure is triaged per D52's rule and the tracking note lands in the same act
+- Notes: The tree already carried the knowledge in two places and neither was
+  consulted when D52 chose 5 — `docs/research/P16-devnet-feasibility.md:138-146`
+  (*"10–14 nodes is the evidence-backed working size … 5 nodes … usable for
+  smoke, not for the flagship suite"*) and `docs/devnet/local-devnet.md:51`
+  (*"below CLOSE_GROUP_SIZE=7 — degraded quorums"*). The reduction saved
+  **seconds** — boot 1.4 s at 5 nodes vs 6.2 s at 14 — against a 13 m 07 s cold
+  build. Found 2026-08-17 by reading the evidence artifact after a maintainer
+  question about artifact retention, not by any lane or checker.
+
+### Q247 — The promote-to-required trigger needs twenty runs of evidence from a store that holds twelve
+
+- Milestone: M4
+- Size: S
+- Deps: Q15, D52; Q246 (the lane must be able to pass before its evidence means anything)
+- Spec: Milestones M4 (line 157)
+- Do: `docs/ci-verification.md:1283` makes the `devnet-e2e-scheduled`
+  promote-to-required trigger **"≥ 20 clean scheduled runs with warm runtime
+  ≤ 15 min"**, and names the `devnet-e2e-evidence` artifact as where that
+  evidence lives. **The arithmetic does not close.** The lane is weekly
+  (`cron: "37 5 * * 3"`), so 20 runs span ≥ 133 days, while the artifact
+  retention measured on this repository is **89 days** (`created_at`
+  2026-08-12T07:19:54Z → `expires_at` 2026-11-10T06:56:33Z) — **at most 12 of
+  the required 20 can coexist**, so the trigger is unreachable from its own
+  named evidence store no matter how many runs go green. Rule the fix: either
+  raise `retention-days` on the upload step to cover the window, or — better,
+  and consistent with this project's own *evidence belongs in the row* rule —
+  stop treating a 90-day expiring store as the home for evidence a permanent
+  document cites, and append each run's one-line `e2e-devnet:` verdict to a
+  committed file. The artifact then carries only the bulky diagnostic logs,
+  which nothing cites and which may expire freely.
+- Accept:
+  - The trigger and its evidence store are arithmetically consistent — stated as a calculation, not an assertion
+  - `docs/ci-verification.md`'s trigger text names the store that actually holds the evidence
+  - If a committed verdict file is chosen, it exists and the workflow appends to it, with the append proven by a run
+- Notes: Generalises past this lane. Any evidence a committed document cites
+  must outlive the document's reader, and GitHub Actions artifacts cannot do
+  that. Found 2026-08-17 alongside Q246.

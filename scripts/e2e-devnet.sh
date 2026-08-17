@@ -7,8 +7,11 @@
 #     changes (CONTRIBUTING, "Devnet E2E gate"), on the Q14 model: a named,
 #     separately-invoked gate that emits recorded evidence; and
 #   * the SCHEDULED, NON-REQUIRED hosted lane
-#     (.github/workflows/devnet-e2e-cron.yml) at reduced node count, which
-#     discharges the run-it-on-the-remote half of Q43's evidence rule.
+#     (.github/workflows/devnet-e2e-cron.yml), which discharges the
+#     run-it-on-the-remote half of Q43's evidence rule. It ran at a
+#     REDUCED node count (5) until 2026-08-17 and could not pass: 5 is
+#     below ant-protocol's CLOSE_GROUP_SIZE=7, so no quote can be
+#     obtained. It now uses this script's own default of 14.
 #
 # There is deliberately NO per-PR devnet job and NO self-hosted runner;
 # docs/decisions/D52-devnet-e2e-venue.md carries the reasoning, the
