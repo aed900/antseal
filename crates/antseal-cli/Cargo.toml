@@ -3,6 +3,7 @@ name = "antseal-cli"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # D34 (docs/decisions/D34-seal-pipeline-placement.md): this package carries
 # BOTH targets. The library `antseal_cli` is the orchestration layer — the

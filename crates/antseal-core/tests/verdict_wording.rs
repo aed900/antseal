@@ -86,6 +86,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use antseal_core::verify::orchestration::FetchFailureClass;
 use antseal_core::verify::report::{AnchorKind, AnchorState, SignatureScheme};
 use antseal_core::verify::wording::*;
 
@@ -276,10 +277,25 @@ fn render_document() -> String {
     out.push_str(&format!("{}\n", live_blob_identical_line("unit 7")));
     out.push_str(&format!("{}\n", live_blob_different_line("unit 7")));
     out.push_str(&format!("{}\n", live_blob_not_found_line("unit 7")));
-    out.push_str(&format!(
-        "{}\n",
-        live_blob_fetch_error_line("unit 7", "transport failure")
-    ));
+    // R89 — **one row per class, derived from the class**, not one row per
+    // remembered string. Before R89 this line was
+    // `live_blob_fetch_error_line("unit 7", "transport failure")`: a literal
+    // restating a label that lived in another crate, so the frozen document
+    // and the shipped word agreed by *coincidence* — reword the class and
+    // this file stayed green while the product's rendered line moved. Sweeping
+    // `ALL` makes the agreement a checked fact and makes a third class arrive
+    // as a snapshot event rather than silently unspelled.
+    assert_eq!(
+        FetchFailureClass::ALL.len(),
+        2,
+        "the sweep below is vacuous if ALL shrinks; grow or shrink it deliberately"
+    );
+    for class in FetchFailureClass::ALL {
+        out.push_str(&format!(
+            "{}\n",
+            live_blob_fetch_error_line("unit 7", live_fetch_failure_class_label(class))
+        ));
+    }
 
     section(&mut out, "10. the online advisory overlay (D64)");
     out.push_str(&format!("{}\n", overlay_framing_line()));
@@ -719,6 +735,17 @@ fn single_sourced() -> Vec<(String, &'static str)> {
             "the storage-linkage-layer label",
         ),
         (LIVE_LAYER_LABEL.to_owned(), "the --live layer label"),
+        // R89's new frozen sentence. Only `BackendRefused`'s word joins the
+        // table: `Transport`'s is `probe_failure_class_label`'s word for the
+        // *online* class too, so it is shared by construction and a scan for
+        // it would report the sharing as an offence. Derived from the table
+        // rather than restated, so a deliberate reword moves needle and
+        // sentence together — this entry guards against a *second copy* in a
+        // renderer, which is a different claim from the wording being frozen.
+        (
+            live_fetch_failure_class_label(FetchFailureClass::BackendRefused).to_owned(),
+            "the live backend-refused failure class",
+        ),
         (
             "existed no later than".to_owned(),
             "the one headline template",
@@ -827,7 +854,9 @@ fn every_single_sourced_needle_occurs_in_the_rendered_set() {
     // The loop below is vacuous over an empty or truncated table, which is
     // this project's dominant defect class. The floor is asserted first and
     // separately, so a table that shrank says so instead of passing quietly.
-    const NEEDLE_FLOOR: usize = 29;
+    // Raised 29 → 30 by R89, in the same act that added the entry: the floor
+    // is only a shrink alarm if it tracks the table it guards.
+    const NEEDLE_FLOOR: usize = 30;
     assert!(
         table.len() >= NEEDLE_FLOOR,
         "the single-sourced table holds {} needle(s), below the {NEEDLE_FLOOR} this floor was \
@@ -1052,6 +1081,29 @@ fn the_source_scan_catches_a_planted_copy_of_a_frozen_sentence() {
         hits,
         vec!["crates/antseal-cli/src/planted.rs:1"],
         "the scan must catch the code literal and ignore the prose mention"
+    );
+
+    // R89's entry, planted on its own. The generic plant above proves the
+    // *predicate* is fallible; this proves it fires on **this** needle, which
+    // is the claim the entry actually makes. The live failure classes were
+    // spelled in `antseal-net` until R89, so a renderer re-spelling one is
+    // exactly the regression the entry exists to catch, and a needle that
+    // could never be hit would be the silent version of that.
+    let refused = live_fetch_failure_class_label(FetchFailureClass::BackendRefused);
+    let planted_class = vec![
+        (
+            "crates/antseal-cli/src/planted_live.rs".to_owned(),
+            format!("    rows.push(format!(\"{{subject}}: fetch failed ({refused})\"));\n"),
+        ),
+        (
+            "crates/antseal-cli/src/live_prose.rs".to_owned(),
+            format!("    // the class renders as `{refused}`; the table owns it\n"),
+        ),
+    ];
+    assert_eq!(
+        occurrences(&planted_class, refused),
+        vec!["crates/antseal-cli/src/planted_live.rs:1"],
+        "the backend-refused needle must catch a renderer copy and ignore prose"
     );
 }
 

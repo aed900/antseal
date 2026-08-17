@@ -252,11 +252,11 @@ fn all_four_outcomes_reach_their_rendered_rows_from_one_mock_backend() {
         (
             "unit 0",
             LiveBlobOutcome::FetchFailed {
-                reason: antseal_net::FetchFailureClass::Transport.label().to_owned(),
+                class: antseal_net::FetchFailureClass::Transport,
             },
             wording::live_blob_fetch_error_line(
                 "unit 0",
-                antseal_net::FetchFailureClass::Transport.label(),
+                wording::live_fetch_failure_class_label(antseal_net::FetchFailureClass::Transport),
             ),
         ),
         (

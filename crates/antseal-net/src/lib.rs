@@ -125,7 +125,7 @@ pub use live::manifest::{
 };
 pub use live::{
     BlobPersistence, FetchFailureClass, PersistenceOutcome, PersistenceReport, PersistenceSummary,
-    check_persistence,
+    check_persistence, fetch_failure_class,
 };
 pub use network::{
     DevnetEnv, DevnetEnvError, EvmAddress20, EvmAddressParseError, NetworkConfig,

@@ -40,7 +40,7 @@ use antseal_core::manifest::anchor_digest;
 use antseal_core::test_util::bundle_fixtures::{Selection, Tweak, build, build_tweaked, shapes};
 use antseal_core::verify::REPORT_VERSION;
 use antseal_core::verify::orchestration::{
-    LiveBlobOutcome, LiveBlobRow, LiveInputs, OnlineInputs, VerifyModes,
+    FetchFailureClass, LiveBlobOutcome, LiveBlobRow, LiveInputs, OnlineInputs, VerifyModes,
 };
 use antseal_core::verify::overlay::{BlockProbe, ProbeEndpoints, ProbeLog, ReceiptProbe};
 use antseal_core::verify::{VerifyOptions, wording};
@@ -391,7 +391,7 @@ fn live_outcomes_never_move_the_exit_code() {
         (
             "fetch-failed",
             LiveBlobOutcome::FetchFailed {
-                reason: "transport failure".to_owned(),
+                class: FetchFailureClass::Transport,
             },
         ),
     ];

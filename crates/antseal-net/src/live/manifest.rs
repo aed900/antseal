@@ -394,21 +394,23 @@ pub fn subject_label(subject: LiveSubject) -> String {
 /// Project one blob's outcome onto core's WASM-safe four.
 ///
 /// Wildcard-free in both directions: a fifth [`PersistenceOutcome`] fails to
-/// compile here. Under R79 the fetch-failure arm carries a **closed class**
-/// and renders [`FetchFailureClass::label`]'s `&'static str` — the courier
-/// authors nothing and no byte from the far end of the connection can occupy
-/// the slot.
+/// compile here. Under R79 the fetch-failure arm carries a **closed class**;
+/// under R89 it hands that class straight across, because both sides now name
+/// the same type — the courier authors nothing, has nothing to spell, and no
+/// byte from the far end of the connection can occupy the slot.
 ///
-/// [`FetchFailureClass::label`]: crate::FetchFailureClass::label
+/// The spelling happens once, later and elsewhere: core's renderer calls
+/// [`live_fetch_failure_class_label`] on the class this hands it.
+///
+/// [`live_fetch_failure_class_label`]:
+///     antseal_core::verify::wording::live_fetch_failure_class_label
 #[must_use]
 pub fn blob_outcome(outcome: &PersistenceOutcome) -> LiveBlobOutcome {
     match outcome {
         PersistenceOutcome::Identical => LiveBlobOutcome::Identical,
         PersistenceOutcome::Different { .. } => LiveBlobOutcome::Different,
         PersistenceOutcome::NotFound => LiveBlobOutcome::NotFound,
-        PersistenceOutcome::FetchError { class } => LiveBlobOutcome::FetchFailed {
-            reason: class.label().to_owned(),
-        },
+        PersistenceOutcome::FetchError { class } => LiveBlobOutcome::FetchFailed { class: *class },
     }
 }
 

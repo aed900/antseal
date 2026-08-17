@@ -5,10 +5,10 @@
 # Tool version pinned per docs/dependency-policy.md §5: cargo-deny =0.19.8
 # (CI installs exactly that; run the same locally).
 #
-# ACTIVE checks (CI + local):     cargo deny check advisories bans sources
-# STUBBED check:                  licenses — see the bottom of this file.
-# Never run a bare `cargo deny check` and treat a licenses failure as
-# meaningful before Q29 lands the allowlist.
+# ACTIVE checks (CI + local):     cargo deny check advisories bans sources licenses
+# The licenses check was STUBBED until Q29 landed the allowlist on
+# 2026-08-17; it is now enforced like the other three. The allowlist and
+# its per-crate copyleft exceptions are at the bottom of this file.
 #
 # Triggers (D19): per-PR via the `audit-deny` job in
 # .github/workflows/ci.yml, plus a weekly cron in
@@ -96,27 +96,76 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
 
 # ---------------------------------------------------------------------------
-# licenses — STUBBED until Q29 (D19; context: docs/decisions/D6-license.md)
+# licenses — LANDED by Q29, 2026-08-17 (context: docs/decisions/D6-license.md,
+# its 2026-08-17 addendum, and ./COPYRIGHT)
 # ---------------------------------------------------------------------------
-# The licenses check is NOT run today (`cargo deny check advisories bans
-# sources` — deliberately not `check licenses`): D6 resolved per-crate
-# dual MIT/Apache-2.0 for our own code, but LICENSE files, per-crate
-# `license` fields, and the allowlist below are the M4/Q29 deliverable.
-# What Q29 must encode (already known from D6):
+# Q29 measured the graph rather than inheriting D6's list, and the measurement
+# found TWO copyleft crates D6 never recorded. Full union, 772 packages:
 #
-#   * allow: MIT, Apache-2.0, BSD-3-Clause (ed25519-dalek), Unicode-3.0
-#     (unicode-ident et al.), plus the usual permissive residents of the
-#     graph at Q29 time;
-#   * **BlueOak-1.0.0**: required by `minicbor =2.3.0` (the pinned D7
-#     deterministic-CBOR codec) — permissive but uncommon, needs an
-#     explicit allowlist entry (D6 "Housekeeping");
-#   * **GPL-3.0**: enters the graph with `ant-core` at M1 via its
-#     mandatory `self_encryption ^0.36` dependency (GPL-3.0, no linking
-#     exception). No single workspace-wide allowlist is possible: the
-#     exception must be scoped to the antseal-net/antseal-cli dependency
-#     graph (their distribution is effectively GPL-3.0 while the dep
-#     remains), and MUST NOT extend to antseal-core/verifier-web — see the
-#     D6 CRITICAL flag on P15 before self_encryption ever nears the core.
+#   * self_encryption 0.36.0  GPL-3.0    <- ant-core            (D6 knew)
+#   * evmlib 0.9.0            GPL-3.0    <- ant-protocol        (D6 MISSED)
+#   * saorsa-core 0.26.2      AGPL-3.0   <- ant-protocol        (D6 MISSED)
 #
-# [licenses]
-# allow = []  # Q29 completes; see above.
+# All three are reachable from a SHIPPED `antseal-cli` over NORMAL edges, and
+# none is reachable in the DEFAULT feature set — verified by `cargo tree -i`
+# both ways. So the permissive core stands, and the copyleft is exactly the
+# `ant-backend` seam. AGPL-3.0 is strictly stronger than the GPL-3.0 D6
+# described; ./COPYRIGHT states it.
+#
+# The exceptions below are per-crate BY DESIGN. D6 is explicit that no single
+# workspace-wide allowlist is possible and that the copyleft MUST NOT extend to
+# antseal-core/verifier-web. A per-crate exception is the shape that fails
+# loudly if a fourth copyleft crate appears, where a blanket `allow` would
+# absorb it in silence.
+
+[licenses]
+# Permissive residents of the measured graph. An `A OR B` expression needs only
+# one of its arms here, so this is the satisfying set, not the observed set.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    # minicbor =2.3.0, the pinned D7 deterministic-CBOR codec: permissive but
+    # uncommon, so D6 "Housekeeping" required it be named explicitly.
+    "BlueOak-1.0.0",
+    "CDLA-Permissive-2.0",
+]
+
+# --- copyleft, scoped to the exact crate that carries it -------------------
+# AGPL-3.0. Strictly stronger than GPL-3.0 (section 13 adds the remote-network
+# source-offer term). Reached via ant-protocol; not in the default graph.
+[[licenses.exceptions]]
+name = "saorsa-core"
+allow = ["AGPL-3.0"]
+
+# GPL-3.0 via ant-protocol. The second GPL crate, absent from D6's record.
+[[licenses.exceptions]]
+name = "evmlib"
+allow = ["GPL-3.0"]
+
+# GPL-3.0, no linking exception. The one D6 named: ant-core's mandatory dep.
+[[licenses.exceptions]]
+name = "self_encryption"
+allow = ["GPL-3.0"]
+
+# --- weak (file-level) copyleft, also per-crate ----------------------------
+# `fastrlp` (MPL-2.0) appears in the lockfile union but resolves into NO graph
+# here, default or --all-features, so it gets no exception: cargo-deny reports
+# an unmatched exception as a warning, and dead config is how a stale allowance
+# survives a dependency's removal unnoticed.
+[[licenses.exceptions]]
+name = "attohttpc"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "option-ext"
+allow = ["MPL-2.0"]

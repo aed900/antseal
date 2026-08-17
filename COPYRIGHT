@@ -1,0 +1,119 @@
+antseal — copyright and licensing
+=================================
+
+Copyright (c) 2026 The antseal Authors.
+
+antseal's own source code is dual-licensed under either of
+
+  * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE),
+    <http://www.apache.org/licenses/LICENSE-2.0>)
+  * MIT license ([LICENSE-MIT](LICENSE-MIT),
+    <http://opensource.org/licenses/MIT>)
+
+at your option. This is the Rust ecosystem's customary `MIT OR Apache-2.0`
+dual licence, and it is what every `license` field in this workspace declares.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+licence, shall be dual licensed as above, without any additional terms or
+conditions.
+
+
+The part a licence file alone does not tell you
+-----------------------------------------------
+
+**The licence on our own code is not the whole licence picture for a
+distributed binary.** [D6](docs/decisions/D6-license.md) ruled this per-crate,
+and the split is deliberate:
+
+| Component | Our own code | What governs a *distributed binary* |
+| --- | --- | --- |
+| `antseal-core` | MIT OR Apache-2.0 | permissive — and **must stay so** |
+| `antseal-anchor` | MIT OR Apache-2.0 | permissive |
+| `verifier-web` | MIT OR Apache-2.0 | permissive |
+| `antseal-net` | MIT OR Apache-2.0 | **effectively AGPL-3.0** (see below) |
+| `antseal-cli` | MIT OR Apache-2.0 | **effectively AGPL-3.0** (see below) |
+
+A CLI built with the `ant-backend` feature — the only build that can actually
+seal — links `ant-core` and `ant-protocol` through `antseal-net`, and that
+pulls in **three copyleft crates**, measured in the resolved graph on
+2026-08-17 rather than taken from any list:
+
+| crate | licence | arrives via |
+| --- | --- | --- |
+| `self_encryption 0.36.0` | GPL-3.0, no linking exception | `ant-core` |
+| `evmlib 0.9.0` | GPL-3.0 | `ant-protocol` |
+| `saorsa-core 0.26.2` | **AGPL-3.0** | `ant-protocol` |
+
+Such a binary is therefore a combined work containing AGPL-3.0 code, and **its
+distribution must satisfy AGPL-3.0 regardless of the permissive licence on our
+own source**. AGPL-3.0 is strictly stronger than GPL-3.0: its §13 adds a
+remote-network source-offer term. For antseal's actual shape — a binary you run
+locally, acting as a client of the Autonomi network — the practical obligation
+is the same as GPL-3.0, because §13 binds whoever *offers* a modified program
+to remote users, not someone running their own copy. It is still a different
+licence with a different term, which is why it is named here rather than
+rounded down to "GPL".
+
+**All three are absent from a default build.** Verified both directions with
+`cargo tree -i --edges normal`: with `--features ant-backend` each has a path
+to `antseal-cli`; without it, none does, and the default graph resolves 213
+packages with no GPL or AGPL among them. That is what keeps `antseal-core`,
+`antseal-anchor` and `verifier-web` — and therefore the WASM verifier page —
+genuinely permissive.
+
+One caveat the per-crate table cannot show: `antseal-anchor` depends on
+`antseal-net` unconditionally. Its own code is permissive and it is clean in a
+default build, but a distributed binary with `ant-backend` enabled puts
+`antseal-anchor` inside the combined work too.
+
+Dual-licensing our own code is what keeps that contained: every line we write
+stays reusable under MIT or Apache-2.0, and the whole arrangement collapses to
+plain permissive the moment the GPL-3.0 dependency goes away.
+
+Two consequences worth stating plainly, because they are easy to get wrong:
+
+1. **The crates.io metadata is accurate but incomplete.** The published
+   `antseal-net` and `antseal-cli` records declare `MIT OR Apache-2.0`, which
+   correctly describes *our* code. It does not describe the distribution
+   obligation above. Read this file, not only the registry field.
+
+   Removing `self_encryption` would **not** dissolve the obligation, and D6
+   originally implied it would. `evmlib` and `saorsa-core` arrive by a
+   different path — `ant-protocol`, not `ant-core` — so all three would have
+   to go. D6's 2026-08-17 addendum corrects that sentence at source.
+
+2. **`self_encryption` must never become a direct `antseal-core` dependency.**
+   That would pull GPL-3.0 into the permissive core and therefore into the
+   WASM verifier page, destroying the split and the "hostable on any static
+   host" premise that `MVP-SPEC.md` line 157 rests on. D6 records the options
+   if the need arises; vendoring is not one of them, because vendoring keeps
+   the GPL.
+
+Where the licence files live, and why `verifier-web/` has none
+--------------------------------------------------------------
+
+`LICENSE-MIT` and `LICENSE-APACHE` sit at the repository root and are copied
+into each **publishable** crate (`antseal-core`, `antseal-anchor`,
+`antseal-net`, `antseal-cli`) so a published `.crate` carries its own licence
+text.
+
+**`verifier-web/` deliberately holds no licence file**, and the absence is
+enforced rather than accidental. `crates/antseal-wasm/tests/page_template.rs`
+asserts that directory holds *exactly* `index.template.html`, because a second
+file there "would silently widen what the R18 wording scan covers" — the page
+template is a frozen-wording surface, not an ordinary source directory. Q29
+originally added both licence files there per its own Accept row; the gate
+caught the conflict and the guard wins, since it is landed, tested, and
+protects a freeze.
+
+The redistribution grant `MVP-SPEC.md` line 157 requires for the page is
+unaffected: the root files licence the whole repository, `verifier-web`'s own
+code is `MIT OR Apache-2.0` like everything else, and nothing about hosting the
+built page depends on a licence file sitting beside the template. **Carrying
+licence text in the DEPLOYED page artifact is a separate question and is owed
+by Q31**, which owns what the release actually publishes — it is not satisfied,
+and must not be assumed satisfied, by this file.
+
+Third-party code retains its own licences. `docs/dependency-policy.md` and
+`deny.toml` govern what is admissible in the dependency graph.

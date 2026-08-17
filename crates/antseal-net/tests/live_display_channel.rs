@@ -38,8 +38,8 @@ use antseal_core::verify::{VerifyOptions, wording};
 use antseal_net::test_util::block_on;
 use antseal_net::{
     Address, BalanceReport, Blob, CostQuote, FetchFailureClass, LiveSubject, PaymentReceipt,
-    PersistenceOutcome, StorageBackend, StorageError, StorageRecord, UnitKindTag, live_check,
-    live_inputs,
+    PersistenceOutcome, StorageBackend, StorageError, StorageRecord, UnitKindTag,
+    fetch_failure_class, live_check, live_inputs,
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -234,9 +234,10 @@ fn a_hostile_backend_error_reaches_no_part_of_the_rendered_live_row() {
     assert_eq!(
         outcome,
         &LiveBlobOutcome::FetchFailed {
-            reason: FetchFailureClass::Transport.label().to_owned(),
+            class: FetchFailureClass::Transport,
         },
-        "the outcome carries the class's label and nothing else"
+        "the outcome carries the class itself and nothing else (R89: there is \
+         no longer a slot a label — or anything else — could be written into)"
     );
 
     for (what, fragment) in forbidden_fragments() {
@@ -252,7 +253,10 @@ fn a_hostile_backend_error_reaches_no_part_of_the_rendered_live_row() {
     assert_eq!(line.lines().count(), 1, "one row is one line: {line:?}");
     assert_eq!(
         line,
-        &wording::live_blob_fetch_error_line("unit 7", FetchFailureClass::Transport.label())
+        &wording::live_blob_fetch_error_line(
+            "unit 7",
+            wording::live_fetch_failure_class_label(FetchFailureClass::Transport)
+        )
     );
 }
 
@@ -267,12 +271,12 @@ fn a_store_path_error_on_a_read_renders_its_own_class_and_leaks_nothing() {
     assert_eq!(
         outcome,
         &LiveBlobOutcome::FetchFailed {
-            reason: FetchFailureClass::BackendRefused.label().to_owned(),
+            class: FetchFailureClass::BackendRefused,
         }
     );
     assert_ne!(
-        FetchFailureClass::BackendRefused.label(),
-        FetchFailureClass::Transport.label(),
+        wording::live_fetch_failure_class_label(FetchFailureClass::BackendRefused),
+        wording::live_fetch_failure_class_label(FetchFailureClass::Transport),
         "the two classes are distinguishable in the rendering, not only in the type"
     );
     for (what, fragment) in forbidden_fragments() {
@@ -301,7 +305,7 @@ fn the_fetch_failure_vocabulary_is_finite_and_static() {
     let mut labels: Vec<&'static str> = Vec::new();
     let mut tokens: Vec<&'static str> = Vec::new();
     for class in FetchFailureClass::ALL {
-        let label = class.label();
+        let label = wording::live_fetch_failure_class_label(class);
         assert!(!label.is_empty(), "{class:?} renders as nothing");
         assert!(
             !label.contains('\n'),
@@ -323,7 +327,7 @@ fn the_fetch_failure_vocabulary_is_finite_and_static() {
 ///
 /// The list below is written out rather than derived, so a new variant makes
 /// this test's count wrong at the same moment it makes
-/// `FetchFailureClass::of` fail to compile.
+/// `fetch_failure_class` fail to compile.
 #[test]
 fn only_a_negative_answer_classifies_as_no_failure() {
     let all = [
@@ -352,17 +356,17 @@ fn only_a_negative_answer_classifies_as_no_failure() {
 
     let answers: Vec<&StorageError> = all
         .iter()
-        .filter(|error| FetchFailureClass::of(error).is_none())
+        .filter(|error| fetch_failure_class(error).is_none())
         .collect();
     assert_eq!(answers.len(), 1, "exactly one variant is an answer");
     assert!(matches!(answers[0], StorageError::NotFound { .. }));
 
     assert_eq!(
-        FetchFailureClass::of(&StorageError::Network { reason: "r".into() }),
+        fetch_failure_class(&StorageError::Network { reason: "r".into() }),
         Some(FetchFailureClass::Transport)
     );
     assert_eq!(
-        FetchFailureClass::of(&StorageError::ProofsExpired),
+        fetch_failure_class(&StorageError::ProofsExpired),
         Some(FetchFailureClass::BackendRefused)
     );
 }

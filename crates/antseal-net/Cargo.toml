@@ -3,6 +3,7 @@ name = "antseal-net"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # NOT a WASM crate: this crate is the Autonomi storage/payment boundary and
 # never enters the verifier page's graph — it must never be added to a wasm

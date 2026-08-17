@@ -87,7 +87,7 @@
 //! [`VerificationReport::to_canonical_json`]:
 //!     super::report::VerificationReport::to_canonical_json
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::anchor::model::{AnchorArtifacts, OnlineEvidence};
 use crate::anchor::verdicts::{AnchorVerdicts, evaluate_anchors};
@@ -204,6 +204,93 @@ impl OnlineInputs {
     }
 }
 
+/// Why a live fetch produced no answer — the closed class
+/// [`LiveBlobOutcome::FetchFailed`] carries, and **the single home of the
+/// live-storage failure taxonomy** (R89).
+///
+/// # Why it lives here and not at the storage boundary
+///
+/// R79 minted this class in `antseal-net`, beside the `StorageError` it
+/// classifies, and left the projection carrying a `String` that could only
+/// ever hold the class's own label. That was **type-precision debt, not an
+/// open channel**: the one production path already produced a `&'static str`
+/// from a wildcard-free match, so no adversary byte could reach a display
+/// line — but the *type* still admitted one, and only convention stood
+/// between a caller and arbitrary text on a verdict surface.
+///
+/// R89 closes it by moving the class into the crate that owns the rendered
+/// value. The direction is forced: `antseal-core` is WASM-safe and must never
+/// depend on `antseal-net`, so a projection that carries the class can only
+/// carry *this* definition. What stays at the boundary is the half that needs
+/// `StorageError` in hand — `antseal_net::fetch_failure_class`, still the
+/// only wildcard-free match over that error on the live path — and it now
+/// converts **once**, into this type, with nothing to re-spell afterwards.
+///
+/// (Every `antseal-net` name here is a **code span, never a link**: this
+/// crate's `[dependencies]` does not include that one and must not, so there
+/// is nothing for rustdoc to resolve — the same constraint D137 §1 (h)
+/// records for the chain-id literals.)
+///
+/// # The pair this belongs to
+///
+/// [`ProbeFailureClass`](super::overlay::ProbeFailureClass) is the same
+/// discipline for the *online* boundary, and its doc carries the measurement
+/// that reverses the intuition about which side was the exposed one. **Read
+/// the two together; each names the other so neither is found alone.**
+///
+/// The display word is [`wording::live_fetch_failure_class_label`], beside
+/// [`probe_failure_class_label`](super::wording::probe_failure_class_label)
+/// and for the same reason: the frozen wording set is where a rendered
+/// sentence is spelled, so the snapshot document and the shipped label are
+/// one fact rather than two that happen to agree.
+///
+/// # What the class deliberately cannot say
+///
+/// `AntCoreBackend::get_data` reports its own BLAKE3 re-check failure through
+/// the same `StorageError::Network` as a plain timeout, so the two are
+/// indistinguishable **by variant** and this class cannot separate them. That
+/// distinction lived only in the free-form string R79 closed; recovering it
+/// needs a `StorageError` variant of its own, which is an S2-taxonomy event.
+/// Recorded so the next reader does not mistake the loss for an oversight —
+/// and note that for a live row the two mean the same thing: no usable answer
+/// arrived.
+///
+/// Serialized with its variant names unrenamed (`"Transport"`,
+/// `"BackendRefused"`), which is the form `antseal-net`'s
+/// `PersistenceOutcome` already emitted for it before the move — the machine
+/// token, when one is wanted in prose or a key, is [`Self::token`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FetchFailureClass {
+    /// No usable answer arrived from the network: transport failure, timeout,
+    /// unreachable peers, or an answer the client refused
+    /// (`StorageError::Network`).
+    Transport,
+    /// The backend refused the read for a reason that is not about reaching
+    /// the network at all — a quote, payment or store-path failure surfacing
+    /// from an operation that neither quotes, pays nor stores. It is a
+    /// statement about the backend, never about the address.
+    BackendRefused,
+}
+
+impl FetchFailureClass {
+    /// Every class, in declaration order — the sweep operand for the label
+    /// test, and the operand the frozen wording snapshot renders a row from,
+    /// so a third class arrives unspelled in neither place.
+    ///
+    /// ([`ProbeFailureClass::ALL`](super::overlay::ProbeFailureClass::ALL)'s
+    /// pattern.)
+    pub const ALL: [Self; 2] = [Self::Transport, Self::BackendRefused];
+
+    /// This class's stable machine token — wildcard-free (the L2 discipline).
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Transport => "transport",
+            Self::BackendRefused => "backend-refused",
+        }
+    }
+}
+
 /// What the network said about one stored blob — the WASM-safe projection of
 /// `antseal-net`'s `PersistenceOutcome`, which lives in a crate this one must
 /// never depend on (the same relationship
@@ -225,15 +312,23 @@ pub enum LiveBlobOutcome {
     /// The fetch could not be completed, so nothing was established either
     /// way.
     FetchFailed {
-        /// Host-supplied diagnostic detail from the storage boundary.
+        /// Which class of failure — the classification key *and* the only
+        /// thing that renders ([`FetchFailureClass`]).
         ///
-        /// **Never a classification key** — callers match on the outcome, not
-        /// on this string — and never secret material (S15's own hygiene
-        /// rule, inherited). It is host-authored text that reaches a display
-        /// line, so a renderer escapes it for its own surface exactly as it
-        /// escapes [`FileRedaction::path`](super::redaction::FileRedaction::path)
-        /// (D67 §3 R6's value-vs-rendering split).
-        reason: String,
+        /// **A closed class, never free-form detail.** Until R89 this was a
+        /// `String`; after R79 the one production path could only put
+        /// [`FetchFailureClass`]'s own label in it, so the guarantee held by
+        /// that path rather than by construction, and any caller could
+        /// construct the variant with arbitrary text. It is now a type error
+        /// to do so, and the renderer below spells the class through
+        /// [`wording::live_fetch_failure_class_label`] — the frozen table —
+        /// so no host, backend or network chooses a byte on this line.
+        ///
+        /// Contrast [`FileRedaction::path`](super::redaction::FileRedaction::path),
+        /// which *is* a value a renderer must escape for its own surface
+        /// (D67 §3 R6's value-vs-rendering split): the split is the reason
+        /// this field being closed is worth stating rather than assumed.
+        class: FetchFailureClass,
     },
 }
 
@@ -707,9 +802,12 @@ impl LiveSection {
                         counts.not_found = counts.not_found.saturating_add(1);
                         wording::live_blob_not_found_line(&row.subject)
                     }
-                    LiveBlobOutcome::FetchFailed { reason } => {
+                    LiveBlobOutcome::FetchFailed { class } => {
                         counts.fetch_failed = counts.fetch_failed.saturating_add(1);
-                        wording::live_blob_fetch_error_line(&row.subject, reason)
+                        wording::live_blob_fetch_error_line(
+                            &row.subject,
+                            wording::live_fetch_failure_class_label(*class),
+                        )
                     }
                 };
                 RenderedLiveRow {

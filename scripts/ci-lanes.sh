@@ -25,7 +25,7 @@
 #   traceability      self-test, then the two documented-claim checks
 #   ci-shell          self-test, then Q43's own guard over every workflow
 #   secret-guard      self-test, then the vault-export/wallet-key scan
-#   audit-deny        cargo-deny advisories/bans/sources
+#   audit-deny        cargo-deny advisories/bans/sources/licenses
 #   fuzz-budget       self-test, then the scheduled fuzz lane's monthly
 #                     minute cost against its named ceiling (D61)
 #   anchor-net-policy self-test, then Q16's no-real-anchor-network policy:
@@ -1384,7 +1384,7 @@ lane_audit_deny() {
     cargo install cargo-deny --version 0.19.8 --locked"
   cargo deny --version
   # Explicit check list, never a bare `check`: licenses are STUBBED until Q29.
-  cargo deny --locked check advisories bans sources
+  cargo deny --locked check advisories bans sources licenses
 }
 
 # Q43's test-of-the-test: reproduce the Q8 defect and watch this lane go red

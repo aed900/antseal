@@ -85,3 +85,75 @@ execution (recheck upstream state at P9 and P15):
   five — placeholders contain only our own (empty) code and no ant-core
   dependency, so the GPL effect does not attach to them; the net/cli
   distribution note attaches at first real publish.
+
+## Addendum — 2026-08-17 (Q29 execution): the graph carries TWO copyleft crates this record never named, and one of them is AGPL-3.0
+
+Q29 landed the LICENSE files, the per-crate `license` fields and the
+`deny.toml` allowlist. It derived the allowlist **from the resolved graph
+rather than from this record's list**, and that is what found the gap.
+
+**Measured 2026-08-17, `cargo metadata --all-features`, 772 packages:**
+
+| crate | licence | reaches the shipped CLI via | in this record? |
+| --- | --- | --- | --- |
+| `self_encryption 0.36.0` | GPL-3.0 | `ant-core` | yes |
+| `evmlib 0.9.0` | **GPL-3.0** | `ant-protocol` | **NO** |
+| `saorsa-core 0.26.2` | **AGPL-3.0** | `ant-protocol` | **NO** |
+
+All three are reachable from a shipped `antseal-cli` over **normal** (not dev)
+edges, verified with `cargo tree -p antseal-cli --features ant-backend -i
+<crate> --edges normal`. **None is reachable in the default feature set** —
+the same command without `--features ant-backend` finds no path for any of the
+three, and a default `cargo metadata` resolves 213 packages with no GPL or
+AGPL among them.
+
+**What stands.** The core conclusion of this record is unaffected and is now
+better evidenced: `antseal-core`, `antseal-anchor` and `verifier-web` are
+permissive, the copyleft is confined to the `ant-backend` seam, and the WASM
+verifier page is clean. The per-crate split was the right shape.
+
+**What changes.**
+
+1. **The obligation is AGPL-3.0, not GPL-3.0.** AGPL-3.0 is strictly stronger:
+   its §13 adds a remote-network source-offer term that GPL-3.0 has no
+   equivalent for. For antseal's actual distribution model — a binary the user
+   runs locally, acting as a client of the Autonomi network — the practical
+   obligation on the maintainer is the same as GPL-3.0, because §13 binds
+   whoever *offers* the modified program to remote users, not a user running
+   their own copy. It is nevertheless a different licence with a different
+   term, and every place this project describes the obligation must say
+   AGPL-3.0. `./COPYRIGHT` does.
+2. **The GPL-3.0 source is not one crate but two**, and the second arrives by
+   a different path — `ant-protocol` rather than `ant-core`. Any future
+   argument that removing `self_encryption` dissolves the issue is **wrong**:
+   it would leave `evmlib` and `saorsa-core` in place. This record's
+   Decision-section sentence *"the whole arrangement collapse[s] to plain
+   permissive the moment the GPL dep goes away"* is therefore **corrected**:
+   there are three copyleft deps by two paths, and all three must go.
+3. **`antseal-anchor` needs a caveat this record's table does not carry.** It
+   depends on `antseal-net` unconditionally (`crates/antseal-anchor/Cargo.toml`
+   `antseal-net.workspace = true`). Its own code is permissive and it is clean
+   in a default build, but a distributed binary that enables `ant-backend`
+   puts `antseal-anchor` inside the combined work too. The table's
+   "permissive" for that row is about its own code and the default graph.
+
+**Why the exceptions are per-crate.** `deny.toml` now names each copyleft
+crate in its own `[[licenses.exceptions]]` block rather than adding the
+licences to `allow`. That is this record's own "no single workspace-wide
+allowlist" rule, and it has a second virtue found in execution: a per-crate
+exception **fails loudly when a fourth copyleft crate appears**, where a
+blanket allow would absorb it silently — which is precisely how the two crates
+above went unrecorded for so long. Proven rather than asserted: removing the
+`self_encryption` exception makes `cargo deny --all-features check licenses`
+exit **4** with `rejected: license is not explicitly allowed`; restored, it
+exits 0.
+
+**The licenses check is no longer stubbed.** `scripts/ci-lanes.sh`'s
+`audit-deny` lane now runs `cargo deny --locked check advisories bans sources
+licenses` and reports `advisories ok, bans ok, licenses ok, sources ok`.
+
+**Not settled here.** Whether the GPL-3.0/AGPL-3.0 obligations are actually
+*discharged* by the chosen distribution channel — offering corresponding
+source for the combined work — is a Q31/Q22 release-process question, not a
+licence-selection one. This addendum records what the obligation IS; it does
+not claim it is met.

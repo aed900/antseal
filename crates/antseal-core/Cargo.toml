@@ -3,6 +3,7 @@ name = "antseal-core"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # Shared test infrastructure (Q2/Q3/Q4/Q5): the golden-vector schema/executor
 # and the shared proptest strategies live in `src/test_util/` behind these

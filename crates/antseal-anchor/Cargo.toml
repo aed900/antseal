@@ -3,6 +3,7 @@ name = "antseal-anchor"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # --- Feature policy (D90 Decision 1) ---
 #

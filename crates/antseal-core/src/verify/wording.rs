@@ -75,6 +75,7 @@
 //! output is byte-identical on native and wasm32.
 
 use super::aggregate::headline_eligible;
+use super::orchestration::FetchFailureClass;
 use super::overlay::{EndpointProbeFailure, ProbeFailureClass};
 use super::report::{AnchorKind, AnchorState, SignatureScheme, StorageLinkageResult};
 use super::verdict::Headline;
@@ -747,9 +748,39 @@ pub fn live_blob_not_found_line(subject: &str) -> String {
 }
 
 /// One `--live` row: the fetch failed, so nothing was established either way.
+///
+/// The `reason` slot takes [`live_fetch_failure_class_label`]'s output and
+/// nothing else — after R89 the projection carries a closed class, so there
+/// is no other value that can reach this parameter from the product.
 #[must_use]
 pub fn live_blob_fetch_error_line(subject: &str, reason: &str) -> String {
     format!("{subject}: fetch failed ({reason}) — nothing established either way")
+}
+
+/// The failure-class word for one live fetch failure. Wildcard-free so a new
+/// class cannot ship unspelled (the L2 discipline at the class level), and
+/// the **one** place a live fetch failure is spelled anywhere in the product.
+///
+/// The sibling of [`probe_failure_class_label`], and deliberately its
+/// neighbour: the storage boundary and the online boundary each hand this
+/// table a closed class and take back a `&'static str`. Until R89 the live
+/// half was spelled in `antseal-net` instead, which left the R18-frozen
+/// snapshot document and the shipped label agreeing **by coincidence** — a
+/// reworded label moved the product's rendered line and no test went red.
+/// The snapshot generator now renders this function over
+/// [`FetchFailureClass::ALL`], so the two are one fact.
+///
+/// `Transport`'s word is [`probe_failure_class_label`]'s for the same class,
+/// and it is the word the R18-frozen row already carried before the move, so
+/// that half moved no frozen byte. `BackendRefused`'s is a **new** frozen
+/// sentence: it had no row of its own, because before R89 nothing rendered
+/// the class set exhaustively.
+#[must_use]
+pub const fn live_fetch_failure_class_label(class: FetchFailureClass) -> &'static str {
+    match class {
+        FetchFailureClass::Transport => "transport failure",
+        FetchFailureClass::BackendRefused => "the backend refused the read",
+    }
 }
 
 // ---------------------------------------------------------------------------

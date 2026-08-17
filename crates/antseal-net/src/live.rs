@@ -59,8 +59,23 @@ use std::collections::BTreeMap;
 
 use crate::{Address, StorageBackend, StorageError};
 
-/// Why a live fetch could not be completed — a **closed** class over the
-/// [`StorageError`] variants a read can produce.
+/// The closed live-failure class, **defined once in `antseal-core`** and
+/// re-exported here because this is the crate that classifies into it.
+///
+/// R89 moved the type: it is carried by
+/// [`LiveBlobOutcome::FetchFailed`](antseal_core::verify::orchestration::LiveBlobOutcome::FetchFailed)
+/// and spelled by
+/// [`live_fetch_failure_class_label`](antseal_core::verify::wording::live_fetch_failure_class_label),
+/// both in a crate this one depends on and which can never depend back — so
+/// a projection that *carries* the class can only carry that definition, and
+/// a second definition here would be a second thing to keep true. What stays
+/// on this side is the half that needs [`StorageError`] in hand:
+/// [`fetch_failure_class`].
+pub use antseal_core::verify::orchestration::FetchFailureClass;
+
+/// Classify one storage-boundary failure into [`FetchFailureClass`], **while
+/// the [`StorageError`] variant is still in hand** — never by re-parsing a
+/// rendered string.
 ///
 /// # R79's ruling: one discipline governs both network boundaries
 ///
@@ -115,106 +130,49 @@ use crate::{Address, StorageBackend, StorageError};
 /// reader does not mistake the loss for an oversight — and note that for a
 /// live row the two mean the same thing: no usable answer arrived.
 ///
-/// # The other half of the ruling, and what is still owed
+/// # The answer-vs-failure split, returned from one function
 ///
-/// The remaining widening is a **type-precision** debt, not an open channel:
-/// core's `LiveBlobOutcome::FetchFailed` still holds a `String`, which after
-/// this change can only ever hold [`Self::label`]'s output. Tightening it to
-/// carry this class — and moving the label into `verify::wording` beside
-/// [`ProbeFailureClass`]'s — belongs in `antseal-core` and is named on
-/// R79's row.
+/// `None` means the error is a negative *answer* rather than a failure to
+/// get one ([`StorageError::NotFound`]): the network said "no such chunk",
+/// which is evidence-relevant and gets [`PersistenceOutcome::NotFound`], not
+/// a failure class. Returning the split from one function is deliberate — it
+/// is the only match over [`StorageError`] on this path, so the two outcomes
+/// cannot drift apart and a new variant forces one decision rather than two.
+///
+/// **Wildcard-free** (the discipline R11 applied to
+/// [`UnitKindTag`](crate::UnitKindTag)): a new [`StorageError`] variant fails
+/// to compile here rather than falling into a catch-all — which is exactly
+/// how the free-form channel this class replaces was opened, one layer up, by
+/// `map_ant_error`'s `other =>` arm.
+///
+/// # Where the class and its word live (R89)
+///
+/// The type is [`antseal_core::verify::orchestration::FetchFailureClass`] and
+/// its display word is
+/// [`antseal_core::verify::wording::live_fetch_failure_class_label`], beside
+/// [`ProbeFailureClass`]'s. This function is the whole of `antseal-net`'s
+/// share: it converts **once**, at the boundary, and nothing downstream
+/// re-spells the result. Before R89 the class and its label were defined
+/// here and the projection carried a `String` that could only ever hold that
+/// label — type-precision debt rather than an open channel, since the one
+/// production path already produced a `&'static str`, but it left the
+/// R18-frozen snapshot document and the shipped label agreeing by
+/// coincidence.
 ///
 /// [`ProbeFailureClass`]: antseal_core::verify::overlay::ProbeFailureClass
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum FetchFailureClass {
-    /// No usable answer arrived from the network: transport failure, timeout,
-    /// unreachable peers, or an answer this client refused
-    /// ([`StorageError::Network`]).
-    Transport,
-    /// The backend refused the read for a reason that is not about reaching
-    /// the network at all — a quote, payment or store-path failure surfacing
-    /// from an operation that neither quotes, pays nor stores. It is a
-    /// statement about the backend, never about the address.
-    BackendRefused,
-}
-
-impl FetchFailureClass {
-    /// Every class, in declaration order — the sweep operand for the label
-    /// test ([`ProbeFailureClass::ALL`]'s pattern).
-    ///
-    /// [`ProbeFailureClass::ALL`]:
-    ///     antseal_core::verify::overlay::ProbeFailureClass::ALL
-    pub const ALL: [Self; 2] = [Self::Transport, Self::BackendRefused];
-
-    /// Classify one storage-boundary failure, **while the variant is still in
-    /// hand** — never by re-parsing a rendered string.
-    ///
-    /// `None` means the error is a negative *answer* rather than a failure to
-    /// get one ([`StorageError::NotFound`]): the network said "no such
-    /// chunk", which is evidence-relevant and gets
-    /// [`PersistenceOutcome::NotFound`], not a failure class. Returning the
-    /// split from one function is deliberate — it is the only match over
-    /// [`StorageError`] on this path, so the two outcomes cannot drift apart
-    /// and a new variant forces one decision rather than two.
-    ///
-    /// **Wildcard-free** (the discipline R11 applied to
-    /// [`UnitKindTag`](crate::UnitKindTag)): a new [`StorageError`] variant
-    /// fails to compile here rather than falling into a catch-all — which is
-    /// exactly how the free-form channel this class replaces was opened, one
-    /// layer up, by `map_ant_error`'s `other =>` arm.
-    #[must_use]
-    pub const fn of(error: &StorageError) -> Option<Self> {
-        match error {
-            // An answer, not a failure to get one.
-            StorageError::NotFound { .. } => None,
-            StorageError::Network { .. } => Some(Self::Transport),
-            StorageError::Quote { .. }
-            | StorageError::Payment { .. }
-            | StorageError::InsufficientAnt { .. }
-            | StorageError::InsufficientGas { .. }
-            | StorageError::Finalize { .. }
-            | StorageError::StrandedPayment { .. }
-            | StorageError::ProofsExpired => Some(Self::BackendRefused),
-        }
-    }
-
-    /// The display word for this class — the **one** place a live fetch
-    /// failure is spelled, wildcard-free so a third class cannot land
-    /// unnamed.
-    ///
-    /// It lives here rather than in `antseal-core`'s `verify::wording`
-    /// because the class is this crate's own taxonomy over this crate's own
-    /// error type, exactly as
-    /// [`probe_failure_class_label`] is core's over core's; the courier
-    /// between them (`verify_host.rs`'s `blob_outcome`) authors nothing. The
-    /// end state named on R79's row moves both the class and this function
-    /// into core beside `LiveBlobOutcome`; until then this is the single
-    /// spelling and the label is a `&'static str` so no other value can
-    /// occupy the slot.
-    ///
-    /// `Transport`'s word is `probe_failure_class_label`'s for the same
-    /// class, and the R18-frozen row already renders it
-    /// (`tests/snapshots/verdict-wording.txt`, via
-    /// `live_blob_fetch_error_line("unit 7", "transport failure")`), so this
-    /// ruling moves no frozen byte.
-    ///
-    /// [`probe_failure_class_label`]:
-    ///     antseal_core::verify::wording::probe_failure_class_label
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Transport => "transport failure",
-            Self::BackendRefused => "the backend refused the read",
-        }
-    }
-
-    /// This class's stable machine token — wildcard-free (the L2 discipline).
-    #[must_use]
-    pub const fn token(self) -> &'static str {
-        match self {
-            Self::Transport => "transport",
-            Self::BackendRefused => "backend-refused",
-        }
+#[must_use]
+pub const fn fetch_failure_class(error: &StorageError) -> Option<FetchFailureClass> {
+    match error {
+        // An answer, not a failure to get one.
+        StorageError::NotFound { .. } => None,
+        StorageError::Network { .. } => Some(FetchFailureClass::Transport),
+        StorageError::Quote { .. }
+        | StorageError::Payment { .. }
+        | StorageError::InsufficientAnt { .. }
+        | StorageError::InsufficientGas { .. }
+        | StorageError::Finalize { .. }
+        | StorageError::StrandedPayment { .. }
+        | StorageError::ProofsExpired => Some(FetchFailureClass::BackendRefused),
     }
 }
 
@@ -257,7 +215,9 @@ pub enum PersistenceOutcome {
     /// backend failure that is not a negative answer).
     ///
     /// **Carries a closed class, never free-form detail — R79's ruling, and
-    /// the whole of it is argued on [`FetchFailureClass`].** The taxonomy is
+    /// the whole of it is argued on [`fetch_failure_class`], the boundary
+    /// classifier ([`FetchFailureClass`] itself is core's since R89).** The
+    /// taxonomy is
     /// the contract: this is what a caller matches on, this is what renders,
     /// and no byte chosen by the far end of the connection can occupy the
     /// slot. It is the same discipline core's
@@ -395,11 +355,11 @@ pub async fn check_persistence<B: StorageBackend>(
             let outcome = match &fetched {
                 Ok(bytes) => compare(bytes, expected[row].1),
                 // R79: classified from the VARIANT, while it is still in
-                // hand. `FetchFailureClass::of` owns both halves of the
+                // hand. `fetch_failure_class` owns both halves of the
                 // answer-vs-failure split, so there is one wildcard-free
                 // match over `StorageError` on this path and the error's
                 // `Display` is never consulted at all.
-                Err(error) => match FetchFailureClass::of(error) {
+                Err(error) => match fetch_failure_class(error) {
                     None => PersistenceOutcome::NotFound,
                     Some(class) => PersistenceOutcome::FetchError { class },
                 },

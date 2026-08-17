@@ -34,8 +34,19 @@ members = [
 [workspace.package]
 edition = "2024"
 rust-version = "1.92.0"
-# NOTE: no `license` field yet — the license decision (D6) lands later.
-# Adding it is a deliberate, recorded event, not a drive-by edit.
+# D6 ruled this per-crate and Q29 landed it (2026-08-16). Our OWN code is
+# `MIT OR Apache-2.0` in every crate, inherited from here so there stays
+# exactly one declaration point.
+#
+# This field describes our source and NOT the obligation on a distributed
+# binary: `antseal-net`/`antseal-cli` link `ant-core`, whose mandatory
+# `self_encryption` dep is GPL-3.0 with no linking exception, so any binary
+# linking them is a combined work whose DISTRIBUTION must satisfy GPL-3.0.
+# That split is stated in ./COPYRIGHT and ruled in
+# docs/decisions/D6-license.md. Never make `self_encryption` a direct
+# `antseal-core` dependency: it would pull GPL-3.0 into the WASM verifier
+# page and destroy the permissive core.
+license = "MIT OR Apache-2.0"
 
 # ----------------------------------------------------------------------------
 # SINGLE version-declaration point for the whole workspace.

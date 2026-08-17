@@ -99,6 +99,7 @@ unit 7: still served, byte-identical
 unit 7: the network served different bytes
 unit 7: not found on the network
 unit 7: fetch failed (transport failure) — nothing established either way
+unit 7: fetch failed (the backend refused the read) — nothing established either way
 
 ════ 10. the online advisory overlay (D64) ════
 online advisory — must-agree endpoint pairs; does not replace the offline verdict above; online results can strengthen or refute individual anchors

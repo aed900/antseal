@@ -624,7 +624,7 @@ fn live_rows() -> LiveInputs {
         LiveBlobRow {
             subject: "encrypted manifest".to_owned(),
             outcome: LiveBlobOutcome::FetchFailed {
-                reason: "transport failure".to_owned(),
+                class: FetchFailureClass::Transport,
             },
         },
     ])
@@ -653,7 +653,10 @@ fn live_mode_renders_a_row_per_blob_from_the_frozen_table() {
             wording::live_blob_identical_line("unit 0"),
             wording::live_blob_different_line("unit 1"),
             wording::live_blob_not_found_line("unit 2"),
-            wording::live_blob_fetch_error_line("encrypted manifest", "transport failure"),
+            wording::live_blob_fetch_error_line(
+                "encrypted manifest",
+                wording::live_fetch_failure_class_label(FetchFailureClass::Transport),
+            ),
         ]
     );
     assert_eq!(
@@ -694,7 +697,7 @@ fn the_live_verdict_follows_r11s_precedence() {
             vec![
                 LiveBlobOutcome::Identical,
                 LiveBlobOutcome::FetchFailed {
-                    reason: "transport failure".to_owned(),
+                    class: FetchFailureClass::Transport,
                 },
             ],
             LiveLayerVerdict::Inconclusive,
@@ -704,7 +707,7 @@ fn the_live_verdict_follows_r11s_precedence() {
             vec![
                 LiveBlobOutcome::NotFound,
                 LiveBlobOutcome::FetchFailed {
-                    reason: "transport failure".to_owned(),
+                    class: FetchFailureClass::Transport,
                 },
             ],
             LiveLayerVerdict::SomeMissing,
@@ -715,7 +718,7 @@ fn the_live_verdict_follows_r11s_precedence() {
                 LiveBlobOutcome::Different,
                 LiveBlobOutcome::NotFound,
                 LiveBlobOutcome::FetchFailed {
-                    reason: "transport failure".to_owned(),
+                    class: FetchFailureClass::Transport,
                 },
             ],
             LiveLayerVerdict::Divergent,
