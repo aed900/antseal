@@ -152,6 +152,36 @@ const ALLOWED: &[(&str, &str)] = &[
          wrong — the CLI renders the guard's outcome and owns none of it — \
          and that is corrected at the citation in the same act",
     ),
+    (
+        "refuse_split_on_no_fine_tree",
+        "cross-crate reference: lives in the antseal-cli crate at \
+         src/seal_plan.rs:454, cited by content/unit.rs:36 and \
+         content/split.rs:65 as the CLI-side half of D24 that this crate's \
+         model layer delegates to — D24 §1's hard error, raised inside \
+         `build_plan` before consent, the vault, the passphrase or any \
+         network access, as `invalid-seal-argument` (exit 27). It is the \
+         first pointer from this crate's PRODUCTION docs at another crate's \
+         PRODUCTION function; the three entries above all point at tests, \
+         and the rule's scope is functions rather than tests, so the kind is \
+         the same. Written 2026-08-18 by U82 (D149 §2 R8), which replaced \
+         two comments that had asserted this error existed for months while \
+         nothing raised it — so the pointer is now true for the first time \
+         and is worth keeping rather than softening. Backticks are \
+         deliberately NOT removed: this file's own Scope note calls that the \
+         one repair that is never correct. It cannot resolve here because \
+         the sweep is scoped to this crate; widening it is Q70, and when Q70 \
+         lands this entry starts resolving and no_allowlist_entry_is_stale \
+         will fail until it is deleted. The pointer is real and was verified \
+         by hand on 2026-08-18: the declaration sits at \
+         crates/antseal-cli/src/seal_plan.rs:454. That location is quoted \
+         WITHOUT the `fn` keyword in front of the name on purpose — \
+         `defined_fns` scans every non-`//` line of this crate's sources for \
+         `fn <ident>`, and these reason strings are code lines, so writing \
+         the declaration out here would register a definition in THIS crate \
+         and make this very entry read as spent to \
+         no_allowlist_entry_is_stale (measured 2026-08-18, first draft of \
+         this entry did exactly that)",
+    ),
 ];
 
 /// The one file the sweep skips: this one, which must quote example pointers
