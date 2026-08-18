@@ -733,3 +733,19 @@
 - R: consumes the manifest/bundle codecs and `body_bytes()` API for M3 assembly and verification; owns all semantic/structural invariant checks (tiling, `true_length` = range width, leaf-exact cover, partial-reveal isolation, salt-length verdict mapping) and their tamper rows; joint error-name mapping where F's schema length errors underlie R rows.
 - Q: CI wiring for cargo-fuzz, wasm32 build + native/WASM bit-match jobs, per-version golden-vector retain-forever policy; global tamper-matrix harness consuming F15's fixture→error mapping; co-owned F14 cross-check CI job and M0 freeze gate.
 - U: presentation of `WorkId` (lowercase hex provided by F's `Display`) and all user-facing format-error rendering.
+
+### F56 — `SUPPORTED_VERSIONS`' doc comment claims a release that has never happened
+
+- Milestone: M4 *(the row sits in the M0 block because F is homed there, and carries the `**(M4)**` tag the F53–F55 rows use; the claim is about **release**, and the milestone that certifies a release is M4)*
+- Size: S
+- Deps: after F1/Q14 (the format-v1 freeze), D104 §1.5 (the measurement); relates to Q132/Q148/D114 (the line-123 citation family)
+- Spec: Format stability (MVP-SPEC.md line 123) — the compatibility rule, which is conditioned on *released*
+- Discovered by: **Q27's lane** (2026-08-17), while writing the format-stability policy against the shipped constants.
+- Problem: **a shipped doc comment states as fact the condition the crate's own test module measures to be false.** `crates/antseal-core/src/format.rs:112` reads *"v1 is the sole entry and the only version that has ever been released."* Nothing has been released. `crates/antseal-core/tests/format_freeze.rs:40` — **in the same crate** — cites **D104 §1.5**, which measures it with three independent confirmations (`docs/decisions/D104-max-ots-depth-lowering-window.md:193-200`): every crate is `version = "0.0.0"` across eight manifests; the only tags are `format-v1-freeze` and `pre-trailer-strip-949dd9d`, neither a release; and Q30 (signing keys) and Q31 (release workflow, versioning scheme) are unbuilt. D97 §1.3 had already ruled the same fact for a different constant. The over-claim matters because line 123's whole obligation is **conditioned on *released***: a comment asserting the condition is satisfied invites exactly the misreading Q132 and Q148 spent two rows correcting, and it does so inside the module those corrections point at.
+- Do: Rewrite the sentence to state what is true — v1 is the sole supported version and **nothing has been released yet**, with the append-never-edit obligation stated as the forward rule it is — and cite D104 §1.5 the way `format_freeze.rs:40` already does, so the two sit on one authority. Sweep the same module for the sibling: `format.rs:114`'s *"obligation 2 of the line-123 contract"* is the Q148 class and appears in no correction record for this file.
+- Accept:
+  - No comment in `crates/antseal-core/src/format.rs` asserts that a release has occurred; the replacement cites D104 §1.5 by name.
+  - The line-123 citation in the same doc block is checked against D114's per-family ruling and either corrected or confirmed, with the outcome stated.
+  - A sweep for the same claim across `crates/antseal-core/src/` is run and its result recorded — one site or several, the number is measured rather than assumed.
+  - No frozen bytes move: this is a doc comment, and the change must not touch anything the format-freeze guard compares.
+- Notes: **The same over-claim family as Q132/Q148/D114, but not the same defect.** Those three were about *miscited authority* — citing line 123's conditional compatibility rule as an unconditional immutability rule. This one is a **positive assertion that the condition is satisfied**, which is a step further and survives inside the very module whose citations were corrected. Both rest on D104 §1.5, which is why the fix is one citation rather than an argument.
