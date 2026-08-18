@@ -9,6 +9,15 @@
 > is left as written, because this project amends by dated addendum and does not
 > rewrite history.
 
+> **AMENDED 2026-08-17 — READ THE SECOND ADDENDUM BEFORE §1.6, §2 R7.3 AND §6.3.**
+> The premise those three passages share — that an unencrypted `-W` minisign
+> secret key *"carries no such marker line"* — is **FALSE for the reference
+> tool**, measured against upstream source by the `Q245` lane. The gap that was
+> really there is a different and larger one, `rsign2`, which §1.6's *"for either
+> tool"* sentence asserts is covered and which the shipped rule never matched.
+> **§2 R7.1's prohibition of `-W` is untouched and survives on its own merits.**
+> The body is left as written; see **§B**.
+
 - **Status: RESOLVED. The maintainer's choice of minisign is CONFIRMED, but not
   for the reason given, and cosign is REFUSED on a ground no brief in this round
   named.** The lean was *"minisign: one Ed25519 keypair I hold, no external
@@ -1101,3 +1110,147 @@ README that carries the key, in the same act, under the same credential. The
 table in §2 R5 keeps exactly one row in the "different control plane" column —
 the DNS TXT record — and §A R4 is why it should exist before the first release
 rather than after it.
+
+---
+
+## Addendum — 2026-08-17: the `-W` premise is FALSE for the reference tool, the real gap was `rsign2`, and the landed guard keys on the key body rather than on the comment
+
+**Read this before §1.6, §2 R7.3 and §6.3.** Those three passages share one
+premise: that an unencrypted secret key produced with `minisign -G -W`
+*"carries no such marker line and would not be caught"*. Measured against
+upstream source by the `Q245` lane, **the premise is false for the reference
+tool**, and the shipped `secret-guard` pattern caught a `-W` key all along —
+demonstrated on files, not from the code alone. No minisign binary exists on
+this host (§1.2), so the lane did what §1.3 did: it built both key forms from
+the upstream format definition — `SeckeyStruct` field order from
+`src/minisign.h`, the `KDFNONE`/`KDFALG` split and the `encrypt_key()`
+condition from `src/minisign.c`, cross-checked against rust-minisign's
+independent `to_bytes()` — and ran the shipped literal against them. What *was* uncovered is a
+different and larger gap the record never named, and it sits on the tool §1.2
+and §2 R12 sanction as the pure-Rust alternative.
+
+**Nothing in §2 is weakened by this.** §2 R7.1's prohibition of `-W` stands on
+its own merits and is restated at §B R4 so that no reader mistakes a corrected
+premise for a relaxed rule.
+
+**Why this addendum carries no line numbers into the body.** The nine lines it
+adds at the head of this record move every locator in it by nine. Measured
+immediately before that insertion, the affected sites were §1.6's table row at
+`:336`, the *"already mechanically enforced, for either tool"* claim at
+`:341-343`, §2 R7.3 at `:557-562` and §6.3 at `:866-870`; after it they are
+`:345`, `:350-352`, `:566-571` and `:875-879`. That is the whole argument
+against citing lines into a living document, made by this addendum against
+itself, and it is why the citations below are **section numbers and verbatim
+quoted anchors**.
+
+### §B R1 — What is false, and where it is written
+
+Upstream `minisign` (0.12, the version §1.2 measured and §1.3 tamper-matrixed)
+writes the secret-key comment **unconditionally**:
+
+- `src/minisign.h:16` — `#define SECRETKEY_DEFAULT_COMMENT "minisign encrypted secret key"`.
+- `src/minisign.c`, `main()`'s `ACTION_GENERATE` arm — `if (comment == NULL || *comment == 0) { comment = SECRETKEY_DEFAULT_COMMENT; }`, then
+  `generate(pk_file, sk_file, comment, force, unencrypted_key)`. The default is
+  applied whenever `-c` is absent, and **the flag `-W` sets does not appear on
+  that path at all**.
+- `src/minisign.c`, `generate()` — `xfprintf(fp, "%s%s\n", COMMENT_PREFIX, comment);`
+  is unconditional. `unencrypted_key` reaches exactly two places in that
+  function: `memcpy(seckey_struct->kdf_alg, unencrypted_key ? KDFNONE : KDFALG, …)`
+  and `if (unencrypted_key == 0) { encrypt_key(seckey_struct); }`. It never
+  reaches the comment.
+
+So `minisign -G -W` yields a file whose first line is
+`untrusted comment: minisign encrypted secret key` — the exact literal the
+shipped rule already matched. The three passages that say otherwise are:
+
+| passage | the sentence, verbatim | disposition |
+|---|---|---|
+| **§1.6**, table row 1 | `untrusted comment: minisign encrypted secret key` \| pattern (4) | **Correct, and correct for the wrong reason.** It reads as though the encrypted form is the covered case and the `-W` form is the gap. Both are the same line. |
+| **§1.6**, closing claim | *"The custody rule … is already **mechanically enforced, for either tool**, on every push."* | **FALSE for `rsign2`** — see §B R2. True for minisign, including `-W`. |
+| **§2 R7.3** | *"an **unencrypted** secret key produced with `-W` carries no such marker line and would not be caught — which is a second, independent reason `-W` is forbidden"* | **The premise is withdrawn.** The rule it supports is not (§B R4). |
+| **§6.3** | *"The current pattern keys on the string `minisign encrypted secret key`, which a `-W` key does not contain — so the one form of the key that is catastrophic to commit is the one form the guard cannot see."* | **Withdrawn as stated.** The follow-up it proposed has landed as `Q245`, on a different mechanism (§B R3). |
+
+The same false premise is carried outside this record by
+`docs/reviews/pre-public-scrub-history.md` §*"Gap 2"*, whose probe reports
+`*** NO MATCH (blind) ***` against a file named `minisign_unenc.txt`, and by
+the wave-22 promotion entry in `docs/instrument-ledger.md` that minted `Q245`.
+Both trace to the same root: a `-W` key written by hand from the *description*
+of the format instead of from its *definition*. The ledger is append-only and
+those entries stand as written; this addendum and `Q245`'s own row are the
+correction.
+
+### §B R2 — The gap that was really there is `rsign2`, and it is bigger
+
+§1.2's candidate table and §2 R12's provisioning paragraph both name **`rsign2`
+0.6.6** as the sanctioned pure-Rust alternative — *"`apt install minisign`
+(Debian 0.12-1) and `cargo install rsign2 --version 0.6.6` are both defensible
+and the choice is Q30's, not this record's."* Read from rust-minisign's source:
+
+- `src/constants.rs:35` — `pub(crate) const SECRETKEY_DEFAULT_COMMENT: &str = "rsign encrypted secret key";` — **`rsign`, not `minisign`**.
+- `SecretKey::to_box(comment)` writes `COMMENT_PREFIX` then, when `comment` is
+  `None`, `SECRETKEY_DEFAULT_COMMENT`.
+- `src/bin/rsign/main.rs`'s generate path passes the user's `comment` **straight
+  through on both arms** — `kp.sk.to_box(comment)` for the unencrypted arm and
+  `generate_and_write_encrypted_keypair(…, comment, …)` for the default one.
+
+So the shipped literal `minisign encrypted secret key` matched **no `rsign2` key
+of either kind** — including the **passphrase-protected** key §2 R7.1 mandates,
+which is the ordinary, correct, by-the-book artifact. That is the opposite shape
+from the one §2 R7.3 and §6.3 describe: the uncovered case was not the forbidden
+key, it was the required one. And in **both** tools any key generated with `-c`
+matches no literal at all, because `-c` replaces the default outright.
+
+§1.6's *"for either tool"* is therefore the sentence that was wrong, and it is
+the sentence §2 R7 leans on.
+
+### §B R3 — Why no comment-keyed rule could ever have been the answer
+
+This record had already measured the reason, three sections earlier and for a
+different purpose. **§1.3's tamper matrix, row 4** — *"untrusted comment fully
+rewritten"* — is a full **ACCEPT**, and its finding reads *"the untrusted
+comment is attacker-controlled and the artifact still fully verifies."* The
+field is not authenticated. A detection rule keyed on it is a convenience that
+holds only for artifacts nobody has touched, and widening the literal to cover
+`rsign` merely moves the convenience.
+
+`Q245` therefore landed **three** arms rather than one, and the load-bearing one
+is not a comment rule:
+
+- `(4a)` the age marker, unchanged.
+- `(4b)` the header comment, widened to `(minisign|rsign)([ ]encrypted)?[ ]secret[ ]key` — kept as the regression arm and as defence, explicitly *not* as the fix.
+- `(4c)` **the key body**: `RWQAAEI[y]|RWRTY0I[y]`, the base64 image of the first
+  six bytes of the secret-key struct — `sig_alg` `Ed`, `kdf_alg`, `chk_alg` `B2`
+  — at offset 0, where six bytes land on exactly eight base64 characters with no
+  alignment slack. `kdf_alg` `00 00` is `KDFNONE`, an unencrypted `-W` key;
+  `Sc` is the passphrase-wrapped key. Field order was verified in **both**
+  implementations (`src/minisign.h`'s `SeckeyStruct` and rust-minisign's
+  `SecretKey::to_bytes()`), which agree byte for byte. **`-c` cannot dodge it,
+  and neither can a rewritten comment.**
+
+It cannot fire on the minisign **public** key §2 R5 publishes into this
+repository: that struct is 42 bytes with no `kdf_alg` field, so its byte 2 is
+random keynum. The guard's self-test plants the nearest possible miss — a public
+key with an all-zero keynum, sharing five leading characters — and asserts it is
+**not** reported, so that stays an assertion rather than a belief.
+
+### §B R4 — §2 R7.1's `-W` prohibition is UNTOUCHED
+
+Read this addendum as a correction to a premise, never as a relaxation of the
+rule. **`-W` remains forbidden**, on §2 R7.1's own grounds, none of which
+mentioned detectability:
+
+- an unencrypted key is a plaintext Ed25519 secret at rest on the maintainer's
+  machine and in every backup of it, and §2 R8 mandates two offline backups;
+- the key **can never be revoked** (this record's title), so a single read of the
+  file is unbounded in time and there is no rotation story to fall back on;
+- minisign's default is scrypt at libsodium's `OPSLIMIT_SENSITIVE` /
+  `MEMLIMIT_SENSITIVE`, the same primitive family and parameter class **D40**
+  chose for the vault — *"nothing further is needed and nothing weaker is
+  acceptable"*.
+
+What changes is only the fourth argument §2 R7.3 offered, the one about the
+guard. It is withdrawn; the other three were never about the guard, and `(4c)`
+now covers the `-W` body directly in any case. `Q30` — which generates the key
+this rule governs — takes `Q245`'s guard as a **precondition**; recording that
+dependency on `Q30`'s tracker entry is owed and is the registrar's, not this
+record's.

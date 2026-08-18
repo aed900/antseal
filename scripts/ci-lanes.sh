@@ -1088,9 +1088,52 @@ lane_secret_guard() {
     #     a temp root and is unaffected by this repo-rooted path.
     hits+="$(ex 'ANTSEAL[ ]VAULT[ ]EXPORT' \
              | grep -vxF "$root/crates/antseal-cli/src/vault/export.rs" || true)"$'\n'
-    # (4) age / minisign secret-key markers.
+    # (4a) age secret-key marker.
     hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
-    hits+="$(ex 'minisign encrypted secret key')"$'\n'
+    # (4b) minisign / rsign2 secret-key HEADER COMMENT. Widened by Q245 in
+    #      two directions, both read off upstream source rather than inferred:
+    #
+    #      - `rsign2` — the pure-Rust CLI D71 §1.4 names as the sanctioned
+    #        alternative to the C tool — writes `rsign encrypted secret key`,
+    #        NOT `minisign …` (rust-minisign `src/constants.rs`,
+    #        `SECRETKEY_DEFAULT_COMMENT`; `src/bin/rsign/main.rs` passes the
+    #        default straight through). The shipped literal therefore missed
+    #        EVERY rsign2 key — including the passphrase-protected one D71
+    #        §2 R7.1 mandates. That gap was never recorded anywhere.
+    #      - ` encrypted` is optional because a header that omits the word
+    #        must not be the thing that makes a key invisible. NOTE, against
+    #        Q245's own premise and D71 §6.3: upstream C minisign does NOT
+    #        omit it for `-W`. `generate()` writes SECRETKEY_DEFAULT_COMMENT
+    #        unconditionally (`src/minisign.c`, `xfprintf(fp, "%s%s\n",
+    #        COMMENT_PREFIX, comment)`; `main()` only defaults it when `-c`
+    #        is absent), so `minisign -G -W` yields the literal the shipped
+    #        pattern already caught. The optionality is defence, not the fix.
+    hits+="$(ex '(minisign|rsign)([ ]encrypted)?[ ]secret[ ]key')"$'\n'
+    # (4c) minisign / rsign2 secret-key BODY — the rule no comment can dodge,
+    #      and the one that actually closes Q245.
+    #
+    #      WHY A HEADER RULE CANNOT BE THE ANSWER: the untrusted comment is
+    #      free text. `-c` replaces it outright, and D71 §1.3 row 4 MEASURED
+    #      that rewriting it leaves the artifact fully verifying — the field
+    #      is not authenticated. Any rule keyed on it is a convenience.
+    #
+    #      This one keys on the first six bytes of the key struct — sig_alg
+    #      `Ed`, kdf_alg, chk_alg `B2` — the type tag, at offset 0, so it
+    #      survives base64 verbatim and 6 bytes land on exactly 8 characters
+    #      with no alignment slack:
+    #        kdf_alg 00 00 (KDFNONE — an UNENCRYPTED `-W` key) -> RWQAAEIy
+    #        kdf_alg `Sc`  (KDFALG  — the passphrase-wrapped key) -> RWRTY0Iy
+    #      Field order verified in BOTH implementations (minisign
+    #      `src/minisign.h` SeckeyStruct; rust-minisign
+    #      `SecretKey::to_bytes()`), which agree byte for byte.
+    #
+    #      It cannot fire on the minisign PUBLIC key, which D71 §2 R5
+    #      publishes into this very repo: that struct is 42 bytes and has no
+    #      kdf_alg field at all, so byte 2 is random keynum. The self-test
+    #      plants the nearest possible miss — a public key with an all-zero
+    #      keynum, `RWQAAAAA…`, which shares five characters and must NOT be
+    #      reported — so that stays an assertion rather than a belief.
+    hits+="$(ex 'RWQAAEI[y]|RWRTY0I[y]')"$'\n'
     # (5) A committed devnet environment export (S5): the wallet-key line
     #     of `.devnet/env` — the key name followed by an actual 64-hex
     #     value. The export must only ever exist under gitignored
@@ -1108,24 +1151,99 @@ lane_secret_guard() {
   }
   # Self-test FIRST, every run: planted fakes in a temp dir MUST trigger
   # every pattern class before the repo verdict is trusted.
-  local tmp planted found
+  #
+  # Q245 — WHY THIS IS SHAPED THE WAY IT IS. It used to be a hand-written
+  # `planted=5` compared against a total, over SIX rules. The arithmetic
+  # balanced anyway, because the age file at (4a) filled the slot the
+  # minisign rule at (4b) had no fake for — so (4b) was never once exercised
+  # in the guard's whole life, inside the guard that exists to make failure
+  # possible. Two changes, and both are needed:
+  #
+  #   1. `planted` is DERIVED from the fixture list, so a rule cannot be
+  #      added without a fake and the number cannot drift out of step.
+  #   2. Every fixture is asserted BY NAME in the scan output, and every path
+  #      in the scan output must be a fixture. A total that merely balances
+  #      cannot tell "six rules, six fakes" from "five rules firing twice".
+  #
+  # ONE FIXTURE PER RULE ARM, and each isolates its own arm: the header
+  # fixtures carry no key-shaped body and the body fixtures carry no matching
+  # header, so a broken arm cannot be covered by its neighbour. No fixture
+  # contains real key material — the (4c) bodies are the format's type tag
+  # and zero padding, which is why they can be written down at all.
+  local tmp planted found out missing unexpected rules f
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   printf 'fake for guard self-test\n-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----\n' > "$tmp/fake-wallet.pem"
   printf '{"version":3,"crypto":{"ciphertext":"00","cipherparams":{},"kdf":"scrypt","kdfparams":{"n":1},"mac":"00"}}\n' > "$tmp/fake-keystore.json"
   printf 'ANTSEAL VAULT EXPORT v0 guard-self-test\n' > "$tmp/fake-vault-export.bin"
   printf 'AGE-SECRET-KEY-1SELFTESTSELFTESTSELFTEST\n' > "$tmp/fake-age.key"
+  # (4b), all four header arms: {minisign, rsign} x {with, without} the word
+  # `encrypted`. The first is the literal the lane shipped with and is kept
+  # as the regression arm; the other three are what it could not see.
+  printf 'untrusted comment: minisign encrypted secret key\n(body elided: this fixture exercises the header rule only)\n' > "$tmp/fake-minisign-enc-header.key"
+  printf 'untrusted comment: minisign secret key\n(body elided: this fixture exercises the header rule only)\n' > "$tmp/fake-minisign-plain-header.key"
+  printf 'untrusted comment: rsign encrypted secret key\n(body elided: this fixture exercises the header rule only)\n' > "$tmp/fake-rsign-enc-header.key"
+  printf 'untrusted comment: rsign secret key\n(body elided: this fixture exercises the header rule only)\n' > "$tmp/fake-rsign-plain-header.key"
+  # (4c), both body arms, each under a CUSTOM untrusted comment — i.e. the
+  # exact file (4b) is blind to, which is the point of having (4c) at all.
+  # `RWQAAEIy` + 64 x 'A' is `Ed` 00 00 `B2` followed by the 48 zero bytes an
+  # unencrypted key leaves in kdf_salt/opslimit/memlimit; the tail is base64
+  # `self-test-no-key-material` where a real key's keynum+sk+chk would be.
+  printf 'untrusted comment: antseal release signing key\nRWQAAEIy%s%s\n' "$(printf 'A%.0s' $(seq 64))" 'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' > "$tmp/fake-minisign-unencrypted-body.key"
+  printf 'untrusted comment: antseal release signing key\nRWRTY0Iy%s\n' 'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' > "$tmp/fake-minisign-encrypted-body.key"
   # The devnet-export wallet-key line (pattern 5): 64 x 'a' is hex-shaped
   # enough to trip the guard and unmistakably fake.
   printf "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='%s'\n" "$(printf 'a%.0s' $(seq 64))" > "$tmp/fake-devnet-env"
-  planted=5
-  found="$(scan "$tmp" | wc -l)" || true
-  if [ "$found" -ne "$planted" ]; then
-    printf '::error::secret-guard self-test FAILED: planted %s fakes, detected %s — the detector is broken; fix it before trusting a green scan\n' "$planted" "$found"
+  # NEGATIVE fixture, deliberately NOT in the list below: a minisign public
+  # key, which D71 §2 R5 publishes into this repository, with an all-zero
+  # keynum so its body shares five leading characters with (4c)'s
+  # unencrypted arm. If (4c) is ever loosened to `RWQAA`, Q30 reds the tree
+  # on the day the real key lands — this is what stops that being found in
+  # production.
+  printf 'untrusted comment: minisign public key 0000000000000000\nRWQAAAAAAAAAAO7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u\n' > "$tmp/not-a-secret-minisign.pub"
+  local -a fakes=(
+    fake-wallet.pem                     # (1)  PEM private-key block
+    fake-keystore.json                  # (2)  EVM keystore conjunction
+    fake-vault-export.bin               # (3)  antseal vault-export magic
+    fake-age.key                        # (4a) age secret key
+    fake-minisign-enc-header.key        # (4b) header, minisign, encrypted
+    fake-minisign-plain-header.key      # (4b) header, minisign, no `encrypted`
+    fake-rsign-enc-header.key           # (4b) header, rsign2, encrypted
+    fake-rsign-plain-header.key         # (4b) header, rsign2, no `encrypted`
+    fake-minisign-unencrypted-body.key  # (4c) body, kdf_alg = 00 00
+    fake-minisign-encrypted-body.key    # (4c) body, kdf_alg = `Sc`
+    fake-devnet-env                     # (5)  committed devnet wallet key
+  )
+  planted="${#fakes[@]}"
+  # The fixture list cannot see a rule nobody wrote a fixture for: an eighth
+  # `hits+=` added to `scan` would match none of the files above, contribute
+  # no path, and every total would still balance — which is Q245's defect one
+  # level up, waiting to happen again. So the rules are counted too, off the
+  # live function body (`declare -f` strips comments, and the pattern carries
+  # a character class so this line cannot count itself). Adding a rule is now
+  # an act that has to touch this block.
+  rules="$(declare -f lane_secret_guard | grep -c 'hits[+]=')" || true
+  if [ "$rules" -ne 7 ]; then
+    printf '::error::secret-guard self-test FAILED: scan() carries %s detection rules, but the fixture list above is written against 7. A rule with no fixture is never exercised and the totals still balance — that is exactly the defect Q245 closed. Add a fixture for every arm of the new rule and update this number in the same act\n' "$rules"
+    return 1
+  fi
+  out="$(scan "$tmp")" || true
+  found="$(grep -c . <<<"$out")" || true
+  missing="" ; unexpected=""
+  for f in "${fakes[@]}"; do
+    grep -qxF "$tmp/$f" <<<"$out" || missing+=" $f"
+  done
+  while read -r f; do
+    [ -n "$f" ] || continue
+    printf '%s\n' "${fakes[@]}" | grep -qxF "${f#"$tmp/"}" || unexpected+=" ${f#"$tmp/"}"
+  done <<<"$out"
+  if [ -n "$missing" ] || [ -n "$unexpected" ] || [ "$found" -ne "$planted" ]; then
+    printf '::error::secret-guard self-test FAILED: planted %s fakes, detected %s; rule arm(s) with NO detection:%s; file(s) matched that are not fixtures:%s — the detector is broken; fix it before trusting a green scan\n' \
+      "$planted" "$found" "${missing:- (none)}" "${unexpected:- (none)}"
     scan "$tmp" || true
     return 1
   fi
-  printf 'self-test OK: all %s planted fakes detected in the temp dir\n' "$planted"
+  printf 'self-test OK: %s planted fakes, one per rule arm, each detected by name; the public-key near-miss was not flagged\n' "$planted"
   # The exclusion above is only safe while `.devnet/` is genuinely
   # unstageable. Check that, rather than trusting it.
   if git rev-parse --git-dir >/dev/null 2>&1; then
