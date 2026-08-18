@@ -69,10 +69,13 @@ END = "<!-- FREEZE-BOUNDARY:END -->"
 BOUNDARY_COPIES = [
     "tasks/Q.md",
     "docs/format/anchor-artifact-limits.md",
+    "docs/user/format-stability.md",
 ]
 
-# The source of truth. Both copies are cut from here; if this section moves,
-# the copies are stale by definition and the check must say so.
+# The source of truth. Every copy in BOUNDARY_COPIES is cut from here; if this
+# section moves, the copies are stale by definition and the check must say so.
+# ("Both" until 2026-08-17, when Q27's page made it three — the word was a
+# count in disguise, which is why it went stale the moment the list grew.)
 BOUNDARY_SOURCE = "docs/decisions/D84-anchor-artifact-limits-permanence.md"
 
 
@@ -631,6 +634,14 @@ CITATION_SCAN = [
     # suffix; measured cost of the pair of additions is 420 -> 421 files with
     # zero collateral, against D123's refused .toml route at 359 -> 377 with 15.
     "verifier-web",
+    # Q23-Q27 land the M4 user-facing documentation set here, and those pages
+    # cite decision and task ids as their evidence. D139 §2 R1 admitted
+    # docs/user/ to the COPY lint; without this entry it would be admitted to
+    # nothing else, so a decision id that stops resolving on a page a stranger
+    # reads would be caught by no check at all. Same shape and same reason as
+    # the verifier-web entry above. A DIRECTORY entry, so D123's per-entry rule
+    # filters it by suffix.
+    "docs/user",
     # Root-level files, swept as themselves (Q176).
     "CHANGELOG.md",
     "README.md",
@@ -2122,43 +2133,161 @@ def self_test() -> int:
                         found.setdefault(int(number), set()).add(rel)
             return found
 
-        def an_unrecorded_open_decision() -> str:
-            """The register line of a decision that is OPEN in the register,
-            cited as normative in a swept file, and has neither a
-            record nor an entry in `DECISIONS_HOMED_ELSEWHERE` — so ticking its
-            box is exactly "RESOLVED, record never written", the Q57 failure.
+        def plant_an_unrecorded_decision() -> str:
+            """Mint `D<ceiling+1>`, plant a normative citation of it in a swept
+            file, and return the id. The two `decisions` arms below then build
+            the Q57 failure — "RESOLVED, record never written" — by adding a
+            register row for it, and its exemption by adding an open one.
 
-            Computed, because the case used to name one decision and pin its
-            UNRESOLVED STATE: the day that decision resolved, the register line
-            it was aimed at would no longer exist in the form the mutation
-            spelled, and the case would disarm itself at the moment its subject
-            stopped being hypothetical. Three decisions qualify today; the
-            fixture takes whichever is lowest and moves on its own.
+            ══ WHY THE SUBJECT IS CONSTRUCTED AND NO LONGER FOUND (Q252) ══════
+            This helper used to SEARCH the register for a decision that was
+            open, cited, unrecorded and unhomed, and return its line for the
+            arm to tick. That search was itself a repair, and its reasoning is
+            kept because it is still right as far as it goes: before it, the
+            case NAMED one decision and thereby pinned that decision's
+            UNRESOLVED STATE, so the day it resolved the line the mutation
+            spelled would no longer exist in that form and the case would
+            disarm itself at the exact moment its subject stopped being
+            hypothetical. Deriving the subject fixed that. Three decisions
+            qualified when it was written.
+
+            It fixed the wrong half. The dependency it removed was on ONE
+            decision staying open; the dependency it kept was on SOME decision
+            staying open — and on 2026-08-17, commit 985ad05 closed D71, D72,
+            D73 and D134 in one round and took the register to ZERO open
+            decisions for the first time in the project's life. The search
+            found nothing and raised, `--self-test` exited 1 before a single
+            arm ran, `ci-lanes.sh lane_traceability` runs this half FIRST and
+            returns on its failure, and `traceability` is one of 19 required
+            status contexts. A drained register — the healthiest state the
+            bookkeeping can reach — took a required context red. Measured, not
+            inferred: `git worktree add --detach` at 59c47ad reproduces it with
+            REAL_EXIT=1, so it predates the wave that found it.
+
+            The assertion it raised offered its own remedy — *"if the register
+            really is in that state, the case has nothing left to prove and
+            goes with it"* — and that is REFUSED. What the case proves is that
+            `check_decisions` bites a decision cited as normative, allocated,
+            and holding no record, no registered home and no open row. That
+            property does not stop mattering when the register is clean; it
+            matters most on the next decision minted whose record is forgotten,
+            which is precisely when nobody is looking. A case that disarms
+            itself whenever the tree is healthy is the assertion-that-cannot-
+            fail class, and Q234 is the same shape one fixture over: *the
+            self-test's TODO.md red arm is defeated by exactly the state
+            bookkeeping creates*. Q234's general form is the rule here — a
+            derived fixture is only as safe as the surface it derives from, and
+            THE REGISTER'S OPEN SET IS NOT A SAFE SURFACE, because draining it
+            is the goal.
+
+            So the subject is neither named nor found. It is BUILT, out of an
+            id the register does not allocate, and the register's state cannot
+            reach it.
+
+            ══ WHY THE PLANT IS SAFE, AND WHY IT IS THE CITATION AND NOT THE
+            ROW ══════════════════════════════════════════════════════════════
+            The defect needs two halves in two files — a citation in a swept
+            file and a row in `TODO.md` — and the harness applies exactly ONE
+            mutation to ONE file per case. So one half must exist before the
+            baseline is measured, and the obvious reading ("stage an open row
+            plus a citation, then tick the row") puts the ROW in the staged
+            tree. Refused, measured: `check_decision_index` compares the
+            register against `docs/decisions/README.md` and `--decisions` is
+            not the only check that reads `TODO.md`, so a pre-staged row
+            reddens OTHER checks' baselines and makes `--self-test` print a
+            contaminated-tree note on a clean tree — training the reader to
+            ignore the one note that means something.
+
+            The CITATION is the safe half, and what makes it safe is the
+            check's own allocation bound (`n > max(allocated) -> skip`, the
+            rule that stops the sweep reporting surrogate D800). An id one
+            above the ceiling is read by the sweep and discarded by the bound:
+            visible, inert, and invisible to every other check, which read task
+            ids, matrix rows, index rows and boundary blocks and not this. It
+            arms only when a row for it appears — which is the mutation. So the
+            fixture is armed BY the case, not by its setup, and the baseline
+            stays exactly as clean as the tree is.
+
+            MEASURED, not argued (2026-08-17, on a staged copy of the live
+            tree): run all seven checks with the plant present and with it
+            absent, and the output is identical but for the swept FILE COUNT on
+            two ok lines, 451 -> 452. Zero findings either way, exit 0 either
+            way, and `findings()` reads only `::error::` lines, so the delta
+            harness sees nothing at all. `132 distinct decisions cited` is
+            unchanged in both — the allocation bound holding the plant inert,
+            watched directly rather than reasoned about.
+
+            Four things are asserted rather than assumed, because each one
+            would otherwise let an arm pass for the wrong reason: the register
+            allocates something (else there is no ceiling to mint above), the
+            minted id has no record and no registered home (else the red arm's
+            row would be legitimately green), the minted id is cited NOWHERE in
+            the staged tree already (else the arm's finding is not attributable
+            to the plant, and raising the ceiling by one could drag an
+            unrelated citation into bound), and `CITATION_SCAN` still names a
+            directory that exists. The plant location is DERIVED from
+            `CITATION_SCAN`/`CITATION_SUFFIXES` for the reason
+            `scratch_decision_citations()` states: a narrowing of either must
+            move this fixture with the check rather than leave it aimed at a
+            surface nothing reads.
             """
             todo = (tree / "TODO.md").read_text(encoding="utf-8")
             allocated = {int(n) for n in re.findall(r"^- \[[ x]\] \*\*D(\d+)\*\*", todo, re.M)}
+            if not allocated:
+                raise AssertionError(
+                    "self-test: TODO.md's register allocates no decision id, so there is "
+                    "no ceiling to mint above. `check_decisions` reports that state "
+                    "itself — 'the bound is vacuous' — and it is a register failure, not "
+                    "a fixture failure"
+                )
+            minted = max(allocated) + 1
             recorded = {
                 int(head.group(1))
                 for path in (tree / DECISION_DIR).glob("D*.md")
                 if (head := re.match(r"D(\d+)-", path.name))
             }
+            if minted in recorded or minted in DECISIONS_HOMED_ELSEWHERE:
+                raise AssertionError(
+                    f"self-test: D{minted} is one above the register's ceiling and yet "
+                    "already carries a record or a registered home, so a resolved row for "
+                    "it would be green for a legitimate reason and the red arm would "
+                    "prove nothing. That is a register/record mismatch to fix, not a "
+                    "fixture to retarget"
+                )
             cited = scratch_decision_citations()
-            for line in todo.splitlines():
-                match = re.match(r"^- \[ \] \*\*D(\d+)\*\*", line)
-                if not match:
-                    continue
-                number = int(match.group(1))
-                if number > max(allocated, default=0):
-                    continue
-                if number in recorded or number in DECISIONS_HOMED_ELSEWHERE:
-                    continue
-                if number in cited:
-                    return line
-            raise AssertionError(
-                "self-test: no open decision is cited as normative without a record, so "
-                "the resolved-with-no-record case cannot be built. If the register really "
-                "is in that state, the case has nothing left to prove and goes with it."
+            if minted in cited:
+                raise AssertionError(
+                    f"self-test: D{minted} is already cited in the staged tree "
+                    f"({', '.join(sorted(cited[minted])[:3])}), so the planted citation "
+                    "would not be the only one: the red arm's finding would not be "
+                    "attributable to the plant, and the green arm's ceiling bump could "
+                    "drag that other citation into bound and change findings for a "
+                    "reason the case is not about"
+                )
+            directory = next((sub for sub in CITATION_SCAN if (tree / sub).is_dir()), None)
+            if directory is None or ".md" not in CITATION_SUFFIXES:
+                raise AssertionError(
+                    "self-test: CITATION_SCAN names no directory present in the staged "
+                    "tree, or .md has left CITATION_SUFFIXES, so there is nowhere to "
+                    "plant a citation the decision sweep would read"
+                )
+            plant = tree / directory / "self-test-planted-decision-citation.md"
+            # No token of the form <PFCGSARUQ><digits> and no
+            # `registry-v1.md:<line>`, or this plant would redden the task-
+            # citation half or the decision half's frozen-registry rule and
+            # contaminate the very baseline it is built to leave alone.
+            plant.write_text(
+                "Planted by `--self-test`, inside its scratch copy only. A normative "
+                f"citation of D{minted}, an id the register does not allocate: the sweep "
+                "reads it and the allocation bound holds it inert until a register row "
+                "arms it.\n",
+                encoding="utf-8",
             )
+            print(
+                f"self-test: note — planted a citation of D{minted} at "
+                f"{plant.relative_to(tree)}; inert until a register row arms it"
+            )
+            return f"D{minted}"
 
         def a_cited_decision_in(relative: str) -> str:
             """The first `D<n>` token in `relative`, read at fixture time.
@@ -2252,7 +2381,7 @@ def self_test() -> int:
                 "mutate one valid status into another and prove nothing"
             )
         unresolvable_reference = a_unique_rust_test_reference()
-        open_decision_row = an_unrecorded_open_decision()
+        minted_decision = plant_an_unrecorded_decision()
 
         # The one target path a Q184 fixture and its case BOTH need. Named once
         # so the two cannot drift apart: a fixture reading one file while the
@@ -2461,29 +2590,60 @@ def self_test() -> int:
             # The Q57 failure, faithfully: a decision marked RESOLVED in the
             # register whose record was never written.
             #
-            # The row is COMPUTED (Q184) — open, cited as normative, no record,
-            # no registered home. It used to name one decision, which pinned
-            # that decision's UNRESOLVED STATE: the day it resolved, the line
-            # the mutation spelled would no longer exist in that form and the
-            # case would disarm itself at the exact moment its subject stopped
-            # being hypothetical. Deriving it also fixes the direction of the
-            # dependency — the case now needs *some* decision to be in that
-            # state, and says so out loud when none is, which is a fact worth
-            # hearing rather than a fixture worth repairing.
+            # The subject is CONSTRUCTED (Q252), not found — see
+            # `plant_an_unrecorded_decision()` for the full reasoning and the
+            # measurement that forced it. In one line: the previous spelling
+            # ticked a row the fixture SEARCHED for, and 985ad05 drained the
+            # register to zero open decisions, so the search raised and the
+            # whole harness exited 1 before any arm ran. The register's open
+            # set is not a surface a fixture may depend on, because emptying it
+            # is the point of the work.
             #
-            # Anchored for the second rule's reason, and this is the case that
-            # proved it: the register carries prose about this very fixture
-            # ABOVE the row it aims at, an unanchored first-occurrence
-            # replacement consumed the prose, and the harness reported the
-            # check green over a register whose row was never touched.
+            # It APPENDS rather than replaces, joining the Q58 line-citation
+            # cases below under their reasoning: the no-op guard cannot fire on
+            # an append — the text always changes — so the expectation is doing
+            # all the work, and there is no first-occurrence hazard to anchor
+            # against. That retires this case's anchoring note, which is worth
+            # keeping in view because it recorded a real incident: prose about
+            # the fixture sat ABOVE the row it aimed at, an unanchored
+            # replacement ate the prose, and the harness called the check green
+            # over a register whose row was never touched. Nothing here can
+            # reproduce it — the mutation matches no existing text at all — but
+            # the rule at the head of this list still holds for every case that
+            # does replace.
             (
                 "decisions",
                 "TODO.md",
-                rewrite_line(
-                    open_decision_row,
-                    open_decision_row.replace("- [ ] ", "- [x] ", 1) + "\n",
-                ),
+                lambda t: t
+                + f"\n- [x] **{minted_decision}** minted by `--self-test`; no record was "
+                "ever written for it, which is the whole defect.\n",
                 "red",
+            ),
+            # And the same subject from the green side. `check_decisions`
+            # exempts an id that is STILL OPEN in the register — it counts them
+            # on its own ok line — and that exemption is the only thing between
+            # a freshly minted decision and a red lane on the day it is minted.
+            #
+            # The old red arm did cover it, but CONTINGENTLY and BY SIDE
+            # EFFECT, which is why this is now its own arm. Its pre-image was
+            # an open unrecorded row, so deleting the exemption would have put
+            # the finding into the BASELINE and the arm would then have failed
+            # with "added no finding" — a true signal wearing the wrong
+            # message, and available only while such a row existed. With the
+            # register drained it is worth nothing at all.
+            #
+            # Here it is direct and available in every register state: the same
+            # minted id, the same planted citation, an OPEN row instead of a
+            # ticked one, and the findings must not move. Measured — deleting
+            # `or number in still_open` fails THIS arm, by its own message,
+            # with every other decisions arm still green.
+            (
+                "decisions",
+                "TODO.md",
+                lambda t: t
+                + f"\n- [ ] **{minted_decision}** minted by `--self-test`; still open, so "
+                "the sweep must stay silent about it.\n",
+                "green",
             ),
             # Q58 — a line-number citation into the frozen registry. The three
             # cases carrying this literal (here, `scripts/fuzz.sh` below, and
@@ -2913,9 +3073,15 @@ def self_test() -> int:
         ]
 
         # ── D120 R6: every arm is a DELTA, not an absolute verdict ──────────
-        # The failure this replaces was never in the red arms. 23 of the 32
-        # cases below are red and 9 are green, and every one of the seven checks
-        # has at least one GREEN arm — so under exit-code validation
+        # The failure this replaces was never in the red arms. 23 of the 33
+        # cases above are red and 10 are green — a count in the prose, so
+        # RECOUNT it when the list moves rather than trusting this sentence.
+        # It read "23 of the 32 … and 9 are green" until Q252 replaced the
+        # decisions red arm with a red/green pair; the same wave found
+        # `BOUNDARY_SOURCE`'s "Both copies" stale for exactly this reason, and
+        # the first draft of this correction got the new split wrong by
+        # arithmetic rather than by measurement. Every one of the seven
+        # checks has at least one GREEN arm — so under exit-code validation
         # `--self-test` contained a complete second run of the entire check
         # suite that nobody declared and nobody could see, and it inherited
         # every unrelated red in the staged tree. Measured twice: a sibling
