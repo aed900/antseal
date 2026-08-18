@@ -141,6 +141,16 @@ Line 28 does not only forbid; it **requires**. Every positioning surface —
 today `README.md`; at M4 the product-limits and disclosure pages Q22–Q25
 write — must state, in its own words:
 
+> **Correction, 2026-08-17 (D139 §2 R9).** The sentence above reads as though
+> every M4 user page becomes a P7 presence surface. It does not, and the
+> widening was **refused on measurement**: `PRESENCE_SURFACES` is
+> `("README.md",)` and forcing the five `docs/user/` pages into it produces
+> **18 P7 findings**, because a funding page or a timestamp-authority page has
+> no business restating all five clauses. P7 stays README-only; the pages
+> Q23–Q27 landed on 2026-08-17 are governed by the *bans* (P1–P3), the
+> dictated spellings (P4/P5) and the URL rule (P6), not by this table. Which
+> surface owes the clauses is a question for **Q22** and **Q28**.
+
 | Clause | What it must say | Spec |
 | --- | --- | --- |
 | `possession-language` | what a seal proves, in possession terms — *the holder of key X possessed this content by time T* | line 28 |
@@ -264,17 +274,24 @@ Recorded rather than exempted, with the task that owns each.
 2. **`README.md` carries no compelled-disclosure note.** Line 28 requires it
    of docs; today it exists only in `docs/threat-model.md` §2.5, which is
    Class E. Registered as an `OWED_PRESENCE` debt owed by **Q22**.
-3. **`docs/threat-model.md`'s Positioning section claims priority
-   unqualified.** Line 14 reads *"antseal proves **existence, integrity and
-   priority** of data you possessed"*, and its block never says an earlier
-   seal outranks a later one — no *seal before you share*. The file is Class
-   E today for two reasons recorded in `DOCS_CLASSIFICATION`: it is an M0
-   skeleton whose product-copy sections are **Q21**'s at M4 (and Q21's
-   `Accept` already reads *"Q20 lint passes"*), and roughly 370 of its lines
-   are a verbatim frozen copy of `docs/security-assumptions.md` asserted
-   byte-identical by `crates/antseal-core/tests/security_assumptions_drift.rs`
-   — a finding inside that block cannot be fixed in this file at all. **This
-   is a real defect in shipped text, not a rule that is wrong.** Q21 owns it.
+3. ~~**`docs/threat-model.md`'s Positioning section claims priority
+   unqualified.**~~ — **DISCHARGED 2026-08-17 by Q21.** As measured on
+   2026-08-15 the section's block claimed *existence, integrity and priority*
+   and never said an earlier seal outranks a later one. Q21 fixed it in the
+   same block, in the spec's own words, and the lint agrees: this file's P2
+   count on `docs/threat-model.md` went **1 → 0**. Two things in the original
+   finding must not be carried forward. Its locator (*"Line 14"*) is stale —
+   the Positioning section moved when Q21 rewrote the header — which is the
+   general reason this guide now cites markers and section numbers rather
+   than line numbers. And its reasoning about the file's class has been
+   **replaced**: the *"M0 skeleton"* half is spent, and D139 §2 R3 ruled the
+   surviving half far more sharply than *"cannot be fixed in this file"*.
+   `docs/threat-model.md` stays Class **E permanently**, because one line
+   inside the byte-frozen assumptions block is a live **P3** with no
+   disclaimer in its sentence, so promoting the file reds the lint on text
+   Q21's own `Accept` forbids it to touch — the promotion is **unbuildable**,
+   not merely deferred. The current reason is recorded in
+   `DOCS_CLASSIFICATION` and is the authority; this entry is history.
 4. **`docs/anchors/root-store-update.md` line 9 claims priority unqualified**
    in the same shape (*"antseal's whole claim is priority"*). Class E,
    operator runbook, no product surface — recorded so the Q28 widening does
@@ -299,15 +316,33 @@ half over those roots. Two registered presence debts with named owners.
 
 **Q28 inherits.**
 
-1. **Widening `COPY_SCAN` to the M4 product docs** — Q22's README rewrite,
-   install guide and product-limits pages, Q23's funding doc, Q24's
-   vault-loss/theft pages, Q25's wallet-hygiene page. None exists today, and
-   a scan root that names a missing file fails by design (P0), so they join
-   as they land. P8 makes that unmissable: each lands unclassified and red.
+1. ~~**Widening `COPY_SCAN` to the M4 product docs**~~ — **DONE 2026-08-17,
+   and the shape above is the one D139 §2 R1 refused.** This item predicted
+   one register entry per page, joining "as they land", each landing
+   unclassified and red. What landed instead is **one directory entry**,
+   `docs/user/`, plus **one** `DOCS_CLASSIFICATION` entry `user/: PRODUCT` —
+   2 register edits rather than 12, priced against a per-page ordering trap
+   that is two-sided (`P0` if the entry lands first, `P8` if the file does)
+   and would have been paid once per page in a file six lanes were editing
+   at once. Coverage is identical under `--self-test`. The set was also
+   larger than this item names: **Q26**'s timestamp-authorities page and
+   **Q27**'s format-stability page belong to it too, and Q22's README
+   rewrite is *not* a widening at all, since `README.md` has always been a
+   scan root. What Q28 still inherits here is the closed-venue rule that
+   nothing mechanical enforces: every file under `docs/user/` is Class P by
+   construction, and an engineering document put there would be scanned as
+   product copy without anything objecting.
 2. **The tree-wide canonical-URL value-identity scan** (§8), which
    `brand.rs` already assigns to R26/Q28.
-3. **`docs/threat-model.md`'s promotion to Class P** once Q21 has written it
-   (finding 3 above).
+3. ~~**`docs/threat-model.md`'s promotion to Class P** once Q21 has written
+   it~~ — **REFUSED 2026-08-17 (D139 §2 R3). Q28 inherits nothing here.**
+   Q21 has now written it, and the promotion is **unbuildable**: the flip is
+   still RED after every repair Q21 was permitted to make, because the
+   surviving violation sits inside the byte-frozen assumptions block that
+   Q21's own `Accept` clause (*"assumptions block still verbatim"*) forbids
+   it to touch. Under the promoting reading that `Accept` is
+   self-contradictory. The file is Class **E** permanently; see finding 3
+   above and the reason recorded in `DOCS_CLASSIFICATION`.
 4. **U31's catalog module**, when it exists, as a literal `COPY_SCAN` entry —
    at which point "CLI strings" stops meaning "the strings that reached a
    snapshot".

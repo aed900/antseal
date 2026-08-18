@@ -112,7 +112,7 @@ The two rows below are byte-identical to the rows in Q14's freeze checklist
 (`tasks/Q.md`, landed by task Q37). They are reproduced here so A5 and A11
 read the same sentences the gate does.
 
-<!-- FREEZE-BOUNDARY:BEGIN — D84 §7 verbatim. Byte-identical copies live in `tasks/Q.md` (Q14) and this file; `scripts/check-traceability.py --freeze-boundary` fails if they drift. Edit D84 first, then both copies. -->
+<!-- FREEZE-BOUNDARY:BEGIN — D84 §7 verbatim. Byte-identical copies live in `tasks/Q.md` (Q14), this file (A27) and `docs/user/format-stability.md` (Q27, 2026-08-17); `scripts/check-traceability.py --freeze-boundary` fails if any of them drifts. Edit D84 first, then re-cut every copy in that script's BOUNDARY_COPIES — never edit a copy in place, and never trust this sentence's list over that constant. -->
 
 - [ ] **Anchor-artifact freeze scope (D84).** Inside the v1 freeze: the
   anchor **envelope** — that an `.ots`, a TSA token, an intermediate

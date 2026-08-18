@@ -75,6 +75,14 @@ COPY_SCAN: tuple[str, ...] = (
     "README.md",
     GUIDE,
     "verifier-web/",
+    # The M4 user-facing documentation set (Q23-Q27; Q21's threat model is NOT
+    # here - D139 §2 R3). A DIRECTORY entry under D123's rule: walked and
+    # suffix-filtered, so every page that lands here is scanned from its first
+    # commit with no second register edit. D139 §1.4/§1.5 prices that against
+    # one entry per page: identical coverage under --self-test, 2 register
+    # edits instead of 12, and no per-page ordering trap in a file six lanes
+    # share. What it costs is recorded at D139 §4.2.
+    "docs/user/",
     # The CLI's copy as the user reads it: the committed golden renderings.
     "crates/antseal-cli/tests/snapshots/",
     # R18's frozen verdict document (MVP-SPEC.md line 127's "one authoritative
@@ -106,10 +114,23 @@ DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     ),
     "threat-model.md": (
         "ENG",
-        "M0 SKELETON whose product-copy sections are Q21's at M4 (Q21's own Accept already "
-        "reads 'Q20 lint passes'); ~370 of its lines are the verbatim frozen copy of "
-        "security-assumptions.md above. Its Positioning section carries a measured, "
-        "registered defect — see docs/positioning-copy-style.md §11",
+        "stays Class E after Q21 finalized it 2026-08-17, and the reason is MEASURED (D139 §1.2, "
+        "§2 R3): the text between the `<!-- BEGIN frozen-security-assumptions -->` and `<!-- END "
+        "frozen-security-assumptions -->` markers is the byte-frozen copy of "
+        "security-assumptions.md, asserted by "
+        "crates/antseal-core/tests/security_assumptions_drift.rs, and one line inside that block "
+        "reads '**What breaks if it is false.** Authorship binding.' - a live P3 with no "
+        "disclaimer in its sentence. Promoting this file to PRODUCT therefore reds the lint on "
+        "text Q21's own Accept clause ('assumptions block still verbatim') forbids it to touch; "
+        "measured, the flip is still RED after every repair Q21 was permitted to make. The block "
+        "is pinned by EQUALITY between the two copies, not by a digest - so the blocker is the M0 "
+        "sign-off record and Q21's Accept, not the drift test. Q21 fixed the two defects OUTSIDE "
+        "the block (the P2 in the Positioning section and the P4 where §2.3 quoted the receipt "
+        "class across a line break), leaving exactly the one frozen P3. The user-facing pages "
+        "live in docs/user/. LOCATOR NOTE, recorded because it happened inside one wave: D139 §2 "
+        "R4 specified this reason with the line numbers 39-408 and :23, and Q21's own mandated "
+        "growth moved the block to 51-420 and the sign-off to :30 before the ink dried. The "
+        "markers are the stable locator and are what the drift test actually reads",
     ),
     "toolchain.md": ("ENG", "toolchain pinning for contributors"),
     "vault-keyfile.md": ("ENG", "keyfile mechanism reference; Q24 writes the user-facing pages"),
@@ -125,6 +146,13 @@ DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     "reviews/": ("ENG", "code-review records"),
     "testing/": ("ENG", "test-harness contracts"),
     "upstream/": ("ENG", "upstream-tracking records"),
+    "user/": (
+        "PRODUCT",
+        "the M4 user-facing documentation set (Q23-Q27), scanned as the COPY_SCAN "
+        "directory entry docs/user/ - D139 §2 R1. CLOSED VENUE: every file here is "
+        "Class P by construction. An engineering document does not go in this "
+        "directory; nothing mechanical enforces that (D139 §4.2)",
+    ),
     "waves/": ("ENG", "wave briefs"),
 }
 
