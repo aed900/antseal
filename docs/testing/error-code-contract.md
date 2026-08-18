@@ -346,9 +346,15 @@ Three grounds, in the order that decides it.
    with a fixed exit code, carried as the `class` field of the U3 `--json`
    envelope (`crates/antseal-cli/src/error.rs` module docs;
    `crates/antseal-cli/tests/exit_codes.rs`). `network-failure` (23),
-   `insufficient-ant-token` (20) and `insufficient-eth-gas` (21) are S
-   outcomes wearing U's identity. Giving S a second identity would mean two
-   stable names for one failure, and §3 makes both permanent.
+   `insufficient-ant-token` (20), `insufficient-eth-gas` (21),
+   `payment-stranded` (28) and `payment-proofs-expired` (29) are S
+   outcomes wearing U's identity — the last two added at **U81/D147**
+   (2026-08-18), which split the two money-moved storage outcomes out of
+   `network-failure` and, by this section's own rule, minted them **only**
+   on U's side: an `S` code prefix *"would be a namespace with no possible
+   member"*, and a reservation protecting nothing is not created here
+   either. Giving S a second identity would mean two stable names for one
+   failure, and §3 makes both permanent.
 3. **The two namespaces answer different questions and must not merge.** An
    exit-code class is a *process outcome* — what the CLI did. A code is a
    *rejection class* — what was wrong with the bytes. Merging them would put

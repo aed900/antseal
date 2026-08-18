@@ -155,3 +155,40 @@ The lean stands. What was missing is the following precision.
   journaled seal for large works (ciphertexts held rather than flushed)
   — bounded by the same work sizes M1 already handles; note for G/S
   perf budgets if works grow.
+
+## Addendum — 2026-08-18 (D146, U79)
+
+**§3's first sentence was never implemented, and is now.** From
+2026-08-01 to this addendum, a dry run that failed the S8 preflight
+returned the typed error and printed **nothing**: `seal_run.rs`'s `DryRun`
+arm ran `report.preflight()?` and the `?` preempted the render, which
+happens only from the `Ok` value. Measured on the wire (D146 §1.1): the
+same wallet state produced 1 064 bytes of report on the real-seal path and
+0 bytes on the dry-run path. D146 §2 R1 implements the emit.
+
+**Three clauses §3 lacked, ruled by D146 and binding here:**
+
+1. **The emit is conditional on the preflight refusing.** On the success
+   path the caller renders the same screen (`commands.rs:423-425`), so an
+   unconditional emit — a literal mirror of the gate at
+   `seal_consent.rs:441` — prints it twice. §3's "still prints the complete
+   report" describes the *shortfall* path only.
+2. **Channel and mode.** The complete report goes to the human channel
+   (stdout in plain mode, stderr under `--json`, D51 invariant 2), and under
+   `--json` stdout carries **exactly one document: the error envelope**.
+   **There is no `result` document on the shortfall path** — §3's
+   "single `--json` result document" clause describes success only, and a
+   script must gate on the exit code and on `error.class`, not on `result`.
+   The error names required and available for the **first** short asset
+   only (ANT before gas, `backend.rs:89-100`); the report names both.
+3. **The D69 third arm is refused here.** D69 §3 R1 (2026-08-12, after this
+   record resolved) made `ok` mean "a result document is present" rather
+   than "the exit code is 0", so a dry-run shortfall *could* now emit
+   `ok:true` + `result` at exit 20/21. It does not: the real seal reports
+   the same condition as `ok:false` + `error`, and D49 §1's prefix
+   principle makes dry-run the real pipeline truncated, not a mode with its
+   own envelope shape. A funding shortfall is not a verdict.
+
+**§3's "documented CI gate" claim stands, and is now true rather than
+aspirational.** The gate is: exit 0 = fundable; 20 = acquire ANT; 21 =
+bridge ETH; the screen on the human channel explains it to a person.

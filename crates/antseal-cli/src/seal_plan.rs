@@ -1,5 +1,15 @@
 //! `seal`'s plan validation (U13): the checks that run before anything is
-//! read, unlocked, quoted, consented to, anchored, paid or uploaded.
+//! unlocked, quoted, consented to, anchored, paid or uploaded.
+//!
+//! *"Before anything is **read**"* was true of this module until D149 §2
+//! R2 and is not any more. D24 §1's `--split` x `--no-fine-tree` refusal
+//! has a condition — *is this file text?* — that no `stat`, extension or
+//! fixed-size prefix can answer (`is_text` is strict UTF-8 validity over
+//! the **whole** file, MVP-SPEC.md line 83), so the refusal reads the
+//! files a `--no-fine-tree` glob matched under an active `--split`,
+//! bounded and one-sided ([`file_is_text`]). That is the only read here,
+//! it happens under that flag pair only, and it is on the path that
+//! exists to say no.
 //!
 //! # Why this is a separate module from the pipeline
 //!
@@ -10,10 +20,12 @@
 //! invocation identity is spelled, and the one flag combination that is
 //! refused outright.
 //!
-//! Every function in this module is pure or `stat`-only. Nothing here
-//! opens a vault, collects a passphrase, touches the network, or writes a
-//! byte — which is what lets `--dry-run` run the identical code (D49) and
-//! what lets the whole D46 matrix be tested without a backend.
+//! Every function in this module is pure, `stat`-only, or — for the one
+//! D24 §1 refusal — reads a file the user's own glob selected, to answer
+//! that refusal's own condition. Nothing here opens a vault, collects a
+//! passphrase, touches the network, or writes a byte — which is what lets
+//! `--dry-run` run the identical code (D49) and what lets the whole D46
+//! matrix be tested without a backend.
 //!
 //! # The order the checks run in, and why
 //!
@@ -22,6 +34,8 @@
 //!   → D46 argument validation  (stat per argument; every problem collected)
 //!   → the M1 anchor-stage gate (this build cannot anchor yet)
 //!   → --no-fine-tree matching  (pure, over the validated list)
+//!   → --split x --no-fine-tree (D24 §1; the only step that reads bytes,
+//!                               and only files the glob matched)
 //! ```
 //!
 //! The mainnet guard is first because it mirrors
@@ -90,8 +104,15 @@ pub struct PlannedFile {
     pub as_given: String,
     /// The same path lexically absolutized — D45's resume match key.
     pub absolute: String,
-    /// Size in bytes, from the same `stat` that validated the argument.
-    /// Displayed by the consent gate (U14) before anything is read.
+    /// Size in bytes, from the same `stat` that validated the argument —
+    /// which is also what lets [`refuse_split_on_no_fine_tree`] exempt an
+    /// empty file for free, before any read.
+    ///
+    /// Displayed by the consent gate (U14). *"…before anything is read"*
+    /// stood here until D149 §2 R2 and no longer holds of the process: a
+    /// file matched by `--no-fine-tree` under an active `--split` has been
+    /// read by then, bounded as R2 specifies. The `stat` this field comes
+    /// from is still the only source of the **number**.
     pub size: u64,
     /// The per-file semantic flags G consumes.
     pub flags: FileFlags,
@@ -160,10 +181,13 @@ impl SealPlan {
 ///
 /// - [`CliError::InvalidSealArgument`] — the `--no-anchor` × `arbitrum-one`
 ///   refusal (constructed from [`SealError::NoAnchorOnMainnet`], so the CLI
-///   and the library say the same words), or any D46 rule 1–3 violation,
-///   with every offending argument named.
+///   and the library say the same words), any D46 rule 1–3 violation, or
+///   D24 §1's `--split` × `--no-fine-tree` conflict — with every offending
+///   argument named.
 /// - [`CliError::Io`] — arguments that do not exist or cannot be `stat`ed,
-///   when that is the *only* problem (D46 rule 4).
+///   when that is the *only* problem (D46 rule 4); or a `--no-fine-tree`
+///   match that cannot be opened or read while D24 §1's condition is being
+///   decided (D149 §2 R2).
 /// - [`CliError::Usage`] — a `--no-fine-tree` pattern that matches no file
 ///   in the work.
 pub fn build_plan(args: &SealArgs, network: NetworkId, cwd: &Path) -> Result<SealPlan, CliError> {
@@ -224,6 +248,14 @@ pub fn build_plan(args: &SealArgs, network: NetworkId, cwd: &Path) -> Result<Sea
             ),
         });
     }
+
+    // ── 4. D24 §1: `--split` x `--no-fine-tree` on the same text file ──
+    //
+    // Last because it is the only check that opens a file: everything
+    // decidable from argv or from the `stat` that already happened has
+    // had its chance, so nothing is read for an invocation another rule
+    // was going to refuse anyway.
+    refuse_split_on_no_fine_tree(&planned, &shaping.no_fine_tree)?;
 
     Ok(SealPlan {
         files: planned,
@@ -365,6 +397,185 @@ fn report(problems: Vec<Problem>) -> Result<(), CliError> {
         context: format!("reading seal argument(s) {}", names.join(", ")),
         source: source.unwrap_or_else(|| std::io::Error::other("unreadable seal argument")),
     })
+}
+
+/// D24 §1's refusal: a **text** file that `--split` selected for splitting
+/// and that a `--no-fine-tree` glob also matched.
+///
+/// The two flags ask for incompatible *permanent* granularities.
+/// `--no-fine-tree` makes a file whole-file-reveal-only forever (spec line
+/// 85) and unit boundaries are frozen at seal time, so the sub-file units
+/// `--split` asked for (line 84) could never be revealed. D24 layer 2
+/// makes that contradiction unrepresentable in the model
+/// ([`antseal_core::content::unit::SplitEligibleText`] is the witness only
+/// a fine-tree-covered text descriptor can produce) — but *unrepresentable
+/// is not rejected*: the model reconciles by falling back to one whole-file
+/// unit, silently. Silence is the outcome D24's status line says was not
+/// chosen, and this function is layer 1, the half that says so out loud.
+///
+/// # Why here and not one layer down
+///
+/// Every other candidate site — `run_seal`, `Pipeline::seal`'s own plan
+/// validation — sits behind the vault lock, the passphrase prompt and the
+/// network connect (`commands.rs`'s `seal_over_backend`). D24 rationale 1
+/// is *"re-running a failed command costs seconds"*, and that is a claim
+/// about this function and about nowhere else: raised any later, a
+/// two-flag typo would cost a passphrase entry and a connect. D149 §1.4
+/// measured the alternatives; §3.2 and §3.3 record why each loses.
+///
+/// # The term order is normative (D149 §2 R1)
+///
+/// `split()` and `no_fine_tree_matched()` are argv-cheap, `size` came from
+/// the `stat` that already happened, and `force_text()` is argv again — so
+/// [`file_is_text`]'s read is reached only once nothing cheaper can
+/// answer. **`--force-text` costs no I/O, and an empty file costs no
+/// I/O.** Reordering the terms is a behaviour change, not a tidy-up.
+///
+/// `--force-text` is a *positive*, not an exemption: it makes a file text
+/// by argv (spec line 83), so it is the one flag that turns a genuinely
+/// binary matched file into a refusal. That combination passes silently in
+/// every build before this one (D149 §1.3 run M3).
+///
+/// Empty files are exempt because the opt-out cost them nothing:
+/// `CanonDescriptor::describe_file` sets
+/// `fine_tree_present = !opt_out.is_requested() && size > 0`, so a
+/// raw-empty file is split-ineligible **with** the opt-out and without it.
+/// This refusal exists to catch granularity the opt-out destroyed; on an
+/// empty file it destroyed none, and refusing would be the over-reach D24
+/// §1 already avoids for binary files.
+///
+/// # Errors
+///
+/// [`CliError::InvalidSealArgument`] — one problem per offending file,
+/// every one named in a single message (D46's own *"every offending
+/// argument named"* rule, reused here so a user with two conflicting files
+/// fixes both in one re-run) — or
+/// [`CliError::Io`] if a matched file cannot be read at all.
+fn refuse_split_on_no_fine_tree(
+    planned: &[PlannedFile],
+    patterns: &[String],
+) -> Result<(), CliError> {
+    let mut problems: Vec<Problem> = Vec::new();
+    for file in planned {
+        if file.flags.split().is_some()
+            && file.flags.no_fine_tree_matched()
+            && file.size > 0
+            && (file.flags.force_text() || file_is_text(&file.absolute, &file.as_given)?)
+        {
+            // The pattern(s) that actually matched **this** file,
+            // recomputed with the very function that made the decision.
+            // Printing the whole `--no-fine-tree` list would leave the
+            // user to work out which entry caught which file, and a
+            // paraphrase could disagree with the matcher.
+            let patterns = patterns
+                .iter()
+                .filter(|pattern| pattern_matches(pattern, &file.as_given, &file.absolute))
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let as_given = &file.as_given;
+            // The "counts as text by antseal's rule" clause is load-bearing,
+            // not decoration: a 10 KiB `tar` is valid UTF-8 end to end, so
+            // `--no-fine-tree '*.tar'` refuses files the user calls binary
+            // (D149 §1.5). State the rule rather than assert a
+            // classification the user will dispute. The two workarounds are
+            // D24 §1's own; there is deliberately no third.
+            problems.push(Problem::Argument(format!(
+                "{as_given} is selected for splitting by --split blank-lines and is also \
+                 matched by --no-fine-tree {patterns}: --no-fine-tree makes it permanently \
+                 whole-file-reveal only, so the sub-file units --split asks for could never \
+                 be revealed from it, and unit boundaries are frozen forever at seal time. \
+                 It counts as text by antseal's rule — valid UTF-8, or --force-text \
+                 (MVP-SPEC.md line 83). Seal it as a separate work without --split, or drop \
+                 one of the two flags (D24)"
+            )));
+        }
+    }
+    report(problems)
+}
+
+/// How much of a file [`file_is_text`] reads before it has to commit to
+/// reading the rest. One buffer decides essentially every non-UTF-8 file
+/// (D149 §1.5: a 128 MB ELF is settled at byte 40).
+const TEXT_PROBE_BYTES: u64 = 8192;
+
+/// Is this file text — [`antseal_core::canon::is_text`]'s answer, reached
+/// as cheaply as that answer allows.
+///
+/// The only function in this module that opens a file. `as_given` is
+/// carried purely so the I/O context names the path the user typed rather
+/// than the absolutized one.
+///
+/// # Errors
+///
+/// [`CliError::Io`] if the file cannot be opened or read. It was `stat`ed
+/// successfully moments ago (D46 rule 4), so this is a race or a
+/// permissions gap, not the ordinary missing-file case.
+fn file_is_text(absolute: &str, as_given: &str) -> Result<bool, CliError> {
+    let io = |source| CliError::Io {
+        context: format!("reading {as_given} to decide --split against --no-fine-tree (D24)"),
+        source,
+    };
+    let file = std::fs::File::open(absolute).map_err(io)?;
+    text_verdict(file).map_err(io)
+}
+
+/// [`file_is_text`]'s rule, over any reader — which is what lets a test
+/// put a byte budget under it and watch the early exit happen (D149 §2
+/// R10 T6) instead of trusting that it does.
+///
+/// # Bounded on one side only
+///
+/// The tempting cheap probe is *"read 8 KiB; valid UTF-8 means text"*, and
+/// measured it is wrong in the direction that over-refuses (D149 §1.5).
+/// What is sound is the negative: [`str::from_utf8`] distinguishes a
+/// genuinely invalid sequence (`error_len() == Some(_)`) from one merely
+/// cut off by the end of the buffer (`error_len() == None`), and a genuine
+/// invalid byte inside the head settles the **whole** file, because
+/// appending bytes can never repair it. So a *negative* may be taken from
+/// the head and a *positive* may not: a 10 KiB `tar` — valid UTF-8 end to
+/// end, NUL being a perfectly good scalar — correctly falls through to the
+/// whole file.
+///
+/// # One text rule, not two
+///
+/// [`antseal_core::canon::is_text`] stays the **sole** author of "this
+/// file is text". The head branch never returns `true` on its own; it only
+/// short-circuits a `false` that `is_text` would have returned anyway. Do
+/// not add an extension test, a NUL scan or a control-character ratio
+/// here: spec line 83 and `canon::is_text`'s own doc state the rule has no
+/// heuristic, and a second rule in the CLI would refuse files the model
+/// would have split and pass files it would not.
+///
+/// # Why the tail comes off the same handle
+///
+/// D149 §2 R2 writes the fall-through as a fresh `std::fs::read` of the
+/// path. Continuing the open handle is that rule with its two reads fused:
+/// identical verdict on any file that is not being rewritten underneath
+/// us, one `open` instead of two, the head bytes read once instead of
+/// twice — and, on a file that *is* changing, a verdict taken from one
+/// version rather than half from each. It is also what gives the R10 T6
+/// budget a single reader to observe; with two opens the second read would
+/// bypass any seam a test could hold.
+fn text_verdict<R: std::io::Read>(mut source: R) -> std::io::Result<bool> {
+    use std::io::Read as _;
+
+    let mut bytes = Vec::new();
+    (&mut source)
+        .take(TEXT_PROBE_BYTES)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() < TEXT_PROBE_BYTES as usize {
+        // A short read out of a `Take` is EOF: this IS the whole file, so
+        // `is_text` over it is the final answer and no tail is read.
+        return Ok(antseal_core::canon::is_text(&bytes));
+    }
+    if let Err(e) = std::str::from_utf8(&bytes)
+        && e.error_len().is_some()
+    {
+        return Ok(false);
+    }
+    source.read_to_end(&mut bytes)?;
+    Ok(antseal_core::canon::is_text(&bytes))
 }
 
 /// Lexically absolutize: cwd-join, drop `.` and repeated separators,
@@ -791,6 +1002,14 @@ mod tests {
 
     // ── plan contents ───────────────────────────────────────────────
 
+    /// **`--split` is deliberately absent here — do not put it back.**
+    /// This work carries `--force-text` and a `--no-fine-tree` glob that
+    /// matches `blob.bin`, and `--force-text` makes every file text by
+    /// argv (spec line 83), so adding `--split` makes this invocation
+    /// D24 §1's refusal rather than a plan (D149 §2 R5, R7). The split
+    /// half of the old combined test lives one test down, over a work
+    /// with no glob to conflict with; splitting the fixture is the only
+    /// way to keep both halves asserted at all.
     #[test]
     fn the_plan_records_sizes_flags_and_both_path_spellings() {
         let dir = Dir::new("plan");
@@ -798,7 +1017,6 @@ mod tests {
         dir.file("blob.bin", &[0u8; 40]);
         let mut a = args(&["notes.txt", "blob.bin"]);
         a.title = Some("thesis".to_owned());
-        a.split = Some(SplitMode::BlankLines);
         a.force_text = true;
         a.no_fine_tree = Some("*.bin".to_owned());
 
@@ -820,13 +1038,40 @@ mod tests {
             plan.shaping,
             SealShapingFlags {
                 title: Some("thesis".to_owned()),
-                split_blank_lines: true,
+                split_blank_lines: false,
                 force_text: true,
                 no_fine_tree: vec!["*.bin".to_owned()],
                 no_anchor: true,
                 force_degraded: false,
             }
         );
+    }
+
+    /// The coverage R7 lifted out of the test above: `--split` reaching
+    /// the D45 shaping record **and** reaching every file's `FileFlags`,
+    /// over a work with no `--no-fine-tree` glob to conflict with.
+    #[test]
+    fn split_reaches_the_shaping_record_and_every_file_when_no_glob_conflicts() {
+        let dir = Dir::new("plan-split");
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        dir.file("more.txt", b"alpha\n\nbeta\n");
+        let mut a = args(&["notes.txt", "more.txt"]);
+        a.title = Some("thesis".to_owned());
+        a.split = Some(SplitMode::BlankLines);
+
+        let plan = build_plan(&a, NetworkId::Devnet, &dir.0).expect("plan builds");
+        assert!(plan.shaping.split_blank_lines);
+        assert!(plan.shaping.no_fine_tree.is_empty());
+        for file in &plan.files {
+            assert_eq!(
+                file.flags.split(),
+                Some(ContentSplitMode::BlankLines),
+                "--split is applied to every file, not just the first: {}",
+                file.as_given
+            );
+            assert!(!file.flags.no_fine_tree_matched());
+            assert!(!file.flags.force_text());
+        }
     }
 
     #[test]
@@ -838,6 +1083,231 @@ mod tests {
         let err = build_plan(&a, NetworkId::Devnet, &dir.0).expect_err("refused");
         assert_eq!(err.class(), crate::error::ErrorClass::Usage);
         assert!(err.to_string().contains("matched none"), "{err}");
+    }
+
+    // ── D24 §1: --split x --no-fine-tree (D149) ────────────────────
+    //
+    // Every row of D149 §2 R10's table lives here except T7, which needs a
+    // spawned binary and a vault-less HOME to say anything at all and is in
+    // `tests/seal_plan_conflict.rs`.
+
+    /// A reader that remembers how much came out of it.
+    ///
+    /// The verdict alone cannot tell whether the probe *stopped*: a file
+    /// whose first byte is `0xFF` is not text however much of it is read.
+    /// Only the byte count can, which is why this exists.
+    struct Counting<'a> {
+        bytes: &'a [u8],
+        read: usize,
+    }
+
+    impl std::io::Read for Counting<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = std::cmp::min(buf.len(), self.bytes.len() - self.read);
+            buf[..n].copy_from_slice(&self.bytes[self.read..self.read + n]);
+            self.read += n;
+            Ok(n)
+        }
+    }
+
+    /// T1. The refusal itself: the file, both flags, and both workarounds.
+    #[test]
+    fn split_over_a_matched_text_file_is_refused_naming_both_flags() {
+        let dir = Dir::new("d24-text");
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        let mut a = args(&["notes.txt"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("notes.txt".to_owned());
+
+        let err = build_plan(&a, NetworkId::Devnet, &dir.0).expect_err("refused (D24 §1)");
+        assert_eq!(err.class(), crate::error::ErrorClass::InvalidSealArgument);
+        // 27, reused rather than minted: the sibling two-flag
+        // contradiction in this same function already means exactly this
+        // (D149 §2 R3).
+        assert_eq!(err.exit_code(), 27);
+        let rendered = err.to_string();
+        // The file-name SLOT, not merely the string: the pattern half of
+        // this very message is also `notes.txt`, so `contains("notes.txt")`
+        // would survive the file name going missing.
+        assert!(
+            rendered.contains("notes.txt is selected for splitting"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("--split blank-lines"), "{rendered}");
+        assert!(rendered.contains("--no-fine-tree notes.txt"), "{rendered}");
+        // Mandatory, not decoration: a `tar` is text by this rule, so the
+        // user's own word for the file will often disagree (D149 §1.5).
+        assert!(
+            rendered.contains("It counts as text by antseal's rule"),
+            "{rendered}"
+        );
+        // D24 §1's own two workarounds, both of them.
+        assert!(
+            rendered.contains("Seal it as a separate work without --split"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("drop one of the two flags"), "{rendered}");
+    }
+
+    /// T2. The negative control that keeps the fix from over-reaching:
+    /// `--split blank-lines --no-fine-tree '*.jpg'` is the *intended*
+    /// usage — split my prose, skip the fine tree on my photographs — and
+    /// D24 §1 exempts binary matches outright (G6).
+    ///
+    /// The fixture is `0xFF` bytes under a name that is not `.bin`, on
+    /// purpose: NUL padding and ASCII headers are valid UTF-8, so a `.bin`
+    /// name proves nothing about text-ness (D149 §1.5).
+    #[test]
+    fn a_genuinely_binary_match_under_split_is_not_an_error() {
+        let dir = Dir::new("d24-binary");
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        dir.file("opaque.dat", &[0xFFu8; 40]);
+        let mut a = args(&["notes.txt", "opaque.dat"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("*.dat".to_owned());
+
+        let plan = match build_plan(&a, NetworkId::Devnet, &dir.0) {
+            Ok(plan) => plan,
+            Err(e) => panic!("a binary match is not an error under --split (D24 §1, G6): {e}"),
+        };
+        assert_eq!(plan.no_fine_tree_matches(), vec!["opaque.dat"]);
+        // Both requests survive onto the file; the model reconciles them
+        // structurally (D24 layer 2), which is what `show_command.rs`'s
+        // fixture asserts one layer down.
+        assert_eq!(
+            plan.files[1].flags.split(),
+            Some(ContentSplitMode::BlankLines)
+        );
+        assert!(plan.files[1].flags.no_fine_tree_matched());
+    }
+
+    /// T3. `--force-text` is the exception to T2, and it is the case that
+    /// passes silently in every build before this one (D149 §1.3 run M3):
+    /// the flag makes the file text by argv, so the contradiction is real
+    /// even though the bytes are not UTF-8.
+    #[test]
+    fn force_text_makes_a_binary_match_a_refusal() {
+        let dir = Dir::new("d24-forced");
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        dir.file("opaque.dat", &[0xFFu8; 40]);
+        let mut a = args(&["notes.txt", "opaque.dat"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.force_text = true;
+        a.no_fine_tree = Some("*.dat".to_owned());
+
+        let err = build_plan(&a, NetworkId::Devnet, &dir.0).expect_err("refused (D24 §1)");
+        assert_eq!(err.exit_code(), 27);
+        let rendered = err.to_string();
+        // Not `contains("--force-text")`: the message names that flag in
+        // its text-rule clause whatever the input, so that assertion could
+        // not fail. The file-name slot can.
+        assert!(
+            rendered.contains("opaque.dat is selected for splitting"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("--no-fine-tree *.dat"), "{rendered}");
+    }
+
+    /// T4. A raw-empty file has no fine tree at any opt-out setting —
+    /// `fine_tree_present = !opt_out.is_requested() && size > 0` — so the
+    /// opt-out destroyed no granularity and there is nothing to refuse.
+    #[test]
+    fn an_empty_matched_file_is_not_an_error() {
+        let dir = Dir::new("d24-empty");
+        dir.file("empty.txt", b"");
+        let mut a = args(&["empty.txt"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("empty.txt".to_owned());
+
+        match build_plan(&a, NetworkId::Devnet, &dir.0) {
+            Ok(plan) => assert_eq!(plan.total_bytes(), 0),
+            Err(e) => panic!("an empty match destroys no granularity (D149 §2 R1): {e}"),
+        }
+    }
+
+    /// T5. The sharpest row in the set. Valid UTF-8 through the whole
+    /// probe, `0xFF` immediately after: the naive *"8 KiB of valid UTF-8
+    /// means text"* rule calls this text and refuses the seal. A small
+    /// binary fixture (T2) cannot catch that, because it never reaches the
+    /// boundary at all.
+    #[test]
+    fn a_head_that_is_valid_utf8_does_not_decide_the_file() {
+        let dir = Dir::new("d24-boundary");
+        let mut bytes = vec![b'a'; TEXT_PROBE_BYTES as usize];
+        bytes.push(0xFF);
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        dir.file("edge.dat", &bytes);
+        let mut a = args(&["notes.txt", "edge.dat"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("*.dat".to_owned());
+
+        if let Err(e) = build_plan(&a, NetworkId::Devnet, &dir.0) {
+            panic!(
+                "a valid-UTF-8 head decides nothing; the file is binary and exempt \
+                 (D149 §2 R2): {e}"
+            );
+        }
+    }
+
+    /// T6. The other side of R2's one-sidedness: a *decisive* invalid
+    /// sequence in the head settles the whole file, so the read takes **at
+    /// most one probe buffer** and never goes on to the tail. It does not
+    /// truncate at the offending byte — the buffer is already in hand — and
+    /// the assertion below is written as that bound rather than as an exact
+    /// offset, because the bound is the property. `Ok` alone would pass with
+    /// the early exit removed; the byte count is what makes this assertion
+    /// able to fail.
+    #[test]
+    fn a_decisive_invalid_byte_in_the_head_stops_the_read() {
+        let mut bytes = Vec::with_capacity((1 << 20) + 1);
+        bytes.push(0xFFu8);
+        bytes.resize((1 << 20) + 1, b'a');
+
+        let mut counting = Counting {
+            bytes: &bytes,
+            read: 0,
+        };
+        let verdict = text_verdict(&mut counting).expect("an in-memory reader cannot fail");
+        assert!(!verdict, "a leading 0xFF is not valid UTF-8");
+        assert!(
+            counting.read <= TEXT_PROBE_BYTES as usize,
+            "a decisive invalid sequence in the head must bound the read to at most one \
+             probe buffer ({} bytes): {} of {} bytes taken (D149 §2 R2)",
+            TEXT_PROBE_BYTES,
+            counting.read,
+            bytes.len()
+        );
+
+        // And the same file through the production path: exempt, and the
+        // plan builds.
+        let dir = Dir::new("d24-earlyexit");
+        dir.file("notes.txt", b"para one\n\npara two\n");
+        dir.file("big.dat", &bytes);
+        let mut a = args(&["notes.txt", "big.dat"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("*.dat".to_owned());
+        if let Err(e) = build_plan(&a, NetworkId::Devnet, &dir.0) {
+            panic!("a leading 0xFF is binary and exempt: {e}");
+        }
+    }
+
+    /// T8. D46's *"every offending argument named"* applies to this
+    /// refusal too: a user with two conflicting files fixes both in one
+    /// re-run rather than discovering the second after fixing the first.
+    #[test]
+    fn every_conflicting_file_is_named_not_just_the_first() {
+        let dir = Dir::new("d24-many");
+        dir.file("one.txt", b"para one\n\npara two\n");
+        dir.file("two.txt", b"alpha\n\nbeta\n");
+        let mut a = args(&["one.txt", "two.txt"]);
+        a.split = Some(SplitMode::BlankLines);
+        a.no_fine_tree = Some("*.txt".to_owned());
+
+        let err = build_plan(&a, NetworkId::Devnet, &dir.0).expect_err("refused (D24 §1)");
+        let rendered = err.to_string();
+        assert!(rendered.contains("one.txt is selected"), "{rendered}");
+        assert!(rendered.contains("two.txt is selected"), "{rendered}");
+        assert!(rendered.starts_with("invalid seal arguments"), "{rendered}");
     }
 
     #[test]

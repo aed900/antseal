@@ -86,3 +86,7 @@
   this bundle did not verify: file 0: the disclosed canonical bytes do not open the manifest's canon_commit [manifest-canon-commit-mismatch]
 [reveal-inputs-unusable] class=reveal-inputs-unusable code=36
   this work cannot produce a proof bundle: unit 3: the bytes served do not hash to the address the manifest records — no change of arguments and no retry fixes this; the vault's records and the sealed evidence disagree
+[payment-stranded] class=payment-stranded code=28
+  payment stranded mid-sequence: 2 sub-batch transaction(s) landed before the failure and the journaled partial receipt is authoritative — this is not a transient network failure and money has already moved: re-run `antseal seal` with the same files and the same seal-shaping flags to finish it, which re-pays no quote the receipt already maps; `antseal list` prints the exact command (a payment sub-batch transaction reverted on-chain)
+[payment-proofs-expired] class=payment-proofs-expired code=29
+  this seal's payment proofs have expired (the ~24 h node-side window has passed), so the storers reject them: completing it requires a new, separately consented payment — the already-spent ANT is not recoverable

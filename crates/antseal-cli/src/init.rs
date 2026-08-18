@@ -254,6 +254,7 @@ impl InitReport {
             format!("Network: {}.", self.network.as_str()),
             String::new(),
             format!("Payment wallet address: {}", self.address),
+            WALLET_CUSTODY_NOTE.to_owned(),
             String::new(),
         ];
         if let Some(path) = &self.keyfile {
@@ -323,6 +324,21 @@ pub fn funding_lines(network: NetworkId, address: &str) -> Vec<String> {
     let _ = address;
     out
 }
+
+/// The wallet-custody fact `init` states once, beside the address it
+/// qualifies (D148 §2 R3). This exact string is what
+/// `docs/user/funding-your-wallet.md` carries, so the page and the CLI cannot
+/// drift — asserted by `the_funding_page_carries_the_wallet_custody_note`.
+///
+/// It says "your vault backup", never "a `vault export`", **on purpose**:
+/// `vault export` refuses a keyfile-wrapped vault outright
+/// (`crate::vault::export`, the wrap-mode refusal), so naming the command
+/// would make this line false for exactly the users `vault-theft.md` tells to
+/// adopt a keyfile.
+pub const WALLET_CUSTODY_NOTE: &str = "  No antseal command displays this address's key, and \
+     nothing moves its balance to another wallet: antseal can only spend it on seals. If \
+     antseal generated the key, your vault backup is the only copy of it there will ever be. \
+     Fund this address like a prepaid meter, not a savings account.";
 
 /// The two standing warnings MVP-SPEC.md line 143 requires `init` to give
 /// once, plus the positioning limit in possession language.
@@ -685,6 +701,71 @@ fn handle_from(key: &WalletKey) -> Result<WalletKeyHandle, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sample report, **constructed rather than derived**: every field is
+    /// a literal, so nothing this module drives to a default can quietly
+    /// empty the fixture out from under the assertions below.
+    ///
+    /// NON-SECRET: the address is the secp256k1 generator's address (the
+    /// public point for scalar 1) — a universally published curve constant,
+    /// unmistakably not a wallet anyone holds, and not key material in any
+    /// sense (project rule 6).
+    fn sample_report() -> InitReport {
+        InitReport {
+            address: "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf".to_owned(),
+            network: NetworkId::ArbitrumOne,
+            vault_dir: PathBuf::from("/fixture/vault"),
+            wallet_source: "generate",
+            kdf: "argon2id",
+            keyfile: None,
+            asked: Vec::new(),
+        }
+    }
+
+    /// **D148 §2 R8 T1.** The wallet-custody fact is in the report, and it is
+    /// the line *immediately after* the address it qualifies.
+    ///
+    /// Deliberately **not** the shape U78's row condemns
+    /// (`tests/init_command.rs`'s old funding-line loop compared `render()`'s
+    /// output to `funding_lines()`'s own output, and `render()` calls
+    /// `funding_lines()`): the needle here is a `const` that `render()` does
+    /// not compute, and the claim is about **position**, which a
+    /// constant-versus-constant comparison could not fake.
+    #[test]
+    fn the_report_states_the_wallet_custody_fact_beside_the_address() {
+        let lines = sample_report().render();
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("Payment wallet address: "))
+            .expect("the report must carry an address line");
+        assert_eq!(
+            lines.get(at + 1).map(String::as_str),
+            Some(WALLET_CUSTODY_NOTE),
+            "D148 §2 R3: the wallet-custody note must be the line immediately after the \
+             address it qualifies — a reader who stops at the address must still have met \
+             it. Report was: {lines:#?}"
+        );
+    }
+
+    /// **D148 §2 R8 T2.** The page has not drifted from the CLI.
+    ///
+    /// The `include_str!` idiom `crates/antseal-core/src/anchor/caps.rs`
+    /// already uses against `docs/format/anchor-artifact-limits.md`;
+    /// whitespace-normalized on both sides because the CLI holds one long
+    /// line and the page wraps at ~78 columns.
+    #[test]
+    fn the_funding_page_carries_the_wallet_custody_note() {
+        const PAGE: &str = include_str!("../../../docs/user/funding-your-wallet.md");
+        let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            squash(PAGE).contains(&squash(WALLET_CUSTODY_NOTE)),
+            "docs/user/funding-your-wallet.md no longer carries `init`'s WALLET_CUSTODY_NOTE \
+             word for word (whitespace-normalized). D148 §2 R2 makes that page the venue a \
+             pre-funding reader meets this in, and vault-theft.md and vault-loss.md both \
+             send the reader there — a page that has drifted from the CLI is exactly the \
+             defect D148 §1.5 measured."
+        );
+    }
 
     #[test]
     fn funding_copy_covers_all_three_networks_in_possession_language() {

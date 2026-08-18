@@ -25,7 +25,7 @@ vault with no recorded backup prints it again:
 That is not a paraphrase. It is the constant `THEFT_WARNING`
 (`crates/antseal-cli/src/vault/bookkeeping.rs:74-77`), quoted byte for byte, and
 it is the same string `init` renders
-(`crates/antseal-cli/src/init.rs:337-342`) and the same string the first-seal
+(`crates/antseal-cli/src/init.rs:353-358`) and the same string the first-seal
 export nag carries (`crates/antseal-cli/src/vault/bookkeeping.rs:264`). One
 author for all three, so a sentence you met at `init` is recognisable here
 rather than being a second phrasing of the same risk. `MVP-SPEC.md` line 143
@@ -257,18 +257,31 @@ what cannot be undone.
    moves the problem to that passphrase.
 2. **The wallet is the only part with a live clock, and antseal gives you no
    way to win that race.** No command prints or exports the wallet key on its
-   own: the key goes *in* at `init` (`--wallet import`, via a file descriptor)
-   and never comes back out
-   (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`). It is read
-   only to sign a payment (`crates/antseal-cli/src/commands.rs:381`, `:387`) or
-   to be copied into a `vault export`
-   (`crates/antseal-cli/src/vault/export.rs:761`) — so your only route to the
-   funds is the same artifact the thief is holding, protected by the same
+   own. The key arrives at `init` — by default **generated there** (`--wallet`
+   defaults to `generate`;
+   `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`), or imported
+   from a file descriptor or a hidden paste if you asked for that — and it never
+   comes back out. Inside the vault it is read to sign a payment
+   (`crates/antseal-cli/src/commands.rs:381`, `:387`), to open the payment RPC
+   in a build with the storage backend compiled in
+   (`crates/antseal-cli/src/backend.rs:699`, `:717`, under
+   `#[cfg(feature = "ant-backend")]`), and to be copied into a `vault export`
+   (`crates/antseal-cli/src/vault/export.rs:761`) — each of them a *use* and
+   none of them an exit, so your route to the funds is the same artifact the
+   thief is holding, protected by the same
    passphrase. If you supplied the key yourself at `init` you still have it
    elsewhere and can sweep the address from any Arbitrum wallet. If antseal
-   generated it, you cannot. **This is why `funding-your-wallet.md` says to keep
-   the balance small and fund close to when you seal** — that advice is the
-   mitigation, and it only works in advance.
+   generated it, you cannot — but you can still *pay* with it: a backup you made
+   before the theft restores into a working vault
+   (`crates/antseal-cli/src/vault/export.rs:1104-1106`) and seals exactly as
+   before. What you cannot do is move the balance somewhere the thief cannot
+   reach, and the thief — holding the vault itself and racing you only for the
+   passphrase — is who the small balance is for.
+   **`funding-your-wallet.md`'s "What this address's key can and cannot do" is
+   the mitigation, and it only works in advance.** That page gives the same
+   *keep the balance small* advice for a second, independent reason — public
+   linkability, `wallet-hygiene.md`'s subject — and the two reasons point the
+   same way.
 3. **Do not bother rotating.** There is nothing to rotate. Creating a new vault
    protects future works only, and re-importing the old one changes nothing an
    attacker holding a copy can do.
@@ -324,12 +337,12 @@ decade. It does.
 | Claim on this page | Where it is enforced |
 | --- | --- |
 | the theft warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:74-77` |
-| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:337-342`; `crates/antseal-cli/src/vault/bookkeeping.rs:264` |
+| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:353-358`; `crates/antseal-cli/src/vault/bookkeeping.rs:264` |
 | retroactive, permanent, unrotatable — stated in the code too | `crates/antseal-core/src/crypto/secrets.rs:47-49` |
 | `W` is per work; everything derives from it | `crates/antseal-cli/src/vault/store.rs:198-201`; `crates/antseal-core/src/crypto/hkdf.rs:137-146` |
 | an export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:99-100` |
 | the wallet sub-key decouples records, not the passphrase | `crates/antseal-cli/src/vault/wallet.rs:9-12` |
-| no command exports the wallet key; it is read only to sign or to be copied into an export | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`; `crates/antseal-cli/src/commands.rs:381`, `:387`; `crates/antseal-cli/src/vault/export.rs:761` |
+| no command exports the wallet key; it is read to sign, to open the payment RPC, and to be copied into an export — three uses, no exit | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`; `crates/antseal-cli/src/commands.rs:381`, `:387`; `crates/antseal-cli/src/backend.rs:699`, `:717`; `crates/antseal-cli/src/vault/export.rs:761` |
 | no rotate / passwd / change-passphrase: nine commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15` |
 | scrypt costs more memory, not less — no low-RAM escape | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:67-74` |
 | import re-encrypts local records and never touches `W` | `crates/antseal-cli/src/vault/export.rs:130-131` |

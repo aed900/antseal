@@ -429,6 +429,16 @@ impl<'a, P: ConsentPrompt> SealConsent<'a, P> {
             }
         }
     }
+
+    /// Show one screen and record it — two acts that must never come apart.
+    ///
+    /// `ConsentHook::confirm` calls it before the preflight; `--dry-run`
+    /// calls it **only** when the preflight refuses, because its `Ok` path
+    /// is rendered by the caller (D146 §2 R1).
+    pub fn show(&self, lines: &[String], report: &ConsentReport) {
+        self.emit(lines);
+        self.rendered.borrow_mut().push(report.clone());
+    }
 }
 
 impl<P: ConsentPrompt> ConsentHook for SealConsent<'_, P> {
@@ -438,8 +448,7 @@ impl<P: ConsentPrompt> ConsentHook for SealConsent<'_, P> {
         // typed error carries required-vs-available for scripts, and the
         // report is what explains it to a person — the file list and the
         // complete quote in one place. Both audiences, one render.
-        self.emit(&report.render());
-        self.rendered.borrow_mut().push(report.clone());
+        self.show(&report.render(), &report);
 
         report.preflight()?;
 

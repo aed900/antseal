@@ -308,8 +308,21 @@ pub struct SealArgs {
     #[arg(long, value_name = "GLOB")]
     pub no_fine_tree: Option<String>,
 
-    /// Run every free step and print the plan + true cost quote; nothing
-    /// is paid, anchored, or uploaded (D49)
+    // The wording below is ruled, not stylistic. This help once read
+    // "print the plan + true cost quote"; D49 §Ruling 4 refuses that
+    // phrase by name (docs/decisions/D49-dry-run-network-semantics.md,
+    // lines 109-116): a real seal re-encrypts under fresh nonces, so it
+    // prices different addresses, from a different peer set, at a later
+    // time -- "claiming 'true cost' (the register's phrase) would
+    // overstate; 'true pricing mechanism, indicative figure' is the
+    // honest contract". The doc comment carries that contract verbatim;
+    // do not restore the old phrase as an improvement (U80). The
+    // rendered line is frozen by U1 in
+    // tests/snapshots/cli-surface.help.txt, so changing it is a
+    // deliberate re-bless under ANTSEAL_BLESS=1, never a typo fix.
+    /// Run every free step and print the plan + quote (true pricing
+    /// mechanism, indicative figure); nothing is paid, anchored, or
+    /// uploaded (D49)
     #[arg(long)]
     pub dry_run: bool,
 

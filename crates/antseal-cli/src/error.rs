@@ -35,6 +35,8 @@
 //! | 25   | `resume-overlap-not-exact` | D45 §2: input overlap with an incomplete work that is not an exact match |
 //! | 26   | `resume-flag-mismatch` | D45 §2: same inputs, different seal-shaping flags |
 //! | 27   | `invalid-seal-argument` | D46: directory / non-regular file / duplicate path, pre-consent |
+//! | 28   | `payment-stranded` | D147: payment failed mid-sequence with money already moved — never the transient class; re-running `seal` finishes it and re-pays no quote the journaled receipt already maps |
+//! | 29   | `payment-proofs-expired` | D147 / D37 Decision 6: the journaled proofs outlived the ~24 h window, so completing the seal costs a **second**, separately consented payment |
 //! | 30   | `refused-overwrite` | D48: restore found an existing, differing file (per-file; most-severe-class reporting) |
 //! | 31   | `malformed-restore-record` | D48: a vault record that cannot drive a safe restore |
 //! | 32   | `export-self-verify-failed` | D47: the written export failed its mandatory self-verify |
@@ -47,6 +49,26 @@
 //! | 42   | `verify-headline-divergence` | D69 §3 R2 rung 2: headline-eligible anchors disagree by strictly more than 48 h (MVP-SPEC.md line 137) |
 //! | 43   | `verify-unanchored` | D69 §3 R2 rung 3: zero headline-eligible anchors — **deliberately nonzero and deliberately distinct**, so a caller who accepts undated bundles opts back in with one line |
 //! | 44–49 | *reserved* | D69 §3 R9: a future storage-linkage rung (only if R6 is ever overturned), a `sig_policy` split, or report-v2 growth — **do not mint here** |
+//!
+//! # 28 and 29 are the money-moved pair (D147)
+//!
+//! Of the classes the storage boundary produces
+//! ([`crate::pipeline::error`]'s `storage_to_cli`), 20 and 21 are
+//! shortfalls found *before* anything is paid and 23 is the transient
+//! class a caller is **right** to retry: all three leave the wallet
+//! untouched by the failed attempt. 28 and 29 are the two where ANT has
+//! already left it, and they are separate codes because the remedies
+//! differ: 28 is finished by re-running `antseal seal` on the same inputs
+//! (the journaled partial receipt is authoritative, so no mapped quote is
+//! re-paid), while 29 needs a new, separately consented payment. A
+//! wrapper that retries 23 the way it retries a peer timeout must not be
+//! handed either of them.
+//!
+//! They are minted **inside** the seal/payment/resume band D69 §1(a)
+//! surveyed and recorded free, not appended past 43 — the same placement
+//! rule that put `restore-verification-failed` at 35 *"beside the other
+//! restore classes"* rather than in the 40s. No assigned code moved and
+//! 44–49 stays reserved (D134 §2 R3).
 //!
 //! # The three verdict rungs are not errors (D69 §3 R1's third arm)
 //!
@@ -309,6 +331,8 @@ pub enum ErrorClass {
     ResumeOverlapNotExact,
     ResumeFlagMismatch,
     InvalidSealArgument,
+    PaymentStranded,
+    PaymentProofsExpired,
     RefusedOverwrite,
     MalformedRestoreRecord,
     ExportSelfVerifyFailed,
@@ -324,7 +348,7 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 33] = [
+    pub const ALL: [ErrorClass; 35] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -344,6 +368,8 @@ impl ErrorClass {
         ErrorClass::ResumeOverlapNotExact,
         ErrorClass::ResumeFlagMismatch,
         ErrorClass::InvalidSealArgument,
+        ErrorClass::PaymentStranded,
+        ErrorClass::PaymentProofsExpired,
         ErrorClass::RefusedOverwrite,
         ErrorClass::MalformedRestoreRecord,
         ErrorClass::ExportSelfVerifyFailed,
@@ -386,6 +412,13 @@ impl ErrorClass {
             ErrorClass::ResumeOverlapNotExact => 25,
             ErrorClass::ResumeFlagMismatch => 26,
             ErrorClass::InvalidSealArgument => 27,
+            // D147: the two money-moved classes, taking the first two
+            // free codes of the seal/payment/resume band (D69 §1(a)
+            // recorded 28 and 29 free) rather than appending past 43 —
+            // the placement rule `restore-verification-failed` (35) and
+            // `reveal-inputs-unusable` (36) already set.
+            ErrorClass::PaymentStranded => 28,
+            ErrorClass::PaymentProofsExpired => 29,
             ErrorClass::RefusedOverwrite => 30,
             ErrorClass::MalformedRestoreRecord => 31,
             ErrorClass::ExportSelfVerifyFailed => 32,
@@ -456,6 +489,8 @@ impl ErrorClass {
             ErrorClass::ResumeOverlapNotExact => "resume-overlap-not-exact",
             ErrorClass::ResumeFlagMismatch => "resume-flag-mismatch",
             ErrorClass::InvalidSealArgument => "invalid-seal-argument",
+            ErrorClass::PaymentStranded => "payment-stranded",
+            ErrorClass::PaymentProofsExpired => "payment-proofs-expired",
             ErrorClass::RefusedOverwrite => "refused-overwrite",
             ErrorClass::MalformedRestoreRecord => "malformed-restore-record",
             ErrorClass::ExportSelfVerifyFailed => "export-self-verify-failed",
@@ -642,6 +677,34 @@ pub enum CliError {
     /// Storage/anchor network I/O failure (transient class).
     #[error("network failure: {detail}")]
     NetworkFailure { detail: String },
+
+    /// **D147**: a payment failed mid-sequence with money already moved. Never
+    /// the transient network class — a caller retrying this the way it retries a
+    /// peer timeout spends against a wallet that has already paid.
+    #[error(
+        "payment stranded mid-sequence: {landed_tx_count} sub-batch transaction(s) landed \
+         before the failure and the journaled partial receipt is authoritative — this is not \
+         a transient network failure and money has already moved: re-run `antseal seal` with \
+         the same files and the same seal-shaping flags to finish it, which re-pays no quote \
+         the receipt already maps; `antseal list` prints the exact command ({detail})"
+    )]
+    PaymentStranded {
+        /// Sub-batch txs that landed (and were journaled) before the failure.
+        landed_tx_count: usize,
+        /// The storage layer's own diagnostic rendering (already redacted at
+        /// `ant_backend.rs`'s `redact_evm_error`).
+        detail: String,
+    },
+
+    /// **D147**: D37 Decision 6's expired-proof stranded state. Its own text says
+    /// "the already-spent ANT is not recoverable"; it exited 2 — clap's parse-error
+    /// code — until this class existed.
+    #[error(
+        "this seal's payment proofs have expired (the ~24 h node-side window has passed), so \
+         the storers reject them: completing it requires a new, separately consented payment — \
+         the already-spent ANT is not recoverable"
+    )]
+    PaymentProofsExpired,
 
     /// Spec line 145: resume never re-encrypts.
     #[error("resume safety abort: {}", .reason.describe())]
@@ -871,6 +934,8 @@ impl CliError {
             CliError::InsufficientEthGas { .. } => ErrorClass::InsufficientEthGas,
             CliError::AnchorGateAbort => ErrorClass::AnchorGateAbort,
             CliError::NetworkFailure { .. } => ErrorClass::NetworkFailure,
+            CliError::PaymentStranded { .. } => ErrorClass::PaymentStranded,
+            CliError::PaymentProofsExpired => ErrorClass::PaymentProofsExpired,
             CliError::ResumeSafetyAbort { .. } => ErrorClass::ResumeSafetyAbort,
             CliError::ResumeOverlapNotExact { .. } => ErrorClass::ResumeOverlapNotExact,
             CliError::ResumeFlagMismatch { .. } => ErrorClass::ResumeFlagMismatch,
@@ -955,6 +1020,8 @@ mod tests {
             ErrorClass::VerifyAnchorRefuted => 30,
             ErrorClass::VerifyHeadlineDivergence => 31,
             ErrorClass::VerifyUnanchored => 32,
+            ErrorClass::PaymentStranded => 33,
+            ErrorClass::PaymentProofsExpired => 34,
         }
     }
 

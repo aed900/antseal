@@ -57,3 +57,36 @@ Two independent layers:
   contract.
 - No format impact (pure CLI semantics; nothing frozen at Q14 beyond
   what G5 already freezes).
+
+## Addendum — 2026-08-18 (D149)
+
+Layer 1 was never built; D149 rules it and sharpens three points this record
+left implicit or wrong.
+
+1. **The venue in §1 holds.** The abort is raised in `build_plan`
+   (`crates/antseal-cli/src/seal_plan.rs`), before the consent gate, before any
+   derivation or payment — and, measured, before the vault lock, the passphrase
+   prompt and the network connect, which is what makes rationale 1's *"costs
+   seconds"* true.
+2. **§1's condition is not free, and this record did not say so.** *"a **text**
+   file"* is `is_text` = strict UTF-8 validity over the whole file (spec line
+   83), which no `stat`, extension or prefix can answer. Plan validation
+   therefore **reads** the files that match a `--no-fine-tree` glob under an
+   active `--split`, bounded as D149 §2 R2 specifies. `--force-text` needs no
+   read: it makes a file text by argv, and such a file **is** covered by §1 even
+   when its bytes are not valid UTF-8.
+3. **§1 is narrowed for empty files.** A raw-empty file has no fine tree at any
+   opt-out setting, so the opt-out costs it no granularity and it is **not** an
+   error. Refusing it would be over-reach of the same kind §1 already avoids for
+   binary files.
+4. **The Consequences section's *"a distinct CLI error variant/exit code"* is
+   amended.** The error is the existing `CliError::InvalidSealArgument` → class
+   `invalid-seal-argument` → exit **27**, the class the sibling two-flag
+   contradiction (`--no-anchor` × `arbitrum-one`) already uses. No code is
+   minted: D134 §2 R3 makes the table append-only, and a new variant would force
+   a re-bless of `tests/snapshots/cli-errors.display.txt` for no gain in
+   distinctness.
+5. **The Consequences section's *"Until U13 lands, the rule lives in G14's
+   assembly contract"* expired without being noticed.** U13/U15/U16 landed and
+   the rule did not move; U82 is the row that found it, and D149 is where it
+   moves.

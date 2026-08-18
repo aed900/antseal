@@ -24,18 +24,18 @@ use antseal_cli::backend::BackendArm;
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
 use antseal_cli::listing::WorkListing;
-use antseal_cli::pipeline::{SealJournal, VaultJournal};
-use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING};
+use antseal_cli::pipeline::{DryRunReport, SealJournal, VaultJournal};
+use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING, SealConsent};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
 use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
-use antseal_cli::seal_run::{SealCommandResult, SealContext, run_seal};
+use antseal_cli::seal_run::{SealCommandResult, SealContext, dry_run_outcome, run_seal};
 use antseal_cli::seal_session::SealSession;
 use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
 use antseal_cli::vault::bookkeeping::{self, LOSS_WARNING, THEFT_WARNING};
 use antseal_cli::vault::store::{WorkState, WorkStore};
 use antseal_core::crypto::secrets::SealId;
 use antseal_net::test_util::{Method, MockBackend, block_on};
-use antseal_net::{BalanceReport, network::EvmAddress20};
+use antseal_net::{BalanceReport, CostQuote, network::EvmAddress20};
 use common::IsolatedVault;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -851,10 +851,198 @@ fn a_dry_run_with_a_drained_wallet_exits_with_the_real_shortfall_code() {
         .expect_err("a dry run is a scriptable funding gate (D49)");
         assert_eq!(err.class(), class);
         assert_eq!(err.exit_code(), code);
+        // The screen that D146 R1 now shows *before* this error is asserted
+        // in `a_dry_run_shortfall_shows_the_whole_screen_before_the_typed_error`,
+        // not here: `run_seal` builds its `SealConsent` as a local, so the
+        // `rendered` recorder is unreachable from this call site, and no test
+        // in this workspace can read the process's own streams (D146 §1.6).
+
         // The gate refused, and it refused *before* anything could move.
         assert_eq!(backend.calls(Method::Pay), 0);
         assert_eq!(backend.calls(Method::FinalizeBatch), 0);
     }
+}
+
+/// One quote for the two `dry_run_outcome` cases below, with the two
+/// figures far apart so each shortfall amount is a distinct integer and a
+/// marker cannot be mistaken for the other asset's.
+fn shortfall_quote() -> CostQuote {
+    CostQuote {
+        blobs: Vec::new(),
+        total_ant_atto: 4_200,
+        gas_estimate_wei: 21_000,
+    }
+}
+
+/// The `DryRunReport` `Pipeline::seal` hands the `DryRun` arm. Only
+/// `quote` and `blob_count` reach the report; the other two are carried
+/// because the struct has them.
+fn dry_report(quote: CostQuote) -> DryRunReport {
+    DryRunReport {
+        quote,
+        blob_count: 2,
+        ciphertext_bytes: 7,
+        units_per_file: vec![1],
+    }
+}
+
+/// **D49 §3 / D146 R1**: a dry run that finds a shortfall shows the whole
+/// rehearsal screen and *then* refuses — the order `ConsentHook::confirm`
+/// uses on the real path, which the `DryRun` arm inverted from 2026-08-01
+/// until D146.
+///
+/// Driven through `dry_run_outcome` rather than `run_seal`, because the
+/// `SealConsent` `run_seal` builds is a local and unreachable from a test.
+/// The instrument is `SealConsent::rendered` — the same one the real gate is
+/// asserted on. **What it does not prove**: that any byte reached a file
+/// descriptor. `seal` is unwired in the default build and the crate cannot
+/// read its own process streams without a new dependency (U29), so the emit
+/// is guaranteed by `SealConsent::show`'s body — one method both paths call,
+/// which cannot record without emitting — and by nothing observable here
+/// (D146 §1.6, §6).
+#[test]
+fn a_dry_run_shortfall_shows_the_whole_screen_before_the_typed_error() {
+    let work = Work::new("dryshortscreen");
+    work.file("a.txt", b"content");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--dry-run"])
+        .expect("plan validates");
+    let quote = shortfall_quote();
+    let required_ant = quote.total_ant_atto;
+    let required_gas = quote.gas_estimate_wei;
+    let dry = dry_report(quote);
+    let context = ctx(true);
+
+    for (label, ant, gas, class, code) in [
+        (
+            "ANT short",
+            1_000u128,
+            u128::from(u64::MAX),
+            ErrorClass::InsufficientAntToken,
+            20,
+        ),
+        (
+            "gas short",
+            u128::from(u64::MAX),
+            5u128,
+            ErrorClass::InsufficientEthGas,
+            21,
+        ),
+        // Both short: the error can only ever name ANT (S8's fixed order,
+        // `antseal_net::preflight`), which is precisely why the screen has
+        // to render.
+        (
+            "both short",
+            1_000u128,
+            5u128,
+            ErrorClass::InsufficientAntToken,
+            20,
+        ),
+    ] {
+        let mut prompt = NeverAsked;
+        let consent = SealConsent::new(
+            &plan,
+            BalanceReport {
+                wallet: EvmAddress20::from_bytes(FIXTURE_WALLET),
+                ant_atto: ant,
+                gas_wei: gas,
+            },
+            Vec::new(),
+            plan.yes,
+            context.machine_mode,
+            context.to_stderr,
+            context.now_unix_secs,
+            &mut prompt,
+        );
+
+        let err = dry_run_outcome(&consent, &dry, &context)
+            .expect_err("a dry run is a scriptable funding gate (D49 §3)");
+        assert_eq!(err.class(), class, "{label}");
+        assert_eq!(err.exit_code(), code, "{label}");
+
+        assert_eq!(
+            consent.rendered.borrow().len(),
+            1,
+            "the dry-run shortfall screen never rendered: D49 §3 requires the complete \
+             report before the typed error, and D146 §1.1 measured this path at 0 emitted \
+             bytes ({label})"
+        );
+
+        // The emitted document is `SealCommandResult::DryRun`'s, not the
+        // gate's: the shortfall screen must be the funded screen with
+        // different numbers, trailer included (D146 §2 R1).
+        let recorded = consent.rendered.borrow()[0].clone();
+        let screen = SealCommandResult::DryRun(Box::new(recorded))
+            .render()
+            .join("\n");
+        assert!(screen.contains("    a.txt  (7 bytes)"), "{label}: {screen}");
+        assert!(screen.contains("Cost (indicative):"), "{label}: {screen}");
+        assert!(screen.contains(PERMANENCE_WARNING), "{label}: {screen}");
+        assert!(screen.contains("Dry run: nothing was"), "{label}: {screen}");
+
+        let expected_markers = usize::from(ant < required_ant) + usize::from(gas < required_gas);
+        assert_eq!(
+            screen.matches("** SHORT by ").count(),
+            expected_markers,
+            "{label}: the screen marks every short asset independently, and that is its \
+             whole advantage over the typed error, which names only the first (ANT before \
+             gas). Screen:\n{screen}"
+        );
+        if ant < required_ant {
+            assert!(
+                screen.contains(&format!("** SHORT by {} **", required_ant - ant)),
+                "{label}: the ANT marker is absent or carries the wrong figure:\n{screen}"
+            );
+        }
+        if gas < required_gas {
+            assert!(
+                screen.contains(&format!("** SHORT by {} **", required_gas - gas)),
+                "{label}: the gas marker is absent or carries the wrong figure:\n{screen}"
+            );
+        }
+    }
+}
+
+/// **D146 R1's other half**: on the success path this arm emits nothing,
+/// because the command handler renders every `Ok`. An unconditional emit —
+/// the literal reading of U79's original `Do` line, which D146 overturned —
+/// prints the whole rehearsal screen twice for every funded dry run.
+#[test]
+fn a_funded_dry_run_leaves_the_screen_to_its_caller() {
+    let work = Work::new("dryfundedscreen");
+    work.file("a.txt", b"content");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--dry-run"])
+        .expect("plan validates");
+    let dry = dry_report(shortfall_quote());
+    let context = ctx(true);
+
+    let mut prompt = NeverAsked;
+    let consent = SealConsent::new(
+        &plan,
+        funded(),
+        Vec::new(),
+        plan.yes,
+        context.machine_mode,
+        context.to_stderr,
+        context.now_unix_secs,
+        &mut prompt,
+    );
+
+    let result = dry_run_outcome(&consent, &dry, &context).expect("a funded dry run succeeds");
+    let SealCommandResult::DryRun(report) = &result else {
+        panic!("--dry-run returns DryRun, got {result:?}");
+    };
+    assert!(report.dry_run, "the figure is labelled indicative (D49)");
+    assert!(
+        result.render().join("\n").contains("Dry run: nothing was"),
+        "the caller renders this screen, trailer and all"
+    );
+    assert!(
+        consent.rendered.borrow().is_empty(),
+        "the rehearsal screen was emitted here AND by the caller: commands.rs:423-425 \
+         renders every Ok, so a funded dry run would print it twice"
+    );
 }
 
 /// U16 Accept row 4's first half: `--dry-run` combined with the flags that

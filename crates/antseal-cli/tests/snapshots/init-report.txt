@@ -1,0 +1,77 @@
+════ init report — arbitrum-one — no keyfile ════
+Vault created at <VAULT-DIR>.
+Network: arbitrum-one.
+
+Payment wallet address: <WALLET-ADDRESS>
+  No antseal command displays this address's key, and nothing moves its balance to another wallet: antseal can only spend it on seals. If antseal generated the key, your vault backup is the only copy of it there will ever be. Fund this address like a prepaid meter, not a savings account.
+
+To seal, this address needs two things:
+  1. ANT tokens on Arbitrum One — they pay for the storage itself.
+  2. A little ETH on Arbitrum One — it pays the gas for the payment transaction.
+
+Acquire ANT on Arbitrum One and send it to the address above, then bridge or buy a small amount of Arbitrum One ETH for gas. Real funds move on this network, and a seal is permanent and paid once.
+
+Two things to understand before you seal anything:
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  THEFT — whoever holds this vault (or an export) and the passphrase can decrypt every work you have ever sealed, retroactively and permanently. The ciphertexts are public and undeletable, and there is no key rotation. Treat the passphrase as a long-term, high-value key.
+
+What a seal proves: that the holder of this vault possessed the content by the anchored time. Not authorship, and not exclusive possession — someone you shared with can seal the same work earlier and outrank you. Seal before you share.
+════ init report — arbitrum-sepolia — no keyfile ════
+Vault created at <VAULT-DIR>.
+Network: arbitrum-sepolia.
+
+Payment wallet address: <WALLET-ADDRESS>
+  No antseal command displays this address's key, and nothing moves its balance to another wallet: antseal can only spend it on seals. If antseal generated the key, your vault backup is the only copy of it there will ever be. Fund this address like a prepaid meter, not a savings account.
+
+To seal, this address needs two things:
+  1. Test-ANT on Arbitrum Sepolia (chain 421614).
+  2. Arbitrum Sepolia ETH for gas.
+
+This is Arbitrum Sepolia, NOT Ethereum Sepolia (11155111): ETH and contracts from Ethereum Sepolia are useless here. Use an Arbitrum Sepolia gas faucet, or bridge Sepolia ETH to Arbitrum Sepolia; test-ANT comes from the project's Sepolia runbook (docs/, D38). Nothing here has value.
+
+Two things to understand before you seal anything:
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  THEFT — whoever holds this vault (or an export) and the passphrase can decrypt every work you have ever sealed, retroactively and permanently. The ciphertexts are public and undeletable, and there is no key rotation. Treat the passphrase as a long-term, high-value key.
+
+What a seal proves: that the holder of this vault possessed the content by the anchored time. Not authorship, and not exclusive possession — someone you shared with can seal the same work earlier and outrank you. Seal before you share.
+════ init report — devnet — no keyfile ════
+Vault created at <VAULT-DIR>.
+Network: devnet.
+
+Payment wallet address: <WALLET-ADDRESS>
+  No antseal command displays this address's key, and nothing moves its balance to another wallet: antseal can only spend it on seals. If antseal generated the key, your vault backup is the only copy of it there will ever be. Fund this address like a prepaid meter, not a savings account.
+
+To seal, this address needs two things:
+  1. Devnet ANT — minted by the local devnet's own deployment.
+  2. Devnet ETH for gas — Anvil pre-funds its accounts.
+
+On the local devnet there is no faucet and no funding step for the built-in accounts: `scripts/devnet/local-up` starts Anvil with pre-funded well-known keys and exports one in `.devnet/`. To pay from THIS address instead, send devnet ANT and ETH to it from that account. Nothing here has value, and the chain is discarded when the devnet stops.
+
+Two things to understand before you seal anything:
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  THEFT — whoever holds this vault (or an export) and the passphrase can decrypt every work you have ever sealed, retroactively and permanently. The ciphertexts are public and undeletable, and there is no key rotation. Treat the passphrase as a long-term, high-value key.
+
+What a seal proves: that the holder of this vault possessed the content by the anchored time. Not authorship, and not exclusive possession — someone you shared with can seal the same work earlier and outrank you. Seal before you share.
+════ init report — arbitrum-one — keyfile ════
+Vault created at <VAULT-DIR>.
+Network: arbitrum-one.
+
+Payment wallet address: <WALLET-ADDRESS>
+  No antseal command displays this address's key, and nothing moves its balance to another wallet: antseal can only spend it on seals. If antseal generated the key, your vault backup is the only copy of it there will ever be. Fund this address like a prepaid meter, not a savings account.
+
+Keyfile written to <KEYFILE-PATH>.
+  This file is now REQUIRED alongside your passphrase at every unlock. Lose it and the vault is gone — exactly as if you had lost the passphrase.
+  Keep it on different media from the vault: a USB stick, a second machine, a password manager's file attachment. Keeping it in your home directory beside `~/.antseal/` protects against nothing, because anything that reaches one reaches the other.
+  Back it up separately too — `antseal vault export` does NOT contain the keyfile, only the fact that one is required. Override its location for a single run with ANTSEAL_KEYFILE=<path>.
+
+To seal, this address needs two things:
+  1. ANT tokens on Arbitrum One — they pay for the storage itself.
+  2. A little ETH on Arbitrum One — it pays the gas for the payment transaction.
+
+Acquire ANT on Arbitrum One and send it to the address above, then bridge or buy a small amount of Arbitrum One ETH for gas. Real funds move on this network, and a seal is permanent and paid once.
+
+Two things to understand before you seal anything:
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  THEFT — whoever holds this vault (or an export) and the passphrase can decrypt every work you have ever sealed, retroactively and permanently. The ciphertexts are public and undeletable, and there is no key rotation. Treat the passphrase as a long-term, high-value key.
+
+What a seal proves: that the holder of this vault possessed the content by the anchored time. Not authorship, and not exclusive possession — someone you shared with can seal the same work earlier and outrank you. Seal before you share.

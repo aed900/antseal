@@ -23,7 +23,7 @@ words "nothing was paid or uploaded".
 
 A wallet with one and not the other fails at a different step with a different
 error, which is why `init` always names both
-(`crates/antseal-cli/src/init.rs:270-275`).
+(`crates/antseal-cli/src/init.rs:271-276`).
 
 Timestamping costs no ANT
 (`docs/decisions/D36-prepay-resume-requote-reconsent.md:250-252`). The
@@ -46,7 +46,7 @@ asks the network for a **real** quote — then stops. Nothing is paid, anchored,
 uploaded, or written to the vault. Its help text:
 
 ```
-Run every free step and print the plan + true cost quote; nothing is paid, anchored, or uploaded (D49)
+Run every free step and print the plan + quote (true pricing mechanism, indicative figure); nothing is paid, anchored, or uploaded (D49)
 ```
 
 (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:130-131`)
@@ -62,10 +62,11 @@ The report shows the quote and both balances together, and marks any shortfall:
 
 (`crates/antseal-cli/src/seal_consent.rs:139-158`, `:236-242`)
 
-Read "true cost quote" there as *true pricing mechanism*, not a locked-in
-price. The report itself labels the figure **indicative**, and that is the
-honest word: a real seal draws fresh nonces, so it encrypts to different
-addresses and re-quotes at a later moment
+The help's *true pricing mechanism, indicative figure* is the whole contract:
+the quote comes from the network itself rather than an offline estimate, and
+it is still not a locked-in price. The report labels the figure
+**indicative**, and that is the honest word: a real seal draws fresh nonces,
+so it encrypts to different addresses and re-quotes at a later moment
 (`crates/antseal-cli/src/seal_run.rs:284-289`;
 `docs/decisions/D49-dry-run-network-semantics.md:110-116`). Treat it as the
 right order of magnitude.
@@ -74,13 +75,48 @@ right order of magnitude.
 works as a scripted check for "could this machine seal this work right now"
 (`docs/decisions/D49-dry-run-network-semantics.md:98-105`).
 
-One difference worth knowing, because it is easy to misread as a broken
-command: **when a dry run finds you short, you get the one-line error and not
-the report above it.** A real `seal` prints the whole report first and then
-refuses (`crates/antseal-cli/src/seal_consent.rs:441-444`); a dry run checks
-the balances after building the report and returns the error instead of it
-(`crates/antseal-cli/src/seal_run.rs:505-520`). The error still carries both
-numbers, so you can still work out the shortfall.
+When a dry run finds you short it prints the whole report first and then
+refuses, exactly as a real `seal` does — the file list, the quote, both
+balances, and a `** SHORT by <N> **` marker beside every asset you are
+short of. The exit code says which remedy you need (20 = acquire ANT,
+21 = bridge ETH) and the typed error repeats the figures for the first one
+(`crates/antseal-cli/src/seal_run.rs`, the `DryRun` arm;
+`docs/decisions/D146-dry-run-shortfall-screen.md`).
+
+Under `--json`, that report goes to stderr and stdout carries one error
+envelope with `ok: false` and the class — there is **no** `result` document
+on the shortfall path, so gate a script on the exit code and on
+`error.class`, never on the presence of `result`.
+
+## What this address's key can and cannot do
+
+`init` says this once, next to the address:
+
+    No antseal command displays this address's key, and nothing moves its balance to another wallet: antseal can only spend it on seals. If antseal generated the key, your vault backup is the only copy of it there will ever be. Fund this address like a prepaid meter, not a savings account.
+
+(That is the constant `WALLET_CUSTODY_NOTE` in
+`crates/antseal-cli/src/init.rs`, quoted word for word; a test asserts this page
+still carries it.)
+
+Unpacked:
+
+- **The key is made inside the vault, and antseal has no command that shows
+  it.** `--wallet` defaults to `generate`
+  (`crates/antseal-cli/src/cli.rs:193`), and a generated key goes straight into
+  the vault's wallet record: `init` keeps the checksummed address and drops the
+  key (`crates/antseal-cli/src/init.rs:539-541`). None of the nine subcommands
+  prints, exports or rotates it.
+- **You can keep spending it; you cannot move it.** A vault backup carries the
+  key, and `vault import` reinstalls it
+  (`crates/antseal-cli/src/vault/export.rs:1104-1106`), so a restored vault pays
+  exactly as the original did. What no antseal command will ever do is hand you
+  the key to sweep the balance into a wallet you hold elsewhere.
+- **If you imported your own key, none of this binds you.** You still hold it
+  outside antseal and can spend or sweep that address from any Arbitrum wallet.
+- **This only works in advance.** Nothing here is a step you can take after a
+  laptop is stolen or a vault is lost. It is a decision about how much to send,
+  taken before you send it — `vault-theft.md` and `vault-loss.md` are what is
+  left afterwards.
 
 ## Arbitrum One — real funds
 
@@ -95,7 +131,7 @@ To seal, this address needs two things:
 Acquire ANT on Arbitrum One and send it to the address above, then bridge or buy a small amount of Arbitrum One ETH for gas. Real funds move on this network, and a seal is permanent and paid once.
 ```
 
-(`crates/antseal-cli/src/init.rs:278-295` — quoted word for word.)
+(`crates/antseal-cli/src/init.rs:279-294` — quoted word for word.)
 
 Three things that sentence packs in tightly:
 
@@ -113,10 +149,13 @@ Arbitrum One is `0xa78d8321B20c4Ef90eCd72f2588AA985A4BDb684`
 (`crates/antseal-net/src/network.rs:66`). A same-named token at a different
 address is a different token and will not pay for anything.
 
-Keep the balance small and fund close to when you seal. A funding transfer is
-public and permanent, and it links this wallet to wherever the funds came
-from — that chain of inference is `wallet-hygiene.md`'s subject, and it is
-worth reading before your first mainnet transfer rather than after.
+Keep the balance small and fund close to when you seal — for two independent
+reasons. A funding transfer is public and permanent, and it links this wallet to
+wherever the funds came from; that chain of inference is `wallet-hygiene.md`'s
+subject, and it is worth reading before your first mainnet transfer rather than
+after. And whatever sits at this address when the vault is lost or stolen is
+bounded by what you put there, because nothing moves it out — see "What this
+address's key can and cannot do" above.
 
 ## What a seal actually costs
 
@@ -172,7 +211,7 @@ insufficient ANT for this seal: the quote needs <required> atto-ANT but the wall
 insufficient ETH for gas: the payment transaction needs about <required> wei but the wallet holds <available>; fund the wallet with ETH for gas and re-run (nothing was paid or uploaded)
 ```
 
-(`crates/antseal-cli/src/error.rs:611-631`; the exact rendering is frozen in
+(`crates/antseal-cli/src/error.rs:646-666`; the exact rendering is frozen in
 `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:45-48`. Under
 `--json` the same text arrives as the `message` field beside `class` and
 `exit_code`.)
@@ -196,6 +235,48 @@ backend; a build from source needs `--features ant-backend`
 (`crates/antseal-cli/Cargo.toml:49`,
 `docs/decisions/D72-release-targets-distribution-and-crates-io-scope.md:493`).
 
+## The two failures where money *was* spent
+
+"Nothing was spent" above is true of exit codes **20** and **21**, because both
+are checked before any transaction is signed. **Do not generalise it to every
+payment error.** Two codes mean the opposite, and they are separate classes
+precisely so that a script cannot mistake them for a transient failure worth
+retrying blindly.
+
+**Payment stranded mid-sequence** — class `payment-stranded`, exit code **28**:
+
+```
+payment stranded mid-sequence: <N> sub-batch transaction(s) landed before the failure and the journaled partial receipt is authoritative — this is not a transient network failure and money has already moved: re-run `antseal seal` with the same files and the same seal-shaping flags to finish it, which re-pays no quote the receipt already maps; `antseal list` prints the exact command (<detail>)
+```
+
+**Payment proofs expired** — class `payment-proofs-expired`, exit code **29**:
+
+```
+this seal's payment proofs have expired (the ~24 h node-side window has passed), so the storers reject them: completing it requires a new, separately consented payment — the already-spent ANT is not recoverable
+```
+
+(`crates/antseal-cli/src/error.rs:681-697` and `:699-707`; the exact rendering
+is frozen in `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:89-90`
+and `:91-92`.)
+
+What each one asks of you:
+
+- **28 is finishable, and re-running is how you finish it.** The sub-batch
+  transactions that landed are journaled and the partial receipt is
+  authoritative, so completing the seal re-pays no quote that receipt already
+  maps. **There is no `antseal resume` command** — re-running `antseal seal`
+  with the same files and the same seal-shaping flags *is* the resume, and
+  `antseal list` prints the exact command that finishes it. What you must not
+  do is retry it as you would a network timeout, with a changed path list or
+  changed shaping flags: that starts a new seal and pays a second quote.
+- **29 costs a second payment, and the first one is gone.** The payment proofs
+  have a node-side window of roughly 24 hours; once it passes the storers
+  reject them, and no re-run recovers the ANT already spent. Finishing the work
+  means a new payment, separately quoted and separately consented.
+- **Branch on the code, never on "something failed".** A caller that treats
+  every non-zero exit as retryable is the failure these two classes exist to
+  prevent. Use the exit code, or `error.class` under `--json`.
+
 ## Development networks
 
 Nothing on either of these has value, and neither produces evidence you should
@@ -213,7 +294,7 @@ To seal, this address needs two things:
 This is Arbitrum Sepolia, NOT Ethereum Sepolia (11155111): ETH and contracts from Ethereum Sepolia are useless here. Use an Arbitrum Sepolia gas faucet, or bridge Sepolia ETH to Arbitrum Sepolia; test-ANT comes from the project's Sepolia runbook (docs/, D38). Nothing here has value.
 ```
 
-(`crates/antseal-cli/src/init.rs:298-307` — quoted word for word.)
+(`crates/antseal-cli/src/init.rs:299-308` — quoted word for word.)
 
 This is the mistake to expect. Most faucet pages offer both Sepolias one
 dropdown apart, and picking the wrong one gives you ETH that cannot pay for
@@ -248,7 +329,7 @@ To seal, this address needs two things:
 On the local devnet there is no faucet and no funding step for the built-in accounts: `scripts/devnet/local-up` starts Anvil with pre-funded well-known keys and exports one in `.devnet/`. To pay from THIS address instead, send devnet ANT and ETH to it from that account. Nothing here has value, and the chain is discarded when the devnet stops.
 ```
 
-(`crates/antseal-cli/src/init.rs:310-320` — quoted word for word.)
+(`crates/antseal-cli/src/init.rs:311-321` — quoted word for word.)
 
 Funding here is a non-event: the exported account holds both assets from block
 zero. Setup is `docs/devnet/local-devnet.md`.

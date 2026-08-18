@@ -33,7 +33,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 33] = [
+const TABLE: [(ErrorClass, u8, &str); 35] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -76,6 +76,16 @@ const TABLE: [(ErrorClass, u8, &str); 33] = [
     ),
     (ErrorClass::ResumeFlagMismatch, 26, "resume-flag-mismatch"),
     (ErrorClass::InvalidSealArgument, 27, "invalid-seal-argument"),
+    // D147's money-moved pair. Minted INSIDE the seal/payment/resume band
+    // (D69 §1(a) surveyed 28 and 29 free), not appended past 43 — the
+    // placement rule `restore-verification-failed` (35) and
+    // `reveal-inputs-unusable` (36) already set. No assigned code moved.
+    (ErrorClass::PaymentStranded, 28, "payment-stranded"),
+    (
+        ErrorClass::PaymentProofsExpired,
+        29,
+        "payment-proofs-expired",
+    ),
     (ErrorClass::RefusedOverwrite, 30, "refused-overwrite"),
     (
         ErrorClass::MalformedRestoreRecord,
@@ -493,6 +503,33 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                          records"
                     .into(),
             },
+        ),
+        // **D147**, appended: this vector is append-ordered, not
+        // code-ordered (measured in the committed snapshot, where
+        // `insufficient-*` precede `vault-keyfile-missing` and
+        // `reveal-inputs-unusable` follows `verify-bundle-rejected`), so the
+        // two new classes go here and the blessed diff is two appended
+        // blocks with nothing else moved.
+        //
+        // The two outcomes where ANT has already left the wallet. Assembled
+        // through the real producer — `storage_to_cli`, reached by the only
+        // route there is, `From<SealError>` — rather than hand-written, so
+        // the frozen text cannot drift from what a paying user actually
+        // meets.
+        (
+            "payment-stranded",
+            CliError::from(antseal_cli::pipeline::error::SealError::Storage(
+                antseal_net::StorageError::StrandedPayment {
+                    landed_tx_count: 2,
+                    reason: "a payment sub-batch transaction reverted on-chain".into(),
+                },
+            )),
+        ),
+        (
+            "payment-proofs-expired",
+            CliError::from(antseal_cli::pipeline::error::SealError::Storage(
+                antseal_net::StorageError::ProofsExpired,
+            )),
         ),
     ]
 }

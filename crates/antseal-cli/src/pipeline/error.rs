@@ -195,17 +195,17 @@ pub enum SealError {
     #[error(transparent)]
     AnchorGate(#[from] AnchorGateError),
 
-    /// **D37 Decision 6 / D36 rule 2**: the journaled payment proofs have
-    /// outlived the ~24 h node-side validity window. The payment is
-    /// stranded; completing the seal needs a fresh, separately consented
-    /// payment. Surfaced distinctly so it can never happen silently.
-    #[error(
-        "this seal's payment proofs have expired (the ~24 h node-side window has passed), so \
-         the storers reject them: completing it requires a new, separately consented payment — \
-         the already-spent ANT is not recoverable"
-    )]
-    ProofsExpired,
-
+    // `ProofsExpired` lived here from S11 until **D147/U81**. Nothing ever
+    // constructed it — the reachable expiry is
+    // `StorageError::ProofsExpired`, which `resume` intercepts once
+    // (`resume.rs:274`) and otherwise hands to `storage_to_cli` — and its
+    // sentence was borrowed by that mapping purely for its text, which is
+    // how the one message in the product containing *"the already-spent ANT
+    // is not recoverable"* came to exit 2. D147 R3 moved the sentence to
+    // `CliError::PaymentProofsExpired` (code 29) and R4 removed the variant,
+    // on this crate's own precedent for `AnchorStageUnavailable`
+    // (`crate::error`, the comment where it stood): *"an error nothing can
+    // produce is a claim about the product that no test can falsify."*
     /// The staged bytes are unavailable: the seal is **abandoned**, any
     /// payment forfeited, and a fresh seal must start with a new `seal_id`
     /// and freshly drawn nonces (S11; the journaled nonce table is never
@@ -276,9 +276,7 @@ impl From<SealError> for CliError {
             SealError::StagedBytes(_) => CliError::ResumeSafetyAbort {
                 reason: ResumeSafetyReason::StagedBytesMissing,
             },
-            SealError::ProofsExpired
-            | SealError::NotResumable { .. }
-            | SealError::NothingStaged => CliError::Usage {
+            SealError::NotResumable { .. } | SealError::NothingStaged => CliError::Usage {
                 message: err.to_string(),
             },
             SealError::KilledAtBarrier(_) => CliError::Internal {
@@ -297,11 +295,30 @@ impl From<SealError> for CliError {
     }
 }
 
-/// The storage boundary's classes mapped onto U2's exit codes. The two
-/// shortfalls stay distinct all the way to the exit code — the user
-/// remedies them differently (acquire ANT vs bridge ETH), which is why the
-/// spec separates them at all.
+/// The storage boundary's classes mapped onto U2's exit codes.
+///
+/// The distinction this map exists to keep is **four-way**, not two-way
+/// (**D147**). Two of the four are the shortfalls found *before* anything is
+/// paid — `insufficient-ant-token` (20) and `insufficient-eth-gas` (21) —
+/// which stay distinct all the way to the exit code because the user
+/// remedies them differently (acquire ANT vs bridge ETH). The other two are
+/// the outcomes where money has **already moved**: `payment-stranded` (28)
+/// and `payment-proofs-expired` (29). Everything else here is the transient
+/// class (23), which is the one a caller is right to retry — and that is
+/// exactly why 28 and 29 must never wear it.
 fn storage_to_cli(err: StorageError) -> CliError {
+    // D147: wildcard-free, the discipline `antseal_net::live::fetch_failure_class`
+    // already applies to this enum. `StorageError` is not `#[non_exhaustive]`, so a
+    // tenth variant is `error[E0004]` here rather than a silent exit 23 — which is
+    // how `StrandedPayment` came to share a code with a peer timeout.
+    //
+    // Every transport arm below binds the WHOLE error and renders it with
+    // `to_string()`, exactly as the catch-all did. Destructuring to
+    // `{ reason }` and forwarding `reason` alone would look equivalent and is
+    // not: it drops each variant's own `#[error(...)]` prefix, so
+    // "quote collection failed: <r>" would silently become "<r>" in four
+    // shipped messages. `the_transport_arms_keep_the_storage_errors_own_prefix`
+    // is the guard.
     match err {
         StorageError::InsufficientAnt {
             required_atto,
@@ -317,11 +334,44 @@ fn storage_to_cli(err: StorageError) -> CliError {
             required_wei,
             available_wei,
         },
-        StorageError::ProofsExpired => CliError::Usage {
-            message: SealError::ProofsExpired.to_string(),
+        // D147 R2: money moved. The sentence the catch-all already forwarded
+        // was right; only the two-word prefix and the machine identity behind
+        // it were wrong.
+        StorageError::StrandedPayment {
+            landed_tx_count,
+            reason,
+        } => CliError::PaymentStranded {
+            landed_tx_count,
+            detail: reason,
         },
-        other => CliError::NetworkFailure {
-            detail: other.to_string(),
+        // D147 R3: money moved, and completing the seal costs a second,
+        // separately consented payment. Exited 2 — clap's own parse-error
+        // code — until this class existed.
+        StorageError::ProofsExpired => CliError::PaymentProofsExpired,
+        // quoting precedes consent and payment: no money is at risk, retry is right.
+        err @ StorageError::Quote { .. } => CliError::NetworkFailure {
+            detail: err.to_string(),
+        },
+        // by its own definition, "before any transaction landed" — nothing moved.
+        err @ StorageError::Payment { .. } => CliError::NetworkFailure {
+            detail: err.to_string(),
+        },
+        // finalize issues no payment and is idempotent with the journaled receipt.
+        err @ StorageError::Finalize { .. } => CliError::NetworkFailure {
+            detail: err.to_string(),
+        },
+        // transport by definition; this is the class 23 is named for.
+        err @ StorageError::Network { .. } => CliError::NetworkFailure {
+            detail: err.to_string(),
+        },
+        // D147 §1.3: unreachable from this pipeline — `NotFound` is produced only
+        // by `get_data`, which the seal/resume pipeline never calls, and whose three
+        // callers stringify at the call site. Written out rather than left to a
+        // wildcard so the day someone wires a fetch into this pipeline is a
+        // deliberate review, not a silent inheritance. Rendered through
+        // `to_string()` like the rest, so the address text has exactly one spelling.
+        err @ StorageError::NotFound { .. } => CliError::NetworkFailure {
+            detail: err.to_string(),
         },
     }
 }
@@ -375,7 +425,6 @@ mod tests {
             SealError::AnchorGate(AnchorGateError::PolicyNotMet {
                 detail: "0 TSA tokens".to_owned(),
             }),
-            SealError::ProofsExpired,
             SealError::StagedBytes(StagedBytesUnavailable::Missing),
             SealError::NotResumable { state: "complete" },
             SealError::NothingStaged,
@@ -391,6 +440,15 @@ mod tests {
             SealError::Storage(StorageError::Network {
                 reason: "unreachable".to_owned(),
             }),
+            // D147's two money-moved classes. They replace the sample that
+            // used to be `SealError::ProofsExpired` — a variant nothing
+            // constructed, so the row proved only that a dead type mapped
+            // somewhere.
+            SealError::Storage(StorageError::StrandedPayment {
+                landed_tx_count: 1,
+                reason: "a payment sub-batch transaction reverted on-chain".to_owned(),
+            }),
+            SealError::Storage(StorageError::ProofsExpired),
         ];
         for err in samples {
             let rendered = err.to_string();
@@ -449,5 +507,83 @@ mod tests {
         .to_string();
         assert!(!binary.contains("--split"));
         assert!(binary.contains("not supported in v1"));
+    }
+
+    /// **D147 R5's guard.** Making `storage_to_cli` wildcard-free replaced one
+    /// `other => … other.to_string()` arm with five named ones, and the
+    /// obvious spelling of those arms — `StorageError::Quote { reason } => …
+    /// detail: reason` — compiles just as happily while silently dropping
+    /// each variant's own `#[error(...)]` prefix. That would turn
+    /// *"quote collection failed: r"* into *"r"* in four shipped messages and
+    /// nothing else in the suite would notice: the display snapshot's
+    /// `network-failure` exemplars are built from `CliError::NetworkFailure`
+    /// directly and never travel through this function.
+    ///
+    /// So the rendering is asserted **against the storage error's own
+    /// `Display`**, which R11 forbids rewording — one string, written once,
+    /// compared where it is consumed.
+    #[test]
+    fn the_transport_arms_keep_the_storage_errors_own_prefix() {
+        let transport = [
+            StorageError::Quote {
+                reason: "r".to_owned(),
+            },
+            StorageError::Payment {
+                reason: "r".to_owned(),
+            },
+            StorageError::Finalize {
+                reason: "r".to_owned(),
+            },
+            StorageError::Network {
+                reason: "r".to_owned(),
+            },
+            StorageError::NotFound {
+                address: antseal_net::Address::from([0xaa; 32]),
+            },
+        ];
+        assert_eq!(transport.len(), 5, "D147 R6 rules exactly five arms at 23");
+        for err in transport {
+            let storage_rendering = err.to_string();
+            // Cannot pass vacuously: the storage rendering must carry a
+            // prefix of its own to lose, and the two halves must differ.
+            assert!(
+                storage_rendering.contains(": ") || storage_rendering.contains(" at "),
+                "{storage_rendering}: no prefix for this test to protect"
+            );
+            let cli: CliError = SealError::Storage(err).into();
+            assert_eq!(cli.class(), ErrorClass::NetworkFailure);
+            assert_eq!(
+                cli.to_string(),
+                format!("network failure: {storage_rendering}"),
+                "an arm dropped the storage error's own `#[error(...)]` prefix"
+            );
+        }
+    }
+
+    /// **D147**: the two outcomes where ANT has already left the wallet are
+    /// each their own class, and neither is the transient one a caller
+    /// retries. Asserted at this seam as well as at the exit code
+    /// (`tests/seal_matrix.rs`), because this `From` impl is the only route
+    /// from the storage boundary to a code.
+    #[test]
+    fn the_two_money_moved_errors_never_wear_the_transient_class() {
+        let stranded: CliError = SealError::Storage(StorageError::StrandedPayment {
+            landed_tx_count: 2,
+            reason: "a payment sub-batch transaction reverted on-chain".to_owned(),
+        })
+        .into();
+        let expired: CliError = SealError::Storage(StorageError::ProofsExpired).into();
+
+        assert_eq!(stranded.class(), ErrorClass::PaymentStranded);
+        assert_eq!(stranded.exit_code(), 28);
+        assert_eq!(expired.class(), ErrorClass::PaymentProofsExpired);
+        assert_eq!(expired.exit_code(), 29);
+
+        let transient = ErrorClass::NetworkFailure.exit_code();
+        assert_ne!(stranded.exit_code(), transient, "23 is the retry-me code");
+        assert_ne!(expired.exit_code(), transient, "23 is the retry-me code");
+        // 2 is clap's own parse-error code, which is where `ProofsExpired`
+        // used to land: a wrapper cannot tell that from a typo.
+        assert_ne!(expired.exit_code(), ErrorClass::Usage.exit_code());
     }
 }

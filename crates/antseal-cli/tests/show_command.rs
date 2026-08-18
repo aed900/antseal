@@ -60,6 +60,16 @@ const SPLIT_TEXT: &[u8] = b"alpha one\n\nbeta two\n\ngamma three\n";
 /// Canonical-already text sealed with `--no-fine-tree` **and** a split
 /// request: D24 makes it single-unit anyway, which is what "whole-file
 /// reveal only" means in the unit table.
+///
+/// **`seal` refuses this combination** in plan validation (D24 §1, D149
+/// §2 R1): on a text file, `--split` plus a matching `--no-fine-tree` glob
+/// is exit 27 and no seal happens. This fixture is constructed at the
+/// **library** boundary on purpose — it never goes near `build_plan` — so
+/// that D24 §2's *structural* reconciliation stays asserted for a caller
+/// that bypasses the CLI, which is the layer D24 deliberately made
+/// *unrepresentable* rather than *rejected*. Do not "fix" it into
+/// unreachability: deleting the split request would delete the only
+/// exercise of D24 layer 2 through the pipeline and the `show` renderer.
 const OPTED_OUT: &[u8] = b"first para\n\nsecond para\n";
 
 /// A scratch directory that removes itself, holding the real files whose
@@ -111,7 +121,14 @@ fn seal_fixture(mock: &MockBackend, vault: &UnlockedVault, scratch: &Scratch) ->
         FileFlags::new(),
         FileFlags::new(),
         FileFlags::new().with_split(SplitMode::BlankLines),
-        // D24: the split request cannot apply to an opted-out file.
+        // D24 §2: the split request cannot apply to an opted-out file —
+        // the model reconciles it structurally, to one whole-file unit.
+        //
+        // Through `seal` this pair is refused outright (D24 §1, D149 §2
+        // R1, exit 27); reached here only because this suite drives
+        // `Pipeline::new` + `pipeline.seal` directly and never calls
+        // `build_plan`. That is the point of the fixture, not an oversight
+        // — see `OPTED_OUT`.
         FileFlags::new()
             .with_no_fine_tree()
             .with_split(SplitMode::BlankLines),
@@ -300,7 +317,14 @@ fn every_unit_of_every_file_is_a_row_with_all_its_fields() {
             (4, 2, "normal", 11, 10, 10),
             (5, 2, "normal", 21, 12, 12),
             // Opted out: one unit spanning the whole file, whatever
-            // `--split` asked for (D24).
+            // `--split` asked for (D24 §2). The **only** place that
+            // reconciliation is exercised through the pipeline and the
+            // `show` renderer. A CLI user cannot reach it *on a text
+            // file*: D24 §1 refuses that pair in plan validation (D149 §2
+            // R1). The pair still reaches this arm through `seal` for a
+            // binary or raw-empty match, which R1 exempts — so what is
+            // untestable from the CLI is this fixture's shape, not the
+            // reconciliation itself.
             (6, 3, "normal", 0, 24, 24),
         ]
     );

@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 
 use antseal_cli::cli::{InitArgs, InitProvided, KdfChoice, WalletSource, WrapChoice};
 use antseal_cli::error::{CliError, ErrorClass};
-use antseal_cli::init::{InitPrompt, WizardStep, funding_lines, run_init};
+use antseal_cli::init::{InitPrompt, InitReport, WizardStep, run_init};
+use antseal_cli::vault::bookkeeping::{LOSS_WARNING, THEFT_WARNING};
 use antseal_cli::vault::layout::{BesideFile, VaultLayout};
 use antseal_cli::vault::session::unlock_vault;
 use antseal_cli::vault::wallet::load_wallet_key;
@@ -666,13 +667,207 @@ fn machine_mode_without_a_passphrase_channel_aborts() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// U78: the committed golden rendering of `init`'s human report
+// ─────────────────────────────────────────────────────────────────────
+//
+// MVP-SPEC.md line 143 obliges the CLI to nag on both failure modes, and
+// `init`'s closing report is where it does it — yet before U78 no freeze
+// reached that text. `check-copy-style.py` reaches CLI copy only through
+// committed snapshots, and there was no snapshot of this report; U32's
+// release freeze inherited the same hole.
+//
+// THE SUBSTITUTIONS, AND WHY THE GOLDEN IS BUILT FROM CONSTRUCTED REPORTS
+// ----------------------------------------------------------------------
+// Three values in `InitReport` vary per run and per machine: the vault
+// directory (a temp path), the wallet address (`WalletKey::generate()`
+// draws from the OS CSPRNG, NOT from the injected test RNG), and the
+// keyfile path. The golden therefore renders reports whose varying fields
+// are the literal placeholder tokens below — a *structural* substitution,
+// not a textual scrub of a rendered string, so nothing machine-specific
+// can survive into the file.
+//
+// The fixture is CONSTRUCTED rather than derived from a live `init`, so
+// that no state the suite drives to a default can quietly empty it. What
+// keeps it honest is `the_report_prints_the_address_and_the_networks_funding_copy`
+// below: it runs the real `run_init`, replaces the three varying values
+// with the same tokens, and requires byte equality with the golden's
+// section. Construction gives determinism; the live run proves the
+// construction is faithful.
+
+/// The vault directory, as the golden spells it. Not a path any machine
+/// has — that is the point (U78: no absolute path in the golden).
+const GOLDEN_VAULT_DIR: &str = "<VAULT-DIR>";
+/// The wallet address, as the golden spells it. A generated address is
+/// OS-random, so pinning a real one would pin a value that changes every
+/// run; and an address token cannot be mistaken for key material.
+const GOLDEN_ADDRESS: &str = "<WALLET-ADDRESS>";
+/// The U8 keyfile path, as the golden spells it.
+const GOLDEN_KEYFILE: &str = "<KEYFILE-PATH>";
+
+fn golden_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/init-report.txt")
+}
+
+fn read_golden() -> String {
+    let path = golden_path();
+    std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing committed init-report snapshot at {}: {e} (generate with ANTSEAL_BLESS=1 \
+             and review the diff)",
+            path.display()
+        )
+    })
+}
+
+/// The header that opens one section of the golden.
+fn golden_header(network: NetworkId, keyfile: bool) -> String {
+    let wrap = if keyfile { "keyfile" } else { "no keyfile" };
+    format!("════ init report — {} — {wrap} ════", network.as_str())
+}
+
+/// One section's body, headers stripped, exactly as committed.
+fn golden_section(document: &str, network: NetworkId, keyfile: bool) -> String {
+    let header = golden_header(network, keyfile);
+    let after = document
+        .split_once(&format!("{header}\n"))
+        .unwrap_or_else(|| panic!("the golden has no section {header:?}"))
+        .1;
+    match after.split_once("\n════ ") {
+        Some((body, _)) => format!("{body}\n"),
+        None => after.to_owned(),
+    }
+}
+
+/// Every branch of [`InitReport::render`], rendered into one document:
+/// the three networks `funding_lines` distinguishes, each without a
+/// keyfile, plus the `placement_guidance` branch once. The two conditions
+/// are independent, so this is the whole branch set — no arm of `render()`
+/// is left unpinned (D148 §3.5 refuses to add a second conditional here
+/// precisely so this stays true).
+fn render_report_surface() -> String {
+    let mut out = String::new();
+    for (network, keyfile) in [
+        (NetworkId::ArbitrumOne, false),
+        (NetworkId::ArbitrumSepolia, false),
+        (NetworkId::Devnet, false),
+        (NetworkId::ArbitrumOne, true),
+    ] {
+        let report = InitReport {
+            address: GOLDEN_ADDRESS.to_owned(),
+            network,
+            vault_dir: PathBuf::from(GOLDEN_VAULT_DIR),
+            wallet_source: "generate",
+            kdf: "argon2id",
+            keyfile: keyfile.then(|| PathBuf::from(GOLDEN_KEYFILE)),
+            asked: Vec::new(),
+        };
+        out.push_str(&golden_header(network, keyfile));
+        out.push('\n');
+        out.push_str(&report.render().join("\n"));
+        out.push('\n');
+    }
+    out
+}
+
+/// **U78 Accept row 1.** `init`'s human report has a committed golden
+/// rendering, byte-compared, regenerable only behind `ANTSEAL_BLESS=1`.
+#[test]
+fn the_init_report_matches_its_committed_golden() {
+    let rendered = render_report_surface();
+    let path = golden_path();
+    if std::env::var_os("ANTSEAL_BLESS").is_some() {
+        std::fs::write(&path, &rendered).expect("write blessed snapshot");
+        return;
+    }
+    let committed = read_golden();
+    assert!(
+        committed == rendered,
+        "`init`'s human report drifted from the committed golden {}.\nMVP-SPEC.md line 143 \
+         mandates this copy and U78 pins it: if the change is deliberate, regenerate with \
+         ANTSEAL_BLESS=1 and justify the diff in review.\n--- rendered ---\n{rendered}",
+        path.display()
+    );
+}
+
+/// **U78 Accept row 1, second half.** The golden covers every section it
+/// claims to, and carries the two spec-mandated warnings **by identity** —
+/// each as a whole line equal to the constant, never as a substring of it.
+///
+/// Substring would pass on a truncated or reworded warning; identity
+/// cannot. A reworded `LOSS_WARNING`/`THEFT_WARNING` moves the golden, and
+/// a reviewer sees the diff.
+#[test]
+fn the_golden_carries_the_standing_warnings_by_identity() {
+    let committed = read_golden();
+    for (network, keyfile) in [
+        (NetworkId::ArbitrumOne, false),
+        (NetworkId::ArbitrumSepolia, false),
+        (NetworkId::Devnet, false),
+        (NetworkId::ArbitrumOne, true),
+    ] {
+        let header = golden_header(network, keyfile);
+        assert!(
+            committed.contains(&format!("{header}\n")),
+            "the golden lost section {header}"
+        );
+        let section = golden_section(&committed, network, keyfile);
+        for (name, warning) in [
+            ("LOSS_WARNING", LOSS_WARNING),
+            ("THEFT_WARNING", THEFT_WARNING),
+        ] {
+            assert!(
+                section.lines().any(|line| line == warning),
+                "{header}: no line of the golden IS {name}. The constant lives at \
+                 crates/antseal-cli/src/vault/bookkeeping.rs and MVP-SPEC.md line 143 requires \
+                 `init` to state both failure modes; re-bless the golden if the wording change \
+                 was deliberate."
+            );
+        }
+        // D148 §2 R3's line, pinned in the same document, in position.
+        let lines: Vec<&str> = section.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("Payment wallet address: "))
+            .unwrap_or_else(|| panic!("{header}: the golden has no address line"));
+        assert_eq!(
+            lines.get(at + 1).copied(),
+            Some(antseal_cli::init::WALLET_CUSTODY_NOTE),
+            "{header}: D148 §2 R3 puts WALLET_CUSTODY_NOTE immediately after the address"
+        );
+    }
+    assert_eq!(
+        committed.matches("════ init report — ").count(),
+        4,
+        "the golden's section set changed: update render_report_surface, the golden and this \
+         count together (deliberately)"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Output: funding copy and the `--json` document
 // ─────────────────────────────────────────────────────────────────────
 
 /// **U11 Accept row 4.** Address + funding instructions for all three
-/// networks, in possession language.
+/// networks, in possession language — asserted against the **committed
+/// golden**, not against the renderer's own inputs.
+///
+/// **What used to be here, and why it could not fail (U78).** This test
+/// looped over `funding_lines(network, &report.address)` and asserted that
+/// `report.render()` contained every line it produced. But `render()`
+/// *calls* `funding_lines()`, so the loop compared a function's output to
+/// itself: no wording change to the funding copy could ever redden it, on
+/// the one CLI surface MVP-SPEC.md line 143 mandates by name. That is this
+/// project's dominant defect class — an assertion nothing reachable could
+/// falsify — and it is why U78 exists. Do not reintroduce a check whose
+/// expected value is computed by the code under test.
+///
+/// What replaces it is a live `run_init` for each network whose rendered
+/// report, with the three varying values replaced by the golden's tokens,
+/// must equal the golden **byte for byte**. It is also the cross-check
+/// that keeps the constructed fixture above honest.
 #[test]
 fn the_report_prints_the_address_and_the_networks_funding_copy() {
+    let committed = read_golden();
     for network in [
         NetworkId::ArbitrumOne,
         NetworkId::ArbitrumSepolia,
@@ -695,12 +890,25 @@ fn the_report_prints_the_address_and_the_networks_funding_copy() {
             text.contains(&report.address),
             "{network}: prints the address"
         );
-        for line in funding_lines(network, &report.address) {
-            if !line.is_empty() {
-                assert!(text.contains(&line), "{network}: funding line missing");
-            }
-        }
-        assert!(text.contains("LOSS") && text.contains("THEFT"));
+        assert!(report.keyfile.is_none(), "{network}: no keyfile wrap here");
+
+        // The structural substitution: the live values out, the golden's
+        // tokens in. Longest-first is not needed — the three tokens are
+        // disjoint — but the vault path is replaced before the address so
+        // a vault directory that happened to contain the address text
+        // could not eat it.
+        let normalized = text
+            .replace(&report.vault_dir.display().to_string(), GOLDEN_VAULT_DIR)
+            .replace(&report.address, GOLDEN_ADDRESS);
+        assert_eq!(
+            format!("{normalized}\n"),
+            golden_section(&committed, network, false),
+            "{network}: the live `init` report differs from the committed golden at {}. \
+             Either the report changed (re-bless with ANTSEAL_BLESS=1 and justify it) or the \
+             constructed fixture in render_report_surface has drifted from what run_init \
+             actually produces.",
+            golden_path().display()
+        );
         assert!(!text.to_lowercase().contains("notar"), "{network}");
     }
 }

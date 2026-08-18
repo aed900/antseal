@@ -359,7 +359,15 @@ where
 {
     let store = WorkStore::new(session.vault());
 
-    // ── D45, before consent and before a single byte is read ──
+    // ── D45, before consent and before the work's bytes are read ──
+    //
+    // Not "before a single byte is read": D149 §2 R2 put a bounded text
+    // probe inside `build_plan`, upstream of this whole function, so the
+    // process may already have read a head (or, for a head that is valid
+    // UTF-8, a file) by the time detection runs. What this ordering buys
+    // is unchanged and is what the comment means — resume detection
+    // precedes consent, and precedes the read of the **work** itself in
+    // the `Fresh` arm below.
     let decision = detect(&store, plan.network, &plan.absolute_paths(), &plan.shaping)?;
     if let Some(notice) = decision.notice() {
         ctx.emit(&notice);
@@ -444,10 +452,23 @@ where
             (SealResult::Sealed(outcome), true)
         }
         ResumeDecision::Fresh { .. } => {
-            // The one place source bytes enter the process. Read after
-            // every refusal has had its chance (D46 validation, resume
-            // detection, the balance read), so a rejected invocation
-            // never loads a gigabyte first.
+            // Where the **work's** bytes enter the process — and, since
+            // D149 §2 R2, no longer the only place source bytes are read
+            // at all: `build_plan`'s `--split` × `--no-fine-tree` probe
+            // reads too, under that flag pair only. Its bound is
+            // one-sided and is exactly this: it reads *at most one 8 KiB
+            // buffer* when that buffer holds a decisive invalid sequence
+            // (it does not truncate at the offending byte), and otherwise
+            // reads the file whole — which is the case D24 §1's refusal
+            // exists for. So an invocation rejected by *that* probe can
+            // load a gigabyte first, exactly when the gigabyte is text.
+            //
+            // The read on the next line is a different one: the **work's**
+            // bytes. It sits after every refusal that can be decided
+            // without it (D46 validation, resume detection, the balance
+            // read), so nothing rejected downstream of here loads the work
+            // first. The two claims are about two reads and do not
+            // conflict.
             let bytes = read_all(plan)?;
             let files: Vec<SealFile<'_>> = plan
                 .files
@@ -502,24 +523,66 @@ where
         // built here from the same inputs it would have received —
         // through `report_for`, so the rehearsal screen and the real one
         // have one author.
-        SealResult::DryRun(dry) => {
-            let request = crate::pipeline::ConsentRequest {
-                seal_id: SealId::from_bytes([0; 16]),
-                quote: &dry.quote,
-                blob_count: dry.blob_count,
-                prior: None,
-                resume: false,
-                proofs_expired: false,
-            };
-            let mut report = consent.report_for(&request);
-            report.dry_run = true;
-            // The S8 preflight runs for real (D49): a dry run is a
-            // scriptable funding gate, so a drained wallet exits with the
-            // same distinct code the real seal would use.
-            report.preflight()?;
-            Ok(SealCommandResult::DryRun(Box::new(report)))
-        }
+        SealResult::DryRun(dry) => dry_run_outcome(&consent, &dry, ctx),
     }
+}
+
+/// D49 §3, as D146 R1 sharpens it: on a shortfall the rehearsal screen is
+/// shown **before** the typed error, exactly as the real gate does
+/// (`seal_consent.rs`'s `ConsentHook::confirm`) — and **only** when the
+/// preflight refuses.
+///
+/// The asymmetry with the gate is deliberate and is the finding D146 exists
+/// for. `ConsentHook::confirm` emits unconditionally because nothing
+/// downstream of it renders; this arm returns a value that `commands::seal`
+/// renders on **every** `Ok`, so an unconditional emit here would print the
+/// whole screen twice for every funded dry run. Measured before the change:
+/// `run_seal` emitted 0 bytes on both dry-run paths (D146 §1.1, §1.3).
+///
+/// The lines are [`SealCommandResult::render`]'s, never
+/// [`ConsentReport::render`]'s: the dry-run trailer is the sentence that
+/// tells a user staring at a shortfall that nothing was paid and the vault
+/// was not touched, and the shortfall screen must be the funded screen with
+/// different numbers.
+///
+/// `_ctx` is taken because D146 §2 R1 fixes this signature and the arm's
+/// call shape; nothing here reads it. The stream rule the emit needs
+/// (stdout in plain mode, stderr under `--json`, D51 invariant 2) already
+/// lives inside `consent`, which was built from this same context — and
+/// D146 §5 defect 1 asks for *fewer* implementations of that rule, not a
+/// fourth one here.
+///
+/// # Errors
+///
+/// The two S8 shortfall classes, and only those: `ConsentReport::preflight`
+/// delegates to `antseal_net::preflight`, whose error set is exactly
+/// `{InsufficientAntToken, InsufficientEthGas}` (D146 §1.8).
+pub fn dry_run_outcome<P: ConsentPrompt>(
+    consent: &SealConsent<'_, P>,
+    dry: &crate::pipeline::DryRunReport,
+    _ctx: &SealContext,
+) -> Result<SealCommandResult, CliError> {
+    let request = crate::pipeline::ConsentRequest {
+        seal_id: SealId::from_bytes([0; 16]),
+        quote: &dry.quote,
+        blob_count: dry.blob_count,
+        prior: None,
+        resume: false,
+        proofs_expired: false,
+    };
+    let mut report = consent.report_for(&request);
+    report.dry_run = true;
+    // The S8 preflight runs for real (D49): a dry run is a scriptable
+    // funding gate, so a drained wallet exits with the same distinct code
+    // the real seal would use. It is pure over the report's own fields
+    // (`antseal_net::preflight`), so computing it here changes nothing the
+    // renderer reads (D146 §1.2).
+    if let Err(err) = report.preflight() {
+        let screen = SealCommandResult::DryRun(Box::new(report.clone()));
+        consent.show(&screen.render(), &report);
+        return Err(err);
+    }
+    Ok(SealCommandResult::DryRun(Box::new(report)))
 }
 
 /// Where this invocation's anchor stage will submit, and which roots it

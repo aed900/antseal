@@ -31,7 +31,13 @@
 //! split — it cannot express it: sub-file ranges are reachable only through
 //! [`FileUnitPlan::split`], which requires a [`SplitEligibleText`] witness that
 //! only a fine-tree-covered **text** descriptor can produce. The matching hard
-//! CLI error (naming the file and both flags) is U's, per D24.
+//! CLI error (naming the file and both flags) is U's, per D24 §1 — and as of
+//! D149 it exists and can be checked rather than trusted:
+//! `refuse_split_on_no_fine_tree` in `crates/antseal-cli/src/seal_plan.rs`,
+//! raised in `build_plan` as `invalid-seal-argument` (exit 27) before the
+//! vault, the passphrase or any network access. Unrepresentable here is
+//! defence in depth, not the refusal: this layer reconciles *silently*, and
+//! silence is the outcome D24 rejected.
 //!
 //! # Byte domains and `size`
 //!

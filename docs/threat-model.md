@@ -565,7 +565,7 @@ to get wrong:
 
 - the wallet secret is **not derived from `W`** and is not derived from
   anything. It is a fresh 32-byte CSPRNG key, or a raw hex key the user
-  imported (`crates/antseal-cli/src/init.rs:497-513`);
+  imported (`crates/antseal-cli/src/init.rs:513-529`);
 - the sub-key is a sub-key of the **vault key**, so it protects the wallet
   record against a compromise of *another* record's key, not against the
   passphrase. A thief who breaks the passphrase derives the vault key and
@@ -638,9 +638,9 @@ counterparty, and it does not weaken a verdict anyone has already been shown.
 
 **The backup mechanism, precisely.** Two commands, no flags at all —
 `antseal vault export [FILE]` and `antseal vault import <FILE>`
-(`crates/antseal-cli/src/cli.rs:454`, `:462`; the frozen surface snapshot
+(`crates/antseal-cli/src/cli.rs:467`, `:475`; the frozen surface snapshot
 `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:357` and `:384`
-carries only the three global options). The design note at `cli.rs:449` is
+carries only the three global options). The design note at `cli.rs:462` is
 the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 
 - **The export is encrypted, under its own fresh salt.** One AEAD over the
@@ -762,7 +762,7 @@ threat model. What remains true is that nothing pins it.)*
 
 The receipt is **excluded from bundles by default**, and the default is
 `bool`'s `false` with no `default_value` anywhere — there is no line to get
-wrong (`crates/antseal-cli/src/cli.rs:375-377`; the shipped help snapshot
+wrong (`crates/antseal-cli/src/cli.rs:388-390`; the shipped help snapshot
 `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286` carries the
 same warning to the user). The include branch is a single `if`
 (`crates/antseal-cli/src/pipeline/reveal.rs:653-657`), and at format level
@@ -813,8 +813,8 @@ singleton — `RecordIdentity::Wallet` carries no discriminant, where
 `Receipt { seal_id }` does (`crates/antseal-cli/src/vault/cipher.rs:100-118`)
 — so every seal in a vault is paid by the same address. The key itself is a
 fresh CSPRNG secret or an imported raw hex key
-(`crates/antseal-cli/src/init.rs:497-513`), never derived, and the address is
-its EIP-55 rendering (`init.rs:523`).
+(`crates/antseal-cli/src/init.rs:513-529`), never derived, and the address is
+its EIP-55 rendering (`init.rs:539`).
 
 `MVP-SPEC.md` line 185 makes three commitments against this risk. **Two are
 implemented and one is not**, and this document should not imply otherwise:
@@ -822,7 +822,7 @@ implemented and one is not**, and this document should not imply otherwise:
 | commitment | state |
 | --- | --- |
 | receipt excluded from bundles by default | **implemented**, proven above |
-| `--include-receipt` to opt in | **implemented** (`cli.rs:375-377`) |
+| `--include-receipt` to opt in | **implemented** (`cli.rs:388-390`) |
 | wallet-hygiene docs (fresh address per work/client) | **docs-only, and there is no CLI affordance behind it** |
 
 Measured: no `seal`-time wallet or address flag exists on the frozen CLI
@@ -1587,7 +1587,7 @@ asymmetry worth naming.**
 **`--split` is what turns a size into a histogram.** The default is one
 whole-file unit (`crates/antseal-core/src/content/unit.rs:5-7`, asserted at
 `:635-641`), and the only splitting mode admitted in v1 is
-`--split blank-lines` (`crates/antseal-cli/src/cli.rs:298-300`, `:333-339`).
+`--split blank-lines` (`crates/antseal-cli/src/cli.rs:298-300`, `:346-352`).
 Under it the manifest publishes **the paragraph-length histogram of every
 split text file, in the clear** — `range` and `true_length` per unit, kept as
 two fields deliberately (`docs/format/registry-v1.md:631-632`). There is no
@@ -1755,7 +1755,7 @@ robustness the collapse case does not deliver.
 
 **The minimum-anchor policy, and the escape.** `evaluate_seal_gate`
 (`submit.rs:252-276`) aborts a seal that produced zero verified tokens unless
-`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:322-324`), and
+`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:335-337`), and
 the abort is loud about what did *not* happen: *"the minimum-anchor policy
 was not met: 0 of {attempted} TSA endpoint(s) produced a verified token, so
 nothing was paid for"* (`crates/antseal-anchor/src/gate.rs:184-189`).

@@ -133,7 +133,11 @@ where
     /// [`SealError::NotResumable`] for a terminal work;
     /// [`SealError::StagedBytes`] (the work is marked abandoned first);
     /// [`SealError::ConsentDeclined`] (no state change);
-    /// [`SealError::ProofsExpired`] when re-payment is refused; plus the
+    /// [`SealError::ConsentDeclined`] when the re-consented re-payment D36
+    /// requires is refused (`:457`); [`SealError::Storage`]
+    /// (`StorageError::ProofsExpired`) only if the *replacement* proofs
+    /// expire in turn — the first expiry is handled here (`:274`) and never
+    /// reaches the caller; plus the
     /// storage, journal and anchor classes.
     pub async fn resume(&self, seal_id: &SealId) -> Result<SealOutcome, SealError> {
         let state = self.journal.state(seal_id)?;

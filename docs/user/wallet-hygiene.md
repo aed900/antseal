@@ -116,7 +116,7 @@ fresh and its funding being unlinked, which are things you control.
 ```
 
 (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286`; the flag
-is defined at `crates/antseal-cli/src/cli.rs:374-377`.)
+is defined at `crates/antseal-cli/src/cli.rs:387-390`.)
 
 **The default is off and there is no configuration that changes it.** It is a
 plain boolean with no default value written anywhere and no config key behind
@@ -231,7 +231,7 @@ going to imply otherwise.** Measured on the frozen CLI surface:
 - `antseal init` will not run twice in one place. A vault already at the
   target path is an absolute refusal with no `--force`, because overwriting
   one destroys the reveal and restore keys of every work it holds
-  (`crates/antseal-cli/src/init.rs:585-596`,
+  (`crates/antseal-cli/src/init.rs:601-612`,
   `crates/antseal-cli/src/vault/session.rs:225-232`).
 
 So the fresh-address recommendation has exactly one mechanism behind it: **a
@@ -313,7 +313,7 @@ What actually keeps two addresses apart:
   a work costs before you move anything.
 - **Never import the same key into two vaults.** `init --wallet import`
   exists for bringing your own key material in
-  (`crates/antseal-cli/src/init.rs:497-513`), and using it twice with one key
+  (`crates/antseal-cli/src/init.rs:513-529`), and using it twice with one key
   produces two vaults with one address, which is the appearance of hygiene
   with none of the substance.
 
@@ -369,7 +369,7 @@ Nothing above is asserted from memory. The primary sources:
 
 | claim | source |
 | --- | --- |
-| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:374-377`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286` |
+| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:387-390`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286` |
 | the include branch and the missing-receipt refusal | `crates/antseal-cli/src/pipeline/reveal.rs:653-657`, `:948-950` |
 | presence in the bundle is the opt-in | `crates/antseal-core/src/bundle/schema.rs:727-741` |
 | the whole journaled receipt is what ships | `crates/antseal-cli/src/pipeline/receipt_sink.rs:79-82` |
@@ -385,7 +385,7 @@ Nothing above is asserted from memory. The primary sources:
 | one vault has exactly one wallet record | `crates/antseal-cli/src/vault/cipher.rs:100-118` |
 | the only wallet flags, and the nine subcommands | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`, `:52-65` |
 | config holds no wallet and no per-work data | `crates/antseal-cli/src/config.rs:8` |
-| `init` refuses an existing vault, with no override | `crates/antseal-cli/src/init.rs:585-596`; `crates/antseal-cli/src/vault/session.rs:225-232` |
+| `init` refuses an existing vault, with no override | `crates/antseal-cli/src/init.rs:601-612`; `crates/antseal-cli/src/vault/session.rs:225-232` |
 | `ANTSEAL_DIR` is a path, never a secret | `crates/antseal-cli/src/vault/layout.rs:16`, `:75-86` |
 | the upgrade hook runs only for the unlocked vault | `crates/antseal-cli/src/upgrade_hook.rs:87-92` |
 | the receipt's class, and that it carries no time | `crates/antseal-core/src/verify/wording.rs:392`; `crates/antseal-core/src/verify/report.rs:743-757` |

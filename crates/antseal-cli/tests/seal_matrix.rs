@@ -18,7 +18,7 @@ mod common;
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use antseal_cli::error::ConsentOutcome;
+use antseal_cli::error::{CliError, ConsentOutcome};
 use antseal_cli::pipeline::{
     Barrier, BlobSlot, NoBarriers, Pipeline, SealError, SealFile, SealJournal, SealPlan,
     SealRequest, SealResult, SealState, StagedBlob, UNIT_ENTRY_BASE, VaultJournal,
@@ -692,6 +692,162 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
         );
         assert_eq!(receipt.blobs.len(), 3, "every blob has a payment record");
     });
+}
+
+/// A backend whose `finalize_batch` **always** reports expired proofs.
+///
+/// D147 §1.10's reachable path to the class: `resume` intercepts the first
+/// expiry once (`resume.rs:274`) to re-quote, re-consent and re-pay, and a
+/// second expiry after that re-payment propagates through `:284`'s `?`.
+/// `MockBackend` has no fault for this — its `Fault` enum is `AfterQuote`,
+/// `AfterPayBeforeStore`, `AfterSubBatches(k)`, `AfterStoringK(k)`,
+/// `DuringGetData`, `NetworkOn(Method)` — and a mock cannot age a quote 24 h
+/// anyway, so the window is modelled at the boundary where it is observed.
+struct AlwaysExpired<'m> {
+    inner: &'m MockBackend,
+}
+
+impl StorageBackend for AlwaysExpired<'_> {
+    async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+        self.inner.quote_batch(blobs).await
+    }
+
+    async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+        self.inner.pay(quote).await
+    }
+
+    async fn finalize_batch(
+        &self,
+        _receipt: &PaymentReceipt,
+        _blobs: &[Blob],
+    ) -> Result<Vec<Address>, StorageError> {
+        Err(StorageError::ProofsExpired)
+    }
+
+    async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+        self.inner.get_data(address).await
+    }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+        self.inner.balances().await
+    }
+}
+
+/// D147: a stranded payment must never wear the transient network class. The
+/// existing rows stop at `SealError`; this one carries it to the exit code,
+/// which is where a retry loop reads it.
+#[test]
+fn a_stranded_payment_exits_with_its_own_class_and_never_the_network_code() {
+    let vault = Arc::new(shared_vault().unlock());
+    let seal_id = fixture_seal_id(70);
+    stage(&vault, seal_id, SealState::Anchored);
+
+    // The `:618` fixture exactly: three blobs, two transfers per tx ⇒ two
+    // sub-batches, killed after the first one lands.
+    let mock = MockBackend::new().with_max_transfers_per_tx(2);
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
+    let gate = RecordingGate::new();
+    let consent = Consent::always_yes();
+
+    let err = paying_journal_over(&vault, &sink, |journal| {
+        let backend = CapturingBackend::crashing_after(&mock, &sink, 2);
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(err) => err,
+            Ok(_) => panic!("the payment must strand mid-sequence"),
+        }
+    });
+    // The row this one extends stops here. Everything below is the layer it
+    // never crossed.
+    assert!(
+        matches!(
+            err,
+            SealError::Storage(StorageError::StrandedPayment {
+                landed_tx_count: 1,
+                ..
+            })
+        ),
+        "{err:?}"
+    );
+
+    let cli: CliError = err.into();
+    assert_eq!(
+        cli.class().name(),
+        "payment-stranded",
+        "a stranded payment must not wear the transient network class: money has \
+         moved, and a caller retrying exit 23 the way it retries a peer timeout \
+         spends against a wallet that has already paid"
+    );
+    assert_eq!(cli.exit_code(), 28);
+    assert_ne!(cli.exit_code(), 23, "23 is the retry-me code");
+    let msg = cli.to_string();
+    assert!(msg.contains(" 1 sub-batch transaction(s) landed"), "{msg}");
+    assert!(msg.contains("antseal seal"), "{msg}");
+    assert!(
+        msg.contains("re-pays no quote the receipt already maps"),
+        "{msg}"
+    );
+    assert!(!msg.starts_with("network failure:"), "{msg}");
+}
+
+/// D147's sibling row: the *other* money-moved outcome, which exited 2 —
+/// clap's own parse-error code — until this class existed.
+#[test]
+fn expired_proofs_exit_with_their_own_class_and_never_the_usage_code() {
+    let vault = Arc::new(shared_vault().unlock());
+    let seal_id = fixture_seal_id(71);
+    stage(&vault, seal_id, SealState::Anchored);
+
+    let mock = MockBackend::new();
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
+    let gate = RecordingGate::new();
+    let consent = Consent::always_yes();
+
+    let err = paying_journal_over(&vault, &sink, |journal| {
+        let backend = AlwaysExpired { inner: &mock };
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(err) => err,
+            Ok(_) => panic!("expired proofs must not complete the seal"),
+        }
+    });
+    assert!(
+        matches!(err, SealError::Storage(StorageError::ProofsExpired)),
+        "{err:?}"
+    );
+    // The re-consent D36 requires happened, and it was flagged as the
+    // stranded-payment one — this is the second expiry, not the first.
+    assert!(
+        consent.calls() >= 2,
+        "the first expiry re-quotes and re-consents ({} consent call(s))",
+        consent.calls()
+    );
+    assert!(
+        consent.last().expect("a consent call").proofs_expired,
+        "the re-consent carries D37 Decision 6's stranded-payment warning"
+    );
+
+    let cli: CliError = err.into();
+    assert_eq!(
+        cli.class().name(),
+        "payment-proofs-expired",
+        "money has already moved and completing the seal costs a second payment: \
+         this is not a usage error"
+    );
+    assert_eq!(cli.exit_code(), 29);
+    assert_ne!(
+        cli.exit_code(),
+        2,
+        "2 is clap's own parse-error code: a wrapper cannot tell this from a typo"
+    );
+    assert_ne!(cli.exit_code(), 23, "23 is the retry-me code");
+    let msg = cli.to_string();
+    assert!(
+        msg.contains("the already-spent ANT is not recoverable"),
+        "{msg}"
+    );
+    assert!(!msg.starts_with("usage error:"), "{msg}");
+    assert!(!msg.starts_with("network failure:"), "{msg}");
 }
 
 // ─────────────────────────────────────────────────────────────────────

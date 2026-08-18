@@ -28,7 +28,7 @@ vault with no recorded backup prints it again:
 That is not a paraphrase. It is the constant `LOSS_WARNING`
 (`crates/antseal-cli/src/vault/bookkeeping.rs:68-70`), quoted byte for byte,
 and it is the same string `init` renders
-(`crates/antseal-cli/src/init.rs:337-341`) and the same string the first-seal
+(`crates/antseal-cli/src/init.rs:353-357`) and the same string the first-seal
 export nag carries (`crates/antseal-cli/src/vault/bookkeeping.rs:263`). One
 author for all three, so a sentence you met at `init` is recognisable here
 rather than being a second phrasing of the same risk. `MVP-SPEC.md` line 143
@@ -61,10 +61,11 @@ Three things, all of them permanently:
   (`crates/antseal-core/src/crypto/hkdf.rs:137-146`), so the work's identity
   cannot be used again.
 
-And the money is gone with it. The Arbitrum wallet key lives inside the same
-vault under its own sub-key (`crates/antseal-cli/src/vault/wallet.rs:9-12`;
-`MVP-SPEC.md` line 143), so losing the vault loses whatever balance that
-address held. See `funding-your-wallet.md`.
+And the money is gone with it, in the case this page opens with — vault **and**
+backup. From a surviving backup the address still pays: `vault import` reinstalls
+the wallet key (`crates/antseal-cli/src/vault/export.rs:1104-1106`). What no
+backup gives you is a way to move the balance to another wallet — see "What this
+address's key can and cannot do" in `funding-your-wallet.md`.
 
 ## What survives, and this is the part people do not expect
 
@@ -92,7 +93,7 @@ antseal vault import <FILE>
 That is the whole surface. Neither takes an option beyond the three global ones
 every command has (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:354-406`).
 The design note in the source is the product decision in one line:
-*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:449`).
+*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:462`).
 
 What `export` writes:
 
@@ -288,9 +289,9 @@ to make new ones.
 | Claim on this page | Where it is enforced |
 | --- | --- |
 | the loss warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:68-70` |
-| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:337-341`; `crates/antseal-cli/src/vault/bookkeeping.rs:263` |
+| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:353-357`; `crates/antseal-cli/src/vault/bookkeeping.rs:263` |
 | the nag stops only after a written and self-verified export | `crates/antseal-cli/src/commands.rs:805-810` |
-| two commands, no flags | `crates/antseal-cli/src/cli.rs:449-467`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:354-406` |
+| two commands, no flags | `crates/antseal-cli/src/cli.rs:462-480`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:354-406` |
 | the export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:61-95`, stated at `:99-100` |
 | fresh salt, one AEAD over the whole file | `crates/antseal-cli/src/vault/export.rs:20-28` |
 | default timestamped filename | `crates/antseal-cli/src/commands.rs:889-896` |

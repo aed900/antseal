@@ -489,7 +489,7 @@ distinction. `clap::ArgMatches::value_source` has it.
 
 **Why it lands there and not in `init`'s handler**: `parse_checked` documents
 itself as "the single entry every driver (binary, tests) uses, so no path can
-skip validation" (cli.rs:358-360). A second entry point returning sources
+skip validation" (cli.rs:483-485). A second entry point returning sources
 would let a caller take the source-less one and silently lose the
 distinction; changing the single entry preserves the property. Carrying the
 bools **inside `InitArgs`** rather than in the return type keeps all six

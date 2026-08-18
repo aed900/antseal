@@ -46,7 +46,7 @@ const SNAPSHOT: &str = concat!(
     "/../../testdata/error-codes/v1/CODES.txt"
 );
 
-/// Q80's measurement, pinned. `ErrorClass::ALL` is `[ErrorClass; 29]`, so this
+/// Q80's measurement, pinned. `ErrorClass::ALL` is `[ErrorClass; 35]`, so this
 /// is a second, independent statement of the same number: the array's own
 /// length is a compile-time fact the module can change silently, and a
 /// disjointness test over a shrunken set is a test that passes more easily.
@@ -64,7 +64,16 @@ const SNAPSHOT: &str = concat!(
 /// as in `ErrorClass::ALL`: the class table is no longer the same thing as
 /// the error-variant table, and a reader counting variants would get 30.
 /// Re-measured at the new size: still empty.
-const PINNED_CLASS_COUNT: usize = 33;
+///
+/// **33 → 35 at U81** (2026-08-18): D147 minted `payment-stranded` (28) and
+/// `payment-proofs-expired` (29), the two outcomes where money has already
+/// moved, taking the first two free codes of the seal/payment/resume band
+/// D69 §1(a) recorded free. Neither name collides in the other frozen kebab
+/// namespace — `payment`, `strand` and `expired` occur 0, 0 and 0 times in
+/// `testdata/error-codes/v1/CODES.txt` — and no S-domain code prefix was
+/// minted, because §2 of the contract rules that domain *"a namespace with
+/// no possible member"*. Re-measured at the new size: still empty.
+const PINNED_CLASS_COUNT: usize = 35;
 
 /// The spelling §2 reserves against the A domain.
 const RESERVED_STEM: &str = "anchor-gate-abort";

@@ -128,7 +128,7 @@ Options:
           Exclude files matching <GLOB> from the fine-grained byte tree: they become whole-file-revealable only, permanently
 
       --dry-run
-          Run every free step and print the plan + true cost quote; nothing is paid, anchored, or uploaded (D49)
+          Run every free step and print the plan + quote (true pricing mechanism, indicative figure); nothing is paid, anchored, or uploaded (D49)
 
       --yes
           Consent in advance to the permanence gate (for scripts; the consent report still prints)

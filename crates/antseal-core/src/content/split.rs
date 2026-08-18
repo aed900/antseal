@@ -60,7 +60,11 @@
 //! are always single-unit (MVP-SPEC.md line 84) and `--no-fine-tree` files are
 //! permanently whole-file-reveal-only (line 85), so neither can reach this
 //! code — the contradiction is unrepresentable rather than rejected. The
-//! matching loud CLI error at `--no-fine-tree` x `--split` is U's, per D24.
+//! matching loud CLI error at `--no-fine-tree` x `--split` is U's, per D24 §1,
+//! and as of D149 it is a real function a reader can open:
+//! `refuse_split_on_no_fine_tree` in `crates/antseal-cli/src/seal_plan.rs`,
+//! raised in `build_plan` as `invalid-seal-argument` (exit 27). Binary and
+//! raw-empty matches stay exempt there, exactly as they are here.
 
 use crate::canon::CanonicalBytes;
 

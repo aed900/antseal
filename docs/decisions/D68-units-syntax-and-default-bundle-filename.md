@@ -129,7 +129,7 @@ annotates all three via `PreviewTotals::mirror_rides_along`,
 
 ### (f) The `--units` parser is already shipped, already snapshot-frozen, and already test-pinned
 
-`crates/antseal-cli/src/cli.rs:358-361`:
+`crates/antseal-cli/src/cli.rs:371-374`:
 
 ```rust
 /// Reveal exactly these units (work-global ordinals as printed by
@@ -412,7 +412,7 @@ Eleven rules. R1–R4 are half 1; R5–R11 are half 2.
 **R1 — The `--units` value grammar is a comma-separated list of decimal
 work-global unit ids, and is exactly the shipped parser.**
 `#[arg(long, value_delimiter = ',', value_name = "UNIT")] pub units: Vec<u64>`
-(`cli.rs:358-361`) is **ratified verbatim**; no clap attribute changes. The
+(`cli.rs:371-374`) is **ratified verbatim**; no clap attribute changes. The
 grammar is: one or more decimal `u64` ids, separated by `,`, with no whitespace,
 no sign requirement, no radix prefix, no ranges, no negation, no wildcards. Ids
 are **0-based** (§1 b) and are the ids `show` prints — the surface spec line 149
@@ -465,7 +465,7 @@ example:   ./antseal-reveal-7c1d5b8e0a3f9264e8b7415c23d0af965e1c7b4098f2a6d3b45e
 ```
 
 - **Location: the invocation cwd**, exactly as D48 §1. Not a subdirectory —
-  `reveal` produces one file, and `-o` is typed `FILE` (`cli.rs:364`), so a
+  `reveal` produces one file, and `-o` is typed `FILE` (`cli.rs:384`), so a
   directory default would contradict the flag's own type.
 - **Stem: `antseal-` + the command name + `-` + the discriminant.** This is the
   house pattern both existing defaults follow (`antseal-restore-<work-id>/`,
@@ -757,7 +757,7 @@ name per open decision 12)"* → *"write the bundle to `-o file`, default
 > - Notes: **[D68, 2026-08-12]** Both halves ruled by
 >   docs/decisions/D68-units-syntax-and-default-bundle-filename.md. **Syntax**:
 >   the shipped `--units` parser (`value_delimiter = ','`, `Vec<u64>`,
->   `cli.rs:358-361`) is ratified verbatim — comma list only, 0-based
+>   `cli.rs:371-374`) is ratified verbatim — comma list only, 0-based
 >   work-global ids, ranges refused for MVP (mirrors sit at positions invisible
 >   in range notation, and a range's off-by-one promotes a file to a full reveal
 >   under D70/D28, disclosing `file_salt`/`s_root`); the parser validates lexis
