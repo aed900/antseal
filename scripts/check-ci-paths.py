@@ -249,6 +249,14 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
         "named in prose about the devnet-e2e-cron.yml lane; not invoked here.",
     ("scripts/ci-lanes.sh", "scripts/local-gate.sh"):
         "named in prose about the local gate; not invoked.",
+    ("scripts/ci-lanes.sh", "scripts/sign-release.sh"):
+        "named in lane_secret_guard's comment explaining WHY rule (4b) is "
+        "anchored on `untrusted comment: ` — sign-release.sh emits the "
+        "SHA256SUMS.minisig and per-artifact signatures the un-anchored Q245 "
+        "pattern falsely reported. Not invoked, and it never can be: D71 §2 "
+        "R1/R7 forbid the signing key on any runner, so sign-release.sh is a "
+        "local-only act by ruling. scripts/verify-release.sh is the half a "
+        "runner may call, and it is not named here.",
     ("scripts/ci-lanes.sh", "scripts/wasm-imports.mjs"):
         "named in prose about the bitmatch lane; not invoked from here.",
     ("scripts/cargo-free.sh", "scripts/check-ci-shell.py"):

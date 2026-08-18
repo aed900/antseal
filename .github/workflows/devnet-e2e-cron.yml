@@ -82,7 +82,7 @@ jobs:
     # this number is one of the things the first runs measure.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
           rustup show active-toolchain || rustup toolchain install
@@ -99,21 +99,45 @@ jobs:
       # anvil is host tooling the launcher spawns via PATH (evmlib / alloy
       # node-bindings); the local host installs it with foundryup
       # (docs/devnet/local-devnet.md, Host requirements). Third-party action
-      # edge accepted on the same footing as Swatinem/rust-cache@v2 and
-      # pinned to a major tag. `version: stable` rather than a literal we
+      # edge accepted on the same footing as Swatinem/rust-cache@v2, and
+      # pinned — as of D143 — to the 40-hex COMMIT that `v1` pointed at when
+      # the pin was taken, not to the major tag this sentence used to name.
+      # `.github/action-pins.tsv` is the authority and
+      # `scripts/check-action-pins.py` keeps the two in step. What the pin
+      # buys is that the request is SPECIFIC — a maintainer can no longer
+      # re-point the tag under us. It is not a checksum anything verifies:
+      # the runner sends {owner, repo, ref} to the Actions service and
+      # extracts whatever tarball comes back (D143 §1.4). `version: stable`
+      # is the toolchain this action installs and is NOT covered by the
+      # ledger (D143 §5.6). `version: stable` rather than a literal we
       # cannot verify from here: D52 residual risk 5 is venue drift, and the
       # mitigation is that `scripts/e2e-devnet.sh` prints the actual
       # `anvil --version` into its evidence line in BOTH venues, so a
       # divergence from the host's 1.5.1-stable is recorded, not ambient.
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: stable
 
-      # The same script bytes the local gate runs (the ci-lanes.sh rule).
+      # Q243/Q154 — the TEST-OF-THE-TEST, run in the venue that PUBLISHES
+      # the result rather than only on a machine that never does. Until this
+      # step existed, `redact()` and the suite-registry rules were proven
+      # exclusively by scripts/local-gate.sh, while the one job that turns
+      # this script's output into a downloadable artifact invoked it bare —
+      # so the guard protecting a funded key's neighbourhood in a published
+      # artifact was proven everywhere except where it publishes.
+      #
+      # BEFORE the capture on purpose: a filter proven after the fact is
+      # proven too late. This is the same two-step shape ci.yml already uses
+      # for the cross-check's `--self-test` and `--check` halves.
+      - name: Self-test — prove the registry rules, the redaction filter and the artifact scan can go red
+        run: ./scripts/e2e-devnet.sh --self-test
+
+      # The same script bytes AND, since Q243, the same INVOCATION the local
+      # gate runs (the ci-lanes.sh rule): the step above is local-gate.sh's
+      # `e2e-selftest` lane and this one is its `e2e-devnet` lane.
       # S17-S19 are written now and DO run (proven by run 31571938292, which
       # executed all four suites); the PENDING path remains for any suite the
-      # registry still lists as unwritten — never a silent pass; the registry
-      # rules that make that true are self-tested in scripts/local-gate.sh.
+      # registry still lists as unwritten — never a silent pass.
       - name: Devnet E2E (D52 scheduled leg — same script as the local gate)
         env:
           # 14 — the scripts' OWN default, NOT the 5 D52 specified for this
@@ -138,13 +162,67 @@ jobs:
           ANTSEAL_DEVNET_NODES: ${{ github.event.inputs.nodes || '14' }}
         run: ./scripts/e2e-devnet.sh
 
-      # `always()`, not `failure()`: on failure this is the node + Anvil log
-      # capture Q15's Accept requires (redacted at capture — the export's
-      # wallet key never enters an artifact), and on success it is the
-      # runtime measurement D52's conditional-landing rule is waiting for.
-      - name: Upload evidence, node and Anvil logs
+      # Q243 — the check on the OUTPUT, not on the filter. `redact()` runs at
+      # capture time inside the step above; this reads what that step actually
+      # wrote and refuses if anything key-shaped survived. It is the half that
+      # keeps meaning something after a refactor that stops calling `redact()`
+      # at all, which is the failure the redactor's own self-test structurally
+      # cannot see. It gates the upload below: a directory with a finding is
+      # not published.
+      #
+      # `always()` because the FAILURE path captures the most — node and Anvil
+      # logs are captured on both paths and a failing run's are the larger —
+      # so scanning only on success would skip the bigger artifact.
+      - name: Redaction scan — refuse to publish evidence carrying key-shaped material
+        id: evidence-scan
         if: always()
-        uses: actions/upload-artifact@v4
+        run: ./scripts/e2e-devnet.sh --scan-evidence
+
+      # WHAT THIS ARTIFACT IS, WHO CAN READ IT, AND FOR HOW LONG (Q243).
+      #
+      # CONTENTS — `target/e2e-devnet/<UTC-timestamp>-<short-sha>/`:
+      #   local-up.log   the launcher's stdout while booting the devnet
+      #   launcher.log   node + Anvil output (Anvil is the launcher's child),
+      #                  passed through `redact()` on the way in
+      #   manifest.json  the devnet manifest, also redacted — its
+      #                  `wallet_private_key` field carries the funded Anvil
+      #                  dev account, a well-known public constant that still
+      #                  never leaves in key shape (project rule 6)
+      #   suite-S*.log   `cargo test … -- --nocapture` output, one per suite
+      #   evidence.txt   the one-line dated verdict
+      # `.devnet/env` is deliberately never captured, in any form.
+      # Measured size, artifact 9132238802 from run 31571938292 (2026-08-12):
+      # 52,269 bytes.
+      #
+      # AUDIENCE — an artifact inherits the repository's CURRENT visibility,
+      # not the visibility it had when it was written. Today that is the
+      # maintainer alone, because the repository is private. After the Q65
+      # flip it is every GitHub account: artifact BYTES need a signed-in user
+      # with read access (an unauthenticated GET of …/artifacts/{id}/zip is
+      # 401), while artifact METADATA — name, size, owning run — is readable
+      # with no account at all. GitHub's visibility-change page states that
+      # "Actions history and logs will be visible to everyone" and points at
+      # deleting existing runs and artifacts BEFORE flipping, so artifacts
+      # written while private are exposed by the flip, not grandfathered.
+      #
+      # RETENTION — 90 days, measured rather than assumed: artifact 9132238802
+      # was created 2026-08-12T07:19:54Z and expires 2026-11-10T06:56:33Z,
+      # exactly 90 days after its run began. 90 is GitHub's default and also
+      # the MAXIMUM a public repository may configure (private and internal
+      # may set up to 400), so the flip caps this where it already sits.
+      # LEFT OPEN, deliberately: whether a `retention-days:` well below 90
+      # belongs on this step. It is a strict risk reduction on its own, but
+      # Q247 counts this lane's scheduled runs from their stored evidence, so
+      # shortening the window has a reader — it is a decision, not a knob.
+      #
+      # `always()`, not `failure()`: on failure this is the node + Anvil log
+      # capture Q15's Accept requires, and on success it is the runtime
+      # measurement D52's conditional-landing rule is waiting for. The scan's
+      # outcome is ANDed in so that "always" can never mean "even when it
+      # leaks".
+      - name: Upload evidence, node and Anvil logs
+        if: always() && steps.evidence-scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: devnet-e2e-evidence
           path: target/e2e-devnet/

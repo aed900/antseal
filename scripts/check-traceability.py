@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Seven checks live here, and they are the same shape: something written down in
+Eight checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -10,8 +10,11 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         traceability matrix actually resolves (Q13).
     --decisions         Every decision cited in code or in a normative doc
                         resolves to a record, a registered alternative home,
-                        or an open register entry; and nothing cites the
-                        frozen wire registry by line number (Q57, Q58).
+                        or an open register entry; every decision ALLOCATED
+                        in TODO.md's register has one of those three homes
+                        whether or not anything cites it; and nothing cites
+                        the frozen wire registry by line number (Q57, Q58,
+                        D142).
     --task-citations    Every task id cited in code, in a normative doc or in
                         a gate script resolves to a row in TODO.md's register
                         (Q85).
@@ -24,6 +27,11 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         row in the decision index, whose link resolves to that
                         record and whose status word and date are the
                         record's, in ascending id order (Q180, D119).
+    --machine-paths     No LIVE surface names a developer's machine: an
+                        absolute home path in a scanned file must use a
+                        reserved placeholder name, and MVP-SPEC.md's one
+                        registered divergence is pinned present rather than
+                        exempted (Q65, D144).
 
 Run with no arguments to run every check.
 
@@ -702,6 +710,17 @@ DECISIONS_HOMED_ELSEWHERE = {
     # check exists to catch. Their homes are named here instead.
     17: "docs/format/registry-v1.md §6.2 + crypto::sig_policy (ratified in code at C14/F5, frozen at Q14)",
     30: "docs/testing/error-code-contract.md (the contract IS the record; frozen at Q14, mechanism in Q52)",
+    # D125 was ruled in session and given no record DELIBERATELY, which is a
+    # fact on the record rather than an inference: `5a21ced` wrote TODO.md,
+    # docs/instrument-ledger.md and docs/waves/wave-16-brief.md and touched
+    # docs/decisions/ not at all, and the register row it wrote says "the
+    # operative text lives in protocol rule 8 + docs/instrument-ledger.md +
+    # docs/waves/wave-16-brief.md rather than a decision doc — deliberately,
+    # under its own rule". This entry is where that fact becomes readable by
+    # the check instead of only by a human reading TODO.md:990. The first
+    # entry whose home is a section of TODO.md; see D142 §2 R1 for why that
+    # is the honest home and not a shortcut.
+    125: "TODO.md protocol rule 8 — the starvation rule's normative text — executed in docs/instrument-ledger.md; ruled in session 2026-08-11 (5a21ced), deliberately recordless",
 }
 
 # A citation is only a decision reference if the number is an allocated id.
@@ -715,6 +734,219 @@ def allocated_decision_ids() -> set[int]:
 def open_decision_ids() -> set[int]:
     todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
     return {int(n) for n in re.findall(r"^- \[ \] \*\*D(\d+)\*\*", todo, re.M)}
+
+
+# ── the self-test's decision subject, constructed rather than found ──────────
+#
+# These three live at module level, not inside `self_test()`, for a reason the
+# harness has paid for twice: a fixture whose correctness cannot be exercised
+# against a CONSTRUCTED state can only ever be exercised against the state the
+# tree happens to be in, and `--self-test` may not be run mid-wave (it stages a
+# full copy of a tree other lanes are writing). `prove_lowest_unhomed_mint()`
+# below builds its states on disk and can be called directly.
+
+
+def decision_homes(tree: pathlib.Path) -> tuple[set[int], set[int]]:
+    """`(allocated, recorded)` as `tree` states them: the ids its register
+    allocates, and the ids its record directory carries as files.
+
+    `tree` is a parameter and not `ROOT` because the subject is a staged copy —
+    and because a helper that can only read the live tree cannot be shown
+    correct on a tree that does not exist yet.
+    """
+    register = (tree / "TODO.md").read_text(encoding="utf-8")
+    allocated = {int(n) for n in re.findall(r"^- \[[ x]\] \*\*D(\d+)\*\*", register, re.M)}
+    recorded = {
+        int(head.group(1))
+        for path in (tree / DECISION_DIR).glob("D*.md")
+        if (head := re.match(r"D(\d+)-", path.name))
+    }
+    return allocated, recorded
+
+
+def lowest_unhomed_decision_id(tree: pathlib.Path) -> int:
+    """The LOWEST id above `tree`'s register ceiling that no home claims.
+
+    ══ WHAT THIS EXISTS TO SURVIVE ═════════════════════════════════════════
+    `plant_an_unrecorded_decision()` needs an id with three properties, and
+    each one is load-bearing for a different arm:
+
+      P1  `minted > max(allocated)` — `check_decisions` skips any cited number
+          above the register's ceiling, so the planted citation is INERT in the
+          baseline and arms only when the mutation adds a row for it.
+      P2  `minted` has no record and no `DECISIONS_HOMED_ELSEWHERE` entry — or
+          the RED arm's resolved row would be green for a perfectly legitimate
+          reason and would prove nothing.
+      P3  every id BETWEEN the ceiling and `minted` is claimed by a record or a
+          home — because the mutation RAISES the ceiling to `minted`, and any
+          id in that window that is cited and unresolved would come into bound
+          with it. The RED arm would still pass (a delta only needs one added
+          finding) but the GREEN arm asserts the findings do NOT change, and it
+          would fail on a finding that has nothing to do with the case.
+
+    The shipped fixture minted `max(allocated) + 1` and RAISED when that id
+    already carried a record. That guard fires in exactly the window
+    `D119 RULING 6` declares ROUTINE — a record file landing before the
+    registrar applies its index row, i.e. every planning wave — so on
+    2026-08-18, with `D141`–`D144` on disk and the register allocating through
+    `D140`, `--self-test` raised before a single arm ran, `ci-lanes.sh`'s
+    `lane_traceability` returns on that failure, and the `traceability`
+    required context went red by traceback.
+
+    THIS IS THE Q252 SHAPE ONE GUARD OVER. Q252 stopped the fixture SEARCHING
+    the register for a subject, because draining the register is the goal and a
+    fixture may not depend on the tree staying unhealthy. The repair then
+    CONSTRUCTED the subject — and left a collision guard that depends on the
+    tree not being mid-act. Registering `D141`–`D144` would clear it today and
+    would not fix it: the next planning wave reopens the same window.
+
+    ══ THE TWO DESIGNS THAT WERE REFUSED, AND WHY ══════════════════════════
+    **Scope the guard to allocated ids.** Refused twice over. `max(allocated) +
+    1` is never in `allocated`, so a guard scoped that way can never fire —
+    this project's dominant defect class, written into a repair for it. Worse,
+    it does not remove the collision, it SILENCES it: with a record already on
+    disk for the minted id, the red arm's row is legitimately green and the
+    harness reports *"decisions added no finding on the red-case mutation of
+    TODO.md"* — a message that blames the check for the fixture's collision. A
+    loud raise traded for a wrong-arm failure is not an improvement.
+
+    **Mint above `max(allocated ∪ recorded ∪ homed)`.** Satisfies P1 and P2 and
+    breaks P3. One hand-written record far above the ceiling — `D900` in a
+    tree whose register stops at `D140` — pushes the mint to `D901` and opens
+    a 760-wide window in which any cited, unrecorded id changes the green
+    arm's findings. Correct in the common case, silently fragile in the
+    uncommon one.
+
+    ══ WHAT IS TAKEN ═══════════════════════════════════════════════════════
+    The lowest free id above the ceiling. P1 by the starting point, P2 by the
+    loop's exit condition, and P3 by its MINIMALITY: every number the loop
+    steps over is a number some home claimed, which is precisely the set
+    `check_decisions` skips. The window the mutation opens is therefore
+    provably inert however many unregistered records are on disk, and it is one
+    id wide whenever the tree is clean.
+
+    Proven, not asserted: `prove_lowest_unhomed_mint()` constructs four
+    register/record states on disk — four unregistered records, none, a record
+    far above the ceiling, and a HOMED id above it — and requires P1, P2 and
+    P3 on each.
+    """
+    allocated, recorded = decision_homes(tree)
+    if not allocated:
+        raise AssertionError(
+            "self-test: TODO.md's register allocates no decision id, so there is "
+            "no ceiling to mint above. `check_decisions` reports that state "
+            "itself — 'the bound is vacuous' — and it is a register failure, not "
+            "a fixture failure"
+        )
+    claimed = allocated | recorded | set(DECISIONS_HOMED_ELSEWHERE)
+    number = max(allocated) + 1
+    while number in claimed:
+        number += 1
+    return number
+
+
+def prove_lowest_unhomed_mint(scratch: pathlib.Path) -> list[tuple[bool, str]]:
+    """Require `lowest_unhomed_decision_id()`'s three properties on four
+    CONSTRUCTED register/record states. Returns `(passed, sentence)` per state.
+
+    Every state is WRITTEN here and none is read from the live tree, which is
+    the whole point: a fixture that measures whatever the tree happens to be
+    can only prove what the tree happens to be, and the state that broke this
+    fixture — records on disk the register has not allocated yet — is a state
+    the tree occupies for a few hours per wave.
+
+    The ceiling sits above `DECISIONS_HOMED_ELSEWHERE`'s highest id in the
+    first three states so that the homed set cannot quietly decide their
+    answers; the fourth puts it below, so that it does.
+    """
+    homed = set(DECISIONS_HOMED_ELSEWHERE)
+    if not homed:
+        return [(False, "DECISIONS_HOMED_ELSEWHERE is empty, so states 1 and 4 cannot be built")]
+    high = max(homed) + 15
+    low = min(homed) - 1
+
+    #  (name, allocated ceiling, extra recorded ids, the fact that makes the
+    #   state the state it claims to be)
+    states: list[tuple[str, int, set[int], str]] = [
+        (
+            "four unregistered records on disk (the mid-act window, D119 RULING 6)",
+            high,
+            {high + 1, high + 2, high + 3, high + 4},
+            "ceiling+1 is already recorded — this is the live failure of 2026-08-18",
+        ),
+        ("no unregistered record anywhere", high, set(), "ceiling+1 is claimed by nothing"),
+        (
+            "a hand-written record far above the ceiling",
+            high,
+            {high + 760},
+            "the far record must NOT drag the mint up with it",
+        ),
+        (
+            "a HOMED id immediately above the ceiling",
+            low,
+            set(),
+            "ceiling+1 is claimed by DECISIONS_HOMED_ELSEWHERE, not by a file",
+        ),
+    ]
+
+    results: list[tuple[bool, str]] = []
+    for index, (name, ceiling, extra, why) in enumerate(states, 1):
+        tree = scratch / f"mint-state-{index}"
+        (tree / DECISION_DIR).mkdir(parents=True, exist_ok=True)
+        (tree / "TODO.md").write_text(
+            "".join(
+                f"- [x] **D{n}** constructed by prove_lowest_unhomed_mint, state {index}.\n"
+                for n in range(1, ceiling + 1)
+            ),
+            encoding="utf-8",
+        )
+        # Records for the two ids below the ceiling exist so `recorded` is never
+        # empty by accident; the interesting members are `extra`.
+        for n in {ceiling - 1, ceiling} | extra:
+            (tree / DECISION_DIR / f"D{n}-constructed.md").write_text("", encoding="utf-8")
+
+        allocated, recorded = decision_homes(tree)
+        claimed = recorded | homed
+        try:
+            minted = lowest_unhomed_decision_id(tree)
+        except AssertionError as exc:
+            results.append((False, f"state {index} ({name}): raised — {exc}"))
+            continue
+
+        problems = []
+        if minted <= max(allocated):
+            problems.append(f"P1 violated: D{minted} is not above the ceiling D{max(allocated)}")
+        if minted in claimed:
+            problems.append(f"P2 violated: D{minted} already has a record or a registered home")
+        dragged = sorted(n for n in range(max(allocated) + 1, minted) if n not in claimed)
+        if dragged:
+            problems.append(
+                "P3 violated: the ceiling bump would drag "
+                + ", ".join(f"D{n}" for n in dragged[:5])
+                + " into bound, and an unresolved citation of any of them changes the "
+                "green arm's findings"
+            )
+        # The state must actually BE the state it claims, or its verdict is
+        # vacuous — the assertion-that-cannot-fail rule applied to fixtures.
+        naive = max(allocated) + 1
+        if index in (1, 4) and naive not in claimed:
+            problems.append(f"state is vacuous: D{naive} is claimed by nothing, so the shipped mint would not have collided")
+        if index == 2 and (naive in claimed or minted != naive):
+            problems.append(f"state is vacuous or the healthy case moved: D{naive} vs minted D{minted}")
+        if index == 3 and max(recorded) <= minted:
+            problems.append("state is vacuous: the far-above record is not above the mint")
+
+        if problems:
+            results.append((False, f"state {index} ({name}): " + "; ".join(problems)))
+        else:
+            results.append(
+                (
+                    True,
+                    f"state {index} ({name}): ceiling D{max(allocated)}, "
+                    f"{len(recorded)} record(s) on disk, minted D{minted} — {why}",
+                )
+            )
+    return results
 
 
 def check_decisions(failures: Failures) -> None:
@@ -731,6 +963,24 @@ def check_decisions(failures: Failures) -> None:
         failures.add(check, "no decision ids found in TODO.md's register — the bound is vacuous")
         return
     still_open = open_decision_ids()
+
+    # The property the constant above claims for itself — "leaving a decision
+    # out of it is a failure" — asserted independently of what anything
+    # cites. Until D142 this check could only see an id a swept file
+    # mentioned, so D125 sat allocated, unrecorded, unhomed and closed for
+    # seven days while this lane printed ok; the three numbers on that ok
+    # line sum to one less than the register allocates, and nothing
+    # subtracted them. Set difference, never `len(a) - len(b) - len(c)`: the
+    # counts are equal today and a count is the artefact this project keeps
+    # watching go stale.
+    for number in sorted(allocated - recorded - set(DECISIONS_HOMED_ELSEWHERE) - still_open):
+        failures.add(
+            check,
+            f"D{number} is ALLOCATED in TODO.md's register and has no home: no "
+            f"record under {DECISION_DIR}/, no entry in DECISIONS_HOMED_ELSEWHERE, "
+            f"and no open row. Nothing needs to cite it for this to be wrong — "
+            f"give it a record, or name its real home in the constant.",
+        )
 
     cited: dict[int, set[str]] = {}
     line_citations: list[str] = []
@@ -802,11 +1052,25 @@ def check_decisions(failures: Failures) -> None:
         # (D116 R3): without it, a scan that silently narrowed back to the
         # three doc/code roots would be invisible in a green log — a green
         # lane saying nothing about how much it read.
+        # D142 R2 — the shipped line printed three of the four numbers and
+        # never the fourth, so the subtraction that finds an allocated id with
+        # no home was available to a reader on every green run and performed
+        # by nobody. `recorded & allocated` and not `recorded`: the glob also
+        # counts records whose id the register has not allocated yet (the
+        # routine mid-act window, D119 RULING 6), and printing those against
+        # an allocation total is what made the sum unreadable. `homed` is NOT
+        # intersected, which is the same hazard one set over: D142 §1.1
+        # MEASURED `homed - allocated = []` and every falsifier re-checks it,
+        # but nothing ENFORCES it, so an entry for an unallocated id would put
+        # this sum above `len(allocated)` with no check saying so. Left as
+        # D142 §2 R2 specified it; the repair is `len(set(...) & allocated)`
+        # here plus an arm, and it is a decision, not an edit.
         print(
-            f"[{check}] ok — {len(in_bound)} distinct decisions cited across "
-            f"{n_files} files, all resolve ({len(recorded)} have records, "
-            f"{homed} homed elsewhere, {len(still_open)} still open in the "
-            f"register); no line-number citations into the registry"
+            f"[{check}] ok — every one of {len(allocated)} allocated decision ids "
+            f"has a home ({len(recorded & allocated)} records, {homed} homed "
+            f"elsewhere, {len(still_open)} still open); {len(in_bound)} distinct "
+            f"decisions cited across {n_files} files, all resolve; no line-number "
+            f"citations into the registry"
         )
 
 
@@ -1549,6 +1813,295 @@ def check_decision_index(failures: Failures) -> None:
         )
 
 
+# ── check 8: no LIVE instruction names a developer's machine (Q65, D144) ────
+#
+# D144 §2 R2 draws the class boundary this check enforces, and §2 R4 states the
+# rule. Inside the LIVE surface — text that instructs a reader about the
+# repository as it is now — an absolute home path may name only a RESERVED
+# PLACEHOLDER. Outside it the same string is captured evidence: of the 61 lines
+# carrying `/home/deb` on 2026-08-18, **50** are transcripts, `file(1)` output,
+# stack traces, dated measurement tables and decision records, and **8** more
+# are the register rows that MANDATE this scrub — six of which record this very
+# work. A lint over those would demand the deletion of its own mandate, and
+# rewriting them would not remove a disclosure, it would falsify a measurement
+# (D144 §1.2). Exactly ONE line was a live instruction, and the scrub was one
+# edit, not 61.
+#
+# THIS IS NOT A PRIVACY CONTROL and no row may be ticked on one. `/home/deb` is
+# in the published history at the initial commit `01cdc83`, at the pushed
+# `format-v1-freeze` tag and at HEAD; 21 commits on `main` change it; a rewrite
+# is ruled not warranted (`docs/reviews/pre-public-scrub-history.md`). Scrubbing
+# HEAD moves the string from "visible in `git grep`" to "visible in `git log
+# -S`, one command later". What the rule buys is MACHINE-INDEPENDENCE of live
+# instructions — real, durable, and the honest claim (D144 §1.6, §2 R1).
+#
+# WHY A RESERVED VOCABULARY AND NOT AN EXEMPTION LIST (D144 §2 R4, §3). An
+# exemption list whose remedy is "add your file to it" grows once per violation,
+# is always edited by the person whose change made it necessary, and is this
+# project's dominant defect class wearing a register's clothes — the same
+# reasoning `check-copy-style.py`'s OWED_PRESENCE, `check-ci-shell.py`'s
+# ALLOWED_INLINE and `verdict_wording.rs`'s RESIDUE already carry: *a debt that
+# cannot go stale is an exemption, and exemptions rot*. A reserved vocabulary's
+# remedy is in the CONTRIBUTOR'S OWN FILE — write `/home/user`, never touch this
+# script — and it grows only when a genuinely new placeholder ROLE appears,
+# which has happened five times in a year: O(roles), not O(files). Measured as
+# this landed: the five names below already covered 27 of the 29 in-scan
+# occurrences with zero edits to any of them.
+#
+# There is deliberately NO exemption list in this implementation. A reviewer may
+# grep for one and find nothing (D144 §2 R8 Accept).
+#
+# REFUSED, and named so it is not re-proposed: a lint on the literal
+# `/home/deb`. It protects exactly one machine, is green for every other
+# contributor from the day it lands, and is therefore a check that cannot fail
+# for anyone but its author (D144 §2 R4).
+
+# The complete set. Adding a sixth name is guarded: `--self-test` builds one
+# GREEN fixture per name FROM THIS TUPLE, so a name cannot land without its own
+# fixture in the same act (Q245's derived-count discipline, one level up from
+# where Q245 applied it).
+RESERVED_PLACEHOLDER_NAMES = ("user", "fixture", "runner", "u", "x")
+
+# The three platform spellings, as a TABLE rather than one opaque regex, so the
+# self-test can read the arms off it and require a planted RED fixture per arm.
+# An arm added here without a fixture fails `--self-test` with its own message
+# instead of letting the totals balance. Values are REGEX SOURCE, not literals.
+#
+# `/Users/` and `C:\Users\` have ZERO live occurrences in this tree, which is
+# exactly why they are planted rather than trusted: an arm no live text
+# exercises is an assertion that cannot fail unless the self-test constructs its
+# subject (D144 §2 R7, faults 2 and 3).
+#
+# `C:` tolerates ONE OR TWO separators, and that is not tidiness: a Windows path
+# inside a Rust or JSON string literal is ESCAPED on disk — the bytes of
+# `"C:\\Users\\alice"` are what a source file actually contains — so a pattern
+# spelling a single backslash reads straight past every real occurrence. The
+# forward-slash form matches too.
+MACHINE_PATH_ARMS = {
+    "posix-home": r"/home/",
+    "macos-users": r"/Users/",
+    "windows-users": r"C:[\\/]{1,2}Users[\\/]{1,2}",
+}
+
+# The name that follows a prefix. Group 1 is the name; group 0 is what the
+# failure quotes.
+#
+# WHERE A NAIVE PATTERN GOES WRONG, and where the anchoring actually lives
+# (D144 §2 R4): `/homework/`, a bare `/home`, `$HOME/…` and `~/…` must not
+# match. All four are killed by the PREFIX — `/home/` requires the trailing
+# separator after `home`, and `$HOME`/`~` are neither, case-sensitively. A
+# trailing-boundary LOOKAHEAD would add nothing: `+` is greedy, so the match
+# cannot end mid-token and the lookahead could never fail — an assertion that
+# cannot fail, this project's dominant defect class, written into the very check
+# that exists to refuse one. So the end-of-token half of the rule is satisfied
+# by construction and the separator half by the prefix, and all four near misses
+# are planted as GREEN controls anyway (D144 §2 R7 fault 5).
+MACHINE_PATH = re.compile(
+    "(?:" + "|".join(MACHINE_PATH_ARMS.values()) + r")([A-Za-z0-9._-]+)"
+)
+
+# The scan boundary is NOT a new list. It is `CITATION_SCAN`, whose thirty-line
+# comment already draws the line this check needs — *"the line is drawn at LIVE
+# versus PRESERVED"* — with every exclusion reasoned and ruled in place (D109
+# §3.3, D116 §1.3, Q176, Q190/D123). `docs/decisions/`, `docs/reviews/`,
+# `docs/research/`, `TODO.md`, `tasks/*.md`, `MVP-SPEC.orig.md` and
+# `SPEC-REVIEW.md` are all already OUT of it, which is precisely the RECORD
+# class above. Two constants held in step by a comment is the defect D116 R1
+# ended; the only honest comment on a second copy would be "these are the same,
+# one is stale" (D144 §2 R6).
+#
+# It also buys the property D139 §1.4 measured for a directory entry over
+# per-file registration: any new file in a scanned root is covered from its
+# first commit.
+#
+# `MVP-SPEC.md` is the one place the reuse is not verbatim. It is a
+# `CITATION_SCAN` literal entry because a citation INTO it must resolve — which
+# is correct — but its CONTENT is preserved, so it is excluded here and PINNED
+# below instead.
+PATH_SCAN_EXCLUDES = {"MVP-SPEC.md"}
+
+# The coupling guard, and the answer to the obvious objection that reusing
+# another check's constant lets an edit made for citation reasons silently
+# shrink path coverage. WIDENING `CITATION_SCAN` is always safe (more surface).
+# NARROWING it is not — so each root below is asserted still present and this
+# check reds BY NAME if one is removed (D144 §2 R6, falsifier f2).
+#
+# What it does NOT guard, stated where someone might otherwise assume it does:
+# a narrowing of `CITATION_SUFFIXES`. Dropping `.rs` would blind this check to
+# every test fixture while leaving all seven roots present. That is why the ok
+# line below reports the SCANNED FILE COUNT and not merely the zero — the count
+# is the only thing that moves when a suffix leaves (D144 f2).
+PATH_SCAN_REQUIRED = {"crates", "scripts", "verifier-web", "docs/user",
+                      "README.md", "CONTRIBUTING.md", "CHANGELOG.md"}
+
+# A machine path that is present ON PURPOSE and may not be removed, with the
+# reason it may not and the row that owns the divergence. This is a PIN, not
+# an exemption: the check asserts the text is STILL THERE, verbatim and
+# exactly once. Repair the line and the check goes RED demanding this entry
+# be deleted in the same act; delete the entry while the line stands and it
+# goes RED the other way. A debt that cannot go stale is an exemption, and
+# exemptions rot (check-copy-style.py OWED_PRESENCE, check-ci-shell.py
+# ALLOWED_INLINE, verdict_wording.rs RESIDUE — the same discipline, third
+# instrument).
+#
+# Anchored on TEXT, never on a line number: D139's 28 locators into
+# docs/threat-model.md died inside the wave that wrote them. The anchor is a
+# WHOLE LINE, matched by equality — a substring anchor would survive an append
+# to its own line and the pin would stop noticing the edit it exists to notice.
+#
+# The registered file is scanned for OTHER machine paths too, with only the
+# anchor line skipped, so this entry can never widen into a blanket file
+# exemption — which is exactly what an allow-list entry would have been.
+KNOWN_MACHINE_PATH_DIVERGENCE: dict[str, tuple[str, str]] = {
+    "MVP-SPEC.md": (
+        "Cargo workspace, greenfield in `/home/deb/Documents/code0`:",
+        "Q65 / D144 §2 R5 — the spec is frozen (TODO.md:3: the spec wins, the "
+        "conflict is FLAGGED, not silently diverged). MVP-SPEC.md has one commit "
+        "in its life (01cdc83, 189 lines added, zero changed since), 1 707 "
+        "line-number citations point into it and F44 measures that NOTHING "
+        "verifies one of them, and line 42 sits inside six cited ranges "
+        "(lines 40-58, lines 44-58). Amending the spec is an M4 event "
+        "(tasks/P.md:62's RECORDED DEVIATION took the flag over the edit for "
+        "the same reason). If a spec amendment is ever taken, it is an "
+        "IN-PLACE, EQUAL-LINE-COUNT replacement on line 42 or it corrupts all "
+        "six ranges silently.",
+    ),
+}
+
+
+def machine_path_scan_roots() -> list[str]:
+    """The roots this check reads: `CITATION_SCAN` minus what is pinned or
+    self-excluded. One place, so the check and its self-test cannot disagree."""
+    return [sub for sub in CITATION_SCAN if sub not in PATH_SCAN_EXCLUDES]
+
+
+def check_machine_paths(failures: Failures) -> None:
+    check = "machine-paths"
+    reserved = ", ".join(RESERVED_PLACEHOLDER_NAMES)
+    # THIS CHECK COUNTS ITS OWN FAILURES. The other seven end with `if not
+    # failures:`, which reads the SHARED object, so any earlier check's finding
+    # suppresses every later ok line — visible today, where four
+    # `[decision-index]` findings would silence this line on a tree with zero
+    # machine-path problems. That is a real defect and it is NOT repaired here:
+    # repairing it edits seven checks that are not this record's subject. New
+    # code simply declines to reproduce it.
+    before = len(failures.messages)
+
+    # (M4) The coupling guard, first: if a required root has left the scan,
+    # every count below is measured over less surface than it claims.
+    roots = machine_path_scan_roots()
+    for required in sorted(PATH_SCAN_REQUIRED):
+        if required not in CITATION_SCAN:
+            failures.add(
+                check,
+                f"CITATION_SCAN no longer contains `{required}`, so this check "
+                f"silently stopped scanning it. Restore the root, or give this "
+                f"check its own root list in the same act (D144 §2 R6).",
+            )
+
+    # (M2/M3) The pin, in both directions.
+    for relative in sorted(KNOWN_MACHINE_PATH_DIVERGENCE):
+        anchor, _reason = KNOWN_MACHINE_PATH_DIVERGENCE[relative]
+        path = ROOT / relative
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            text = ""
+        lines = text.splitlines()
+        present = sum(1 for line in lines if line == anchor)
+        if present != 1:
+            if present == 0:
+                failures.add(
+                    check,
+                    f"{relative}: the registered divergence text is no longer "
+                    f"present verbatim — the file was edited or the anchor moved. "
+                    f"If the edit was deliberate, delete the "
+                    f"KNOWN_MACHINE_PATH_DIVERGENCE entry in the same act; if it "
+                    f"was not, revert it. The spec is frozen and the protocol "
+                    f"FLAGS divergences rather than editing them (TODO.md:3, "
+                    f"D144 §2 R5).",
+                )
+            else:
+                failures.add(
+                    check,
+                    f"{relative}: the registered divergence text occurs {present} "
+                    f"times, not once — the pin cannot identify its subject "
+                    f"(D144 §2 R5).",
+                )
+        # The rest of a pinned file is scanned like any other live surface: the
+        # entry pins ONE LINE, never a file.
+        for number, line in enumerate(lines, 1):
+            if line == anchor:
+                continue
+            for match in MACHINE_PATH.finditer(line):
+                if match.group(1) in RESERVED_PLACEHOLDER_NAMES:
+                    continue
+                failures.add(
+                    check,
+                    f"{relative}:{number}: absolute home path `{match.group(0)}` "
+                    f"in a live surface. Live instructions must not name a "
+                    f"developer's machine — use a reserved placeholder name "
+                    f"({reserved}) or a $HOME-relative path. There is no "
+                    f"exemption list to add this file to (D144 §2 R4).",
+                )
+
+    # (M1) The live surface. Loop body at parity with `check_decisions` and
+    # `sweep_task_surfaces` (D116 R2): an entry may be a DIRECTORY (walked,
+    # filtered by CITATION_SUFFIXES) or a single FILE (read as itself,
+    # UNFILTERED) — D123's per-entry rule, reused verbatim rather than restated.
+    #
+    # This file excludes itself, as it does from the citation sweep and for the
+    # same reason: it carries the pin's anchor text and every banned pattern as
+    # literals. `CITATION_SCAN_SELF` already exists for exactly this, and
+    # `check-copy-style.py` and `ci-lanes.sh` (`--exclude='ci-lanes.sh'`) do the
+    # same — third instrument, same shape. Documenting the trap does not lay
+    # another one.
+    skip = set(PATH_SCAN_EXCLUDES) | set(KNOWN_MACHINE_PATH_DIVERGENCE) | {CITATION_SCAN_SELF}
+    scanned = 0
+    for sub in roots:
+        base = ROOT / sub
+        if not base.exists():
+            continue
+        literal = base.is_file()
+        for path in ([base] if literal else base.rglob("*")):
+            if not path.is_file() or (not literal and path.suffix not in CITATION_SUFFIXES):
+                continue
+            if {"target", "node_modules", "__pycache__"} & set(path.parts):
+                continue
+            rel = str(path.relative_to(ROOT))
+            if rel in skip:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            scanned += 1
+            for number, line in enumerate(text.splitlines(), 1):
+                for match in MACHINE_PATH.finditer(line):
+                    if match.group(1) in RESERVED_PLACEHOLDER_NAMES:
+                        continue
+                    failures.add(
+                        check,
+                        f"{rel}:{number}: absolute home path `{match.group(0)}` "
+                        f"in a live surface. Live instructions must not name a "
+                        f"developer's machine — use a reserved placeholder name "
+                        f"({reserved}) or a $HOME-relative path. There is no "
+                        f"exemption list to add this file to (D144 §2 R4).",
+                    )
+
+    if len(failures.messages) == before:
+        # The COUNT, not merely the zero (D144 §2 R8 Accept, falsifier f2): a
+        # suffix leaving CITATION_SUFFIXES moves nothing except this number.
+        print(
+            f"[{check}] ok — 0 absolute home paths outside the reserved "
+            f"vocabulary ({reserved}) across {scanned} live file(s) in "
+            f"{len(roots)} scan root(s); "
+            f"{len(KNOWN_MACHINE_PATH_DIVERGENCE)} registered divergence(s) "
+            f"still present verbatim and exactly once "
+            f"({', '.join(sorted(KNOWN_MACHINE_PATH_DIVERGENCE))})"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
@@ -1557,6 +2110,7 @@ CHECKS = {
     "task-entries": check_task_entries,
     "decision-owners": check_decision_owners,
     "decision-index": check_decision_index,
+    "machine-paths": check_machine_paths,
 }
 
 
@@ -1616,6 +2170,28 @@ def self_test() -> int:
     ok = True
     with tempfile.TemporaryDirectory() as scratch:
         tree = pathlib.Path(scratch) / "tree"
+
+        # ── the mint fixture's own proof, before anything is staged ─────────
+        # `lowest_unhomed_decision_id()` decides the subject of two `decisions`
+        # arms, and its predecessor RAISED on a state this tree occupies for
+        # part of every planning wave — records on disk the register has not
+        # allocated yet — taking `--self-test` and with it a required status
+        # context red before a single arm ran. Its three properties are
+        # therefore required against CONSTRUCTED states, on disk, before the
+        # live tree is read at all. Nothing below is derived from ROOT, so no
+        # amount of tree health or tree sickness can decide the verdict (Q252,
+        # and Q234's general form: a derived fixture is only as safe as the
+        # surface it derives from).
+        for passed, sentence in prove_lowest_unhomed_mint(pathlib.Path(scratch) / "mint-proof"):
+            if passed:
+                print(f"self-test: ok — the decisions mint holds on a constructed {sentence}")
+            else:
+                print(
+                    f"self-test: FAILED — the decisions mint does not hold on a "
+                    f"constructed {sentence}",
+                    file=sys.stderr,
+                )
+                ok = False
 
         # Q150 — this copy races every other writer under ROOT, and it used to
         # lose. `copytree` lists a directory with one `scandir` and copies the
@@ -2217,43 +2793,36 @@ def self_test() -> int:
             unchanged in both — the allocation bound holding the plant inert,
             watched directly rather than reasoned about.
 
-            Four things are asserted rather than assumed, because each one
-            would otherwise let an arm pass for the wrong reason: the register
-            allocates something (else there is no ceiling to mint above), the
-            minted id has no record and no registered home (else the red arm's
-            row would be legitimately green), the minted id is cited NOWHERE in
-            the staged tree already (else the arm's finding is not attributable
-            to the plant, and raising the ceiling by one could drag an
-            unrelated citation into bound), and `CITATION_SCAN` still names a
-            directory that exists. The plant location is DERIVED from
+            Two things are asserted and two are now CONSTRUCTED, and the
+            difference is the 2026-08-18 repair. Asserted, because each would
+            otherwise let an arm pass for the wrong reason: the register
+            allocates something (else there is no ceiling to mint above — the
+            raise lives in `lowest_unhomed_decision_id`), and the minted id is
+            cited NOWHERE in the staged tree already (else the arm's finding is
+            not attributable to the plant). Constructed, because a guard on
+            them fired on ordinary tree states rather than on defects: the
+            minted id has no record and no registered home, and the window the
+            mutation's ceiling bump opens contains nothing unresolved. A third
+            assertion remains for the plant's LOCATION: `CITATION_SCAN` still
+            names a directory that exists. The plant location is DERIVED from
             `CITATION_SCAN`/`CITATION_SUFFIXES` for the reason
             `scratch_decision_citations()` states: a narrowing of either must
             move this fixture with the check rather than leave it aimed at a
             surface nothing reads.
             """
-            todo = (tree / "TODO.md").read_text(encoding="utf-8")
-            allocated = {int(n) for n in re.findall(r"^- \[[ x]\] \*\*D(\d+)\*\*", todo, re.M)}
-            if not allocated:
-                raise AssertionError(
-                    "self-test: TODO.md's register allocates no decision id, so there is "
-                    "no ceiling to mint above. `check_decisions` reports that state "
-                    "itself — 'the bound is vacuous' — and it is a register failure, not "
-                    "a fixture failure"
-                )
-            minted = max(allocated) + 1
-            recorded = {
-                int(head.group(1))
-                for path in (tree / DECISION_DIR).glob("D*.md")
-                if (head := re.match(r"D(\d+)-", path.name))
-            }
-            if minted in recorded or minted in DECISIONS_HOMED_ELSEWHERE:
-                raise AssertionError(
-                    f"self-test: D{minted} is one above the register's ceiling and yet "
-                    "already carries a record or a registered home, so a resolved row for "
-                    "it would be green for a legitimate reason and the red arm would "
-                    "prove nothing. That is a register/record mismatch to fix, not a "
-                    "fixture to retarget"
-                )
+            # The id is the LOWEST above the ceiling that no home claims
+            # (`lowest_unhomed_decision_id`, whose docstring carries the full
+            # reasoning and the two refused designs). Three properties come
+            # with it BY CONSTRUCTION and are therefore no longer guarded here:
+            # it is above the ceiling, it carries no record and no registered
+            # home, and every id the mint stepped over is claimed by one or the
+            # other — so the ceiling bump the register-row mutation performs
+            # drags nothing unresolved into bound with it. The guard that used
+            # to stand here fired on a record the register had not allocated
+            # yet, which is the routine mid-act window (D119 RULING 6), i.e.
+            # every planning wave.
+            minted = lowest_unhomed_decision_id(tree)
+            allocated, recorded = decision_homes(tree)
             cited = scratch_decision_citations()
             if minted in cited:
                 raise AssertionError(
@@ -2283,9 +2852,17 @@ def self_test() -> int:
                 "arms it.\n",
                 encoding="utf-8",
             )
+            # The mint's provenance, printed rather than inferred: the gap
+            # between the ceiling and the minted id IS the mid-act window, and
+            # a reader who sees it non-zero is looking at the state that used
+            # to raise here.
+            above = sorted(n for n in recorded if n > max(allocated))
             print(
                 f"self-test: note — planted a citation of D{minted} at "
-                f"{plant.relative_to(tree)}; inert until a register row arms it"
+                f"{plant.relative_to(tree)}; inert until a register row arms it. "
+                f"The register's ceiling is D{max(allocated)} and "
+                f"{len(above)} record(s) sit above it"
+                + (f" ({', '.join(f'D{n}' for n in above[:6])})" if above else "")
             )
             return f"D{minted}"
 
@@ -2496,7 +3073,280 @@ def self_test() -> int:
                 "so the divergence case would rewrite the status cell into itself"
             )
 
-        # (check, file, mutation, expect) where expect is "red" or "green".
+        # ── D144's fixtures — the machine-path lint ─────────────────────────
+        # Nine faults (D144 §2 R7), every subject CONSTRUCTED in the staged
+        # copy and none of them found in it (Q252): the probe file does not
+        # exist in the tree, the pin's two mutations are applied to a staged
+        # copy of a file that has never been edited, and the scan-root fault is
+        # planted in a staged copy of this script. Draining the tree of machine
+        # paths — which is the entire point of the rule — can therefore never
+        # disarm any of them.
+        #
+        # TWO OF THE THREE PLATFORM ARMS HAVE ZERO LIVE OCCURRENCES in this
+        # tree (`/Users/…` and `C:\Users\…`, measured 2026-08-18). Without
+        # their plants they are assertions that cannot fail — this project's
+        # dominant defect class — so they are planted first and the arm table
+        # is read for the count, not written down.
+        def append_text(addition: str):
+            """Append `addition`. The no-op guard cannot fire on an append — the
+            text always changes — so the expectation does all the work and
+            there is no first-occurrence hazard to anchor against."""
+            return lambda t: t + addition
+
+        machine_root = next(
+            (sub for sub in CITATION_SCAN
+             if sub in PATH_SCAN_REQUIRED and (tree / sub).is_dir()),
+            None,
+        )
+        if machine_root is None or ".rs" not in CITATION_SUFFIXES:
+            raise AssertionError(
+                "self-test: no PATH_SCAN_REQUIRED root is a directory in the staged tree, "
+                "or .rs has left CITATION_SUFFIXES, so there is nowhere to plant a file "
+                "the machine-path scan would read"
+            )
+        machine_probe = f"{machine_root}/__machine_path_probe.rs"
+        (tree / machine_probe).write_text(
+            "// Written by `--self-test` inside its scratch copy only. It carries NO\n"
+            "// machine path at baseline; each machine-paths arm appends its own, and\n"
+            "// the harness restores this file between arms.\n",
+            encoding="utf-8",
+        )
+
+        # One planted violation per PATTERN ARM, keyed by the arm it exercises,
+        # so an arm added to MACHINE_PATH_ARMS without a fixture fails here with
+        # its own message instead of letting the totals balance (Q245).
+        machine_violations = {
+            "posix-home": "/home/nonesuch/work/a.txt",
+            "macos-users": "/Users/nonesuch/work/a.txt",
+            # Escaped exactly as a Rust or JSON source file carries it — which is
+            # the spelling a single-backslash pattern reads straight past.
+            "windows-users": "C:\\\\Users\\\\nonesuch\\\\work",
+        }
+        unfixtured = sorted(set(MACHINE_PATH_ARMS) - set(machine_violations))
+        if unfixtured:
+            raise AssertionError(
+                f"self-test: MACHINE_PATH_ARMS gained {', '.join(unfixtured)} with no "
+                "planted fault, so that arm of the pattern would be an assertion that "
+                "cannot fail. An arm gets its fixture in the act that adds it (D144 §2 R7)"
+            )
+        unarmed = sorted(set(machine_violations) - set(MACHINE_PATH_ARMS))
+        if unarmed:
+            raise AssertionError(
+                f"self-test: {', '.join(unarmed)} is planted but is no longer an arm of "
+                "MACHINE_PATH_ARMS, so the case would prove something the check does not "
+                "claim"
+            )
+
+        def rust_literal(name: str, value: str) -> str:
+            """A line a real source file would carry, not a comment: the Windows
+            arm's whole point is that the escaping is what reaches disk."""
+            return f'const _{re.sub(r"[^A-Za-z0-9]", "_", name).upper()}: &str = "{value}";\n'
+
+        machine_fragments: dict[str, str] = {}
+        for arm in sorted(machine_violations):
+            violation = machine_violations[arm]
+            if not re.search(MACHINE_PATH_ARMS[arm], violation):
+                raise AssertionError(
+                    f"self-test: the fault planted for arm {arm} ({violation!r}) does not "
+                    f"match that arm's own pattern {MACHINE_PATH_ARMS[arm]!r}, so the case "
+                    "would go red through a different arm and prove nothing about this one"
+                )
+            hit = MACHINE_PATH.search(violation)
+            if hit is None or hit.group(1) in RESERVED_PLACEHOLDER_NAMES:
+                raise AssertionError(
+                    f"self-test: {violation!r} is not a violation of the machine-path rule, "
+                    "so the check would be green over it for a legitimate reason and the "
+                    "red case would prove nothing"
+                )
+            machine_fragments[arm] = f"absolute home path `{hit.group(0)}`"
+
+        # The GREEN half of the vocabulary rule, one path per RESERVED NAME and
+        # the set read off the constant: a sixth name cannot land without its
+        # own fixture in the same act (D144 §2 R4).
+        machine_reserved = [f"/home/{name}/work/a.txt" for name in RESERVED_PLACEHOLDER_NAMES]
+        machine_reserved_line = (
+            f"const _RESERVED: [&str; {len(machine_reserved)}] = ["
+            + ", ".join(f'"{path}"' for path in machine_reserved)
+            + "];\n"
+        )
+        exercised = {m.group(1) for m in MACHINE_PATH.finditer(machine_reserved_line)}
+        if exercised != set(RESERVED_PLACEHOLDER_NAMES):
+            raise AssertionError(
+                f"self-test: the reserved-vocabulary fixture exercises "
+                f"{sorted(exercised)} where the vocabulary is "
+                f"{sorted(RESERVED_PLACEHOLDER_NAMES)}. Either a name has no fixture, or "
+                "the pattern cannot see one of them and its green arm would pass BY "
+                "ABSENCE rather than by the vocabulary being honoured (D144 §2 R4)"
+            )
+
+        # The near-miss set: the four spellings a separator-blind pattern eats.
+        machine_near_misses = ["/homework/notes", "/home", "$HOME/x", "~/x"]
+        machine_near_miss_line = (
+            f"const _NEAR: [&str; {len(machine_near_misses)}] = ["
+            + ", ".join(f'"{path}"' for path in machine_near_misses)
+            + "];\n"
+        )
+        if MACHINE_PATH.search(machine_near_miss_line):
+            raise AssertionError(
+                f"self-test: the near-miss control line matches the machine-path pattern "
+                f"({MACHINE_PATH.search(machine_near_miss_line).group(0)!r}), so its green "
+                "arm would be red for a real reason. The pattern lost its separator "
+                "anchoring (D144 §2 R4)"
+            )
+
+        # The PIN, in both directions. The anchor is a WHOLE LINE and is
+        # asserted unique in the staged copy before either arm is built.
+        if not KNOWN_MACHINE_PATH_DIVERGENCE:
+            raise AssertionError(
+                "self-test: KNOWN_MACHINE_PATH_DIVERGENCE is empty, so the pin's two arms "
+                "have no subject. When the last registered divergence is repaired, the "
+                "register, the pin and these two cases go together"
+            )
+        machine_pinned = sorted(KNOWN_MACHINE_PATH_DIVERGENCE)[0]
+        machine_anchor = KNOWN_MACHINE_PATH_DIVERGENCE[machine_pinned][0]
+        pinned_lines = (tree / machine_pinned).read_text(encoding="utf-8").splitlines()
+        if pinned_lines.count(machine_anchor) != 1:
+            raise AssertionError(
+                f"self-test: the registered divergence text occurs "
+                f"{pinned_lines.count(machine_anchor)} time(s) as a whole line in staged "
+                f"{machine_pinned}, not once. The pin is already red on the unmutated "
+                "tree, so its two arms would be measured against a contaminated baseline"
+            )
+
+        # The CITATION_SCAN coupling fault: a REQUIRED root removed from the
+        # scan list. Planted in the constant itself rather than through a
+        # parameter, so the arm also proves the shipped call path reads it.
+        machine_dropped = next(
+            (sub for sub in CITATION_SCAN
+             if sub in PATH_SCAN_REQUIRED and sub != machine_root),
+            None,
+        )
+        if machine_dropped is None:
+            raise AssertionError(
+                "self-test: PATH_SCAN_REQUIRED names no second root to drop, so the "
+                "coupling arm cannot distinguish a removed root from the probe's own"
+            )
+        machine_root_line = f'    "{machine_dropped}",'
+        self_source = (tree / CITATION_SCAN_SELF).read_text(encoding="utf-8")
+        if self_source.count(machine_root_line + "\n") != 1:
+            raise AssertionError(
+                f"self-test: {machine_root_line.strip()!r} occurs "
+                f"{self_source.count(machine_root_line + chr(10))} time(s) as a whole line "
+                f"in staged {CITATION_SCAN_SELF}, not once, so deleting it would not "
+                "reliably remove the scan root this arm is about"
+            )
+
+        # The PRESERVED classes, out of scan BY ASSERTION rather than by nobody
+        # having looked (D144 §2 R7 fault 9, §2 R2). This is the arm this
+        # project would otherwise skip, and it is what makes the class boundary
+        # a measured property instead of a paragraph.
+        machine_preserved: list[str] = []
+        for directory in ("docs/decisions", "docs/reviews", "tasks"):
+            first = next(iter(sorted((tree / directory).glob("*.md"))), None)
+            if first is None:
+                raise AssertionError(
+                    f"self-test: {directory}/ holds no .md file in the staged tree, so the "
+                    "preserved-class control has nothing to plant a violation in"
+                )
+            machine_preserved.append(str(first.relative_to(tree)))
+        for literal in ("TODO.md", "MVP-SPEC.orig.md"):
+            if not (tree / literal).is_file():
+                raise AssertionError(
+                    f"self-test: {literal} is not in the staged tree, so its "
+                    "preserved-class control has no subject"
+                )
+            machine_preserved.append(literal)
+        for relative in machine_preserved:
+            if relative in CITATION_SCAN or any(
+                relative.startswith(f"{sub}/") for sub in CITATION_SCAN
+            ):
+                raise AssertionError(
+                    f"self-test: {relative} is INSIDE CITATION_SCAN, so its control would "
+                    "be green only because the check is entitled to be red there. The "
+                    "live/preserved boundary moved and D144 §2 R2 needs re-reading before "
+                    "this case is re-armed"
+                )
+        machine_preserved_line = (
+            f"\n<!-- self-test: {machine_violations['posix-home']} -->\n"
+        )
+        if MACHINE_PATH.search(machine_preserved_line) is None:
+            raise AssertionError(
+                "self-test: the preserved-class control plants no machine path at all, so "
+                "every one of its arms would be green BY ABSENCE"
+            )
+
+        # (check, file, mutation, expect, required message fragment). Built,
+        # not written out, and the counts below are DERIVED from the list
+        # (Q245): a fixture added or lost moves them without anyone editing a
+        # number.
+        machine_cases: list[tuple] = []
+        for arm in sorted(machine_violations):
+            machine_cases.append(
+                (
+                    "machine-paths",
+                    machine_probe,
+                    append_text(rust_literal(arm, machine_violations[arm])),
+                    "red",
+                    machine_fragments[arm],
+                )
+            )
+        machine_cases.append(
+            ("machine-paths", machine_probe, append_text(machine_reserved_line), "green", None)
+        )
+        machine_cases.append(
+            ("machine-paths", machine_probe, append_text(machine_near_miss_line), "green", None)
+        )
+        machine_cases.append(
+            (
+                "machine-paths",
+                machine_pinned,
+                rewrite_line(machine_anchor, machine_anchor + " AND ONE WORD MORE\n"),
+                "red",
+                "the registered divergence text is no longer present verbatim",
+            )
+        )
+        machine_cases.append(
+            (
+                "machine-paths",
+                machine_pinned,
+                rewrite_line(machine_anchor, machine_anchor + "\n" + machine_anchor + "\n"),
+                "red",
+                "the registered divergence text occurs 2 times, not once",
+            )
+        )
+        machine_cases.append(
+            (
+                "machine-paths",
+                CITATION_SCAN_SELF,
+                rewrite_line(machine_root_line, ""),
+                "red",
+                f"CITATION_SCAN no longer contains `{machine_dropped}`",
+            )
+        )
+        for relative in machine_preserved:
+            machine_cases.append(
+                ("machine-paths", relative, append_text(machine_preserved_line), "green", None)
+            )
+        print(
+            f"self-test: note — {len(machine_cases)} machine-path fixture(s) constructed "
+            f"({sum(1 for c in machine_cases if c[3] == 'red')} red, "
+            f"{sum(1 for c in machine_cases if c[3] == 'green')} green) over "
+            f"{len(MACHINE_PATH_ARMS)} pattern arm(s), "
+            f"{len(RESERVED_PLACEHOLDER_NAMES)} reserved name(s), "
+            f"{len(KNOWN_MACHINE_PATH_DIVERGENCE)} pinned divergence(s) and "
+            f"{len(machine_preserved)} preserved surface(s)"
+        )
+
+        # (check, file, mutation, expect) where expect is "red" or "green", and
+        # an OPTIONAL fifth element: the sentence a red arm's planted fault must
+        # produce. `scripts/lib/red-arm.sh`'s rule — "A RED ARM MUST MATCH ON
+        # THE MESSAGE THE CHECK PRINTS WHEN IT FINDS THE PLANTED FAULT, NOT ON
+        # THE EXIT STATUS ALONE" — is only half kept by a delta: a delta proves
+        # the check ADDED a finding, not that it added THE finding, so a
+        # mutation that trips a neighbouring rule passes an arm written for
+        # this one. Where the fifth element is absent the arm is a delta only,
+        # which is what every case above has always been; supplying one asserts
+        # BOTH (D144 §2 R7).
         #
         # The two "green" cases are Q49's: a checkbox marker is gate state and
         # must be tolerated in either direction and either case. They are not
@@ -3071,11 +3921,18 @@ def self_test() -> int:
                 "green",
             ),
         ]
+        # D144's arms carry a fifth element and are appended rather than
+        # inlined, so the thirty-three above keep their reviewed four-tuple
+        # shape and no proven case is touched to add a new one.
+        cases += machine_cases
 
         # ── D120 R6: every arm is a DELTA, not an absolute verdict ──────────
         # The failure this replaces was never in the red arms. 23 of the 33
-        # cases above are red and 10 are green — a count in the prose, so
-        # RECOUNT it when the list moves rather than trusting this sentence.
+        # cases in the literal list above are red and 10 are green, and D144's
+        # 13 appended arms add 6 and 7 — counts in the prose, so RECOUNT them
+        # when either list moves rather than trusting this sentence. The
+        # appended block DERIVES and prints its own split on every run, which
+        # is the form to prefer; the literal list's is still by hand.
         # It read "23 of the 32 … and 9 are green" until Q252 replaced the
         # decisions red arm with a red/green pair; the same wave found
         # `BOUNDARY_SOURCE`'s "Both copies" stale for exactly this reason, and
@@ -3128,7 +3985,11 @@ def self_test() -> int:
             }
 
         baseline: dict[str, set[str]] = {}
-        for check_name in dict.fromkeys(name for name, _r, _m, _e in cases):
+        # `case[0]`, not a four-tuple unpack: D144's arms carry an optional
+        # fifth element and an unpack here would raise on the first of them —
+        # before any baseline exists, so every arm below would report the same
+        # crash and none of them would be a delta against anything.
+        for check_name in dict.fromkeys(case[0] for case in cases):
             measured = findings(check_name)
             if measured is None:
                 print(
@@ -3151,7 +4012,9 @@ def self_test() -> int:
                 )
             baseline[check_name] = measured
 
-        for check, relative, mutate, expect in cases:
+        for case in cases:
+            check, relative, mutate, expect = case[:4]
+            fragment = case[4] if len(case) > 4 else None
             path = tree / relative
             if not path.is_file():
                 # Never a skip. A self-test that quietly opts out of a case is
@@ -3209,6 +4072,16 @@ def self_test() -> int:
                     file=sys.stderr,
                 )
                 ok = False
+            elif expect == "red" and fragment and not any(fragment in f for f in added):
+                print(
+                    f"self-test: FAILED — {check} went red on the red-case mutation of "
+                    f"{relative}, but no added finding says {fragment!r}. Going red is "
+                    f"not proof the PLANTED fault is the one found — a neighbouring rule "
+                    f"biting the same mutation looks identical to a delta. Added: "
+                    f"{sorted(added)[:2]}",
+                    file=sys.stderr,
+                )
+                ok = False
             elif expect == "green" and (added or removed):
                 print(
                     f"self-test: FAILED — {check}'s findings CHANGED on the green-case "
@@ -3220,7 +4093,10 @@ def self_test() -> int:
                 )
                 ok = False
             elif expect == "red":
-                print(f"self-test: ok — {check} goes red when {relative} is corrupted")
+                print(
+                    f"self-test: ok — {check} goes red when {relative} is corrupted"
+                    + (f", saying {fragment!r}" if fragment else "")
+                )
             else:
                 print(f"self-test: ok — {check} stays green where it must, on {relative}")
 

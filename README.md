@@ -51,6 +51,8 @@ deliberately states no task count: it moves most weeks, and
   promise across future versions.
 - [Threat model](docs/threat-model.md) — what a seal defends against and what
   it does not.
+- [Security policy](SECURITY.md) — how to report a flaw privately, and what
+  this project treats as a security issue.
 
 ## License
 

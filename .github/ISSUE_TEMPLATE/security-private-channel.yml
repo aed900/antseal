@@ -1,0 +1,51 @@
+name: Request a private channel for a security report
+description: >-
+  Use ONLY if you cannot use the private advisory form. This issue is public —
+  it carries no detail by design.
+title: Request a private channel for a security report
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Try the private route first
+
+        **[Report a vulnerability privately](https://github.com/aed900/antseal/security/advisories/new)**
+        — that form is private, is recorded, and is the right place for the
+        finding itself. It is live only where GitHub offers private reporting:
+        a public repository with the feature switched on. This issue exists for
+        the case where that link does not resolve for you, or you have no
+        GitHub account that can reach it.
+
+        ## This issue is public. Put no detail in it.
+
+        Not the component. Not the symptom. Not a reproducer. **Not in the
+        title either** — leave the title exactly as it is filled in above.
+        This form deliberately gives you nowhere to describe the finding, so
+        that a private channel can be opened without anything leaking first.
+
+        A maintainer will open a private advisory and invite you into it.
+
+  - type: checkboxes
+    id: no-detail
+    attributes:
+      label: Confirm before submitting
+      options:
+        - label: >-
+            I have not described the finding here or in the title, and I will
+            not describe it in a comment on this issue.
+          required: true
+        - label: >-
+            I could not use the private advisory form, or I do not have a
+            GitHub account that can reach it.
+          required: true
+
+  - type: input
+    id: contact
+    attributes:
+      label: How should we reach you?
+      description: >-
+        A GitHub username to invite to the advisory. Leave blank to be
+        invited as the author of this issue.
+      placeholder: e.g. @your-handle
+    validations:
+      required: false

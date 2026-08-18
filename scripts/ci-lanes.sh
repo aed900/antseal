@@ -1090,25 +1090,59 @@ lane_secret_guard() {
              | grep -vxF "$root/crates/antseal-cli/src/vault/export.rs" || true)"$'\n'
     # (4a) age secret-key marker.
     hits+="$(ex 'AGE[-]SECRET[-]KEY[-]1')"$'\n'
-    # (4b) minisign / rsign2 secret-key HEADER COMMENT. Widened by Q245 in
-    #      two directions, both read off upstream source rather than inferred:
+    # (4b) minisign / rsign2 secret-key HEADER COMMENT, anchored to the
+    #      comment PREFIX. Widened by Q245 to cover `rsign` and to make the
+    #      word `encrypted` optional; anchored here, in the same act as the
+    #      false positive that widening created was measured.
     #
-    #      - `rsign2` — the pure-Rust CLI D71 §1.4 names as the sanctioned
-    #        alternative to the C tool — writes `rsign encrypted secret key`,
-    #        NOT `minisign …` (rust-minisign `src/constants.rs`,
-    #        `SECRETKEY_DEFAULT_COMMENT`; `src/bin/rsign/main.rs` passes the
-    #        default straight through). The shipped literal therefore missed
-    #        EVERY rsign2 key — including the passphrase-protected one D71
-    #        §2 R7.1 mandates. That gap was never recorded anywhere.
-    #      - ` encrypted` is optional because a header that omits the word
-    #        must not be the thing that makes a key invisible. NOTE, against
-    #        Q245's own premise and D71 §6.3: upstream C minisign does NOT
-    #        omit it for `-W`. `generate()` writes SECRETKEY_DEFAULT_COMMENT
-    #        unconditionally (`src/minisign.c`, `xfprintf(fp, "%s%s\n",
-    #        COMMENT_PREFIX, comment)`; `main()` only defaults it when `-c`
-    #        is absent), so `minisign -G -W` yields the literal the shipped
-    #        pattern already caught. The optionality is defence, not the fix.
-    hits+="$(ex '(minisign|rsign)([ ]encrypted)?[ ]secret[ ]key')"$'\n'
+    #      WHAT THE ANCHOR IS FOR. Both tools write the SAME `untrusted
+    #      comment:` line into every SIGNATURE they produce, and both name
+    #      themselves in it:
+    #        minisign      `src/minisign.h`  DEFAULT_COMMENT
+    #                      = "signature from minisign secret key"
+    #        rust-minisign `src/constants.rs` DEFAULT_COMMENT
+    #                      = "signature from rsign secret key"
+    #      Unanchored, `(minisign|rsign)([ ]encrypted)?[ ]secret[ ]key`
+    #      matches both — so the Q245 pattern reported EVERY `.minisig` this
+    #      project will ever ship as secret material, including the
+    #      `SHA256SUMS.minisig` and per-artifact signatures
+    #      `scripts/sign-release.sh` emits and the `minisign.pub.minisig`
+    #      D71 §2 R9 step 2 publishes on rotation. A signature is public by
+    #      construction; a lane that reds on one blocks the release act it
+    #      exists to protect. It also matched ordinary PROSE — any non-`.md`
+    #      file saying "the minisign secret key never enters the checkout"
+    #      (a script header, a workflow comment, page HTML) went red.
+    #      Measured on real artifacts from a real `minisign` binary, not
+    #      inferred. This was a REGRESSION: the shipped literal Q245
+    #      replaced, `minisign encrypted secret key`, appears in no
+    #      signature file.
+    #
+    #      A `*.minisig` EXCLUSION WOULD BE THE WRONG FIX and is refused.
+    #      `ex()`'s excludes apply to every rule at once, so excluding the
+    #      extension would blind (1)-(5) and (4c) as well — a real secret key
+    #      renamed `foo.minisig` would become invisible to the whole lane.
+    #      The anchor removes the false positive from THIS rule and adds no
+    #      hole; the `renamed-secret-key.minisig` fixture below asserts that
+    #      such a file is still caught, so a later "simpler fix" reds.
+    #
+    #      `untrusted comment: ` is COMMENT_PREFIX, verified identical in
+    #      both implementations (minisign `src/minisign.h`; rust-minisign
+    #      `src/constants.rs`). A secret key's comment BEGINS with the tool
+    #      name; a signature's begins with `signature from`. That is the
+    #      whole discriminator, and it is exact.
+    #
+    #      WHAT THIS RULE IS WORTH, stated plainly so nobody over-trusts it.
+    #      D71 §B R3 ruled that no comment-keyed rule can be the answer:
+    #      §1.3 row 4 MEASURED the untrusted comment as unauthenticated free
+    #      text, `-c` replaces it outright, and a rewritten comment still
+    #      verifies. (4c) below is the rule that catches keys. Measured over
+    #      real keys of every form D71 cares about, (4b)'s true positives are
+    #      a SUBSET of (4c)'s but for one case: a key file whose body is
+    #      absent or mangled and whose header survives. It is kept for that
+    #      case and as the regression arm for the shipped literal, never as
+    #      the fix. Removing it outright is a decision, not an implementer's
+    #      call — D71 §B R3 records it as landed and kept.
+    hits+="$(ex 'untrusted[ ]comment:[ ](minisign|rsign)([ ]encrypted)?[ ]secret[ ]key')"$'\n'
     # (4c) minisign / rsign2 secret-key BODY — the rule no comment can dodge,
     #      and the one that actually closes Q245.
     #
@@ -1170,6 +1204,17 @@ lane_secret_guard() {
   # header, so a broken arm cannot be covered by its neighbour. No fixture
   # contains real key material — the (4c) bodies are the format's type tag
   # and zero padding, which is why they can be written down at all.
+  #
+  # ONE FIXTURE IS THE EXCEPTION AND SAYS SO: `renamed-secret-key.minisig`
+  # covers (4c)'s `Sc` arm a second time, because what it asserts is not the
+  # arm but the ABSENCE of a filename exclusion. If that arm breaks, two
+  # fixtures go missing and the message names both.
+  #
+  # The NEGATIVE fixtures are the other half of the same discipline: files
+  # that must NOT be reported, left out of the list so the `unexpected` arm
+  # names them if they ever are. They cover the two near misses that would
+  # otherwise be found in production — the published public key, and every
+  # signature this project ships.
   local tmp planted found out missing unexpected rules f
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
@@ -1194,13 +1239,36 @@ lane_secret_guard() {
   # The devnet-export wallet-key line (pattern 5): 64 x 'a' is hex-shaped
   # enough to trip the guard and unmistakably fake.
   printf "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='%s'\n" "$(printf 'a%.0s' $(seq 64))" > "$tmp/fake-devnet-env"
-  # NEGATIVE fixture, deliberately NOT in the list below: a minisign public
+  # A REAL secret key does not become safe by being renamed. This fixture is
+  # a (4c)-shaped body under a custom comment — i.e. invisible to (4b) — with
+  # the extension every release signature carries. It is IN the list below, so
+  # if anyone ever "fixes" a `.minisig` false positive by adding
+  # `--exclude='*.minisig'` to `ex()`, this file stops being reported and the
+  # self-test names it. That exclusion would blind every rule at once, which
+  # is why the fix at (4b) is an anchor and not an exclude.
+  printf 'untrusted comment: antseal release signing key\nRWRTY0Iy%s\n' 'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' > "$tmp/renamed-secret-key.minisig"
+  # NEGATIVE fixtures, deliberately NOT in the list below: a minisign public
   # key, which D71 §2 R5 publishes into this repository, with an all-zero
   # keynum so its body shares five leading characters with (4c)'s
   # unencrypted arm. If (4c) is ever loosened to `RWQAA`, Q30 reds the tree
   # on the day the real key lands — this is what stops that being found in
   # production.
   printf 'untrusted comment: minisign public key 0000000000000000\nRWQAAAAAAAAAAO7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u\n' > "$tmp/not-a-secret-minisign.pub"
+  # ... and the two SIGNATURE header lines, one per tool, verbatim from
+  # upstream's DEFAULT_COMMENT. These are what the un-anchored Q245 pattern
+  # reported as secret material: every `.minisig` this project ships, its
+  # release manifest signature, and the rotation signature over the public
+  # key. The bodies are `ED` + zero padding — the prehashed sig_alg — so they
+  # also assert that a signature cannot reach (4c). If (4b) ever loses its
+  # `untrusted comment:` anchor, these are reported, they are not fixtures,
+  # and the self-test names them.
+  printf 'untrusted comment: signature from minisign secret key\nRURAAAAAAAAAAAAA%s\ntrusted comment: guard self-test, not a real signature\n%s\n' \
+    'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' 'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' > "$tmp/not-a-secret-minisign-signature.minisig"
+  printf 'untrusted comment: signature from rsign secret key\nRURAAAAAAAAAAAAA%s\ntrusted comment: guard self-test, not a real signature\n%s\n' \
+    'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' 'c2VsZi10ZXN0LW5vLWtleS1tYXRlcmlhbA==' > "$tmp/not-a-secret-rsign-signature.minisig"
+  # ... and the PROSE case: an ordinary non-`.md` file that names the tool and
+  # the key in a sentence. The un-anchored pattern reported this too.
+  printf '#!/bin/sh\n# The maintainer holds the minisign secret key offline (D71 §2 R7);\n# an rsign secret key would be the same story. Neither is ever in the tree.\n' > "$tmp/not-a-secret-prose.sh"
   local -a fakes=(
     fake-wallet.pem                     # (1)  PEM private-key block
     fake-keystore.json                  # (2)  EVM keystore conjunction
@@ -1213,6 +1281,8 @@ lane_secret_guard() {
     fake-minisign-unencrypted-body.key  # (4c) body, kdf_alg = 00 00
     fake-minisign-encrypted-body.key    # (4c) body, kdf_alg = `Sc`
     fake-devnet-env                     # (5)  committed devnet wallet key
+    renamed-secret-key.minisig          # (4c) body, `Sc`, under the extension
+                                        #      a release signature carries
   )
   planted="${#fakes[@]}"
   # The fixture list cannot see a rule nobody wrote a fixture for: an eighth
@@ -1243,7 +1313,7 @@ lane_secret_guard() {
     scan "$tmp" || true
     return 1
   fi
-  printf 'self-test OK: %s planted fakes, one per rule arm, each detected by name; the public-key near-miss was not flagged\n' "$planted"
+  printf 'self-test OK: %s planted fakes, every rule arm detected by name; the public-key, signature and prose near-misses were not flagged\n' "$planted"
   # The exclusion above is only safe while `.devnet/` is genuinely
   # unstageable. Check that, rather than trusting it.
   if git rev-parse --git-dir >/dev/null 2>&1; then

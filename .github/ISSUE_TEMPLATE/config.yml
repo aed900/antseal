@@ -1,0 +1,29 @@
+# The blank-issue escape hatch is OFF deliberately.
+#
+# antseal is a verifier that makes cryptographic claims and invites strangers
+# to audit it. The one class of report this project most wants to receive is
+# exactly the class that must not arrive as a public issue, and a blank issue
+# is a text box with no warning above it. Turning it off makes the chooser
+# unavoidable, so every reporter passes the private route before reaching any
+# field they can type a finding into.
+#
+# The cost is real and accepted: there is no free-form issue. The two forms
+# beside this file are the whole intake — a bug report, and a request for a
+# private channel for someone who cannot use the advisory form.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/aed900/antseal/security/advisories/new
+    about: >-
+      Flaws in verification, the sealed formats, parsing of untrusted input, or
+      key and vault handling go here — a draft advisory only you and the
+      maintainer can read. It is live only where GitHub offers private
+      reporting: a public repository with the feature switched on. If it does
+      not resolve, use the "Request a private channel" form instead. Never put
+      a security finding in a public issue.
+  - name: Security policy — scope, response times, what to include
+    url: https://github.com/aed900/antseal/security/policy
+    about: >-
+      What is in scope and what is not, when to expect an answer, and why you
+      should never attach real key material to a report.

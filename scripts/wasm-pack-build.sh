@@ -42,8 +42,8 @@
 #
 # MEASURED 2026-08-14 at 08c074c, two runners, one commit: the GitHub Actions
 # module was 1 853 735 B and this machine's 1 853 543 B, and the cause was the
-# builder's absolute $CARGO_HOME — `/home/runner/.cargo/registry` against
-# `/home/deb/.cargo/registry`, **52 occurrences each**. Base64-expanded
+# builder's absolute $CARGO_HOME — `/home/runner/.cargo/registry` against a
+# three-characters-shorter local one, **52 occurrences each**. Base64-expanded
 # (3 B -> 4 B) the 192-byte module delta is 256 B, which is exactly the
 # 2 517 337 / 2 517 081 page gap.
 #

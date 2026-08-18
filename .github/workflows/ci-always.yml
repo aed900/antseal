@@ -79,7 +79,7 @@ jobs:
     name: secret-guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Vault-export / wallet-key signature guard (self-test, then scan)
         run: ./scripts/ci-lanes.sh secret-guard
 
@@ -110,7 +110,7 @@ jobs:
     name: traceability
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # D124/Q182 — this job's cargo-free property, ASSERTED instead of
       # stated. Installs failing `cargo`/`rustc`/`rustup` shims ahead of the
       # real ones for every step below, INCLUDING STEPS NOT YET WRITTEN, and
@@ -154,6 +154,62 @@ jobs:
         run: ./scripts/check-ci-paths.py --self-test
       - name: D138 — nothing ci.yml reads is excluded from ci.yml's push trigger
         run: ./scripts/check-ci-paths.py
+      # D143/Q244 — every `uses:` in this directory is pinned to the 40-hex
+      # COMMIT `.github/action-pins.tsv` names, and the ledger has not gone
+      # stale. The ledger is the AUTHORITY; the workflows are checked against
+      # it, never the reverse.
+      #
+      # WHAT THE PIN IS AND IS NOT, because a comment asserting the wrong
+      # thing here would be false in the file it is about: a 40-hex in a
+      # `uses:` line is NOT a checksum anything verifies. The runner sends
+      # {owner, repo, ref} to a closed-source Actions service and extracts
+      # whatever tarball comes back, with no digest and no signature; the
+      # `ResolvedSha` it gets back is logged and compared to nothing
+      # (`actions/runner` v2.336.0, `ActionManager.cs`). The pin makes the
+      # REQUEST SPECIFIC — a maintainer can no longer re-point a tag under us
+      # — and it buys nothing against GitHub itself, which is the party that
+      # holds this repository's only write credential. Pinning is ruled on
+      # COST, not as a security claim: six of the nine major tags have not
+      # moved in 328-923 days, so freezing them forfeits a stream of updates
+      # that does not exist (D143 §1.4, §1.5, §2 R1).
+      #
+      # AND A SHAPE CHECK ALONE WOULD NOT DO IT. `Swatinem/rust-cache@v2` is
+      # an ANNOTATED tag, so `gh api …/git/ref/tags/v2` returns the TAG
+      # OBJECT `49a0bdc7…` — forty lowercase hex characters, a real object,
+      # and not the commit. `^[0-9a-f]{40}$` is green on it. The ledger, not
+      # the regex, is the authority, and that exact value is a mandatory
+      # planted fault in the self-test below (D143 §1.7).
+      #
+      # It rides HERE, as two steps of an existing job, for exactly the reason
+      # `ci-shell`, `fuzz-budget`, `anchor-net-policy`, the bitmatch trigger
+      # and the copy-style lint do: Python stdlib only, no network, no git, no
+      # cargo (asserted by this job's `--arm`/`--verdict` pair, D124/Q182). So
+      # it costs SECONDS and ZERO new required-status contexts — the set stays
+      # at 19 and Q56's generated context list is untouched. That is not
+      # thrift: Q253 is a latent required-context red and every hosted run is
+      # refused before a step is created, so a context added now would be a
+      # red no run can clear (D143 §2 R8, §3.6).
+      #
+      # THE RENEWAL MECHANISM IS THIS STEP. Rule P6 goes red once
+      # `next_review_utc` passes (90 days, owner named in the ledger header)
+      # and warns for the 14 days before. A scheduled hosted lane could not be
+      # the venue — `advisory-cron.yml` has been refused every week since the
+      # allowance went — so the deadline lives where something still runs
+      # (D143 §1.9, §2 R7).
+      #
+      # SELF-TEST FIRST, as everywhere here: nine planted faults, each
+      # required to go red BY ITS OWN RULE TAG rather than by exit status
+      # (scripts/lib/red-arm.sh), plus one green control and one WARN-tier arm
+      # that must print while staying green. Every fault is planted by string
+      # substitution on an IN-MEMORY copy — this self-test writes to no
+      # tracked file, unlike `check-ci-paths.py`'s, which has to (D143 §5.3).
+      # MEASURED on a 2-core host 2026-08-18, 3 runs each: `--self-test`
+      # 0.04/0.04/0.04 s and the check itself 0.03/0.03/0.03 s — ~0.07 s for
+      # the pair, against this job's existing seconds.
+      - name: D143 — self-test the action-pin ledger check (prove every rule can go red)
+        run: ./scripts/check-action-pins.py --self-test
+      - name: D143 — every `uses:` is the 40-hex commit the ledger names, and the ledger is fresh
+        run: ./scripts/check-action-pins.py
       # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its
       # named 700-minute ceiling. It rides HERE, as a step of an existing
       # job, for the reason `ci-shell` does: it needs no network, and the

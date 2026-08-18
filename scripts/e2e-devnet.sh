@@ -22,6 +22,9 @@
 #   scripts/e2e-devnet.sh --plan          registry + plan only; no devnet, no cargo
 #   scripts/e2e-devnet.sh --list-suites   the registry, one row per line
 #   scripts/e2e-devnet.sh --self-test     prove the registry rules can go red
+#   scripts/e2e-devnet.sh --scan-evidence [DIR]
+#                                         refuse an evidence directory that
+#                                         still carries key-shaped material
 #
 # Exit: 0 = PASS · 1 = FAIL, and PENDING is a FAIL unless --allow-pending.
 #
@@ -108,6 +111,107 @@ suite_path() { printf '%s/crates/%s/tests/%s.rs' "$repo" "$1" "$2"; }
 redact() {
   sed -E "s/(wallet_private_key|[A-Za-z_]*PRIVATE_KEY|[A-Za-z_]*SECRET_KEY)([\"']?[[:space:]]*[:=][[:space:]]*[\"']?)(0x)?[0-9a-fA-F]{8,}/\1\2<redacted>/g"
 }
+
+# ── The artifact scan (Q243) ──────────────────────────────────────────────
+#
+# `redact()` above is a check on the FUNCTION. This is a check on the OUTPUT:
+# it reads the evidence directory that is about to be uploaded and refuses if
+# anything key-shaped is still in it. That is the half which survives a
+# refactor that stops calling `redact()` at all — the failure the redactor's
+# own self-test structurally cannot see, because it tests the filter and not
+# the artifact.
+#
+# The name list below is deliberately BROADER than the redactor's. A scan
+# built from the redactor's own alternation can only ever agree with it; the
+# point of this one is to catch material the redactor did not see, so it adds
+# the lowercase spellings, `mnemonic`, `passphrase`, `seed_phrase` and
+# `keystore_password`, and a base64 value arm the hex-only redactor is
+# structurally blind to.
+#
+# What it must NOT do is fire on the material that makes a failure log worth
+# keeping. A bare 64-hex blob digest, a `0x`+40-hex contract address and a
+# `0x`+64-hex transaction hash are all ordinary artifact content; the
+# self-test asserts each of them survives, so this stays a NAME-scoped scan
+# and never becomes the blanket hex filter `redact()` was written not to be.
+#
+# Findings are reported by LOCATION with the value withheld: a scan that
+# echoes what it found into a CI log has published the thing it exists to
+# withhold, and on a public repository that log is readable by everyone.
+EVIDENCE_KEY_NAMES='private_?key|secret_?key|mnemonic|passphrase|seed_?phrase|keystore_password'
+EVIDENCE_SEP="[\"']?[[:space:]]*[:=][[:space:]]*[\"']?"
+# The redactor's own value shape — an unredacted hex run under a key name
+# means the redaction did not reach this file.
+EVIDENCE_HEX_ARM="($EVIDENCE_KEY_NAMES)$EVIDENCE_SEP(0x)?[0-9a-fA-F]{8,}"
+# 40+ characters of base64 alphabet, not starting with `/` so a long unix path
+# under a *_KEY_FILE-shaped name is not a finding. `<redacted>` cannot match:
+# `<` is outside the class.
+EVIDENCE_B64_ARM="($EVIDENCE_KEY_NAMES)$EVIDENCE_SEP[A-Za-z0-9+=][A-Za-z0-9+/=]{39,}"
+
+# Every basename `run_gate`, `capture_devnet_logs` and `verdict` write into
+# the evidence directory, and nothing else. An artifact whose contents nobody
+# enumerated is an artifact nobody reviewed, so a file this list does not name
+# is a finding rather than a curiosity: add the basename here in the same
+# commit that adds the capture, or stop capturing it.
+evidence_name_allowed() {
+  case "$1" in
+    local-up.log|launcher.log|manifest.json|evidence.txt) return 0 ;;
+    suite-*.log) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Replace the VALUE after a key-name separator, so a finding can be reported
+# by file and line without republishing the material.
+evidence_mask() {
+  sed -E "s/(($EVIDENCE_KEY_NAMES)$EVIDENCE_SEP)[^[:space:]\"',]*/\1<<value withheld by scan>>/gI"
+}
+
+# Usage: scan_evidence [DIR]   (default: target/e2e-devnet)
+# Exit 0 = nothing key-shaped found · 1 = at least one finding, DO NOT UPLOAD.
+scan_evidence() {
+  local dir="${1:-$repo/target/e2e-devnet}"
+  local files=0 findings=0 f base hits h state
+  if [ ! -d "$dir" ]; then
+    printf '\033[33m::warning::e2e-devnet: scan-evidence: no evidence directory at %s — nothing was captured, so nothing can leave\033[0m\n' "$dir"
+    printf 'e2e-devnet: scan-evidence: dir=%s files=0 findings=0 verdict=EMPTY\n' "$dir"
+    return 0
+  fi
+  while IFS= read -r -d '' f; do
+    files=$(( files + 1 ))
+    base="${f##*/}"
+    if ! evidence_name_allowed "$base"; then
+      findings=$(( findings + 1 ))
+      printf '\033[31m::error::e2e-devnet: scan-evidence: %s is a file this gate does not know how to capture. Unenumerated content is unreviewed content, and this artifact is downloadable by everyone the repository is visible to — add the basename to evidence_name_allowed(), or stop capturing it.\033[0m\n' "$f" >&2
+    fi
+    # ONE finding per (file,line): a value matching both arms is one leak,
+    # not two, so the arms are a union rather than two passes.
+    hits="$(grep -a -n -E -i -e "$EVIDENCE_HEX_ARM" -e "$EVIDENCE_B64_ARM" "$f" 2>/dev/null | evidence_mask)"
+    if [ -n "$hits" ]; then
+      while IFS= read -r h; do
+        [ -n "$h" ] || continue
+        findings=$(( findings + 1 ))
+        printf '\033[31m::error::e2e-devnet: scan-evidence: %s:%s\033[0m\n' "$f" "$h" >&2
+        printf '\033[31m::error::e2e-devnet: scan-evidence: the line above assigns a key-shaped value under a key name and was NOT reduced to <redacted> — the redaction did not reach this file.\033[0m\n' >&2
+      done <<<"$hits"
+    fi
+  done < <(find "$dir" -type f -print0 | LC_ALL=C sort -z)
+  state=CLEAN
+  [ "$findings" -eq 0 ] || state=LEAK
+  printf 'e2e-devnet: scan-evidence: dir=%s files=%s findings=%s verdict=%s\n' "$dir" "$files" "$findings" "$state"
+  if [ "$findings" -ne 0 ]; then
+    printf '\033[31m::error::e2e-devnet: scan-evidence: %s finding(s) — this evidence directory MUST NOT be uploaded.\033[0m\n' "$findings" >&2
+    return 1
+  fi
+  # A clean scan of nothing asserts nothing, and must say so rather than read
+  # as a pass: `files=0` in the line above is the number to look at.
+  if [ "$files" -eq 0 ]; then
+    printf '\033[33m::warning::e2e-devnet: scan-evidence: the directory exists but holds NO files — this run proved nothing about any artifact\033[0m\n'
+    return 0
+  fi
+  note "scan-evidence: $files file(s), none carrying key-shaped material"
+  return 0
+}
+
 
 # ── Plan ──────────────────────────────────────────────────────────────────
 #
@@ -305,8 +409,8 @@ verdict() {
 # location — a copy anywhere else would be a different program (the
 # ci-lanes.sh self-test note).
 self_test() {
-  local copy="$repo/scripts/.e2e-devnet-selftest.sh" out fail=0
-  trap 'rm -f "$copy"' RETURN
+  local copy="$repo/scripts/.e2e-devnet-selftest.sh" out fail=0 sdir=""
+  trap 'rm -f "$copy"; [ -n "${sdir:-}" ] && rm -rf "$sdir"' RETURN
 
   # `extra` is S32's addition: probing a latch that is ON by default needs a
   # probe that can turn it off, or the tolerant direction is unreachable.
@@ -397,6 +501,124 @@ self_test() {
     printf '  planted fault: %-42s -> %s\n' "key material in a captured log" "redacted (addresses kept)"
   fi
 
+
+  # ── The artifact scan (Q243), probed with a CONSTRUCTED fixture ─────────
+  #
+  # CONSTRUCTED, never derived from a live run. A fixture that reads whatever
+  # the last devnet happened to write is green on a machine that has never
+  # booted one, and green again for the wrong reason — the shape that disarms
+  # itself the moment the state it derives from changes. Every byte below is
+  # written here, in a temp directory OUTSIDE the repository, and every
+  # planted value is a repeated-character non-key that could not be real.
+  sdir="$(mktemp -d "${TMPDIR:-/tmp}/antseal-e2e-scan.XXXXXX")" || {
+    printf '::error:: cannot create the scan fixture directory\n'; return 1; }
+
+  local ev="$sdir/20260812T065811Z-3c8095a"
+  local digest tx fake_hex fake_b64
+  digest="$(printf 'd%.0s' $(seq 64))"                 # a blob digest: bare 64-hex
+  tx="0x$(printf 'e%.0s' $(seq 64))"                   # a tx hash: 0x + 64-hex
+  fake_hex="0x$(printf 'f%.0s' $(seq 64))"             # the planted "key"
+  fake_b64="$(printf 'Z%.0s' $(seq 43))="              # 44 chars, NOT hex
+
+  scan_fixture() { # rebuild the clean, fully-redacted capture from scratch
+    rm -rf "$ev"; mkdir -p "$ev"
+    printf '%s\n' \
+      '{"base_port": 5000, "node_count": 14,' \
+      '  "data_dir": "/home/runner/work/antseal/antseal/.devnet/data",' \
+      '  "created_at": "2026-08-12T06:58:11Z",' \
+      '  "evm": {"rpc_url": "http://127.0.0.1:8545/",' \
+      '    "wallet_private_key": "<redacted>",' \
+      '    "payment_token_address": "0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C",' \
+      '    "payment_vault_address": "0x8464135c8F25Da09e49BC8782676a84730C318bC"}}' \
+      > "$ev/manifest.json"
+    printf '%s\n' \
+      "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='<redacted>'" \
+      "ANTSEAL_DEVNET_TOKEN_ADDRESS='0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C'" \
+      "node 0 listening on /ip4/127.0.0.1/udp/5000/quic-v1" \
+      > "$ev/launcher.log"
+    # The over-redaction direction, in the artifact rather than in the filter:
+    # a digest and a tx hash are ordinary content and must NOT be findings.
+    printf '%s\n' \
+      "chunk stored: $digest" \
+      "payment tx: $tx" \
+      "test result: ok. 7 passed; 0 failed" \
+      > "$ev/suite-S17.log"
+    printf '%s\n' "boot: 14 nodes in 6.2s" > "$ev/local-up.log"
+    printf '%s\n' "e2e-devnet: PASS commit=3c8095a nodes=14 suites_run=4 failed=[] pending=[] secs=1374" > "$ev/evidence.txt"
+  }
+
+  scan_probe() { # <label> <dir> <want-rc> <want-substring>…
+    local label="$1" d="$2" want_rc="$3" o rc w
+    shift 3
+    o="$(bash "$repo/scripts/e2e-devnet.sh" --scan-evidence "$d" 2>&1)"; rc=$?
+    if [ "$rc" -ne "$want_rc" ]; then
+      printf '::error:: scan probe [%s] -> exit %s (wanted %s):\n%s\n' "$label" "$rc" "$want_rc" "$o"
+      fail=1; return
+    fi
+    for w in "$@"; do
+      if ! grep -qF -- "$w" <<<"$o"; then
+        printf '::error:: scan probe [%s] exited %s as wanted, but its output did not contain %s — an exit code is not a diagnosis:\n%s\n' \
+          "$label" "$rc" "$w" "$o"
+        fail=1; return
+      fi
+    done
+    printf '  scan probe:    %-42s -> exit %s, %s\n' "$label" "$rc" \
+      "$(grep -o 'files=[0-9]* findings=[0-9]* verdict=[A-Z]*' <<<"$o" | tail -1)"
+  }
+
+  # 1. The clean capture passes, and passes for a stated reason: five files,
+  #    zero findings — a digest, a contract address and a tx hash all intact.
+  scan_fixture
+  scan_probe "a fully redacted capture" "$sdir" 0 "files=5 findings=0 verdict=CLEAN"
+
+  # 2. A key that survived redaction, in the file the launcher writes.
+  scan_fixture
+  sed -i "s/<redacted>\",/$fake_hex\",/" "$ev/manifest.json"
+  scan_probe "an unredacted hex key in manifest.json" "$sdir" 1 \
+    "manifest.json" "findings=1 verdict=LEAK" "MUST NOT be uploaded"
+
+  # 3. …and its output must not republish what it found. This is the arm that
+  #    keeps the fix from being its own leak.
+  scan_fixture
+  sed -i "s/<redacted>\",/$fake_hex\",/" "$ev/manifest.json"
+  out="$(bash "$repo/scripts/e2e-devnet.sh" --scan-evidence "$sdir" 2>&1)"
+  if grep -qF -- "$fake_hex" <<<"$out"; then
+    printf '::error:: scan-evidence echoed the key it found into its own output — the report is now the leak\n'
+    fail=1
+  else
+    printf '  scan probe:    %-42s -> %s\n' "the finding withholds the value" "value not in the report"
+  fi
+
+  # 4. A base64 key. The redactor is hex-only and cannot see this at all, so
+  #    this arm exercises the SECOND pattern rather than filling a slot the
+  #    first one already covers (it contains no hex-only run of length 8).
+  scan_fixture
+  printf "%s\n" "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='$fake_b64'" >> "$ev/launcher.log"
+  scan_probe "a base64 key the hex filter cannot see" "$sdir" 1 \
+    "launcher.log" "findings=1 verdict=LEAK"
+
+  # 5. A key name the REDACTOR does not carry — proof the scan is genuinely
+  #    broader than the filter it backs up, not a copy of it.
+  scan_fixture
+  printf "%s\n" "mnemonic = $(printf '1%.0s' $(seq 32))" >> "$ev/suite-S17.log"
+  scan_probe "a key name redact() does not cover" "$sdir" 1 \
+    "suite-S17.log" "findings=1 verdict=LEAK"
+
+  # 6. A file nobody enumerated — the refactor that adds a capture and forgets
+  #    that an artifact is a publication.
+  scan_fixture
+  printf '%s\n' "some new capture" > "$ev/extra-capture.txt"
+  scan_probe "a file the capture does not enumerate" "$sdir" 1 \
+    "extra-capture.txt" "does not know how to capture" "findings=1 verdict=LEAK"
+
+  # 7. The empty directions, stated rather than silent: an absent directory is
+  #    a pass that asserts nothing, and must say EMPTY rather than CLEAN.
+  scan_probe "no evidence directory at all" "$sdir/never-ran" 0 \
+    "files=0 findings=0 verdict=EMPTY"
+  rm -rf "$sdir"; mkdir -p "$sdir"
+  scan_probe "an evidence directory with no files" "$sdir" 0 \
+    "files=0 findings=0 verdict=CLEAN" "proved nothing about any artifact"
+
   # Control: the registry as committed must validate.
   out="$(bash "$repo/scripts/e2e-devnet.sh" --plan 2>&1)"
   if [ $? -ne 0 ]; then
@@ -405,7 +627,7 @@ self_test() {
   fi
   printf '  control (committed registry)%29s -> %s\n' '' "$(printf '%s' "$out" | grep -o 'e2e-devnet: [A-Z]*' | tail -1)"
   [ "$fail" -eq 0 ] || return 1
-  note "e2e-devnet self-test PASS — registry rules and redaction both go red on planted faults"
+  note "e2e-devnet self-test PASS — the registry rules, the redaction filter and the artifact scan all go red on planted faults"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -418,7 +640,8 @@ while [ "$#" -gt 0 ]; do
     --allow-pending)  require_suites=0 ;;
     --list-suites)    suite_registry; exit 0 ;;
     --self-test)      self_test; exit $? ;;
-    -h|--help)        sed -n '1,30p' "$repo/scripts/e2e-devnet.sh"; exit 0 ;;
+    --scan-evidence)  shift; scan_evidence "${1:-$repo/target/e2e-devnet}"; exit $? ;;
+    -h|--help)        sed -n '1,33p' "$repo/scripts/e2e-devnet.sh"; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift

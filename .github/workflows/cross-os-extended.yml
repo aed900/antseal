@@ -107,12 +107,12 @@ jobs:
         # also gives pipefail semantics everywhere.
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run cross-platform-sensitive suites (corpus_/vector_ filters; allowed-empty)
         # `bash <script>` rather than `./<script>`: this job also runs on the
         # Windows runner under Git Bash, where the executable bit is not the

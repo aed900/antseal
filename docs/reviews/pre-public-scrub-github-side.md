@@ -608,6 +608,25 @@ posture the moment the workflows are public and running against fork PRs (G-S2),
 this project pins `ant-core = "=0.5.0"` exactly and documents why. The same reasoning applied to
 actions would pin them by SHA.
 
+> **[DATED ADDENDUM 2026-08-18, wave 24 — the first sentence of G-N4 is now
+> FALSE, and this is recorded rather than rewritten because the finding is the
+> record of what was true when the scrub ran.]** Q244 pinned **all 57
+> invocations** to 40-hex commit SHAs with exact semver comments
+> (`# v4.4.0`, not `# v4`), under
+> [D143](../decisions/D143-third-party-action-pinning-and-renewal.md); the
+> resolved commits and their invocation counts are committed at
+> `.github/action-pins.tsv` and enforced by `scripts/check-action-pins.py`.
+> **The second half of the sentence — `sha_pinning_required: false` — is still
+> true and is deliberately unchanged**: D143 §2 R5 defers arming that setting,
+> because `actions/upload-pages-artifact@v3.0.1` is a *composite* action whose
+> own `action.yml:77` carries a bare `actions/upload-artifact@v4`, one level
+> below anything this repository can pin, so arming it today would refuse
+> `pages.yml` outright. G-N4's closing reasoning — that the `ant-core = "=0.5.0"`
+> argument applies to actions too — is the reasoning D143 adopted, though it
+> reached the same answer on **cost** rather than on threat: the GitHub Actions
+> runner never compares a resolved SHA to anything it was given, so the pin
+> binds the maintainer's own review cadence and not an attacker.
+
 **G-N5 — Going public switches on four GitHub features that are off today, and there are zero
 pre-existing alerts to inherit.** Dependabot alerts, code scanning, secret scanning and
 vulnerability alerts are all disabled (§4), so the "existing alert becomes relevant" risk the

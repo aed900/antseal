@@ -323,6 +323,24 @@ fallout, with this checklist completed in the PR description:
   exists: a floating channel would make "the fuzzer found nothing" a
   statement about whatever compiler CI downloaded that morning. Bumps
   follow §4.
+- **minisign** — the release-signature tool
+  ([D71](decisions/D71-binary-signing-mechanism-and-key-custody.md) §2 R12,
+  landed at Q30 2026-08-18). Recorded here rather than above because it is a
+  **verification-side** tool and never a build input: no byte it produces
+  enters a manifest, a bundle or a binary, and it appears in no Rust
+  dependency tree. Version **0.11-1** (Debian bookworm; trixie and later
+  carry 0.12-1), source `http://deb.debian.org/debian`, `.deb` SHA-256
+  `878264fbb6cfd39c7a67262f712ca73d1bfd0d8533f37c2a92c4af2b42b062fd`.
+  The signing half (`scripts/sign-release.sh`) runs **only on the
+  maintainer's machine** — D71 §2 R1/R7 forbid the secret key on any runner,
+  which is why `scripts/check-ci-paths.py` classifies that edge as
+  unreachable rather than following it. The verifying half
+  (`scripts/verify-release.sh`) is the half a runner or a stranger may call.
+  **Recorded correction to D71 §2 R3**, measured against the real 0.11 binary
+  at Q30: it states *"Exit status is 0 on success and 1 on any failure"*, and
+  0.11 exits **2** on malformed input (truncated signature, missing file, bad
+  key token). Nothing breaks today because both scripts test non-zero rather
+  than `== 1` — but a future gate asserting `1` would be wrong.
 
 ## Enforcement & cross-references
 

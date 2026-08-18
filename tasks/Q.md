@@ -940,7 +940,35 @@ question).**
   Then take the substantive call, which is **not** obvious in the direction it first appears: for a proof-of-existence tool the **format spec and the verifier must be public** for a third party to implement and audit them. A verifier nobody can audit is worth very little, and MVP-SPEC.md line 123's promise (versions verifiable forever) is a promise to people outside this repository. The genuinely private material is commercial timing, not security.
 - Accept:
   - A decision record naming, per file or directory, `public` / `private` / `private-until-release`, with the reason — and it must survive the test above: nothing marked `private` may be load-bearing for verification.
-  - The `/home/…` path scrub landed, with a lint so it cannot return.
+  - **The machine-path rule landed at the live sites, with a lint whose remedy is
+    never an exemption** *(AMENDED 2026-08-18 by D144 §2 R1; the row this replaces
+    read "The `/home/…` path scrub landed, with a lint so it cannot return" and was
+    unsatisfiable — of the 61 lines it demanded, 50 are captured evidence or dated
+    records, 8 are register rows (six of which record this very scrub), 2 are the
+    frozen spec and the preserved original, and exactly ONE is a live instruction)*:
+    - `scripts/wasm-pack-build.sh:46` no longer names a developer's home directory,
+      and the 3-byte path-length datum its own arithmetic depends on survives the edit.
+    - `MVP-SPEC.md:42` is **NOT edited**. It is registered as a still-present,
+      still-owed divergence, pinned by its exact line text and asserted to occur
+      exactly once; the lint reds if that text changes or vanishes without the
+      register entry going with it, and reds if the entry is deleted while the line
+      stands. The spec is frozen: the protocol flags divergences, it does not edit
+      them (`TODO.md:3`; precedent `tasks/P.md:62`, A136, Q251).
+    - The lint scans the live-surface partition (`check-traceability.py`'s
+      `CITATION_SCAN`, minus `MVP-SPEC.md`, minus the checker itself) and bans any
+      absolute home path — `/home/<name>`, `/Users/<name>`, `C:\Users\<name>` —
+      outside a closed reserved-placeholder vocabulary (`user`, `fixture`, `runner`,
+      `u`, `x`). A contributor's remedy is to use a reserved name; adding a path to
+      an exemption list is not available, because there is no such list.
+    - Its self-test CONSTRUCTS every subject (Q252), plants one fault per rule arm
+      with the fixture count DERIVED from the fixture list (Q245), and asserts each
+      arm on the message that fault produces, never on exit status (Q149).
+    - **This row may NOT be ticked on a confidentiality claim.** `/home/deb` is in
+      the published history at `01cdc83`, at `format-v1-freeze` and at HEAD; 21
+      commits on `main` change it; no rewrite is warranted
+      (`docs/reviews/pre-public-scrub-history.md`). What the rule buys is
+      machine-independence of live instructions, and this row says so rather than
+      claiming a privacy it cannot deliver.
   - Executed **before** any visibility change, and the ordering stated where the visibility change would be made (the `docs/ci-verification.md` runbook).
   - If the answer is "stay private indefinitely", that is recorded as the decision too, with its consequence: third parties cannot audit the verifier, which weakens the product's central claim.
   - **D61 is re-read in this same wave** when this resolves to *public*, and the re-read records which of D61 §9's two conditions hold: **(a)** the repository is public — which alone reopens only the *budget* half, since standard GitHub-hosted runners are free on public repositories; **(b)** use by parties other than the maintainer, sufficient to argue OSS-Fuzz's own *"significant user base and/or critical to the global IT infrastructure"* criterion. **(a) alone does not reopen the OSS-Fuzz arm.** Until both hold, OSS-Fuzz is *not applicable* rather than *pending*, and no wave may carry D61 as open on that account. *(Added 2026-08-02 by D61 §9 — armed by the orchestrator, since the lane that resolved it may not edit `tasks/*.md`.)*
@@ -2957,7 +2985,7 @@ Exact line to add to Q65's Accept:
 - Milestone: M4
 - Size: S
 - Deps: after Q65 (the visibility flip this must land **with**, not after), Q21/Q23 (threat model and security posture), Q22 (README, which must point at the policy)
-- Spec: Risks — malicious verifier host (MVP-SPEC.md line 189); Positioning (line 28); Milestones M4 (line 157)
+- Spec: Risks — malicious verifier host (MVP-SPEC.md line **186**; *corrected 2026-08-18 — this entry read `line 189`, which is Free-TSA terms and rate limits; `docs/threat-model.md:2040-2060`'s risk-coverage map already had 186 → §2.4 and 189 → `docs/user/timestamp-authorities.md`*); Positioning (line 28); Milestones M4 (line 157)
 - Discovered by: **the pre-public scrub's GitHub-side lane** (2026-08-17, `docs/reviews/pre-public-scrub-github-side.md`), and confirmed by the wave-22 registrar against the GitHub API.
 - Problem: **the repository has no way to receive a vulnerability report privately, and is about to acquire a public one.** Measured 2026-08-17: Issues are **enabled**; `securityPolicyUrl` is empty and **no `SECURITY.md` exists anywhere in the tree**; `.github/` contains **only** `workflows/` and eight workflow files — no `ISSUE_TEMPLATE/`, no `CODE_OF_CONDUCT.md`; the only community-health file is `CONTRIBUTING.md` at the repo root. GitHub's private vulnerability reporting endpoint returns **404** because the feature is public-repository-only, so the one mechanism that would fix this **cannot be enabled until the flip and must be enabled as part of it**. For a proof-of-existence tool whose entire value rests on a verifier third parties are invited to audit, the moment the repo goes public the default disclosure route becomes *"open a public issue describing the flaw"* — which is the wrong shape for the one class of report this project most wants to receive.
 - Do: **write the policy and turn the mechanism on in the same act as the flip.** A `SECURITY.md` naming the supported versions, the reporting route, the expected response window, and — specifically for this product — **what is and is not in scope**: the verifier and the formats are in scope; the Autonomi network's availability is not, because MVP-SPEC.md's own promise is that evidence validity never depends on it. Enable GitHub private vulnerability reporting the moment visibility allows. Add an `.github/ISSUE_TEMPLATE/` that routes a security report away from the public tracker rather than relying on a reporter reading `SECURITY.md` first. Point `README.md` at it (Q22). **Positioning discipline applies to this document too**: it describes proof of existence, integrity and priority, and must not drift into notary language.
@@ -3178,3 +3206,63 @@ Exact line to add to Q65's Accept:
   - The general rule for in-session maintainer rulings is written down where the next one will be made — the protocol section, not only the decision record.
   - The arithmetic is re-derived at close: allocated − recorded − homed − open is **empty**, computed from the checker's accessors and not from this row.
 - Notes: **A latent red, not a live one — and it is the Q57 failure sitting in the tree today, one scan root away.** Nothing is wrong with the gate; what is wrong is that its greenness rests on a directory not being swept rather than on the property holding. **Correction to the brief that minted this row**, verified at registration: it lists **five** citation sites and there are **seven**, the two omitted being **`TODO.md` itself** — where the ruling is recorded, and where any register maintenance could trip it if `TODO.md` were ever swept — and `testdata/anchors/A25-wave16-cycle/CAPTURE.log`. Three `testdata/acvp/*.json` files also contain the literal `D125` inside hex, but they are immune by regex rather than by design: `\bD(\d+)\b` fails on `07798DD125A2CEBB` only because the preceding character is a word character. That is luck holding a required context green, and it is worth stating in whichever record closes this.
+
+### Q254 — The publish flip has no ordered execution checklist, and three of its steps are only correct in one order
+
+- Milestone: M4
+- Size: S
+- Deps: after Q65 (the publish-scope decision this sequences), Q242, Q243, Q244; consumes D141 §2 R6
+- Spec: Milestones M4 (MVP-SPEC.md line 157); Risks — malicious verifier host (line 186)
+- Discovered by: **D141 (2026-08-18, wave-24 planning round)**, while resolving the apparent Q65/Q22/Q31 ordering cycle. The cycle dissolved; the *sequencing of the flip itself* turned out to be the thing nobody owned.
+- Problem: **Q65 rules what is published and D144 rules the machine-path precondition, but nothing states the order in which the flip is taken — and the order is load-bearing in at least three measured places.** (i) Q242 is **co-timed**, not prior: `PUT repos/aed900/antseal/private-vulnerability-reporting` returns 404 while the repository is private, so `SECURITY.md` ships naming a route that does not yet resolve and the gap between flip and enable is a window in which the only disclosure route is public. (ii) Q243 is **strictly prior**: the evidence artifact becomes readable the instant visibility changes, and D145 §2 R2 measured that the existing artifact predates the gate by five days. (iii) Q244's mitigations — private repo, no fork PRs, read-only token — are exactly what the flip removes, while `sha_pinning_required` stays `false` behind Q255.
+- Do: write the checklist as an ordered, executable procedure in `docs/ci-verification.md`'s runbook, which is the venue Q65's own Accept row 3 names. Each step carries its verification command and expected output. Cover the four at-the-flip settings items Q65 finding 4 folds in (`homepage` and `topics`, both empty while `https://antseal.org/` is live and canonical; the eight expiring `fuzz-smoke-artifacts`; fork-PR approval, today not merely unset but **unqueryable** — `422 "Fork PR approval is not allowed for private repositories"`), the D61 §9 re-read, and the instruction to push `main` **by name**. That last is not stylistic: `git ls-remote` shows the remote carrying only `refs/heads/main` and `refs/tags/format-v1-freeze`, while this clone holds 35 unpushed branches, a `refs/original` filter-branch backup, 61 unreachable commits and 83 unreachable blobs — all local-only until someone runs `git push --all` or `--mirror`, at which point they are not.
+- Accept:
+  - The checklist is executable by a non-author, and every step names the command that reads back its own result.
+  - Co-timed steps are marked as co-timed and not as prerequisites — the distinction Q242 turns on.
+  - It states that the flip is an **external action requiring express in-the-moment consent naming action, destination and account**, and that no prior consent carries forward to it.
+  - `git push --all` and `git push --mirror` are named as forbidden, with the measured reason.
+- Notes: minted by D141 §2 R6 rather than folded into Q65 because Q65 owns the *decision* and this owns the *execution*; the two have different Accept shapes and Q65's is already amended twice.
+
+### Q255 — The Pages action set is stale and its middle action carries a transitive moving tag into the only write-scope job
+
+- Milestone: M4
+- Size: S
+- Deps: after Q244 (the pinning act), Q65; **before** any row that arms `sha_pinning_required` — this is that setting's hard blocker
+- Spec: Risks — supply chain (MVP-SPEC.md line 186); Page provenance (line 139); Milestones M4 (line 157)
+- Discovered by: **D143 (2026-08-18)**, as the arm no brief in the round had named.
+- Problem: `actions/upload-pages-artifact@v3.0.1` is a **composite** action whose own `action.yml:77` reads `uses: actions/upload-artifact@v4` — a bare major tag one level below anything this repository can pin, inside `pages.yml`, the only job in the tree with write scope. GitHub's pinning policy traverses composites, so arming `sha_pinning_required: true` today refuses that workflow outright. Upstream fixed it in v5.0.0, which SHA-pins its own nested `uses:`.
+- Do: upgrade and re-pin all three Pages actions — `configure-pages` v5.0.0 → v6.0.0, `upload-pages-artifact` v3.0.1 → v5.0.0, `deploy-pages` v4.0.5 → v5.0.0 — each to its resolved **commit** with an exact `# vX.Y.Z` comment, moving its `.github/action-pins.tsv` row with it, and read the release notes for input renames. Distinguish commit from annotated tag object by the two-endpoint test D143 established: `git/commits/<sha>` returns 200 only for a commit, `git/tags/<sha>` only for a tag object. Delete the `residual` ledger line **only after** confirming v5's nested `uses:` is SHA-pinned at the commit adopted. Fold in `persist-credentials: false` at `pages.yml:72`: the `pages: write` token currently lands in `.git/config` before 9 644 375 B of third-party bundled JS executes at `:77`, and the job's transitive script closure (31 scripts) contains zero networked git operations, zero `git+` sources in `Cargo.lock` and no `.gitmodules`, while all three Pages actions take the token as a declared input.
+- Accept:
+  - One green `workflow_dispatch` of `pages.yml` witnessing both changes — they share a witness, which is why they share a row.
+  - `pages-publish.sh --build` green; the deployed hash recorded.
+  - `check-action-pins.py` green **including rule P7**, which reds by design the moment a ledger row moves without the residual being re-taken.
+  - The run id recorded in the row's Notes.
+- Notes: `persist-credentials: false` **shrinks rather than closes** the blast radius — `id-token: write` is job-wide and remains in every step's environment. It is a behaviour change to a live deploy path, which is why it needs the witness rather than riding in on a pin bump.
+
+### Q256 — Six of the eight devnet evidence files are duplicated verbatim into the job log, where no gate can refuse them
+
+- Milestone: M4
+- Size: S
+- Deps: after Q243 (the scan this bypasses), Q246; consumes D145 §2 R7
+- Spec: Risks — key/secret handling (MVP-SPEC.md line 186); project rule 6
+- Discovered by: **D145 (2026-08-18)**, and it is the measurement that decided that record.
+- Problem: `scripts/e2e-devnet.sh:322,339` write through `tee`, so six evidence files land identically in the workflow log and in the artifact — measured per file: `local-up.log` 1076/1076, `suite-S6-S8` 589/589, `suite-S18` 110/110, `suite-S17` 64/64, `suite-S19` 17/17, `evidence.txt` 1/1. `redact()` is applied at `:361-362` to exactly the two artifact-only files. So Q243's scan gates the artifact and D145's `retention-days: 30` governs the artifact — together 525 954 of 620 748 B — and neither reaches the 94 794 B leaving through the log, which has its own retention and which the visibility flip exposes on GitHub's own statement that *"Actions history and logs will be visible to everyone"*. **Nothing has leaked**: the artifact scans `findings=0 verdict=CLEAN` and the log carries the same content. The *proof* is in the wrong place — the same defect Q243 was minted for, one channel over.
+- Do: fix it at the **write**, not at the upload — pipe through the redactor before `tee` (`| redact | tee`) so both destinations receive redacted bytes. Then assert it rather than assuming it: a fault planted in `redact()` must redden a check that reads the log-bound stream, proven by message. Consider whether `--scan-evidence` should additionally be pointed at a captured copy of the log.
+- Accept:
+  - No evidence file reaches the job log unredacted.
+  - A planted fault reddens by **message**, not by exit code — a crash exits nonzero too.
+  - The two-sided property is preserved: contract addresses, blob digests and tx hashes still survive, per Q243's clean-fixture arm, so the fix cannot quietly become a blanket hex filter.
+
+### Q257 — The reserved-placeholder vocabulary is enforced by a lint and written down nowhere a contributor reads first
+
+- Milestone: M4
+- Size: XS
+- Deps: after Q65; consumes D144 §2 R8
+- Spec: Milestones M4 (MVP-SPEC.md line 157)
+- Discovered by: **D144 (2026-08-18)**, as an owed half of its own ruling.
+- Problem: `check-traceability.py`'s `--machine-paths` check bans any absolute home path outside the closed vocabulary `(user, fixture, runner, u, x)`, and its remedy is deliberately **not** an exemption list — a contributor's only move is to rename their own placeholder. That is the right design and it is currently undiscoverable: the vocabulary lives in `RESERVED_PLACEHOLDER_NAMES` and in D144, and in neither `CONTRIBUTING.md` nor `docs/positioning-copy-style.md`. The first time anyone meets it is as a red gate on their own commit, citing a rule they have never seen.
+- Do: state it in one line where a contributor meets it **before** the lint does. `CONTRIBUTING.md` is the likelier home, since the rule governs how paths are written in examples rather than product copy. Interpolate the names from the constant if the venue allows, so the document cannot drift from the check — the check's own four `::error::` messages already do this and therefore cannot go stale.
+- Accept:
+  - The vocabulary is stated in a contributor-facing file, naming all five reserved names.
+  - The statement says an exemption list does not exist, so nobody looks for one.
+  - A reader arriving from the lint's error message can act without opening a decision record.

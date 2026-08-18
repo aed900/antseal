@@ -86,12 +86,12 @@ jobs:
     name: browser
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: install the pinned wasm tools this image does not ship
         run: ./scripts/wasm-tools-provision.sh
       # Also the deliberate answer to D136 §5's one open mechanism — whether
@@ -121,7 +121,7 @@ jobs:
       # green §1 e measured, and it must be impossible.
       - name: diagnosis on failure (screenshot + event log)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verifier-page-diagnosis
           # `scripts/verifier-page-browser.sh`'s `DIAGNOSIS` — READ FROM THAT
@@ -135,7 +135,7 @@ jobs:
       # bundles the run drove, which say WHAT was tested and not why it failed.
       - name: the fixtures the run drove
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verifier-page-fixtures
           path: target/verifier-web-fixtures/

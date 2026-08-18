@@ -149,18 +149,17 @@
 #                                    classified — it still cannot see a
 #                                    heavy-gated path that stopped compiling.
 #   e2e-selftest                     `e2e-devnet.sh --self-test` needs no
-#                                    devnet and costs seconds, but its remote
-#                                    home is the SCHEDULED lane beside the
-#                                    thing it tests, not a per-PR job:
+#                                    devnet and costs seconds. Its remote home
+#                                    is the SCHEDULED lane beside the thing it
+#                                    tests, not a per-PR job, and since Q243
+#                                    it IS there:
 #                                    .github/workflows/devnet-e2e-cron.yml
-#                                    runs `./scripts/e2e-devnet.sh` BARE — the
-#                                    lane without its test-of-the-test, Q141's
-#                                    shape inverted. Ruled for Q154, which
-#                                    owns that workflow: add `--self-test` as
-#                                    its own step immediately before the bare
-#                                    lane, the way ci.yml already runs the
-#                                    cross-check's two halves. Not taken here
-#                                    because a per-PR copy would have put the
+#                                    runs `--self-test` as its own step
+#                                    immediately before the bare lane, the way
+#                                    ci.yml runs the cross-check's two halves,
+#                                    and `--scan-evidence` after the capture,
+#                                    gating the artifact upload. A per-PR copy
+#                                    is still refused: it would put the
 #                                    self-test in one venue and the lane it
 #                                    guards in another.
 #   page-browser                     `verifier-page-browser.sh --check` — the
@@ -453,6 +452,16 @@ run ci-lanes   scripts/ci-lanes.sh --self-test
 # adds ZERO required-status contexts — the set stays at 19.
 run ci-paths-selftest scripts/check-ci-paths.py --self-test
 run ci-paths          scripts/check-ci-paths.py
+
+# D143/Q244 — the third-party-action pin ledger and its checker. Measured
+# 2026-08-18 on a 2-core host, 3 runs each: self-test 0.04 s, check 0.03 s.
+# THIS IS THE VENUE THAT MAKES R7's RENEWAL DEADLINE REAL: rule P6 reddens
+# when a pin's 90-day review falls due, and until this pair runs locally it
+# reddens only a hosted run — and no hosted run starts while the Actions
+# allowance is exhausted. Rides ci-always.yml's `traceability` job remotely;
+# adds ZERO required-status contexts, the set stays at 19.
+run action-pins-selftest scripts/check-action-pins.py --self-test
+run action-pins          scripts/check-action-pins.py
 
 # D124/Q182 — the test-of-the-test for the guard that asserts CI's
 # `traceability` job runs no cargo. The ASSERTION is two steps on that job and

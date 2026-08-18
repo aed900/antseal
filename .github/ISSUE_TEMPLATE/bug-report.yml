@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in the CLI, the verifier page, or the docs behaves wrongly.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Stop here if this is a security finding
+
+        Anything that makes a bundle verify when it should not, or fail when it
+        should not; anything that crashes or hangs a parser on untrusted input;
+        anything that puts key material somewhere it does not belong — **report
+        it privately**, not here.
+
+        **[Report a vulnerability privately](https://github.com/aed900/antseal/security/advisories/new)**
+        · [Security policy](https://github.com/aed900/antseal/security/policy)
+
+        If that first link does not resolve, private reporting is not available
+        on this repository right now — open the **Request a private channel**
+        issue instead, with no detail in it. Never describe a security finding
+        here.
+
+        Everything below this line is public the moment you submit it, including
+        the title.
+
+  - type: checkboxes
+    id: not-security
+    attributes:
+      label: Confirm before continuing
+      options:
+        - label: >-
+            This is not a security finding, and nothing I am about to write
+            discloses a way to defeat verification.
+          required: true
+        - label: >-
+            Nothing I am attaching contains real key material — no vault
+            export, no wallet key, no passphrase.
+          required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: >-
+        The commit SHA you built from. Nothing has been released, so a version
+        number will not identify a build.
+      placeholder: e.g. de71a09
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >-
+        Commands, a bundle, or a vector. Use a throwaway vault and a devnet or
+        testnet wallet — never a real one.
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >-
+        OS and version, Rust toolchain, and — for a verifier-page report — the
+        browser and the build hash shown in the page footer.
+    validations:
+      required: false

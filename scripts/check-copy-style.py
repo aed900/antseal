@@ -73,8 +73,21 @@ R18_TABLE = "crates/antseal-core/tests/verdict_wording.rs"
 COPY_SCAN: tuple[str, ...] = (
     # Class P — product copy.
     "README.md",
+    # The disclosure policy (Q242). A LITERAL entry under D123's rule: read as
+    # itself, unfiltered. It is product copy in the strictest sense — the one
+    # page a stranger reads before deciding how to report a flaw in a verifier
+    # that makes cryptographic claims — and its scope section restates what a
+    # seal does and does not prove, which is exactly what P1-P3 police.
+    "SECURITY.md",
     GUIDE,
     "verifier-web/",
+    # Q30's release-signing set (D71). A DIRECTORY entry for the same reason
+    # docs/user/ is one: the user-facing check-your-download page is product
+    # copy in the strictest sense - a stranger holding only a download follows
+    # it - and D71 §2 R11 constrains what the custody and maintainer documents
+    # beside it may claim about a signature too, so the whole subtree is
+    # scanned rather than one file of it.
+    "docs/signing/",
     # The M4 user-facing documentation set (Q23-Q27; Q21's threat model is NOT
     # here - D139 §2 R3). A DIRECTORY entry under D123's rule: walked and
     # suffix-filtered, so every page that lands here is scanned from its first
@@ -144,6 +157,19 @@ DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     "naming/": ("ENG", "registration/outreach runbooks"),
     "research/": ("ENG", "design-round records"),
     "reviews/": ("ENG", "code-review records"),
+    "signing/": (
+        "PRODUCT",
+        "Q30's release-signing set (D71), scanned as the COPY_SCAN directory entry "
+        "docs/signing/. PRODUCT on the merits of its user-facing half: "
+        "verifying-a-release.md is followed by a stranger holding only a download, "
+        "and D71 §2 R11 forbids the release documentation claiming a legal property, "
+        "a withdrawal mechanism that does not exist, or independent verifiability for "
+        "a key served from the same origin as the binary - which is P1/P3's rule "
+        "reached from a different record. The operational half (key-custody.md, "
+        "maintainer-key-procedure.md) is scanned too and costs nothing: measured "
+        "2026-08-18, admitting the subtree moved the corpus 20 -> 24 files and "
+        "produced ZERO new findings",
+    ),
     "testing/": ("ENG", "test-harness contracts"),
     "upstream/": ("ENG", "upstream-tracking records"),
     "user/": (

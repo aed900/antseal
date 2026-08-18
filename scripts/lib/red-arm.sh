@@ -92,6 +92,26 @@
 #                                 the resolver anchored on the source file —
 #                                 which is the evidence that the arms were not
 #                                 fitted to the check. D138/Q239.
+#   scripts/check-action-pins.py  in-process: `check(workflows, ledger, today)`
+#                                 returns a `Failures` object and each of NINE
+#                                 arms requires its own rule tag (P1, P2, P3,
+#                                 P4a, P4b, P5, P6-red, P6-warn, P7) plus
+#                                 D143 §2 R8's mandated substrings, so an
+#                                 unrelated red cannot satisfy an arm. Every
+#                                 fault is planted in memory — into a copied
+#                                 `dict(workflows)` or a local ledger string —
+#                                 so it writes NO tracked file and cannot race
+#                                 a parallel lane, the `check-anchor-net.py`
+#                                 shape rather than the `check-ci-paths.py`
+#                                 one. P6's dates are CONSTRUCTED from
+#                                 `date.today()` rather than read out of the
+#                                 ledger, so the deadline arms cannot disarm
+#                                 themselves as the real review dates drift.
+#                                 Test-of-the-test: disabling P2 alone turns
+#                                 the whole run GREEN over the annotated tag
+#                                 object 49a0bdc7… — which is why P1's
+#                                 40-hex-shape rule is not sufficient on its
+#                                 own. D143/Q244.
 #
 # Python instruments cannot source this file. The rule is the same for them
 # and the shape is `check()`-returns-a-list, as `check-ci-shell.py` does it:
