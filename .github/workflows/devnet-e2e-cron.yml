@@ -204,16 +204,38 @@ jobs:
       # "Actions history and logs will be visible to everyone" and points at
       # deleting existing runs and artifacts BEFORE flipping, so artifacts
       # written while private are exposed by the flip, not grandfathered.
+      # (CORRECTED 2026-08-18 by D145 §1: GitHub's visibility-change page does
+      # not itself instruct you to delete runs or artifacts first — it states
+      # that "Actions history and logs will be visible to everyone" and points
+      # at the management docs. The exposure claim is right; the sourcing was
+      # overstated. Note also the audience asymmetry: artifact BYTES need a
+      # signed-in user with read access — an unauthenticated GET of the zip
+      # returns 401 — while artifact METADATA is anonymously readable.)
       #
       # RETENTION — 90 days, measured rather than assumed: artifact 9132238802
       # was created 2026-08-12T07:19:54Z and expires 2026-11-10T06:56:33Z,
       # exactly 90 days after its run began. 90 is GitHub's default and also
       # the MAXIMUM a public repository may configure (private and internal
       # may set up to 400), so the flip caps this where it already sits.
-      # LEFT OPEN, deliberately: whether a `retention-days:` well below 90
-      # belongs on this step. It is a strict risk reduction on its own, but
-      # Q247 counts this lane's scheduled runs from their stored evidence, so
-      # shortening the window has a reader — it is a decision, not a knob.
+      # RULED at 30 days by D145 §2 R1 (2026-08-18), and the value is chosen
+      # by the rule that READS this store rather than by risk appetite. This
+      # workflow's own triage rule (see the header, "two consecutive reds
+      # block storage-wave starts until diagnosed") needs the previous red's
+      # evidence to still exist when the next one fires. At weekly cadence an
+      # artifact from run T-7k lives iff 7k < R: R=7 keeps exactly ONE alive,
+      # so the first red's diagnosis expires the day the second fires and the
+      # rule becomes unexecutable from its own store. R=14 keeps 2, R=30
+      # keeps 5, R=90 keeps 13. Q247 counts its twenty runs from here, so
+      # shortening had a reader — which is why this was a decision, not a
+      # knob, and why the Q243 lane returned it to planning rather than
+      # picking a number.
+      #
+      # WHAT THIS SETTING CANNOT REACH, measured by D145 §1: six of the eight
+      # evidence files are written through `tee` and are duplicated VERBATIM
+      # into the job log, which has its own retention and which no gate here
+      # can refuse. This setting therefore governs 525 954 of 620 748 B. The
+      # remainder leaves through the log; fixing it at the write (`| redact |
+      # tee`) rather than at the upload is Q256.
       #
       # `always()`, not `failure()`: on failure this is the node + Anvil log
       # capture Q15's Accept requires, and on success it is the runtime
@@ -227,3 +249,5 @@ jobs:
           name: devnet-e2e-evidence
           path: target/e2e-devnet/
           if-no-files-found: ignore
+          # D145 §2 R1. Not a default: see the reasoning above.
+          retention-days: 30

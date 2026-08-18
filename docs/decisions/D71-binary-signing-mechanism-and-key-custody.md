@@ -1254,3 +1254,72 @@ now covers the `-W` body directly in any case. `Q30` — which generates the key
 this rule governs — takes `Q245`'s guard as a **precondition**; recording that
 dependency on `Q30`'s tracker entry is owed and is the registrar's, not this
 record's.
+
+---
+
+## §C — DATED ADDENDUM 2026-08-18 (wave 24): the widening §B R3 records as landed was a REGRESSION, and the pattern quoted at §B R3 is no longer what ships
+
+**§B R3's reasoning is untouched and is vindicated.** Its conclusion — that no
+comment-keyed rule could ever have been the answer — is exactly what this
+addendum re-confirms from the other direction. What is stale is the **verbatim
+pattern** it quotes as landed.
+
+**What was wrong.** `(4b)`, widened at Q245 to
+`(minisign|rsign)([ ]encrypted)?[ ]secret[ ]key`, made the optional `encrypted`
+match **every signature file this project will ever ship**: minisign writes
+`untrusted comment: signature from minisign secret key` into every `.minisig`
+unconditionally (upstream `minisign/src/minisign.h`, `DEFAULT_COMMENT`;
+`rust-minisign/src/constants.rs` for rsign). A `.minisig` is in no exclusion
+set. It also matched ordinary **prose** in any non-`.md` file naming the tool
+and the key in one sentence — the lane that found it had its intended *clean
+control*, a shell script commenting *"the maintainer holds the minisign secret
+key offline"*, reported as secret material.
+
+This was not a latent hazard. **§2 R9 step 2's `minisign.pub.minisig` and
+§2 R5/R6's key publication are artifacts this record itself mandates**, and
+`scripts/sign-release.sh` (landed at Q30, wave 24) emits `SHA256SUMS.minisig`
+and per-artifact signatures into a `--dir` that will normally sit inside the
+checkout. The guard would have blocked the release act it exists to protect.
+
+**The repair, and why it is not an exclusion.** `(4b)` is now anchored on the
+comment **prefix**:
+
+```
+untrusted[ ]comment:[ ](minisign|rsign)([ ]encrypted)?[ ]secret[ ]key
+```
+
+`untrusted comment: ` is `COMMENT_PREFIX`, identical in both implementations. A
+secret key's comment *begins* with the tool name; a signature's begins with
+`signature from`. That is the whole discriminator and it is exact.
+
+An exclusion was **refused on measurement**: `ex()`'s `--exclude` flags apply to
+all seven rules at once, so `--exclude='*.minisig'` would blind rules (1)–(5)
+and (4c) as well, and a real secret key renamed `foo.minisig` would become
+invisible to the entire lane — strictly worse than the defect. A fixture named
+`renamed-secret-key.minisig` now reds **by name** if a future lane reaches for
+that shortcut.
+
+**`(4b)` is kept, not removed.** Measured over real keys of every form this
+record cares about, its true positives are a subset of `(4c)`'s **but for one
+case**: a key file whose body is absent or mangled and whose header survives.
+Removing it would delete a rule this record describes as kept, which is a
+decision rather than an implementer's call; removal remains available to a
+future planning round with its own addendum.
+
+**§2 R7.1's `-W` prohibition is untouched**, as §B R4 already states.
+
+**Two further corrections measured in the same act.** §1.2's *"no minisign
+binary exists on this host"* is stale — `apt-get download minisign && dpkg-deb
+-x` needs no root, which is how wave 24 measured on real artifacts rather than
+constructions, and how §2 R3's command was finally *run*. And **§2 R3's exit-code
+claim is factually wrong**: it states *"Exit status is 0 on success and 1 on any
+failure … so it is scriptable"*; minisign 0.11 exits **2** on malformed input
+(truncated signature, missing file, bad key token). Nothing breaks today because
+both shipped scripts test non-zero rather than `== 1` — but a future gate
+asserting `1` would be wrong.
+
+**Disposition**: ruled **instrument, ledger entry, no task id** under `TODO.md`
+rule 8 — nothing a user seals, verifies or restores changes. The promotion
+argument was weighed and recorded rather than taken, because the work landed in
+the same act and a row would have been minted only to be ticked.
+

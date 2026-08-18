@@ -213,7 +213,7 @@ The M1 storage E2E does **not** run as a per-PR CI job. Decision
 | Venue | What | Enforcement |
 | --- | --- | --- |
 | `./scripts/e2e-devnet.sh` | **Required local gate** before merging a storage-touching change. Boots the P16 devnet ([docs/devnet/local-devnet.md](docs/devnet/local-devnet.md)), runs the registered suites, captures node + Anvil logs (redacted) and writes a dated evidence line under `target/e2e-devnet/`. | Convention + recorded evidence, on the Q14 format-freeze model |
-| `devnet-e2e-cron` | **Scheduled, non-required** hosted job (weekly + `workflow_dispatch`), **same node count as local (14)** and same script bytes. | Never a PR status context; the required-context set stays at 19 |
+| `devnet-e2e-cron` | **Scheduled, non-required** hosted job (weekly + `workflow_dispatch`), **same node count as local (14)** and same script bytes — and, **since Q243 (2026-08-18), the same INVOCATION too**: `--self-test`, then the lane, then `--scan-evidence`, whose result gates the artifact upload. Before that the remote ran the script bare, so the bytes matched and the invocation did not. | Never a PR status context; the required-context set stays at 19 |
 
 **A change is storage-touching — and the gate is mandatory — when it touches
 any of:**
