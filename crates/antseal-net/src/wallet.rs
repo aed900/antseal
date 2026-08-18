@@ -49,7 +49,7 @@
 //! `Debug` is redacted, it has no `Display`, no `Clone`, and no error in
 //! this module ever echoes input material.
 //!
-//! [D89]: https://github.com/antseal/antseal/blob/main/docs/decisions/D89-wallet-primitives-below-the-gate.md
+//! [D89]: ../../../docs/decisions/D89-wallet-primitives-below-the-gate.md
 
 use antseal_core::crypto::secrets::SecretBuf;
 use k256::elliptic_curve::sec1::ToEncodedPoint;

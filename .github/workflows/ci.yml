@@ -700,8 +700,8 @@ jobs:
   # P13 (live; permanent operation + licenses completion = Q10): cargo-deny
   # ONLY per decision D19 (docs/decisions/D19-advisory-lane.md) — no
   # cargo-audit; deny's `advisories` check consumes the same RUSTSEC DB.
-  # Config: deny.toml (advisories/bans/sources active; licenses STUBBED
-  # until Q29 — hence the explicit check list, never a bare `check`).
+  # Config: deny.toml (advisories, bans, sources and licenses are all active;
+  # the check list stays explicit, never a bare `check`).
   # Job name kept from the Q1 mount point: it is a required-status context.
   # The weekly scheduled run independent of PR traffic lives in
   # .github/workflows/advisory-cron.yml (same pinned tool, same command).
@@ -727,7 +727,7 @@ jobs:
       - name: Install pinned cargo-deny (docs/dependency-policy.md §5)
         if: steps.deny-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --version 0.19.8 --locked
-      - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
+      - name: cargo deny (advisories, bans, sources, licenses)
         run: ./scripts/ci-lanes.sh audit-deny
 
   # ── MOVED, NOT DELETED (D138/Q239) ───────────────────────────────────────

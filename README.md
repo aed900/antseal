@@ -27,17 +27,41 @@ been performed.
 | `crates/antseal-anchor` | Network side of anchoring: OTS calendar submit/upgrade polling, RFC 3161 TSA HTTP, Arbitrum receipt capture |
 | `crates/antseal-net` | Autonomi storage behind the batch-first `StorageBackend` (ant-core impl + `MockBackend`) |
 | `crates/antseal-cli` | Binary `antseal` (clap + tokio): the nine subcommands above |
-| `verifier-web/` | Static offline verifier page: plain HTML/JS + antseal-core via wasm-bindgen (M3) |
+| `verifier-web/` | Static offline verifier page: plain HTML/JS + antseal-core via wasm-bindgen — built, deployed and live at <https://antseal.org/> |
 | `testdata/` | Golden vectors, UTF-8 corpus, tamper matrix, fine-tree range-proof fixtures |
 
-Authoritative spec: [MVP-SPEC.md](MVP-SPEC.md). Task tracker: [TODO.md](TODO.md)
-(648 tasks; per-domain detail under [tasks/](tasks/)). Counts here are a
-script's parse — `python3 scripts/check-traceability.py` — never an increment.
+Authoritative spec: [MVP-SPEC.md](MVP-SPEC.md). Task tracker:
+[TODO.md](TODO.md), with per-domain detail under [tasks/](tasks/). This README
+deliberately states no task count: it moves most weeks, and
+`python3 scripts/check-traceability.py` is the only place it is ever right.
+
+## Documentation
+
+- [Funding your wallet](docs/user/funding-your-wallet.md) — what the payment
+  address needs before you can seal.
+- [Vault loss](docs/user/vault-loss.md) — what is unrecoverable once the vault
+  or its passphrase is gone.
+- [Vault theft](docs/user/vault-theft.md) — what someone else holding your
+  vault and passphrase can read.
+- [Wallet hygiene](docs/user/wallet-hygiene.md) — what the payment wallet links
+  together on a public chain.
+- [Timestamp authorities](docs/user/timestamp-authorities.md) — which time
+  anchors a seal uses, and how to change them.
+- [Format stability](docs/user/format-stability.md) — what the sealed formats
+  promise across future versions.
+- [Threat model](docs/threat-model.md) — what a seal defends against and what
+  it does not.
 
 ## License
 
-**Not yet chosen in-tree.** [D6](docs/decisions/D6-license.md) rules the
-intended set (permissive for `antseal-core` and `verifier-web`), but no LICENSE
-file exists yet and no manifest carries a `license` field, so **the source is
-under default copyright — all rights reserved — until Q29 lands**. Do not
-assume redistribution rights from the crates.io placeholder metadata.
+antseal's own source is dual-licensed **MIT OR Apache-2.0** at your option
+([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)), declared once in
+`[workspace.package]` and inherited by every crate.
+
+**That is not the whole picture for a distributed binary.** A CLI built with the
+`ant-backend` feature — the only build that can actually seal — links copyleft
+dependencies through `ant-core` and `ant-protocol`, so distributing such a
+binary carries obligations our own permissive licence does not describe.
+[COPYRIGHT](COPYRIGHT) names which crates, which licences and which builds;
+[D6](docs/decisions/D6-license.md) rules it. Read COPYRIGHT before you
+redistribute a binary.

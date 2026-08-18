@@ -12,9 +12,9 @@
 # Same pinned tool + same command as the per-PR `audit-deny` job in
 # ci.yml: cargo-deny =0.19.8 (docs/dependency-policy.md §5; NO cargo-audit
 # per D19 — deny's advisories check reads the same RUSTSEC DB), checks
-# advisories/bans/sources only (licenses stubbed until Q29 — see
-# deny.toml). Job name `advisory-weekly` is NOT a PR status context and
-# never becomes one.
+# advisories, bans, sources and licenses (all four named explicitly against
+# the committed deny.toml). Job name `advisory-weekly` is NOT a PR status
+# context and never becomes one.
 #
 # Follow-up on red (Q10 owns the permanent process): a failing weekly run
 # means a new advisory landed — open a tracking issue, write the
@@ -67,5 +67,5 @@ jobs:
       - name: Install pinned cargo-deny (docs/dependency-policy.md §5)
         if: steps.deny-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-deny --version 0.19.8 --locked
-      - name: cargo deny (advisories, bans, sources — licenses stubbed until Q29)
+      - name: cargo deny (advisories, bans, sources, licenses)
         run: ./scripts/ci-lanes.sh audit-deny

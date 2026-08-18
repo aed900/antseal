@@ -43,7 +43,7 @@ Live lanes (wave 2 — Q2/Q4/P13):
 | --- | --- |
 | `golden-vectors` | Q4 — the native runner discovers (directory walk, no hardcoded lists) and executes **every** committed vector under `testdata/vectors/<format-version>/`; malformed or unclassifiable files and empty discovery fail loudly. Schema + add-a-vector procedure: `testdata/vectors/README.md`. The append-only freeze guard is the separate `vector-freeze` lane (Q6). |
 | `secret-guard` | Q2 — no vault-export/wallet-key file signatures anywhere in the checkout (PEM private keys, EVM keystore JSON, age/minisign secret keys, the reserved `ANTSEAL VAULT EXPORT` magic); self-tests each run by planting fakes in a temp dir (testdata/README.md, secret-material convention). |
-| `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources` against the committed `deny.toml` (licenses stubbed until Q29). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
+| `audit-deny` | P13 — **cargo-deny only** (D19; pinned `=0.19.8`): `check advisories bans sources licenses` against the committed `deny.toml` (all four checks named explicitly, never a bare `check`). Weekly no-push sweep: `.github/workflows/advisory-cron.yml`. Q10 owns permanent operation. |
 
 Live lanes (wave 4 — P14/Q5):
 
