@@ -26,7 +26,7 @@ Two scripts implement the machine halves:
   `--self-test` plants every mutation D71 §1.3 measured and asserts each is
   caught by its own distinct failure.
 
-> **Nothing here has been used on a real release.** No signing key exists yet,
-> the `TXT` pin has not been created, and nothing has been anchored.
-> `maintainer-key-procedure.md` §7 records exactly what has and has not been
-> run.
+> **What has and has not actually been run is recorded in exactly one place:**
+> [`maintainer-key-procedure.md`](maintainer-key-procedure.md) §7. No other page
+> in this directory states it, so no other page goes stale when the maintainer
+> takes an act.

@@ -1323,3 +1323,26 @@ rule 8 — nothing a user seals, verifies or restores changes. The promotion
 argument was weighed and recorded rather than taken, because the work landed in
 the same act and a row would have been minted only to be ticked.
 
+---
+
+## Addendum — 2026-08-19 (D153 §2 R9 item 1 / §5 item 17). Appended; no ruling moves.
+
+- **§1.2's and §2 R12's *"No signing or verifying tool is installed on this
+  machine"* is FALSE as of 2026-08-19 12:31.** `minisign 0.11-1` is installed at
+  `/usr/bin/minisign` from the Debian archive — **§6's tool pin, executed at the
+  pinned version**. R12's ruling is unaffected; only its stated premise moved.
+- **The project signing key now exists** — key id `3E5D46890F192F58`, KDF field
+  `Sc` (scrypt), so it is passphrase-wrapped and `-W` was not used.
+- **Recorded because the ban did not state this threat model:** the secret key is
+  at `~/.minisign/` on the account that **also owns the working tree**, uid 1000 —
+  the account under which automated agents execute in this project.
+  `key-custody.md` §2's *"Never"* list names CI runners, GitHub secrets, hosted
+  KMS, tracked files and online backups; it does not contemplate *a machine on
+  which agents run as the key holder*. **What bounds the exposure is §2 R7.1's
+  `-W` ban** — the key is `Sc`-wrapped, so possession of the file is not
+  possession of the key. That ban therefore carries a threat model nobody wrote
+  down, and it is written down here.
+- **Nothing bounds a delete.** §1a step 1's two offline backups do not yet exist,
+  so the key is currently single-copy on a live account. D153 §2 R4 moves those
+  backups forward to gate **§3** (the anchor), not merely §4 (signing): an anchor
+  cannot be transferred to a replacement key.

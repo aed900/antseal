@@ -246,10 +246,10 @@ backup.
    needs network access where the earlier steps do not.
 
 **`import` will not overwrite an existing vault**, and there is no flag to make
-it (`crates/antseal-cli/src/error.rs:535-542`):
+it (`crates/antseal-cli/src/error.rs:577-585`):
 
 ```
-refusing to import over the existing vault at <dir>: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)
+refusing to import over the existing vault at <dir>: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move that directory aside yourself first — moving it keeps everything, and no antseal command has to run first; delete it only when you are certain nothing in it matters. Scripted overwrite-import is deliberately unsupported (D51)
 ```
 
 Moving the old directory aside by hand *is* the consent. So rehearse in a

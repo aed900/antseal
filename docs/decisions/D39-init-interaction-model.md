@@ -147,3 +147,32 @@ is what U1's frozen surface needs.
   (tasks/U.md:80). If so, its non-interactive equivalent must be a flag
   value, or non-TTY `init` on a low-RAM machine will abort — flagged to
   D40 rather than solved here.
+
+## Amendment (2026-08-19, U86 / D155 §2 R7): Decision 4's *"after `vault export`"* parenthetical is struck
+
+Decision 4 (`:87-95`) resolves the absolute refusal as *"the error names the
+vault path and tells the user to move/remove it manually **(after
+`vault export` if they want the contents)**"*. The parenthetical was true when
+this record was written and has been false since **U8** landed on 2026-08-02:
+`vault export` refuses any vault whose header wrap mode is non-zero
+(`crates/antseal-cli/src/vault/export.rs:745-756`), and both messages Decision
+4 governs — `init::existing_vault_refusal` and
+`CliError::ImportRefusedExistingVault` — are produced from a `header.exists()`
+gate with the header never decoded (`init.rs:418`,
+`vault/export.rs:1208-1213`), so **neither can know whether the command it was
+naming would run**. The overturn of the export side was recorded in U8's
+register row and in `export.rs`'s module docs, and written into D47 only by
+D151 §2 R2; it was never written **here**, and this record is where an
+implementer of the refusal copy looks.
+
+**What replaces it.** The remedy is now *"move the directory aside instead of
+deleting it"*: the one instruction true for every wrap mode, requiring no
+command and refusable by none. The exact strings are D155 §2 R2 and §2 R3.
+Everything else in Decision 4 stands unchanged — no override flag exists, the
+error names the vault path, manual filesystem action is the consent, and
+`vault import` keeps its own refusal.
+
+**Not amended:** the Residual-risk paragraph (`:142-145`). Its verdict —
+*"refusing too much is recoverable, refusing too little is not"* — is the
+ground on which D155 §2 R1 keeps the `header.exists()` predicate and refuses
+to hang a fallible decode off it.

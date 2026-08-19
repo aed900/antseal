@@ -11,7 +11,7 @@
 [consent-machine-mode] class=consent-not-obtained code=10
   consent required but not obtainable: machine mode (--json, non-TTY stdin, or --passphrase-fd 0) never prompts — pass --yes to consent in advance; nothing was paid, anchored, uploaded, or disclosed
 [import-refused-existing-vault] class=consent-not-obtained code=10
-  refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move or remove that directory yourself first (after `antseal vault export` if you want its contents) — scripted overwrite-import is deliberately unsupported (D51)
+  refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move that directory aside yourself first — moving it keeps everything, and no antseal command has to run first; delete it only when you are certain nothing in it matters. Scripted overwrite-import is deliberately unsupported (D51)
 [passphrase-no-channel] class=passphrase-unavailable code=11
   passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' "$PASS" | antseal … --passphrase-fd 0`
 [passphrase-fd-read-failed] class=passphrase-unavailable code=11

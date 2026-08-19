@@ -521,9 +521,24 @@ fn import_over_an_existing_vault_refuses_absolutely() {
     assert_eq!(err.class(), ErrorClass::ConsentNotObtained);
     assert_eq!(err.exit_code(), 10);
     let rendered = err.to_string();
+    // D155 §2 R2/R3: this refusal is produced from a `header.exists()` gate
+    // with the header never decoded (`refuse_existing_target`), so it cannot
+    // know whether `antseal vault export` would run for this vault — and for
+    // a keyfile-wrapped one it would not. The remedy is an action, not a
+    // command. The claim is held against the command's measured verdict in
+    // `tests/vault_keyfile.rs`; this is the local guard.
+    //
+    // Not named by D155 §2 R5, whose census stopped at `:520`: this
+    // assertion is the second copy of the fault R5 item 1 moves in
+    // `tests/init_command.rs`.
     assert!(
-        rendered.contains("vault export"),
-        "workaround copy: {rendered}"
+        !rendered.contains("antseal vault export"),
+        "a class-blind refusal must not name a command that may refuse the reader's vault: \
+         {rendered}"
+    );
+    assert!(
+        rendered.contains("aside"),
+        "the refusal names the action: {rendered}"
     );
     assert!(
         rendered.contains("unsupported"),

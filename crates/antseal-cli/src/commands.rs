@@ -337,7 +337,7 @@ fn seal_over_backend(
     use crate::seal_consent::TtyConsentPrompt;
     use crate::seal_run::{AnchorStageConfig, SealContext, run_seal};
     use crate::seal_session::SealSession;
-    use crate::vault::wallet::load_wallet_key;
+    use crate::vault::wallet::{load_wallet_key, no_wallet_key_refusal};
 
     let ui = Ui { json: globals.json };
     // **U73 ruled this line stays first.** It is why this build answers
@@ -378,12 +378,13 @@ fn seal_over_backend(
     // `UnlockedVault` is still `!Clone`, so this is still the one
     // `UnlockedVault` and the one `VaultKey` in the process.
     let session = SealSession::open(unlock_for_command(&layout, &passphrase, slot)?);
-    let handle = load_wallet_key(session.vault())?.ok_or_else(|| CliError::Usage {
-        message: "this vault holds no wallet key, so it cannot pay for a seal — it was \
-                  created by an older build, or the wallet record was removed. Restore from a \
-                  `antseal vault export` backup"
-            .to_owned(),
-    })?;
+    // D155 §2 R4: the message has one public author in `vault::wallet`,
+    // because nothing in this private module can be reached by a test and
+    // the old copy's remedy — restore from a `vault export` backup — was
+    // unfollowable for every wrap mode (the vault is unlocked here, so
+    // `vault import` refuses over it, always).
+    let handle =
+        load_wallet_key(session.vault())?.ok_or_else(|| no_wallet_key_refusal(layout.root()))?;
     let key = wallet_key(&handle)?;
 
     let ctx = SealContext {

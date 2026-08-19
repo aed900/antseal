@@ -1551,6 +1551,162 @@ fn only_the_refused_file_is_named_not_every_matched_one() {
     );
 }
 
+// ── U87: the blocked copy, committed where the copy lint reads ───────
+
+/// **U87.** The three lines U85 added are product copy, and
+/// `scripts/check-copy-style.py` reaches CLI copy **only** through the
+/// committed golden snapshots — `crates/antseal-cli/tests/snapshots/` is a
+/// DIRECTORY entry in its `COPY_SCAN`, walked and filtered by
+/// `COPY_SUFFIXES`, so a `.txt` landing under it is scanned from its first
+/// commit with no second register edit. Until this snapshot existed the
+/// blocked rendering appeared in no file that scan reads: it was checked
+/// against every rule by hand and passed, which is a claim about one
+/// moment rather than a guard.
+///
+/// # Why not a sixth work in `fixture_vault`, which D152 §2 R7.4 proposed
+///
+/// `fixture_vault` drives the journal directly and never calls `put_plan`,
+/// so its works carry **no manifest** — and `resume_refusal`'s step 2 turns
+/// an absent manifest into `ResumeRefusal::Undetermined`, which renders the
+/// ordinary hint and none of this copy. That is not an assumption here:
+/// `a_work_with_no_manifest_gets_no_verdict_and_renders_as_before` is the
+/// measurement, committed beside this test. So the snapshot is taken from
+/// the route that does produce a manifest — `seal_into`'s barrier kill,
+/// which is the production shape of a stranded work.
+///
+/// # Why two works, and not one
+///
+/// `blocked_lines` renders four distinct strings, not three: the money
+/// clause forks on `ResumeClock`, and the verb agreement forks on the
+/// offender count. Copy the lint does not read is copy that is not policed,
+/// so the fixture carries a **post-pay, single-offender** work (`this seal
+/// is paid for`; `was`/`is`) and a **pre-pay, two-offender** work
+/// (`nothing was paid`; `were`/`are`).
+#[test]
+fn the_blocked_rendering_is_committed_where_the_copy_lint_reads_it() {
+    let vault = IsolatedVault::create("u87-blocked-copy");
+
+    // The post-pay half, walked forward while it is still the only work in
+    // the vault, so selecting it needs no lookup by title.
+    seal_into(
+        &vault,
+        0,
+        "paid, and blocked",
+        "*.txt",
+        "/w",
+        &[Shaped {
+            name: "chapter one.txt",
+            bytes: PROSE,
+            matched: true,
+            force_text: false,
+        }],
+    );
+    {
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        let ids = store.list_works().expect("list");
+        assert_eq!(ids.len(), 1, "walked forward before the second work lands");
+        let id = ids[0];
+        let mut rng = ChaCha20Rng::from_seed([0x87; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        for step in [SealState::Anchored, SealState::Paid] {
+            journal.set_state(&id, step).expect("advance");
+        }
+        journal
+            .put_consent(
+                &id,
+                ConsentRecord {
+                    total_ant_atto: 9,
+                    gas_estimate_wei: 21_000,
+                    consent_time_unix_secs: BASE_TIME,
+                    channel: ConsentChannel::YesFlag,
+                },
+            )
+            .expect("consent");
+        // A paid work that reports `cost: not recorded (nothing paid)` two
+        // lines above `this seal is paid for` would be a fixture arguing
+        // with itself, so the outcome is recorded the way `fixture_vault`
+        // records it for its own `Paid` row.
+        journal
+            .record_outcome(&id, Some([0xC1; 32]), Some(9))
+            .expect("outcome");
+    }
+
+    // The pre-pay half: two offenders, which is the only way the plural
+    // rendering appears in a committed file at all.
+    seal_into(
+        &vault,
+        1,
+        "staged, and blocked",
+        "*.md",
+        "/w",
+        &[
+            Shaped {
+                name: "chapter two.md",
+                bytes: PROSE,
+                matched: true,
+                force_text: false,
+            },
+            Shaped {
+                name: "chapter three.md",
+                bytes: PROSE,
+                matched: true,
+                force_text: false,
+            },
+        ],
+    );
+
+    let listing = listing(&vault);
+    assert_eq!(listing.works.len(), 2, "both halves are in the vault");
+    // Anti-vacuity, and it is the whole point: a snapshot of two rows that
+    // were not blocked would be a byte-exact guard over none of the copy it
+    // exists to police, and it would still pass every re-bless.
+    for work in &listing.works {
+        assert!(
+            matches!(
+                work.resume_refusal,
+                Some(ResumeRefusal::SplitOnNoFineTree { .. })
+            ),
+            "every work here must be blocked, or this pins the wrong copy: {:?}",
+            work.resume_refusal
+        );
+    }
+
+    let rendered = format!("{}\n", listing.render().join("\n"));
+    // Each of the four forks named, so a rendering that quietly lost one
+    // cannot be blessed back to green.
+    for needle in [
+        "nothing was paid, so only the local staged copy is lost.",
+        "this seal is paid for and the payment cannot be recovered.",
+        "CANNOT BE FINISHED: chapter one.txt was selected for splitting",
+        "were selected for splitting",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "the snapshot must carry {needle:?}:\n{rendered}"
+        );
+    }
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/snapshots/list-blocked-work.txt");
+    if std::env::var_os("ANTSEAL_BLESS").is_some() {
+        std::fs::write(&path, &rendered).expect("bless");
+        return;
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing committed blocked-work snapshot at {}: {e} (generate with ANTSEAL_BLESS=1)",
+            path.display()
+        )
+    });
+    assert!(
+        committed == rendered,
+        "the blocked-work rendering drifted from {} — regenerate with ANTSEAL_BLESS=1 and \
+         justify the diff\n--- rendered ---\n{rendered}",
+        path.display()
+    );
+}
+
 // ── T3 and T7: the third value, and the gate that keeps it cheap ──────
 
 /// A vault of works that never reached `put_plan` — `journal.begin` and

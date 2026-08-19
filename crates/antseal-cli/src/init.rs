@@ -628,8 +628,9 @@ pub fn existing_vault_refusal(root: &std::path::Path) -> CliError {
         message: format!(
             "a vault already exists at {root} — antseal never overwrites a vault, and there is \
              no --force flag: overwriting one destroys the reveal and restore keys of every \
-             work it holds, forever. If you want a fresh vault, run `antseal vault export` \
-             first when the contents matter, then move or remove {root} yourself.",
+             work it holds, forever. If you want a fresh vault, move {root} aside instead of \
+             deleting it: a moved directory keeps everything, and no antseal command has to \
+             run first. Delete it only when you are certain nothing in it matters.",
             root = root.display(),
         ),
     }

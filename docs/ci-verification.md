@@ -2821,3 +2821,840 @@ keeps that lane local-only — minted **U73**, fixed, re-measured 23 passed /
 - **It does not discharge Q238.** R86's step remains deploy-gated, and the
   exposure D135 §3 R4.1 names — a reproducibility break sitting between deploys
   for days to weeks — is unchanged by M3 passing.
+
+# Q254/Q65 — the publish flip, as an ordered procedure (2026-08-19, M4 wave 27)
+
+**This is the runbook Q65's `Accept` row 3 names.** Q65 owns the *decision* —
+what is public, what is not, and the scrub that precedes it. This chapter owns
+the *execution*: which steps, in which order, each with the command that reads
+back its own result. D154 §2 R2 records that the two are halves of one act
+(`with Q65`), not a queue.
+
+The "Maintainer runbook (remote steps, in this exact order)" earlier in this
+file is a **different runbook** and is not superseded: it sequences the first
+push and branch protection. Its step 5 has been blocked by plan since wave 7,
+and the flip below is one of the three ways that block lifts — see *"Branch
+protection is BLOCKED BY PLAN"*. Do not take the flip for that reason. Take it
+because Q65 resolved to *public* on its own terms.
+
+## The flip is an external action, and no prior consent carries forward to it
+
+**Nothing in this chapter authorises anything.** Making `aed900/antseal` public
+is irreversible in the only sense that matters — the bytes are copyable the
+instant they are readable — and it is an external action in the strict sense:
+it changes state on a third-party service under a named account.
+
+It therefore requires **express, in-the-moment consent from the maintainer,
+naming all three of**:
+
+1. the **action** — "make the repository public";
+2. the **destination** — `github.com/aed900/antseal`;
+3. the **account** — `aed900`.
+
+**No prior consent carries forward.** A decision recorded in `TODO.md`, a
+resolved `Q65`, a planning-round ruling, this chapter, and an agent's own task
+brief are **none of them consent**. "Go public after a scrub" (maintainer,
+2026-08-16) is the *decision*; the *act* still needs its own confirmation at
+the moment it is taken. The same applies to every `PATCH`/`PUT`/`POST` step in
+Phase B below: each one writes to GitHub, and consent to the flip is not
+consent to the settings changes that share its window — name them together
+when consent is sought, and say so out loud if any is dropped.
+
+An agent executing this chapter runs the **read-back** commands. It does not
+run the writes.
+
+## Ordering vocabulary — three words, and two of them are not "first"
+
+The defect this chapter exists to close is reading a co-timed step as a
+prerequisite. The three markers below are used on every step and mean exactly
+this:
+
+| Marker | Meaning | Failure if you get it wrong |
+| --- | --- | --- |
+| **BEFORE** | Must be complete *and verified* before consent is sought. The flip does not happen until every BEFORE step reads back green. | The thing it guards is exposed at the instant of the flip, with no window to react. |
+| **AT THE FLIP (co-timed)** | Cannot be done earlier — the API refuses it while the repository is private — and must not be left for later. Same sitting, same hour, one continuous act. | A window opens in which the repository is public and the setting is not yet true. This is the D140 103-minute false-window class. |
+| **AFTER** | Reads back a property that only exists once the repository is public. Verification, not execution. | Nothing is exposed; you simply have no evidence the flip did what it claimed. |
+
+**A co-timed step is not a prerequisite and must never be written as one.**
+D154 §2 R2 struck `Q254 after Q242` for exactly this reason: Q242's `Accept`
+row 2 requires private vulnerability reporting to read *enabled* **in the same
+window as the visibility change**, and the endpoint refuses while private, so
+`after` was an edge that could never be satisfied. Measured 2026-08-19, on this
+host, with the `aed900` token:
+
+```
+$ gh api repos/aed900/antseal/private-vulnerability-reporting
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}
+gh: Not Found (HTTP 404)                                    # REAL_EXIT=1
+```
+
+That 404 is the mechanism. `SECURITY.md` (9 690 B, landed) ships naming a route
+that does not resolve, and the gap between flip and enable is a window in which
+the only disclosure route for a cryptographic verifier is a public issue.
+
+## How to read the observation status on each step
+
+Every step carries one of two tags, and the distinction is the point of the
+row:
+
+- **[OBSERVED 2026-08-19]** — the command was run on this host, against this
+  account, and the output shown is what it printed. Exit codes are recorded as
+  `REAL_EXIT=` read back from a file, never inferred from a pipeline's status.
+- **[UNOBSERVED — <reason>]** — the command is stated with what it *should*
+  return, and it was **not run**. Two reasons occur: the step needs the
+  repository already public, or it is a write no agent may take. An unobserved
+  expectation is a prediction. Treat a mismatch as new information about
+  GitHub, not as a failure of the step.
+
+## Phase A — BEFORE. Every step here reads back green before consent is sought
+
+### A1 — BEFORE. Q65's own remaining `Accept` rows are discharged
+
+This chapter is Q65's execution half, not its substitute. Its `Accept` rows 1,
+2, 5 and 6 are separate obligations and none of them is satisfied by writing a
+checklist.
+
+```bash
+grep -nE '^- \[.\] \*\*Q(65|242|243|244|254|255)\*\*' TODO.md | cut -c1-60
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, six rows:
+
+```
+825:- [ ] **Q65** (M) Publish-scope decision + the pre-publ
+830:- [ ] **Q242** (S) **A cryptographic verifier invites a
+831:- [x] **Q243** (S) **The job that publishes the devnet
+832:- [x] **Q244** (S) **Nine third-party actions, fifty-se
+833:- [ ] **Q255** (S) **The Pages action set is two years
+845:- [ ] **Q254** (S) **The publish flip has no ordered ex
+```
+
+Expected **at the flip**: `Q65`, `Q242`, `Q243`, `Q244`, `Q254` all `[x]`.
+`Q255` may still be `[ ]` — see B6, which records that exposure rather than
+closing it. The two Q65 obligations that this file cannot see are the per-file
+`public`/`private`/`private-until-release` decision record and the two
+registered `OWED_PRESENCE` clauses (`limit-exclusive-possession`,
+`compelled-disclosure`), which are **Q22's** and not this row's; both are
+tracked and neither reddens a checker, so **read them, do not grep for a
+failure that cannot arrive**.
+
+### A2 — BEFORE. The machine-path lint is green on the live surface
+
+Q65 `Accept` row 2, as amended by D144 §2 R1. The check is the **flagless**
+run; `--machine-paths` is the narrow arm and `--self-test` stages a full tree
+copy and must not be run mid-wave.
+
+```bash
+python3 scripts/check-traceability.py
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, all eight checks ok. The line that
+matters here:
+
+```
+[machine-paths] ok — 0 absolute home paths outside the reserved vocabulary
+(user, fixture, runner, u, x) across 455 live file(s) in 14 scan root(s);
+1 registered divergence(s) still present verbatim and exactly once (MVP-SPEC.md)
+```
+
+Read the numbers, not the word `ok`: the scan-root count and the live-file
+count both move as the tree grows, and a scan that silently stopped covering a
+directory would still print `ok`. **This lint does not buy confidentiality**
+and Q65 says so itself — `/home/deb` is already in the published history at
+`01cdc83` and at `format-v1-freeze`. What it buys is machine-independence of
+live instructions.
+
+### A3 — BEFORE. All three scrub halves exist and are committed
+
+```bash
+ls -l docs/reviews/pre-public-scrub-*.md
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, three files:
+
+```
+47278  docs/reviews/pre-public-scrub-github-side.md
+27644  docs/reviews/pre-public-scrub-history.md
+33364  docs/reviews/pre-public-scrub-worktree.md
+```
+
+Zero credential findings in all three. **They are dated documents, not live
+guards**: the worktree half's own figures were stale by the commits that landed
+it. A2 is the live check; these are the record of the sweep.
+
+### A4 — BEFORE, strictly. Q243's evidence-artifact gate is in the publishing job
+
+The `devnet-e2e-evidence` artifact becomes publicly downloadable at the instant
+visibility changes, so the gate that proves its redaction must already be in
+the job that uploads it. This is the one ordering in this chapter that D141
+§2 R5(a) inverted from an outright backwards edge.
+
+```bash
+grep -n 'e2e-devnet.sh' .github/workflows/devnet-e2e-cron.yml
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`:
+
+```
+133:        run: ./scripts/e2e-devnet.sh --self-test
+163:        run: ./scripts/e2e-devnet.sh
+179:        run: ./scripts/e2e-devnet.sh --scan-evidence
+```
+
+Both of D141's arms are present: `--self-test` proves the redactor in that
+environment before capture, and `--scan-evidence` asserts the **artifact
+itself** after capture and before upload — the one that survives a refactor
+that stops calling `redact()` at all.
+
+**The existing artifact is not covered by this gate and is kept anyway.**
+D145 §2 R2: run `9132238802` predates the gate by five days, was scanned by
+hand instead (`files=8 findings=0 verdict=CLEAN`), and is retained. Record that
+when the flip is taken; do not claim the gate covers it.
+
+### A5 — BEFORE, strictly. Q244's SHA pins are landed
+
+The mitigations that made mutable action tags tolerable — private repository,
+no fork PRs, read-only default token — are exactly what the flip removes, so
+the pins precede it.
+
+```bash
+grep -rhoE '(^|- )uses: \S+' .github/workflows/ | grep -vE '@[0-9a-f]{40}'
+```
+
+**[OBSERVED 2026-08-19]** — prints **nothing**; `REAL_EXIT=0` from the first
+element of the pipeline read back via `PIPESTATUS[0]`. Counts: **46** `uses:`
+invocations across **8** workflow files, **46** pinned to a 40-hex commit,
+**0** unpinned.
+
+**The check was proved able to fail.** Run against a two-line fixture holding
+one tag reference and one SHA reference, the same pipeline printed exactly the
+tag line:
+
+```
+- uses: actions/checkout@v4
+```
+
+Note the count moved: Q244's row measured **57** invocations of 9 distinct
+actions. Verify by running the command, never by quoting the row — and note
+that `^\s*uses:` alone silently misses every `- uses:` step, which is a check
+that cannot fail rather than a passing one.
+
+### A6 — BEFORE, and it is a branch. Read the README's minisign anchor back
+
+**[D153 §2 R8, 2026-08-19.]** The publishing act and the key-publishing act are
+owned by different rows, and only one of them knows about the DNS pin. This
+step exists so the flip cannot become a key's first publication by accident.
+
+```bash
+sed -n '/BEGIN minisign-public-key/,/END minisign-public-key/p' README.md
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, `README.md:50-54`:
+
+```
+<!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 1) -->
+No key is published here yet. The 56-character public key goes between these
+two markers when it is published, alongside a pointer to
+[checking a download](docs/signing/verifying-a-release.md).
+<!-- END minisign-public-key -->
+```
+
+Then branch on what came back:
+
+- **The anchor carries no key** — its state on 2026-08-19, observed above.
+  **Record the read-back and proceed.** The flip publishes no key material and
+  D71 §A R4's precondition does not fire.
+- **The anchor carries a 56-character key** — then **the flip is that key's
+  first publication**, and D71 §A R4 applies to *this* step: the pin's clock
+  starts the moment the key is first published, it cannot be retrofitted, and
+  without it the scheme's security at first contact reduces to trusting GitHub.
+  The TXT record must resolve **first**:
+
+  ```bash
+  dig +short TXT antseal.org
+  ```
+
+  Expected in that branch: a line containing `antseal-minisign-key=` matching
+  the anchor's key. **[OBSERVED 2026-08-19]** — the command returns **no
+  output** with `REAL_EXIT=0`. An empty answer and a `NXDOMAIN` both print
+  nothing here and both exit 0, so **assert on the string, never on the exit
+  code**:
+
+  ```bash
+  dig +short TXT antseal.org | grep -q 'antseal-minisign-key=' ; echo "PIN_PRESENT_EXIT=$?"
+  ```
+
+  `PIN_PRESENT_EXIT=0` means present; `1` means absent. Today it is `1`.
+
+**This is not a contradiction with D71 §A R5**, which deliberately release-times
+the TXT pin and the OTS anchor. Nothing here asks for them early. It asks that
+*if* the anchor already carries a key when the flip is taken, the pin precedes
+the publication — which is the same ruling read in the other direction.
+
+### A7 — BEFORE. D61 §9 is re-read, and the re-read is written down
+
+D61 is **resolved with a condition**, and Q65 is the named owner of its
+trigger. The re-read records which of D61 §9's two conditions hold:
+
+- **(a)** `aed900/antseal` is public. **False today** — and it becomes true in
+  Phase B, which is why this step is written before the flip and read back
+  after it (C3). It reopens the **budget half only**: standard GitHub-hosted
+  runners are free on public repositories.
+- **(b)** the project can point to use by parties other than its maintainer,
+  sufficient to argue OSS-Fuzz's own *"a significant user base and/or be
+  critical to the global IT infrastructure"* criterion. **False**, and the flip
+  does not change it.
+
+**(a) alone does not reopen the OSS-Fuzz arm.** Until both hold, OSS-Fuzz is
+*not applicable* rather than *pending*, and no wave may carry D61 as open on
+that account. Write that sentence into the wave record with both verdicts
+attached; a re-read that concludes "still closed" is a discharged obligation,
+not a skipped one.
+
+The budget half is the part that actually changes, and it changes in the
+project's favour: the hosted CI has refused every job since wave 20 on an
+exhausted Actions allowance, and free minutes on a public repository is the
+mechanism by which that stops. **Do not add any required status context on the
+strength of that expectation** — see C2.
+
+### A8 — BEFORE. Push `main` **by name**
+
+```bash
+git push origin main
+```
+
+**[UNOBSERVED — this is a write to the remote, and no agent may take it.]**
+Expected: the remote's `refs/heads/main` advances to the local `main`. Read it
+back with the same command that establishes the pre-state:
+
+```bash
+git ls-remote origin
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, four lines and no more:
+
+```
+dc0bac80964172ea3a458cc1a495f003a32cd6f0	HEAD
+dc0bac80964172ea3a458cc1a495f003a32cd6f0	refs/heads/main
+5b72bb0fdfaf4e50ab953c4b0d36d5a12c666e8f	refs/tags/format-v1-freeze
+d3345e1622bf4ae8d90d5d02b9e80317c73b7683	refs/tags/format-v1-freeze^{}
+```
+
+The remote carries **one branch and one tag**. Locally: `main` is **3 commits
+ahead** of `dc0bac8` (waves 25–27), **549** commits total, **36** branches,
+**2** tags, and **1** ref under `refs/original`.
+
+**Why this step is before the flip and not after.** The pre-public scrub scanned
+*this clone*; publishing a remote whose content is a subset of what was scanned
+keeps that coverage true, and it means the repository that becomes public is the
+one the scrub describes rather than one that grows into public view commit by
+commit. The cost is that the first push still lands on a CI that refuses jobs —
+the free-minutes change arrives only with the flip — so **expect no green run
+from this step**. The first genuine remote verdict is C4.
+
+#### `git push --all` and `git push --mirror` are FORBIDDEN, and the reason is measured
+
+Not style. Measured on this host, 2026-08-19:
+
+| Local-only object class | Count | On the remote? |
+| --- | --- | --- |
+| Branches besides `main` | **35** (36 total) | no |
+| `refs/original` filter-branch backup | **1** (`refs/original/refs/heads/m2w4-kappa` → `d286d4e`) | no |
+| Unreachable commits | **61** | no |
+| Unreachable blobs | **83** | no |
+| Unreachable trees | **279** | no |
+| Unreachable tags | **1** | no |
+| Local-only tags | **1** (`pre-trailer-strip-949dd9d` → `949dd9d`) | no |
+
+Going public exposes what the **remote** holds — 533 commits and 3 364 blobs at
+the scrub's measurement — **not** the larger set in this clone. Every row above
+is local-only **and stops being local the instant anyone runs `git push --all`
+or `git push --mirror`**. `--mirror` is the worse of the two: it pushes
+`refs/*` entire, including `refs/original` and every tag, **and it deletes
+remote refs that are absent locally**, so it is destructive in both directions
+against a remote carrying a published freeze tag.
+
+Two specifics worth naming, because the summary hides them:
+
+- **`refs/original/refs/heads/m2w4-kappa`** is a filter-branch backup. Pushing
+  it republishes precisely the history a rewrite was taken to remove — it
+  undoes the rewrite while leaving the rewritten branch in place, which is
+  worse than never having rewritten.
+- **`pre-trailer-strip-949dd9d`** points at `949dd9d`, and
+  `git merge-base --is-ancestor 949dd9d main` **exits 1** — it is *not* an
+  ancestor of `main`. It is a second pre-rewrite line, and `--mirror` publishes
+  it. So does the smaller, more tempting `git push --tags`, which is why the
+  ban is stated as *push `main` by name* rather than as a list of two flags to
+  avoid.
+
+The read-back for the ban is the same `git ls-remote origin` above: after any
+push in this procedure it must still print `refs/heads/main` and
+`refs/tags/format-v1-freeze` (with its peeled `^{}` line) and **nothing else**.
+
+```bash
+git ls-remote origin | awk '{print $2}' | grep -vE '^(HEAD|refs/heads/main|refs/tags/format-v1-freeze(\^\{\})?)$'
+```
+
+Expected: **no output**. Any line printed is a ref that should not be there.
+**[OBSERVED 2026-08-19]** — no output; the trailing `grep` exits **1**, which is
+the clean result and the inverse of the usual convention, so read the *lines*,
+not the status. Run against a synthetic list carrying `refs/heads/m2w4-kappa`,
+the same filter printed that one line and exited 0 — the check can fail.
+
+## Phase B — AT THE FLIP. One sitting. Every step here is co-timed, none is a prerequisite
+
+**Read this heading literally.** B1 through B7 are **not** a queue in which B1
+must be finished and verified before B2 is attempted on some later day. They
+are one act. B1 is first only because the API refuses B2 and B5 until it has
+happened, and each hour between B1 and B7 is an hour in which the repository is
+public and its hardening is not yet true.
+
+Have every command below open before consent is sought. The read-backs are the
+deliverable; run them all again at the end of the sitting.
+
+### B0 — Consent, named. Not a step any agent takes
+
+Before B1: the maintainer states, in the moment, that they are making
+**`github.com/aed900/antseal` public** under the account **`aed900`**, and that
+the settings writes in B2–B5 are included. Nothing in this file, in `TODO.md`,
+in a decision record or in an agent's brief substitutes for that.
+
+```bash
+gh auth status
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`. Confirms which account the writes
+would run as, and this host has **two**:
+
+```
+✓ Logged in to github.com account aed900 (keyring)   - Active account: true
+  Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+✓ Logged in to github.com account <second-account> (keyring) - Active account: false
+```
+
+**Check the active account before every write in this phase.** A second
+authenticated account on the same host is exactly how a named-destination
+consent gets executed somewhere else.
+
+### B1 — AT THE FLIP. The visibility change
+
+Either the web UI (Settings → General → Danger Zone → Change visibility, which
+requires typing the repository name — a useful second confirmation), or:
+
+```bash
+gh api -X PATCH repos/aed900/antseal -f visibility=public
+```
+
+**[UNOBSERVED — this is the flip itself; it is the one act this whole chapter
+exists to sequence, and no agent may take it.]**
+
+Read back, and read it back **twice** — once authenticated, once not, because
+only the second proves the change is visible to the world rather than to the
+token:
+
+```bash
+gh api repos/aed900/antseal --jq '{visibility:.visibility,private:.private}'
+curl -sS -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/aed900/antseal
+```
+
+Expected after: `{"private":false,"visibility":"public"}` and `200`.
+
+**[OBSERVED 2026-08-19 — the pre-state]** — `REAL_EXIT=0` for both:
+
+```
+{"default_branch":"main","has_issues":true,"homepage":null,"private":true,"topics":[],"visibility":"private"}
+404
+```
+
+The unauthenticated `404` is the honest before-picture: GitHub returns `404`
+rather than `403` for a private repository, so *"the repo is invisible"* and
+*"the URL is wrong"* look identical from outside. After B1 that `404` becomes
+`200`, and it is the only read-back in this chapter that does not depend on a
+credential.
+
+### B2 — AT THE FLIP, co-timed with B1. Private vulnerability reporting (Q242)
+
+**This is the step the co-timing vocabulary was written for.** Q242's `Accept`
+row 2 requires this to read *enabled* **in the same window as the visibility
+change**. It cannot be done before B1 — the endpoint refuses — and leaving it
+for later opens the window in which the only disclosure route for a
+cryptographic verifier is a public issue.
+
+```bash
+gh api -X PUT repos/aed900/antseal/private-vulnerability-reporting
+```
+
+**[UNOBSERVED — a write, and it is refused while the repository is private.]**
+Expected: `204 No Content`. Read back:
+
+```bash
+gh api repos/aed900/antseal/private-vulnerability-reporting
+```
+
+Expected after: `{"enabled":true}`.
+
+**[OBSERVED 2026-08-19 — the pre-state]** — `REAL_EXIT=1`:
+
+```
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}
+gh: Not Found (HTTP 404)
+```
+
+**Do not over-read that 404.** It is consistent with *"the feature is
+unavailable on a private repository"* and with *"this path does not exist"*,
+and from here the two are indistinguishable. If the `GET` still 404s after a
+successful `PUT`, confirm in the UI (Settings → Advanced Security → Private
+vulnerability reporting) rather than concluding the `PUT` failed.
+
+Q242's **other** clauses do not need the flip, and one of them is already true:
+
+```bash
+gh api graphql -f query='{repository(owner:"aed900",name:"antseal"){securityPolicyUrl isSecurityPolicyEnabled}}'
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`:
+
+```
+{"data":{"repository":{"securityPolicyUrl":"https://github.com/aed900/antseal/security/policy","isSecurityPolicyEnabled":true}}}
+```
+
+`SECURITY.md` is on the remote and GitHub already serves the policy URL, **on a
+private repository**. So Q242 splits: its policy half is landed and needs
+nothing from this phase, and only the *mechanism* half is co-timed. Do not
+carry the row's 2026-08-17 measurement (*"`securityPolicyUrl` empty, no
+`SECURITY.md`"*) into the flip — it is stale, and re-running the query is the
+whole cost of finding that out.
+
+### B3 — AT THE FLIP, co-timed. `homepage`
+
+Q65 finding 4. `https://antseal.org/` has been live and canonical since D62,
+and the repository does not say so.
+
+```bash
+gh api -X PATCH repos/aed900/antseal -f homepage='https://antseal.org/'
+```
+
+**[UNOBSERVED — a write.]** Read back:
+
+```bash
+gh api repos/aed900/antseal --jq '.homepage'
+```
+
+Expected after: `https://antseal.org/`. **[OBSERVED 2026-08-19 — pre-state]**
+`null`.
+
+Use the canonical form with the trailing slash; the copy-style checker holds
+every other spelling of the product URL to be a defect, and the repository
+sidebar is a copy surface like any other.
+
+### B4 — AT THE FLIP, co-timed. `topics`
+
+```bash
+gh api -X PUT repos/aed900/antseal/topics -f names[]=rust -f names[]=proof-of-existence \
+  -f names[]=timestamping -f names[]=merkle-tree -f names[]=autonomi
+```
+
+**[UNOBSERVED — a write. The topic list itself is Q65's call, not this
+chapter's; what is fixed here is that the field is set in this window and read
+back.]** Read back:
+
+```bash
+gh api repos/aed900/antseal/topics
+```
+
+Expected after: a `names` array matching what was set. **[OBSERVED 2026-08-19 —
+pre-state]** `{"names":[]}`, `REAL_EXIT=0`.
+
+Positioning discipline applies to topics exactly as it does to prose: this is
+proof of existence, integrity and priority. A topic like `notary` would be a
+claim the product does not make, in the one field search engines read first.
+
+### B5 — AT THE FLIP, co-timed. Fork-PR contributor approval, which only becomes queryable now
+
+Q65 finding 4 records this as *unqueryable* rather than merely unset, and the
+endpoint name matters — the neighbouring path answers with a different and
+misleading status.
+
+```bash
+gh api repos/aed900/antseal/actions/permissions/fork-pr-contributor-approval
+```
+
+**[OBSERVED 2026-08-19 — pre-state]** — `REAL_EXIT=1`:
+
+```
+{"message":"Validation Failed",
+ "errors":"Fork PR approval is not allowed for private repositories.",
+ "documentation_url":".../permissions#get-fork-pr-contributor-approval-permissions-for-a-repository",
+ "status":"422"}
+```
+
+That **422**, quoting the reason, is the signal. Its neighbour
+`actions/permissions/fork-pr-workflows` returns a bare `404 Not Found` on the
+same repository — **[OBSERVED 2026-08-19]**, `REAL_EXIT=1` — which says nothing
+about visibility and would be read as "no such setting". Query the
+`fork-pr-contributor-approval` path, and treat the disappearance of the 422 as
+the confirmation that the flip took effect.
+
+Then set it, in the same window:
+
+```bash
+gh api -X PUT repos/aed900/antseal/actions/permissions/fork-pr-contributor-approval \
+  -f approval_policy=all_external_contributors
+```
+
+**[UNOBSERVED — a write, and it is refused until B1 lands.]** Read back with
+the `GET` above; expected `{"approval_policy":"all_external_contributors"}`.
+
+Verify the three hardening settings that are already correct have **not** moved,
+since B1 and B3 both `PATCH` the repository object:
+
+```bash
+gh api repos/aed900/antseal/actions/permissions/workflow
+gh api repos/aed900/antseal/actions/permissions/access
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0` for both:
+
+```
+{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}
+{"access_level":"none"}
+```
+
+Expected after: unchanged. A read-only default token is worth more once the
+repository is public than it was before, and a settings write that silently
+resets it is the kind of thing only a read-back finds.
+
+### B6 — AT THE FLIP, co-timed. `sha_pinning_required` stays `false`, and that is recorded, not fixed
+
+```bash
+gh api repos/aed900/antseal/actions/permissions
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`:
+
+```
+{"enabled":true,"allowed_actions":"all","sha_pinning_required":false}
+```
+
+Expected after: **the same**. This is a **recorded exposure, not a step to
+execute.** A5 established that all 46 `uses:` invocations are already pinned to
+40-hex, so the setting is currently weaker than the files — but flipping it to
+`true` is gated behind **Q255**, whose action set is stale and whose middle
+action carries a transitive moving tag into the only write-scope job. Turning
+the enforcement on before Q255 resolves risks blocking the very change that
+would fix it.
+
+Write the reading into the wave record with its owner. **Do not tick anything
+on the strength of this step** — it asserts that a known-loose setting is still
+exactly as loose as it was, which is evidence, not progress.
+
+### B7 — AT THE FLIP, co-timed. The artifacts that become publicly downloadable
+
+```bash
+gh api repos/aed900/antseal/actions/artifacts --paginate \
+  --jq '.artifacts[] | [.name,.size_in_bytes,.expired,.expires_at] | @tsv'
+```
+
+**[OBSERVED 2026-08-19]** — `REAL_EXIT=0` via `PIPESTATUS[0]`, ten artifacts:
+
+```
+github-pages           865661  true   2026-08-16T08:02:37Z
+devnet-e2e-evidence     52269  false  2026-11-10T06:56:33Z
+fuzz-smoke-artifacts       672 false  2026-11-05T09:42:20Z
+fuzz-smoke-artifacts      1100 false  2026-11-04T21:46:09Z
+fuzz-smoke-artifacts       820 false  2026-11-04T20:36:04Z
+fuzz-smoke-artifacts       854 false  2026-11-04T15:45:58Z
+fuzz-smoke-artifacts       854 false  2026-11-04T12:16:46Z
+fuzz-smoke-artifacts       812 false  2026-11-04T11:47:50Z
+fuzz-smoke-artifacts       490 false  2026-11-04T09:30:30Z
+fuzz-smoke-artifacts       402 false  2026-11-04T08:45:26Z
+```
+
+Q65 finding 4's figures reproduce exactly: **eight** live `fuzz-smoke-artifacts`
+totalling **6 004 bytes**, `github-pages` already **expired**, and
+`devnet-e2e-evidence` at **52 269 B** retained to **2026-11-10**.
+
+The ruling is **leave them to expire, do not delete them**, and the deletion
+endpoint is not in this chapter for that reason. What this step owes is the
+record:
+
+- The eight fuzz artifacts are crash-corpus fragments of a few hundred bytes
+  each and carry no key material; they expire on their own on 2026-11-04/05.
+- **`devnet-e2e-evidence` is the one to read twice.** A4 is why: this artifact
+  predates Q243's gate, is covered by a **hand** scan (`files=8 findings=0
+  verdict=CLEAN`, D145 §2 R2) rather than by the job, and it becomes publicly
+  downloadable at B1. State that in the record — that the coverage is a manual
+  sweep on a dated artifact, and that every artifact produced from now on is
+  covered by `--scan-evidence` in the uploading job instead.
+
+## Phase C — AFTER. Reading back what only exists once the repository is public
+
+Nothing in this phase exposes anything. Each step reads a property that could
+not be read before B1, and a failure here means missing evidence rather than an
+open window.
+
+### C1 — AFTER. The ref surface did not grow
+
+The single most consequential thing that can go wrong in this procedure leaves
+no trace in any settings API. Re-run the stray-ref filter from A8:
+
+```bash
+git ls-remote origin | awk '{print $2}' \
+  | grep -vE '^(HEAD|refs/heads/main|refs/tags/format-v1-freeze(\^\{\})?)$'
+```
+
+Expected: **no output**, exactly as observed on 2026-08-19. Every ref that
+prints here is now world-readable. Run it once immediately after B1 and once at
+the end of the sitting, because the flip is precisely the moment someone is
+tempted to "push everything while we're here".
+
+### C2 — AFTER. Branch protection is now available, and must still not be armed
+
+The wave-7 block lifts here: *"Branch protection is BLOCKED BY PLAN"* earlier in
+this file lists three options, and B1 is option 2. **[OBSERVED 2026-08-19 —
+pre-state]**, and note both of these have already moved since that chapter was
+written:
+
+```
+$ gh api repos/aed900/antseal/rulesets
+[]                                                          # REAL_EXIT=0
+$ gh api repos/aed900/antseal/branches/main/protection
+{"message":"Branch not protected", …, "status":"404"}       # REAL_EXIT=1
+```
+
+The 403s that chapter recorded are gone — GitHub un-gated rulesets for private
+Free repositories — so the flip is **not** what unblocks protection, and taking
+it for that reason would be taking it for a stale reason. `main` is unprotected
+today and so is `format-v1-freeze`; the freeze is enforced in-repo by digest
+files, not by the platform.
+
+**Do not add a required status context in this sitting.** A required context
+that has never reported green on `main` blocks the next push, including the
+maintainer's own — and the hosted CI has refused every job since wave 20 on an
+exhausted Actions allowance, so *no* context has a recent green. The correct
+order is unchanged from runbook step 3 → step 5: first a green run on `main`
+(C4), then protection.
+
+When it is armed, **regenerate the payload rather than copying one**. That
+chapter's payload lists 19 contexts from 17 jobs; measured 2026-08-19,
+`ci.yml` now declares **15** job ids:
+
+```bash
+awk '/^jobs:/{j=1;next} j && /^  [a-z0-9-]+:$/{gsub(/[ :]/,"");print}' \
+  .github/workflows/ci.yml | wc -l
+```
+
+**[OBSERVED 2026-08-19]** — `15`, `REAL_EXIT=0`. Every hand-maintained context
+list in this file has gone stale at least once; that is the whole of Q56.
+
+### C3 — AFTER. D61 §9's condition (a) now holds in fact
+
+A7 wrote the re-read with `(a)` predicted. Read it back against the world:
+
+```bash
+gh api repos/aed900/antseal --jq '.visibility'
+```
+
+Expected: `public`. Then the re-read reads: **(a) holds**, **(b) does not**,
+therefore **OSS-Fuzz remains *not applicable* rather than *pending***, and only
+the budget half of D61 reopens — on its own merits, in its own wave, not here.
+A wave that carries D61 as open on the strength of (a) alone is carrying it
+wrongly.
+
+### C4 — AFTER. The first CI run that a hosted runner actually executes
+
+Free minutes on public repositories is the mechanism that ends the refusal
+streak. Confirm it with a **verdict**, not with a queued job:
+
+```bash
+gh api "repos/aed900/antseal/commits/$(git rev-parse main)/check-runs" \
+  --paginate --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv' | sort
+```
+
+**[UNOBSERVED — needs a run on a public repository; on this account today every
+job is refused.]** Expected: one row per context, `completed` with `success`.
+
+**The refusal signature is what to watch for, and it is not an error message.**
+A refused job reports `conclusion: failure` with an empty `steps` array, in
+3–5 seconds, having never reached a code verdict. Confirm the run took a
+plausible wall time and that its steps are non-empty before calling the streak
+over:
+
+```bash
+gh run list --limit 5 --json databaseId,conclusion,createdAt,updatedAt
+```
+
+Until a run passes that test, the local gate remains the only witness this
+project has, and every gate claim in this file keeps saying so.
+
+### C5 — AFTER. One block, run again, at the end of the sitting
+
+Every read-back in this chapter, in one place, so the closing record is a single
+capture rather than a reconstruction:
+
+```bash
+set -o pipefail
+{
+  gh auth status
+  gh api repos/aed900/antseal --jq '{visibility:.visibility,private:.private,homepage:.homepage,topics:.topics}'
+  curl -sS -o /dev/null -w 'anon_http=%{http_code}\n' https://api.github.com/repos/aed900/antseal
+  gh api repos/aed900/antseal/topics
+  gh api repos/aed900/antseal/private-vulnerability-reporting
+  gh api repos/aed900/antseal/actions/permissions
+  gh api repos/aed900/antseal/actions/permissions/workflow
+  gh api repos/aed900/antseal/actions/permissions/access
+  gh api repos/aed900/antseal/actions/permissions/fork-pr-contributor-approval
+  gh api repos/aed900/antseal/actions/artifacts --paginate \
+    --jq '.artifacts[] | [.name,.size_in_bytes,.expired,.expires_at] | @tsv'
+  git ls-remote origin
+} > flip-readback.txt 2>&1
+echo "REAL_EXIT=$?" >> flip-readback.txt
+```
+
+Then **read `REAL_EXIT=` back out of the file**. The exit status a harness or a
+terminal reports is the status of the *last* command in the wrapper, which here
+is `echo`; it has announced `0` for runs that exited `1` and `101`. Paste the
+captured file into the wave record — a measurement that lives only in a
+transcript is not evidence.
+
+## What this checklist does NOT cover
+
+- **It does not decide anything.** The per-file `public` / `private` /
+  `private-until-release` record is Q65's, the topic list is Q65's, the
+  disclosure policy's contents are Q242's, and the pin renewal cadence is
+  Q244's. This chapter sequences acts whose content is decided elsewhere.
+- **It does not authorise the flip**, and it is not evidence of consent. See
+  B0.
+- **It says nothing about reversing the flip.** Making a repository private
+  again does not un-copy anything, does not remove forks, and does not retract
+  a downloaded artifact. There is no rollback step in this chapter because
+  there is no rollback.
+- **It does not cover releases, packages, or `crates.io`.** Release assets
+  inherit repository visibility (D72 §2 R6) and change status at B1, but the
+  release process itself is Q31/Q34's and the publication scope of the crates
+  is D72's.
+- **It does not cover the Pages deployment.** `https://antseal.org/` is already
+  public and served from this repository; the flip changes the visibility of
+  the *source*, not of the page. `github-pages` as an artifact is already
+  expired (B7).
+- **It does not cover history rewriting.** The scrub's history half measured
+  that none is warranted. If that verdict ever changes, this chapter is the
+  wrong instrument — a rewrite against a published freeze tag is its own
+  decision.
+- **It does not arm branch protection** (C2), **does not set
+  `sha_pinning_required`** (B6, behind Q255), and **does not delete any
+  artifact** (B7, ruled expire-not-delete).
+- **Seven of its steps were never executed.** A8, B1, B2, B3, B4, B5 and C4
+  carry expectations, not observations; each is tagged `[UNOBSERVED]` with its
+  reason at the step, and the count is checkable without counting this sentence:
+  every step-level tag opens its own line, so
+  `grep -c '^..\[UNOBSERVED' docs/ci-verification.md` returns **7** while the
+  legend entry and this paragraph, which are indented, do not. Six of the seven are
+  writes no agent may take; C4 is a read that has no public repository to read
+  yet. Every pre-state around them was measured on 2026-08-19 on this host with
+  the `aed900` token, and **a pre-state is not a result**.
+- **The read-backs are only as good as the moment they were run.** Q242's own
+  row carried a 2026-08-17 measurement that this chapter found stale two days
+  later (B2), Q244's invocation count moved from 57 to 46 (A5), and `ci.yml`'s
+  job count moved from 17 to 15 (C2). Re-run every command; quote no figure
+  from a row.

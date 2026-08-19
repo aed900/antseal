@@ -12,7 +12,9 @@
 
 use std::path::{Path, PathBuf};
 
-use antseal_cli::error::ErrorClass;
+use antseal_cli::cli::{Cli, Command, InitArgs};
+use antseal_cli::error::{CliError, ErrorClass};
+use antseal_cli::init::{InitPrompt, run_init};
 use antseal_cli::vault::header::{
     VaultHeader, WRAP_MODE_KEYFILE, WRAP_MODE_NONE, WRAP_MODE_OS_KEYSTORE_RESERVED,
 };
@@ -517,6 +519,297 @@ fn the_backup_advice_matches_what_export_actually_does() {
             if succeeded { "runs" } else { "refuses" },
         );
     }
+}
+
+/// Every [`InitPrompt`] method panics: the existing-vault refusal fires at
+/// `init.rs:418`, before the wizard, and the comment there says so
+/// (*"the refusal must happen before a passphrase is collected"*). If that
+/// gate is ever moved below the wizard to learn the wrap mode — D155 §2 R1's
+/// refused arm (a) — this panics instead of returning a message, so the
+/// ordering invariant is held by a mechanism rather than by a comment.
+struct NeverPrompts;
+
+impl InitPrompt for NeverPrompts {
+    fn ask_choice(&mut self, question: &str, _: &[&str], _: &str) -> Result<String, CliError> {
+        panic!("the existing-vault refusal must precede every prompt; was asked: {question}")
+    }
+
+    fn read_secret_line(&mut self, prompt: &str) -> Result<SecretBuf, CliError> {
+        panic!("the existing-vault refusal must precede every secret prompt; was asked: {prompt}")
+    }
+
+    fn ask_path(&mut self, question: &str, _default: &str) -> Result<String, CliError> {
+        panic!("the existing-vault refusal must precede every path prompt; was asked: {question}")
+    }
+}
+
+/// A readable fd carrying the NON-SECRET fixture passphrase, in
+/// `tests/init_command.rs::passphrase_fd_of`'s idiom (the fd is
+/// deliberately leaked for the process lifetime; these are test files in a
+/// per-test temporary directory).
+///
+/// It exists so that a *moved* existing-vault gate reaches the wizard
+/// rather than dying earlier on the passphrase channel — measured: without
+/// it, `run_init` answers `PassphraseUnavailable { NoChannel }` before any
+/// `InitPrompt` method is called, and `NeverPrompts` could never fire.
+fn passphrase_fd_in(dir: &Dir) -> u32 {
+    use std::os::fd::IntoRawFd;
+
+    let path = dir.0.join(format!(
+        "pass-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::write(&path, FIXTURE_PASSPHRASE).expect("write passphrase file");
+    let file = std::fs::File::open(&path).expect("open passphrase file");
+    u32::try_from(file.into_raw_fd()).expect("fd fits u32")
+}
+
+/// `antseal init`'s flags from the real parser, so the gate is driven with
+/// what a user's command line actually produces.
+fn init_args() -> InitArgs {
+    match Cli::parse_checked(["antseal", "init"])
+        .expect("`antseal init` parses")
+        .command
+    {
+        Command::Init(args) => args,
+        other => panic!("`antseal init` did not parse as `init`: {other:?}"),
+    }
+}
+
+/// **U86 / D155 §2 R8.** Two class-blind refusals, held against what
+/// `vault export` actually does — for *every* class, because neither
+/// message can see the one in front of it.
+///
+/// The claim is universally quantified and that is the whole point: a
+/// message produced before the header is decoded may name
+/// `antseal vault export` **only if** the command runs for every wrap mode
+/// it could be shown to. Today it does not, so the honest text names no
+/// command (D155 §2 R2/R3); if the export ever stopped refusing wrapped
+/// vaults, this test would demand the command be named again rather than
+/// silently accept copy written for the old world.
+///
+/// Do not reduce step 4 to `assert!(!msg.contains(EXPORT_COMMAND))`. That
+/// version is green for the wrong reason — it can never notice that the
+/// product's behaviour moved, which is the exact fault U86's Accept row 3
+/// requires to be watched.
+///
+/// **Assertion order is load-bearing, and it deviates from D155 §2 R8's
+/// sketch deliberately.** The sketch put the per-class `vault export`
+/// verdict guard (*"the verdict moved — that is a D47 format event"*)
+/// inside the loop, ahead of step 4. Measured, that ordering makes the
+/// record's own T1 plant unreachable: deleting both wrap refusals flips the
+/// wrapped row's verdict, the in-loop guard fires first, and step 4 — the
+/// only assertion that encodes U86's claim — never runs, so it could never
+/// be watched red from the correct side. The guard therefore runs **last**,
+/// as step 6. Its redness is unaffected; step 4's is bought.
+///
+/// **What this test does not cover.** It drives the two gates and the third
+/// message's producer, not the handlers around them, and it says nothing
+/// about the standing warnings or `export_nag` — those are
+/// `the_backup_advice_matches_what_export_actually_does`'s (U84/D151 §2 R10)
+/// and each producer keeps its own two-arm guard.
+#[test]
+fn the_class_blind_refusals_name_no_command_that_could_refuse_the_reader() {
+    use antseal_cli::vault::export::{export_vault, import_vault};
+    use antseal_cli::vault::wallet::no_wallet_key_refusal;
+    use antseal_net::NetworkId;
+
+    // (site, rendered, rendered with this row's vault path elided). The
+    // third element exists because the two rows are two different temporary
+    // vaults: "class-blind" means the messages agree once the path they are
+    // each required to name is taken out, and `replace` inserts `<dir>`
+    // only if the path was there, so step 3 gets its presence check free.
+    let mut messages: Vec<(&'static str, String, String)> = Vec::new();
+    let mut verdicts: Vec<bool> = Vec::new();
+    let mut no_wallet_messages: Vec<String> = Vec::new();
+
+    for wrapped in [false, true] {
+        let dir = Dir::new(if wrapped {
+            "blind-wrapped"
+        } else {
+            "blind-plain"
+        });
+        let layout = dir.layout();
+        let keyfile = dir.keyfile();
+        let wrap = if wrapped {
+            WrapChoice::Keyfile {
+                path: keyfile.clone(),
+                record_path: true,
+            }
+        } else {
+            WrapChoice::None
+        };
+        let vault = create_vault_with_wrap(
+            &layout,
+            &passphrase(),
+            KdfSelection::Argon2id,
+            &wrap,
+            &mut rng(0x55),
+        )
+        .expect("create");
+        let root = layout.root().display().to_string();
+
+        // 1. What `vault export` DOES for this class, measured, not assumed.
+        //    Recorded here and judged at step 6 — see the ordering note above.
+        let out = dir.0.join("backup.sealvault");
+        let export = export_vault(&vault, &passphrase(), &out, &mut rng(0x56));
+        verdicts.push(export.is_ok());
+
+        // 2. The two refusals, driven through the real entry points, one per
+        //    class. Neither is reached by any other test in the workspace
+        //    (D155 §4.5), so this is the whole of their coverage.
+        // `machine: false` and a real passphrase fd are deliberate, and both
+        // were measured against the T4 plant (the gate moved below the
+        // wizard). Under `machine: true`, or with no fd, `run_init` answers
+        // `PassphraseUnavailable { NoChannel }` before any `InitPrompt`
+        // method is reached, so `NeverPrompts` would be a double that cannot
+        // fire. With both, and an `init_args()` that supplies none of the
+        // three wizard answers, a moved gate reaches `ask_choice` and the
+        // double panics. In the green world neither is consulted at all —
+        // the gate returns at `init.rs:418`, before both.
+        let init_err = run_init(
+            &layout,
+            &init_args(),
+            Some(passphrase_fd_in(&dir)),
+            false,
+            NetworkId::Devnet,
+            &mut NeverPrompts,
+            &mut rng(0x57),
+        )
+        .expect_err("init over an existing vault refuses");
+        assert_eq!(init_err.class(), ErrorClass::Usage, "{init_err:?}");
+
+        // The nonexistent path is deliberate: `import_vault_impl` refuses at
+        // step 1 and reads the file at step 2, so a refusal that started
+        // reading first would surface `CliError::Io` instead of this variant.
+        let missing = dir.0.join("does-not-exist.sealvault");
+        assert!(
+            !missing.exists(),
+            "the import source must not exist, or this proves nothing about ordering"
+        );
+        let import_err = import_vault(
+            &missing,
+            &layout,
+            || panic!("the refusal must precede the passphrase"),
+            &mut rng(0x58),
+        )
+        .expect_err("import over an existing vault refuses");
+        assert!(
+            matches!(import_err, CliError::ImportRefusedExistingVault { .. }),
+            "the import refusal must be the deliberate one, not an I/O error from \
+             reading the file first: {import_err:?}"
+        );
+
+        for (site, err) in [("init", init_err), ("import", import_err)] {
+            let rendered = err.to_string();
+            let elided = rendered.replace(&root, "<dir>");
+            messages.push((site, rendered, elided));
+        }
+
+        // R4's site: not class-blind (the vault is unlocked where it is
+        // raised) but chained into the import refusal above, so it is held
+        // to the same rule at step 5.
+        no_wallet_messages.push(
+            no_wallet_key_refusal(layout.root())
+                .to_string()
+                .replace(&root, "<dir>"),
+        );
+    }
+
+    // 3. Anti-vacuity, every arm. Without these an empty, truncated or
+    //    never-produced message satisfies step 4 for free.
+    assert_eq!(verdicts.len(), 2, "both classes must have been measured");
+    assert_eq!(
+        messages.len(),
+        4,
+        "both refusals must have fired, per class"
+    );
+    assert_eq!(
+        no_wallet_messages.len(),
+        2,
+        "R4's message must have been built"
+    );
+    for (site, rendered, elided) in &messages {
+        assert!(
+            rendered.len() > 200,
+            "{site}: message is {} bytes: {rendered}",
+            rendered.len()
+        );
+        assert!(
+            elided.contains("<dir>"),
+            "{site}: the refusal must name the vault path (D39 Decision 4): {rendered}"
+        );
+        assert!(
+            rendered.contains("aside"),
+            "{site}: no remedy in the message: {rendered}"
+        );
+    }
+    assert_eq!(
+        messages[0].2, messages[2].2,
+        "`init`'s refusal must be class-blind: it fires on `header.exists()` alone, so a \
+         message that varies by wrap mode means the gate moved and D155 §2 R1 was \
+         overturned in silence"
+    );
+    assert_eq!(
+        messages[1].2, messages[3].2,
+        "`import`'s refusal must be class-blind, for the same reason"
+    );
+
+    // 4. The claim. A class-blind message may name the command exactly when
+    //    the command runs for EVERY class it could be shown to.
+    let runs_for_every_class = verdicts.iter().all(|ok| *ok);
+    for (site, rendered, _) in &messages {
+        assert_eq!(
+            rendered.contains(EXPORT_COMMAND),
+            runs_for_every_class,
+            "{site}: the refusal {} `{EXPORT_COMMAND}` while the command runs for {} of the \
+             {} wrap modes measured ({verdicts:?}). U86: a message produced before the \
+             header is decoded may name a command only if that command runs for every \
+             vault it may be shown to.\n  message: {rendered}",
+            if rendered.contains(EXPORT_COMMAND) {
+                "names"
+            } else {
+                "does not name"
+            },
+            verdicts.iter().filter(|ok| **ok).count(),
+            verdicts.len(),
+        );
+    }
+
+    // 5. R4's site: the same rule, for a message whose remedy is an ARTIFACT
+    //    and not an imperative. It may name `vault import` because its
+    //    antecedent ("if you hold a vault export") is false for exactly the
+    //    class that command refuses — but it may never name the export.
+    for no_wallet in &no_wallet_messages {
+        assert!(
+            !no_wallet.contains(EXPORT_COMMAND),
+            "the no-wallet refusal must not send the reader to a command that refuses \
+             their vault: {no_wallet}"
+        );
+        assert!(
+            no_wallet.contains("refuses to write over a vault that exists"),
+            "the no-wallet refusal must name the step the old copy left out — the import \
+             it points at refuses over an existing vault, for every class: {no_wallet}"
+        );
+        assert!(
+            no_wallet.contains("<dir>"),
+            "the no-wallet refusal must name the vault path: {no_wallet}"
+        );
+    }
+
+    // 6. Deliberately last (see the ordering note above): the D47 guard on
+    //    the verdict itself. If this reddens, the product moved and the copy
+    //    ruled by D155 §2 R2/R3 must be re-ruled, not re-worded.
+    assert_eq!(
+        verdicts,
+        vec![true, false],
+        "`vault export`'s own verdict moved — measured [unwrapped, wrapped] = {verdicts:?}. \
+         If that is deliberate it is a D47 format event and D151 §2 R1 must be re-ruled \
+         before this copy changes."
+    );
 }
 
 /// U8 Accept row 4's dependency assertion — **narrowed to what is true**,

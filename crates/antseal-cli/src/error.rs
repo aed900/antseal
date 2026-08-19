@@ -567,11 +567,19 @@ pub enum CliError {
     /// D51 prompt-class table, "destructive confirm" row: overwriting a
     /// vault destroys `W` for every work in it; the manual move/remove is
     /// the consent, and no bypass flag exists in v1.
+    ///
+    /// The remedy names **no command**: this message is produced from
+    /// `refuse_existing_target`'s `header.exists()` gate
+    /// (`vault/export.rs:1208-1213`) with the header never decoded, so it
+    /// cannot know whether `antseal vault export` would run for this vault
+    /// — and moving the directory is the one instruction true for every
+    /// wrap mode (D155 §2 R3).
     #[error(
         "refusing to import over the existing vault at {}: overwriting a vault \
-         irreversibly destroys the reveal/restore keys of every work in it. Move or remove \
-         that directory yourself first (after `antseal vault export` if you want its \
-         contents) — scripted overwrite-import is deliberately unsupported (D51)",
+         irreversibly destroys the reveal/restore keys of every work in it. Move that \
+         directory aside yourself first — moving it keeps everything, and no antseal command \
+         has to run first; delete it only when you are certain nothing in it matters. \
+         Scripted overwrite-import is deliberately unsupported (D51)",
         .vault_dir.display()
     )]
     ImportRefusedExistingVault { vault_dir: PathBuf },

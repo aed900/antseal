@@ -156,6 +156,41 @@ pub fn load_wallet_key(vault: &UnlockedVault) -> Result<Option<WalletKeyHandle>,
     Ok(Some(WalletKeyHandle::from_bytes(bytes)))
 }
 
+/// The `seal` refusal for a vault with no wallet record.
+///
+/// **The remedy names the step the old copy left out (D155 §2 R4).** The
+/// sentence this replaces — *"Restore from a `antseal vault export`
+/// backup"* — could never be executed by anyone: the message is reached
+/// with the vault **unlocked**, so its header exists, so
+/// `vault::export::refuse_existing_target` refuses the import for
+/// **every** wrap mode. The advice closed a cycle on the refusal it sent
+/// the reader to.
+///
+/// Naming `antseal vault import` here is honest where naming the export
+/// was not, and the distinction is the general rule: the command sits
+/// inside an antecedent conditioned on an **artifact** (*"if you hold a
+/// vault export"*), not inside an imperative. A keyfile-wrapped vault can
+/// never have produced an export, so the antecedent is false for exactly
+/// the class the command would refuse.
+///
+/// It lives here rather than at its call site because `commands` is a
+/// private module (`lib.rs:26`) and nothing there can be reached by an
+/// integration test; this message's only pin is that test
+/// (`tests/vault_keyfile.rs`, D155 §2 R8 step 5), so it needs one author
+/// with a public name — `init::existing_vault_refusal`'s own precedent.
+#[must_use]
+pub fn no_wallet_key_refusal(root: &std::path::Path) -> CliError {
+    CliError::Usage {
+        message: format!(
+            "this vault holds no wallet key, so it cannot pay for a seal — it was created by \
+             an older build, or the wallet record was removed. There is no repair in place: \
+             if you hold a vault export, move {root} aside and import into the empty path; \
+             `antseal vault import` refuses to write over a vault that exists.",
+            root = root.display(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

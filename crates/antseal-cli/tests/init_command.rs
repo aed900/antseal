@@ -589,7 +589,19 @@ fn init_over_an_existing_vault_refuses_absolutely() {
         "the refusal names the vault path: {rendered}"
     );
     assert!(rendered.contains("no --force"));
-    assert!(rendered.contains("vault export"));
+    // D155 §2 R2: the refusal is produced before the header is decoded, so it
+    // cannot know whether `antseal vault export` would run for this vault. The
+    // claim that it names no such command is held against the command's real
+    // verdict in `tests/vault_keyfile.rs`; this is the local guard.
+    assert!(
+        !rendered.contains("antseal vault export"),
+        "a class-blind refusal must not name a command that may refuse the reader's vault: \
+         {rendered}"
+    );
+    assert!(
+        rendered.contains("aside"),
+        "the refusal names the action: {rendered}"
+    );
 }
 
 /// No override flag parses — the surface has none, by design (D39).

@@ -1,0 +1,15 @@
+c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1  incomplete
+  paid, and blocked   2027-01-01 00:00:00 UTC   devnet
+  cost: 9 atto-ANT
+  state: paid
+  CANNOT BE FINISHED: chapter one.txt was selected for splitting by --split blank-lines and is also matched by --no-fine-tree '*.txt', and antseal refuses that pair (D24). D45 makes the recorded flags this work's identity, so no re-run can change them.
+  this seal is paid for and the payment cannot be recovered. To seal this material, move or copy the file(s) to a different path and seal them there with either --split or --no-fine-tree dropped: re-running the recorded command is refused, and re-running the same paths with different flags is refused too. This build has no command that discards a staged work.
+  recorded invocation, refused — do not re-run: antseal seal 'chapter one.txt' --title 'paid, and blocked' --split blank-lines --no-fine-tree '*.txt' --network devnet
+00d539b6a75e6e3743e458b40e389f146b50f73a9835f2107cf6e91f96b1c57e  incomplete
+  staged, and blocked   not yet sealed   devnet
+  cost: not recorded (nothing paid)
+  state: staged
+  CANNOT BE FINISHED: chapter two.md, chapter three.md were selected for splitting by --split blank-lines and are also matched by --no-fine-tree '*.md', and antseal refuses that pair (D24). D45 makes the recorded flags this work's identity, so no re-run can change them.
+  nothing was paid, so only the local staged copy is lost. To seal this material, move or copy the file(s) to a different path and seal them there with either --split or --no-fine-tree dropped: re-running the recorded command is refused, and re-running the same paths with different flags is refused too. This build has no command that discards a staged work.
+  recorded invocation, refused — do not re-run: antseal seal 'chapter two.md' 'chapter three.md' --title 'staged, and blocked' --split blank-lines --no-fine-tree '*.md' --network devnet
+2 work(s): 0 complete, 2 incomplete, 0 abandoned.

@@ -1217,3 +1217,18 @@
   - §2.10's cross-check subsection is updated to describe the shipped behaviour after the change, so the threat model and the page do not part again.
   - The report-side copy §2.10 also names (the canonical report crossing into immutable JS strings at `:303` and `:778`) is dispositioned in the same act, or explicitly deferred with a reason.
 - Notes: **What could not be determined, recorded rather than glossed:** the wasm-bindgen glue is not committed — `git ls-files verifier-web/` returns exactly one path and no `pkg/` directory exists — so per-call linear-memory copies were not audited and this row makes no claim about them. **The value of the row is the pin, not the finding**: Q21 already wrote the widening into §2.10 with the correct mechanism and the correct line numbers, so what is left is that no check would notice if the page's retention changed tomorrow.
+
+### R96 — The page footer is a key publication location with no key element and no marker
+- Milestone: M4
+- Size: S
+- Deps: **with Q258**; consumes D153 §1.6b; constrained by the `page_template.rs` freeze
+- Spec: Page provenance (MVP-SPEC.md line 139); Milestones M4 (line 157)
+- Discovered by: **D153's lane** (2026-08-19) §1.6b, while measuring where the key's four publication locations actually are
+- Problem: `docs/signing/maintainer-key-procedure.md` §5 step 2 and `key-custody.md` §9 both name *"the page footer at `https://antseal.org/`"* as one of the four places the public key is published, and §9 prices it as **discovery** — not independent, because the page, the README and the release assets share one account. Measured 2026-08-19: `verifier-web/index.template.html` contains `minisign` **zero** times, the live page contains it zero times, and no marker pair exists of the kind `README.md:50`/`:54` now carries. When §5 fires, three of the four locations have a defined write target and this one does not — so the publication act that `key-custody.md` §6 step 4 requires to happen *"in one act"* has nowhere to land its second location.
+- Do: add a footer key element and a named marker pair to `verifier-web/index.template.html`, carrying no key today and stating that none is published there yet, in the same idiom `README.md` uses. **It must go inside `index.template.html`**: `crates/antseal-wasm/tests/page_template.rs:81-87` asserts `verifier-web/` holds *exactly* that one file, on the merits that a second file would silently widen what the R18 wording scan covers.
+- Accept:
+  - A marker pair exists in `index.template.html` and is asserted by a test, so a rename or deletion cannot be silent.
+  - The rendered page carries the element; measured on the built artifact, not on the template alone.
+  - No key is published there while `maintainer-key-procedure.md` §5 has not fired, and the copy obeys D71 §2 R11's four prohibitions.
+  - `page_template.rs`'s exactly-one-file assertion still passes.
+- Notes: the README marker pair this mirrors is itself pinned by nothing (instrument ledger, 2026-08-19) — this row should not repeat that.

@@ -48,9 +48,9 @@ does and does not mean: it says the key holder released those bytes — never
 that the bytes are safe, correct, or the newest.
 
 <!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 1) -->
-No signing key exists yet, so none is published here; when one is generated
-its 56-character public key goes between these two markers, alongside a
-pointer to [checking a download](docs/signing/verifying-a-release.md).
+No key is published here yet. The 56-character public key goes between these
+two markers when it is published, alongside a pointer to
+[checking a download](docs/signing/verifying-a-release.md).
 <!-- END minisign-public-key -->
 
 A key published in this file is served from the same account as the binaries

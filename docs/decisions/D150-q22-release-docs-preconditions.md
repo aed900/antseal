@@ -877,3 +877,32 @@ check them off.
 5. **The whole of §1.4 is time-sensitive.** The three HTTP measurements were
    taken 2026-08-18 from this host, unauthenticated. Q65's flip changes two of
    them in a single act, and the flip is consented in principle and not taken.
+
+---
+
+## Addendum — 2026-08-19 (D153 §5 item 16). Appended, never an edit to §1 or §2 above.
+
+The maintainer executed `maintainer-key-procedure.md` §1 on **2026-08-19**, one
+day after this record was written. What that state change does to the text above,
+clause by clause, measured rather than assumed:
+
+- **§1.2's key row and §1.4's key clause changed.** Both read *"the 56-character
+  public key — **DOES NOT EXIST**"*. It exists: key id `3E5D46890F192F58`, logged
+  as the first row of `key-custody.md` §10.
+- **§1.3's *"performed at the moment the key exists"* and §2 R2's closing
+  sentence FALL on their timing claim** — the ownership finding is intact and
+  untouched. **D153 §2 R1 rules that §5 step 1 did NOT become due when the key
+  arrived**: D71 §A R4 starts the `TXT` pin's clock at the key's *first
+  publication*, and putting the key in `README.md` **is** that publication, so §5
+  is what the pin gates rather than what follows it.
+- **§2 R3 item 3's mandated sentence is amended by D153 §2 R3.** The anchor
+  stays; the sentence inside it no longer says no key exists, because that became
+  false. **The rest of R3 was re-measured on 2026-08-19 and STANDS** — three of
+  its four absent operands are still absent, and
+  `https://github.com/aed900/antseal` still returns **404**.
+- **§3.2's *"minisign is not installed here"* is STALE.** `minisign 0.11-1` is at
+  `/usr/bin/minisign`, dpkg-recorded 2026-08-19 12:31.
+- **§4.2's three untaken acts are now two-and-a-part** — §1 is run; §1a step 1's
+  two offline backups, §2 and §3 are not.
+
+No ruling in §2 above is withdrawn.

@@ -2,8 +2,9 @@
 
 Three acts here are **external**: they touch the maintainer's own machine, the
 domain registrar account, and a public timestamp calendar. **No agent performs
-any of them, and none has been performed.** Each needs the maintainer's own
-terminal and, for §2, express in-the-moment consent at the registrar.
+any of them**; §7 records which have been performed and which have not. Each
+needs the maintainer's own terminal and, for §2, express in-the-moment consent
+at the registrar.
 
 Order matters: **§1 → §3 → §2**. The key must exist before it can be anchored,
 and D71 §A R4 wants the anchor a few days ahead of the release while the `TXT`
@@ -25,6 +26,14 @@ that is deliberate.
 mkdir -p ~/.minisign
 minisign -G -p ~/.minisign/minisign.pub -s ~/.minisign/minisign.key
 ```
+
+> **Run this as your own user — not under `sudo`, not as `root`.** `~` expands to the
+> *invoking* account's home, so a root run writes the key to `/root/.minisign/` owned by
+> `root`. That is not where `key-custody.md` §2 puts the working location, and it is not
+> where `scripts/sign-release.sh`'s `${HOME}/.minisign/minisign.key` default will look
+> when you later sign as yourself. **Measured 2026-08-19: this is what happened on the
+> real first run**, and it was corrected by moving the directory and re-running §1a as the
+> maintainer. Signing needs no root at all (`sign-release.sh:98` — *signing is a local act*).
 
 You will be asked:
 
@@ -59,7 +68,7 @@ sed -n '2p' ~/.minisign/minisign.key | base64 -d | head -c 4 | tail -c 2 | od -A
 minisign -R -s ~/.minisign/minisign.key -p /tmp/check.pub && head -1 /tmp/check.pub && rm -f /tmp/check.pub
 ```
 
-Then, before signing anything:
+Then — **step 3 immediately, and steps 1 and 2 before §3, not merely before §4**:
 
 1. Make **two offline backups** of `~/.minisign/minisign.key`, on separate
    media in separate locations, and back up `minisign.pub` with them
@@ -67,6 +76,16 @@ Then, before signing anything:
 2. Record the passphrase where the vault passphrase is recorded, **not** with
    the backups.
 3. Add the first row to `key-custody.md` §10 — date, "generated", key id.
+
+**Why steps 1 and 2 gate §3 and not only §4** (D153 §2 R4): §3 anchors *this*
+key, and an anchor cannot be transferred to a replacement. D71 §A R4 puts the
+anchor in a narrow window — *"a few days before the release date"* — so a key
+lost after §3 and before the release costs the anchor **and** the window on top
+of the regeneration. Loss is the failure `key-custody.md` §5 calls the cheap one
+*because* published signatures survive it; before §3 there is nothing to survive,
+and the backups are what keep it cheap. §1.7 of D153 is the measurement that
+makes this concrete rather than theoretical: today the key has exactly one copy,
+on a machine that is not dedicated to it.
 
 ---
 
@@ -166,7 +185,12 @@ scripts/verify-release.sh --version v0.1.0 --commit "$(git rev-parse HEAD)" \
 
 ## 5. Publish the key in the other three places
 
-After §1 and alongside §2:
+**After §1 and §3, and never before §2.** *"Alongside §2"* was the original
+wording, and it is the ambiguity this section is now explicit about: writing the
+key into any location below **is** the first publication of the key, and D71 §A
+R4 rules that the `TXT` pin's clock *"starts the moment the key is first
+published"*. The `TXT` record therefore exists before the first of these three
+is written, rather than at the same time as an afterthought (D153 §2 R1).
 
 1. **`README.md`** — the 56-character key, with a pointer to
    [`verifying-a-release.md`](verifying-a-release.md).
@@ -175,6 +199,20 @@ After §1 and alongside §2:
 
 All four locations change **in one act** whenever the key changes
 (`key-custody.md` §6 step 4).
+
+**Two locations this list does not name, both measured missing 2026-08-19.**
+
+- **`verifying-a-release.md` carries the placeholder three times** (`:12`, `:35`,
+  `:92`), behind its *"Not yet published"* banner at `:10-14`. It is not one of
+  the four pins — which is why it may carry a placeholder at all (D150 §2 R3
+  item 2) — but it is the one page a stranger actually follows, so replace all
+  three and delete the banner in this same act.
+- **The page footer has no key element and no marker to write into.**
+  `verifier-web/` holds exactly one file and carries the word `minisign` zero
+  times; the live page returns the same. The element is added to
+  `verifier-web/index.template.html` and to nothing else, because
+  `crates/antseal-wasm/tests/page_template.rs` asserts that directory holds
+  exactly `index.template.html`.
 
 **What the wording in those places may not say** (D71 §2 R11): not "verified"
 on its own as a verdict about the software; not "revoked", "expired" or "key
@@ -225,5 +263,22 @@ forbid). A newer minisign is fine; an older one is not checked.
   resulting directory; the `-W` refusal; and `verify-release.sh --self-test`,
   whose ten arms include a flipped data byte, an edited trusted comment, a
   replayed previous release and a substituted key.
-- **Not run:** every step in §1, §2 and §3 above. No project key exists, no
-  `TXT` record exists, and nothing has been anchored.
+- **§1 RUN 2026-08-19.** The project key exists — key id `3E5D46890F192F58`, KDF
+  field `Sc`, at `~/.minisign/` on the maintainer's account, logged as the first row
+  of [`key-custody.md`](key-custody.md) §10. The §1a checks were re-run there after
+  the move described in §1 and all three pass. **§1a step 1 is NOT complete: the two
+  offline backups have not been made**, and §1a's own preamble — which since
+  2026-08-19 reads *"step 3 immediately, and steps 1 and 2 before §3, not merely
+  before §4"* — is what forbids **both §3 and §4** until they exist;
+  `key-custody.md` §4 is the rule that defines them. **§1a step 3 (the `key-custody.md` §10 row) IS
+  complete**, and §1a step 2 is the maintainer's to state.
+- **Not run: §2 and §3.** `dig +short TXT antseal.org` still returns empty — the
+  zone has no `TXT` records at all — and nothing has been anchored. **They are
+  timed differently, and D71 §A R4 says so in its own heading**: *"both deferrable
+  items share one property, and it decides them differently"*. §3, the anchor, is
+  release-timed — *"stamp a few days before the release date"*, not now and not
+  after. §2, the `TXT` pin, is **not** release-timed: §A R4 rules that its clock
+  *"starts the moment the key is first published"* and calls it *"the one that
+  should not be deferred"*, and §A R5 clause 3's *"before first release"* is its
+  outer deadline rather than its schedule. Neither is overdue, because the key is
+  published nowhere yet — and §5 may not publish it until §2 exists.
