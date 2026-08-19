@@ -101,6 +101,45 @@ pub fn preflight(
     Ok(report)
 }
 
+/// The ERC-20 allowance rule for the Autonomi payment vault (Q240; the
+/// ruling and its price are in `docs/threat-model.md` §2.3).
+///
+/// Returns `Some(amount_atto)` — the amount a fresh `approve` must carry
+/// — or `None` when the standing allowance already covers `total_atto`
+/// and no `approve` is emitted at all.
+///
+/// **The amount is the exact quoted total, never `U256::MAX`.** Upstream
+/// approves unlimited spending at every call site it has; antseal does not,
+/// so the payment vault is never standing-authorised to move more ANT than
+/// the payment it was raised for. The cost of that choice is an anonymity
+/// cost and it is stated in the threat model rather than hidden here: an
+/// exact allowance is consumed by its own payment, so a fresh, non-round
+/// `Approval` is emitted on the public chain before essentially every seal.
+/// That is a deliberate trade, not an accident, and this function is the
+/// one place the amount is decided — which is what makes it pinnable.
+///
+/// **Arithmetic, not I/O**, and a free function for the same reason
+/// [`preflight`] is one (D89 Decision 3): the rule must have exactly one
+/// implementation, and a rule that lives on the seam can be disagreed with
+/// by an implementation. It lives in the DEFAULT feature set so the pin
+/// costs no upstream graph — `crates/antseal-net/tests/allowance_policy.rs`
+/// is the test, on `MockBackend`'s feature set, with no live network and no
+/// spend of any kind.
+///
+/// Units are atto-ANT throughout, which is the adapter's own domain: the
+/// total is summed from the quote's per-transfer `amount_atto`
+/// (`u128`) before it is widened for the on-chain call.
+#[must_use]
+pub fn allowance_to_approve(current_atto: u128, total_atto: u128) -> Option<u128> {
+    // The short-circuit. It reads like an optimisation and is not one: see
+    // `AntCoreBackend::ensure_allowance`, where the reason it almost never
+    // fires is written beside the call.
+    if current_atto >= total_atto {
+        return None;
+    }
+    Some(total_atto)
+}
+
 /// The batch-first Autonomi storage boundary (MVP-SPEC.md lines 60–69).
 ///
 /// # The churn-isolation boundary

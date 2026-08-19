@@ -311,11 +311,13 @@ antseal never gives one of these warnings without the other, so neither does
 this page:
 
 ```
-  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Keep a backup of this vault somewhere else.
 ```
 
-That is `LOSS_WARNING` (`crates/antseal-cli/src/vault/bookkeeping.rs:68-70`),
+That is `LOSS_WARNING` (`crates/antseal-cli/src/vault/bookkeeping.rs:73-75`),
 quoted byte for byte, exactly as the top of this page quotes `THEFT_WARNING`.
+The CLI prints a backup instruction beside it, chosen by the vault's wrap mode;
+it is quoted on `vault-loss.md`, which is where the procedure belongs.
 The two mitigations genuinely pull against each other — *make more copies*
 versus *make fewer* — and only stating both makes the trade visible instead of
 letting you optimise one failure into the other. `vault-loss.md` is that side

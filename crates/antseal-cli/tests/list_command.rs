@@ -9,20 +9,25 @@
 mod common;
 
 use antseal_anchor::ots::NagState;
-use antseal_cli::listing::{NAG_VERIFY_AT_UNIX, ResumeClock, WorkListing, WorkRow};
+use antseal_cli::listing::{NAG_VERIFY_AT_UNIX, ResumeClock, ResumeRefusal, WorkListing, WorkRow};
 use antseal_cli::pipeline::journal::{SealJournal, SealState, WorkIdentity};
 use antseal_cli::pipeline::{
-    AnchorArtifact, ArtifactKind, OTS_SLOT, PLAN_ENTRY, SealPlan, VaultJournal, tsa_slot,
+    AnchorArtifact, ArtifactKind, Barrier, OTS_SLOT, PLAN_ENTRY, Pipeline, SealError, SealFile,
+    SealPlan, SealRequest, VaultJournal, tsa_slot,
 };
 use antseal_cli::status::{StatusContext, WorkStatus};
 use antseal_cli::vault::store::{
     ConsentChannel, ConsentRecord, SealShapingFlags, WorkState, WorkStore,
 };
+use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::secrets::{MasterSecret, SealId};
+use antseal_core::crypto::sig_policy::SigPolicy;
+use antseal_net::NetworkId;
+use antseal_net::test_util::{MockBackend, block_on};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-use common::IsolatedVault;
+use common::{IsolatedVault, RecordingGate, ScriptedConsent};
 
 /// A base moment for the fixture clocks (2027-01-01T00:00:00Z), so the
 /// rendered dates are stable and obviously synthetic.
@@ -130,8 +135,19 @@ fn fixture_vault() -> IsolatedVault {
                     title: f.title.map(str::to_owned),
                     split_blank_lines: f.tag == 0x01,
                     force_text: false,
+                    // **The glob must MATCH one of `paths`, and that is not
+                    // cosmetic** (D152 §1.8; U85). It was `*.png` over
+                    // `chapter one.txt` / `notes.md` until 2026-08-18 — a
+                    // shaping `build_plan` has refused as a zero-match glob
+                    // since `442165e` (2026-08-02), so it described no work
+                    // that could ever have existed, and it pinned **the one
+                    // shape in which `--split` and `--no-fine-tree` cannot
+                    // interact**. That is why nothing here went red when
+                    // U82/D149 made the pair a hard refusal and `list` began
+                    // printing a command `seal` aborts on. Do not change it
+                    // back to a glob that matches nothing.
                     no_fine_tree: if f.tag == 0x01 {
-                        vec!["*.png".to_owned()]
+                        vec!["*.txt".to_owned()]
                     } else {
                         Vec::new()
                     },
@@ -313,7 +329,7 @@ fn the_resume_hint_reproduces_the_recorded_invocation() {
     assert_eq!(
         hint,
         "antseal seal 'chapter one.txt' notes.md --title 'thesis draft' --split blank-lines \
-         --no-fine-tree '*.png'"
+         --no-fine-tree '*.txt'"
     );
 }
 
@@ -1146,5 +1162,852 @@ fn the_nag_is_a_structured_field_in_the_json_document() {
         doc["counts"]["unanchored"],
         serde_json::json!(1),
         "the nag count and the --no-anchor count are different questions"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U85 (ruled by D152): `list` must not print a command `seal` refuses
+//
+// U82/D149 made `--split blank-lines` × a matching `--no-fine-tree` glob a
+// hard refusal in `build_plan` (`invalid-seal-argument`, exit 27) for any
+// non-empty **text** file. D45 makes the recorded flag set a work's identity
+// and there is no `--resume` subcommand — re-running `seal` *is* the resume
+// — so a work sealed before that change with such a file cannot be finished
+// through the documented route, and `list` was printing the failing command
+// as an instruction.
+//
+// Every work below is built through the **pipeline**, killed at
+// `PostStagingJournal`, because that barrier's contract is *"every staged
+// blob and the plan record are durable"* — which is the production shape of
+// a stranded work, manifest and all. Such a work can no longer be created
+// through `seal` at all, which is the whole premise of the row.
+//
+// NON-SECRET: every byte string and path below is a documented fixture.
+// ─────────────────────────────────────────────────────────────────────
+
+/// One file in a constructed legacy work: its bytes, and whether the work's
+/// recorded glob matched it.
+struct Shaped {
+    name: &'static str,
+    bytes: &'static [u8],
+    /// Whether a recorded `--no-fine-tree` glob caught this file — i.e.
+    /// what `build_plan:220-228` would have set on its `PlannedFile`.
+    matched: bool,
+    force_text: bool,
+}
+
+/// Text whose raw and canonical renditions are equal: no raw mirror.
+const PROSE: &[u8] = b"alpha one\n\nbeta two\n";
+/// Binary — D24 §1's G6 exemption, and the flag pair's *designed* use.
+const OPAQUE: &[u8] = &[0xFF; 40];
+/// The lone-BOM class: valid UTF-8, raw 3 bytes, **canonical 0** — so its
+/// descriptor carries `fine_tree_present = false` with no glob involved.
+const LONE_BOM: &[u8] = "\u{FEFF}".as_bytes();
+
+/// Seal `files` into a fresh vault and kill the seal after the plan record
+/// is journaled, leaving the work `Staged` with a real manifest.
+fn staged_vault(tag: &str, glob: &str, files: &[Shaped]) -> IsolatedVault {
+    let vault = IsolatedVault::create(tag);
+    seal_into(&vault, 0, "legacy work", glob, "/w", files);
+    vault
+}
+
+/// One staged work, into an existing vault.
+///
+/// `nth` seeds both RNGs: a fixed journal seed would draw the **same**
+/// `seal_id` for every work and the second `begin` would collide, so the
+/// index is load-bearing rather than tidy.
+fn seal_into(
+    vault: &IsolatedVault,
+    nth: u8,
+    title: &str,
+    glob: &str,
+    root: &str,
+    files: &[Shaped],
+) {
+    {
+        let unlocked = vault.unlock();
+        let mock = MockBackend::new();
+        let gate = RecordingGate::new();
+        let consent = ScriptedConsent::always_yes();
+        let kill = common::KillAt::new(Barrier::PostStagingJournal);
+        let mut journal_rng = ChaCha20Rng::from_seed([0x85 ^ nth; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+
+        let absolutes: Vec<String> = files.iter().map(|f| format!("{root}/{}", f.name)).collect();
+        let seal_files: Vec<SealFile<'_>> = files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| SealFile {
+                path_as_given: f.name,
+                path_absolute: &absolutes[i],
+                bytes: f.bytes,
+                // Exactly what `base_flags` + the glob pass would have
+                // produced: `--split` on every file unconditionally, the
+                // opt-out on the ones the glob caught.
+                flags: {
+                    let mut flags = FileFlags::new().with_split(SplitMode::BlankLines);
+                    if f.matched {
+                        flags = flags.with_no_fine_tree();
+                    }
+                    if f.force_text {
+                        flags = flags.with_force_text();
+                    }
+                    flags
+                },
+            })
+            .collect();
+        let request = SealRequest {
+            files: &seal_files,
+            title: title.to_owned(),
+            claimed_time_unix_secs: BASE_TIME,
+            app_version: "antseal-test/1".to_owned(),
+            network: NetworkId::Devnet,
+            no_anchor: false,
+            degraded: false,
+            dry_run: false,
+            sig_policy: SigPolicy::hybrid(),
+            shaping: SealShapingFlags {
+                title: Some(title.to_owned()),
+                split_blank_lines: true,
+                force_text: files.iter().any(|f| f.force_text),
+                no_fine_tree: vec![glob.to_owned()],
+                no_anchor: false,
+                force_degraded: false,
+            },
+        };
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &kill);
+        match block_on(pipeline.seal(&request, &mut ChaCha20Rng::from_seed([0x86 ^ nth; 32]))) {
+            Err(SealError::KilledAtBarrier(Barrier::PostStagingJournal)) => {}
+            other => panic!("the fixture must land staged, not {other:?}"),
+        }
+        assert_eq!(mock.call_log().len(), 0, "no backend call before the kill");
+    }
+}
+
+/// The one work in a fixture vault built by [`staged_vault`].
+fn only_row(listing: &WorkListing) -> &WorkRow {
+    assert_eq!(listing.works.len(), 1, "these fixtures hold one work");
+    &listing.works[0]
+}
+
+/// The `resume` object of a row, as `--json` renders it, selected by title.
+fn resume_json(listing: &WorkListing, title: Option<&str>) -> serde_json::Value {
+    let doc = listing.json();
+    let works = doc["works"].as_array().expect("works array").clone();
+    let row = match title {
+        None => {
+            assert_eq!(works.len(), 1, "expected a single-work vault");
+            works[0].clone()
+        }
+        Some(title) => works
+            .into_iter()
+            .find(|w| w["title"] == serde_json::json!(title))
+            .expect("that work is in the document"),
+    };
+    row["resume"].clone()
+}
+
+/// The rendered lines belonging to the single work in a listing.
+fn rendered(listing: &WorkListing) -> String {
+    listing.render().join("\n")
+}
+
+// ── T1 ───────────────────────────────────────────────────────────────
+
+/// **U85 accept 1 (D152 §2 R9 T1).** A stored shaping `build_plan` would
+/// refuse does not yield a bare hint: the row names the refusal, the money,
+/// the one route that works, and demotes the recorded command to a record.
+#[test]
+fn a_blocked_work_names_the_refusal_and_a_workaround_that_runs() {
+    let vault = staged_vault(
+        "u85-blocked",
+        "*.txt",
+        &[Shaped {
+            name: "chapter one.txt",
+            bytes: PROSE,
+            matched: true,
+            force_text: false,
+        }],
+    );
+    let listing = listing(&vault);
+    let row = only_row(&listing);
+    assert_eq!(row.state, WorkState::IncompletePrePay);
+    assert!(
+        matches!(
+            row.resume_refusal,
+            Some(ResumeRefusal::SplitOnNoFineTree { .. })
+        ),
+        "the recorded shaping is one `build_plan` refuses: {:?}",
+        row.resume_refusal
+    );
+
+    let text = rendered(&listing);
+    for needle in [
+        "  CANNOT BE FINISHED: chapter one.txt was selected for splitting by --split blank-lines \
+         and is also matched by --no-fine-tree '*.txt', and antseal refuses that pair (D24). D45 \
+         makes the recorded flags this work's identity, so no re-run can change them.",
+        "  nothing was paid, so only the local staged copy is lost. To seal this material, move \
+         or copy the file(s) to a different path and seal them there with either --split or \
+         --no-fine-tree dropped: re-running the recorded command is refused, and re-running the \
+         same paths with different flags is refused too. This build has no command that discards \
+         a staged work.",
+        "  recorded invocation, refused — do not re-run: antseal seal 'chapter one.txt' --title \
+         'legacy work' --split blank-lines --no-fine-tree '*.txt' --network devnet",
+    ] {
+        assert!(
+            text.contains(needle),
+            "the blocked row must carry, verbatim:\n{needle}\n--- rendered ---\n{text}"
+        );
+    }
+
+    // The two things it must NOT say: the hint as an instruction, and the
+    // clock note that tells a paid user to hurry up and do the impossible.
+    assert!(
+        !text.contains("resume with:"),
+        "a command that aborts must not be printed as an instruction:\n{text}"
+    );
+    assert!(
+        !text.contains("the recorded quote is stale by design"),
+        "the clock note is replaced, not merely preceded (D152 §3.2):\n{text}"
+    );
+
+    // And the machine document says the same thing in its own vocabulary.
+    assert_eq!(
+        resume_json(&listing, None)["refusal"],
+        serde_json::json!({
+            "rule": "split-x-no-fine-tree",
+            "files": ["chapter one.txt"],
+            "patterns": ["*.txt"],
+        })
+    );
+}
+
+/// **U85 (D152 §2 R5).** The money clause takes `ResumeClock`'s own two-way
+/// split, and the post-pay half is the one that matters: `RESUME PROMPTLY …
+/// finishing it costs a second payment` is an instruction to do the
+/// impossible, on a deadline, about money that is already gone.
+#[test]
+fn a_blocked_post_pay_work_says_the_payment_cannot_be_recovered() {
+    let vault = staged_vault(
+        "u85-blocked-paid",
+        "*.txt",
+        &[Shaped {
+            name: "chapter one.txt",
+            bytes: PROSE,
+            matched: true,
+            force_text: false,
+        }],
+    );
+    // Walk the same work forward to PAID, exactly as `fixture_vault` does.
+    {
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        let id = store.list_works().expect("list")[0];
+        let mut rng = ChaCha20Rng::from_seed([0x87; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        for step in [SealState::Anchored, SealState::Paid] {
+            journal.set_state(&id, step).expect("advance");
+        }
+        journal
+            .put_consent(
+                &id,
+                ConsentRecord {
+                    total_ant_atto: 9,
+                    gas_estimate_wei: 21_000,
+                    consent_time_unix_secs: BASE_TIME,
+                    channel: ConsentChannel::YesFlag,
+                },
+            )
+            .expect("consent");
+    }
+    let listing = listing(&vault);
+    let row = only_row(&listing);
+    assert_eq!(row.state, WorkState::IncompletePostPay);
+
+    let text = rendered(&listing);
+    assert!(
+        text.contains(
+            "  this seal is paid for and the payment cannot be recovered. To seal this \
+                       material, move or copy the file(s) to a different path"
+        ),
+        "the post-pay money clause, verbatim:\n{text}"
+    );
+    assert!(
+        !text.contains("RESUME PROMPTLY"),
+        "a work that cannot be finished must not be told to hurry:\n{text}"
+    );
+}
+
+// ── T2: the false-positive control ───────────────────────────────────
+
+/// **U85 accept (D152 §2 R9 T2).** A work carrying **both flags
+/// legitimately** — a binary opted out beside split prose — still prints
+/// `resume with:` and its clock note, and its `refusal` is `null`.
+///
+/// This is the test that kills the cheap `split && !no_fine_tree.is_empty()`
+/// trigger. That trigger's false positives are not exotic: they are the flag
+/// pair's *designed* use (D24 §1's G6 exemption), they are creatable at HEAD
+/// today, and firing on one would tell the owner of a **recoverable**
+/// payment that it is lost — inside the one-day window in which it still is.
+#[test]
+fn the_flag_pair_alone_does_not_block_a_work() {
+    let vault = staged_vault(
+        "u85-ordinary",
+        "*.dat",
+        &[
+            Shaped {
+                name: "chapter one.txt",
+                bytes: PROSE,
+                matched: false,
+                force_text: false,
+            },
+            Shaped {
+                name: "photo.dat",
+                bytes: OPAQUE,
+                matched: true,
+                force_text: false,
+            },
+        ],
+    );
+    let listing = listing(&vault);
+    let row = only_row(&listing);
+    assert!(
+        row.resume_refusal.is_none(),
+        "the pair over a BINARY file is legal, seals today and resumes today: {:?}",
+        row.resume_refusal
+    );
+
+    let text = rendered(&listing);
+    assert!(
+        text.contains(
+            "  resume with: antseal seal 'chapter one.txt' photo.dat --title 'legacy work' \
+             --split blank-lines --no-fine-tree '*.dat' --network devnet"
+        ),
+        "the ordinary path is untouched:\n{text}"
+    );
+    assert!(text.contains("nothing was paid; the recorded quote is stale by design"));
+    assert!(!text.contains("CANNOT BE FINISHED"), "{text}");
+    assert_eq!(
+        resume_json(&listing, None)["refusal"],
+        serde_json::Value::Null
+    );
+}
+
+// ── T8: multi-file, one offender ─────────────────────────────────────
+
+/// **U85 (D152 §2 R9 T8).** Every offending file is named and only the
+/// offending files are — D46's *"every offending argument named"*, the rule
+/// `refuse_split_on_no_fine_tree` follows for the same refusal.
+#[test]
+fn only_the_refused_file_is_named_not_every_matched_one() {
+    let vault = staged_vault(
+        "u85-three",
+        "*.dat",
+        &[
+            // Text, NOT matched: keeps its fine tree, so the pair never
+            // touches it.
+            Shaped {
+                name: "unmatched.txt",
+                bytes: PROSE,
+                matched: false,
+                force_text: false,
+            },
+            // Binary, matched: matched but not refused (G6).
+            Shaped {
+                name: "opaque.dat",
+                bytes: OPAQUE,
+                matched: true,
+                force_text: false,
+            },
+            // Text, matched: the only offender.
+            Shaped {
+                name: "prose.dat",
+                bytes: PROSE,
+                matched: true,
+                force_text: false,
+            },
+        ],
+    );
+    let listing = listing(&vault);
+    let row = only_row(&listing);
+    let Some(ResumeRefusal::SplitOnNoFineTree { files, patterns }) = &row.resume_refusal else {
+        panic!("expected a refusal, got {:?}", row.resume_refusal);
+    };
+    assert_eq!(files, &vec!["prose.dat".to_owned()], "one offender, named");
+    assert_eq!(patterns, &vec!["*.dat".to_owned()]);
+
+    let text = rendered(&listing);
+    assert!(
+        text.contains("CANNOT BE FINISHED: prose.dat was selected"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("CANNOT BE FINISHED: unmatched.txt")
+            && !text.contains("opaque.dat was selected")
+            && !text.contains("unmatched.txt, ")
+            && !text.contains(", opaque.dat"),
+        "a file that is not refused must not appear in the refusal:\n{text}"
+    );
+}
+
+// ── T3 and T7: the third value, and the gate that keeps it cheap ──────
+
+/// A vault of works that never reached `put_plan` — `journal.begin` and
+/// nothing else, which is `SealState::Staged` with **no manifest**.
+///
+/// Work `0xB1` carries the flag pair, `0xB2` and `0xB3` do not. That is the
+/// whole population T7 counts over, and it is the same fixture T3 reads.
+fn no_manifest_vault() -> IsolatedVault {
+    let vault = IsolatedVault::create("u85-no-manifest");
+    let unlocked = vault.unlock();
+    let mut rng = ChaCha20Rng::from_seed([0x88; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    for (tag, paired) in [(0xB1_u8, true), (0xB2, false), (0xB3, false)] {
+        let w = MasterSecret::from_bytes([tag; 32]);
+        journal
+            .begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id: seal_id(tag),
+                network: "devnet".to_owned(),
+                unanchored: false,
+                degraded: false,
+                input_paths_as_given: vec!["draft.txt".to_owned()],
+                input_paths_absolute: vec!["/w/draft.txt".to_owned()],
+                shaping: SealShapingFlags {
+                    title: Some(format!("work {tag:#04x}")),
+                    split_blank_lines: paired,
+                    force_text: false,
+                    no_fine_tree: if paired {
+                        vec!["*.txt".to_owned()]
+                    } else {
+                        Vec::new()
+                    },
+                    no_anchor: false,
+                    force_degraded: false,
+                },
+            })
+            .expect("begin");
+    }
+    vault
+}
+
+/// **U85 (D152 §2 R9 T3).** A work that was killed before `put_plan` has no
+/// manifest, so there is **no verdict** — the third value. Its human row is
+/// byte-identical to what it rendered before this row, because the branch
+/// carries no money: `put_plan` (`pipeline/seal.rs:351`) runs before
+/// `quote_batch` (`:372`), so a work with no journaled manifest was never
+/// quoted, consented to or paid for.
+#[test]
+fn a_work_with_no_manifest_gets_no_verdict_and_renders_as_before() {
+    let vault = no_manifest_vault();
+    let listing = listing(&vault);
+    let row = listing
+        .works
+        .iter()
+        .find(|r| r.seal_id == seal_id(0xB1))
+        .expect("the flag-pair work");
+    assert_eq!(row.resume_refusal, Some(ResumeRefusal::Undetermined));
+
+    let text = rendered(&listing);
+    assert!(
+        !text.contains("CANNOT BE FINISHED"),
+        "no verdict is not a verdict:\n{text}"
+    );
+    assert!(
+        text.contains(
+            "  resume with: antseal seal draft.txt --title 'work 0xb1' --split blank-lines \
+             --no-fine-tree '*.txt' --network devnet"
+        ),
+        "the ordinary hint, unchanged:\n{text}"
+    );
+    assert!(
+        text.contains("nothing was paid; the recorded quote is stale by design"),
+        "{text}"
+    );
+
+    assert_eq!(
+        resume_json(&listing, Some("work 0xb1"))["refusal"],
+        serde_json::json!({ "rule": "undetermined" })
+    );
+}
+
+/// **U85 accept (D152 §2 R9 T7).** The cheap gate is load-bearing, and this
+/// counts rather than argues it.
+///
+/// `Undetermined` is *only* reachable through the plan read, so a work whose
+/// shaping lacks the flag pair and whose row reads `null` is a work whose
+/// plan record was **not** read. The count is over the whole population, and
+/// the anti-vacuity arm is built in: the same vault holds one work that
+/// *does* carry the pair, so `Undetermined` is demonstrably reachable and
+/// `0 of 2` is not a value the fixture could not produce.
+#[test]
+fn only_the_flag_pair_pays_for_a_plan_read() {
+    let vault = no_manifest_vault();
+    let listing = listing(&vault);
+
+    let read: Vec<&WorkRow> = listing
+        .works
+        .iter()
+        .filter(|r| r.resume_refusal.is_some())
+        .collect();
+    let unread: Vec<&WorkRow> = listing
+        .works
+        .iter()
+        .filter(|r| r.resume.is_some() && r.resume_refusal.is_none())
+        .collect();
+
+    assert_eq!(listing.works.len(), 3, "the whole population");
+    assert_eq!(
+        unread.len(),
+        2,
+        "two ordinary incomplete works, and neither may cost a plan read"
+    );
+    assert_eq!(read.len(), 1, "exactly the work carrying both flags");
+    assert_eq!(read[0].seal_id, seal_id(0xB1));
+    // Anti-vacuity: the value the two `None`s are being distinguished from
+    // is one this very fixture produces, so `None` here means "not read"
+    // rather than "unreachable".
+    assert_eq!(read[0].resume_refusal, Some(ResumeRefusal::Undetermined));
+}
+
+// ── T5 and T6: the doors, and the differential ───────────────────────
+
+/// A scratch directory holding the real files `build_plan` opens, removed
+/// when the test ends.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "antseal-u85-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).expect("mk scratch");
+        Self(path)
+    }
+
+    /// Plant `files` on disk and return the directory as a `str`.
+    fn plant(&self, files: &[Shaped]) -> &str {
+        for f in files {
+            std::fs::write(self.0.join(f.name), f.bytes).expect("plant");
+        }
+        self.0.to_str().expect("utf-8 scratch path")
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// `build_plan` over `files` in `scratch`, reduced to D24 §1's verdict.
+fn build_plan_refuses(scratch: &Scratch, glob: &str, force_text: bool, files: &[Shaped]) -> bool {
+    let args = antseal_cli::cli::SealArgs {
+        paths: files.iter().map(|f| f.name.into()).collect(),
+        title: None,
+        split: Some(antseal_cli::cli::SplitMode::BlankLines),
+        force_text,
+        no_fine_tree: Some(glob.to_owned()),
+        dry_run: false,
+        yes: false,
+        force_degraded: false,
+        no_anchor: false,
+    };
+    match antseal_cli::seal_plan::build_plan(&args, NetworkId::Devnet, &scratch.0) {
+        Ok(_) => false,
+        Err(antseal_cli::error::CliError::InvalidSealArgument { .. }) => true,
+        Err(other) => panic!("neither verdict: {other}"),
+    }
+}
+
+/// **U85 (D152 §2 R9 T5).** The three doors out of a stranded work, driven
+/// on one constructed work — and every one of them is shut.
+///
+/// This is what R5's copy asserts, pinned as fact rather than as prose:
+/// re-running the recorded command is **27**, the same paths with a flag
+/// dropped is **26**, and an overlapping subset is **25**. Doors 2 and 3
+/// each send the user back to the command door 1 refuses, which is why
+/// `list` is the venue that has to break the cycle — and why the copy never
+/// says *drop a flag* or *seal it separately* without *at a different path*.
+#[test]
+fn all_three_doors_out_of_a_stranded_work_are_shut() {
+    let files = [
+        Shaped {
+            name: "chapter one.txt",
+            bytes: PROSE,
+            matched: true,
+            force_text: false,
+        },
+        Shaped {
+            name: "notes.md",
+            bytes: PROSE,
+            matched: false,
+            force_text: false,
+        },
+    ];
+    let scratch = Scratch::new("doors");
+    let root = scratch.plant(&files);
+    let vault = IsolatedVault::create("u85-doors");
+    seal_into(&vault, 0, "legacy work", "*.txt", root, &files);
+
+    let absolute: Vec<String> = files.iter().map(|f| format!("{root}/{}", f.name)).collect();
+    let recorded = SealShapingFlags {
+        title: Some("legacy work".to_owned()),
+        split_blank_lines: true,
+        force_text: false,
+        no_fine_tree: vec!["*.txt".to_owned()],
+        no_anchor: false,
+        force_degraded: false,
+    };
+
+    // Door 1 — re-run the printed command. `build_plan` refuses it before
+    // the vault is even opened, so this needs no unlock.
+    let door_one = antseal_cli::seal_plan::build_plan(
+        &antseal_cli::cli::SealArgs {
+            paths: files.iter().map(|f| f.name.into()).collect(),
+            title: Some("legacy work".to_owned()),
+            split: Some(antseal_cli::cli::SplitMode::BlankLines),
+            force_text: false,
+            no_fine_tree: Some("*.txt".to_owned()),
+            dry_run: false,
+            yes: false,
+            force_degraded: false,
+            no_anchor: false,
+        },
+        NetworkId::Devnet,
+        &scratch.0,
+    )
+    .expect_err("the recorded command is refused");
+    assert_eq!(door_one.class().name(), "invalid-seal-argument");
+    assert_eq!(door_one.class().exit_code(), 27);
+
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    // Door 2 — the same paths with `--split` dropped.
+    let door_two = antseal_cli::seal_resume::detect(
+        &store,
+        NetworkId::Devnet,
+        &absolute,
+        &SealShapingFlags {
+            split_blank_lines: false,
+            ..recorded.clone()
+        },
+    )
+    .expect_err("a flag-set mismatch on an exact path match");
+    assert_eq!(door_two.class().name(), "resume-flag-mismatch");
+    assert_eq!(door_two.class().exit_code(), 26);
+    assert!(
+        door_two.to_string().contains("--split blank-lines"),
+        "and its detail reprints the very command door 1 refuses: {door_two}"
+    );
+
+    // Door 3 — an overlapping, non-exact path set.
+    let door_three =
+        antseal_cli::seal_resume::detect(&store, NetworkId::Devnet, &absolute[..1], &recorded)
+            .expect_err("an overlapping subset");
+    assert_eq!(door_three.class().name(), "resume-overlap-not-exact");
+    assert_eq!(door_three.class().exit_code(), 25);
+    assert!(
+        door_three.to_string().contains("--no-fine-tree '*.txt'"),
+        "and it too points back at the refused command: {door_three}"
+    );
+
+    // The one route that runs: a path set disjoint from every candidate.
+    let elsewhere = vec![format!("{root}/copy/chapter one.txt")];
+    assert!(
+        antseal_cli::seal_resume::detect(&store, NetworkId::Devnet, &elsewhere, &recorded).is_ok(),
+        "moving the files to a different path is the escape R5 names"
+    );
+}
+
+/// **U85 (D152 §2 R9 T6).** `list`'s verdict and `build_plan`'s verdict are
+/// the same rule read from two different media, over a matrix that makes
+/// each term the deciding one somewhere.
+///
+/// Sharing the predicate (R3) cannot cover this: what is being tested is
+/// that the *manifest* answers the same question the *filesystem* does, and
+/// only driving both sides over the same bytes can show it.
+///
+/// Row (f) is the lone-BOM class, and it is why this suite's manifest side
+/// carries a `pattern_matches` conjunct that D152 §2 R2 step 3 does not:
+/// `describe_file` is handed the **canonical** byte count, so a file whose
+/// raw bytes are a BOM alone has `fine_tree_present == false` with no glob
+/// involved, while its raw-mirror length is 3. Read as D152 §1.6 states it,
+/// `list` would call that work blocked and `build_plan` would accept the
+/// re-run — the false-positive direction §1.5 refuses the cheap trigger for.
+#[test]
+fn the_manifest_verdict_agrees_with_build_plan_on_every_shape() {
+    struct Row {
+        title: &'static str,
+        glob: &'static str,
+        force_text: bool,
+        files: Vec<Shaped>,
+    }
+    let matrix = vec![
+        Row {
+            title: "a: non-empty text, matched",
+            glob: "*.txt",
+            force_text: false,
+            files: vec![Shaped {
+                name: "a.txt",
+                bytes: PROSE,
+                matched: true,
+                force_text: false,
+            }],
+        },
+        Row {
+            title: "b: binary, matched",
+            glob: "*.dat",
+            force_text: false,
+            files: vec![Shaped {
+                name: "b.dat",
+                bytes: OPAQUE,
+                matched: true,
+                force_text: false,
+            }],
+        },
+        Row {
+            title: "c: empty file, matched",
+            glob: "*.txt",
+            force_text: false,
+            files: vec![Shaped {
+                name: "c.txt",
+                bytes: b"",
+                matched: true,
+                force_text: false,
+            }],
+        },
+        Row {
+            title: "d: text NOT matched, beside a matched binary",
+            glob: "*.dat",
+            force_text: false,
+            files: vec![
+                Shaped {
+                    name: "d.txt",
+                    bytes: PROSE,
+                    matched: false,
+                    force_text: false,
+                },
+                Shaped {
+                    name: "d.dat",
+                    bytes: OPAQUE,
+                    matched: true,
+                    force_text: false,
+                },
+            ],
+        },
+        Row {
+            title: "e: --force-text over the matched binary",
+            glob: "*.dat",
+            force_text: true,
+            files: vec![Shaped {
+                name: "e.dat",
+                bytes: OPAQUE,
+                matched: true,
+                force_text: true,
+            }],
+        },
+        Row {
+            title: "f: lone BOM, NOT matched, beside a matched binary",
+            glob: "*.dat",
+            force_text: false,
+            files: vec![
+                Shaped {
+                    name: "bom.txt",
+                    bytes: LONE_BOM,
+                    matched: false,
+                    force_text: false,
+                },
+                Shaped {
+                    name: "f.dat",
+                    bytes: OPAQUE,
+                    matched: true,
+                    force_text: false,
+                },
+            ],
+        },
+        // (g) is (f)'s mirror image and pins the other half of the class:
+        // matched, `build_plan` over-refuses it (raw 3 > 0 and the bytes are
+        // valid UTF-8 — D149 §6), and `list` must AGREE with that
+        // over-refusal rather than quietly correct it. It is the row that
+        // makes the raw-mirror byte count load-bearing: `size()` alone is
+        // the **canonical** count, which is 0 here.
+        Row {
+            title: "g: lone BOM, matched",
+            glob: "*.txt",
+            force_text: false,
+            files: vec![Shaped {
+                name: "bom2.txt",
+                bytes: LONE_BOM,
+                matched: true,
+                force_text: false,
+            }],
+        },
+    ];
+
+    let vault = IsolatedVault::create("u85-differential");
+    let mut plan_side = Vec::new();
+    for (nth, row) in matrix.iter().enumerate() {
+        let scratch = Scratch::new(&format!("diff{nth}"));
+        let root = scratch.plant(&row.files);
+        seal_into(
+            &vault,
+            u8::try_from(nth).expect("small matrix"),
+            row.title,
+            row.glob,
+            root,
+            &row.files,
+        );
+        plan_side.push(build_plan_refuses(
+            &scratch,
+            row.glob,
+            row.force_text,
+            &row.files,
+        ));
+    }
+
+    let listing = listing(&vault);
+    assert_eq!(listing.works.len(), matrix.len(), "one work per matrix row");
+    let mut list_side = Vec::new();
+    for row in &matrix {
+        let work = listing
+            .works
+            .iter()
+            .find(|w| w.title.as_deref() == Some(row.title))
+            .unwrap_or_else(|| panic!("row {} is in the vault", row.title));
+        list_side.push(matches!(
+            work.resume_refusal,
+            Some(ResumeRefusal::SplitOnNoFineTree { .. })
+        ));
+        assert_ne!(
+            work.resume_refusal,
+            Some(ResumeRefusal::Undetermined),
+            "row {}: every work here has a journaled manifest",
+            row.title
+        );
+    }
+
+    for (index, row) in matrix.iter().enumerate() {
+        assert_eq!(
+            list_side[index], plan_side[index],
+            "row {}: `list` says {}, `build_plan` says {}",
+            row.title, list_side[index], plan_side[index]
+        );
+    }
+    // Anti-vacuity: agreement over an all-false matrix is `assert_eq!(x, x)`.
+    assert!(
+        plan_side.contains(&true) && plan_side.contains(&false),
+        "the matrix must exercise both verdicts, not one: {plan_side:?}"
+    );
+    assert!(
+        list_side.contains(&true) && list_side.contains(&false),
+        "and so must the manifest side: {list_side:?}"
     );
 }

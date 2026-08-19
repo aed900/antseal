@@ -271,6 +271,14 @@ pub fn combine(base: &VaultKey, keyfile: &KeyfileSecret) -> Result<VaultKey, Cli
 /// The placement guidance `init` prints when a keyfile wrap is chosen.
 /// Docs own the long form (Q24); this is the minimum a user needs at the
 /// moment the file is created.
+///
+/// **It names no command, deliberately (U84 / D151 §2 R7).** This text is
+/// printed only to a keyfile user, and `vault export` refuses a
+/// keyfile-wrapped vault ([`crate::vault::export`], the overturned-U8
+/// section), so any sentence here about the export would be advice that
+/// cannot be followed. The vault-level instruction is
+/// [`crate::vault::bookkeeping::BACKUP_BY_HAND`], eleven lines below on
+/// the same screen; this says only what is true of the **keyfile**.
 #[must_use]
 pub fn placement_guidance(path: &Path) -> Vec<String> {
     vec![
@@ -284,9 +292,9 @@ pub fn placement_guidance(path: &Path) -> Vec<String> {
          the other."
             .to_owned(),
         format!(
-            "  Back it up separately too — `antseal vault export` does NOT contain the \
-             keyfile, only the fact that one is required. Override its location for a single \
-             run with {KEYFILE_ENV}=<path>."
+            "  Back it up separately too: a copy of the keyfile, on different media from the \
+             vault, is the second half of this vault's backup. Override its location for a \
+             single run with {KEYFILE_ENV}=<path>."
         ),
     ]
 }
@@ -400,17 +408,24 @@ mod tests {
         assert_eq!(locate(None, None), None);
     }
 
+    /// The guidance echoes the caller's path and the env override. What it
+    /// must not do — promise anything about `antseal vault export` — is
+    /// asserted where the command can actually be driven
+    /// (`tests/vault_keyfile.rs::the_backup_advice_matches_what_export_actually_does`).
+    ///
+    /// **What used to be here, and why it could not fail (U84).** This test
+    /// asserted `text.contains("does NOT contain the keyfile")` — the copy
+    /// compared to its own words. It was green *because* the sentence
+    /// existed, while `vault export` refused the very vaults this text is
+    /// printed for. Do not reintroduce a check whose expected value is the
+    /// string under test; the wording is pinned by U78's golden and the
+    /// claim is pinned by behaviour.
     #[test]
-    fn the_placement_guidance_says_the_export_does_not_carry_it() {
+    fn the_placement_guidance_echoes_the_path_and_the_env_override() {
         let text = placement_guidance(Path::new("/media/usb/vault.key")).join("\n");
         assert!(text.contains("/media/usb/vault.key"), "{text}");
-        assert!(
-            text.contains("REQUIRED alongside your passphrase"),
-            "{text}"
-        );
-        assert!(text.contains("different media"), "{text}");
-        assert!(text.contains("does NOT contain the keyfile"), "{text}");
         assert!(text.contains(KEYFILE_ENV), "{text}");
+        assert!(!text.contains("antseal vault export"), "{text}");
     }
 
     /// The secret types stay redacted (project rule 6 / U21).

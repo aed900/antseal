@@ -718,6 +718,11 @@ fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
         // with no recorded backup. `false` would document the field
         // without documenting why it exists.
         export_nag: true,
+        // D151 §2 R6: mode 0, so the nag's exemplar carries the
+        // actionable `vault export` remedy. The `--json` document is
+        // deliberately unchanged by the class — see D151 §3.6 — so this
+        // field moves no byte of `json-envelopes.txt`.
+        wrapped: false,
     }
 }
 
@@ -1135,6 +1140,7 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 degraded: false,
                 cost_atto: Some(4_200_000_000_000_000_000),
                 resume: None,
+                resume_refusal: None,
                 pending_anchors: Some(2),
                 nag: Some(NagState::OnlyPendingOts),
                 damaged_anchors: AnchorDamage::default(),
@@ -1154,6 +1160,16 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                     invocation: "antseal seal big.bin --no-anchor --network devnet".to_owned(),
                     clock: ResumeClock::TimeBoxed,
                 }),
+                // U85/D152 R6. `null` is the honest value for THIS exemplar
+                // — its recorded invocation carries neither `--split` nor
+                // `--no-fine-tree`, so the rule cannot refuse it — and it
+                // documents that the key is present unconditionally, which
+                // is the property a consumer branches on. It does **not**
+                // register the populated shape
+                // (`{"rule":"split-x-no-fine-tree","files":[..],"patterns":[..]}`)
+                // or the third value (`{"rule":"undetermined"}`); those are
+                // pinned in `list_command.rs` and are not documented here.
+                resume_refusal: None,
                 pending_anchors: Some(0),
                 nag: Some(NagState::Unanchored),
                 damaged_anchors: AnchorDamage::default(),
@@ -1170,6 +1186,7 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 degraded: false,
                 cost_atto: Some(2_000_000_000_000_000_000),
                 resume: None,
+                resume_refusal: None,
                 // The nag class is **orthogonal** to the damage and is not
                 // suppressed by it (D100 R4): this work does hold a
                 // headline-eligible anchor, so `anchored` is true, and the

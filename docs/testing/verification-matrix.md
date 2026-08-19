@@ -3,7 +3,12 @@
 > **Owning task: Q13** (`tasks/Q.md`), milestone **M0** — tagged M0 because it
 > must exist at the freeze; maintained continuously through M4.
 > **Spec basis: MVP-SPEC.md lines 165–175**, the Verification section, every
-> bullet of it.
+> bullet of it — **plus one declared extension: MVP-SPEC.md line 143**, the
+> Vault paragraph, whose clause-by-clause conformance table is the last
+> section of this file. That extension is **Q251**'s and is stated here
+> rather than left implicit, because a table sitting inside a file whose
+> declared basis excludes it is the same silent divergence Q251 exists to
+> collect. What it costs is recorded at that section's preamble.
 >
 > **This file is machine-checked.** `scripts/check-traceability.py --matrix`
 > parses the tables below and asserts that **every** reference in a
@@ -22,6 +27,23 @@
 > cover-node wire encoding and tests will move with it; a line-number matrix
 > would rot silently on the first refactor, and a rotted matrix is worse than
 > none because it is trusted.
+>
+> **The rule binds the whole file, not only the checked column** — stated
+> because Q251 arrived with an `Accept` row asking for `path:line` citations
+> and the two had to be reconciled rather than both obeyed. The checker
+> resolves the `tests / evidence` cell and never reads `notes`, so a line
+> number in `notes` would be a pointer nothing verifies: the worst of the two
+> shapes, not a compromise between them. Shipped behaviour is therefore named
+> by **symbol** here — `KdfParams::check_ranges`, not `kdf.rs:280` — which is
+> exact, greppable and survives an edit above it. Q251 supplied the
+> demonstration as well as the request: of the eighteen `path:line` locators
+> its own row and the records feeding it carried, **three did not survive
+> re-measurement** — one naming an unrelated line, one naming an unrelated
+> section of the record it quotes, and one naming the first guard inside a
+> match arm rather than the arm (see that section's preamble). The dated
+> `path:line` measurements live in `TODO.md`'s row and the `tasks/Q.md`
+> entry, where they are timestamped claims about one tree state; this file
+> carries the durable form.
 
 ## How the gate uses this
 
@@ -208,6 +230,93 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
 | V9.2 | 175 | One small **real mainnet** seal, verified end-to-end from a clean machine using only the released signed binary and the hosted page | M4 | Q34 | deferred | NONE at M0 | The only pre-release public-network exposure; accepted and recorded. |
 | V9.3 | 175 | Disk-loss restore drill | M4 | Q32 | deferred | NONE at M0 | Second clean machine, vault backup only. |
 
+## MVP-SPEC.md line 143 — the Vault paragraph, clause by clause (Q251)
+
+**Why this section is in this file, and what it costs.** The rest of the
+matrix is keyed to the Verification section's bullets. Line 143 is a *Vault*
+line, so this section is a declared extension of the file's spec basis rather
+than a new group of ordinary rows, and the header says so. It is here because
+**Q34**'s gate reads *"traceability matrix 100 % green"* and nothing else the
+M4 gate reads holds line 143's conformance. Each divergence below was flagged
+where it was found and nowhere else — one record apiece, scattered across a
+task file, the register, six separate decision records and an audit — so no
+document held them against the line, and one of them was held by nothing at
+all. A
+collection in a file the gate does not read would have reproduced exactly that.
+
+**The cost, stated rather than absorbed.** `covered` means something slightly
+wider here than in the V-series. There it reads *"a test exists for this
+verification bullet"*. Here it reads **"this clause's disposition is decided
+below AND its shipped behaviour is pinned by at least one named test or
+committed document"**. The vocabulary is machine-fixed to three words, so
+there is no fourth status to mint: `gap` would mean the clause's shipped
+behaviour is pinned by nothing, and `deferred` is a category error for a
+clause whose behaviour already ships. A row here going to `gap` is a real
+finding and blocks the M4 gate exactly as a V-row does.
+
+**A `covered` status is NOT a claim that the clause is satisfied.** Seven of
+the fifteen rows record a **divergence** — six standing and one closed — and
+all seven stay `covered`, because what the status certifies is that the
+divergence is measured, disposed and pinned, not that the code agrees with the
+sentence. Read the `notes` cell, always. The disposition vocabulary is Q251's:
+*satisfied*, *satisfied-and-stronger*, *stricter than spec*, *deviation in
+mechanism*, *half deferred*, *incomplete spec*, *interpretation*, and *closed*
+for a divergence that no longer stands.
+
+**Derivation.** The list below is derived by reading line 143's own clauses in
+their own order, not by transcribing the task row — the row's `Accept`
+requires that, because a collection that only collects what was already known
+repeats the defect one level up. **`L143.5` is a divergence no record names**
+— the spec states parameter *floors* and shipped enforces two-sided *windows*,
+so a spec-conformant hardening is refused — and the wording conflict recorded
+inside `L143.2` is likewise named nowhere, though the divergence containing it
+is D42's. Both were found by the clause-by-clause read and neither appears in
+the row that commissioned this section.
+
+**Locator hygiene, and why this section names symbols.** Every divergence
+below arrived cited by line number. Eighteen such locators were re-measured
+against the tree for this section and **three did not survive**: the exit-14
+mapping was cited at a line holding an unrelated enum entry in a different
+list; a record's §Spec-conformance quotation was cited some seventy lines past
+the section it quotes; and *"the Argon2id arm"* was cited at the first range
+guard inside that arm rather than at the arm. **None had rotted** — all three
+were wrong the day they were written, two on 2026-08-17 and one on 2026-08-18.
+That is the file's by-name rule earning its keep on its own subject matter, so
+this section obeys it: shipped behaviour is named by symbol and by file,
+records by file and section. The dated `path:line` form lives in `TODO.md`'s
+row and the `tasks/Q.md` entry, where it is a timestamped claim about one tree
+state rather than a durable pointer.
+
+**No code change is licensed by any row here.** Every divergence is either
+stronger than the spec, a recorded deferral, an under-specified spec line, or
+an interpretation. `MVP-SPEC.md` is frozen; the protocol is *the spec wins,
+flag the conflict, do not silently diverge*, and this section is the flag.
+
+**Ids.** `L143.n`, for the spec **L**ine they key to. Deliberately not
+`S143.n`: `S` is a task-id domain, and that id written alone inside a
+backtick span is exactly the shape `scripts/check-traceability.py`'s task
+half reds as a freshly minted, never-registered citation — the id is above
+S's ceiling, where only a marked occurrence fires. `L` is in no domain, as
+the `V` series is in none.
+
+| id | spec line | spec bullet | milestone | owner | status | tests / evidence | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| L143.1 | 143 | *"config + per-work records (`W`, seal journal, receipts, `.ots`, TSA tokens, addresses, paths, costs)"* — the per-work enumeration is inside the vault AEAD | M4 | U5/U9/D42 | covered | `crates/antseal-cli/tests/work_store.rs::fixture_states_round_trip_across_reopen`, `crates/antseal-cli/tests/work_store.rs::receipt_survives_reopen_byte_identically`, `crates/antseal-cli/tests/work_store.rs::enumeration_never_touches_journal_bodies`, `crates/antseal-cli/tests/anchor_stage.rs::one_verified_tsa_lets_the_seal_proceed_and_journals_its_artifacts`, `crates/antseal-cli/src/vault/mod.rs` | **SATISFIED.** The `vault` module's layout map carries the enumeration item for item — meta (`W`, seal id, work id, title, network, source paths, costs, state), `journal/` (staged ciphertext, nonce, address), `receipt`, `anchors/` (`.ots`, TSA tokens, fetch dates) — and every content byte under `works/` is AEAD ciphertext under the vault key. Honest limit, recorded at D42's rider and not a divergence: the **filesystem metadata** of a locked vault is visible — how many work directories exist, entry counts, sizes, mtimes. Directory names are random hex and content-free, so nothing links a locked vault to a bundle, anchor, digest or title. |
+| L143.2 | 143 | *"…, encrypted at rest with a passphrase"* — read as covering **config** as well as the per-work records | M4 | U4/D42 | covered | `crates/antseal-cli/tests/vault_store.rs::beside_set_is_exactly_the_three_d42_files`, `crates/antseal-cli/tests/config_file.rs::binary_resolves_network_through_the_config`, `docs/decisions/D42-vault-encryption-boundary.md` | **DIVERGENCE — interpretation, disposed at D42.** The sentence's grammar puts *config* under "encrypted at rest"; shipped leaves `config.toml` in the clear as one of exactly three beside-the-AEAD files (config, the vault header, the lockfile), and that list is asserted exhaustive by a test. D42's §Spec-conformance rejects the config-inside reading and not on convenience: `verify --online` reads the endpoint overrides and **must** run vault-less and prompt-free, so config-inside-AEAD would force it either to prompt (forbidden) or to ignore the owner's configured overrides (a worse divergence). Priced there: plaintext config is tamperable by a local file-writer, which cannot forge a verdict but can redirect a probe; the optional hardening (a config digest witnessed inside the vault, warn-only) is recorded and not taken. **Found by this collection and left standing, because no code change is licensed here:** the `vault` module's own D42 paragraph says the mandate *"holds with no carve-outs"* in the same breath as naming config beside the AEAD. That is true only under D42's reading, and the sentence does not say which reading it is using. |
+| L143.3 | 143 | *"Argon2id, m ≥ 256 MiB, t = 3, p = 1 (default), random 16-B salt"* — the creation values | M4 | U6/D40 | covered | `crates/antseal-cli/tests/vault_encryption.rs::generated_params_are_frozen_values_and_round_trip`, `crates/antseal-cli/tests/vault_encryption.rs::rfc9106_argon2id_known_answer`, `crates/antseal-cli/tests/vault_encryption.rs::kdf_block_golden_vectors`, `crates/antseal-cli/src/vault/kdf.rs` | **SATISFIED, exactly.** `ARGON2ID_M_COST_KIB` = 262 144 KiB, which is 256 MiB at the floor rather than above it; `ARGON2ID_T_COST` = 3; `ARGON2ID_P_COST` = 1; `KDF_SALT_LEN` = 16, drawn from the CSPRNG per vault. Argon2id is the **sole** default — D40 overturned the fallback-prompt lean U6 carried, because the fallback it imagined does not exist: scrypt at its own spec floor needs 1 GiB, four times Argon2id's 256 MiB. A machine that cannot allocate gets the typed `vault-kdf-memory` refusal at create **and** at unlock, with no prompt and no silent substitution. |
+| L143.4 | 143 | *"with `scrypt N ≥ 2²⁰` as an alternative"* | M4 | D40 | covered | `crates/antseal-cli/tests/vault_encryption.rs::rfc7914_scrypt_known_answer_at_production_n`, `crates/antseal-cli/tests/vault_encryption.rs::scrypt_round_trip`, `crates/antseal-cli/tests/vault_encryption.rs::rfc7914_scrypt_known_answers`, `docs/decisions/D40-vault-kdf-selection.md` | **DIVERGENCE — incomplete spec, completed writer-side.** The line names an N floor and **no r or p**, which is not implementable as written: RFC 7914 has no default pairing. D40 fixes `r` = 8 and `p` = 1 as the creation values (the conventional pairing the N-floor implies) and the header records them explicitly either way, so this is a writer-side completion of an under-specified line, not a format change. D40's §Spec-conformance flags it and recommends a one-word spec amendment — *"N ≥ 2²⁰, r = 8, p = 1"* — at the next spec-touching pass; the spec is frozen, so the amendment is **owed and not taken**, and this row is where that debt is readable. Consistent with *"as an alternative"* and worth stating because it is easy to misread as a divergence: scrypt is selectable only as an explicit `init`-time choice, never automatically and never as a low-RAM escape. |
+| L143.5 | 143 | The parameter bounds themselves — the line states **floors** (*"m ≥ 256 MiB"*, *"N ≥ 2²⁰"*) and shipped enforces two-sided **windows** | M4 | D40/U6 | covered | `crates/antseal-cli/tests/vault_encryption.rs::pre_auth_caps_reject_out_of_range_params`, `crates/antseal-cli/tests/vault_export.rs::kdf_bomb_header_is_rejected_pre_allocation_and_pre_passphrase`, `crates/antseal-cli/src/vault/kdf.rs`, `docs/decisions/D40-vault-kdf-selection.md` | **DIVERGENCE — stricter than spec. Found by this collection; no record states it.** `KdfParams::check_ranges` caps Argon2id `m_cost` at 4 194 304 KiB (4 GiB) and scrypt log₂ N at 24, and pins Argon2id `p` and scrypt `r`/`p` to exact values. So a header carrying m = 8 GiB or N = 2²⁵ — *spec-conformant hardening* under the line's own `≥` — is refused **pre-auth** with `vault-kdf-params-out-of-range`, exit **14**, before the KDF allocates. D40's §3 states the cap table and D40's §Spec-conformance accounts only for *"Parameters, floors, salt size, AAD binding … No deviation"*, never for the ceilings introduced one section earlier; U6's execution note enumerates three tested directions — lowered params to cap rejection, raised-within-window to auth failure, pure-AAD header edit to auth failure — and raised-**above**-window is not among them. **Disposition: accepted as stronger than spec.** The cap is the reason D40 §3 exists: the KDF runs before any key exists, so a substituted header demanding 1 TiB is a resource bomb no AAD check can reach, and the same caps serve `vault import`. D40 already rules that raising a parameter is a header-version event that revisits the caps with it, which is the route if a future build wants the range the spec's `≥` implies. |
+| L143.6 | 143 | *"the algorithm id + full parameters live in the vault header"* | M4 | U5/U6 | covered | `crates/antseal-cli/tests/vault_store.rs::golden_header_vector_is_byte_exact`, `crates/antseal-cli/tests/vault_store.rs::header_round_trips_across_the_field_space`, `crates/antseal-cli/tests/vault_encryption.rs::kdf_block_golden_vectors`, `crates/antseal-cli/tests/vault_store.rs::tamper_kdf_block_over_cap_rejected` | **SATISFIED.** The header is magic plus a canonical-CBOR `[format_version, body]` envelope, the body carrying the KDF block (algorithm id, full parameters, salt) at key 0, the D50 wrap mode at key 1, and an optional recorded keyfile path at key 2. The KDF block is deliberately opaque to the header layer, which caps only its size; the schema inside it belongs to the KDF module, and its parse is total over adversarial input. |
+| L143.7 | 143 | *"the entire KDF header is bound into the vault AEAD as AAD"* | M4 | U6/D42 | covered | `crates/antseal-cli/src/vault/cipher.rs::identity_and_header_axes_all_bind`, `crates/antseal-cli/tests/vault_encryption.rs::flipped_salt_fails_authentication`, `crates/antseal-cli/tests/vault_encryption.rs::wrap_mode_flip_is_refused`, `crates/antseal-cli/tests/work_store.rs::spliced_record_files_fail_authentication`, `crates/antseal-cli/tests/wallet_record.rs::wallet_and_work_records_do_not_splice` | **SATISFIED, and stronger than asked.** Every record AEAD binds the exact bytes `VaultHeader::encode` produces — magic, version envelope, KDF block **and** wrap mode, plus the optional keyfile path — not the KDF block alone, and appends a canonical-CBOR record identity, so a valid blob moved between slots of one vault or between vaults fails authentication instead of being silently accepted. Naming note, recorded so a reader is not misled: the vault module and the cipher module both call those whole-header bytes *"the KDF header"* in this rider's wording, which is the spec's phrase and not the header's own name. Honest limit at D42: whole-vault rollback — restoring an older copy of the directory — is undetectable offline and out of scope; no offline scheme detects it. |
+| L143.8 | 143 | *"so a parameter downgrade (e.g. lowering `m`/`N`) is a detected authentication failure, not a silent weakening"* | M4 | U6/D40 | covered | `crates/antseal-cli/tests/vault_encryption.rs::downgraded_params_are_rejected_pre_auth`, `crates/antseal-cli/tests/vault_encryption.rs::raised_params_within_caps_fail_authentication`, `crates/antseal-cli/tests/vault_encryption.rs::wrap_mode_flip_is_refused`, `crates/antseal-cli/tests/vault_encryption.rs::malformed_blocks_collapse_to_vault_auth` | **DIVERGENCE — deviation in mechanism, not in property.** Shipped refuses a lowered `m`/`N` **before** the KDF runs and before any AEAD can authenticate anything: `KdfParams::check_ranges`, called from `KdfParams::decode`, reached from the vault session's unlock one step ahead of key derivation, with its own class `vault-kdf-params-out-of-range` and exit **14** rather than the vault-auth collapse the sentence describes. D40's floors sit **at** the frozen creation values, so the literal sentence is unreachable by construction for the very example it names. The property the sentence protects — no silent weakening — holds strictly harder, and the AEAD path it describes stays live for the two directions the cap does not take: params raised within the window derive a different key and fail authentication, and a header edit that leaves the KDF inputs fixed (a wrap-mode flip) fails at the cipher layer on the AAD alone. Flagged at U6's execution note item 1, 2026-08-01, as *"a deviation-in-mechanism, not in property"*, with all three directions tested; collected here for the first time. |
+| L143.9 | 143 | *"`init` enforces a passphrase-strength floor"* | M4 | U7/U11/D41 | covered | `crates/antseal-cli/tests/passphrase_channel.rs::create_floor_is_twelve_bytes_and_unlock_has_none`, `crates/antseal-cli/src/passphrase.rs::create_floor_rejects_eleven_bytes_and_accepts_twelve`, `crates/antseal-cli/src/passphrase.rs::unlock_prompts_once_and_applies_no_floor`, `crates/antseal-cli/src/passphrase.rs` | **SATISFIED.** A documented byte-length floor of 12, enforced at vault creation and at the import re-passphrase, and deliberately **not** at unlock — an existing vault's owner is not re-judged on a passphrase they already have. The recorded choice is a length floor rather than a strength estimator, with the reasoning at the module docs: the floor exists to stop trivially short passphrases, and the real work is done by the memory floor. **Measured for this collection, because it is the obvious place for a hole:** the floor applies on the `--passphrase-fd` channel too. D41 exempts that channel from the *confirmation prompt* only, and the code says so at the branch. |
+| L143.10 | 143 | *"offers a high-entropy keyfile / OS-keystore wrap for `W`"* | M4 | U8/D50/D72 | covered | `crates/antseal-cli/tests/vault_keyfile.rs::the_header_records_the_mode_a_flip_fails_auth_and_mode_two_is_its_own_refusal`, `crates/antseal-cli/tests/vault_keyfile.rs::a_keyfile_vault_round_trips_and_refuses_distinctly_without_its_keyfile`, `crates/antseal-cli/tests/vault_keyfile.rs::declining_the_wrap_leaves_a_plain_mode_zero_vault`, `crates/antseal-cli/tests/init_command.rs::the_wizard_asks_d39s_questions_in_d39s_order`, `docs/decisions/D50-os-keystore-scope.md` | **DIVERGENCE — half deferred.** Only the **keyfile** half ships. Wrap mode 2, the OS keystore, is a *registered* id with no implementation: the vault session's unlock dispatches it before any expensive work and refuses with its own class `vault-wrap-mode-unsupported`, exit **19**, a refusal that says the vault is intact and is emphatically not the generic auth collapse — nothing secret is involved in reading a mode byte. D50 ruled M1 keyfile-only on measured evidence (keyring churn, reboot-volatile keyutils, and machine-bound factors breaking the clean-machine restore drill), and **D72 answered the follow-up no**, so this is a recorded deferral and not an omission. The *offer* half is met and was measured rather than assumed: `init`'s wizard asks the wrap question in D39's order, and the choice set it offers is exactly none-or-keyfile, which is the honest surface for a two-mode implementation. Flagged throughout U8, whose own spec citation quotes this clause verbatim. |
+| L143.11 | 143 | *"The Arbitrum wallet key lives inside the encrypted vault but under its own sub-key"* | M4 | U10 | covered | `crates/antseal-cli/tests/wallet_record.rs::wallet_key_round_trips_across_reopen`, `crates/antseal-cli/tests/wallet_record.rs::wallet_and_work_records_do_not_splice`, `crates/antseal-cli/tests/wallet_record.rs::corruption_blast_radius_is_decoupled`, `crates/antseal-cli/tests/wallet_record.rs::tampered_wallet_record_fails_authentication`, `crates/antseal-cli/src/vault/wallet.rs` | **SATISFIED.** The 32 secret bytes live at their own store slot under `HKDF-SHA256(ikm = the vault key, info = a versioned label)` — the one recorded exception to the single-vault-key schedule — so the wallet and work domains share no AEAD key and the decoupled blast radius the clause asks for is a property of the derivation rather than a claim. The accessor surface is one narrow method on a non-`Clone`, redacted-`Debug`, zeroize-on-drop handle. *"external-signer support may come later"* is permissive; nothing is owed at M4, and the sub-key is what makes it additive — a future external-signer build deletes this record and its derivation without touching any work record's schedule. |
+| L143.12 | 143 | *"`zeroize` on `W`, unit keys, and passphrase buffers"* | M4 | C21/C22/D88 | covered | `crates/antseal-core/tests/zeroization_residue.rs::dropped_hkdf_extract_context_retains_no_verbatim_master_secret`, `crates/antseal-core/tests/zeroization_residue.rs::dropped_hkdf_state_retains_no_master_secret_bytes`, `crates/antseal-core/tests/zeroization_residue.rs::dropped_sha256_retains_no_ggm_seed`, `crates/antseal-core/tests/feature_pins.rs::sha2_pin_declares_the_zeroize_feature`, `crates/antseal-core/tests/digest_zeroize_link.rs::digest_reexports_a_working_zeroize`, `docs/zeroization-audit.md` | **DIVERGENCE — CLOSED, and this row exists to say so.** All three subjects the line names are `ZeroizeOnDrop` today: the master-secret type holding `W`, the unit-key type, and the passphrase buffer (which wipes its spare capacity too and withholds even its length from `Debug`). C21's audit found the HKDF/HMAC internal key state un-zeroizable on the pins and recorded it as *"a live contradiction of MVP-SPEC.md line 143"*; C22 resolved it the same day via D88 by enabling `sha2`'s non-default `zeroize` feature — an option C22's own three-way question had not listed, and C21's premise that no feature fixes it was false. Measured red-first against a control: 114 of 144 bytes to 0, and an extract context holding `W` verbatim to 0. **Permanently accepted narrowed residue:** four `hybrid_array` stack temporaries have no `Drop` under any feature; stack-resident, never heap, never logged, never serialized, for the duration of one derivation — the same window in which `W` is resident anyway. Closing them means reimplementing HKDF *and* HMAC in-house. Three separate test binaries guard the pin so this cannot silently reopen, and each states the contradiction **conditionally** in its failure message, which is why a grep for that phrase still returns hits in a tree where the contradiction is closed. Residual limits outside the three named subjects — a disclosure `Vec`'s growth stranding un-wiped salts, decrypted unit plaintext returned caller-owned, non-wiping byte-extractor copies — are the audit's and are not line-143 divergences. |
+| L143.13 | 143 | *"documented caveat: the WASM verifier cannot guarantee this for bundle-supplied keys in browser memory"* | M4 | C21/Q21 | covered | `crates/antseal-core/tests/security_assumptions_drift.rs::the_wasm_zeroize_caveat_is_on_the_module_root_and_in_the_threat_model`, `crates/antseal-core/src/crypto.rs`, `docs/threat-model.md`, `docs/zeroization-audit.md` | **SATISFIED.** The clause mandates a *documented caveat*, not a mitigation, and the caveat is carried in one wording on the crypto module root and in the threat model, with the drift test pinning the two copies to each other so a reworded one cannot drift from the other. The audit records the same limit as a residual risk. |
+| L143.14 | 143 | *"`vault export`/`import` for encrypted backup"* — read together with the keyfile wrap of `L143.10`, which the same line offers | M4 | U12/D47/U84/D151 | covered | `crates/antseal-cli/tests/vault_keyfile.rs::a_wrapped_vault_is_refused_by_export_and_a_wrapped_payload_by_import`, `crates/antseal-cli/tests/vault_export.rs::round_trip_preserves_the_full_logical_state`, `crates/antseal-cli/tests/vault_export.rs::wrong_passphrase_fails_with_the_import_auth_class`, `docs/decisions/D151-vault-export-backup-advice.md` | **DIVERGENCE — mutually exclusive clauses.** The encrypted backup itself ships and round-trips. What diverges is that line 143 offers the backup **and** the keyfile wrap and shipped antseal makes them exclusive: the export gatherer refuses any vault whose header wrap mode is not none, and the payload validator refuses any payload carrying one — both `usage`, exit **2**, both before anything is read or written, both saying *"nothing was written"*. A user who takes this line's wrap loses this line's backup command for the life of the vault and backs up by hand instead, which the two user pages document. **Structural, not an oversight:** the wrap flag would have to live in the export **header**, which is read before any key exists, and the v1 header body has no slot for it; the payload's own wrap-mode slot sits *inside* the AEAD, so no reader can learn a keyfile is needed without already holding the key the keyfile helps derive; and the spec's own CLI-surface line gives `vault export` and `vault import` no flags for a keyfile to arrive through. Carrying the wrap is therefore a D47 **format event** and is not taken at MVP. **Ruled by D151, 2026-08-18, and the owning-record situation inverts what a reader would expect:** D47's format section *mandates* that the keyfile factor is preserved and its §Spec-conformance says *"no divergence"*, while shipped code has refused both directions since U8 — a deliberate overturn recorded in U8's register row and in the export module's own docs, and **never written into D47**, which D151 amends by dated addendum. Do not read D47 as agreeing with shipped behaviour until that addendum is on disk. |
+| L143.15 | 143 | *"Docs and CLI must nag on both failure modes: loss … and theft"* | M4 | U18/U78/Q24 | covered | `crates/antseal-cli/tests/init_command.rs::the_golden_carries_the_standing_warnings_by_identity`, `crates/antseal-cli/tests/init_command.rs::the_init_report_matches_its_committed_golden`, `crates/antseal-cli/tests/snapshots/init-report.txt`, `docs/user/vault-loss.md`, `docs/user/vault-theft.md` | **SATISFIED, with one live caveat owned elsewhere.** Docs half: the two user pages, which quote the CLI's own constants byte for byte rather than paraphrasing them. CLI half: the loss and theft warnings live as constants in the vault bookkeeping module, are rendered by `init`'s closing report, and are pinned in U78's committed golden **by identity** rather than by containment — a one-character reword of either constant reddens three independent tests. The nag after the first successful seal is the third surface. **Caveat, measured at D151 and not licensed here:** a keyfile-wrapped vault can never record a backup, because the export counter is incremented only after a successful export and export refuses such a vault, so the first-seal nag fires on every seal for ever and names a command that will not run for that user. That is a behaviour defect against this clause rather than a divergence from it, and it is **U84**'s. |
+
 ## Findings from building this matrix (2026-07-28, M0 wave 6)
 
 1. **~~One M0 bullet has no test: V3.4, "bundle/manifest CBOR fuzzing in
@@ -320,3 +429,29 @@ Checked at the M4 review via Q34, which requires this whole matrix green.
   the constant's value were retired to the rule in the same act (**Q230**'s
   class), and D122 §7.2's replacement for the *"how the gate uses this"*
   bullet landed with them.
+- **2026-08-19 (M4 wave 26, Q251)** — the file gains **one declared extension
+  to its spec basis** and fifteen rows under it: `L143.1`–`L143.15`, the
+  clause-by-clause conformance of **MVP-SPEC.md line 143**, the Vault
+  paragraph. The M4 gate reads *"traceability matrix 100 % green"* and this
+  is the only place line 143's status is decided; before it the flags sat one
+  per record, scattered, and nothing held them against the line. **Seven of
+  the fifteen record a divergence — six standing, one closed** — and **one of
+  the seven is named by no record at all**: `L143.5`, where the spec states
+  parameter *floors* and shipped
+  enforces two-sided *windows*, so a spec-conformant hardening (m = 8 GiB,
+  N = 2²⁵) is refused pre-auth at exit 14 while D40's §Spec-conformance
+  accounts only for the floors it introduced the caps beside. A second thing
+  nobody had named sits inside `L143.2`, whose divergence is D42's: the vault
+  module says the encrypted-at-rest mandate *"holds with no carve-outs"* in
+  the same breath as naming config beside the AEAD. The remaining four
+  divergences are collected, not re-litigated: the
+  downgrade mechanism (U6, 2026-08-01), the keystore half that does not ship
+  (U8/D50/D72), the scrypt `r`/`p` the spec never names (D40), and the export
+  that refuses a keyfile-wrapped vault (D151, 2026-08-18). **The zeroization
+  contradiction C21 recorded against this line is CLOSED**, not standing, and
+  `L143.12` says so — a grep for its wording still returns hits because the
+  three guards state it conditionally. **No code change is licensed by any of
+  it.** The by-name rule was extended to the `notes` column rather than
+  waived for it, against Q251's own `Accept`: eighteen `path:line` locators
+  were re-measured for this section and three were wrong the day they were
+  written, which is the rule's own argument arriving as evidence.

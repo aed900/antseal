@@ -769,6 +769,30 @@ fn the_binarys_stdout_contains_the_canonical_report_bytes() {
 
 /// `verify` needs no vault and never prompts — on a machine that has none,
 /// with stdin closed, in plain mode.
+///
+/// # What this check cannot see, and why it is kept anyway (U77)
+///
+/// **Kept, not replaced.** It catches a real and different failure: the
+/// vault vocabulary leaking into a run that has no vault. But it does not
+/// establish the never-prompts claim, and it fails to twice over:
+///
+/// 1. **Three English words are the whole guard.** A prompt reading
+///    *"Enter word 1 of 24"*, *"Key?"* or *"Type the 24 words from your
+///    card"* contains none of `passphrase`, `Passphrase` or
+///    `no vault exists`, and passes here. Nothing can slip past it *today*
+///    only because no key-entry vocabulary exists in the product — D134
+///    rules that a paper-key `reveal` lock mode and an unlock surface are
+///    coming, which is why the structural guard below was written before
+///    that vocabulary exists rather than after.
+/// 2. **Prompting is invisible here as a behaviour.** [`run_binary`] closes
+///    stdin and collects output *after* the process exits, so a binary that
+///    blocked on a read would present as a **hang** — the harness's timeout
+///    — and never as a failed assertion. Neither this test nor the
+///    structural one closes that gap; the structural one removes the
+///    *source* of such a read instead of detecting the block.
+///
+/// The structural half is
+/// [`verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan`].
 #[test]
 fn verify_runs_on_a_vault_less_machine_without_prompting() {
     let dir = TestDir::new("vault-less");
@@ -788,6 +812,812 @@ fn verify_runs_on_a_vault_less_machine_without_prompting() {
             "`verify` must not mention the vault: {forbidden}"
         );
     }
+}
+
+/// **U77 — the structural half of *"`verify` never prompts"*: a closed scan
+/// over the tree's own source text.**
+///
+/// The output check above is a substring search over three English words.
+/// This one is a source-shape assertion in the idiom
+/// `crates/antseal-cli/tests/reveal_consent.rs:651`
+/// (`the_reveal_consent_gate_has_exactly_one_production_caller`) established
+/// for `reveal`'s consent gate: a closed, exhaustively enumerated table
+/// scanned over production source, with the searched-for tokens assembled by
+/// `concat!` so the scanner cannot match itself.
+///
+/// # Why now, before the vocabulary exists
+///
+/// D134 rules that a paper-key `reveal` lock mode and an unlock surface are
+/// coming. **No key-entry vocabulary exists in the product today**, so
+/// nothing can slip past the output check yet — and that is precisely why
+/// this lands now. After the vocabulary exists, strengthening the guard is a
+/// change made against a live counterexample; before it exists, it is a rule
+/// made in advance (U77's Accept, fourth row).
+///
+/// # What is asserted, and why each part is closed
+///
+/// 1. **The device inventory.** The five primitives below are the only ways
+///    a Rust program in this workspace can put a question to a human: the
+///    no-echo terminal crate, the process's own stdin, std's tty detection,
+///    the controlling terminal by path, and a blocking line read. They occur
+///    in production source **exactly** as [`DEVICE_SITES`] enumerates —
+///    nine rows over six files, exact counts, no "at most" and no
+///    "contains". A new prompt-capable call anywhere under any crate's
+///    `src/` reddens as a stray or as a moved count.
+/// 2. **`verify`'s own handler body is zero.** Counted over the body
+///    extracted from `commands.rs` by brace-matching, for every device
+///    primitive **and** every in-crate seam. This has to be body-level and
+///    not file-level: `commands.rs` calls the passphrase collector eight
+///    times: seven handlers plus the definition. The file `verify` lives in
+///    is one of the most prompt-dense in the crate.
+/// 3. **The handlers that do collect a secret are an enumerated set of
+///    seven, and `verify` is not among them** — with an *accounting*
+///    identity (`file total == sum over spans + definition lines`) that
+///    reddens if the span extractor ever stops seeing a function, rather
+///    than silently reporting zero for a body it failed to find.
+/// 4. **`verify`'s one-hop reach is a closed set**: four `crate::` modules
+///    and one local helper. A fifth module named in the body reddens until
+///    it is listed and classified. Each of the four is then pinned at
+///    **zero** primitives and **zero** seams, and its file asserted
+///    non-trivial in size — so the zero is a measured zero and not an
+///    unread file.
+/// 5. **The dependency surface is closed**: `antseal-cli`'s
+///    `[dependencies]` is exactly nineteen crates, of which `rpassword` is
+///    the only terminal-input edge. A brand-new prompting crate cannot
+///    arrive without appearing here, which is what stops the vocabulary
+///    list above from being open-ended.
+/// 6. **The red direction is committed, not merely claimed.** Both scanners
+///    are run a second time over a *planted* tree carrying an interactive
+///    read inside a `fn verify` body, and each must return a message naming
+///    the planted site. A guard that has never been watched fail is this
+///    project's dominant defect class; this one fails on every run, in a
+///    controlled place.
+///
+/// # What this test cannot see
+///
+/// - **It is one hop, not transitive, and deliberately so.** Measured
+///   2026-08-18: the transitive `crate::…` module closure from `verify`'s
+///   four reach files covers **28** of `antseal-cli`'s modules — including
+///   `passphrase`, `init` and `seal_consent` — because error types and
+///   doc-links cross-reference the whole crate. A transitive assertion would
+///   therefore be unpassable rather than strict, and the honest guard is the
+///   tree-wide inventory (1) plus the one-hop closure (4), not a reachability
+///   proof.
+/// - **It is text, not types.** A prompt reached through a trait object
+///   whose implementation lives in a listed file is still counted at the
+///   listed file — the count moves — but a prompt built entirely out of
+///   tokens not in the vocabulary, from a dependency already on the list,
+///   would not be seen.
+/// - **It cannot see a hang.** Neither can
+///   [`verify_runs_on_a_vault_less_machine_without_prompting`]: `run_binary`
+///   closes stdin and collects output *after* exit, so a binary blocking on
+///   a read presents as a timeout, never as a failed assertion. This test
+///   removes the *source* of such a read rather than detecting the block,
+///   and nothing in this file closes the behavioural gap.
+#[test]
+fn verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // ── the vocabulary ──────────────────────────────────────────────
+    //
+    // Every token is assembled with `concat!` so this file does not
+    // contain the strings it hunts for. The scan below only walks a
+    // crate's `src/`, and this file is not under one — but a scanner that
+    // would match itself if the filter were ever widened is a scanner
+    // nobody trusts on sight, and self-exemption by construction is what
+    // U77 asks for over an exclusion the next refactor breaks
+    // (`reveal_consent.rs:679`'s own precaution, adopted).
+
+    /// `(token, what it is)` — the closed vocabulary of *device*-level
+    /// prompting: the irreducible ways to ask a human a question.
+    const DEVICE: [(&str, &str); 5] = [
+        (
+            concat!("rpassword", "::"),
+            "the pinned no-echo terminal reader (U7/D41)",
+        ),
+        (
+            concat!("std::io::", "stdin"),
+            "the process's own standard input",
+        ),
+        (concat!("Is", "Terminal"), "std's tty detection"),
+        (
+            concat!("/dev/", "tty"),
+            "the controlling terminal, by path (D51's read/write device)",
+        ),
+        (
+            concat!("read_line", "("),
+            "a blocking line read from any reader",
+        ),
+    ];
+
+    /// `(token, what it is)` — the closed vocabulary of this crate's own
+    /// prompting *seams*: the named entry points that end in a question.
+    /// A handler reaches a prompt through one of these or through a device
+    /// primitive; there is no third way in this crate today.
+    const SEAM: [(&str, &str); 4] = [
+        (
+            concat!("collect_passphrase", "("),
+            "`commands.rs`'s passphrase collector (U7)",
+        ),
+        (
+            concat!("ask_on_tty", "("),
+            "the one device-level consent prompt, shared by U14 and U29",
+        ),
+        (
+            concat!("collect_from_prompt", "("),
+            "the double-entry prompt loop behind the collector",
+        ),
+        (concat!("prompt_password", "("), "the no-echo read itself"),
+    ];
+
+    /// `(primitive index into `DEVICE`, file, exact count, warrant)` — the
+    /// **closed** inventory of every device-level prompting token in
+    /// production source, tree-wide.
+    ///
+    /// Counts are over the whole file with line comments removed, including
+    /// any `#[cfg(test)]` module living in it: over-counting is the safe
+    /// direction for a guard, and every occurrence has to earn a row here.
+    const DEVICE_SITES: [(usize, &str, usize, &str); 9] = [
+        (
+            0,
+            "crates/antseal-cli/src/init.rs",
+            1,
+            "U11's guided setup: the one no-echo read at vault creation",
+        ),
+        (
+            0,
+            "crates/antseal-cli/src/passphrase.rs",
+            1,
+            "U7's production prompt seam (`TtyPrompt::read_secret_line`)",
+        ),
+        (
+            1,
+            "crates/antseal-cli/src/init.rs",
+            2,
+            "U11's two confirm-line reads",
+        ),
+        (
+            1,
+            "crates/antseal-cli/src/passphrase.rs",
+            2,
+            "D51's isatty detection, and `--passphrase-fd 0`'s slurp",
+        ),
+        (
+            1,
+            "crates/antseal-cli/src/pipeline/reveal.rs",
+            1,
+            "NOT a call: R16's in-file scanner plants this token as a string \
+             literal to prove its own red direction",
+        ),
+        (
+            2,
+            "crates/antseal-cli/src/passphrase.rs",
+            1,
+            "the `IsTerminal` import behind D51's detection rule",
+        ),
+        (
+            3,
+            "crates/antseal-cli/src/seal_consent.rs",
+            2,
+            "`ask_on_tty`: the device open, and the same path in its error \
+             context string",
+        ),
+        (
+            4,
+            "crates/antseal-cli/src/init.rs",
+            2,
+            "U11's two confirm-line reads (the read half of row three)",
+        ),
+        (
+            4,
+            "crates/antseal-cli/src/seal_consent.rs",
+            1,
+            "`ask_on_tty`'s single answer read",
+        ),
+    ];
+
+    /// The `crate::…` modules `verify`'s body names — the closed one-hop
+    /// reach. Each is pinned at zero primitives and zero seams below.
+    const REACH_MODULES: [(&str, &str); 4] = [
+        (
+            "backend",
+            "U36's storage-backend seam; `--live` refuses here",
+        ),
+        ("config", "the config file, for `--online` endpoints only"),
+        (
+            "verify_host",
+            "R21's pure accessor over collected probe data",
+        ),
+        (
+            "verify_out",
+            "the run, its rendering and its `--json` document",
+        ),
+    ];
+
+    /// The `commands.rs`-local helpers `verify`'s body calls.
+    const REACH_LOCALS: [(&str, &str); 1] =
+        [("now_unix_secs", "the clock, read once for the whole run")];
+
+    /// The handlers in `commands.rs` that **do** reach a prompt. `verify` is
+    /// not one, and this is the list that says so by exhaustion rather than
+    /// by absence of three English words.
+    const PROMPTING_HANDLERS: [(&str, &str); 7] = [
+        ("list", "opens the vault to resolve work ids"),
+        (
+            "reveal",
+            "opens the vault, then asks U29's consent question",
+        ),
+        (
+            "seal_over_backend",
+            "the `ant-backend` arm: lock, then passphrase, then network",
+        ),
+        ("show", "opens the vault"),
+        ("status", "opens the vault"),
+        ("vault_export", "D47's passphrase proof before the backup"),
+        ("vault_import", "the destructive-overwrite confirm"),
+    ];
+
+    /// `antseal-cli`'s production dependency surface, closed. `rpassword` is
+    /// the only terminal-input edge; a new prompting crate cannot arrive
+    /// without failing here first, which is what keeps `DEVICE` from being
+    /// an open-ended guess at tomorrow's vocabulary.
+    const CLI_DEPENDENCIES: [&str; 19] = [
+        "antseal-anchor",
+        "antseal-core",
+        "antseal-net",
+        "argon2",
+        "blake2",
+        "chacha20poly1305",
+        "clap",
+        "getrandom",
+        "hkdf",
+        "rand_core",
+        "rpassword",
+        "scrypt",
+        "serde_json",
+        "sha2",
+        "thiserror",
+        "tokio",
+        "tracing",
+        "tracing-subscriber",
+        "zeroize",
+    ];
+
+    const COMMANDS: &str = "crates/antseal-cli/src/commands.rs";
+    const HANDLER: &str = "verify";
+    const CONTROL_HANDLER: &str = "vault_export";
+
+    // ── the scanner ─────────────────────────────────────────────────
+
+    /// Line comments removed, so a doc reword cannot redden a structural
+    /// guard. `://` is left alone: a URL inside a string literal must not
+    /// truncate the code after it, because truncation is the *unsafe*
+    /// direction — it would hide a token rather than invent one.
+    fn code_only(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for line in text.lines() {
+            let bytes = line.as_bytes();
+            let mut cut = line.len();
+            let mut index = 0usize;
+            while index + 1 < bytes.len() {
+                if bytes[index] == b'/'
+                    && bytes[index + 1] == b'/'
+                    && (index == 0 || bytes[index - 1] != b':')
+                {
+                    cut = index;
+                    break;
+                }
+                index += 1;
+            }
+            out.push_str(&line[..cut]);
+            out.push('\n');
+        }
+        out
+    }
+
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|e| panic!("cannot read an entry under {}: {e}", dir.display()))
+                .path();
+            let skip = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == "target" || n == ".git");
+            if skip {
+                continue;
+            }
+            if path.is_dir() {
+                collect(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Production source is everything under a crate's `src/`. There is no
+    /// exclusion list, on purpose: an exclusion is what the next refactor
+    /// breaks, and U77's Accept asks for self-exemption by construction
+    /// instead.
+    fn is_production_source(relative: &str) -> bool {
+        relative.contains("/src/")
+    }
+
+    /// `((primitive index, relative path) -> count)`, plus the number of
+    /// `.rs` files walked so a broken walker cannot pass as a clean tree.
+    fn scan(root: &Path) -> (BTreeMap<(usize, String), usize>, usize) {
+        let mut files = Vec::new();
+        collect(root, &mut files);
+        let mut found: BTreeMap<(usize, String), usize> = BTreeMap::new();
+        for file in &files {
+            let relative = file
+                .strip_prefix(root)
+                .expect("every scanned file is under the root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !is_production_source(&relative) {
+                continue;
+            }
+            let text = code_only(
+                &std::fs::read_to_string(file)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display())),
+            );
+            for (index, &(token, _)) in DEVICE.iter().enumerate() {
+                let count = text.matches(token).count();
+                if count > 0 {
+                    found.insert((index, relative.clone()), count);
+                }
+            }
+        }
+        (found, files.len())
+    }
+
+    /// The inventory verdict as a **message**, so the red direction can be
+    /// asserted on what it says rather than on the fact that something
+    /// panicked.
+    fn check_inventory(found: &BTreeMap<(usize, String), usize>) -> Result<(), String> {
+        let mut listed: BTreeMap<(usize, String), (usize, &str)> = BTreeMap::new();
+        for (primitive, file, count, why) in DEVICE_SITES {
+            listed.insert((primitive, file.to_owned()), (count, why));
+        }
+        for ((index, file), count) in found {
+            let (token, what) = DEVICE[*index];
+            match listed.get(&(*index, file.clone())) {
+                None => {
+                    return Err(format!(
+                        "`{file}` names the prompt-capable primitive `{token}` ({what}) \
+                         {count} time(s) and is not on U77's closed list. `verify` is the \
+                         key-free third-party command (MVP-SPEC.md line 38) and its \
+                         never-prompts claim is structural, not a matter of which English \
+                         words reach stdout. Add the site here with its warrant — and if it \
+                         is reachable from `commands::verify`, do not add the site (U77)."
+                    ));
+                }
+                Some((expected, why)) if expected != count => {
+                    return Err(format!(
+                        "`{file}` names `{token}` ({what}) {count} time(s), not {expected}. \
+                         It is on U77's closed list as: {why}. A count that moved is a \
+                         prompting site nobody ruled, or a listed site that stopped \
+                         prompting."
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        for ((index, file), (expected, why)) in &listed {
+            let seen = found.get(&(*index, file.clone())).copied().unwrap_or(0);
+            if seen != *expected {
+                let (token, _) = DEVICE[*index];
+                return Err(format!(
+                    "`{file}` names `{token}` {seen} time(s), not the {expected} U77 \
+                     enumerated as: {why}. Either the site moved, or the file did."
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every top-level `fn` in `code`, as `(name, body-with-braces span)`.
+    ///
+    /// Top-level means column zero. A `fn` inside an `impl` block or nested
+    /// in another body is indented and gets no span of its own — which is
+    /// safe rather than lax, because the accounting identity below refuses
+    /// any occurrence that lands in no span and on no definition line.
+    fn top_level_fns(code: &str) -> Vec<(String, usize, usize)> {
+        let mut out = Vec::new();
+        let mut offset = 0usize;
+        for line in code.split_inclusive('\n') {
+            let start = offset;
+            offset += line.len();
+            if line.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let mut rest = line;
+            for prefix in ["pub(crate) ", "pub(super) ", "pub "] {
+                if let Some(stripped) = rest.strip_prefix(prefix) {
+                    rest = stripped;
+                    break;
+                }
+            }
+            if let Some(stripped) = rest.strip_prefix("async ") {
+                rest = stripped;
+            }
+            let Some(after) = rest.strip_prefix("fn ") else {
+                continue;
+            };
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                continue;
+            }
+            let Some(relative_open) = code[start..].find('{') else {
+                continue;
+            };
+            let open = start + relative_open;
+            let mut depth = 0usize;
+            let mut close = None;
+            for (index, character) in code[open..].char_indices() {
+                match character {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + index + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(close) = close {
+                out.push((name, open, close));
+            }
+        }
+        out
+    }
+
+    /// The spans of every top-level `fn` called `wanted`. Two is normal:
+    /// `seal_over_backend` has one definition per `#[cfg]` arm.
+    fn spans_named<'a>(
+        spans: &'a [(String, usize, usize)],
+        wanted: &str,
+    ) -> Vec<&'a (String, usize, usize)> {
+        spans.iter().filter(|(name, _, _)| name == wanted).collect()
+    }
+
+    /// The verdict on one handler body, as a **message**.
+    fn check_handler_body(handler: &str, body: &str) -> Result<(), String> {
+        for &(token, what) in DEVICE.iter().chain(SEAM.iter()) {
+            let count = body.matches(token).count();
+            if count != 0 {
+                return Err(format!(
+                    "`commands::{handler}`'s own body names `{token}` ({what}) {count} \
+                     time(s). It must name it zero times: `{handler}` is the key-free \
+                     third-party entry point (MVP-SPEC.md line 38, D99 R2 — it opens no \
+                     vault and arms no upgrade hook), and a third party has nothing to \
+                     type. This is U77's guard, and it is deliberately structural: the \
+                     output check in this file would pass a prompt reading \
+                     \"Enter word 1 of 24\"."
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The `crate::<module>` first segments named in `body`.
+    fn crate_modules(body: &str) -> BTreeSet<String> {
+        let prefix = concat!("crate", "::");
+        let mut out = BTreeSet::new();
+        for (offset, _) in body.match_indices(prefix) {
+            let name: String = body[offset + prefix.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                out.insert(name);
+            }
+        }
+        out
+    }
+
+    // ── the comment stripper, proven in both directions ─────────────
+    //
+    // A stripper that returned "" would make every count below zero and
+    // every assertion vacuous. That is this project's dominant defect
+    // class, so it is checked here rather than trusted.
+    let stripped = code_only("let a = 1; // a note about a\n");
+    assert!(
+        stripped.contains("let a = 1;"),
+        "code survives: {stripped:?}"
+    );
+    assert!(
+        !stripped.contains("note"),
+        "the comment does not: {stripped:?}"
+    );
+    let url = code_only("let u = \"https://example.invalid/x\"; let b = 2;\n");
+    assert!(
+        url.contains("let b = 2;"),
+        "`://` must not truncate the code after it: {url:?}"
+    );
+
+    // ── 1. the device inventory, tree-wide and closed ───────────────
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("the crate sits two levels under the workspace root")
+        .to_path_buf();
+    let (found, walked) = scan(&root);
+    assert!(
+        walked > 300,
+        "the walker found only {walked} `.rs` files — it is not reaching the tree, and \
+         every count below would be a vacuous zero"
+    );
+    assert!(
+        found.len() >= DEVICE_SITES.len(),
+        "the scan found {} sites for {} enumerated rows — a scanner that finds nothing \
+         proves nothing",
+        found.len(),
+        DEVICE_SITES.len()
+    );
+    if let Err(message) = check_inventory(&found) {
+        panic!("{message}");
+    }
+
+    // ── 2/3. `commands.rs`: spans, accounting, and the two verdicts ──
+
+    let commands_path = root.join(COMMANDS);
+    let commands = code_only(
+        &std::fs::read_to_string(&commands_path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", commands_path.display())),
+    );
+    let spans = top_level_fns(&commands);
+
+    // The extractor's own controls. Without these, a brace-matcher that
+    // returned empty bodies would make every "names it zero times" below
+    // true for the wrong reason.
+    let verify_spans = spans_named(&spans, HANDLER);
+    assert_eq!(
+        verify_spans.len(),
+        1,
+        "exactly one top-level `fn {HANDLER}` must be found in {COMMANDS}; the extractor \
+         found {} — it is not seeing the handler it is about to clear",
+        verify_spans.len()
+    );
+    assert_eq!(
+        spans_named(&spans, "seal_over_backend").len(),
+        2,
+        "both `#[cfg]` arms of `seal_over_backend` must be seen, or the extractor is \
+         skipping definitions"
+    );
+    let control = spans_named(&spans, CONTROL_HANDLER);
+    assert_eq!(control.len(), 1, "one `fn {CONTROL_HANDLER}`");
+    let (_, control_open, control_close) = control[0];
+    assert!(
+        check_handler_body(CONTROL_HANDLER, &commands[*control_open..*control_close]).is_err(),
+        "POSITIVE CONTROL: `{CONTROL_HANDLER}` collects a passphrase (D47's proof before \
+         the backup), so the body check must reject it. If this passes, the extractor is \
+         handing out empty bodies and every clearance below is worthless."
+    );
+
+    // The accounting identity: every occurrence in the file lands either
+    // inside exactly one span or on the token's own `fn` definition line.
+    for &(token, what) in DEVICE.iter().chain(SEAM.iter()) {
+        let total = commands.matches(token).count();
+        let inside: usize = spans
+            .iter()
+            .map(|(_, open, close)| commands[*open..*close].matches(token).count())
+            .sum();
+        let definitions = commands
+            .matches(&format!("fn {}", token.trim_end_matches('(')))
+            .count();
+        assert_eq!(
+            total,
+            inside + definitions,
+            "{COMMANDS} names `{token}` ({what}) {total} time(s), but {inside} fall inside \
+             a top-level `fn` span and {definitions} on a definition line. An unaccounted \
+             occurrence means the span extractor missed a function — and a missed function \
+             is a prompt this test cannot see."
+        );
+    }
+
+    let (_, verify_open, verify_close) = verify_spans[0];
+    let verify_body = &commands[*verify_open..*verify_close];
+    assert!(
+        verify_body.len() > 400,
+        "`{HANDLER}`'s extracted body is {} bytes — too small to be the handler, so its \
+         zero counts would be vacuous",
+        verify_body.len()
+    );
+    if let Err(message) = check_handler_body(HANDLER, verify_body) {
+        panic!("{message}");
+    }
+
+    // The set of handlers that DO reach a prompt, by exhaustion.
+    let mut prompting: BTreeSet<&str> = BTreeSet::new();
+    for (name, open, close) in &spans {
+        if check_handler_body(name, &commands[*open..*close]).is_err() {
+            prompting.insert(name.as_str());
+        }
+    }
+    let expected_prompting: BTreeSet<&str> =
+        PROMPTING_HANDLERS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        prompting, expected_prompting,
+        "the handlers in {COMMANDS} that reach a prompt are a closed set (U77). A name \
+         that appeared must be classified here; a name that vanished means a handler \
+         stopped asking. `{HANDLER}` must never be among them."
+    );
+    assert!(
+        !prompting.contains(HANDLER),
+        "`{HANDLER}` collects a secret — the whole of U30's third-party claim is that it \
+         does not"
+    );
+
+    // ── 4. the one-hop reach, closed and pinned at zero ─────────────
+
+    let reached = crate_modules(verify_body);
+    let expected_reach: BTreeSet<String> = REACH_MODULES
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        reached, expected_reach,
+        "`{HANDLER}`'s body names a different set of `crate::` modules than U77 \
+         enumerated. Every module it reaches is pinned at zero prompt-capable tokens \
+         below; a module that is not on the list has never been checked. Classify it \
+         here, or do not reach it."
+    );
+    let locals: BTreeSet<&str> = spans
+        .iter()
+        .map(|(name, _, _)| name.as_str())
+        .filter(|name| *name != HANDLER && verify_body.contains(&format!("{name}(")))
+        .collect();
+    let expected_locals: BTreeSet<&str> = REACH_LOCALS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        locals, expected_locals,
+        "`{HANDLER}`'s body calls a different set of {COMMANDS}-local helpers than U77 \
+         enumerated. `collect_passphrase` is one of those helpers, which is exactly why \
+         this list is closed rather than open."
+    );
+
+    for (module, why) in REACH_MODULES {
+        let direct = root.join(format!("crates/antseal-cli/src/{module}.rs"));
+        let nested = root.join(format!("crates/antseal-cli/src/{module}/mod.rs"));
+        let path = if direct.is_file() { direct } else { nested };
+        let text = code_only(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display())),
+        );
+        assert!(
+            text.len() > 500,
+            "`{module}` ({why}) read as {} bytes — a zero over an unread file is not a \
+             measured zero",
+            text.len()
+        );
+        for &(token, what) in DEVICE.iter().chain(SEAM.iter()) {
+            assert_eq!(
+                text.matches(token).count(),
+                0,
+                "`{module}.rs` ({why}) names `{token}` ({what}). It is on `{HANDLER}`'s \
+                 one-hop reach list, and U77 pins every file on that list at zero."
+            );
+        }
+    }
+
+    // ── 5. the dependency surface, closed ───────────────────────────
+
+    let manifest_path = root.join("crates/antseal-cli/Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", manifest_path.display()));
+    let section = manifest
+        .split("\n[dependencies]\n")
+        .nth(1)
+        .expect("`crates/antseal-cli/Cargo.toml` has a `[dependencies]` table")
+        .split("\n[")
+        .next()
+        .expect("a section ends at the next table header");
+    let declared: BTreeSet<&str> = section
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            line.split([' ', '.', '='])
+                .next()
+                .expect("a dependency line starts with its name")
+        })
+        .collect();
+    assert!(
+        declared.len() > 10,
+        "the manifest parser found only {} dependencies — it is not reading the table, so \
+         the closure below would be vacuous: {declared:?}",
+        declared.len()
+    );
+    assert!(
+        declared.contains("rpassword"),
+        "POSITIVE CONTROL: the one terminal-input dependency must be found by the parser"
+    );
+    let expected_dependencies: BTreeSet<&str> = CLI_DEPENDENCIES.iter().copied().collect();
+    assert_eq!(
+        declared, expected_dependencies,
+        "`antseal-cli`'s production dependency surface changed. U77 closes it because the \
+         `DEVICE` vocabulary above can only enumerate prompting APIs that exist: a new \
+         crate capable of reading a terminal would be invisible to every token in this \
+         test. Classify the new edge — prompt-capable or not — and add it here."
+    );
+
+    // ── 6. the red direction, planted and asserted BY MESSAGE ───────
+    //
+    // U77's whole point. A prompt-capable read is wired into a `fn verify`
+    // body in a planted tree, and each scanner must NAME the planted site.
+    // This runs on every invocation, so the guard is never merely believed
+    // to be able to fail.
+
+    let planted_root = TestDir::new("u77-planted-prompt");
+    let planted_src = planted_root.path().join("crates/antseal-cli/src");
+    std::fs::create_dir_all(&planted_src).expect("create the planted src tree");
+    let planted_source = format!(
+        "pub(crate) fn {HANDLER}(bundle: &Path) -> Result<(), CliError> {{\n    \
+         let mut line = String::new();\n    \
+         let _ = {stdin}().lock().{read}&mut line);\n    \
+         let _ = bundle;\n    Ok(())\n}}\n",
+        stdin = DEVICE[1].0,
+        read = DEVICE[4].0,
+    );
+    std::fs::write(planted_src.join("commands.rs"), &planted_source).expect("plant");
+
+    let (planted_found, planted_walked) = scan(planted_root.path());
+    assert_eq!(
+        planted_walked, 1,
+        "the planted tree holds exactly one `.rs` file"
+    );
+    // The scanner must SEE the plant, not merely error about the real rows
+    // it cannot find in a synthetic tree. Measured 2026-08-18: without this
+    // line a plant carrying no prompt token at all still produced an `Err`
+    // (about `init.rs`), so `expect_err` on its own was a control that could
+    // not fail. It is the message assertions below, and this key, that carry
+    // the proof.
+    assert_eq!(
+        planted_found
+            .get(&(1, "crates/antseal-cli/src/commands.rs".to_owned()))
+            .copied(),
+        Some(1),
+        "the scanner must see the planted `{}` at the planted site: {planted_found:?}",
+        DEVICE[1].0
+    );
+    let inventory_message = check_inventory(&planted_found)
+        .expect_err("the inventory scan must reject a planted prompt-capable call");
+    assert!(
+        inventory_message.contains("src/commands.rs"),
+        "the inventory's rejection must NAME the planted site: {inventory_message}"
+    );
+    assert!(
+        inventory_message.contains(DEVICE[1].0),
+        "and the primitive it saw: {inventory_message}"
+    );
+
+    let planted_spans = top_level_fns(&planted_source);
+    let planted_verify = spans_named(&planted_spans, HANDLER);
+    assert_eq!(
+        planted_verify.len(),
+        1,
+        "the plant defines one `fn {HANDLER}`"
+    );
+    let (_, planted_open, planted_close) = planted_verify[0];
+    let body_message = check_handler_body(HANDLER, &planted_source[*planted_open..*planted_close])
+        .expect_err("the body check must reject an interactive read wired into `verify`");
+    assert!(
+        body_message.contains(HANDLER),
+        "the body check's rejection must NAME the handler: {body_message}"
+    );
+    assert!(
+        body_message.contains(DEVICE[1].0),
+        "and the primitive it saw: {body_message}"
+    );
 }
 
 /// A tampered bundle through the binary: nonzero, the error envelope, and the

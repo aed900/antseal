@@ -271,3 +271,49 @@ right one.
   this after the fact; the remedy is to re-export from a live vault, which
   still holds the journal. No shipped release predates the fix, so the
   exposure is limited to development-tree backups.
+
+## Amendment (2026-08-18, U84 / D151 §2 R2): the keyfile factor is NOT preserved — it is refused
+
+The §Format bullet **"Keyfile factor preserved"** (`:78-85`) and the
+§Spec-conformance sentence **"no divergence"** (`:176`, in the section at
+`:172-178`) are both false of the shipped code and have been since U8 landed on
+2026-08-02.
+
+*(Citation corrected while landing this amendment: D151 §1.1 places the
+§Spec-conformance sentence at `:250-255`. Re-measured against this file at the
+moment of writing, `:250-255` is inside the 2026-08-02 S29 amendment's D43
+discussion; `## Spec conformance` opens at `:172` and the sentence is `:176`.
+D151's substance is unaffected — both statements exist and both are false — and
+the two ranges above were each read back before this line was written.)*
+
+`vault export` refuses any vault whose header wrap mode is non-zero
+(`crates/antseal-cli/src/vault/export.rs:745-756`) and `vault import` refuses
+any payload whose wrap mode is non-zero (`:520-535`).
+The overturn was deliberate, was argued at the site
+(`crates/antseal-cli/src/vault/export.rs:30-59`) and was recorded in U8's
+register row (`TODO.md:398`, deviation 1) — **but never here**, so this record
+has been read as the refusal's authority when it is in fact the thing the
+refusal overturns.
+
+**Why the factor cannot be preserved in v1.** The export's AEAD key is
+`KDF(passphrase, fresh salt)` — the passphrase **alone**, as this record's own
+§Format block says. A v1 export of a two-factor vault would therefore be a
+one-factor backup of a two-factor vault: the weakest link, believed to be the
+strongest. The payload's `wrap_mode` slot (key 1) exists, but the payload sits
+**inside** the AEAD, so no reader can learn from it that a keyfile is required
+before deriving the key the keyfile participates in. Carrying the wrap means
+putting it in the **header**, whose v1 body is `map { 0: kdf_block, 1: nonce }`
+and which is the AAD. That is a format event, unchanged in status by this
+amendment: **not taken at MVP.**
+
+**Consequences.** (i) The §Format "Keyfile factor preserved" bullet is
+superseded by this amendment in its entirety. (ii) §Spec conformance's *"no
+divergence"* is corrected: the conjunction MVP-SPEC.md line 143 promises —
+`vault export`/`import` **and** a keyfile wrap — does not hold, and the
+divergence is collected by **Q251**. (iii) `D50-os-keystore-scope.md:60-61`'s
+premise *"D47's export preserves wrap factors"* is likewise false; D50's
+**conclusion** (no keystore at M1) is unaffected and is strengthened, and its
+binding constraint on a future keystore wrap stands unchanged. (iv) The
+user-facing statement of the refusal is already correct and needs no repair:
+`docs/user/vault-loss.md:167-181`, `docs/user/vault-theft.md:219-224`,
+`docs/vault-keyfile.md:47-51`.

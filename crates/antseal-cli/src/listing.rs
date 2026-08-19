@@ -201,14 +201,15 @@ use antseal_core::anchor::model::TsaArtifactView;
 use antseal_core::anchor::roots::TsaRootStore;
 use antseal_core::anchor::verdicts::evaluate_tsa_artifact;
 use antseal_core::crypto::secrets::SealId;
-use antseal_core::manifest::anchor_digest;
+use antseal_core::manifest::{DescriptorKind, Manifest, UnitEntry, anchor_digest};
 
 use crate::error::CliError;
 use crate::pipeline::anchors::{
     AnchorArtifact, DamageReason, DamagedSlot, StoredAnchors, damaged_slot_json,
 };
 use crate::pipeline::journal::{JournalError, SealState, recorded_plan, recorded_state};
-use crate::vault::store::{SealShapingFlags, WorkState, WorkStore};
+use crate::seal_plan::{pattern_matches, split_conflicts_with_no_fine_tree};
+use crate::vault::store::{SealShapingFlags, WorkRecord, WorkState, WorkStore};
 
 /// The instant `list` evaluates every stored TSA token at.
 ///
@@ -273,6 +274,67 @@ pub struct ResumeHint {
     pub clock: ResumeClock,
 }
 
+/// Whether the recorded flags make this work's own resume command a
+/// **refusal**, decided from what the vault recorded rather than from the
+/// files as they are now.
+///
+/// # Why the manifest and never the filesystem (D152 §1.4)
+///
+/// The rule this answers is `build_plan`'s
+/// [`split_conflicts_with_no_fine_tree`](crate::seal_plan::split_conflicts_with_no_fine_tree),
+/// whose decisive term is a whole-file UTF-8 read. `list` holds no
+/// `SealArgs`, no cwd and no `PlannedFile`, and it opens no user file
+/// anywhere — and the bytes on disk today are not the bytes that were
+/// sealed, so a verdict read from them would answer a different question,
+/// vary between two `list` runs over an unchanged vault, and put an
+/// unbounded read behind a read-only reporter. The journaled plaintext
+/// manifest records all three content terms exactly, on the bytes that were
+/// actually sealed: `descriptor_kind`, `fine_tree_present`, and the
+/// raw-mirror byte count.
+///
+/// # Why three values and not a nullable boolean (D152 §2 R6)
+///
+/// Absent is *"this rule does not refuse the recorded command"*; it is not
+/// *"the resume will succeed"*, which nothing here measures. Folding
+/// [`Self::Undetermined`] into it would re-create the `Some(0)`/`None`
+/// ambiguity U25 paid to remove and D100 R3 records forty lines below.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeRefusal {
+    /// D24 §1's pair, **as recorded**: the offending paths and the
+    /// `--no-fine-tree` patterns that caught them, in `file_id` order.
+    SplitOnNoFineTree {
+        /// The offending input paths, as the user gave them.
+        files: Vec<String>,
+        /// The recorded `--no-fine-tree` patterns that matched at least
+        /// one offending path, in recorded order.
+        patterns: Vec<String>,
+    },
+    /// The flag pair is recorded but the work has no readable manifest, so
+    /// no verdict exists.
+    ///
+    /// **Necessarily a pre-pay work when the record is merely absent**
+    /// (D152 §1.7): `put_plan` runs at `pipeline/seal.rs:351`, before
+    /// `quote_batch` at `:372` and therefore before consent, the anchor
+    /// gate and `pay` — so a work whose manifest was never journaled was
+    /// never quoted, consented to or paid for. The one asymmetry is a plan
+    /// record that is *present but undecodable*, which may be post-pay and
+    /// is a damaged vault by other instruments; `list` is a reporter
+    /// (D100 R3), so it lands here rather than in a fourth state or a
+    /// refusal of the whole listing.
+    Undetermined,
+}
+
+impl ResumeRefusal {
+    /// Stable kebab identifier for `--json`'s `rule` key.
+    #[must_use]
+    pub const fn rule_name(&self) -> &'static str {
+        match self {
+            Self::SplitOnNoFineTree { .. } => "split-x-no-fine-tree",
+            Self::Undetermined => "undetermined",
+        }
+    }
+}
+
 /// One work's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkRow {
@@ -320,6 +382,16 @@ pub struct WorkRow {
     pub cost_atto: Option<u128>,
     /// Present exactly for unfinished works.
     pub resume: Option<ResumeHint>,
+    /// Whether the recorded flags make [`ResumeHint::invocation`] a command
+    /// `seal` refuses (**U85**, ruled by D152).
+    ///
+    /// Populated for the two incomplete states only, exactly as
+    /// [`Self::resume`] is: a `Complete` or `Abandoned` work has nothing to
+    /// resume, so it has nothing to be blocked. `None` says *"this rule does
+    /// not refuse the recorded command"* and nothing stronger — a file
+    /// deleted or moved since the seal makes any hint fail, and nothing here
+    /// measures that.
+    pub resume_refusal: Option<ResumeRefusal>,
     /// How many OTS calendar attestations this work is still waiting on —
     /// summed over its `.ots` artifacts, in the sense A15's
     /// `OtsAnchorStatus::pending_uris` gives the word.
@@ -557,6 +629,14 @@ impl WorkListing {
                 }),
                 WorkState::Complete | WorkState::Abandoned => None,
             };
+            // U85/D152 R4: only an unfinished work can be blocked, and only
+            // the flag pair pays for the plan read (`resume_refusal` step 1).
+            let refusal = match state {
+                WorkState::IncompletePrePay | WorkState::IncompletePostPay => {
+                    resume_refusal(store, &seal_id, &record)
+                }
+                WorkState::Complete | WorkState::Abandoned => None,
+            };
             works.push(WorkRow {
                 work_id: record.work_id,
                 seal_id,
@@ -569,6 +649,7 @@ impl WorkListing {
                 degraded: record.degraded,
                 cost_atto: record.cost_atto,
                 resume,
+                resume_refusal: refusal,
                 pending_anchors: read.nag.as_ref().map(|nag| nag.pending),
                 nag: read.nag.map(|nag| nag.nag),
                 damaged_anchors: read.damaged,
@@ -669,8 +750,30 @@ impl WorkListing {
             out.extend(nag_lines(row));
             if let Some(resume) = &row.resume {
                 out.push(format!("  state: {}", row.detail_state_name()));
-                out.push(format!("  {}", resume.clock.note()));
-                out.push(format!("  resume with: {}", resume.invocation));
+                match &row.resume_refusal {
+                    // U85/D152 R5. The clock note is **replaced**, not
+                    // merely preceded: for a post-pay work it reads
+                    // "RESUME PROMPTLY … finishing it costs a second
+                    // payment", which is an instruction to do the
+                    // impossible on a deadline. And the invocation is
+                    // demoted from an instruction to a labelled record —
+                    // kept, because D45's identity is exactly the
+                    // information needed to choose *different* flags for
+                    // the copy.
+                    Some(ResumeRefusal::SplitOnNoFineTree { files, patterns }) => {
+                        out.extend(blocked_lines(files, patterns, resume));
+                    }
+                    // No verdict is not a verdict. An `Undetermined` work
+                    // has no journaled manifest, which (D152 §1.7) means
+                    // nothing was quoted, consented to or paid — so an
+                    // unqualified hint costs its owner one re-run that
+                    // aborts pre-passphrase and pre-network, with a message
+                    // naming the file, both flags and the matched pattern.
+                    None | Some(ResumeRefusal::Undetermined) => {
+                        out.push(format!("  {}", resume.clock.note()));
+                        out.push(format!("  resume with: {}", resume.invocation));
+                    }
+                }
             }
         }
         let counts = self.counts();
@@ -952,6 +1055,181 @@ fn anchor_nag(
     })
 }
 
+/// D24 §1's refusal, evaluated against the **journaled manifest** — U85's
+/// honesty check (D152 §2 R2).
+///
+/// Answers one question: would `build_plan` refuse the very command
+/// [`seal_invocation`] prints for this work? D45 makes the recorded flag set
+/// the work's identity and there is no `--resume` subcommand — re-running
+/// `seal` *is* the resume — so a work whose recorded shaping `build_plan`
+/// now refuses cannot be finished through the documented route at all, and
+/// the route currently prints the failing command.
+///
+/// # The rule has one author
+///
+/// The predicate is not reimplemented here: this reads the three content
+/// terms out of the manifest and calls
+/// [`split_conflicts_with_no_fine_tree`], the same function
+/// `refuse_split_on_no_fine_tree` calls, so `seal` and `list` cannot drift
+/// on what the refusal means. That is the discipline `anchor_nag` already
+/// follows for A15's nag, and the shape U82 found three artifacts agreeing
+/// on something none of them checked.
+///
+/// # Where each term comes from
+///
+/// | `build_plan` term | read here from | why it is the same value |
+/// | --- | --- | --- |
+/// | `split()` | `shaping.split_blank_lines` | `base_flags` applies `--split` to every file unconditionally |
+/// | `no_fine_tree_matched()` | `!fine_tree().is_present()` **and** a recorded pattern that matches | see the note below |
+/// | `size` | the raw-mirror `true_length`, else `size()` | a mirror exists iff `raw != canonical` and then carries the raw count; `size()` alone is the *canonical* count for text |
+/// | `force_text()` | `canon().kind() == Text` | `kind` is Text iff `is_text(raw) \|\| force_text` — the recorded value of the whole disjunction, which is why the text oracle is unreachable |
+///
+/// # Why the pattern conjunct, where D152 §2 R2 step 3 wrote only `!fine_tree_present`
+///
+/// **Deliberate deviation, measured.** D152 §1.6 argues `fine_tree_present`
+/// is false for exactly two reasons — the opt-out, or an empty file — and
+/// that the raw size separates them. Measured, it does not, for exactly one
+/// class: `CanonDescriptor::describe_file` is handed the **`size` field**,
+/// which is the *canonical* byte count for text, so a lone-BOM file (raw 3,
+/// canonical 0) has `fine_tree_present == false` with **no glob involved**
+/// while its raw-mirror length is 3. Without this conjunct such a file, in a
+/// work carrying both flags, would be reported blocked when `build_plan`
+/// would accept the re-run — the false-positive direction D152 §1.5 refuses
+/// the cheap flag-pair trigger for. The conjunct is not a second rule: it is
+/// `pattern_matches` over the two recorded spellings, which is exactly the
+/// function `build_plan:220-223` used to set the flag in the first place.
+/// It also makes D152 §2 R2 step 5's *"if the recomputation names none, use
+/// the whole list"* fallback unreachable rather than dead: an offending file
+/// has a matching pattern by construction, so `patterns` is never empty.
+///
+/// # Errors
+///
+/// None, ever. `list` is a reporter (D100 R3): a plan record that is absent,
+/// unreadable, undecodable or inconsistent with the meta record becomes
+/// [`ResumeRefusal::Undetermined`] on the row, never a refusal of the
+/// listing. Nothing on this path may propagate.
+fn resume_refusal(
+    store: &WorkStore<'_>,
+    seal_id: &SealId,
+    record: &WorkRecord,
+) -> Option<ResumeRefusal> {
+    // ── Step 1: the cheap gate, and it is normative (D152 §2 R2.1) ──
+    //
+    // The same short-circuit discipline D149 §2 R1 made normative in
+    // `build_plan`, for the same reason: the expensive step must be
+    // **unreachable** when a free term settles it. A vault of ordinary
+    // works therefore costs `list` no plan read at all, which R9 T7 counts
+    // rather than argues.
+    //
+    // As a *trigger* this pair is refused (D152 §3.3) — its false positives
+    // are the pair's designed use, a binary opted out beside split prose —
+    // but as a *gate* a false positive costs one journal read and nothing
+    // else.
+    let both_flags_recorded =
+        record.shaping.split_blank_lines && !record.shaping.no_fine_tree.is_empty();
+    if !both_flags_recorded {
+        return None;
+    }
+
+    // ── Step 2: the recorded manifest, or no verdict at all ──
+    let Ok(Some(plan)) = recorded_plan(store, seal_id) else {
+        return Some(ResumeRefusal::Undetermined);
+    };
+    let Some(manifest_bytes) = plan.manifest_bytes else {
+        return Some(ResumeRefusal::Undetermined);
+    };
+    let Ok(manifest) = Manifest::decode(&manifest_bytes) else {
+        return Some(ResumeRefusal::Undetermined);
+    };
+    let files = manifest.body().files();
+    // The length guard `show.rs:412-423` already applies to this same pair
+    // of records: the manifest carries the file entries and the meta record
+    // carries the paths, and only their agreement makes `files[i]` and
+    // `input_paths_*[i]` the same file.
+    if record.input_paths_as_given.len() != files.len()
+        || record.input_paths_absolute.len() != files.len()
+    {
+        return Some(ResumeRefusal::Undetermined);
+    }
+
+    // ── Steps 3 and 4: the shared predicate, per file, in `file_id` order ──
+    let mut offending: Vec<String> = Vec::new();
+    for (index, file) in files.iter().enumerate() {
+        let as_given = &record.input_paths_as_given[index];
+        let absolute = &record.input_paths_absolute[index];
+        let matched = record
+            .shaping
+            .no_fine_tree
+            .iter()
+            .any(|pattern| pattern_matches(pattern, as_given, absolute));
+        // A mirror exists iff the raw and canonical renditions differ, and
+        // then it carries the raw count (D23, spec line 92); with no mirror
+        // the two are equal and `size()` is already the raw count.
+        let raw_size = file
+            .raw_mirror()
+            .map_or_else(|| file.size(), UnitEntry::true_length);
+        let conflicts = split_conflicts_with_no_fine_tree(
+            true,
+            !file.fine_tree().is_present() && matched,
+            raw_size,
+            file.canon().kind() == DescriptorKind::Text,
+            // Unreachable by construction: the `force_text` argument above
+            // is the recorded value of `build_plan`'s whole
+            // `force_text() || file_is_text(..)` disjunction, so the oracle
+            // is reached only for a file the manifest records as **not**
+            // text — and then the caller has already returned `true`. R9 T4
+            // counts the calls, with an anti-vacuity arm proving the same
+            // counter does fire when a caller supplies `force_text = false`.
+            // If a future edit reaches it, the honest answer is "no verdict
+            // from here", whose conservative rendering is "not refused".
+            || Err(NoTextOracle),
+        )
+        .unwrap_or(false);
+        if conflicts {
+            offending.push(as_given.clone());
+        }
+    }
+    if offending.is_empty() {
+        return None;
+    }
+
+    // ── Step 5: the patterns that caught them, recomputed by the matcher ──
+    //
+    // Named rather than reprinted whole, exactly as
+    // `refuse_split_on_no_fine_tree:466-474` does for its own message: a
+    // user with two globs and three files must not be left to work out
+    // which entry caught which file, and a paraphrase could disagree with
+    // the matcher.
+    let patterns: Vec<String> = record
+        .shaping
+        .no_fine_tree
+        .iter()
+        .filter(|pattern| {
+            record
+                .input_paths_as_given
+                .iter()
+                .zip(&record.input_paths_absolute)
+                .filter(|(as_given, _)| offending.contains(as_given))
+                .any(|(as_given, absolute)| pattern_matches(pattern, as_given, absolute))
+        })
+        .cloned()
+        .collect();
+
+    Some(ResumeRefusal::SplitOnNoFineTree {
+        files: offending,
+        patterns,
+    })
+}
+
+/// The text oracle `list` deliberately does not have.
+///
+/// A private marker rather than [`std::convert::Infallible`] so the
+/// unreachable arm is *written down* instead of being a type-level claim no
+/// reader can see, and so the fallback is an honest "no verdict from here"
+/// rather than a fabricated `false` (D152 §2 R3).
+#[derive(Debug)]
+struct NoTextOracle;
+
 /// Run A15's per-work nag rule over one work's decoded artifacts.
 ///
 /// The rule itself is **not** reimplemented here: this assembles
@@ -1065,6 +1343,33 @@ pub struct ListingCounts {
     pub damaged_anchors: usize,
 }
 
+/// The `resume.refusal` value (**U85**, D152 §2 R6).
+///
+/// Three values, deliberately, and not a nullable boolean: `null` means
+/// **this rule does not refuse the recorded command** — *not* that the
+/// resume will succeed. A file deleted, moved or edited since the seal makes
+/// any hint fail, and nothing here measures that; the verdict is read from
+/// the journaled manifest and never from the filesystem. `"undetermined"`
+/// is the third value, and collapsing it into `null` would re-create the
+/// `Some(0)`/`None` ambiguity U25 paid to remove (D100 R3, twenty lines
+/// below).
+fn refusal_json(refusal: Option<&ResumeRefusal>) -> serde_json::Value {
+    match refusal {
+        None => serde_json::Value::Null,
+        Some(ResumeRefusal::Undetermined) => serde_json::json!({
+            "rule": ResumeRefusal::Undetermined.rule_name(),
+        }),
+        Some(refusal @ ResumeRefusal::SplitOnNoFineTree { files, patterns }) => serde_json::json!({
+            "rule": refusal.rule_name(),
+            "files": files,
+            // The recorded pattern verbatim, not the shell-quoted spelling
+            // the human line prints: a machine reader wants the glob, not a
+            // token to paste.
+            "patterns": patterns,
+        }),
+    }
+}
+
 fn row_json(row: &WorkRow) -> serde_json::Value {
     serde_json::json!({
         "work_id": row.work_id.as_ref().map(crate::pipeline::hex32),
@@ -1077,10 +1382,17 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
         "unanchored": row.unanchored,
         "degraded": row.degraded,
         "cost_atto": row.cost_atto.map(|c| c.to_string()),
+        // U85/D152 R6. `note` and `invocation` are unchanged so a consumer
+        // keying on either does not break; the blocked sentence is
+        // derivable from `refusal`'s `rule`, `files` and `patterns`.
+        // `refusal` is present whenever the object is — a key that only
+        // appeared on a blocked work would leave a blocked work looking
+        // exactly like an ordinary one to a consumer that never saw it.
         "resume": row.resume.as_ref().map(|hint| serde_json::json!({
             "invocation": hint.invocation,
             "clock": hint.clock.name(),
             "note": hint.clock.note(),
+            "refusal": refusal_json(row.resume_refusal.as_ref()),
         })),
         // U25 (M2). Both `null` together, and only for a work whose
         // anchor class could not be computed (see `WorkRow::nag`).
@@ -1100,6 +1412,78 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
             .map(damaged_slot_json)
             .collect::<Vec<_>>(),
     })
+}
+
+/// The three lines a **blocked** unfinished work renders instead of the
+/// clock note and the `resume with:` hint (**U85**, D152 §2 R5).
+///
+/// # Every clause is a measurement, and the ones that are absent are too
+///
+/// `seal_resume`'s two neighbouring refusals both delegate their way-forward
+/// clause to `list`, so this is the venue that has to break the cycle:
+///
+/// - re-running the printed command lands on `invalid-seal-argument`, **27**
+///   (`build_plan` refuses the pair before the vault is even opened);
+/// - re-running the **same paths** with a flag dropped lands on
+///   `ResumeFlagMismatch`, **26**, whose message says *"re-run with the
+///   original flags"* — the command 27 refuses;
+/// - sealing an **overlapping** path set lands on `ResumeOverlapNotExact`,
+///   **25**, whose message says *"`antseal list` shows … the exact command
+///   that finishes it"* — this row.
+///
+/// So the copy never says *drop one flag* without *at a different path*, and
+/// never says *seal it as a separate work* without one either. The one route
+/// that runs is a **disjoint** path set, which falls through to
+/// `ResumeDecision::Fresh` — and it appears in none of the three refusals as
+/// an instruction.
+///
+/// It also never says *abandon*: `Command` has nine subcommands and none of
+/// them is one, and `abandon_pre_pay` has no production caller. That is
+/// **U41**, and the last sentence here becomes false the day U41 lands.
+///
+/// Every offending file is named, comma-joined in `file_id` order — D46's
+/// *"every offending argument named"*, the rule
+/// `refuse_split_on_no_fine_tree` follows for the same refusal. Verb
+/// agreement follows the count so that the single-file rendering is D152 §2
+/// R5's copy byte for byte.
+fn blocked_lines(files: &[String], patterns: &[String], resume: &ResumeHint) -> Vec<String> {
+    let (was, is) = if files.len() == 1 {
+        ("was", "is")
+    } else {
+        ("were", "are")
+    };
+    let named = files.join(", ");
+    // Quoted the way the invocation quotes them, so the pattern the user
+    // reads here is the token they would type.
+    let globs = patterns
+        .iter()
+        .map(|pattern| shell_quote(pattern))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The only clause that keys on the clock, and it takes `ResumeClock`'s
+    // own two-way split rather than inventing a third reading of it.
+    let money = match resume.clock {
+        ResumeClock::ReQuote => "nothing was paid, so only the local staged copy is lost.",
+        ResumeClock::TimeBoxed => "this seal is paid for and the payment cannot be recovered.",
+    };
+    vec![
+        format!(
+            "  CANNOT BE FINISHED: {named} {was} selected for splitting by --split blank-lines \
+             and {is} also matched by --no-fine-tree {globs}, and antseal refuses that pair \
+             (D24). D45 makes the recorded flags this work's identity, so no re-run can change \
+             them."
+        ),
+        format!(
+            "  {money} To seal this material, move or copy the file(s) to a different path and \
+             seal them there with either --split or --no-fine-tree dropped: re-running the \
+             recorded command is refused, and re-running the same paths with different flags is \
+             refused too. This build has no command that discards a staged work."
+        ),
+        format!(
+            "  recorded invocation, refused — do not re-run: {}",
+            resume.invocation
+        ),
+    ]
 }
 
 /// Rebuild the recorded `seal` invocation from D45's identity block.
@@ -1724,6 +2108,7 @@ mod tests {
             degraded: false,
             cost_atto: None,
             resume: None,
+            resume_refusal: None,
             pending_anchors: nag.map(|_| 0),
             nag,
             damaged_anchors: AnchorDamage::default(),
@@ -1744,17 +2129,43 @@ mod tests {
         row
     }
 
+    /// **The glob must match one of the paths below, and this is not a
+    /// style preference (D152 §1.8; U85).**
+    ///
+    /// It was `*.png` until 2026-08-18, over `chapter one.txt` and
+    /// `notes.md`. `glob_matches` has `*` and `?` as its only
+    /// metacharacters and neither crosses `/`, so `*.png` requires the text
+    /// to end in `.png` — it matched **none** of the given paths, and
+    /// `build_plan` has refused a zero-match `--no-fine-tree` since
+    /// `442165e` (2026-08-02), the same day this fixture landed. So the
+    /// committed golden pinned a command the product already refused, for a
+    /// reason unrelated to its own name, and **the shaping it pinned is the
+    /// one shape in which `--split` and `--no-fine-tree` cannot interact**.
+    /// That is why nothing went red when U82/D149 made the pair a hard
+    /// refusal (exit 27) and `list` began printing a command `seal` aborts
+    /// on. Do not "simplify" it back to a glob that matches nothing.
     fn shaping() -> SealShapingFlags {
         SealShapingFlags {
             title: Some("my thesis".to_owned()),
             split_blank_lines: true,
             force_text: false,
-            no_fine_tree: vec!["*.png".to_owned()],
+            no_fine_tree: vec!["*.txt".to_owned()],
             no_anchor: true,
             force_degraded: false,
         }
     }
 
+    /// `seal_invocation` reproduces D45's identity block verbatim — and is
+    /// **deliberately unaware** of whether the command it prints is one
+    /// `build_plan` would refuse (U85, D152 §2 R7.3).
+    ///
+    /// It is a pure string builder over recorded flags and must keep
+    /// reproducing them whatever they are, because D45's identity is exactly
+    /// what a stranded user needs in order to choose *different* flags for
+    /// the copy. The honesty lives one layer up, in [`resume_refusal`] and
+    /// [`blocked_lines`], where the row can say that the command is a record
+    /// and not an instruction. The shaping here is now in the shape a real
+    /// legacy work has — the glob matches — which is the point.
     #[test]
     fn the_resume_hint_reproduces_every_identity_flag() {
         let hint = seal_invocation(
@@ -1765,7 +2176,7 @@ mod tests {
         assert_eq!(
             hint,
             "antseal seal 'chapter one.txt' notes.md --title 'my thesis' --split blank-lines \
-             --no-fine-tree '*.png' --no-anchor --network devnet"
+             --no-fine-tree '*.txt' --no-anchor --network devnet"
         );
     }
 
@@ -1791,6 +2202,73 @@ mod tests {
         assert_eq!(shell_quote("it's"), r"'it'\''s'");
         assert_eq!(shell_quote("$(rm -rf /)"), "'$(rm -rf /)'");
         assert_eq!(shell_quote(""), "''");
+    }
+
+    /// **U85 / D152 §2 R9 T4.** The shared predicate reaches its text
+    /// oracle only when nothing cheaper can answer — which is what makes
+    /// `list`'s no-filesystem-access property structural rather than a
+    /// promise, since `list`'s oracle is [`NoTextOracle`] and has no answer
+    /// to give.
+    ///
+    /// # The anti-vacuity arm is the point
+    ///
+    /// A counter asserted to be zero proves nothing if the counter can never
+    /// move — this project's dominant defect class. So the same oracle is
+    /// driven to a shape that **must** call it, and the test fails if it
+    /// does not.
+    #[test]
+    fn the_text_oracle_is_reached_only_when_nothing_cheaper_answers() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0_usize);
+        let oracle = || {
+            calls.set(calls.get() + 1);
+            Ok::<bool, NoTextOracle>(true)
+        };
+
+        // The three cheap negatives D24's term order exists for, plus the
+        // binary-matched shape G6 exempts. `force_text` is false throughout,
+        // so only the term order can keep the oracle unreached.
+        let cheap: [(bool, bool, u64, &str); 4] = [
+            (true, true, 0, "an empty matched file costs no I/O"),
+            (true, false, 40, "an unmatched file costs no I/O"),
+            (false, true, 40, "a file with no --split costs no I/O"),
+            (
+                true,
+                true,
+                40,
+                "the binary-matched shape is the one that reads",
+            ),
+        ];
+        for (index, (split, matched, size, why)) in cheap.iter().enumerate() {
+            let before = calls.get();
+            let verdict = split_conflicts_with_no_fine_tree(*split, *matched, *size, false, oracle)
+                .expect("the counting oracle never errors");
+            let fired = calls.get() - before;
+            if index < 3 {
+                assert_eq!(fired, 0, "{why}");
+                assert!(!verdict, "{why}: and the verdict is a cheap negative");
+            } else {
+                // Anti-vacuity: the very same oracle, on the one shape that
+                // has to consult it. A counter that cannot move is not
+                // evidence about the three assertions above.
+                assert_eq!(fired, 1, "{why}");
+                assert!(verdict, "{why}: and its answer is the verdict");
+            }
+        }
+
+        // And `list`'s own call shape — `force_text` carrying the recorded
+        // value of the whole disjunction — settles the refused case without
+        // the oracle at all.
+        let before = calls.get();
+        let verdict =
+            split_conflicts_with_no_fine_tree(true, true, 40, true, oracle).expect("never reached");
+        assert!(verdict, "recorded-as-text short-circuits to refused");
+        assert_eq!(
+            calls.get() - before,
+            0,
+            "D152 R2: `kind() == Text` is the recorded disjunction, so `list` never reads a file"
+        );
     }
 
     #[test]

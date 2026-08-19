@@ -91,7 +91,7 @@ use ant_protocol::evm::contract::payment_vault::handler::PaymentVaultHandler;
 use ant_protocol::evm::{Amount, U256};
 use bytes::Bytes;
 
-use crate::backend::{BalanceReport, PreflightReport};
+use crate::backend::{BalanceReport, PreflightReport, allowance_to_approve};
 use crate::evm::to_evm_network;
 use crate::network::{NetworkConfig, NetworkId};
 use crate::quote::{
@@ -431,10 +431,43 @@ impl AntCoreBackend {
     }
 
     /// Exact-allowance approve (module docs): if the vault's current
-    /// allowance is below `total`, approve exactly `total` — never
-    /// `U256::MAX`. Returns the approve tx's gas cost in wei (0 when no
-    /// approve was needed).
-    async fn ensure_allowance(&self, total: Amount) -> Result<u128, StorageError> {
+    /// allowance is below `total_atto`, approve exactly `total_atto` —
+    /// never unlimited. Returns the approve tx's gas cost in wei (0 when
+    /// no approve was needed).
+    ///
+    /// # The amount is decided elsewhere, deliberately
+    ///
+    /// The rule is [`allowance_to_approve`] in the DEFAULT feature set,
+    /// not a literal here, so that it can be pinned by a test that needs
+    /// no upstream graph, no network and no spend
+    /// (`tests/allowance_policy.rs`). **Do not inline it.** The choice it
+    /// encodes is a ruled wallet-hygiene/anonymity trade — Q240,
+    /// `docs/threat-model.md` §2.3 — and the obvious "simplification"
+    /// toward upstream's shape is precisely the refactor the pin exists to
+    /// catch. Upstream carries the *identical* guard
+    /// (`evmlib-0.9.0/src/wallet.rs:185-190`, `:415-426`); the clients
+    /// differ only in the amount.
+    ///
+    /// # The short-circuit is not an optimisation that works
+    ///
+    /// `allowance_to_approve` returning `None` — the standing allowance
+    /// already covers the total — **almost never happens on this path**,
+    /// and a reader should not mistake it for a saving. An exact allowance
+    /// is consumed by the very payment it was raised for: `payForQuotes`
+    /// moves exactly `total_atto` by `transferFrom`, which decrements the
+    /// allowance to zero, so the next seal starts from zero again. It
+    /// fires only when a previous seal approved and then failed to spend
+    /// (a [`StorageError::StrandedPayment`] shape) and the next seal's
+    /// total is no larger than what was left. The observable consequence
+    /// is a fresh, public, permanent `Approval` before essentially every
+    /// seal, which is the fingerprint §2.3 prices.
+    ///
+    /// The `U256 → u128` lift of the current allowance is verdict-
+    /// preserving (see [`saturate_u256`]): a standing allowance above
+    /// `u128::MAX` saturates to `u128::MAX`, which still compares
+    /// greater-or-equal to every representable total, so an unlimited
+    /// standing allowance short-circuits exactly as it does at full width.
+    async fn ensure_allowance(&self, total_atto: u128) -> Result<u128, StorageError> {
         let vault = vault_address(&self.wallet);
         let current =
             self.wallet
@@ -443,12 +476,12 @@ impl AntCoreBackend {
                 .map_err(|e| StorageError::Network {
                     reason: format!("allowance query failed: {e}"),
                 })?;
-        if current >= total {
+        let Some(amount_atto) = allowance_to_approve(saturate_u256(current), total_atto) else {
             return Ok(0);
-        }
+        };
         let tx_hash = self
             .wallet
-            .approve_to_spend_tokens(vault, total)
+            .approve_to_spend_tokens(vault, U256::from(amount_atto))
             .await
             .map_err(|e| StorageError::Payment {
                 reason: format!("token approve failed: {}", redact_evm_error(&e.to_string())),
@@ -676,7 +709,7 @@ impl StorageBackend for AntCoreBackend {
         // 4. Exact-allowance approve (no-op when nothing to transfer).
         let mut gas_cost_wei: u128 = 0;
         if total > 0 {
-            gas_cost_wei = self.ensure_allowance(U256::from(total)).await?;
+            gas_cost_wei = self.ensure_allowance(total).await?;
         }
 
         // 5. Sequential ≤cap sub-batches (D37 Decision 2). Each blob's
@@ -1243,8 +1276,10 @@ fn checked_u128(amount: Amount) -> Result<u128, StorageError> {
     })
 }
 
-/// `U256 → u128`, saturating — for balances only (comparisons stay
-/// correct at saturation; costs use [`checked_u128`]).
+/// `U256 → u128`, saturating — for balances and for the allowance
+/// comparison (comparisons stay correct at saturation: a value above
+/// `u128::MAX` becomes `u128::MAX`, which is still greater-or-equal to
+/// every representable operand; costs use [`checked_u128`]).
 fn saturate_u256(value: U256) -> u128 {
     u128::try_from(value).unwrap_or(u128::MAX)
 }

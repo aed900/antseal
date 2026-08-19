@@ -108,6 +108,10 @@ pub struct SealReport {
     /// anything was sealed would be advice about a risk not yet taken, and
     /// MVP-SPEC.md line 143 puts it after the first successful seal.
     pub export_nag: bool,
+    /// The vault's wrap mode is non-zero (U8/D50), so `vault export` refuses
+    /// it and the backup is by hand. Read from the header, not inferred:
+    /// the backup advice must match what the command actually does (D151).
+    pub wrapped: bool,
 }
 
 impl SealReport {
@@ -140,7 +144,7 @@ impl SealReport {
         }
         out.extend(self.anchor_lines());
         if self.export_nag {
-            out.extend(crate::vault::bookkeeping::export_nag());
+            out.extend(crate::vault::bookkeeping::export_nag(self.wrapped));
         }
         out
     }
@@ -517,6 +521,16 @@ where
             // vault restored from a backup carries its export record, so
             // the nag correctly stays quiet on a machine that has one.
             export_nag: !crate::vault::bookkeeping::load(session.vault())?.ever_exported(),
+            // D151 §2 R6: which backup instruction the nag carries. Read
+            // from the header rather than from any flag this invocation
+            // saw, because it must agree with what `vault export` will
+            // actually do for this vault — that command refuses a
+            // non-zero wrap mode, and advice naming it would be advice
+            // the user cannot follow.
+            wrapped: crate::vault::header::VaultHeader::decode(session.vault().header_bytes())
+                .map_err(CliError::from)?
+                .wrap_mode()
+                != crate::vault::header::WRAP_MODE_NONE,
         })),
         // D49's truncation. The consent gate was never called (the
         // pipeline returns at the post-quote barrier), so the report is

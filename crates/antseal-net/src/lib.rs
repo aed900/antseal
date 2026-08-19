@@ -116,7 +116,9 @@ pub mod test_util;
 pub use address::Address;
 #[cfg(feature = "ant-backend")]
 pub use ant_backend::{AntCoreBackend, CaptureHook};
-pub use backend::{BalanceReport, PreflightReport, StorageBackend, preflight};
+pub use backend::{
+    BalanceReport, PreflightReport, StorageBackend, allowance_to_approve, preflight,
+};
 pub use blob::{Blob, BlobExceedsChunkCap, MAX_CHUNK_SIZE};
 pub use error::StorageError;
 pub use live::manifest::{

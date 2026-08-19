@@ -8,6 +8,16 @@ anyone, with proof it belongs to what you sealed.
 "Seal before you share." antseal is proof of existence, integrity and
 priority; it is not a legal notary.
 
+**What a seal does not prove, and what it cannot protect you from.** A seal
+shows that the holder of key X possessed this content by time T — that is
+not exclusive possession, and it is no evidence that nobody else held the
+same bytes. And the vault holder can always be compelled to reveal what they
+sealed: selective disclosure limits what a *recipient* learns, never what a
+court, an employer or anyone else with leverage can extract; destroying the
+vault and every backup of it is the only, irreversible opt-out.
+[The threat model](docs/threat-model.md) sets out the compulsion case in
+full, including why no deniability feature exists and none is claimed.
+
 **Status:** the M0, M1, M2 and M3 gates have passed; **M4 (hardening and
 release) is in progress**. The verifier page is live at
 <https://antseal.org/>, and the `antseal` binary has nine subcommands
@@ -18,6 +28,36 @@ release) is in progress**. The verifier page is live at
 way to run it today is to build from source. Treat it as pre-release: the CLI
 surface is not frozen until U32, and the one accepted mainnet exposure has not
 been performed.
+
+## Install
+
+There is no released binary and no signed artifact to check, so building from
+a source checkout is the only way to run antseal today.
+
+When the first release ships, the channel will be **GitHub Releases** as the
+single authoritative source — no package managers, no third-party mirrors —
+and every artifact will carry a `SHA256SUMS` entry and a minisign signature
+([D72](docs/decisions/D72-release-targets-distribution-and-crates-io-scope.md),
+[D71](docs/decisions/D71-binary-signing-mechanism-and-key-custody.md)). That
+channel is inoperative while this repository is private, so no instruction to
+go and fetch something is written here yet.
+
+[Checking a download](docs/signing/verifying-a-release.md) is the page that
+will tell you what to run, how to read its output, and what a good signature
+does and does not mean: it says the key holder released those bytes — never
+that the bytes are safe, correct, or the newest.
+
+<!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 1) -->
+No signing key exists yet, so none is published here; when one is generated
+its 56-character public key goes between these two markers, alongside a
+pointer to [checking a download](docs/signing/verifying-a-release.md).
+<!-- END minisign-public-key -->
+
+A key published in this file is served from the same account as the binaries
+it signs, so it is not an independent check on them; the copy that does not
+share that control plane is a `TXT` record on `antseal.org`, and
+[how the signing key is looked after](docs/signing/key-custody.md) records
+what each copy is worth.
 
 ## Workspace map
 
@@ -49,6 +89,10 @@ deliberately states no task count: it moves most weeks, and
   anchors a seal uses, and how to change them.
 - [Format stability](docs/user/format-stability.md) — what the sealed formats
   promise across future versions.
+- [Checking a download](docs/signing/verifying-a-release.md) — how to check a
+  release signature before you run it, and what a good result does not mean.
+- [Release signing](docs/signing/README.md) — how releases are signed, and how
+  the signing key is held, backed up and lost.
 - [Threat model](docs/threat-model.md) — what a seal defends against and what
   it does not.
 - [Security policy](SECURITY.md) — how to report a flaw privately, and what

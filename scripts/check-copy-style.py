@@ -189,18 +189,22 @@ DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
 # the same discipline check-ci-shell.py applies to ALLOWED_INLINE and
 # verdict_wording.rs applies to RESIDUE. A debt that cannot go stale is an
 # exemption, and exemptions rot.
-OWED_PRESENCE: dict[tuple[str, str], str] = {
-    ("README.md", "limit-exclusive-possession"): (
-        "Q22 (M4) — 'Write README, install guide, and product-limits/disclosure docs', whose Do "
-        "names 'possession-not-authorship' and whose Accept reads 'Q20 lint green'. README today "
-        "states the authorship limit and not the exclusive-possession one; MVP-SPEC.md line 28 "
-        "requires both"
-    ),
-    ("README.md", "compelled-disclosure"): (
-        "Q22 (M4) — same row; its Do names the compelled-disclosure note explicitly. Today the "
-        "note exists only in docs/threat-model.md §2.5, which is Class E"
-    ),
-}
+#
+# EMPTY since 2026-08-19 (D150 §2 R4, ruled 2026-08-18). The two entries
+# that stood here — ("README.md", "limit-exclusive-possession") and ("README.md",
+# "compelled-disclosure"), both owed by Q22 — were deleted in the same act
+# that wrote their clauses into README.md, because each half alone is RED:
+# the clauses without the deletion trips the staleness loop below, and the
+# deletion without the clauses turns two notices into two findings.
+#
+# An empty register is the healthy state, not a disabled check. A required
+# clause that goes unstated with no entry here is a FINDING (check_presence
+# below), so emptiness weakens nothing; it only means nothing is currently
+# owed. The self-test arm that exercises the staleness loop CONSTRUCTS its
+# debt rather than reading one out of this register (D150 §2 R7) — a fixture
+# whose subject is state the project is driving to zero disarms itself the
+# moment the project succeeds, which is Q252's class.
+OWED_PRESENCE: dict[tuple[str, str], str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -786,14 +790,30 @@ def self_test() -> int:
                 lambda: edit(readme, "Seal before you share.", "Sealing is optional."),
                 "red",
             ),
+            # D150 §2 R7. What stood here mutated README.md to STATE the two
+            # clauses OWED_PRESENCE carried, and took its red from the live
+            # register holding them. Q22 discharged both and emptied the
+            # register, at which point that arm's staleness loop had nothing
+            # to iterate: it went GREEN where it asserts RED, and so FAILED —
+            # Q252's class (a fixture derived from live state gets weaker
+            # exactly as the tree gets healthier) in a second instrument.
+            # This replacement CONSTRUCTS its subject the way the P8 arm below
+            # constructs a DOCS_CLASSIFICATION entry: it registers a debt for
+            # a clause README.md ALREADY states, so the guard is armed with no
+            # live debt anywhere in the register.
             (
                 "P7",
-                "a debt satisfied but not deleted from OWED_PRESENCE",
-                lambda: readme.write_text(
-                    readme.read_text(encoding="utf-8")
-                    + "\n\nA seal proves possession, not exclusive possession, and the vault "
-                    "holder can always be compelled to reveal.\n",
-                    encoding="utf-8",
+                # D150 §2 R7's label, verbatim. It is 106 characters and the
+                # print above truncates at 62, so the log line reads
+                # "…already states — th"; the arm's own Finding prints in
+                # full underneath it.
+                "a debt registered for a clause the surface already states — the "
+                "staleness guard, armed without a live debt",
+                lambda: OWED_PRESENCE.__setitem__(
+                    ("README.md", "seal-before-you-share"),
+                    "SELF-TEST PLANT (D150 §2 R7) — no task owes this; the arm constructs its "
+                    "subject instead of deriving it from the live register, so it stays armed "
+                    "with OWED_PRESENCE empty",
                 ),
                 "red",
             ),
@@ -889,10 +909,13 @@ def self_test() -> int:
                 for path in base.rglob("*")
                 if path.is_file()
             }
-            # One arm mutates a module-level register rather than a file, so
-            # the restore has to cover both or the arms after it run against a
-            # tree nobody put back.
+            # Two arms mutate a module-level register rather than a file, so
+            # the restore has to cover both registers or the arms after them
+            # run against a tree nobody put back. The final "staged tree
+            # restored" control is what catches a leak: a debt left behind for
+            # a clause the README states reddens P7 on the next check() call.
             register = dict(DOCS_CLASSIFICATION)
+            owed = dict(OWED_PRESENCE)
             mutate()
             findings, _notices, _scanned = check(base)
             fired = sorted({f.rule for f in findings})
@@ -929,6 +952,8 @@ def self_test() -> int:
                 path.write_bytes(blob)
             DOCS_CLASSIFICATION.clear()
             DOCS_CLASSIFICATION.update(register)
+            OWED_PRESENCE.clear()
+            OWED_PRESENCE.update(owed)
 
         # D123 R6's discipline, applied to every entry rather than to the one
         # that motivated the rule: a scan root is only proven to be read by a

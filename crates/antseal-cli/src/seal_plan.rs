@@ -457,11 +457,13 @@ fn refuse_split_on_no_fine_tree(
 ) -> Result<(), CliError> {
     let mut problems: Vec<Problem> = Vec::new();
     for file in planned {
-        if file.flags.split().is_some()
-            && file.flags.no_fine_tree_matched()
-            && file.size > 0
-            && (file.flags.force_text() || file_is_text(&file.absolute, &file.as_given)?)
-        {
+        if split_conflicts_with_no_fine_tree(
+            file.flags.split().is_some(),
+            file.flags.no_fine_tree_matched(),
+            file.size,
+            file.flags.force_text(),
+            || file_is_text(&file.absolute, &file.as_given),
+        )? {
             // The pattern(s) that actually matched **this** file,
             // recomputed with the very function that made the decision.
             // Printing the whole `--no-fine-tree` list would leave the
@@ -492,6 +494,49 @@ fn refuse_split_on_no_fine_tree(
         }
     }
     report(problems)
+}
+
+/// D24 §1's per-file condition, with its text oracle **injected** — so the
+/// CLI's refusal and `list`'s honesty check are the same rule read from two
+/// different media (**D152 §2 R3**), rather than two rules that agree until
+/// they do not.
+///
+/// [`refuse_split_on_no_fine_tree`] supplies [`file_is_text`] over the file
+/// on disk. [`crate::listing`] supplies an oracle that **cannot be called**,
+/// because it decides the same question from the journaled manifest, where
+/// `descriptor_kind == Text` already *is* the recorded value of the whole
+/// `force_text() || file_is_text(..)` disjunction — so it passes that value
+/// as `force_text` and the read never happens. `list` opens no user file
+/// (D152 §1.4), and the bytes on disk today are not the bytes that were
+/// sealed.
+///
+/// # The term order is normative (D149 §2 R1)
+///
+/// `is_text` is [`FnOnce`] so that *"reached only when nothing cheaper can
+/// answer"* is enforced by the type and observable by a test that counts its
+/// calls, instead of being a property of the way an `&&` chain happens to be
+/// written. Reordering these terms is a behaviour change, not a tidy-up:
+/// `--force-text` costs no I/O and an empty file costs no I/O, both by
+/// construction here.
+///
+/// # Errors
+///
+/// Whatever the injected oracle raises, and nothing else — this function
+/// has no failure of its own.
+pub(crate) fn split_conflicts_with_no_fine_tree<E>(
+    split: bool,
+    no_fine_tree_matched: bool,
+    size: u64,
+    force_text: bool,
+    is_text: impl FnOnce() -> Result<bool, E>,
+) -> Result<bool, E> {
+    if !(split && no_fine_tree_matched && size > 0) {
+        return Ok(false);
+    }
+    if force_text {
+        return Ok(true);
+    }
+    is_text()
 }
 
 /// How much of a file [`file_is_text`] reads before it has to commit to

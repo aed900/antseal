@@ -694,8 +694,12 @@ drill written as steps rather than as a mechanism.
 *Scope.* Payment happens from an Arbitrum wallet, and the receipt names it.
 Including a receipt in a bundle (`reveal --include-receipt`, opt-in) exposes
 the paying wallet and thereby links every seal that wallet ever paid for.
+The opt-in is **not** the first exposure, and this section says so where it
+would otherwise imply it: the paying address reaches the storing nodes at
+upload time, on the first seal, whatever any bundle later contains.
 Must cover: what an observer learns from the chain without any bundle at
-all; what the opt-in adds; funding hygiene; and whether
+all; what the opt-in adds; what the storing nodes are handed regardless of
+either; funding hygiene; and whether
 "supporting evidence — no independently proven time" is worth that linkage
 to a given user.
 
@@ -704,7 +708,7 @@ to a given user.
 A seal's entire public on-chain footprint is one ERC-20 `approve` followed by
 `1..n` `payForQuotes(DataPayment[])` calls — one tx in the common case, since
 the cap is 256 transfers per tx and one non-zero transfer per blob
-(`crates/antseal-net/src/ant_backend.rs:36-40`, `:675-691`).
+(`crates/antseal-net/src/ant_backend.rs:36-40`, `:709-725`).
 
 **Nothing in that calldata says "antseal".** The transfer struct is
 upstream's own three fields — `rewardsAddress`, `amount`, `quoteHash`. There
@@ -713,20 +717,24 @@ is no memo field, no tag, and antseal deploys no contract on any network
 An observer watching `payForQuotes` sees an Autonomi payer, not an antseal
 payer.
 
-**The allowance is a different story, and it is an open question this
-section records rather than settles.** antseal approves the **exact quoted
-total**; upstream approves `U256::MAX`:
+**The allowance is a different story, and this section settles it.**
+antseal approves the **exact quoted total**; upstream approves `U256::MAX`
+at every call site it has:
 
 | | antseal | upstream |
 | --- | --- | --- |
 | amount approved | the exact quoted total | `U256::MAX` (unlimited) |
-| where | `crates/antseal-net/src/ant_backend.rs:437-455` (`ensure_allowance`), doc comment at `:433-436` — *"never `U256::MAX`"* | `evmlib-0.9.0/src/wallet.rs:421`; `ant-core-0.5.0/src/data/client/payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
+| where | the rule is the free function `allowance_to_approve` (`crates/antseal-net/src/backend.rs:133-141`); the adapter calls it and passes its output, deciding nothing itself (`ant_backend.rs:479`, `:484`, doc comment `:433-469`) | `evmlib-0.9.0/src/wallet.rs:188` and `:421`, `ant-core-0.5.0/src/data/client/payment.rs:141`, `ant-protocol-2.3.0/src/payment/single_node.rs:683` — four sites, one value; `payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
 | how often | before essentially **every** seal | once per address, **ever** |
 
 The frequency difference is the mechanism, and it follows from the amount.
-`ensure_allowance` short-circuits when the standing allowance already covers
-the total (`ant_backend.rs:446-448`), but an *exact* allowance is consumed by
-the very payment it was raised for, so the short-circuit almost never fires.
+The rule short-circuits when the standing allowance already covers the total
+(`backend.rs:137-140`, consumed at `ant_backend.rs:479-481`), but an *exact*
+allowance is consumed by the very payment it was raised for — `payForQuotes`
+moves exactly that total by `transferFrom`, which decrements the allowance to
+zero — so the short-circuit almost never fires. It is not an optimisation
+that works, and the code says so where a reader would meet it
+(`ant_backend.rs:451-463`).
 Both the calldata and the ERC-20 `Approval` event log are public and
 permanent. **An address that emits a fresh, non-round `approve` before
 essentially every payment is therefore separable from the general Autonomi
@@ -734,29 +742,94 @@ payer population** — so the honest answer to this section's own scope
 question is: an observer with no bundle at all learns *that this address is
 running antseal, or a tool with identical hygiene*.
 
-**This is deliberately left open here.** The behaviour was chosen **for**
-wallet hygiene — it leaves no unlimited standing allowance against the
-payment vault — and it is defensible on that ground. It also reduces the
-anonymity set. D73 established the fingerprint and **explicitly refused to
-rule on it** (§6 item 6, `D73-external-completions-without-telemetry.md:743-750`):
-the three arms are *unlimited* (costs a standing allowance), *exact* (costs
-anonymity) and *rounded-up* (might cost neither, and **nobody has priced
-it**). Row **Q240** owns the choice, jointly with Q25. Nothing in this
-section chooses, and a reader should not take the description above as an
-endorsement of any arm.
+**The ruling: the exact allowance stays, and its anonymity cost is stated
+rather than hidden.** D73 established the fingerprint and **explicitly
+refused to rule on it** (§6 item 6,
+`D73-external-completions-without-telemetry.md:743-750`), naming three arms
+and pricing two. Row **Q240** owns the choice, jointly with Q25, and this
+paragraph is where it is made. Priced:
 
-**What is missing is a pin, not a description.** Measured: `grep` over
-`crates/` for `approve_to_spend_tokens|token_allowance|U256::MAX` returns
-four hits, all inside `ant_backend.rs` itself (`:50`, `:435`, `:441`,
-`:451`) — **zero test assertions**. A refactor toward upstream's shape, which
-is the obvious simplification, would silently destroy a deliberate trade and
-no lane would notice. That test is Q240's, against `MockBackend`; no mainnet
-spend is needed to prove it.
+| arm | approvals emitted | standing allowance between seals | anonymity |
+| --- | --- | --- | --- |
+| unlimited (`U256::MAX`) | one per address, **ever** | the wallet's **entire** ANT balance, until revoked | joins the whole Autonomi payer population |
+| **exact** (shipped) | one per seal | one seal's cost, for the seconds between `approve` and `payForQuotes` | separable from it |
+| rounded up to a granularity `g` | about one per `g / cost-per-seal` seals | up to `g`, until spent or revoked | **still separable** |
 
-*(One correction, because the record it comes from is stale about itself:
-D73 §3.5.4 says the fingerprint is "documented nowhere as an observability
-property". D73 **is** that documentation, and as of this section so is the
-threat model. What remains true is that nothing pins it.)*
+**The rounded arm is a dial between the other two, not a third point that
+costs neither** — which is the thing nobody had checked. Its two numbers are
+the same number: an allowance of `g` covers roughly `g / cost-per-seal` seals
+before it is exhausted, and up to `g` is standing and spendable by the vault
+contract for exactly as long as it lasts. Buying back approve cadence buys
+precisely that much standing allowance, at every granularity; there is no `g`
+that is cheap on both axes. At `g` ≈ one seal it saves about half the
+approvals, which is not worth a mechanism; at `g` ≈ a hundred seals the
+cadence is gone and so is the property the exact arm was chosen for.
+
+**And it does not buy the anonymity anyway.** The discriminator is not the
+value's roundness — it is emitting a non-`U256::MAX` approval **at all**.
+Measured over the pinned graph: every approve amount upstream passes,
+anywhere, is `U256::MAX` (the four sites in the table above), and the
+external-signer path antseal itself drives says so in its own words —
+*"The `approve_amount` is set to `U256::MAX`"*
+(`evmlib-0.9.0/src/external_signer.rs:122`). A rounded value is not a value
+the crowd emits; it is a *second* value only antseal emits, and a fixed
+granularity is a constant that identifies the tool more sharply than a
+quote-derived total does. Rounding removes entropy from the number without
+changing which set the address is in.
+
+**The deciding cost is one antseal has no affordance for.** A standing
+allowance is reduced only by another `approve`, and this tool ships no
+command that emits one: the nine subcommands are `init`, `seal`, `list`,
+`show`, `status`, `restore`, `reveal`, `verify` and `vault`
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`), and none of
+them touches the allowance. **Any standing allowance antseal creates is one
+antseal cannot undo** — revoking it would mean importing the payment key into
+a third-party wallet, which is the funding-hygiene chain
+(`docs/user/wallet-hygiene.md` §7) run in reverse, on the one key this
+product tells the user to keep in the vault. The exact arm creates no such
+obligation, because it leaves nothing standing to revoke.
+
+**So, the price in the terms an observer would use.** An address that emits a
+fresh, non-round approval to the Autonomi payment vault before essentially
+every payment is *running antseal, or a tool with identical hygiene*. That is
+public, permanent, and paid again on every seal; what it buys is a payment
+key that is never one contract bug away from being emptied. A user who values
+the anonymity set above the hygiene has the remedy the *Funding hygiene*
+subsection below describes and prices — a separate vault, and therefore a
+separate address, per work. It does not remove the fingerprint from any
+address; it stops the fingerprint linking works to each other, which is the
+half that costs the user something. Funding is what would undo that, and it
+is §7 of the same page.
+
+**Nothing in this ruling changes shipped behaviour, so nothing in it needs a
+decision record.** Reversing it would: unlimited and rounded are both changes
+to a ruled trade, and the pin below is what will say so.
+
+**And it is now pinned.** The amount is decided in exactly one place — the
+free function `allowance_to_approve`
+(`crates/antseal-net/src/backend.rs:133-141`), in the crate's default feature
+set, beside `preflight` and for the same D89 reason: a rule with two
+implementations is a rule two implementations can disagree about.
+`crates/antseal-net/tests/allowance_policy.rs` holds it there in two ways.
+**Five tests drive the rule** — exact, never unlimited, never rounded at any
+of six granularities from 10³ to 10¹⁸ atto, the short-circuit's exact
+boundary, and a ten-seal sequence that reproduces the fingerprint itself by
+emitting ten approvals for ten seals; one of the five takes its total from a
+quote `MockBackend` actually produced rather than from a number the test
+invented. **Two more read `ant_backend.rs` as text** and require its single
+`approve_to_spend_tokens` call to still pass the rule's output, and
+`U256::MAX` to appear in that file only in prose — because a rule that is
+bypassed keeps returning the right answer to nobody, and an inlined amount
+type-checks perfectly. Each half was watched red under a planted fault:
+unlimited in the rule, unlimited at the call site, rounded to 10⁹, and
+total-plus-one. It all runs on `MockBackend`'s feature set — no live network,
+no upstream graph, and no spend of any kind.
+
+*(One correction carried forward, because the record it comes from is stale
+about itself: D73 §3.5.4 says the fingerprint is "documented nowhere as an
+observability property". D73 **is** that documentation, and so is this
+section. What was still true when that sentence was written — that nothing
+pinned the behaviour — stopped being true with the file named above.)*
 
 ### What including the receipt adds
 
@@ -805,6 +878,61 @@ if the section were present-but-empty as readily as if the flag were ignored.
 (`crates/antseal-cli/tests/reveal_output.rs:438-479`) repeats it at CLI level
 and additionally asserts the default reveal's human output contains no
 mention of a wallet at all.
+
+### What the storing nodes learn, receipt or no receipt
+
+**One bounded exception, and it is not a bundle disclosure at all.** The
+proof of payment that travels *with the upload* carries the on-chain
+transaction hashes. `ant-protocol` `=2.3.0`'s
+`ant_protocol::payment::PaymentProof` (`src/payment/proof.rs`) is three
+fields — the quote-based `proof_of_payment`, the ADR-0004
+`commitment_sidecars`, and **`tx_hashes`**, documented there as *"Transaction
+hashes from the on-chain payment"* — and `finalize_batch` hands the whole
+serialized proof to each storing peer, sequentially, until
+`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:506-562`) — four of
+the seven quoting peers, since `CLOSE_GROUP_MAJORITY` is `(CLOSE_GROUP_SIZE
+/ 2) + 1` over a close group of 7 (`ant-protocol-2.3.0/src/chunk.rs:35,40`).
+The proof rides *in* the PUT request rather than following an acceptance, so
+every node that was **offered** one of your chunks has been handed a
+transaction hash that resolves on any public explorer to the paying address
+— not only the four that ended up storing it.
+
+**This happens on the first seal, and nothing configurable changes it.** It
+is not gated on `--include-receipt`, which governs only what goes into a
+bundle. It is not avoidable inside this adapter's charter either: the proof
+is built by upstream's pure `finalize_batch_payment`
+(`ant-core` `=0.5.0`, `data::client::batch`), which **refuses** to build one
+for a non-zero quote whose tx hash it was not given — *"Missing tx hash for
+quote … — external signer did not return a receipt for this payment"*.
+Omitting the hashes would mean hand-rolling the payment proof instead of
+driving upstream's builder, which is a fork of the payment path, not a
+setting.
+
+Two bounds on the exception, both measured, because "the network knows" is
+too coarse to act on:
+
+- **It is the address, not the work.** A node learns which address paid for
+  the chunk it was offered. It does not learn the work id or the unit
+  structure: a chunk is a padded AEAD blob and what the network sees of it is
+  a padded ciphertext length (§2.8), and the manifest's signing keys are
+  per-work, so nothing in what a node holds says *"this is the same sealer"*.
+- **The pinned node does not use the hashes.** `ant-node` `=0.15.0`
+  deserializes them, logs the count at `debug`, and then verifies the payment
+  from the quotes and the on-chain settlement instead — its single-node arm
+  passes `proof_of_payment` and `commitment_sidecars` to `verify_evm_payment`
+  and never the hashes (`src/payment/verifier.rs`). They are **carried, not
+  consumed**. That bounds what the protocol *needs*; it bounds nothing about
+  what a node *receives*, and a node that keeps what it was given keeps them.
+
+**What this means for the two subsections above.** Leaving the receipt out
+hides the wallet from the people you show bundles to. It does not hide it
+from the network you uploaded to. The right posture is to treat the paying
+address as **semi-public from its first seal**, rather than to treat any
+single reveal as the moment of exposure — which is what
+`docs/user/wallet-hygiene.md` §4 tells the user, and this section owed the
+same fact. This **widens** the observability the rest of §2.3 establishes; it
+reverses none of it, and it is not a defect in the product: the proof of
+payment is how storage gets paid for, and the hashes ride inside it.
 
 ### Funding hygiene, and the affordance that does not exist
 

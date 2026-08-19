@@ -65,9 +65,14 @@ const MAX_BOOKKEEPING_RECORD_BYTES: usize = 4096;
 /// They are the same sentence because they are the same fact, and a user
 /// who read it at `init` must recognise it at `seal` rather than parse a
 /// second phrasing of the same risk.
+///
+/// The remedy is NOT here: how you make that backup depends on the
+/// vault's wrap mode, so it is [`BACKUP_BY_EXPORT`] / [`BACKUP_BY_HAND`]
+/// and the renderer picks by class (D151 §2 R3/R4). A command named here
+/// would be false for every wrapped vault.
 pub const LOSS_WARNING: &str = "  LOSS  — lose this vault and its passphrase, and no one can \
      ever reveal or restore your sealed works again. The sealed data itself stays safely \
-     unreadable. Run `antseal vault export` and keep the backup somewhere else.";
+     unreadable. Keep a backup of this vault somewhere else.";
 
 /// The **theft** half of the standing warning: retroactive, permanent,
 /// unrotatable.
@@ -75,6 +80,23 @@ pub const THEFT_WARNING: &str = "  THEFT — whoever holds this vault (or an exp
      passphrase can decrypt every work you have ever sealed, retroactively and permanently. \
      The ciphertexts are public and undeletable, and there is no key rotation. Treat the \
      passphrase as a long-term, high-value key.";
+
+/// How the backup is made for a passphrase-only vault (wrap mode 0). One
+/// author for both venues that give it: `init`'s closing report and the
+/// first-seal nag (D151 §2 R4).
+pub const BACKUP_BY_EXPORT: &str = "  BACK UP — run `antseal vault export` and keep the file \
+     on different media from the vault: another disk, another machine, a safe. The keys to \
+     everything you seal live in this one directory.";
+
+/// How it is made for a vault with a keyfile (wrap mode 1). It deliberately
+/// does NOT name `antseal vault export`: that command refuses this vault
+/// (`crate::vault::export`, the overturned-U8 section), and naming it would
+/// be the defect U84 exists to fix. The prohibition is mechanical and is
+/// asserted — see `tests/vault_keyfile.rs`.
+pub const BACKUP_BY_HAND: &str = "  BACK UP — this vault has a keyfile, so it is backed up by \
+     hand, in two pieces kept apart: a copy of the vault directory and a copy of the keyfile. \
+     There is no single backup file for a two-factor vault: it would be encrypted under the \
+     passphrase alone, which is weaker than the vault it backs up.";
 
 /// The vault-global bookkeeping facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -253,13 +275,28 @@ pub fn record_export<R: TryCryptoRng + ?Sized>(
 /// Positioning discipline (U31): no "notary", no unqualified "priority" —
 /// this says what a backup does and what losing one costs, nothing about
 /// legal effect.
+///
+/// **Class-keyed (D151 §2 R6).** A keyfile-wrapped vault can never record
+/// a backup — `record_export` has exactly one production caller, reached
+/// only after a successful `vault export`, and that command refuses a
+/// wrapped vault — so for mode 1 this nag is perpetual. It therefore says
+/// *why* it is perpetual instead of naming a command that will not run.
 #[must_use]
-pub fn export_nag() -> Vec<String> {
+pub fn export_nag(wrapped: bool) -> Vec<String> {
     vec![
-        "  NO BACKUP YET — this vault has never been exported.".to_owned(),
-        "  Run `antseal vault export` now and put the file somewhere else: another disk, \
-         another machine, a safe. The keys to everything you seal live in this one directory."
-            .to_owned(),
+        if wrapped {
+            "  NO BACKUP RECORDED — a keyfile-wrapped vault is backed up by hand, and antseal \
+             cannot see that you did it, so this stays on every seal."
+        } else {
+            "  NO BACKUP YET — this vault has never been exported."
+        }
+        .to_owned(),
+        if wrapped {
+            BACKUP_BY_HAND
+        } else {
+            BACKUP_BY_EXPORT
+        }
+        .to_owned(),
         LOSS_WARNING.to_owned(),
         THEFT_WARNING.to_owned(),
     ]
@@ -343,18 +380,34 @@ mod tests {
 
     /// The nag says both failure modes, and says them in the *same* words
     /// `init` used — one author, one sentence per fact.
+    ///
+    /// **Two arms since D151 §2 R11.** The remedy is class-keyed, so the
+    /// command is asserted present for mode 0 and asserted **absent** for
+    /// mode 1 — naming it there is the U84 defect. Whether the refusal
+    /// still matches this copy is measured against the command itself in
+    /// `tests/vault_keyfile.rs`, never against the copy's own wording.
     #[test]
     fn the_nag_carries_both_failure_modes_and_no_positioning_overreach() {
-        let text = export_nag().join("\n");
-        assert!(text.contains(LOSS_WARNING), "{text}");
-        assert!(text.contains(THEFT_WARNING), "{text}");
-        assert!(text.contains("LOSS"), "{text}");
-        assert!(text.contains("THEFT"), "{text}");
-        assert!(text.contains("antseal vault export"), "{text}");
-        // U31 positioning: this is not a legal claim.
-        let lower = text.to_lowercase();
-        assert!(!lower.contains("notary"), "{text}");
-        assert!(!lower.contains("notaris"), "{text}");
-        assert!(!lower.contains("priority"), "{text}");
+        for wrapped in [false, true] {
+            let text = export_nag(wrapped).join("\n");
+            assert!(text.contains(LOSS_WARNING), "{text}");
+            assert!(text.contains(THEFT_WARNING), "{text}");
+            assert!(text.contains("LOSS"), "{text}");
+            assert!(text.contains("THEFT"), "{text}");
+            assert!(
+                text.contains("BACK UP"),
+                "wrapped={wrapped}: no remedy line: {text}"
+            );
+            assert_eq!(
+                text.contains("antseal vault export"),
+                !wrapped,
+                "wrapped={wrapped}: the nag must name the export exactly when it runs: {text}"
+            );
+            // U31 positioning: this is not a legal claim.
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("notary"), "{text}");
+            assert!(!lower.contains("notaris"), "{text}");
+            assert!(!lower.contains("priority"), "{text}");
+        }
     }
 }

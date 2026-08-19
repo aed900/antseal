@@ -263,7 +263,7 @@ impl InitReport {
         }
         out.extend(funding_lines(self.network, &self.address));
         out.push(String::new());
-        out.extend(standing_warnings());
+        out.extend(standing_warnings(self.keyfile.is_some()));
         out
     }
 }
@@ -341,21 +341,45 @@ pub const WALLET_CUSTODY_NOTE: &str = "  No antseal command displays this addres
      Fund this address like a prepaid meter, not a savings account.";
 
 /// The two standing warnings MVP-SPEC.md line 143 requires `init` to give
-/// once, plus the positioning limit in possession language.
+/// once, the backup instruction for this vault's class, and the
+/// positioning limit in possession language.
 ///
 /// The LOSS and THEFT sentences are
 /// [`crate::vault::bookkeeping`]'s constants, not literals: U18's
 /// first-seal export nag states the same two facts, and a user who read
 /// them here must recognise them there rather than parse a second
 /// phrasing of the same risk.
+///
+/// **`wrapped` is the vault's wrap mode being non-zero (U8/D50)**, and it
+/// picks the remedy: `vault export` refuses a keyfile-wrapped vault
+/// outright, so naming that command to a wrapped user is advice that
+/// cannot be followed (U84 / D151 §2 R5).
+///
+/// **This is not the conditional D148 §3.5 refused.** §3.5 refused
+/// branching on `wallet_source`, on the ground that a conditional block
+/// means the golden covers one branch and leaves the other unpinned, or
+/// U78 grows a second golden. The predicate here is
+/// `self.keyfile.is_some()` — the condition `render_report_surface` in
+/// `tests/init_command.rs` **already sections the golden on** — so the
+/// four committed sections remain the whole branch set and no arm is left
+/// unpinned. Do not add a branch on any other predicate without moving
+/// the golden's section set with it.
 #[must_use]
-pub fn standing_warnings() -> Vec<String> {
-    use crate::vault::bookkeeping::{LOSS_WARNING, THEFT_WARNING};
+pub fn standing_warnings(wrapped: bool) -> Vec<String> {
+    use crate::vault::bookkeeping::{
+        BACKUP_BY_EXPORT, BACKUP_BY_HAND, LOSS_WARNING, THEFT_WARNING,
+    };
 
     vec![
-        "Two things to understand before you seal anything:".to_owned(),
+        "Two things to understand before you seal anything, and one thing to do:".to_owned(),
         LOSS_WARNING.to_owned(),
         THEFT_WARNING.to_owned(),
+        if wrapped {
+            BACKUP_BY_HAND
+        } else {
+            BACKUP_BY_EXPORT
+        }
+        .to_owned(),
         String::new(),
         "What a seal proves: that the holder of this vault possessed the content by the \
          anchored time. Not authorship, and not exclusive possession — someone you shared \
@@ -791,11 +815,27 @@ mod tests {
         assert!(sepolia.contains("421614"));
     }
 
+    /// **Two arms since D151 §2 R11.** `assert!(text.contains("vault
+    /// export"))` used to run unconditionally; it is false for the
+    /// wrapped class, because `vault export` refuses a keyfile-wrapped
+    /// vault. The remedy is now class-keyed, so the command is asserted
+    /// present for mode 0 and **absent** for mode 1.
     #[test]
     fn standing_warnings_state_loss_and_theft_and_the_positioning_limit() {
-        let text = standing_warnings().join("\n");
-        assert!(text.contains("LOSS") && text.contains("THEFT"));
-        assert!(text.contains("vault export"), "loss copy names the remedy");
+        for wrapped in [false, true] {
+            let text = standing_warnings(wrapped).join("\n");
+            assert!(text.contains("LOSS") && text.contains("THEFT"));
+            assert!(
+                text.contains("BACK UP"),
+                "wrapped={wrapped}: no remedy line"
+            );
+            assert_eq!(
+                text.contains("antseal vault export"),
+                !wrapped,
+                "wrapped={wrapped}: `init` must name the export exactly when it runs"
+            );
+        }
+        let text = standing_warnings(false).join("\n");
         assert!(
             text.contains("no key rotation"),
             "theft copy states the irreversibility"

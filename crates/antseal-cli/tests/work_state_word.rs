@@ -232,6 +232,9 @@ fn row_in(state: WorkState) -> WorkRow {
         degraded: false,
         cost_atto: None,
         resume: None,
+        // U85/D152 R4: irrelevant to the word this suite is about, and a
+        // work with no resume hint can never carry one.
+        resume_refusal: None,
         pending_anchors: None,
         nag: None,
         damaged_anchors: AnchorDamage::default(),

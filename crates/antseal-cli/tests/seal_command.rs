@@ -1181,7 +1181,7 @@ fn the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it()
 
     // The nag is the same copy `init` closes with — asserted against the
     // real producer, not a hand-copied string.
-    let init_copy = antseal_cli::init::standing_warnings().join("\n");
+    let init_copy = antseal_cli::init::standing_warnings(false).join("\n");
     assert!(init_copy.contains(LOSS_WARNING));
     assert!(init_copy.contains(THEFT_WARNING));
 

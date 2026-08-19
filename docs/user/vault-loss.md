@@ -22,24 +22,39 @@ read, including you. That is a much better failure than the other one — see
 vault with no recorded backup prints it again:
 
 ```
-  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Run `antseal vault export` and keep the backup somewhere else.
+  LOSS  — lose this vault and its passphrase, and no one can ever reveal or restore your sealed works again. The sealed data itself stays safely unreadable. Keep a backup of this vault somewhere else.
 ```
 
-That is not a paraphrase. It is the constant `LOSS_WARNING`
-(`crates/antseal-cli/src/vault/bookkeeping.rs:68-70`), quoted byte for byte,
-and it is the same string `init` renders
-(`crates/antseal-cli/src/init.rs:353-357`) and the same string the first-seal
-export nag carries (`crates/antseal-cli/src/vault/bookkeeping.rs:263`). One
-author for all three, so a sentence you met at `init` is recognisable here
-rather than being a second phrasing of the same risk. `MVP-SPEC.md` line 143
-requires both the CLI and these docs to state it.
+and, a line or two later, what to do about it:
+
+```
+  BACK UP — run `antseal vault export` and keep the file on different media from the vault: another disk, another machine, a safe. The keys to everything you seal live in this one directory.
+```
+
+Neither is a paraphrase. They are two constants, quoted byte for byte: the fact
+is `LOSS_WARNING` (`crates/antseal-cli/src/vault/bookkeeping.rs:73-75`) and the
+remedy is `BACKUP_BY_EXPORT` (`:87-89`). Both are the same strings `init`
+renders (`crates/antseal-cli/src/init.rs:375`, `:377-382`) and the same strings
+the first-seal export nag carries
+(`crates/antseal-cli/src/vault/bookkeeping.rs:300`, `:294-299`) — in `init` the
+theft warning sits between them, and in the nag the
+remedy comes first; the wording is identical either way. One author for each
+fact, so a sentence you met at `init` is recognisable here rather than being a
+second phrasing of the same risk. `MVP-SPEC.md` line 143 requires both the CLI
+and these docs to state it.
+
+The fact and the remedy are separate constants because **the remedy is not the
+same for every vault**. `LOSS_WARNING` is true of any vault and names no
+command; the backup line is chosen by the vault's wrap mode, and a
+keyfile-wrapped vault gets `BACKUP_BY_HAND` (`:96-99`) instead — see *If your
+vault uses a keyfile, `export` refuses* below.
 
 The nag around it is equally direct
-(`crates/antseal-cli/src/vault/bookkeeping.rs:257-266`):
+(`crates/antseal-cli/src/vault/bookkeeping.rs:285-303`):
 
 ```
   NO BACKUP YET — this vault has never been exported.
-  Run `antseal vault export` now and put the file somewhere else: another disk, another machine, a safe. The keys to everything you seal live in this one directory.
+  BACK UP — run `antseal vault export` and keep the file on different media from the vault: another disk, another machine, a safe. The keys to everything you seal live in this one directory.
 ```
 
 It stops as soon as one export has been written and self-verified, and never
@@ -180,6 +195,21 @@ A keyfile vault is therefore backed up by hand, in two pieces kept apart:
 
 Lose either and the vault is gone. `docs/vault-keyfile.md` is the full
 placement guidance.
+
+**Your first-seal nag says so, and it never goes away.** antseal records that a
+backup exists only when `vault export` succeeds, and for your vault it never
+will — so the nag is permanent by construction rather than because you have
+neglected something, and it says that instead of naming a command that refuses
+you:
+
+```
+  NO BACKUP RECORDED — a keyfile-wrapped vault is backed up by hand, and antseal cannot see that you did it, so this stays on every seal.
+  BACK UP — this vault has a keyfile, so it is backed up by hand, in two pieces kept apart: a copy of the vault directory and a copy of the keyfile. There is no single backup file for a two-factor vault: it would be encrypted under the passphrase alone, which is weaker than the vault it backs up.
+```
+
+That second line is `BACKUP_BY_HAND`
+(`crates/antseal-cli/src/vault/bookkeeping.rs:96-99`), quoted byte for byte;
+`init` closes with the same line for a keyfile vault.
 
 ## The restore drill — rehearse it before you need it
 

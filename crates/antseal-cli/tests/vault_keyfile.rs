@@ -357,6 +357,168 @@ fn a_wrapped_vault_is_refused_by_export_and_a_wrapped_payload_by_import() {
     );
 }
 
+/// The command name that must appear exactly when it will run.
+const EXPORT_COMMAND: &str = "antseal vault export";
+
+/// `init`'s report for a vault of the given class, in
+/// `tests/init_command.rs::render_report_surface`'s idiom: constructed,
+/// deterministic, and rendered by the real [`InitReport::render`].
+fn report_for(wrapped: bool, vault_dir: &Path, keyfile: &Path) -> String {
+    use antseal_cli::init::InitReport;
+    use antseal_net::NetworkId;
+
+    InitReport {
+        address: "0x0000000000000000000000000000000000000000".to_owned(),
+        network: NetworkId::Devnet,
+        vault_dir: vault_dir.to_path_buf(),
+        wallet_source: "generate",
+        kdf: "argon2id",
+        keyfile: wrapped.then(|| keyfile.to_path_buf()),
+        asked: Vec::new(),
+    }
+    .render()
+    .join("\n")
+}
+
+/// **U84 / D151 §2 R10.** The backup advice and the backup command,
+/// measured against each other instead of against themselves.
+///
+/// What this replaces and why: `vault::keyfile`'s unit guard asserted that
+/// `placement_guidance(...)` *contained the string* "does NOT contain the
+/// keyfile" — the copy checked against its own words, green precisely
+/// because the sentence existed, while the sentence was false. Do not
+/// reintroduce a check whose expected value is the copy under test.
+///
+/// The two faults a copy-versus-copy test cannot see, and which this one
+/// catches: putting `antseal vault export` back into `LOSS_WARNING` (it
+/// reddens the wrapped row only, which is exactly why the old guard was
+/// blind to it), and making the class parameter decorative.
+///
+/// **What this test cannot see on its own, measured rather than assumed.**
+/// `copy` is the join of three producers, so `contains` is an OR over
+/// them: a regression in exactly one producer's mode-0 arm hides behind
+/// the other two and this test stays green. Both halves were planted and
+/// watched — swapping only `init::standing_warnings`'s mode-0 arm leaves
+/// this test green and reddens `init`'s own two-arm unit test; emptying
+/// only `export_nag` leaves this test green and reddens
+/// `vault::bookkeeping`'s. Each producer therefore keeps its own two-arm
+/// guard (D151 §2 R11) and this test holds only the cross-producer claim.
+/// Do not delete either unit pair on the grounds that "the integration
+/// test covers it" — measured, it does not.
+#[test]
+fn the_backup_advice_matches_what_export_actually_does() {
+    use antseal_cli::init::standing_warnings;
+    use antseal_cli::vault::bookkeeping::export_nag;
+    use antseal_cli::vault::export::export_vault;
+
+    for wrapped in [false, true] {
+        let dir = Dir::new(if wrapped {
+            "advice-wrapped"
+        } else {
+            "advice-plain"
+        });
+        let layout = dir.layout();
+        let keyfile = dir.keyfile();
+        let wrap = if wrapped {
+            WrapChoice::Keyfile {
+                path: keyfile.clone(),
+                record_path: true,
+            }
+        } else {
+            WrapChoice::None
+        };
+        let vault = create_vault_with_wrap(
+            &layout,
+            &passphrase(),
+            KdfSelection::Argon2id,
+            &wrap,
+            &mut rng(0x52),
+        )
+        .expect("create");
+
+        // 1. What the product DOES, measured, not assumed.
+        let out = dir.0.join("backup.sealvault");
+        let export = export_vault(&vault, &passphrase(), &out, &mut rng(0x53));
+        let succeeded = export.is_ok();
+        assert_eq!(
+            succeeded, !wrapped,
+            "wrap mode {wrapped}: `vault export`'s own verdict moved. If that is \
+             deliberate it is a D47 format event and D151 §2 R1 must be re-ruled \
+             before this copy changes: {export:?}"
+        );
+        // The refusal must be the **deliberate** one, and `is_ok()` alone
+        // cannot say so — measured, not assumed. Deleting the export-side
+        // refusal (`vault/export.rs`, the overturned-U8 block) does NOT
+        // make a wrapped export succeed: the mandatory D47 self-verify
+        // re-reads the file through full import-side validation, whose
+        // own wrap refusal then fails it as `ExportSelfVerifyFailed`. So
+        // `succeeded` is `false` in both worlds and the plant D151 §2
+        // R10's T1 names would pass over an `is_ok()` check. R1's stated
+        // verification is the refusal's *verdict* per class; this is it.
+        if wrapped {
+            let err = export.as_ref().expect_err("the wrapped arm refuses");
+            assert_eq!(
+                err.class(),
+                ErrorClass::Usage,
+                "wrap mode {wrapped}: the export failed, but not with the deliberate \
+                 pre-write refusal — it reached the write path and died downstream. \
+                 The copy in this test is written against a refusal that names the \
+                 by-hand procedure and writes nothing; that refusal is gone: {err:?}"
+            );
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains("separately by hand"),
+                "wrap mode {wrapped}: the refusal no longer names the by-hand procedure \
+                 that `BACKUP_BY_HAND` sends the user to: {rendered}"
+            );
+            assert!(
+                !out.exists(),
+                "wrap mode {wrapped}: the refusal must leave no half-written backup"
+            );
+        }
+
+        // 2. What the product SAYS to a user of this class, from the real
+        //    producers — `init`'s whole report (which composes
+        //    `placement_guidance` and `standing_warnings`) and `seal`'s nag.
+        //    The second element is redundant *by design*: it pins the
+        //    producer directly, so a future `render()` that stops calling
+        //    it cannot hide a false line behind the composition.
+        let copy = [
+            report_for(wrapped, layout.root(), &keyfile),
+            standing_warnings(wrapped).join("\n"),
+            export_nag(wrapped).join("\n"),
+        ]
+        .join("\n");
+
+        // Anti-vacuity: the class-keyed line was reached at all. Without
+        // this, an empty `copy` would satisfy the wrapped row for free.
+        assert!(
+            copy.contains("BACK UP"),
+            "wrap mode {wrapped}: no backup line rendered"
+        );
+        assert!(
+            copy.len() > 1_000,
+            "wrap mode {wrapped}: copy is {} bytes",
+            copy.len()
+        );
+
+        // 3. The biconditional. Both directions are defects.
+        assert_eq!(
+            copy.contains(EXPORT_COMMAND),
+            succeeded,
+            "wrap mode {wrapped}: the CLI {} `{EXPORT_COMMAND}` while the command {}. \
+             U84: no antseal output may name a command that refuses the vault it is \
+             describing, and none may withhold the one that works.",
+            if copy.contains(EXPORT_COMMAND) {
+                "names"
+            } else {
+                "does not name"
+            },
+            if succeeded { "runs" } else { "refuses" },
+        );
+    }
+}
+
 /// U8 Accept row 4's dependency assertion — **narrowed to what is true**,
 /// and the narrowing is a finding rather than a convenience.
 ///
