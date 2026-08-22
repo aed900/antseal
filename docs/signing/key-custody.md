@@ -52,8 +52,14 @@ matching its header line, because the header is free text that `-c` replaces
 outright — D71 §B R3 is the reasoning, and D71 §1.3 row 4 is the measurement
 behind it.
 
-The passphrase is generated and stored the way the vault passphrase is, and it
-is **not** the vault passphrase.
+The passphrase is **generated rather than invented** — five or six random words
+from a large list, or 20+ random characters — and is used for nothing else. It
+is **not** the vault passphrase and is not held the way one is: §5 makes losing
+this one the cheap failure, while [`vault-loss.md`](../user/vault-loss.md) makes
+losing a vault passphrase final. The effort goes into strength rather than into
+copies, because
+this passphrase is the only thing between a copy of the key file and the key
+itself, and §4 requires that copies of that file exist.
 
 ## 3. The key is used for nothing else
 
@@ -67,8 +73,10 @@ is not going to be introduced at the release boundary.
 - **Two** offline backups of the passphrase-wrapped key file, on **separate
   media**, in **separate physical locations**. Offline means offline: not a
   synced folder, not a cloud drive.
-- The **passphrase** recorded by whatever means the vault passphrase is
-  recorded by, and not stored with either backup.
+- The **passphrase** written down once, on paper, kept somewhere the maintainer
+  controls that is neither backup location — never stored with either backup,
+  and deliberately not duplicated for safety (§5: losing it costs a rotation, a
+  copy in the wrong place costs the key).
 - **The public key is backed up too.** It is recoverable from the secret key
   with `minisign -R`, and from nothing else — losing both is losing the
   identity, and every published signature becomes uncheckable by anyone who did
@@ -206,6 +214,7 @@ suspected compromise. Never edit a row.
 | date | event | key id | notes |
 |---|---|---|---|
 | 2026-08-19 | generated | `3E5D46890F192F58` | `minisign -G` on the maintainer's own machine (Debian 12 bookworm, `minisign 0.11-1` from the Debian archive — the §6 pin). KDF field reads `Sc` (scrypt), so the key is passphrase-wrapped and `-W` was not used. `~/.minisign` is mode `0700` and `minisign.key` is mode `0600`, both owned by the maintainer's own account rather than by `root`. The key id re-derived from the **secret** key with `minisign -R` equals the id decoded from `minisign.pub` bytes 3–10, so the stored public key genuinely corresponds to it. **§4's two offline backups are NOT yet made; nothing may be signed until they are.** Generated first under the `root` account and moved to the maintainer's own home the same day — `/root` is mode 700 throughout, so the file was never group- or world-readable (see `maintainer-key-procedure.md` §1). |
+| 2026-08-22 | backup | `3E5D46890F192F58` | **§1a step 1 / §4 complete — the key is no longer single-copy.** Two offline backups on **separate media**: one USB device and one paper copy, held **off-site**. `minisign.pub` was backed up with each, per §4 — it is recoverable from the secret key and from nothing else. **Each backup was verified from the backup copy itself, not from the original**: `minisign -R -s <backup>/minisign.key` re-derived key id `3E5D46890F192F58` from both, which establishes in one step that the copy is intact, that it parses as a genuine passphrase-wrapped minisign secret key, and that the recorded passphrase decrypts it. The passphrase is **not** stored with either backup. **What this row does not cover:** the media, the locations, and the separateness of the two locations are the maintainer's attestation and no record can verify them; and the `-R` check speaks to the copies as of this date, not to media durability — flash loses charge unpowered, so re-run it periodically rather than assuming. **§1a step 2 (recording the passphrase) is deliberately NOT yet taken** — its instruction names a referent that does not exist in this project and inverts the risk model; `Q259` owns the fix and step 2 follows it. |
 
 ## 11. Amendments to this document
 

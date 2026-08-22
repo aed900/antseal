@@ -108,9 +108,36 @@ suite_path() { printf '%s/crates/%s/tests/%s.rs' "$repo" "$1" "$2"; }
 # Redaction is BY KEY NAME, not by hex shape: a blanket 64-hex filter would
 # also destroy the blob digests and addresses that make a failure log worth
 # capturing.
+#
+# Arguments are handed straight to sed, so a STREAMING caller can ask for `-u`
+# without a second copy of the expression existing anywhere. There is exactly
+# one redaction filter in this script, and this is it.
 redact() {
-  sed -E "s/(wallet_private_key|[A-Za-z_]*PRIVATE_KEY|[A-Za-z_]*SECRET_KEY)([\"']?[[:space:]]*[:=][[:space:]]*[\"']?)(0x)?[0-9a-fA-F]{8,}/\1\2<redacted>/g"
+  sed -E "$@" "s/(wallet_private_key|[A-Za-z_]*PRIVATE_KEY|[A-Za-z_]*SECRET_KEY)([\"']?[[:space:]]*[:=][[:space:]]*[\"']?)(0x)?[0-9a-fA-F]{8,}/\1\2<redacted>/g"
 }
+
+# A capture has TWO destinations, and until Q256 only one of them was filtered.
+# `… | tee <file>` writes the evidence file AND forwards every byte to this
+# process's stdout, which becomes the workflow log; `capture_devnet_logs()`
+# redacts the file copy AFTERWARDS, which can never reach a log line already
+# written. That asymmetry matters because the log is the half no gate can
+# refuse: Q243's scan can block the upload, `retention-days:` governs only the
+# artifact, and the visibility flip publishes logs on GitHub's own statement
+# that "Actions history and logs will be visible to everyone". Measured on run
+# 31571938292: six of the artifact's eight files were in the job log verbatim.
+#
+# So the filter goes BEFORE the fork, on the one code path both destinations
+# are downstream of. The two legs cannot drift because there is no second call
+# site to keep in step — what reaches stdout is what reaches the file, by
+# construction rather than by two places agreeing (D145 §2 R7, Q256).
+#
+# `-u` is load-bearing, not tidiness: sed block-buffers on a pipe, so without
+# it a thirteen-minute cold `cargo test` would stop streaming into the terminal
+# and into the log until 4 KiB had accumulated. Exit status is unaffected —
+# `set -o pipefail` (:67) is what makes a caller's `if !` see the COMMAND's
+# failure rather than the last stage's success, and that was already true when
+# tee was the last stage.
+capture_through() { redact -u | tee "$1"; }
 
 # ── The artifact scan (Q243) ──────────────────────────────────────────────
 #
@@ -319,7 +346,7 @@ run_gate() {
   else
     note "booting a devnet: $nodes nodes (scripts/devnet/local-up)"
     boot_started="$(date -u +%s)"
-    if ! scripts/devnet/local-up --nodes "$nodes" 2>&1 | tee "$evdir/local-up.log"; then
+    if ! scripts/devnet/local-up --nodes "$nodes" 2>&1 | capture_through "$evdir/local-up.log"; then
       capture_devnet_logs "$evdir"
       verdict "$n_run" "" "$(( $(date -u +%s) - started ))" "(devnet failed to boot)" boot-failed
       return 1
@@ -336,7 +363,7 @@ run_gate() {
     [ -n "${task:-}" ] || continue
     note "$task: cargo test -p $pkg --features $feat --test $target"
     if ANTSEAL_DEVNET_ENV="$envfile" cargo test -p "$pkg" --features "$feat" --locked \
-         --test "$target" -- --nocapture 2>&1 | tee "$evdir/suite-$task.log"; then
+         --test "$target" -- --nocapture 2>&1 | capture_through "$evdir/suite-$task.log"; then
       printf '    %s PASS\n' "$task"
     else
       printf '\033[31m    %s FAIL (log: %s)\033[0m\n' "$task" "$evdir/suite-$task.log" >&2
@@ -387,6 +414,21 @@ verdict() {
     "$(printf '%s' "$failed" | tr -s ' ' ',' | sed 's/,$//')" "$pending_list" "$secs" \
     "$(command -v anvil >/dev/null 2>&1 && anvil --version 2>/dev/null | head -1 | awk '{print $NF}' || echo '<absent>')" \
     "$evdir")"
+  # `evidence.txt` is the sixth file Q256 measured in the job log, and it gets
+  # there through THIS printf rather than through `capture_through` — one
+  # variable, two writes. It is filtered here, once, at construction, so both
+  # writes are downstream of the same redaction and cannot drift. It is
+  # deliberately NOT routed through `capture_through`, which would drop the
+  # `[ -d "$evdir" ]` guard — the no-live-suite verdict is called with an EMPTY
+  # evdir and must write no file — and would lose the blank line that frames
+  # the verdict on stdout.
+  #
+  # Not a filter that can never fire: `$nodes` arrives from the command line
+  # and `anvil=` is another program's version banner, so two of this line's
+  # nine fields are outside this script's own vocabulary. On a real verdict
+  # line it IS a no-op, and the self-test asserts exactly that, so the line
+  # D145 recorded at sha256 7dd3faa7…c450 stays byte-identical.
+  line="$(printf '%s' "$line" | redact)"
   printf '\n%s\n' "$line"
   [ -d "$evdir" ] && printf '%s\n' "$line" > "$evdir/evidence.txt"
   case "$state" in
@@ -409,8 +451,8 @@ verdict() {
 # location — a copy anywhere else would be a different program (the
 # ci-lanes.sh self-test note).
 self_test() {
-  local copy="$repo/scripts/.e2e-devnet-selftest.sh" out fail=0 sdir=""
-  trap 'rm -f "$copy"; [ -n "${sdir:-}" ] && rm -rf "$sdir"' RETURN
+  local copy="$repo/scripts/.e2e-devnet-selftest.sh" out fail=0 sdir="" ctdir=""
+  trap 'rm -f "$copy"; [ -n "${sdir:-}" ] && rm -rf "$sdir"; [ -n "${ctdir:-}" ] && rm -rf "$ctdir"' RETURN
 
   # `extra` is S32's addition: probing a latch that is ON by default needs a
   # probe that can turn it off, or the tolerant direction is unreachable.
@@ -500,6 +542,91 @@ self_test() {
   else
     printf '  planted fault: %-42s -> %s\n' "key material in a captured log" "redacted (addresses kept)"
   fi
+
+  # ── The capture's LOG leg (Q256 / D145 §2 R7) ───────────────────────────
+  #
+  # The arm above proves redact() the FUNCTION. It cannot see WHICH of a
+  # capture's two destinations the filter sits on, and that is the whole of
+  # Q256: the stream was forked and only the file half was ever redacted. So
+  # this arm drives capture_through for real and reads BOTH legs from one
+  # planted line — the evidence file it writes, and the stdout that becomes
+  # the job log. An arm that reads only the file cannot tell a log-bound leak
+  # from a clean run, which is the assertion-that-cannot-fail class D145 §2 R7
+  # names by name.
+  #
+  # Two-sided like the scan fixture below, and carrying a survivor the arm
+  # above does not: a bare 64-hex blob digest. The arm above has only a 40-hex
+  # address to protect, so a regression that turned redact() into the blanket
+  # `s/[0-9a-fA-F]{64}/…/g` filter it was written NOT to be passes it — that
+  # direction is caught here and nowhere else in this script's filter checks.
+  ctdir="$(mktemp -d "${TMPDIR:-/tmp}/antseal-e2e-capture.XXXXXX")" || {
+    printf '::error:: cannot create the capture-arm directory\n'; fail=1; return 1; }
+  local ct_key ct_digest ct_addr ct_file ct_stdout ct_disk ct_defs ct_stray
+  ct_key="0x$(printf 'c%.0s' $(seq 64))"                 # the planted "key": a repeated-character non-key
+  ct_digest="$(printf 'd%.0s' $(seq 64))"                # a blob digest: bare 64-hex, must SURVIVE
+  ct_addr="0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C"   # a contract address, must SURVIVE
+  ct_file="$ctdir/local-up.log"
+  ct_stdout="$(printf '%s\n' \
+        "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY='$ct_key'" \
+        "chunk $ct_digest stored, paid to $ct_addr" \
+      | capture_through "$ct_file")"
+  ct_disk="$(cat "$ct_file" 2>/dev/null || true)"
+
+  ct_check() { # <leg> <what that leg received>
+    local leg="$1" body="$2"
+    if grep -qE 'c{64}' <<<"$body"; then
+      printf '::error:: capture_through left key material on the %s:\n%s\n' "$leg" "$body"
+      fail=1; return
+    fi
+    if ! grep -qF '<redacted>' <<<"$body"; then
+      printf '::error:: capture_through delivered nothing redacted to the %s — no <redacted> in:\n%s\n' "$leg" "$body"
+      fail=1; return
+    fi
+    if ! grep -qF -- "$ct_digest" <<<"$body" || ! grep -qF -- "$ct_addr" <<<"$body"; then
+      printf '::error:: capture_through destroyed a blob digest or a contract address on the %s — the filter must be key-name-scoped, not hex-shaped:\n%s\n' "$leg" "$body"
+      fail=1; return
+    fi
+    printf '  capture leg:   %-42s -> %s\n' "$leg" "redacted (digest + address kept)"
+  }
+  ct_check "EVIDENCE FILE leg (the artifact copy)" "$ct_disk"
+  ct_check "LOG-BOUND leg (stdout -> the job log)" "$ct_stdout"
+
+  # The verdict line is the sixth duplicated file (`evidence.txt`) and is
+  # filtered at construction rather than by capture_through. Assert the
+  # no-op claim that decision rests on: a real verdict line must come back
+  # byte-identical, or D145's recorded sha256 for it stops being true.
+  local ct_verdict
+  ct_verdict='e2e-devnet: PASS commit=3c8095a nodes=14 suites_run=4 failed=[] pending=[] secs=1374 anvil=1.3.0 evidence=/home/runner/work/antseal/antseal/target/e2e-devnet/20260812T065656Z-3c8095a'
+  if [ "$(printf '%s' "$ct_verdict" | redact)" != "$ct_verdict" ]; then
+    printf '::error:: redact() is not a no-op on a real verdict line — evidence.txt and its job-log copy would no longer be the bytes D145 measured:\n%s\n' \
+      "$(printf '%s' "$ct_verdict" | redact)"
+    fail=1
+  else
+    printf '  capture leg:   %-42s -> %s\n' "verdict line (evidence.txt, both writes)" "unchanged by redact()"
+  fi
+
+  # …and the same property STATICALLY, because the dynamic arm can only ever
+  # see the call sites that exist today. The rule: this script forks a capture
+  # in exactly ONE place, and that place is capture_through. A future capture
+  # written the old way is then a red naming its line, not a silent second leg
+  # publishing to the job log. The definition is kept to ONE LINE on purpose,
+  # so the rule can be expressed per line: spreading it over three would put
+  # the fork on a line of its own and this rule would report it, correctly by
+  # its own terms and uselessly. (The pattern's first character is bracketed
+  # so this rule is not its own finding.)
+  ct_defs="$(grep -c '^capture_through() {' "$repo/scripts/e2e-devnet.sh")"
+  ct_stray="$(grep -nE '[t]ee[[:space:]]+"' "$repo/scripts/e2e-devnet.sh" \
+              | grep -v '^[0-9]*:capture_through() {' || true)"
+  if [ "$ct_defs" != "1" ]; then
+    printf '::error:: capture_through() is defined %s times, not once — the single-code-path property D145 §2 R7 requires is not there\n' "$ct_defs"
+    fail=1
+  elif [ -n "$ct_stray" ]; then
+    printf '::error:: a capture forks to the job log OUTSIDE capture_through(), so its log leg bypasses redact() — at:\n%s\n' "$ct_stray"
+    fail=1
+  else
+    printf '  static rule:   %-42s -> %s\n' "one capture fork, inside capture_through" "no bypass"
+  fi
+  rm -rf "$ctdir"; ctdir=""
 
 
   # ── The artifact scan (Q243), probed with a CONSTRUCTED fixture ─────────
@@ -627,7 +754,7 @@ self_test() {
   fi
   printf '  control (committed registry)%29s -> %s\n' '' "$(printf '%s' "$out" | grep -o 'e2e-devnet: [A-Z]*' | tail -1)"
   [ "$fail" -eq 0 ] || return 1
-  note "e2e-devnet self-test PASS — the registry rules, the redaction filter and the artifact scan all go red on planted faults"
+  note "e2e-devnet self-test PASS — the registry rules, the redaction filter, BOTH legs of a capture and the artifact scan all go red on planted faults"
 }
 
 while [ "$#" -gt 0 ]; do

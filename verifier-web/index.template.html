@@ -49,6 +49,10 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .outcome.refuted { font-weight: 600; }
 footer { margin-top: 3rem; border-top: 1px solid var(--edge); padding-top: 1rem; font-size: .88em; opacity: .8; }
 footer p { margin: .3rem 0; word-break: break-all; }
+/* The footer's break-all exists for the digest above; this paragraph is prose and
+   the key that will land in it is one unbroken 56-character token, so it needs the
+   opposite rule and cannot use a style attribute (the page's own CSP blocks those). */
+#signing-key { word-break: normal; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -144,6 +148,34 @@ footer p { margin: .3rem 0; word-break: break-all; }
        the source of the conflation and is a SPEC correction owed to Q237 or
        the M4 docs row - flagged, not silently diverged from. -->
   <p id="page-build">module build <code>__ANTSEAL_MODULE_SHA256__</code></p>
+  <!-- R96 / D153 §1.6b: the signing key's publication target on this page.
+       docs/signing/maintainer-key-procedure.md §5 step 2 names the page footer
+       at https://antseal.org/ as one of the four places the minisign public key
+       is published, and until this element existed three of the four had a
+       named write target and this one had none - so the §6 step 4 act that
+       changes all four "in one act" had nowhere here to land.
+
+       The marker pair below is that target, and it is deliberately the SAME
+       pair README.md:50/:54 carries, so a publisher greps ONE string and finds
+       every locus (D150 §2 R3 item 3's named-locus rule).
+
+       What the copy may not say: D71 §2 R11. Item 3 is the live one here -
+       docs/signing/key-custody.md §9 prices this location as DISCOVERY and not
+       an independent check, because the page, the README and the release
+       assets are one account, so the sentence outside the markers states that
+       limit rather than leaving it to be inferred.
+
+       Asserted by crates/antseal-wasm/tests/page_template.rs, on the template
+       AND on the built artifact: the README pair this mirrors is pinned by
+       nothing (D153 §5 item 20), and this one must not repeat that. -->
+  <p id="signing-key">
+    <!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 2) -->
+    No signing key is published here yet. The 56-character minisign public key
+    goes between these two markers when it is published.
+    <!-- END minisign-public-key -->
+    A key published here comes from the same account as the downloads it signs,
+    so it is a copy to find rather than an independent check on them.
+  </p>
 </footer>
 
 <script>

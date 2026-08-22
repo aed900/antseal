@@ -50,8 +50,16 @@ forbids it — the key can never be withdrawn, so a plaintext copy on disk and i
 every backup is unbounded in time. `scripts/sign-release.sh` refuses to run
 against such a key.
 
-Use a strong, unique passphrase, generated and stored the way the antseal vault
-passphrase is. **It is not the vault passphrase.**
+Use a long passphrase, **generated rather than invented** — five or six random
+words from a large list, or 20+ random characters from a password manager — and
+used for nothing else. **It is not the vault passphrase, and it is not kept the
+way one is.** Losing this one is the cheap failure (`key-custody.md` §5):
+generate a new key, run `key-custody.md` §6's rotation, and every signature
+already published stays valid and checkable. Losing a vault passphrase is
+final. So the effort here
+goes into **strength, not into copies** — this passphrase is the only thing
+between a copy of the key file and the key itself (D71 §2 R7.1), and
+`key-custody.md` §4 requires that copies of that file exist.
 
 ### 1a. Immediately after generating
 
@@ -73,8 +81,11 @@ Then — **step 3 immediately, and steps 1 and 2 before §3, not merely before �
 1. Make **two offline backups** of `~/.minisign/minisign.key`, on separate
    media in separate locations, and back up `minisign.pub` with them
    (`key-custody.md` §4).
-2. Record the passphrase where the vault passphrase is recorded, **not** with
-   the backups.
+2. Write the passphrase down **once**, on paper, and keep it somewhere you
+   control that is **neither** backup location from step 1 — a passphrase kept
+   beside the key file it wraps is not a passphrase. Do not make a second copy
+   for safety: losing it costs a rotation (`key-custody.md` §5), while a copy in
+   the wrong place costs the key.
 3. Add the first row to `key-custody.md` §10 — date, "generated", key id.
 
 **Why steps 1 and 2 gate §3 and not only §4** (D153 §2 R4): §3 anchors *this*
@@ -83,9 +94,10 @@ anchor in a narrow window — *"a few days before the release date"* — so a ke
 lost after §3 and before the release costs the anchor **and** the window on top
 of the regeneration. Loss is the failure `key-custody.md` §5 calls the cheap one
 *because* published signatures survive it; before §3 there is nothing to survive,
-and the backups are what keep it cheap. §1.7 of D153 is the measurement that
-makes this concrete rather than theoretical: today the key has exactly one copy,
-on a machine that is not dedicated to it.
+and the backups are what keep it cheap.
+D153 §1.7 measured what that costs concretely rather than theoretically, on a
+key that was then single-copy on a shared-use machine. §7 records whether the
+backups exist today; this section states only why they gate §3.
 
 ---
 
@@ -207,12 +219,24 @@ All four locations change **in one act** whenever the key changes
   the four pins — which is why it may carry a placeholder at all (D150 §2 R3
   item 2) — but it is the one page a stranger actually follows, so replace all
   three and delete the banner in this same act.
-- **The page footer has no key element and no marker to write into.**
-  `verifier-web/` holds exactly one file and carries the word `minisign` zero
-  times; the live page returns the same. The element is added to
-  `verifier-web/index.template.html` and to nothing else, because
+- **The page footer's key element and marker pair EXIST as of 2026-08-22 (`R96`).**
+  They live in `verifier-web/index.template.html` and in nothing else, because
   `crates/antseal-wasm/tests/page_template.rs` asserts that directory holds
-  exactly `index.template.html`.
+  exactly `index.template.html`. The markers carry the **same name** the README
+  pair does (`minisign-public-key`), so step 4's "one act" is one grep. Today the
+  block reads that no key is published yet, and that two-state invariant is
+  asserted — the test requires the block to be *either* the placeholder sentence
+  *or* a key-shaped run, never both and never neither, so it does not obstruct
+  this step. **Superseded here:** until 2026-08-22 this bullet read *"The page
+  footer has no key element and no marker to write into"* and recorded that
+  `verifier-web/` carried the word `minisign` zero times. Both were true when
+  written and both are now false — the template and the built page carry it four
+  times each. **A hazard this step must know about:** `docs/ci-verification.md`'s
+  pre-flip check A6 greps **`README.md` only**, which was complete only while the
+  footer could not hold a key. The page is already live and public while the
+  repository is private, and `scripts/pages-publish.sh` contains no occurrence of
+  `key`, `signing` or `minisign` — so a key placed in the footer reaches the world
+  through a publish that never touches `Q65`'s flip. Owned by `Q262`.
 
 **What the wording in those places may not say** (D71 §2 R11): not "verified"
 on its own as a verdict about the software; not "revoked", "expired" or "key
@@ -266,12 +290,29 @@ forbid). A newer minisign is fine; an older one is not checked.
 - **§1 RUN 2026-08-19.** The project key exists — key id `3E5D46890F192F58`, KDF
   field `Sc`, at `~/.minisign/` on the maintainer's account, logged as the first row
   of [`key-custody.md`](key-custody.md) §10. The §1a checks were re-run there after
-  the move described in §1 and all three pass. **§1a step 1 is NOT complete: the two
-  offline backups have not been made**, and §1a's own preamble — which since
-  2026-08-19 reads *"step 3 immediately, and steps 1 and 2 before §3, not merely
-  before §4"* — is what forbids **both §3 and §4** until they exist;
-  `key-custody.md` §4 is the rule that defines them. **§1a step 3 (the `key-custody.md` §10 row) IS
-  complete**, and §1a step 2 is the maintainer's to state.
+  the move described in §1 and all three pass. **§1a step 3 (the §10 generation row)
+  was complete on the same day.**
+- **§1a step 1 RUN 2026-08-22 — the two offline backups exist, and §3 and §4 are no
+  longer blocked by them.** Separate media — one USB device and one paper copy — held
+  off-site, each carrying `minisign.pub` as well as the secret key, as `key-custody.md`
+  §4 requires. Each was verified **from the backup copy rather than from the original**:
+  `minisign -R` re-derived key id `3E5D46890F192F58` from both, which in one step
+  establishes that the copy is intact, that it parses as a genuine passphrase-wrapped
+  secret key, and that the recorded passphrase decrypts it. Appended as the second row
+  of [`key-custody.md`](key-custody.md) §10. **The key is no longer single-copy** — the
+  measurement in D153 §1.7, and the exposure it describes, are superseded as of this
+  date. The media, the locations and their separateness are the maintainer's
+  attestation; nothing here can verify them.
+- **§1a step 2 is still outstanding, and is deferred on purpose.** It instructs the
+  maintainer to record the passphrase *"where the vault passphrase is recorded"* — a
+  referent that resolves, since it was written, to guidance for a different secret
+  with the opposite loss profile (`docs/user/vault-theft.md`) — so following the
+  pointer imports the wrong discipline rather than finding nothing — and the analogy
+  inverts the risk model, since `key-custody.md` §5 makes signing-key loss the cheap
+  failure while `docs/user/vault-loss.md` makes vault-passphrase loss final.
+  **`Q259` owns the fix; take step 2 after it lands, not before.** Note that §1a
+  step 1's verification above exercised the passphrase against both backups, so it
+  is known-correct even though where it should be recorded is not yet settled.
 - **Not run: §2 and §3.** `dig +short TXT antseal.org` still returns empty — the
   zone has no `TXT` records at all — and nothing has been anchored. **They are
   timed differently, and D71 §A R4 says so in its own heading**: *"both deferrable
@@ -282,3 +323,22 @@ forbid). A newer minisign is fine; an older one is not checked.
   should not be deferred"*, and §A R5 clause 3's *"before first release"* is its
   outer deadline rather than its schedule. Neither is overdue, because the key is
   published nowhere yet — and §5 may not publish it until §2 exists.
+
+### Which act releases what
+
+Two fields, not one class word: what is *stopping* an act and when to *take* it
+are independent, and one word for both is what D153 §2 R5 removed from this
+section once already. Status stays in the bullets above; this table does not
+restate it.
+
+| act | who takes it | blocked by | take it when | releases |
+|---|---|---|---|---|
+| §1 generate | maintainer, own machine | — | — | §1a, and everything below it |
+| §1a step 1 — two offline backups | maintainer | nothing | immediately after §1 | §3 and §4 (D153 §2 R4 moved this gate forward from §4 to §3) |
+| §1a step 2 — record the passphrase | maintainer | **`Q259`** | after `Q259` lands, not before | nothing else; it closes the residue that a lost passphrase is a lost key |
+| §2 — the registrar `TXT` pin | maintainer, at the registrar, **express in-the-moment consent naming action, destination and account** | **nothing — §1 is done** | any time from now. It must exist before §5, and D71 §A R4 calls it *"the one that should not be deferred"*; §A R5 clause 3's *"before first release"* is its outer deadline, not its schedule | §5, and with it `Q30` Accept row 1 |
+| §3 — anchor the public key | maintainer, own machine + a public calendar | nothing (§1a step 1 discharged its gate) | **a few days before the release date — not now and not after** (D71 §A R5 clause 4) | §5 step 3's `minisign.pub.ots`; `Q30` Accept row 1 |
+| §5 — publish the key in three places | **a lane, not the maintainer** — §5 is three repository edits, and the preamble above names only §1, §2 and §3 as external | §2 and §3 | after both | `Q30` Accept row 1; `R96` is the missing write target for step 2 |
+
+`§1 → §3 → §2` at the top of this file is a **schedule**, not a dependency chain.
+The only hard predecessor in the column above is §1.

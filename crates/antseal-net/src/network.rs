@@ -323,8 +323,11 @@ impl NetworkConfig {
     /// fresh ports, so a `NetworkConfig` built here is valid only for the
     /// devnet run whose export produced `env` — re-read the export after
     /// every up (docs/devnet/local-devnet.md, "Environment surface").
+    /// Generic over the wallet slot (P22): a `NetworkConfig` describes the
+    /// *chain*, and none of its fields is the wallet, so a walletless
+    /// Sepolia-devnet export builds one exactly as a local export does.
     #[must_use]
-    pub fn devnet(env: &DevnetEnv) -> Self {
+    pub fn devnet<W>(env: &DevnetEnv<W>) -> Self {
         Self {
             id: NetworkId::Devnet,
             evm_chain_id: env.chain_id,
@@ -413,12 +416,38 @@ pub enum NetworkConfigError {
 /// in [`SecretBuf`] (zeroize-on-drop), redacted from `Debug`, and never
 /// echoed by any error this module produces — project rule 6 applies to
 /// the pattern, not just to real secrets.
-pub struct DevnetEnv {
+///
+/// # The wallet slot (P22)
+///
+/// `W` is the wallet slot, and it is a **type-level** statement about
+/// whether this environment has a key at all:
+///
+/// | `W` | written | wallet accessor | produced by |
+/// | --- | --- | --- | --- |
+/// | `SecretBuf` (the default, so `DevnetEnv` means this) | ten keys | [`Self::wallet_private_key`] → `&SecretBuf` | [`Self::from_env_file`], [`Self::from_lookup`], [`Self::from_process_env`] |
+/// | `Option<SecretBuf>` | nine or ten | [`Self::wallet_private_key`] → `Option<&SecretBuf>` | [`Self::from_env_file_optional_wallet`] and siblings |
+///
+/// P22's Sepolia devnet writes **nine** keys — a Sepolia key is a real
+/// secret and never reaches a file the launcher writes — so its
+/// `.devnet/env` does not parse as the ten-key form, by design. Read it as
+/// `DevnetEnv<Option<SecretBuf>>` and, if you need to pay, complete it with
+/// [`Self::with_wallet`] from wherever your key management lives
+/// (docs/devnet/sepolia-devnet.md, "The wallet key is never written to a
+/// file").
+///
+/// A slot rather than an `Option` field because the ten-key form's
+/// `wallet_private_key(&self) -> &SecretBuf` is the contract every existing
+/// consumer is written against: an `Option`-returning accessor would push
+/// an `unwrap`-shaped decision into call sites that cannot reach a
+/// walletless export in the first place. Here a consumer that needs a key
+/// asks for the type that has one, and the compiler — not a runtime check —
+/// is what refuses the walletless case.
+pub struct DevnetEnv<W = SecretBuf> {
     rpc_url: String,
     chain_id: u64,
     payment_token: EvmAddress20,
     payment_vault: EvmAddress20,
-    wallet_private_key: SecretBuf,
+    wallet_private_key: W,
     bootstrap: Vec<SocketAddr>,
     node_count: u32,
     base_port: u16,
@@ -462,18 +491,43 @@ pub mod devnet_keys {
         DATA_DIR,
         PID,
     ];
+
+    /// The nine a **Sepolia** devnet export carries: [`ALL`] minus
+    /// [`WALLET_PRIVATE_KEY`], in the same order (P22).
+    ///
+    /// The launcher omits the wallet line entirely rather than writing it
+    /// empty, so the absence is a `MissingKey` naming the key — the right
+    /// problem — instead of an "invalid hex" three layers downstream.
+    pub const ALL_WITHOUT_WALLET: [&str; 9] = [
+        RPC_URL,
+        CHAIN_ID,
+        TOKEN_ADDRESS,
+        PAYMENT_VAULT_ADDRESS,
+        BOOTSTRAP,
+        NODE_COUNT,
+        BASE_PORT,
+        DATA_DIR,
+        PID,
+    ];
 }
 
-impl DevnetEnv {
-    /// Parse from any key→value lookup (the seam every other constructor
-    /// funnels through; tests drive it directly).
-    ///
-    /// # Errors
-    ///
-    /// [`DevnetEnvError`] naming the offending **key** and the structural
-    /// problem. Values are never echoed — uniformly, so the wallet-key
-    /// line cannot become the exception by accident.
-    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, DevnetEnvError> {
+/// Parse every field, in the documented key order, with the wallet either
+/// required or optional.
+///
+/// One body for both shapes so the *order* of checks — and therefore which
+/// key a malformed export names first — cannot drift between them. The
+/// wallet is checked in its documented position (fifth) in both, so
+/// `wallet_required` changes only whether an **absent** key is an error; a
+/// present-but-empty value is malformed either way, because an empty value
+/// is not the same statement as an omitted line.
+///
+/// Returns the nine common fields with an empty wallet slot, plus the
+/// wallet if the export carried one; the callers fill the slot.
+fn parse_devnet_fields(
+    lookup: &impl Fn(&str) -> Option<String>,
+    wallet_required: bool,
+) -> Result<(DevnetEnv<()>, Option<SecretBuf>), DevnetEnvError> {
+    {
         let require = |key: &'static str| lookup(key).ok_or(DevnetEnvError::MissingKey { key });
         let invalid = |key: &'static str, problem: &str| DevnetEnvError::InvalidValue {
             key,
@@ -499,11 +553,25 @@ impl DevnetEnv {
         // Key-shaped material: moved into a SecretBuf immediately; only a
         // structural emptiness check here (real validation is the D44
         // parse-through-pinned-stack in `crate::evm`, behind the feature).
-        let wallet_raw = require(devnet_keys::WALLET_PRIVATE_KEY)?;
-        if wallet_raw.trim().is_empty() {
-            return Err(invalid(devnet_keys::WALLET_PRIVATE_KEY, "empty"));
-        }
-        let wallet_private_key = SecretBuf::new(wallet_raw.into_bytes());
+        //
+        // P22: an ABSENT key is `MissingKey` only when the caller asked for
+        // the ten-key form; a PRESENT-but-empty value is malformed in both
+        // forms, so a launcher that ever wrote `WALLET_PRIVATE_KEY=''`
+        // cannot pass itself off as a walletless export.
+        let wallet_private_key = match lookup(devnet_keys::WALLET_PRIVATE_KEY) {
+            Some(raw) => {
+                if raw.trim().is_empty() {
+                    return Err(invalid(devnet_keys::WALLET_PRIVATE_KEY, "empty"));
+                }
+                Some(SecretBuf::new(raw.into_bytes()))
+            }
+            None if wallet_required => {
+                return Err(DevnetEnvError::MissingKey {
+                    key: devnet_keys::WALLET_PRIVATE_KEY,
+                });
+            }
+            None => None,
+        };
 
         let bootstrap_raw = require(devnet_keys::BOOTSTRAP)?;
         let mut bootstrap = Vec::new();
@@ -542,22 +610,99 @@ impl DevnetEnv {
             .parse::<u32>()
             .map_err(|_| invalid(devnet_keys::PID, "not a decimal u32 pid"))?;
 
-        Ok(Self {
-            rpc_url,
-            chain_id,
-            payment_token,
-            payment_vault,
+        Ok((
+            DevnetEnv {
+                rpc_url,
+                chain_id,
+                payment_token,
+                payment_vault,
+                wallet_private_key: (),
+                bootstrap,
+                node_count,
+                base_port,
+                data_dir,
+                pid,
+            },
             wallet_private_key,
-            bootstrap,
-            node_count,
-            base_port,
-            data_dir,
-            pid,
-        })
+        ))
+    }
+}
+
+/// Split the launcher's flat `KEY='value'` env-file text into a map.
+///
+/// Blank lines and `#` comments are skipped; unknown `ANTSEAL_DEVNET_*`
+/// keys are ignored (forward compatibility with a launcher that exports
+/// more). Values may be wrapped in single quotes (the launcher's format) or
+/// bare; embedded quotes are not supported (the launcher never emits them —
+/// addresses, hex, numbers, socket lists, paths).
+fn env_file_map(text: &str) -> BTreeMap<&str, String> {
+    let mut map: BTreeMap<&str, String> = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.starts_with("ANTSEAL_DEVNET_") {
+            continue;
+        }
+        let value = value.trim();
+        let value = value
+            .strip_prefix('\'')
+            .and_then(|v| v.strip_suffix('\''))
+            .unwrap_or(value);
+        map.insert(key, value.to_owned());
+    }
+    map
+}
+
+impl<W> DevnetEnv<W> {
+    /// Move the nine common fields into a different wallet slot.
+    fn with_slot<X>(self, wallet_private_key: X) -> DevnetEnv<X> {
+        DevnetEnv {
+            rpc_url: self.rpc_url,
+            chain_id: self.chain_id,
+            payment_token: self.payment_token,
+            payment_vault: self.payment_vault,
+            wallet_private_key,
+            bootstrap: self.bootstrap,
+            node_count: self.node_count,
+            base_port: self.base_port,
+            data_dir: self.data_dir,
+            pid: self.pid,
+        }
+    }
+}
+
+/// The ten-key form: the local devnet's export, wallet **required**.
+impl DevnetEnv<SecretBuf> {
+    /// Parse from any key→value lookup (the seam every other constructor
+    /// funnels through; tests drive it directly).
+    ///
+    /// # Errors
+    ///
+    /// [`DevnetEnvError`] naming the offending **key** and the structural
+    /// problem. Values are never echoed — uniformly, so the wallet-key
+    /// line cannot become the exception by accident.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, DevnetEnvError> {
+        let (base, wallet) = parse_devnet_fields(&lookup, true)?;
+        // `wallet_required` already refused an absent key by name; this
+        // keeps the function total without a second failure mode.
+        let wallet = wallet.ok_or(DevnetEnvError::MissingKey {
+            key: devnet_keys::WALLET_PRIVATE_KEY,
+        })?;
+        Ok(base.with_slot(wallet))
     }
 
     /// Parse from the process environment (after `source .devnet/env`, or
     /// under a harness that exported the keys).
+    ///
+    /// This is the shape the Sepolia recipe produces: source the chain half
+    /// **and** the launcher half, export the key, and all ten are present
+    /// with none of them on disk (docs/devnet/sepolia-devnet.md).
     ///
     /// # Errors
     ///
@@ -572,40 +717,131 @@ impl DevnetEnv {
     /// the file I/O, keeping this module I/O-free and the parse testable
     /// on fixtures).
     ///
-    /// Blank lines and `#` comments are skipped; unknown
-    /// `ANTSEAL_DEVNET_*` keys are ignored (forward compatibility with a
-    /// launcher that exports more); the ten required keys must all be
-    /// present. Values may be wrapped in single quotes (the launcher's
-    /// format) or bare; embedded quotes are not supported (the launcher
-    /// never emits them — addresses, hex, numbers, socket lists, paths).
+    /// All ten keys must be present. A P22 **Sepolia** export carries nine
+    /// and is refused here, naming `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` —
+    /// read it with [`Self::from_env_file_optional_wallet`] instead.
     ///
     /// # Errors
     ///
     /// As [`Self::from_lookup`].
     pub fn from_env_file(text: &str) -> Result<Self, DevnetEnvError> {
-        let mut map: BTreeMap<&str, String> = BTreeMap::new();
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let Some((key, value)) = line.split_once('=') else {
-                continue;
-            };
-            let key = key.trim();
-            if !key.starts_with("ANTSEAL_DEVNET_") {
-                continue;
-            }
-            let value = value.trim();
-            let value = value
-                .strip_prefix('\'')
-                .and_then(|v| v.strip_suffix('\''))
-                .unwrap_or(value);
-            map.insert(key, value.to_owned());
-        }
+        let map = env_file_map(text);
         Self::from_lookup(|key| map.get(key).cloned())
     }
 
+    /// The funded dev wallet key (key-shaped material — zeroizing buffer;
+    /// feed it to `crate::wallet::WalletKey::import`).
+    ///
+    /// Infallible **by type**: this form parses only from an export that
+    /// carried a key. The walletless form's accessor of the same name
+    /// returns an `Option` instead.
+    #[must_use]
+    pub const fn wallet_private_key(&self) -> &SecretBuf {
+        &self.wallet_private_key
+    }
+}
+
+/// The nine-or-ten-key form: an export that **may** omit the wallet — P22's
+/// Arbitrum-Sepolia devnet, whose key is a real secret and is never written
+/// to any file.
+impl DevnetEnv<Option<SecretBuf>> {
+    /// Parse from any key→value lookup, tolerating an absent wallet key.
+    ///
+    /// # Errors
+    ///
+    /// As [`DevnetEnv::from_lookup`], except that an absent
+    /// `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` is not an error. A *present but
+    /// empty* one still is.
+    pub fn from_lookup_optional_wallet(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, DevnetEnvError> {
+        let (base, wallet) = parse_devnet_fields(&lookup, false)?;
+        Ok(base.with_slot(wallet))
+    }
+
+    /// Parse the launcher's flat env-file text, tolerating an absent wallet
+    /// key — the P22 Sepolia `.devnet/env`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_lookup_optional_wallet`].
+    pub fn from_env_file_optional_wallet(text: &str) -> Result<Self, DevnetEnvError> {
+        let map = env_file_map(text);
+        Self::from_lookup_optional_wallet(|key| map.get(key).cloned())
+    }
+
+    /// Parse from the process environment, tolerating an absent wallet key.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_lookup_optional_wallet`].
+    pub fn from_process_env_optional_wallet() -> Result<Self, DevnetEnvError> {
+        Self::from_lookup_optional_wallet(|key| std::env::var(key).ok())
+    }
+
+    /// Complete a walletless environment with a key supplied out of band —
+    /// the code form of the Sepolia recipe, for a caller whose key lives in
+    /// a key manager rather than in the process environment.
+    ///
+    /// Any key already parsed is **replaced**: the caller's is the one they
+    /// meant.
+    #[must_use]
+    pub fn with_wallet(self, wallet_private_key: SecretBuf) -> DevnetEnv<SecretBuf> {
+        self.with_slot(wallet_private_key)
+    }
+
+    /// Promote to the ten-key form if this export did carry a wallet.
+    ///
+    /// # Errors
+    ///
+    /// [`DevnetEnvError::MissingKey`] naming
+    /// `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` when it did not — the same error
+    /// the ten-key parse would have produced, so a consumer that discovers
+    /// the need for a key late reports it identically to one that demanded
+    /// it up front.
+    pub fn require_wallet(self) -> Result<DevnetEnv<SecretBuf>, DevnetEnvError> {
+        let DevnetEnv {
+            rpc_url,
+            chain_id,
+            payment_token,
+            payment_vault,
+            wallet_private_key,
+            bootstrap,
+            node_count,
+            base_port,
+            data_dir,
+            pid,
+        } = self;
+        let Some(wallet_private_key) = wallet_private_key else {
+            return Err(DevnetEnvError::MissingKey {
+                key: devnet_keys::WALLET_PRIVATE_KEY,
+            });
+        };
+        Ok(DevnetEnv {
+            rpc_url,
+            chain_id,
+            payment_token,
+            payment_vault,
+            wallet_private_key,
+            bootstrap,
+            node_count,
+            base_port,
+            data_dir,
+            pid,
+        })
+    }
+
+    /// The funded wallet key, if this export carried one.
+    ///
+    /// Feed it to `crate::wallet::WalletKey::import`; a `None` here is the
+    /// normal, designed state of a Sepolia devnet export, not a fault.
+    #[must_use]
+    pub fn wallet_private_key(&self) -> Option<&SecretBuf> {
+        self.wallet_private_key.as_ref()
+    }
+}
+
+impl<W> DevnetEnv<W> {
     /// Anvil EVM JSON-RPC endpoint.
     #[must_use]
     pub fn rpc_url(&self) -> &str {
@@ -628,13 +864,6 @@ impl DevnetEnv {
     #[must_use]
     pub const fn payment_vault(&self) -> EvmAddress20 {
         self.payment_vault
-    }
-
-    /// The funded dev wallet key (key-shaped material — zeroizing buffer;
-    /// feed it to `crate::wallet::WalletKey::import`).
-    #[must_use]
-    pub const fn wallet_private_key(&self) -> &SecretBuf {
-        &self.wallet_private_key
     }
 
     /// Node bootstrap addresses for `Client::connect`.
@@ -668,7 +897,7 @@ impl DevnetEnv {
     }
 }
 
-impl fmt::Debug for DevnetEnv {
+impl<W: fmt::Debug> fmt::Debug for DevnetEnv<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DevnetEnv")
             .field("rpc_url", &self.rpc_url)
@@ -939,6 +1168,276 @@ mod tests {
             !debug.contains(&fixture_key_hex()),
             "wallet key leaked into Debug"
         );
+        assert!(debug.contains("SecretBuf(<redacted>)"), "{debug}");
+    }
+
+    // ── P22: the walletless (Arbitrum-Sepolia) export ──────────────────
+
+    /// The launcher's Sepolia export: P16's ten keys minus the wallet line,
+    /// with Arbitrum Sepolia's chain id and canonical contracts. Built by
+    /// FILTERING the ten-key fixture rather than by retyping it, so the two
+    /// fixtures cannot drift into disagreeing about anything but the wallet.
+    fn fixture_sepolia_env_file() -> String {
+        fixture_env_file()
+            .lines()
+            .filter(|line| !line.starts_with(devnet_keys::WALLET_PRIVATE_KEY))
+            .map(|line| {
+                if line.starts_with(devnet_keys::CHAIN_ID) {
+                    "ANTSEAL_DEVNET_CHAIN_ID='421614'".to_owned()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .map(|line| format!("{line}\n"))
+            .collect()
+    }
+
+    /// The nine-vs-ten distinction, from both sides: the Sepolia export is
+    /// refused by the ten-key parse — **naming the wallet key**, not some
+    /// downstream symptom — and accepted by the optional-wallet parse.
+    #[test]
+    fn p22_a_sepolia_export_needs_the_optional_wallet_parse() {
+        let text = fixture_sepolia_env_file();
+        assert_eq!(
+            text.lines().filter(|l| l.contains('=')).count(),
+            devnet_keys::ALL_WITHOUT_WALLET.len(),
+            "the fixture must be the nine-key shape"
+        );
+
+        // Ten-key form: refused, by name.
+        assert_eq!(
+            DevnetEnv::from_env_file(&text).expect_err("nine keys is not ten"),
+            DevnetEnvError::MissingKey {
+                key: devnet_keys::WALLET_PRIVATE_KEY
+            }
+        );
+
+        // Optional-wallet form: parses, and says so honestly.
+        let env = DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&text)
+            .expect("the Sepolia export parses");
+        assert!(env.wallet_private_key().is_none());
+        assert_eq!(env.chain_id(), ARBITRUM_SEPOLIA_CHAIN_ID);
+        assert_ne!(env.chain_id(), 11_155_111, "that is Ethereum Sepolia");
+        assert_eq!(env.node_count(), 14);
+        assert_eq!(env.bootstrap().len(), 3);
+
+        // And it is enough to describe the network: a NetworkConfig has no
+        // wallet field, so nothing about paying is being smuggled in here.
+        let config = NetworkConfig::devnet(&env);
+        assert_eq!(config.id, NetworkId::Devnet);
+        assert_eq!(config.evm_chain_id, ARBITRUM_SEPOLIA_CHAIN_ID);
+        assert_eq!(config.bootstrap.len(), 3);
+    }
+
+    /// The recipe, in code: nine keys off disk plus a key from somewhere
+    /// that is not disk. Both completions produce the ten-key form.
+    #[test]
+    fn p22_a_walletless_export_completes_with_an_out_of_band_key() {
+        let text = fixture_sepolia_env_file();
+        let supplied = || SecretBuf::new(fixture_key_hex().into_bytes());
+
+        let completed = DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&text)
+            .expect("parses")
+            .with_wallet(supplied());
+        assert_eq!(
+            completed.wallet_private_key().as_bytes(),
+            fixture_key_hex().as_bytes()
+        );
+        assert_eq!(completed.chain_id(), ARBITRUM_SEPOLIA_CHAIN_ID);
+
+        // Without a key, promotion fails with the SAME error the ten-key
+        // parse gives — a late discovery reports identically to an early one.
+        assert_eq!(
+            DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&text)
+                .expect("parses")
+                .require_wallet()
+                .map(|_| ())
+                .expect_err("no wallet to promote"),
+            DevnetEnvError::MissingKey {
+                key: devnet_keys::WALLET_PRIVATE_KEY
+            }
+        );
+
+        // The layered lookup — file keys first, the key from elsewhere —
+        // is the same recipe through the ten-key seam directly.
+        let map = env_file_map(&text);
+        let layered = DevnetEnv::from_lookup(|key| {
+            if key == devnet_keys::WALLET_PRIVATE_KEY {
+                Some(fixture_key_hex())
+            } else {
+                map.get(key).cloned()
+            }
+        })
+        .expect("nine from the file plus one from elsewhere is ten");
+        assert_eq!(
+            layered.wallet_private_key().as_bytes(),
+            fixture_key_hex().as_bytes()
+        );
+    }
+
+    /// A ten-key export still promotes, so the optional parse is a
+    /// widening rather than a second dialect.
+    #[test]
+    fn p22_the_optional_parse_also_accepts_a_ten_key_export() {
+        let env =
+            DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&fixture_env_file())
+                .expect("ten keys parse in the optional form too");
+        assert!(env.wallet_private_key().is_some());
+        let promoted = env.require_wallet().expect("a key is present");
+        assert_eq!(
+            promoted.wallet_private_key().as_bytes(),
+            fixture_key_hex().as_bytes()
+        );
+        assert_eq!(promoted.chain_id(), 31_337);
+    }
+
+    /// An **empty** wallet value is malformed in both forms. Absent and
+    /// empty are different statements: a launcher that wrote
+    /// `WALLET_PRIVATE_KEY=''` must not pass as a walletless export.
+    #[test]
+    fn p22_an_empty_wallet_value_is_malformed_in_both_forms() {
+        let text: String = fixture_env_file()
+            .lines()
+            .map(|line| {
+                if line.starts_with(devnet_keys::WALLET_PRIVATE_KEY) {
+                    "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY=\'\'".to_owned()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+
+        for err in [
+            DevnetEnv::from_env_file(&text)
+                .map(|_| ())
+                .expect_err("ten"),
+            DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&text)
+                .map(|_| ())
+                .expect_err("optional"),
+        ] {
+            match err {
+                DevnetEnvError::InvalidValue { key, problem } => {
+                    assert_eq!(key, devnet_keys::WALLET_PRIVATE_KEY);
+                    assert_eq!(problem, "empty");
+                }
+                other => panic!("expected InvalidValue, got {other:?}"),
+            }
+        }
+    }
+
+    /// The optional parse relaxes exactly one key. Every one of the other
+    /// nine is still required, and still named.
+    #[test]
+    fn p22_the_optional_parse_relaxes_only_the_wallet_key() {
+        let text = fixture_sepolia_env_file();
+        for missing in devnet_keys::ALL_WITHOUT_WALLET {
+            let filtered: String = text
+                .lines()
+                .filter(|line| !line.starts_with(missing))
+                .map(|line| format!("{line}\n"))
+                .collect();
+            let err = DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&filtered)
+                .map(|_| ())
+                .expect_err("must fail");
+            assert_eq!(err, DevnetEnvError::MissingKey { key: missing });
+        }
+        // …and the nine are the ten minus exactly the wallet key.
+        let expected: Vec<&str> = devnet_keys::ALL
+            .iter()
+            .copied()
+            .filter(|k| *k != devnet_keys::WALLET_PRIVATE_KEY)
+            .collect();
+        assert_eq!(devnet_keys::ALL_WITHOUT_WALLET.to_vec(), expected);
+    }
+
+    /// No error this parser can raise about a wallet-bearing export ever
+    /// carries the key.
+    ///
+    /// `malformed_values_name_the_key_and_never_echo_the_value` checks five
+    /// keys and the wallet is not among them — the one key where an echo
+    /// would matter most was the one not swept. P22 touches this parse, so
+    /// it closes that here rather than leaving it for the change that
+    /// starts echoing.
+    #[test]
+    fn p22_no_parse_error_ever_carries_the_wallet_key() {
+        let key = fixture_key_hex();
+        let base = fixture_env_file();
+
+        let mut broken = vec![
+            // wallet absent, wallet empty
+            base.lines()
+                .filter(|l| !l.starts_with(devnet_keys::WALLET_PRIVATE_KEY))
+                .map(|l| format!("{l}\n"))
+                .collect::<String>(),
+            base.lines()
+                .map(|l| {
+                    if l.starts_with(devnet_keys::WALLET_PRIVATE_KEY) {
+                        "ANTSEAL_DEVNET_WALLET_PRIVATE_KEY=\'\'".to_owned()
+                    } else {
+                        l.to_owned()
+                    }
+                })
+                .map(|l| format!("{l}\n"))
+                .collect::<String>(),
+        ];
+        // …and every other key broken in turn, with the wallet still present.
+        for other in devnet_keys::ALL_WITHOUT_WALLET {
+            broken.push(
+                base.lines()
+                    .map(|l| {
+                        if l.starts_with(other) {
+                            format!("{other}='!!not-a-valid-value!!'")
+                        } else {
+                            l.to_owned()
+                        }
+                    })
+                    .map(|l| format!("{l}\n"))
+                    .collect::<String>(),
+            );
+        }
+
+        let mut errors = 0;
+        for text in &broken {
+            for message in [
+                DevnetEnv::from_env_file(text).map(|_| ()).err(),
+                DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(text)
+                    .map(|_| ())
+                    .err(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|e| e.to_string())
+            {
+                errors += 1;
+                assert!(!message.contains(&key), "wallet key echoed: {message}");
+            }
+        }
+        // The sweep must actually have produced errors — a matrix that
+        // silently parsed everything would assert nothing at all.
+        assert!(
+            errors >= broken.len(),
+            "only {errors} errors from {} cases",
+            broken.len()
+        );
+    }
+
+    /// Rule 6 holds on the new shape too: a completed walletless export
+    /// redacts exactly as the ten-key one does, and the walletless one
+    /// shows an absent slot rather than an invisible field.
+    #[test]
+    fn p22_debug_redacts_on_the_walletless_shape_too() {
+        let walletless = DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(
+            &fixture_sepolia_env_file(),
+        )
+        .expect("parses");
+        let debug = format!("{walletless:?}");
+        assert!(!debug.contains(&fixture_key_hex()), "{debug}");
+        assert!(debug.contains("wallet_private_key: None"), "{debug}");
+
+        let completed = walletless.with_wallet(SecretBuf::new(fixture_key_hex().into_bytes()));
+        let debug = format!("{completed:?}");
+        assert!(!debug.contains(&fixture_key_hex()), "key leaked: {debug}");
         assert!(debug.contains("SecretBuf(<redacted>)"), "{debug}");
     }
 

@@ -1862,6 +1862,26 @@ def check_decision_index(failures: Failures) -> None:
 # where Q245 applied it).
 RESERVED_PLACEHOLDER_NAMES = ("user", "fixture", "runner", "u", "x")
 
+# Q257 — the vocabulary above is a RULE contributors must obey, so it is stated
+# where they meet it BEFORE the lint does, and pinned to the tuple here. D144
+# §2 R8 owed this half; the row it minted is Q257. A name added or removed
+# above without the matching edit to the document is a red, and so is a name
+# documented but not reserved.
+#
+# WHY THE DELIMITED, ANCHORED FORM IS LOAD-BEARING. The obvious arm — substring
+# -search each reserved name in the document — is GREEN BY CONSTRUCTION for two
+# of the five: `u` and `x` are single letters occurring in thousands of English
+# words, so neither could ever be reported missing. This project's dominant
+# defect class, and it would have been written into the check that documents
+# the rule against it. So: read only what follows the anchor ON ONE LINE,
+# require each name inside BACKTICKS, and assert the documented sequence EQUALS
+# the tuple — a COUNT in both directions, not a "none failed". The count is not
+# implied by the two set comparisons: a line naming `user` twice and `x` never
+# has an empty `missing` under a set test and is still wrong.
+PLACEHOLDER_DOC = "CONTRIBUTING.md"
+PLACEHOLDER_DOC_ANCHOR = "Reserved placeholder names:"
+PLACEHOLDER_DOC_TOKEN = re.compile(r"`([^`]+)`")
+
 # The three platform spellings, as a TABLE rather than one opaque regex, so the
 # self-test can read the arms off it and require a planted RED fixture per arm.
 # An arm added here without a fixture fails `--self-test` with its own message
@@ -1975,6 +1995,84 @@ def machine_path_scan_roots() -> list[str]:
     return [sub for sub in CITATION_SCAN if sub not in PATH_SCAN_EXCLUDES]
 
 
+def placeholder_doc_evidence(failures: Failures, check: str) -> str:
+    """Q257 — hold `PLACEHOLDER_DOC`'s declaration of the reserved vocabulary
+    equal to `RESERVED_PLACEHOLDER_NAMES`, and return the ok line's evidence
+    clause. One finding per divergence; the constants above say why the names
+    are read delimited and COUNTED rather than substring-searched."""
+    expected = ", ".join("`" + name + "`" for name in RESERVED_PLACEHOLDER_NAMES)
+    form = "**" + PLACEHOLDER_DOC_ANCHOR + "** " + expected
+
+    try:
+        lines = (ROOT / PLACEHOLDER_DOC).read_text(encoding="utf-8").splitlines()
+    except (UnicodeDecodeError, OSError) as exc:
+        failures.add(
+            check,
+            f"{PLACEHOLDER_DOC} could not be read ({type(exc).__name__}), so the "
+            f"reserved vocabulary this check enforces is stated on no surface a "
+            f"contributor reads before the lint fires. Restore the file and the "
+            f"line: {form} (Q257, D144 §2 R8).",
+        )
+        return "vocabulary UNDOCUMENTED"
+
+    hits = [n for n, line in enumerate(lines, 1) if PLACEHOLDER_DOC_ANCHOR in line]
+    if len(hits) != 1:
+        failures.add(
+            check,
+            f"{PLACEHOLDER_DOC} holds {len(hits)} line(s) containing "
+            f'"{PLACEHOLDER_DOC_ANCHOR}", not exactly 1. The vocabulary is '
+            f"declared on ONE line so that line can be held equal to "
+            f"RESERVED_PLACEHOLDER_NAMES; a rewrap or a second copy makes the "
+            f"pin unable to identify its subject. Restore it as: {form} (Q257).",
+        )
+        return "vocabulary NOT declared exactly once"
+
+    number = hits[0]
+    where = f"{PLACEHOLDER_DOC}:{number}"
+    tail = lines[number - 1].split(PLACEHOLDER_DOC_ANCHOR, 1)[1]
+    documented = PLACEHOLDER_DOC_TOKEN.findall(tail)
+
+    missing = [name for name in RESERVED_PLACEHOLDER_NAMES if name not in documented]
+    if missing:
+        absent = ", ".join("`" + name + "`" for name in missing)
+        failures.add(
+            check,
+            f"{where}: the declaration does not name {absent}, so this check "
+            f"reserves {len(missing)} name(s) a contributor cannot read about "
+            f"anywhere before their commit goes red. Names are matched INSIDE "
+            f"BACKTICKS and on this line only — a bare occurrence in prose does "
+            f"not count, which is what keeps single-letter names falsifiable. "
+            f"Restore the line as: {form} (Q257).",
+        )
+
+    extra = [token for token in documented if token not in RESERVED_PLACEHOLDER_NAMES]
+    if extra:
+        surplus = ", ".join("`" + token + "`" for token in extra)
+        failures.add(
+            check,
+            f"{where}: the declaration names {surplus}, which "
+            f"RESERVED_PLACEHOLDER_NAMES does not reserve. A contributor who "
+            f"uses it will be refused by a lint their own guide told them to "
+            f"trust. Restore the line as: {form} (Q257).",
+        )
+
+    if len(documented) != len(RESERVED_PLACEHOLDER_NAMES):
+        failures.add(
+            check,
+            f"{where}: the declaration states {len(documented)} name(s) against "
+            f"{len(RESERVED_PLACEHOLDER_NAMES)} in RESERVED_PLACEHOLDER_NAMES. "
+            f"This is a COUNT, deliberately separate from the two comparisons "
+            f"above: it is the arm that fires when the tuple grows a name the "
+            f"document never gained, and the only arm that sees a duplicate. "
+            f"Restore the line as: {form} (Q257).",
+        )
+
+    return (
+        f"the vocabulary is declared for contributors at {where}, naming "
+        f"exactly the {len(RESERVED_PLACEHOLDER_NAMES)} reserved name(s)"
+    )
+
+
 def check_machine_paths(failures: Failures) -> None:
     check = "machine-paths"
     reserved = ", ".join(RESERVED_PLACEHOLDER_NAMES)
@@ -1998,6 +2096,12 @@ def check_machine_paths(failures: Failures) -> None:
                 f"silently stopped scanning it. Restore the root, or give this "
                 f"check its own root list in the same act (D144 §2 R6).",
             )
+
+    # (M4/Q257) The DOC-side coupling guard, here and for the same reason as the
+    # root guard above: this check enforces the vocabulary, and PLACEHOLDER_DOC
+    # is where a contributor meets it before the lint does. If the two have
+    # drifted, every refusal below cites a rule nobody can read.
+    doc_evidence = placeholder_doc_evidence(failures, check)
 
     # (M2/M3) The pin, in both directions.
     for relative in sorted(KNOWN_MACHINE_PATH_DIVERGENCE):
@@ -2042,7 +2146,9 @@ def check_machine_paths(failures: Failures) -> None:
                     f"in a live surface. Live instructions must not name a "
                     f"developer's machine — use a reserved placeholder name "
                     f"({reserved}) or a $HOME-relative path. There is no "
-                    f"exemption list to add this file to (D144 §2 R4).",
+                    f"exemption list to add this file to. The vocabulary, and why no "
+                    f"exemption list exists, are in {PLACEHOLDER_DOC} under "
+                    f"'{PLACEHOLDER_DOC_ANCHOR}' (D144 §2 R4, Q257).",
                 )
 
     # (M1) The live surface. Loop body at parity with `check_decisions` and
@@ -2086,7 +2192,9 @@ def check_machine_paths(failures: Failures) -> None:
                         f"in a live surface. Live instructions must not name a "
                         f"developer's machine — use a reserved placeholder name "
                         f"({reserved}) or a $HOME-relative path. There is no "
-                        f"exemption list to add this file to (D144 §2 R4).",
+                        f"exemption list to add this file to. The vocabulary, and why no "
+                        f"exemption list exists, are in {PLACEHOLDER_DOC} under "
+                        f"'{PLACEHOLDER_DOC_ANCHOR}' (D144 §2 R4, Q257).",
                     )
 
     if len(failures.messages) == before:
@@ -2098,7 +2206,8 @@ def check_machine_paths(failures: Failures) -> None:
             f"{len(roots)} scan root(s); "
             f"{len(KNOWN_MACHINE_PATH_DIVERGENCE)} registered divergence(s) "
             f"still present verbatim and exactly once "
-            f"({', '.join(sorted(KNOWN_MACHINE_PATH_DIVERGENCE))})"
+            f"({', '.join(sorted(KNOWN_MACHINE_PATH_DIVERGENCE))}); "
+            f"{doc_evidence}"
         )
 
 
@@ -3327,6 +3436,138 @@ def self_test() -> int:
             machine_cases.append(
                 ("machine-paths", relative, append_text(machine_preserved_line), "green", None)
             )
+
+        # ── Q257: the DOCUMENT side of the vocabulary (D144 §2 R8's owed half) ─
+        #
+        # THE ARM THESE CASES EXIST FOR IS THE ONE THAT IS GREEN BY CONSTRUCTION
+        # IF WRITTEN NAIVELY. `u` and `x` are single letters, so "grep the guide
+        # for each reserved name" can never report either of them missing —
+        # two of five permanently unfalsifiable. Case (b) is the discriminator:
+        # it leaves the name present as BARE TEXT on the very line the check
+        # reads, and any substring implementation stays green on it.
+        #
+        # The subject is READ from the staged file, never reconstructed: a
+        # cosmetic reword of the sentence must not silently disarm a case, and
+        # a mutation that matches nothing already fails the harness loudly.
+        if not RESERVED_PLACEHOLDER_NAMES:
+            raise AssertionError(
+                "self-test: RESERVED_PLACEHOLDER_NAMES is empty, so the document arm has "
+                "no name to plant and every case below would be green BY ABSENCE"
+            )
+        # The SHORTEST name on purpose: it is the one a substring search is
+        # blindest to, so the cases bite where the defect actually lives.
+        machine_vocab_name = min(RESERVED_PLACEHOLDER_NAMES, key=len)
+        machine_vocab_token = "`" + machine_vocab_name + "`"
+        machine_doc_lines = [
+            line
+            for line in (tree / PLACEHOLDER_DOC).read_text(encoding="utf-8").splitlines()
+            if PLACEHOLDER_DOC_ANCHOR in line
+        ]
+        if len(machine_doc_lines) != 1:
+            raise AssertionError(
+                f"self-test: staged {PLACEHOLDER_DOC} holds {len(machine_doc_lines)} line(s) "
+                f"containing {PLACEHOLDER_DOC_ANCHOR!r}, not one, so the document cases have "
+                "no unambiguous subject to corrupt"
+            )
+        machine_vocab_cut = next(
+            (
+                form
+                for form in (machine_vocab_token + ", ", ", " + machine_vocab_token)
+                if form in machine_doc_lines[0]
+            ),
+            None,
+        )
+        if machine_vocab_cut is None:
+            raise AssertionError(
+                f"self-test: the staged declaration does not carry {machine_vocab_token!r} in "
+                "a removable form, so both document cases would mutate nothing"
+            )
+        machine_tuple_marker = "RESERVED_PLACEHOLDER_NAMES = ("
+        machine_tuple_lines = [
+            line for line in self_source.splitlines() if line.startswith(machine_tuple_marker)
+        ]
+        if len(machine_tuple_lines) != 1 or not machine_tuple_lines[0].endswith(")"):
+            raise AssertionError(
+                f"self-test: staged {CITATION_SCAN_SELF} holds "
+                f"{len(machine_tuple_lines)} single-line definition(s) of "
+                "RESERVED_PLACEHOLDER_NAMES, not one, so the constant-side case cannot "
+                "widen the tuple it is about"
+            )
+        machine_vocab_extra = "planted"
+        if machine_vocab_extra in RESERVED_PLACEHOLDER_NAMES:
+            raise AssertionError(
+                f"self-test: {machine_vocab_extra!r} is already reserved, so widening the "
+                "tuple with it would be a no-op and the count case would prove nothing"
+            )
+
+        def declaration_mutation(needle: str, replacement: str):
+            """Rewrite the ONE anchored declaration line in `PLACEHOLDER_DOC`."""
+
+            def mutate(text: str) -> str:
+                lines = text.splitlines(keepends=True)
+                for index, line in enumerate(lines):
+                    if PLACEHOLDER_DOC_ANCHOR not in line or needle not in line:
+                        continue
+                    lines[index] = line.replace(needle, replacement, 1)
+                    return "".join(lines)
+                return text
+
+            return mutate
+
+        def widen_reserved_tuple(name: str):
+            """Append a sixth reserved name to the staged constant."""
+
+            def mutate(text: str) -> str:
+                lines = text.splitlines(keepends=True)
+                for index, line in enumerate(lines):
+                    stripped = line.rstrip("\n")
+                    if not stripped.startswith(machine_tuple_marker):
+                        continue
+                    if not stripped.endswith(")"):
+                        break
+                    lines[index] = stripped[:-1] + ', "' + name + '")\n'
+                    return "".join(lines)
+                return text
+
+            return mutate
+
+        machine_vocab_missing = "the declaration does not name " + machine_vocab_token
+        machine_vocab_count = (
+            "against " + str(len(RESERVED_PLACEHOLDER_NAMES) + 1)
+            + " in RESERVED_PLACEHOLDER_NAMES"
+        )
+        # (a) the name is deleted from the guide.
+        machine_cases.append(
+            (
+                "machine-paths",
+                PLACEHOLDER_DOC,
+                declaration_mutation(machine_vocab_cut, ""),
+                "red",
+                machine_vocab_missing,
+            )
+        )
+        # (b) the name is still THERE, just no longer delimited. This is the
+        # case a substring implementation passes and this one must not.
+        machine_cases.append(
+            (
+                "machine-paths",
+                PLACEHOLDER_DOC,
+                declaration_mutation(machine_vocab_token, machine_vocab_name),
+                "red",
+                machine_vocab_missing,
+            )
+        )
+        # (c) the CONSTANT grows a name the guide never gained — the direction
+        # a presence-only check is blind to, caught by the COUNT.
+        machine_cases.append(
+            (
+                "machine-paths",
+                CITATION_SCAN_SELF,
+                widen_reserved_tuple(machine_vocab_extra),
+                "red",
+                machine_vocab_count,
+            )
+        )
         print(
             f"self-test: note — {len(machine_cases)} machine-path fixture(s) constructed "
             f"({sum(1 for c in machine_cases if c[3] == 'red')} red, "

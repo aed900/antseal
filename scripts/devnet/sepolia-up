@@ -18,18 +18,24 @@
 # process with one pidfile under `.devnet/` in either mode, so a second copy
 # of that logic could only ever drift from the first.
 #
-# ── STATUS: BLOCKED ON THE LAUNCHER (P22) ─────────────────────────────────
+# ── STATUS: LIVE (P22 landed the launcher's Sepolia mode) ─────────────────
 #
-# Everything below the capability probe is ready and unexercised, because
-# `devnet-launcher` has no Sepolia mode yet: it hardcodes the Anvil path
-# (`assert_anvil_on_path`, `DevnetConfig` built with `evm_network` left
-# `None`, and `ANTSEAL_DEVNET_CHAIN_ID` written as the literal `31337`).
-# Upstream supports the mode already — `DevnetConfig.evm_network:
-# Option<EvmNetwork>` with `EvmNetwork::ArbitrumSepoliaTest`, ant-node
-# 0.15.0 src/devnet.rs:164-167 — so this is a small, bounded launcher
-# change, tracked as **P22**. Until it lands, this script runs the preflight
-# (which is real, and does its whole job) and then stops with a named
-# blocker rather than pretending.
+# `devnet-launcher --network arbitrum-sepolia` boots N in-process nodes
+# configured against chain 421614 with no Anvil in the process tree, and
+# writes a NINE-key `.devnet/env` (the ten of P16 minus the wallet). The
+# capability probe that used to stand here — a source grep for the flag —
+# is deleted, per P22: the launcher's own argument parser is the authority
+# now, and a probe that can only ever agree with it is one more thing to
+# keep in step.
+#
+# What P22 found on the way, recorded because it is not obvious from the
+# outside: the launcher could NOT reach this mode by setting
+# `DevnetConfig.evm_network` alone. `ant_core::data::LocalDevnet::start`
+# spawns Anvil unconditionally and then OVERWRITES `evm_network` with
+# Anvil's network (ant-core-0.5.0/src/node/devnet.rs:44,54), so Sepolia mode
+# drives `ant_node::devnet::Devnet` directly — which is exactly what
+# upstream's own `start-devnet-sepolia` example does, and for the same
+# reason.
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -78,39 +84,7 @@ if [ -f "$pidfile" ]; then
   fi
 fi
 
-# 3. Capability probe — the P22 handshake.
-#
-# Deliberately a source grep and not a `--help` run: learning the answer from
-# the binary costs the ~13-minute release build of the 736-package devnet
-# graph first, to discover something already knowable. When P22 lands the
-# flag, this passes and the launcher's own argument parser becomes the
-# authority; this probe is then a formality and can be deleted with it.
-if ! grep -q 'arbitrum-sepolia' "$repo/crates/devnet-launcher/src/devnet.rs" 2>/dev/null; then
-  printf '\033[31m::error::sepolia-up: BLOCKED ON P22 — devnet-launcher has no Sepolia mode.\033[0m\n' >&2
-  cat >&2 <<'BLOCKED'
-    The environment is verified and exported (.devnet/sepolia-env); what is
-    missing is the launcher flag that boots nodes against chain 421614
-    instead of a fresh Anvil.
-
-    What P22 has to change, all inside crates/devnet-launcher/src/devnet.rs:
-      * accept `--network arbitrum-sepolia` (default stays `local`);
-      * in that mode set `DevnetConfig.evm_network =
-        Some(EvmNetwork::ArbitrumSepoliaTest)` (ant-node 0.15.0
-        src/devnet.rs:164-167; upstream's example does exactly this) and
-        SKIP `assert_anvil_on_path` — there is no Anvil in Sepolia mode;
-      * write `ANTSEAL_DEVNET_CHAIN_ID='421614'` instead of the hardcoded
-        `31337`, and omit `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` entirely —
-        the Sepolia devnet embeds no wallet, by upstream's design and ours.
-      * `DevnetEnv` (crates/antseal-net/src/network.rs) requires all ten
-        keys, so the omitted wallet key needs an optional-wallet variant or
-        the process-environment recipe in docs/devnet/sepolia-devnet.md.
-
-    Everything else in this script is written and waiting.
-BLOCKED
-  exit 4
-fi
-
-# 4. Boot. Same shape as local-up: build release with the devnet feature,
+# 3. Boot. Same shape as local-up: build release with the devnet feature,
 #    background the launcher, poll for the manifest (which appears only
 #    after stabilization, so its existence IS the ready signal).
 note "building devnet-launcher (release, --features devnet)"

@@ -154,3 +154,30 @@ antseal-core = { workspace = true, features = ["test-vectors"] }
 
 [lints]
 workspace = true
+
+# U76 — D73 §4 R5 X2's distinctness instrument, the value no shipped command
+# printed. `required-features` is the whole containment claim and it rides an
+# EXISTING feature: `test-util` is "never enabled by any production build"
+# (see [features] above), so this maintainer-side tool cannot reach a user's
+# PATH, a `cargo install`, or a signed release asset — D73 §7 item 2's "a use
+# case that is not a user's". Minting a feature for it instead would fail
+# `scripts/gate-features.sh --check-partition` until someone classified it in
+# `local-gate.sh`'s GATE_LIGHT_FEATURES.
+#
+# `test-util` is needed for real, exactly as `anchor-smoke-driver`'s is:
+# `--self-test` builds D73 R5 X7's planted duplicate out of
+# `test_util::bundle_fixtures`. And because `antseal-core/test-util` IS in
+# GATE_LIGHT_FEATURES, the required tier-1 gate compiles, clippies and tests
+# this target every run — it cannot rot unseen.
+#
+# NOT built for wasm32, by construction: the only two wasm commands in the
+# tree are `cargo build -p antseal-core --target wasm32-unknown-unknown`
+# (default features, so `test-util` is off and cargo skips a bin whose
+# required-features are unmet) and `cargo test -p antseal-core --lib
+# --target wasm32-unknown-unknown` (`--lib` excludes bin targets). The
+# crate's WASM-safe library surface is untouched: this file is a bin target,
+# not a module of the lib.
+[[bin]]
+name = "metric-vault-fp"
+path = "src/bin/metric_vault_fp.rs"
+required-features = ["test-util"]

@@ -1,5 +1,13 @@
 # D153 — The key exists and §5 does not fire: D71 §A R4 rules the `TXT` pin's clock starts *at first publication*, so publishing the key is what the pin gates rather than what follows it — and the file that declares itself append-only was wrong about where its own log lives on the day it was born
 
+> **AMENDED 2026-08-22 — READ THE ADDENDUM BEFORE THE FINAL STATUS BULLET AND
+> BEFORE §1.7.** *"Nothing bounds a delete, and there is no backup"* was true
+> when measured and is **superseded**: the maintainer executed §1a step 1 on
+> 2026-08-22 and the key has two verified off-site backups (`key-custody.md`
+> §10, second row). **§2 R4's ruling is unaffected and is discharged, not
+> withdrawn** — the backups gate §3, and they now exist. §1.7's measurement
+> stands as a dated measurement. The body is left as written; see the addendum.
+
 - **Status: RESOLVED. The lean is OVERTURNED in its operative half and REFUTED
   IN SCOPE, MECHANISM AND CONTENT in the half that survives.** The lean was
   *"the key exists, so §5 step 1 fires: put the 56-character key in the README
@@ -883,3 +891,21 @@ reports its output** (D139 §2 R6).
 21. `docs/signing/key-custody.md` §10 — **not touched.** Its first row is a dated
     custody record and is true as of its date; §2 R6's second §11 entry explains
     why the placeholder it replaced was not a row.
+
+## Addendum — 2026-08-22 (D157 §2 R6 item 4 / §2 R7). Appended; no ruling moves.
+
+- **§2 R4 is DISCHARGED.** §1a step 1 was executed 2026-08-22; the precondition
+  it created is satisfied and §3 is no longer blocked by it. The ruling is not
+  withdrawn — it decided *where* the gate sits, and that finding stands for any
+  future key.
+- **§1.7's measurement stands and is dated.** A §1 records what was true when it
+  was measured. Readers wanting today's state read
+  `maintainer-key-procedure.md` §7, which §2 R2 makes authoritative.
+- **§2 R5's replacement block is SUPERSEDED — see D157 §2 R7.** The §7 text it
+  mandates was replaced by the maintainer on 2026-08-22 and is no longer what
+  the page should say. **The block at §2 R5 is not edited**, because a
+  *"replace with, exactly"* block records what this record ruled, not what the
+  page says today. Do not restore it.
+- **§4.5's finding survives its own premise.** The passphrase pointer's referent
+  now exists (`docs/user/vault-theft.md:117-126`) and prescribes the opposite
+  discipline, which makes the defect worse rather than smaller. D157 rules it.

@@ -297,6 +297,7 @@
 - R: consumes the registered verifier domain (P3) for the M3 canonical URL + page deploy; consumes P14's pinned wasm-pack/wasm-bindgen versions and P6's toolchain pin for the reproducible build + published hash; decides the wasm-bindgen surface location with P.
 - U: wires `--network arbitrum-one|arbitrum-sepolia|devnet` to the P16/P17 environment surfaces; reuses the funding runbooks in `init`'s printed funding instructions.
 - Q: extends the P8 CI skeleton (fuzz lanes + nightly pin, golden-vector retention forever, native↔WASM bit-match lanes on the P14 harness, release CI, binary signing); owns the M4 license decision that completes P13's deny.toml licenses section; owns M4 docs (wallet funding, vault loss/theft) that build on P16/P17 runbooks.
+- Notes: **[D156 §2 R7, 2026-08-22 — the `P17` term is DISCHARGED under D156 §2 R1.]** P17's `Do` landed in full; its residue is `Accept` row 2's paid smoke, which this row does not need — this row's `Accept` *"deliberately stops at 'boots'"*. **P17's residue is not this row's to carry**: it is escalated to **`Q258`** and to `TODO.md`'s **Maintainer actions** block, where it had never appeared. **This row was AVAILABLE throughout wave 27 and that survey never named it** — it is the measured counter-example to wave 27's *"no amount of lane work opens M4's gate"*.
 
 ### P23 — Govern the two pre-release pins and the one mandatory advisory ignore
 - Milestone: M2

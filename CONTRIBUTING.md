@@ -12,6 +12,31 @@ today:
 - No secret material (master secrets, unit keys, salts, wallet keys) in
   code, logs, error messages, or test fixtures. Ever.
 
+## Machine paths in examples (D144)
+
+Live surfaces — this file, `docs/`, `scripts/`, workflows, source — must
+never name a developer's machine. Where an example needs an absolute home
+path, write it `$HOME`-relative or use a **reserved placeholder name**.
+
+**Reserved placeholder names:** `user`, `fixture`, `runner`, `u`, `x`.
+
+The `[machine-paths]` arm of the traceability check refuses any `/home/…`,
+`/Users/…` or `C:\Users\…` whose name segment is outside that list, across
+every file in its scan:
+
+```bash
+python3 scripts/check-traceability.py   # the flagless run IS the check
+./scripts/ci-lanes.sh traceability      # what CI runs (self-test first)
+```
+
+**There is no exemption list, and none is coming.** A path the lint refuses
+is fixed by renaming *your* placeholder, never by registering *your* file:
+D144 §2 R4 refused the allow-list on its own terms — "a debt that cannot go
+stale is an exemption, and exemptions rot". The names live in
+`RESERVED_PLACEHOLDER_NAMES` (`scripts/check-traceability.py`), and that
+same check asserts the bolded line above still names exactly those, so this
+section cannot drift from the lint it describes (Q257).
+
 ## CI lanes
 
 `.github/workflows/ci.yml` runs on every PR and on push to `main`. Every

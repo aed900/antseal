@@ -1346,3 +1346,21 @@ the same act and a row would have been minted only to be ticked.
   so the key is currently single-copy on a live account. D153 §2 R4 moves those
   backups forward to gate **§3** (the anchor), not merely §4 (signing): an anchor
   cannot be transferred to a replacement key.
+
+## Addendum — 2026-08-22 (D157 §2 R6 item 3). Appended; no ruling moves.
+
+- **The 2026-08-19 addendum's *"Nothing bounds a delete"* is superseded.** The
+  maintainer executed `maintainer-key-procedure.md` §1a step 1 on 2026-08-22:
+  two offline backups on separate media, held off-site, each verified **from the
+  backup copy** with `minisign -R` re-deriving key id `3E5D46890F192F58`
+  (`key-custody.md` §10, second row). A delete of the live copy is now
+  recoverable and the key is not single-copy. Media, locations and separateness
+  are the maintainer's attestation and no record verifies them.
+- **§2 R7.1's `-W` ban gained weight in the same act, and this is the part that
+  is easy to read backwards.** The ban is what bounds the exposure, and the
+  passphrase is what the ban means in practice. There were one `Sc`-wrapped copy
+  of the key file before 2026-08-22 and three after. The passphrase's *strength*
+  is therefore the control that scaled with the backups; its *replication* is
+  the risk that scaled with them. D157 §2 R1 writes that into the two pages.
+- **Nothing in §2 R1–R12 or §A R1–R6 moves.** The `-W` ban, the four pins, the
+  four prohibitions and §A R4's timing all stand exactly as ruled.

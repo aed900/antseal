@@ -1277,3 +1277,20 @@
   - Nothing added to the class-blind refusals names a command that may refuse the reader's vault — asserted by U86's existing test rather than by review.
   - If a new user-facing string lands, it is reachable by `check-copy-style.py` through a committed snapshot (the U87 lesson), not merely hand-checked.
 - Notes: **`U32` freezes these renderings**, so this must land before it or be recorded as deliberately unfixed. The tempting shortcut — putting the class-aware advice back into the class-blind message — is the defect U84, U85 and U86 each closed in a different place.
+
+### U89 — antseal-cli silently sees "no devnet" against a Sepolia devnet
+
+- Milestone: M4
+- Size: S
+- Deps: after P22 (which created the nine-key export and landed the constructor this row adopts); **before U32** — ordering, not a gate
+- Spec: CLI network selection (MVP-SPEC.md line 143); devnet environments are P16/P17's
+- Discovered by: **P22's implementing lane** (2026-08-22), reporting a gap **its own change opened** rather than one it found lying there — nine-key exports did not exist before that act.
+- Problem: `crates/antseal-cli/src/commands.rs:443` reads a devnet environment with `DevnetEnv::from_env_file(&text).ok()`. The `.ok()` **discards the error**, and `from_env_file` requires all ten keys. A Sepolia devnet export carries **nine** — it omits `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` by upstream's design and by ours, because the Sepolia devnet embeds no wallet. So the CLI does not report *"a devnet whose wallet key you must supply"*; it reports **no devnet at all**, and the user is told nothing about the nine keys that were sitting right there. This is the **M1-named dominant defect class one turn worse**: the capability exists, the parse succeeds on nine of ten fields, and the whole thing is thrown away by a `.ok()`.
+- Do: Adopt `from_env_file_optional_wallet` at `commands.rs:443` — landed by P22 for exactly this purpose — and decide what the CLI says when the wallet key is genuinely absent rather than merely optional. Sweep the two test helpers with the same shape (`crates/antseal-net/tests/devnet_backend.rs:76`, `crates/antseal-cli/tests/common/devnet.rs:89`), because a test written against a Sepolia devnet currently fails for a reason that names nothing.
+- Accept:
+  - A nine-key Sepolia export is recognised **as a devnet**, and any message about the missing wallet key names the key and the mode rather than reporting absence.
+  - A genuinely malformed export still fails, and its message still never echoes a key value — P22 closed a pre-existing hole here (the malformed-value sweep covered five keys and not the wallet), and this row must not reopen it.
+  - The two test helpers are swept, or the reason each is left alone is recorded.
+  - A planted fault proves the new path can go red: hand it an eight-key export and require a message that names what is missing.
+- Notes: **This row takes no external action and needs no funds** — it is a parse and a message, not a network act. It is `before U32` because U32 freezes the CLI surface and this changes what one command says. The `.ok()` is the whole defect: the information needed for a good message was computed and then dropped.
+

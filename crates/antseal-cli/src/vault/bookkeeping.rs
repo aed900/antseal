@@ -398,6 +398,45 @@ mod tests {
                 text.contains("BACK UP"),
                 "wrapped={wrapped}: no remedy line: {text}"
             );
+            // The remedy is CLASS-KEYED, and until D160 it was the only
+            // constant here pinned by four characters while `LOSS_WARNING`
+            // and `THEFT_WARNING` above are pinned by identity. This
+            // rendering is in NO golden (`init-report.txt` renders
+            // `standing_warnings`, not this nag), so a wrapped arm rewritten
+            // to any other string containing "BACK UP" was a silent
+            // regression: it kept this assert, the export-command
+            // biconditional below, and `tests/vault_keyfile.rs`'s
+            // cross-producer test all green — and that nag is the surface
+            // D160 §2 R1's recorded silence at the two existing-vault
+            // refusals is licensed by.
+            //
+            // This is a ROUTING assertion — which constant the producer
+            // selected — and NOT the banned shape `vault/keyfile.rs:418-422`
+            // warns about, which compares a claim against the string that
+            // makes it. The constants' own wording stays pinned by
+            // `tests/snapshots/init-report.txt:68` and `:79`.
+            let expected = if wrapped {
+                BACKUP_BY_HAND
+            } else {
+                BACKUP_BY_EXPORT
+            };
+            let other = if wrapped {
+                BACKUP_BY_EXPORT
+            } else {
+                BACKUP_BY_HAND
+            };
+            assert!(
+                text.contains(expected),
+                "wrapped={wrapped}: the nag's remedy is no longer this class's own \
+                 constant. A keyfile vault's owner is told the two-piece backup route \
+                 here on EVERY seal, perpetually, and that surface is what licenses the \
+                 silence at both existing-vault refusals (D160 §2 R1/R8): {text}"
+            );
+            assert!(
+                !text.contains(other),
+                "wrapped={wrapped}: the nag emits the other class's remedy as well, so \
+                 the assertion above passes for free: {text}"
+            );
             assert_eq!(
                 text.contains("antseal vault export"),
                 !wrapped,
