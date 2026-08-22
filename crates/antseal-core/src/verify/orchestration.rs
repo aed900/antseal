@@ -470,7 +470,7 @@ pub struct RenderedAnchorSlot {
 /// anchor (MVP-SPEC.md line 110; A19).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RenderedSupportingEvidence {
-    /// The class row: supporting evidence, no independently proven time.
+    /// The class row: supporting evidence — no independently proven time.
     pub class_line: String,
     /// The receipt's detail row.
     pub detail_line: String,

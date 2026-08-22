@@ -1,5 +1,5 @@
 //! The DER `TimeStampReq` constructor (task **A4**; decision
-//! [D59](../../../docs/decisions/D59-request-nonce-persistence.md)).
+//! [D59](../../../../docs/decisions/D59-request-nonce-persistence.md)).
 //!
 //! ```text
 //! TimeStampReq ::= SEQUENCE {

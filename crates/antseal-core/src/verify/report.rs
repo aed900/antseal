@@ -753,7 +753,7 @@ pub struct AnchorResult {
 /// built from an [`AnchorVerdict`](crate::anchor::model::AnchorVerdict), so
 /// the receipt has no route into `anchors` to begin with. What this type adds
 /// is the other direction: the arm it *does* have carries **no time field and
-/// no state field** — not a null one, none — so "supporting evidence, no
+/// no state field** — not a null one, none — so "supporting evidence — no
 /// independently proven time" is a property of the shape rather than of a
 /// renderer remembering it. `verified_time_unix` cannot be read off a receipt
 /// because there is nothing to read.

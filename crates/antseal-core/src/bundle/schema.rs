@@ -731,9 +731,11 @@ fn decode_anchor_status(d: &mut CanonicalDecoder<'_>) -> Result<AnchorStatus, Bu
 /// absence is never an error and presence is never required. A verifier must
 /// not read anything into either.
 ///
-/// The MVP verdict is fixed and unchangeable by this section — "supporting
-/// evidence, no independently proven time" — because no on-chain datum
-/// contains `anchor_digest`.
+/// The MVP verdict is fixed and unchangeable by this section: "supporting
+/// evidence — no independently proven time", because no on-chain datum
+/// contains `anchor_digest`. The em dash is the dictated spelling
+/// (MVP-SPEC.md line 110; `scripts/check-copy-style.py`'s `RECEIPT_CLASS`),
+/// and this line carried the comma paraphrase until Q28's audit.
 #[derive(Debug)]
 pub struct ReceiptRecord {
     tx_hashes: Vec<[u8; TX_HASH_LEN as usize]>,

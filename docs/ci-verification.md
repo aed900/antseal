@@ -2914,6 +2914,27 @@ This chapter is Q65's execution half, not its substitute. Its `Accept` rows 1,
 2, 5 and 6 are separate obligations and none of them is satisfied by writing a
 checklist.
 
+**[CORRECTED 2026-08-22 by D161 §2 R8 — this step names a row that does not
+exist, and it has been stale in a second way since the day it was written.]**
+
+1. **There is no `Accept` row 6.** `Q65` has exactly **five** top-level
+   `Accept` bullets, and D156 §2 R5 says so in its own words (*"this row's
+   five `Accept` rows"*). The list above appears to skip row 3 correctly —
+   `Q254` owns it — and then run one high; read it as rows **1, 2, 4 and 5**.
+   This is the **sixth** silent count drift of the class the tracker header
+   tracks, and it is the one that sits in a file a maintainer reads aloud at
+   the flip.
+2. **Rows 1 and 5 are now DISCHARGED**, by `docs/decisions/D161-what-the-flip-publishes.md`
+   — the classification record (ruled **per class**, because the flip
+   publishes history and the per-file function is a constant) and the D61 §9
+   re-read ((a) FALSE, measured; (b) FALSE). Row 2 was already green under
+   D144 §2 R1. **Row 4 is satisfied vacuously** — its antecedent is *"if the
+   answer is 'stay private indefinitely'"* and the answer is public — and
+   **row 3's ordering conjunct is already stated** (`Q254`'s checklist landed).
+   **What actually remains at the flip is row 3's *"executed before any
+   visibility change"* deadline** plus the `Do`'s finding-4 settings items,
+   which are B3-B5.
+
 ```bash
 grep -nE '^- \[.\] \*\*Q(65|242|243|244|254|255)\*\*' TODO.md | cut -c1-60
 ```
@@ -2937,6 +2958,25 @@ registered `OWED_PRESENCE` clauses (`limit-exclusive-possession`,
 `compelled-disclosure`), which are **Q22's** and not this row's; both are
 tracked and neither reddens a checker, so **read them, do not grep for a
 failure that cannot arrive**.
+
+**[CORRECTED 2026-08-22 by D161 §2 R8. The sentence above has been stale since
+the day it was written, and it names one obligation too many.]** The two
+`OWED_PRESENCE` clauses were **discharged 2026-08-19** by `Q22`'s lane, which
+wrote both clauses into `README.md` and deleted both register entries in one
+act. D150 §2 R6's own anchored predicate settles it and is re-measured at every
+registration — **`0` is the value that permits the flip**:
+
+```bash
+python3 scripts/check-copy-style.py | grep -c '^check-copy-style: registered debt'
+```
+
+**[OBSERVED 2026-08-22]** — returns **`0`**, with the flagless run at
+`REAL_EXIT=0`. So **one** obligation was invisible to this file, not two — and
+that one, the classification record, is itself now discharged by D161 (see the
+correction at the head of this step). With the register empty the check has
+changed direction as well: an unstated required clause no longer has an entry
+to excuse it and is a **finding**, so *"neither reddens a checker"* is now
+historical for this half.
 
 ### A2 — BEFORE. The machine-path lint is green on the live surface
 
@@ -3116,6 +3156,31 @@ project's favour: the hosted CI has refused every job since wave 20 on an
 exhausted Actions allowance, and free minutes on a public repository is the
 mechanism by which that stops. **Do not add any required status context on the
 strength of that expectation** — see C2.
+
+**[EXECUTED 2026-08-22 — this step is DONE, and the flip sitting reads it back
+rather than re-deriving it.]** The re-read landed as **D161 §2 R7**
+(`docs/decisions/D161-what-the-flip-publishes.md`), with `Q65`'s `Accept` row 5
+amended at source in `tasks/Q.md` in the same act. Condition **(a)** was
+**measured, not assumed**:
+
+```bash
+gh api repos/aed900/antseal --jq '.visibility'
+```
+
+**[OBSERVED 2026-08-22T08:49Z]** — `private`, `REAL_EXIT=0`. It is a read, not
+a state change, and needs no consent. **(b)** is FALSE and the flip does not
+change it. Verdict recorded: **OSS-Fuzz is *not applicable* rather than
+*pending*** until both hold.
+
+**The timing was contested and is settled**, because reading it the other way
+would have made this step premature: D61 §9's trigger takes the **row** as its
+subject (*"when Q65 resolves to 'public'"*), while condition (a) takes the
+**repository** (*"`aed900/antseal` is public — the Q65-gated flip"*). The
+record keeps them apart deliberately, which is why this step is a **BEFORE**
+step at all. The trigger fired at the maintainer's 2026-08-16 call.
+
+**This step stays in the checklist.** C3 still reads condition (a) back after
+the flip, and that read-back is what makes the *"predicted"* half honest.
 
 ### A8 — BEFORE. Push `main` **by name**
 

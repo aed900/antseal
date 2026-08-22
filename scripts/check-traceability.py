@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Eight checks live here, and they are the same shape: something written down in
+Nine checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -32,6 +32,11 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         reserved placeholder name, and MVP-SPEC.md's one
                         registered divergence is pinned present rather than
                         exempted (Q65, D144).
+    --doc-links         Every markdown link whose target is a relative `.md`
+                        path resolves, from the containing file's own
+                        directory, to a file that exists; and the corpus has
+                        not silently collapsed, asserted by two floors
+                        (Q249, D159).
 
 Run with no arguments to run every check.
 
@@ -2211,6 +2216,528 @@ def check_machine_paths(failures: Failures) -> None:
         )
 
 
+# ── check 9: every relative `.md` link resolves on disk (Q249, D159 §2 R1) ──
+#
+# WHY HERE AND NOT IN A DOCUMENTATION BUILD, which is what the row asked for.
+# rustdoc's doc-link lints resolve Rust ITEM PATHS — `[`crate::evm`]`,
+# `[`WalletKey::evm_wallet`]`. A markdown link whose target is a FILESYSTEM
+# path is not an item path: rustdoc emits it verbatim as an href and validates
+# nothing about it, so `cargo doc` could not have found the defect that raised
+# Q249 in any venue. The second witness is the row's own carriage — the Q248
+# lane's `cargo doc` reported "twelve broken INTRA-DOC links" with
+# `request.rs:2` NOT among them, and the lane found that link by READING
+# (D159 §1.2).
+#
+# AND THE GAP IS INSIDE `check_decisions`' OWN SUBJECT, which is what answers
+# the venue question rather than deferring it. That check asserts "every
+# decision cited in code or in a normative doc resolves to a record" and
+# extracts `\bD(\d+)\b` — the ID, and only the ID. A citation whose id resolved
+# and whose PATH pointed at a directory that does not exist was green for as
+# long as it existed. The claim is carried by the path; the check audited the
+# number.
+#
+# COST, measured 2026-08-22 (D159 §2 R4). This script already reads every one
+# of these files, is cargo-free, runs in `local-gate.sh` and rides
+# `ci-always.yml`'s `traceability` job — the workflow whose defining property
+# is that it carries no path filter, ever. ZERO new required status contexts
+# (the set stays at 19), zero new workflow files, zero new job steps, zero new
+# hosted weighted minutes; 0.110 s for the sweep itself.
+
+# THE SUBJECT, normative and deliberately narrow. A DOC LINK is a markdown
+# inline link `](TARGET)` whose TARGET, with any `#fragment` removed, ends in
+# `.md`, contains no `://`, and does not begin with `/`. It must resolve,
+# relative to the CONTAINING FILE'S DIRECTORY, to an existing file.
+#
+# Every clause is a measurement rather than a taste:
+#
+#   `.md` ONLY — because `crates/antseal-core/tests/bundle_wire/mod.rs:13`
+#   writes a rustdoc-HTML-OUTPUT-relative link at `../manifest_wire/`, correct
+#   where it is written and dead on disk. Measured: it is the ONLY non-`.md`
+#   relative link in the corpus, so this restriction excludes it ONE FOR ONE by
+#   a property of the target, and there is no exemption list to add a file to
+#   (D144 §2 R4's own failure text; D159 §3 item 7).
+#
+#   BOTH SPELLINGS, dot-prefixed and bare-relative — 14 and 35 of the 49. The
+#   wave-26 defect was a `../` link that failed and its repair was a
+#   bare-relative one that passes, so a check restricted to the dot form would
+#   have graded that repair without ever checking it (D159 §1.1).
+#
+#   `#fragment` STRIPPED, AND THE FRAGMENT NOT VALIDATED — a STATED LIMIT, not
+#   an oversight. Zero anchored links exist in the tree today, so an
+#   anchor-validating rule would be an assertion with no subject; the branch
+#   that strips is exercised only by a constructed fixture.
+#
+#   NO `://`, NO LEADING `/` — a URL is nobody's filesystem claim and a
+#   site-root-absolute path is a web server's, not a tree's. Zero of each live
+#   today; both branches are constructed in `prove_doc_link_arms()`.
+#
+#   FENCED BLOCKS AND INLINE CODE SPANS ARE SKIPPED — `doc_pointer_liveness.rs`'s
+#   rule verbatim, "their content is code, not prose about code". Measured
+#   2026-08-22, this clause changes the live corpus NOT AT ALL: 49 links with
+#   it and 49 without, 0 inside fences and 0 inside spans. It is added anyway
+#   because the false positive it prevents is already demonstrable — a record
+#   ABOUT broken links necessarily QUOTES broken links, and D159 §2 R3/§2 R5
+#   carry four such link-shaped strings inside code spans. Without this clause
+#   the widening routed in D159 §4 item 5 (admitting `docs/decisions/` to the
+#   scan) could never go green. Whoever takes that widening confirms this
+#   clause first.
+DOC_LINK = re.compile(r"\]\(\s*<?([^)\s>]+)>?[^)]*\)")
+
+# A fence opens and closes on a line whose first content — after an optional
+# RUST DOC-COMMENT PREFIX, because a third of the corpus is `//!` prose — is a
+# run of backticks or tildes. Without the prefix branch every ```text block in
+# a Rust module doc would stay in scope, which is where this tree's link-shaped
+# code samples actually live.
+DOC_LINK_FENCE = re.compile(r"^\s*(?://[/!]?)?\s*(?:```|~~~)")
+
+# `crates/<crate>/src/**` — Q249's OWN subject, and deliberately not "anything
+# under crates/". `crates/antseal-wasm/README.md:9` carries a relative link
+# that resolves; it counts toward the TOTAL floor and must NOT count toward
+# this one, or a later reader "fixes" the floor to 5 (D159 §4 item 4).
+DOC_LINK_CRATES_SRC = re.compile(r"^crates/[^/]+/src/")
+
+# ANTI-VACUITY, and the COMPARISON IS WRITTEN DOWN because this project has
+# had a live `>=` that three witnesses said must be `>` (wave 17).
+#
+# D159 §2 R1 SETS BOTH NUMBERS; they are not re-derived here. What IS
+# re-measured, because §1's provenance requires it of the implementing lane,
+# is the corpus they are measured against: 53 links across 461 files, 4 of
+# them under crates/*/src/ (2026-08-22, this lane). D159 §1.1 recorded 49 over
+# 457 the same morning, and BOTH differences are accounted for — the parity
+# loop below excludes this file exactly as `check_decisions` does, and
+# `README.md` grew from 19 links to 23 under a concurrent lane WHILE THIS
+# CHECK WAS BEING WRITTEN. The corpus is a moving number. The floors are not,
+# which is the whole point of having them.
+# LOWER-ONLY BY DECISION, never by an implementer needing a run to go green —
+# the FUZZ_BUDGET_CEILING_MINUTES idiom (scripts/ci-lanes.sh:1351-1353 today;
+# D135 §3 R6 cites :1162-1164, which has drifted — D159 §4 item 7).
+#
+# TOTAL: measured 53 against a floor of 45. R1 set 45 when the corpus was 49
+# and reasoned "the headroom is EXACTLY FOUR — the size of Q249's own
+# subject". That headroom is EIGHT today, and 45 is deliberately NOT raised to
+# restore it: raising a ruled constant is a decision and not an edit, and the
+# trap R1 aimed the headroom at — losing `crates/**/src/**` — is owned by the
+# OTHER floor, which sits at the boundary and cannot miss it. What 45 still
+# buys is measured rather than argued: `README.md` and `CONTRIBUTING.md` alone
+# yield 39 today, so a collapse back to the two root literals reds (39 < 45).
+# That is the property the total floor exists for, and it still holds.
+# CRATES-SRC: measured 4 and set AT the boundary. This is "the count equals 4"
+# rendered as `>=` rather than `==` on purpose: a FIFTH correct link must not
+# redden the gate, while losing any of the four must. It is the guard against
+# the named trap — a glob rooted wrong finds 0, and `0 >= 4` is false.
+DOC_LINK_TOTAL_FLOOR = 45   # >= ; catches the walk collapsing
+DOC_LINK_CRATES_SRC_FLOOR = 4   # >= ; Q249's own subject, AT the boundary
+
+
+def blank_code(text: str) -> str:
+    """`text` with fenced blocks and inline code spans replaced by spaces.
+
+    NEWLINES ARE PRESERVED, so every line number a finding reports is still the
+    file's own. Blanking rather than deleting is what buys that.
+    """
+    chars = list(text)
+
+    def blank(start: int, stop: int) -> None:
+        for index in range(start, stop):
+            if chars[index] != "\n":
+                chars[index] = " "
+
+    offset = 0
+    fenced = False
+    for line in text.splitlines(keepends=True):
+        end = offset + len(line)
+        marker = bool(DOC_LINK_FENCE.match(line))
+        if marker or fenced:
+            blank(offset, end)
+        if marker:
+            fenced = not fenced
+        offset = end
+
+    # Inline spans, over what the fences left. CommonMark: a run of N backticks
+    # opens a span that the next run of EXACTLY N closes. An unclosed run is
+    # not a span and must not swallow the rest of the file, so it is stepped
+    # over rather than blanked.
+    body = "".join(chars)
+    index = 0
+    while index < len(body):
+        if body[index] != "`":
+            index += 1
+            continue
+        open_end = index
+        while open_end < len(body) and body[open_end] == "`":
+            open_end += 1
+        run = open_end - index
+        cursor = open_end
+        closed = None
+        while cursor < len(body):
+            if body[cursor] != "`":
+                cursor += 1
+                continue
+            close_end = cursor
+            while close_end < len(body) and body[close_end] == "`":
+                close_end += 1
+            if close_end - cursor == run:
+                closed = close_end
+                break
+            cursor = close_end
+        if closed is None:
+            index = open_end
+            continue
+        blank(index, closed)
+        index = closed
+    return "".join(chars)
+
+
+def tree_relative(directory: str, target: str) -> str:
+    """Where `target` lands, as a path relative to the tree root.
+
+    Normalised by hand rather than by `Path.resolve()`, because `resolve()`
+    returns an ABSOLUTE path and a finding that prints one would name the
+    developer's machine in a CI log — the surface `machine-paths` exists to
+    keep clean. A target that climbs out of the tree keeps its leading `../`,
+    which is the honest rendering of what it did.
+    """
+    parts: list[str] = []
+    for piece in (directory.split("/") if directory else []) + target.split("/"):
+        if piece in ("", "."):
+            continue
+        if piece == "..":
+            if parts and parts[-1] != "..":
+                parts.pop()
+            else:
+                parts.append("..")
+        else:
+            parts.append(piece)
+    return "/".join(parts)
+
+
+def doc_link_sweep(tree: pathlib.Path) -> tuple[list[tuple[str, int, str, str, bool]], dict[str, int], int]:
+    """`(links, per-root counts, files read)` over `tree`.
+
+    Each link is `(relative file, line number, target as written, where it
+    lands relative to the tree, does that file exist)`.
+
+    `tree` is a PARAMETER and not `ROOT` for the same reason `decision_homes()`
+    takes one: three of this check's branches have NO live subject, so the only
+    thing that can exercise them is a CONSTRUCTED tree, and a helper that can
+    only read the live tree cannot be shown correct on a tree that does not
+    exist yet.
+    """
+    links: list[tuple[str, int, str, str, bool]] = []
+    per_root: dict[str, int] = {}
+    n_files = 0
+    # Loop body at parity with `check_decisions` and `sweep_task_surfaces()`
+    # (D116 R2, now THREE copies — D159 §4 item 1 routes the extraction of one
+    # generator all three consume, and it is a refactor of two currently-green
+    # checks rather than this row's work). One scan set; having different prune
+    # sets afterwards is exactly the divergence that rule exists to end.
+    for sub in CITATION_SCAN:
+        base = tree / sub
+        if not base.exists():
+            continue
+        # Q176 + Q190/D123 — an entry may be a DIRECTORY (swept recursively and
+        # filtered by CITATION_SUFFIXES) or a single FILE (swept as itself,
+        # UNFILTERED). Two branches because they answer different questions: a
+        # tree walk has no opinion about what it finds, so it needs the suffix
+        # set; a named file was already deliberated in a reviewed constant, so
+        # a second gate is owed to nobody. Both other sweeps carry these lines
+        # identically; see the note at CITATION_SCAN.
+        literal = base.is_file()
+        for path in ([base] if literal else base.rglob("*")):
+            if not path.is_file() or (not literal and path.suffix not in CITATION_SUFFIXES):
+                continue
+            if {"target", "node_modules", "__pycache__"} & set(path.parts):
+                continue
+            rel = str(path.relative_to(tree))
+            # This file excludes itself, as it does from the citation sweep and
+            # for the same reason one register over: `prove_doc_link_arms()`
+            # below writes link-shaped fixtures as literals, so sweeping this
+            # file would report its own fixtures. Documenting the trap does not
+            # lay another one.
+            if rel == CITATION_SCAN_SELF:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            n_files += 1
+            directory = str(path.parent.relative_to(tree))
+            if directory == ".":
+                directory = ""
+            for number, line in enumerate(blank_code(text).splitlines(), 1):
+                for target in DOC_LINK.findall(line):
+                    bare = target.split("#", 1)[0]
+                    if "://" in target or bare.startswith("/") or not bare.endswith(".md"):
+                        continue
+                    per_root[sub] = per_root.get(sub, 0) + 1
+                    # `is_file()`, not `exists()`: R1 says "to an existing
+                    # FILE", and a directory that happens to be named `x.md`
+                    # would satisfy `test -e` while satisfying no reader.
+                    landed = (path.parent / bare).is_file()
+                    links.append((rel, number, target, tree_relative(directory, bare), landed))
+    return links, per_root, n_files
+
+
+def doc_link_findings(
+    tree: pathlib.Path,
+    total_floor: int = DOC_LINK_TOTAL_FLOOR,
+    crates_src_floor: int = DOC_LINK_CRATES_SRC_FLOOR,
+) -> tuple[list[str], dict[str, int], int, int, int]:
+    """`(messages, per-root counts, files, total links, crates-src links)`.
+
+    Everything the check would report over `tree`, returned AS STRINGS so a
+    constructed state can be asserted against THE MESSAGE and never against an
+    exit code — `scripts/lib/red-arm.sh`'s rule, one venue over.
+
+    The two floors are PARAMETERS so that a constructed three-file tree can
+    exercise the RESOLUTION rules without the floors drowning them, while the
+    zero-corpus arm passes the real ones and asserts they fire. `check_doc_links`
+    below always passes the constants; nothing else may.
+    """
+    links, per_root, n_files = doc_link_sweep(tree)
+    total = len(links)
+    crates_src = sum(1 for rel, *_ in links if DOC_LINK_CRATES_SRC.match(rel))
+
+    messages: list[str] = []
+    for rel, number, target, landing, landed in links:
+        if landed:
+            continue
+        messages.append(
+            f"{rel}:{number}: the link target `{target}` does not resolve — "
+            f"relative to this file's own directory it lands at `{landing}`, "
+            f"and no such file exists. Fix it by resolving the target against "
+            f"the filesystem (`realpath -m` from the file's directory), NEVER "
+            f"by counting `../` segments, which is how this class of defect "
+            f"gets written wrong in the first place (D159 §2 R5)."
+        )
+
+    # The floors are asserted AFTER the resolution rule and independently of
+    # it, so a walk that collapsed to nothing reports the collapse rather than
+    # a clean `0 broken`. Printing a count is not asserting it: `machine-paths`
+    # printed "ok — 0 ... across 455 live file(s)" over a live plant, and that
+    # entry is in the instrument ledger (U87's lane).
+    if total < total_floor:
+        messages.append(
+            f"the sweep found {total} doc link(s) where DOC_LINK_TOTAL_FLOOR "
+            f"requires at least {total_floor}: {total} < {total_floor}. A count "
+            f"below the floor means the WALK collapsed, not that the tree got "
+            f"tidier — check CITATION_SCAN and CITATION_SUFFIXES first. This "
+            f"floor is LOWER-ONLY BY DECISION (D159 §2 R1); an implementer "
+            f"needing a run to go green is exactly who it is written against."
+        )
+    if crates_src < crates_src_floor:
+        messages.append(
+            f"the sweep found {crates_src} doc link(s) under crates/*/src/ "
+            f"where DOC_LINK_CRATES_SRC_FLOOR requires at least "
+            f"{crates_src_floor}: {crates_src} < {crates_src_floor}. This is "
+            f"Q249's own subject and the floor sits AT the measured count, so a "
+            f"glob rooted wrong finds 0 and reds here instead of passing as a "
+            f"clean run. A FIFTH correct link is fine; losing one of the four "
+            f"is not. LOWER-ONLY BY DECISION (D159 §2 R1)."
+        )
+    return messages, per_root, n_files, total, crates_src
+
+
+def prove_doc_link_arms(scratch: pathlib.Path) -> list[tuple[bool, str]]:
+    """Require `doc-links`' branches on CONSTRUCTED trees. `(passed, sentence)`.
+
+    D159 §2 R3's arms, and the module-level home is the same one
+    `prove_lowest_unhomed_mint()` has, for a reason this harness has paid for
+    twice: THREE of the six branches below — `#fragment` stripping, the
+    code-span/fence exclusion, and the site-root-absolute and `://` rejections —
+    have NO LIVE SUBJECT ANYWHERE IN THE TREE. An arm no live text exercises is
+    an assertion that cannot fail unless the self-test constructs its subject,
+    and `--self-test` stages a full copy of a tree other lanes are writing, so
+    it may not be run mid-wave. Everything below builds its own state on disk
+    and can be called directly.
+
+    Nothing here is derived from ROOT, so no amount of tree health or tree
+    sickness can decide a verdict (Q252, and Q234's general form).
+    """
+    results: list[tuple[bool, str]] = []
+
+    def build(name: str, files: dict[str, str]) -> pathlib.Path:
+        tree = scratch / name
+        for relative, body in files.items():
+            path = tree / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        return tree
+
+    def record(passed: bool, sentence: str) -> None:
+        results.append((passed, sentence))
+
+    # ── RED 1: the message must NAME the file, the target and where it landed.
+    # Q249's own defect, reconstructed rather than borrowed: a doc link one
+    # `../` short of its target, in a file at Q249's own depth. "1 broken link"
+    # does not discharge this arm.
+    short = build(
+        "red-1-short-prefix",
+        {
+            "docs/decisions/D59-constructed.md": "constructed target\n",
+            "crates/c/src/anchor/request.rs": (
+                "//! Constructed by prove_doc_link_arms.\n"
+                "//! [D59](../../../docs/decisions/D59-constructed.md)).\n"
+            ),
+        },
+    )
+    messages, _roots, _files, total, _src = doc_link_findings(short, 0, 0)
+    wanted = (
+        "crates/c/src/anchor/request.rs:2",
+        "../../../docs/decisions/D59-constructed.md",
+        "crates/docs/decisions/D59-constructed.md",
+    )
+    missing = [part for part in wanted if not any(part in message for message in messages)]
+    if total != 1:
+        record(False, f"RED 1 (a link one `../` short): the state is vacuous — {total} link(s) swept, not 1")
+    elif len(messages) != 1:
+        record(False, f"RED 1 (a link one `../` short): expected one finding, got {len(messages)}: {messages}")
+    elif missing:
+        record(False, f"RED 1 (a link one `../` short): the finding never says {missing}")
+    else:
+        record(True, "RED 1 (a link one `../` short): red, naming the file:line, the target as written, and where it landed")
+
+    # ── RED 2: THE VACUITY PLANT. A fixture root with zero `.md` links, and the
+    # REAL floors. This is the arm that would otherwise pass green for ever —
+    # a mis-rooted glob and a clean tree are indistinguishable without it.
+    empty = build(
+        "red-2-zero-corpus",
+        {"docs/testing/prose.md": "No link-shaped text lives in this file at all.\n"},
+    )
+    messages, _roots, _files, total, crates_src = doc_link_findings(empty)
+    both = all(
+        any(number in message for message in messages)
+        for number in (f"0 < {DOC_LINK_TOTAL_FLOOR}", f"0 < {DOC_LINK_CRATES_SRC_FLOOR}")
+    )
+    if (total, crates_src) != (0, 0):
+        record(False, f"RED 2 (a zero-link corpus): the state is vacuous — swept {total}/{crates_src}, wanted 0/0")
+    elif len(messages) != 2 or not both:
+        record(False, f"RED 2 (a zero-link corpus): both floors must fire naming both numbers; got {messages}")
+    else:
+        record(True, f"RED 2 (a zero-link corpus): red on BOTH floors, saying 0 < {DOC_LINK_TOTAL_FLOOR} and 0 < {DOC_LINK_CRATES_SRC_FLOOR}")
+
+    # ── RED 3: the `#fragment` branch, which has NO live subject. Its purpose
+    # is to prove the strip is a STRIP and not a truncation of the whole
+    # target: the finding must name the FILE part and must not carry the
+    # fragment into the path it says it resolved.
+    anchored = build(
+        "red-3-fragment-missing",
+        {"docs/testing/page.md": "[x](./missing-page.md#section)\n"},
+    )
+    messages, _roots, _files, total, _src = doc_link_findings(anchored, 0, 0)
+    landed_clause = [m for m in messages if "docs/testing/missing-page.md`" in m]
+    if total != 1:
+        record(False, f"RED 3 (an anchored link at a missing file): the state is vacuous — {total} link(s) swept, not 1")
+    elif not landed_clause:
+        record(False, f"RED 3 (an anchored link at a missing file): no finding names the file part without its fragment: {messages}")
+    elif any("missing-page.md#section`" in m.split("lands at")[-1] for m in landed_clause):
+        record(False, "RED 3 (an anchored link at a missing file): the fragment survived into the resolved path, so the strip is a truncation")
+    else:
+        record(True, "RED 3 (an anchored link at a missing file): red, naming the file part and not the fragment")
+
+    # ── GREEN 3: the fragment branch's POSITIVE half. Without it, RED 3 passes
+    # for a check that reds on every anchored link ever written.
+    real = build(
+        "green-3-fragment-real",
+        {
+            "docs/testing/page.md": "[x](./real-page.md#section)\n",
+            "docs/testing/real-page.md": "constructed target\n",
+        },
+    )
+    messages, _roots, _files, total, _src = doc_link_findings(real, 0, 0)
+    if total != 1:
+        record(False, f"GREEN 3 (an anchored link at a real file): the state is vacuous — {total} link(s) swept, not 1")
+    elif messages:
+        record(False, f"GREEN 3 (an anchored link at a real file): must be green, got {messages}")
+    else:
+        record(True, "GREEN 3 (an anchored link at a real file): green — the strip resolves the file and ignores the anchor")
+
+    # ── GREEN 2: the code-span and fence exclusion, which has NO live subject,
+    # plus its RED other half. A record ABOUT broken links necessarily QUOTES
+    # broken links; without this pair the widening routed in D159 §4 item 5
+    # could never go green, and the exclusion could widen to "skip everything"
+    # with nothing noticing.
+    quoted = (
+        "A record that quotes a dead link: `[x](./quoted-in-a-span.md)`.\n"
+        "\n"
+        "```\n"
+        "[x](./quoted-in-a-fence.md)\n"
+        "```\n"
+    )
+    spans = build("green-2-quoted", {"docs/testing/page.md": quoted})
+    messages, _roots, _files, total, _src = doc_link_findings(spans, 0, 0)
+    if total or messages:
+        record(False, f"GREEN 2 (a dead link inside a span and inside a fence): must be green and sweep 0, got {total} link(s) {messages}")
+    else:
+        record(True, "GREEN 2 (a dead link inside a span and inside a fence): green — neither is a link")
+
+    escaped = build(
+        "green-2-unquoted",
+        {"docs/testing/page.md": quoted.replace("`[x](./quoted-in-a-span.md)`", "[x](./quoted-in-a-span.md)")},
+    )
+    messages, _roots, _files, total, _src = doc_link_findings(escaped, 0, 0)
+    if total != 1 or len(messages) != 1 or "quoted-in-a-span.md" not in messages[0]:
+        record(False, f"GREEN 2's red half (the SAME link moved outside the span): must be red on exactly that link, got {total} link(s) {messages}")
+    else:
+        record(True, "GREEN 2's red half (the SAME link moved outside the span): red — the exclusion is the span, not the text")
+
+    # ── GREEN 1: the `.md` restriction, asserted rather than assumed, together
+    # with the two branches R1 states have zero live subjects — `://` and a
+    # leading `/`. All three targets below are dead on disk; all three must be
+    # invisible to this check. An exclusion is evidence only once you have
+    # watched it exclude.
+    excluded = build(
+        "green-1-non-md",
+        {
+            "docs/testing/page.md": (
+                "[`crate::manifest_wire`](../manifest_wire/index.html)\n"
+                "[x](https://example.invalid/docs/nowhere.md)\n"
+                "[x](/docs/site-root/nowhere.md)\n"
+            )
+        },
+    )
+    messages, _roots, _files, total, _src = doc_link_findings(excluded, 0, 0)
+    if total or messages:
+        record(False, f"GREEN 1 (a rustdoc-HTML link, a URL and a site-root path): must be green and sweep 0, got {total} link(s) {messages}")
+    else:
+        record(True, "GREEN 1 (a rustdoc-HTML link, a URL and a site-root path): green — excluded by a property of the target, with no allowlist")
+
+    return results
+
+
+def check_doc_links(failures: Failures) -> None:
+    check = "doc-links"
+    # THIS CHECK COUNTS ITS OWN FAILURES, for the reason `check_machine_paths`
+    # states one check up: `if not failures:` reads the SHARED object, so any
+    # earlier check's finding would suppress this ok line. New code declines to
+    # reproduce that.
+    before = len(failures.messages)
+
+    messages, per_root, n_files, total, crates_src = doc_link_findings(ROOT)
+    for message in messages:
+        failures.add(check, message)
+
+    if len(failures.messages) == before:
+        # BOTH exact counts AND the per-root breakdown, printed (D142 §2 R2 —
+        # the number a reader needs must be printed, not left as a subtraction
+        # that is available to everyone and performed by nobody). The per-root
+        # split is what makes a collapsed walk readable BEFORE it reaches a
+        # floor: `README.md` and `CONTRIBUTING.md` carry 35 of the 49 and are
+        # swept for this by nothing else in the tree.
+        breakdown = ", ".join(
+            f"{root} {count}"
+            for root, count in sorted(per_root.items(), key=lambda item: (-item[1], item[0]))
+        )
+        silent = len(CITATION_SCAN) - len(per_root)
+        print(
+            f"[{check}] ok — {total} markdown link(s) with a relative .md target "
+            f"across {n_files} file(s) in {len(CITATION_SCAN)} scan root(s), every "
+            f"one resolving on disk ({breakdown}; {silent} root(s) carry none); "
+            f"{crates_src} of them under crates/*/src/, against floors "
+            f"total >= {DOC_LINK_TOTAL_FLOOR} and crates-src >= "
+            f"{DOC_LINK_CRATES_SRC_FLOOR}"
+        )
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
@@ -2220,6 +2747,7 @@ CHECKS = {
     "decision-owners": check_decision_owners,
     "decision-index": check_decision_index,
     "machine-paths": check_machine_paths,
+    "doc-links": check_doc_links,
 }
 
 
@@ -2298,6 +2826,26 @@ def self_test() -> int:
                 print(
                     f"self-test: FAILED — the decisions mint does not hold on a "
                     f"constructed {sentence}",
+                    file=sys.stderr,
+                )
+                ok = False
+
+        # ── the doc-link arms, also before anything is staged ───────────────
+        # D159 §2 R3. FIVE of this check's seven branches have NO LIVE SUBJECT
+        # anywhere in the tree — `#fragment` stripping in both directions, the
+        # code-span/fence exclusion in both directions, and the site-root and
+        # `://` rejections — so they can only ever be exercised against a
+        # CONSTRUCTED state. They are therefore proven here, on trees this
+        # function writes itself, before the live tree is read at all; the two
+        # branches that DO have live subjects ride the delta harness below
+        # instead. Nothing in the loop is derived from ROOT.
+        for passed, sentence in prove_doc_link_arms(pathlib.Path(scratch) / "doc-link-arms"):
+            if passed:
+                print(f"self-test: ok — doc-links holds on a constructed {sentence}")
+            else:
+                print(
+                    f"self-test: FAILED — doc-links does not hold on a constructed "
+                    f"{sentence}",
                     file=sys.stderr,
                 )
                 ok = False
@@ -4166,6 +4714,125 @@ def self_test() -> int:
         # inlined, so the thirty-three above keep their reviewed four-tuple
         # shape and no proven case is touched to add a new one.
         cases += machine_cases
+
+        # ── D159 §2 R3's two LIVE-SUBJECT arms, appended for D144's reason ──
+        # The thirty-three-tuple list above keeps its reviewed shape and its
+        # hand-counted split; this block DERIVES and prints its own, which is
+        # the form to prefer. Both literals below are FIXTURE-BUILT (Q184
+        # class 2): each is read out of the staged file and RAISES — here,
+        # fails in a sentence — if the subject has moved, rather than
+        # silently matching nothing.
+        doc_link_cases: list[tuple] = []
+
+        # RED 1 — Q249's own defect, restored: one `../` short. "1 broken
+        # link" does not discharge this arm, so the fifth element pins the
+        # WHOLE message shape — the file and line, the target AS WRITTEN, and
+        # the path it resolved to. `:<line>` is not a wildcard: `findings()`
+        # below collapses every `:\d+` in an annotation so an unrelated line
+        # shift is not counted as a change, and the fragment is written in the
+        # form that survives it.
+        doc_link_subject = "crates/antseal-core/src/anchor/request.rs"
+        doc_link_path = tree / doc_link_subject
+        doc_link_written = None
+        if doc_link_path.is_file():
+            doc_link_written = re.search(
+                r"\]\(((?:\.\./)+docs/decisions/D\d+-[^)\s]*\.md)\)",
+                doc_link_path.read_text(encoding="utf-8"),
+            )
+        if doc_link_written is None:
+            print(
+                f"self-test: FAILED — {doc_link_subject} carries no relative decision "
+                "link to shorten, so D159 §2 R3's RED 1 has no subject to build from",
+                file=sys.stderr,
+            )
+            ok = False
+        else:
+            written = doc_link_written.group(1)
+            shortened = written[len("../") :]
+            landing = tree_relative(
+                str(doc_link_path.parent.relative_to(tree)), shortened
+            )
+            if (doc_link_path.parent / shortened).is_file():
+                # The vacuity guard, and it is not hypothetical: if the file
+                # ever moves one directory deeper, dropping a `../` lands on a
+                # real file and the red arm goes green for a reason that has
+                # nothing to do with the check.
+                print(
+                    f"self-test: FAILED — dropping one `../` from {written} still "
+                    f"resolves (to {landing}), so RED 1 would be green by construction",
+                    file=sys.stderr,
+                )
+                ok = False
+            else:
+                doc_link_cases.append(
+                    (
+                        "doc-links",
+                        doc_link_subject,
+                        lambda text, w=written, s=shortened: text.replace(
+                            f"]({w})", f"]({s})", 1
+                        ),
+                        "red",
+                        f"{doc_link_subject}:<line>: the link target `{shortened}` "
+                        f"does not resolve — relative to this file's own directory it "
+                        f"lands at `{landing}`",
+                    )
+                )
+
+        # GREEN 1 — the `.md` restriction, watched EXCLUDING rather than
+        # assumed to exclude. `bundle_wire/mod.rs` carries the tree's only
+        # non-`.md` relative link, a rustdoc-HTML-OUTPUT-relative one that is
+        # correct where it is written and DEAD ON DISK; a checker over every
+        # relative link reds on it on day one. Both facts are asserted at
+        # fixture time, because the arm means nothing if the link has been
+        # "repaired" away. The mutation appends a second such link plus a URL
+        # and a site-root path — the three exclusion branches with no live
+        # subject — so the arm is a real delta and not a no-op.
+        doc_link_control = "crates/antseal-core/tests/bundle_wire/mod.rs"
+        control_path = tree / doc_link_control
+        control_link = None
+        if control_path.is_file():
+            control_link = re.search(
+                r"\]\((\.\./[^)\s]*\.html)\)", control_path.read_text(encoding="utf-8")
+            )
+        if control_link is None:
+            print(
+                f"self-test: FAILED — {doc_link_control} no longer carries a "
+                "rustdoc-output-relative link, so GREEN 1 asserts an exclusion with "
+                "nothing to exclude",
+                file=sys.stderr,
+            )
+            ok = False
+        elif (control_path.parent / control_link.group(1)).exists():
+            print(
+                f"self-test: FAILED — {doc_link_control}'s {control_link.group(1)} "
+                "now resolves on disk, so GREEN 1 would pass whether the .md "
+                "restriction exists or not",
+                file=sys.stderr,
+            )
+            ok = False
+        else:
+            doc_link_cases.append(
+                (
+                    "doc-links",
+                    doc_link_control,
+                    lambda text: text
+                    + "\n// Planted by --self-test (D159 §2 R3, GREEN 1): a second\n"
+                    "// rustdoc-output-relative link [x](../manifest_wire/index.html),\n"
+                    "// a URL [x](https://example.invalid/nowhere.md) and a site-root\n"
+                    "// path [x](/docs/nowhere.md). None of the three is a doc link,\n"
+                    "// and all three are dead on disk.\n",
+                    "green",
+                )
+            )
+
+        print(
+            f"self-test: note — {len(doc_link_cases)} doc-link fixture(s) constructed "
+            f"({sum(1 for c in doc_link_cases if c[3] == 'red')} red, "
+            f"{sum(1 for c in doc_link_cases if c[3] == 'green')} green) over the two "
+            f"branches that have a live subject; the other five are proven on "
+            f"constructed trees above"
+        )
+        cases += doc_link_cases
 
         # ── D120 R6: every arm is a DELTA, not an absolute verdict ──────────
         # The failure this replaces was never in the red arms. 23 of the 33

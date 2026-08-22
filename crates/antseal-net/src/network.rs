@@ -11,7 +11,7 @@
 //! U4/U11's `--network` wiring and consent rendering can consume it
 //! without the ~600-package backend graph. The conversion into upstream's
 //! `EvmNetwork` lives behind the non-default **`ant-backend`** feature
-//! ([`crate::evm`]); S6's adapter extends the same feature. The wallet
+//! (`crate::evm`); S6's adapter extends the same feature. The wallet
 //! operations do **not**: since D89 they are [`crate::wallet`], in this
 //! same default set, over `k256` + `sha3`.
 //!
@@ -21,7 +21,7 @@
 //! transcribed verbatim from the pinned evmlib's built-in network
 //! definitions — the same constants `EvmNetwork::ArbitrumOne` /
 //! `ArbitrumSepoliaTest` resolve to at payment time — and the
-//! feature-gated consistency test in [`crate::evm`] asserts byte equality
+//! feature-gated consistency test in `crate::evm` asserts byte equality
 //! against the running evmlib, so a silent upstream bump cannot leave
 //! these stale. Chain ids are **not** defined anywhere in evmlib (it
 //! trusts the RPC); they are pinned here from the canonical chain
@@ -32,6 +32,15 @@
 //! a fresh Anvil chain with freshly deployed contracts, exported under the
 //! repo-local gitignored `.devnet/` (docs/devnet/local-devnet.md). The
 //! [`DevnetEnv`] parser consumes that **run-scoped** export.
+//!
+//! **[D159 §2 R2, 2026-08-22]** `crate::evm` is named here as a plain code
+//! span and NOT as an intra-doc link: this module is ungated while `evm` is
+//! behind the non-default `ant-backend` feature (`lib.rs:95-96`), so a
+//! default-feature `cargo doc` resolved the link against a module that is
+//! not there — six such warnings across this file and `wallet.rs`.
+//! `crate::ant_backend`'s own docs keep the link form, because that module is
+//! only ever rendered with the feature on. Nothing mechanical enforces this;
+//! the doc build that would is armed at first publication (D159 §2 R6).
 
 use core::fmt;
 use std::collections::BTreeMap;
@@ -258,7 +267,7 @@ impl core::str::FromStr for NetworkId {
 /// chain id, payment-token and payment-vault contracts, payment-RPC
 /// endpoint, and Autonomi bootstrap peers.
 ///
-/// Pure data (module docs); [`crate::evm::to_evm_network`] converts it
+/// Pure data (module docs); `crate::evm::to_evm_network` converts it
 /// into upstream's `EvmNetwork` under `ant-backend`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkConfig {

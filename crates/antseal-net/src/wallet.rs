@@ -5,7 +5,7 @@
 //! # Why this is not in `evm.rs`
 //!
 //! Everything here used to live inside the `ant-backend`-gated
-//! [`crate::evm`], which made `init`'s entire UX surface — the wizard, the
+//! `crate::evm`, which made `init`'s entire UX surface — the wizard, the
 //! D44 rejection classes, the funding copy, the `--json` fixture —
 //! `#[cfg]`-inactive in a default build. Inactive code is not compiled, not
 //! type-checked and not linted, and **no required CI context and no local
@@ -39,7 +39,7 @@
 //! when they sat above the alloy call. So this is one indirection removed
 //! from a two-layer arrangement, not a fork of the accepted set — and lane
 //! δ's `import_acceptance_equals_the_pinned_stack_acceptance` (in
-//! [`crate::evm`]'s gated test module) is retained unchanged as the
+//! `crate::evm`'s gated test module) is retained unchanged as the
 //! executable drift guard between the two.
 //!
 //! # Key-material hygiene (project rule 6)
@@ -48,6 +48,15 @@
 //! exist; every intermediate raw buffer is wiped explicitly; [`WalletKey`]'s
 //! `Debug` is redacted, it has no `Display`, no `Clone`, and no error in
 //! this module ever echoes input material.
+//!
+//! **[D159 §2 R2, 2026-08-22]** `crate::evm` is named here as a plain code
+//! span and NOT as an intra-doc link: this module is ungated while `evm` is
+//! behind the non-default `ant-backend` feature (`lib.rs:95-96`), so a
+//! default-feature `cargo doc` resolved the link against a module that is
+//! not there — six such warnings across this file and `network.rs`.
+//! `crate::ant_backend`'s own docs keep the link form, because that module is
+//! only ever rendered with the feature on. Nothing mechanical enforces this;
+//! the doc build that would is armed at first publication (D159 §2 R6).
 //!
 //! [D89]: ../../../docs/decisions/D89-wallet-primitives-below-the-gate.md
 
@@ -241,7 +250,7 @@ impl WalletKey {
 
     /// &str view of the invariant-held hex (construction guarantees
     /// ASCII). Crate-internal, and feature-gated because it has exactly
-    /// one caller: [`crate::evm`]'s `evm_wallet`, which hands this
+    /// one caller: `crate::evm`'s `evm_wallet`, which hands this
     /// spelling back to upstream. Nothing in the default graph needs a
     /// `&str` view of key material, and not offering one is the point.
     #[cfg(feature = "ant-backend")]
@@ -373,7 +382,7 @@ pub enum WalletImportError {
 ///
 /// The two upstream-dependent arms are `ant-backend`-gated: they can only
 /// be produced by [`WalletKey::evm_wallet`], which lives in
-/// [`crate::evm`]. Keeping them on **one** error type rather than splitting
+/// `crate::evm`. Keeping them on **one** error type rather than splitting
 /// it means the gate never changes an error's name or its `Display` string
 /// — the deviation-in-mechanism D89's "the non-config arms of
 /// `WalletOpsError`" allows for, recorded here rather than left implicit.
