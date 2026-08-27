@@ -61,7 +61,7 @@ ureq.workspace = true
 # `test-util`". `antseal-cli` already takes this exact edge, so the workspace
 # test build is unchanged, and no D60 pin is declared here — A30(c)'s owner
 # set stays `antseal-core` alone.
-antseal-core = { workspace = true, features = ["test-util"] }
+antseal-core = { path = "../antseal-core", features = ["test-util"] }
 # The SHA-256 of a merged artifact, for D103 RULING 2a's cross-check: the
 # shipped `merge_upgrade` run over the committed archive bodies must reach the
 # same digest the `anchor` golden vector carries for the same artifact (A14;

@@ -1282,6 +1282,41 @@ page.** Two preconditions, both required:
    `target/e2e-devnet/<run>/evidence.txt`, which the workflow uploads as the
    `devnet-e2e-evidence` artifact.
 
+   **[MEASURED 2026-08-27, wave 31 — precondition 2 is unreachable three ways,
+   and none of the three was recorded here. `Q247`'s `Accept` rows 1-2.]**
+
+   a. **The store holds ONE artifact, not twelve.** `gh api
+      repos/aed900/antseal/actions/artifacts --paginate`, filtered to
+      `devnet-e2e-evidence`, returns exactly `9132238802` (2026-08-12,
+      `expired=false`) — and that one is the **red** 5-node run's, so the
+      count of *clean* runs in the store is **0**. `Q247`'s row states twelve;
+      the row is wrong by eleven and is corrected at source in the same act.
+
+   b. **Retention makes 20 coexisting runs impossible.** The lane is weekly
+      and `retention-days: 30` is landed
+      (`.github/workflows/devnet-e2e-cron.yml`), so by D145's own table
+      R=30 keeps **5** coexisting artifacts, not 13. Twenty weekly runs need
+      **≥ 133 days**; the window is **35**. The trigger as written can never
+      be satisfied by a weekly cadence at this retention — it needs a longer
+      retention, a faster cadence, or a committed running tally that outlives
+      the artifacts. That is a decision, and it is not taken here.
+
+   c. **`secs=` is never warm, and the number is now attached.** The clock
+      starts at `scripts/e2e-devnet.sh:329`, *before* the `cargo test` at
+      `:365`, and the workflow has no separate build step — so every hosted
+      `secs=` includes a cold build. Measured locally: **787 s build + ~6 s
+      boot + 466-485 s suites ≈ 21 min against a 15 min trigger**, with the
+      build alone **87.4 %** of the budget. D145 §2 R4 reached *"no run of it
+      is ever warm"* and attached no figure; the figure is above, and it says
+      the gap is not marginal. **Nothing here is a hosted measurement** — every
+      run since 2026-08-16 has been refused — so treat these as a local
+      projection of the hosted shape, not as the hosted number.
+
+   Consequence for a future maintainer: **do not read precondition 2 as
+   waiting on time.** It is waiting on a ruling about cadence, retention and
+   what "warm" is measured from. Until that ruling exists, the count cannot
+   advance past what the store can hold.
+
 Then, and only then, add `{"context":"devnet-e2e-scheduled"}` to the payload
 above — after moving the job onto a `pull_request` trigger, since a lane that
 only ever runs on a schedule can never satisfy a per-PR required check (the
@@ -2952,7 +2987,30 @@ grep -nE '^- \[.\] \*\*Q(65|242|243|244|254|255)\*\*' TODO.md | cut -c1-60
 
 Expected **at the flip**: `Q65`, `Q242`, `Q243`, `Q244`, `Q254` all `[x]`.
 `Q255` may still be `[ ]` — see B6, which records that exposure rather than
-closing it. The two Q65 obligations that this file cannot see are the per-file
+closing it.
+
+**[RE-MEASURED 2026-08-27, wave 31.]** `Q242` is now **`[x]`**, and it was
+*landed-and-unticked* rather than unfinished: `securityPolicyUrl` reads
+`https://github.com/aed900/antseal/security/policy` with
+`isSecurityPolicyEnabled: true`, `SECURITY.md` is at the repository root and
+linked from `README.md:255`, the issue-template set carries a private-advisory
+contact link with `blank_issues_enabled: false`, and `SECURITY.md` is a literal
+`COPY_SCAN` entry so the policy is positioning-linted every run. Its one open
+clause — private vulnerability reporting **enabled** — is unsatisfiable before
+the flip by construction and is **B2**, carried as a `🟡` residue on the ticked
+row with B2 and the Maintainer-actions block named as its live owners. So the
+row list above now reads: `Q242`, `Q243`, `Q244`, `Q254` **`[x]`**; `Q65`
+**`[ ]`**, ticking in this sitting; `Q255` `[ ]` by permission.
+
+**Two rows joined the pre-flip set this wave and neither is `Q65`'s**, so read
+them here rather than discovering them at B0: **`Q266`** (the history scan is
+now a script, and nothing runs it — the flip publishes history, and the only
+prior scan was a dated document already stale by 504 objects) and **`Q268`**
+(the scrub reports put the maintainer's personal address into the history they
+were certifying clean — 15 blobs, 4 paths, all live in `HEAD`; accept or
+rewrite, and there is no rollback after the flip). Neither blocks the flip by
+ruling; both are things a maintainer should have decided **before** it rather
+than after. The two Q65 obligations that this file cannot see are the per-file
 `public`/`private`/`private-until-release` decision record and the two
 registered `OWED_PRESENCE` clauses (`limit-exclusive-possession`,
 `compelled-disclosure`), which are **Q22's** and not this row's; both are
@@ -3057,27 +3115,56 @@ The mitigations that made mutable action tags tolerable — private repository,
 no fork PRs, read-only default token — are exactly what the flip removes, so
 the pins precede it.
 
-```bash
+**[CORRECTED 2026-08-27, wave 31 — this step's command was blind to 11 of the
+57 invocations, and the paragraph that noticed the gap explained it away.]**
+The command below is the corrected one. The superseded form was
+
+```
 grep -rhoE '(^|- )uses: \S+' .github/workflows/ | grep -vE '@[0-9a-f]{40}'
 ```
 
-**[OBSERVED 2026-08-19]** — prints **nothing**; `REAL_EXIT=0` from the first
-element of the pipeline read back via `PIPESTATUS[0]`. Counts: **46** `uses:`
-invocations across **8** workflow files, **46** pinned to a 40-hex commit,
-**0** unpinned.
+which anchors on line-start-or-`- ` and therefore matches only `- uses:` steps
+and column-0 `uses:` lines. Every **bare-indented** `uses:` — the continuation
+form inside a step block — was invisible to it: `verifier-page.yml:124,138`,
+`pages.yml:85`, `ci.yml:677,694,723`, `fuzz-nightly.yml:93,121,166`,
+`devnet-e2e-cron.yml:247`, `advisory-cron.yml:63`. All eleven are pinned today,
+so the step **read green by luck**, and `pages.yml:85` is `actions/deploy-pages`
+— the highest-blast-radius invocation in the tree. The check could not have
+reddened on any of them.
 
-**The check was proved able to fail.** Run against a two-line fixture holding
-one tag reference and one SHA reference, the same pipeline printed exactly the
-tag line:
+The old paragraph noticed the discrepancy and drew the wrong conclusion from
+it: it read the gap between its own **46** and `Q244`'s **57** as the row being
+stale, and told the reader to *"verify by running the command, never by quoting
+the row"*. The row was right. It then named the mirror-image bug — that
+`^\s*uses:` alone misses every `- uses:` step — while carrying exactly the
+inverse of it. Its fault plant used the `- uses:` form only, so the blind spot
+was **un-plantable by construction**, which is why a proved-able-to-fail claim
+sat over it for eight days. **[assertions-that-cannot-fail.]**
+
+```bash
+grep -rhoE '^[[:space:]]*-?[[:space:]]*uses: \S+' .github/workflows/ |
+  grep -vE '@[0-9a-f]{40}'
+```
+
+**[OBSERVED 2026-08-27]** — prints **nothing**; `REAL_EXIT=0` from the first
+element of the pipeline read back via `PIPESTATUS[0]`. Counts: **57** `uses:`
+invocations across **8** workflow files, **57** pinned to a 40-hex commit,
+**0** unpinned. That agrees with `scripts/check-action-pins.py`, which is the
+authority and reports *"57 `uses:` invocation(s) across 8 workflow(s) … 9
+ledger row(s), every one used"*. **Cross-check the two rather than trusting
+either**: this step exists so the flip sitting can read a pin count without
+running Python, and the eight-day-old version of it disagreed with the checker
+by eleven and said the checker was wrong.
+
+**The corrected check is proved able to fail, on the form that defeated the old
+one.** Run against a three-line fixture holding one `- uses:` tag reference,
+one **bare-indented** tag reference and one SHA reference, the pipeline prints
+exactly the two tag lines:
 
 ```
 - uses: actions/checkout@v4
+  uses: actions/deploy-pages@v4
 ```
-
-Note the count moved: Q244's row measured **57** invocations of 9 distinct
-actions. Verify by running the command, never by quoting the row — and note
-that `^\s*uses:` alone silently misses every `- uses:` step, which is a check
-that cannot fail rather than a passing one.
 
 ### A6 — BEFORE, and it is a branch. Read every signing-key anchor back
 
@@ -3440,6 +3527,53 @@ the clean result and the inverse of the usual convention, so read the *lines*,
 not the status. Run against a synthetic list carrying `refs/heads/m2w4-kappa`,
 the same filter printed that one line and exited 0 — the check can fail.
 
+### A9 — BEFORE, and it is a branch. `Q238`/`Q265` — the required-context promotion
+
+**[ADDED 2026-08-27 by D164 §2 R4 and §2 R8.]** `Q238`'s headline said the
+reproducibility comparison becomes a required push context *"before the
+repository goes public"*, and its `Notes` said `Q34` and `Q65` are *"where it
+must be checked"*. **Neither of those rows names it back** — `Q34`'s ordering
+run is `after Q13,Q21,Q28,Q31–Q33,Q65`, `Q65`'s row names no `Q238`, and the
+M4 `Gate =` line names five clauses, none of them this row. That was an
+assertion nothing could redden, and under rule 4 the gate is the exit
+criterion, so M4 could have passed with the obligation open and silent. **The
+gate is deliberately NOT widened.** The check lands here instead, as a step the
+flip operator reads in the sitting — a human checkpoint that exists, rather
+than a machine one that does not.
+
+**This step is a branch, on the `A6` precedent.** Read it; never expect it:
+
+```bash
+gh api repos/aed900/antseal/commits/main/check-runs \
+  --jq '.check_runs[] | select(.name|test("repro|reproduc")) | "\(.name) \(.conclusion)"'
+```
+
+- **Branch 1 — the context has reported `success` on `main`.** Arming is a
+  **Phase A** act: take it here, before `B0`, and the maintainer's *"before
+  public"* wish is met literally. Regenerate the payload from
+  `scripts/check-ci-paths.py`'s `REQUIRED_CONTEXTS` — **never increment a
+  prose copy** (D164 §2 R7; C2's own rule). `Q265` ticks on the read-back.
+- **Branch 2 — it has not.** Arming becomes a **Phase C** act tied to `C4`,
+  and **the flip proceeds** carrying a recorded exposure in `B6`'s shape:
+  dated, owned by `Q265`, and named aloud in the sitting rather than
+  discovered afterwards. This is the expected branch today — no hosted job has
+  produced a verdict since 2026-08-15.
+
+**Do not arm on the strength of an expectation.** C2's prohibition stands for
+the case where nothing has reported. What D164 §2 R2 removed is the *reason*
+that prohibition was being read as permanent: the claim that a never-green
+required context blocks the maintainer's own push **names no mechanism**, and
+this file prescribes `"enforce_admins": false` at `:277` and calls it an
+explicit admin bypass at `:292-294`. A **ruleset** has no such implicit bypass.
+**Which mechanism is used is undecided and is `Q265`'s first clause** — the two
+differ on exactly the case `Q238`'s lane shape creates, and nothing in this
+register has ever distinguished them.
+
+**This step does not depend on whether the flip restores CI.** D164 §2 R5 rules
+that no step may assert either branch of the refusal disjunction; the cut is at
+the green-run predicate precisely so that question does not have to be answered
+here.
+
 ## Phase B — AT THE FLIP. One sitting. Every step here is co-timed, none is a prerequisite
 
 **Read this heading literally.** B1 through B7 are **not** a queue in which B1
@@ -3767,12 +3901,43 @@ it for that reason would be taking it for a stale reason. `main` is unprotected
 today and so is `format-v1-freeze`; the freeze is enforced in-repo by digest
 files, not by the platform.
 
-**Do not add a required status context in this sitting.** A required context
-that has never reported green on `main` blocks the next push, including the
-maintainer's own — and the hosted CI has refused every job since wave 20 on an
-exhausted Actions allowance, so *no* context has a recent green. The correct
-order is unchanged from runbook step 3 → step 5: first a green run on `main`
-(C4), then protection.
+**Do not add a required status context in this sitting.** The prohibition
+stands; its stated *reason* does not, and the difference matters because four
+surfaces were resting on the reason.
+
+**[QUALIFIED 2026-08-27 by D164 §2 R2. The sentence below is kept because
+D163 §1.6, D163 §2 R4, Maintainer actions entry (8) and `Q238`'s `Accept` row 3
+all quote it — but it names no mechanism, and this file contradicts it twice.]**
+It read: *"A required context that has never reported green on `main` blocks
+the next push, including the maintainer's own — and the hosted CI has refused
+every job since wave 20 on an exhausted Actions allowance, so no context has a
+recent green."*
+
+Two corrections, neither of which reopens the prohibition:
+
+1. **"including the maintainer's own" is unqualified and this file refutes it
+   twice.** `:277` prescribes `"enforce_admins": false`, `:292-294` says that
+   *"leaves the repo admin an explicit bypass for emergencies"*, and `:1216`
+   says it *"leaves the admin a bypass regardless"*. Under **classic branch
+   protection with that flag**, an admin push is **not** blocked. Under a
+   **ruleset**, there is no implicit admin bypass at all — a ruleset must grant
+   one explicitly. **The register has never distinguished the two mechanisms**,
+   and they differ on precisely the case `Q238`'s lane shape creates: a
+   docs-only direct push with the promoted context unreported. So *"arming
+   early is actively unsafe"* is **UNPROVEN** — which removes the reason to
+   defer without supplying any reason to hurry. Deciding the mechanism is
+   **`Q265`**'s first clause and is a prerequisite of the write, not a detail
+   of it.
+2. **"on an exhausted Actions allowance" states one branch of a disjunction as
+   fact.** The refusal annotation reads *"recent account payments have failed
+   **or** your spending limit needs to be increased"* — see C4. The evidence
+   favours the allowance reading, but no step may assert it (D164 §2 R5).
+
+**What survives unchanged, and is the operative instruction:** do not arm a
+context that has never reported. The correct order is still runbook step 3 →
+step 5 — first a green run on `main` (C4), then protection — and the *reading*
+of that order is now **A9**, which carries it as a branch rather than as a
+deadline against the flip.
 
 When it is armed, **regenerate the payload rather than copying one**. That
 chapter's payload lists 19 contexts from 17 jobs; measured 2026-08-19,
@@ -3802,8 +3967,35 @@ wrongly.
 
 ### C4 — AFTER. The first CI run that a hosted runner actually executes
 
-Free minutes on public repositories is the mechanism that ends the refusal
-streak. Confirm it with a **verdict**, not with a queued job:
+**[QUALIFIED 2026-08-27 by D164 §2 R5 — the sentence below is a PREDICTION,
+and it is labelled as one because D161 §2 R7's own rider says *"the expectation
+is not a measurement"*.]** *Free minutes on public repositories is the mechanism
+that ends the refusal streak* — expected, not established. Three things are
+measured and they do not settle it:
+
+- **The refusal annotation is a DISJUNCTION and cannot discriminate.** Verbatim
+  from the check-run annotation on run `33083210871` (2026-08-27): *"The job was
+  not started because recent account payments have failed **or** your spending
+  limit needs to be increased. Please check the 'Billing & plans' section in
+  your settings"*. GitHub emits the same bytes for a failed payment and for an
+  allowance spent behind a $0 spending limit.
+- **The evidence favours the allowance reading.** Last run with a runner:
+  `31873411737`, 2026-08-15. D135 §1.1 measured ~3 154–3 324 weighted minutes
+  against a 3 000 allowance over 2026-08-01→15; refusals begin 2026-08-16. That
+  is a mid-cycle exhaustion signature.
+- **But a billing-side action alone has already cleared this, with no flip.**
+  The byte-identical annotation appeared on run `31407751482` on 2026-08-10, and
+  the same day a 1 589 s run succeeded at 22:05 — repository still private. So
+  the flip is demonstrably **not the only route**, and Maintainer action **(9)**
+  routes the cheap one: check the Actions spending limit first, because it is
+  free and reversible and the flip is neither.
+
+**In a genuinely delinquent-payment state it is not established that the flip
+helps at all**, and no read-only endpoint reachable with this host's scopes
+distinguishes the two states (`/user/settings/billing/actions` → **404**, not
+403; `gh api /user --jq .plan` → **`null`**). Do not record the streak as ended
+because the repository went public; record it as ended when a runner produces a
+verdict. Confirm with a **verdict**, not with a queued job:
 
 ```bash
 gh api "repos/aed900/antseal/commits/$(git rev-parse main)/check-runs" \

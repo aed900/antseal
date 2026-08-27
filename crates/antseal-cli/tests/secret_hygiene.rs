@@ -11,6 +11,15 @@
 //! for those sentinels in **raw, lowercase-hex, uppercase-hex and base64**
 //! form.
 //!
+//! "Every implemented command" is a claim, so it is machine-checked:
+//! `COMMANDS` must cover exactly `machine::ALL_COMMAND_NAMES`
+//! ([`the_harness_enumerates_every_command_on_the_surface`]), and the set
+//! the harness *actually drove* is read back and checked against the same
+//! axis. `init` is the one command that cannot meet the sentinel vault —
+//! it refuses when a vault already exists — so its cells get a fresh
+//! empty home each and really do build a vault out of the sentinel
+//! passphrase, which is then unlocked with it to prove they did.
+//!
 //! Per D41 the scan also covers the running process's own
 //! `/proc/<pid>/cmdline` and `/proc/<pid>/environ`. That channel is why
 //! `--passphrase-fd` exists at all: argv and the environment are readable
@@ -39,12 +48,14 @@
 
 #[path = "common/spawn.rs"]
 mod spawn;
+use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use antseal_cli::machine::ALL_COMMAND_NAMES;
 use antseal_cli::vault::kdf::KdfSelection;
-use antseal_cli::vault::layout::VaultLayout;
+use antseal_cli::vault::layout::{BesideFile, VaultLayout};
 use antseal_cli::vault::session::create_vault;
 use antseal_cli::vault::store::{SealShapingFlags, WorkRecord, WorkState, WorkStore};
 use antseal_cli::vault::wallet::{WalletKeyHandle, store_wallet_key};
@@ -355,6 +366,21 @@ impl SentinelVault {
 
         Self { home, _root: root }
     }
+
+    /// An **empty** home beside the sentinel vault, for the one command
+    /// that must not meet an existing one.
+    ///
+    /// `init` refuses outright when a vault already exists (D39 Decision
+    /// 4; `run_init` step 1) and it refuses *before* a passphrase is
+    /// collected — so an `init` cell pointed at the sentinel home would
+    /// scan a usage error and never reach the passphrase-handling path
+    /// this harness exists to measure. Each cell gets its own fresh home
+    /// instead, under the same root, so `Drop` still cleans them all up.
+    fn fresh_home(&self, tag: &str) -> PathBuf {
+        let home = self._root.join(tag);
+        std::fs::create_dir_all(&home).expect("mk a fresh home");
+        home
+    }
 }
 
 impl Drop for SentinelVault {
@@ -385,7 +411,11 @@ struct Observed {
 
 /// Run one command with the sentinel passphrase supplied over the D41 fd
 /// channel (never argv, never the environment).
-fn run(vault: &SentinelVault, args: &[&str], verbosity: Option<&str>, json: bool) -> Observed {
+///
+/// `home` is the `HOME` the child sees: the sentinel vault's for every
+/// command that reads a vault, a fresh empty one for `init`, which
+/// creates one (see [`SentinelVault::fresh_home`]).
+fn run(home: &Path, args: &[&str], verbosity: Option<&str>, json: bool) -> Observed {
     let mut argv: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
     argv.push("--passphrase-fd".to_owned());
     argv.push("0".to_owned());
@@ -394,8 +424,8 @@ fn run(vault: &SentinelVault, args: &[&str], verbosity: Option<&str>, json: bool
     }
 
     let mut cmd = bin();
-    cmd.env("HOME", &vault.home)
-        .current_dir(&vault.home)
+    cmd.env("HOME", home)
+        .current_dir(home)
         .args(&argv)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -498,7 +528,39 @@ impl HeldChild {
 /// included deliberately: a stub that grew a secret-bearing message would
 /// be caught the moment it landed, not the moment someone remembered to
 /// add it here.
-const COMMANDS: [&[&str]; 9] = [
+///
+/// # This array is not the enumeration axis — it is *checked against* it
+///
+/// [`ALL_COMMAND_NAMES`] is the axis, and
+/// [`the_harness_enumerates_every_command_on_the_surface`] asserts set
+/// equality between the two. Hand-maintaining a second list beside the
+/// canonical one is precisely how `init` — the command that takes the
+/// passphrase at its rawest — went unscanned here from the day this file
+/// landed. It was never typed, the doc comment above said "every command
+/// the surface has", and nothing in the workspace was capable of noticing
+/// the difference. An eleventh command
+/// now cannot reach the surface without either appearing here or
+/// reddening that test.
+const COMMANDS: [&[&str]; 10] = [
+    // First, so the array opens on the name `ALL_COMMAND_NAMES` opens on
+    // — and so a leak planted in `init`'s output reddens the harness in
+    // seconds rather than after fifty-odd other cells.
+    //
+    // What this cell covers: the **passphrase** at its rawest. It arrives
+    // on the D41 fd channel, becomes a KDF input, and a vault is really
+    // built out of it — asserted below by unlocking that vault with it.
+    //
+    // What it does not, and why the gap is structural rather than
+    // forgotten: the cell's wallet key is `--wallet generate`'s fresh
+    // one, not `SENTINEL_WALLET_KEY`. Feeding the sentinel key in needs
+    // `--wallet import --wallet-key-fd <n>` with `n != 0` (0 is taken by
+    // `--passphrase-fd`, and equal fds are a usage error), and handing a
+    // child an fd above 2 needs `CommandExt::pre_exec` — `unsafe`, which
+    // `[workspace.lints.rust] unsafe_code = "deny"` refuses workspace-wide
+    // for the same reason `common/spawn.rs` records. The sentinel wallet
+    // key is measured through every *other* command instead, over the
+    // vault that already holds it.
+    &["init"],
     &["list"],
     &["show", "a7a7a7a7"],
     &["status", "a7a7a7a7"],
@@ -517,6 +579,85 @@ const COMMANDS: [&[&str]; 9] = [
     ],
 ];
 
+/// The canonical command name one harness argv drives, spelled the way
+/// [`ALL_COMMAND_NAMES`] spells it.
+///
+/// Longest matching prefix rather than `argv[0]`, because `vault export`
+/// and `vault import` are two-token names: a first-token rule would
+/// collapse them into a single entry called `vault`, which is not on the
+/// surface at all, and would make the completeness check simultaneously
+/// wrong in one direction and blind in the other.
+fn canonical_name(argv: &[&str]) -> &'static str {
+    for take in (1..=argv.len().min(3)).rev() {
+        let candidate = argv[..take].join(" ");
+        if let Some(name) = ALL_COMMAND_NAMES.iter().find(|n| **n == candidate) {
+            return name;
+        }
+    }
+    panic!(
+        "`antseal {}` begins with no name in ALL_COMMAND_NAMES ({ALL_COMMAND_NAMES:?}), so the \
+         harness cannot say which command it covers",
+        argv.join(" ")
+    );
+}
+
+/// Assert that `covered` is **exactly** the command surface, naming both
+/// directions of the difference.
+///
+/// Set equality, not `len()`. A length check passes on a swap — drop one
+/// command, duplicate another — and passes on a rename, which are the two
+/// ways a hand-maintained list realistically goes wrong once someone is
+/// already looking at it.
+fn assert_covers_the_surface(covered: &BTreeSet<&'static str>, what: &str) {
+    let declared: BTreeSet<&'static str> = ALL_COMMAND_NAMES.iter().copied().collect();
+    let missing: Vec<&str> = declared.difference(covered).copied().collect();
+    let extra: Vec<&str> = covered.difference(&declared).copied().collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "{what} is not the command surface. Never scanned: {missing:?}. Not on the surface: \
+         {extra:?}. U21's `Do` opens its flow list on `init`, and U32 Accept asks for this \
+         harness \"green across the full command set\" — `ALL_COMMAND_NAMES` is what \"full\" \
+         means here. A command that reaches the surface without reaching this harness is a \
+         secret-bearing path nobody measures"
+    );
+}
+
+/// **The mechanism this file was missing.** `COMMANDS` covers exactly
+/// [`ALL_COMMAND_NAMES`]: no command on the surface goes unscanned, and
+/// no entry here names a command that no longer exists.
+///
+/// Cheap and vault-free on purpose — it answers in milliseconds, so the
+/// enumeration defect is reported by its own name rather than inferred
+/// from a seventy-second harness that stayed green while never running
+/// the command in question.
+#[test]
+fn the_harness_enumerates_every_command_on_the_surface() {
+    let covered: BTreeSet<&'static str> =
+        COMMANDS.iter().map(|argv| canonical_name(argv)).collect();
+    assert_covers_the_surface(&covered, "the COMMANDS table");
+}
+
+/// Scan every file under `dir`, recursively; returns how many were read,
+/// so a caller can refuse a walk that found nothing.
+fn scan_tree(dir: &Path) -> usize {
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+        .flatten()
+    {
+        let path = entry.path();
+        if path.is_dir() {
+            scanned += scan_tree(&path);
+        } else if path.is_file() {
+            let bytes = std::fs::read(&path).expect("read a produced file");
+            scan_bytes(&bytes, &format!("the file {}", path.display()))
+                .unwrap_or_else(|e| panic!("{e}"));
+            scanned += 1;
+        }
+    }
+    scanned
+}
+
 /// **The harness.** Every command × every verbosity × {plain, `--json`},
 /// against a vault whose every secret is a sentinel.
 #[test]
@@ -528,11 +669,24 @@ fn no_command_at_any_verbosity_emits_a_sentinel() {
         .expect("write the input file");
 
     let mut ran = 0usize;
+    let mut ran_names: BTreeSet<&'static str> = BTreeSet::new();
+    let mut init_homes: Vec<PathBuf> = Vec::new();
     for command in COMMANDS {
+        let name = canonical_name(command);
         for verbosity in [None, Some("debug"), Some("trace")] {
             for json in [false, true] {
-                let observed = run(&vault, command, verbosity, json);
+                // `init` is the one command that creates a vault rather
+                // than reading one, so it needs a home with none.
+                let home = if name == "init" {
+                    let fresh = vault.fresh_home(&format!("init-home-{ran}"));
+                    init_homes.push(fresh.clone());
+                    fresh
+                } else {
+                    vault.home.clone()
+                };
+                let observed = run(&home, command, verbosity, json);
                 ran += 1;
+                ran_names.insert(name);
                 scan_bytes(&observed.stdout, &format!("{}: stdout", observed.label))
                     .unwrap_or_else(|e| panic!("{e}"));
                 scan_bytes(&observed.stderr, &format!("{}: stderr", observed.label))
@@ -545,6 +699,47 @@ fn no_command_at_any_verbosity_emits_a_sentinel() {
         COMMANDS.len() * 3 * 2,
         "the harness must actually have run every cell"
     );
+    // The axis, read back off what actually ran rather than off the
+    // table. `the_harness_enumerates_every_command_on_the_surface` checks
+    // the declaration; this checks the execution, and a `continue` in the
+    // loop above would satisfy the first and defeat the second.
+    assert_covers_the_surface(&ran_names, "the set of commands the harness actually drove");
+
+    // `init` must genuinely have *built* a vault out of the sentinel
+    // passphrase. If it had refused early — an existing vault, a missing
+    // channel — its cells would have scanned a usage error, the harness
+    // would still be green, and the passphrase would still be unmeasured
+    // at its rawest, which is the exact failure this case exists to end.
+    assert_eq!(init_homes.len(), 3 * 2, "one fresh home per `init` cell");
+    for home in &init_homes {
+        let header = VaultLayout::at(home.join(".antseal")).beside_path(BesideFile::Header);
+        assert!(
+            header.exists(),
+            "`init` wrote no vault header at {} — that cell scanned a refusal, not the \
+             passphrase-handling path",
+            header.display()
+        );
+    }
+    // And one of those vaults opens with the sentinel passphrase, which
+    // is the only thing that proves the D41 fd channel — rather than some
+    // default or an empty read — is what `init` derived the vault key
+    // from.
+    antseal_cli::vault::session::unlock_vault(
+        &VaultLayout::at(init_homes[0].join(".antseal")),
+        &SecretBuf::new(SENTINEL_PASSPHRASE.as_bytes().to_vec()),
+    )
+    .expect("the vault `init` built opens with the sentinel passphrase it was fed on fd 0");
+
+    // Those vaults are where the passphrase is allowed to have left a
+    // trace — as a KDF salt and a wrapped key, never as itself. Scan
+    // every byte of them.
+    for home in &init_homes {
+        assert!(
+            scan_tree(home) >= 1,
+            "the walk of {} read no files at all — a clean scan of nothing is not a pass",
+            home.display()
+        );
+    }
 
     // The commands wrote files outside the vault (a `vault export`
     // backup, at least). Those are encrypted, but "encrypted" is the

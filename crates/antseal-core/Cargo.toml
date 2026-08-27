@@ -132,7 +132,7 @@ x509-cert.workspace = true
 #   [dev-dependencies]
 #   antseal-core = { workspace = true, features = ["test-util"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-antseal-core = { workspace = true, features = ["test-util"] }
+antseal-core = { path = ".", features = ["test-util"] }
 # D14's fallback implementation, consumed ONLY by
 # `tests/mldsa_fallback_equivalence.rs` (Q11/D31 §9 step 6). That test is
 # **T2** — same-ecosystem agreement — and is evidence for D14's fallback
@@ -150,7 +150,7 @@ antseal-core = { workspace = true, features = ["test-util"] }
 fips204.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-antseal-core = { workspace = true, features = ["test-vectors"] }
+antseal-core = { path = ".", features = ["test-vectors"] }
 
 [lints]
 workspace = true

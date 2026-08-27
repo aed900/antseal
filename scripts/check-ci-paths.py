@@ -39,7 +39,8 @@ R2  No workflow filters `pull_request` by path, and a filtered `push` uses
     `paths-ignore` and never `paths`. See "the two are not complements" below.
 R3  The per-event required-context sets are exactly REQUIRED_CONTEXTS and
     REQUIRED_CONTEXTS - PUSH_EXEMPT, with no context produced twice on the
-    same event by two workflows.
+    same event by two workflows. A workflow whose `push` is TAG-ONLY is not
+    counted on `push` at all — see R7 for why, and for what that skip costs.
 R4  THE LOAD-BEARING RULE. No excluded path is read by anything the filtered
     workflow runs. Three detectors, because no one of them is complete:
       R4a a whole-string path literal, on a non-comment line, in a reader;
@@ -52,7 +53,16 @@ R5  Anti-vacuity: every pattern matches at least one tracked file, the
     suffix on ALLOWED_EXCLUDED_SUFFIXES — so a `.py` dropped into `tasks/`
     reds instead of quietly becoming unbuilt code.
 R6  The cheap checkers that must survive a docs push are in a workflow whose
-    `push` carries no path filter at all.
+    `push` carries no path filter at all AND reaches branches — a tag-only
+    workflow cannot witness a docs push, however unfiltered it looks.
+R7  A workflow whose `push` is TAG-ONLY (`on: push: tags:` with no
+    `branches:`) produces no required context and carries no path filter.
+    `push` has TWO axes — which files changed, and which REF moved — and
+    until Q31 nothing in this tree used the second one. Without R7, the
+    release workflow's every job would land in R3's `extra` set and the only
+    way to green it would be to write a tag build into REQUIRED_CONTEXTS,
+    i.e. into branch protection, where it can never report on a merge to main
+    and would hang the branch for ever. R7 is what makes R3's skip safe.
 
 ── WHAT IT CANNOT CATCH. READ THIS BEFORE TRUSTING A GREEN ─────────────────
 
@@ -463,11 +473,52 @@ def _block(lines: list[str], start: int, indent: int) -> tuple[list[str], int]:
     return body, i
 
 
-def parse_triggers(text: str) -> dict[str, dict[str, list[str]]]:
-    """`{event: {"paths": [...], "paths-ignore": [...]}}` for each `on:` event.
+# The six filter keys an event may carry. `paths`/`paths-ignore` select on the
+# CHANGED FILES; the other four select on the REF, and that second axis is what
+# R7 exists for. Nothing else under an event is collected — `workflow_dispatch`'s
+# `inputs:` and `schedule`'s `- cron:` fall through untouched.
+FILTER_KEYS = ("paths", "paths-ignore", "branches", "branches-ignore", "tags", "tags-ignore")
 
-    An event with no filters maps to empty lists, which is what R2/R3 read as
-    "unfiltered" — distinct from the event being absent from the dict at all.
+
+def _flow_seq(value: str) -> list[str]:
+    """A YAML sequence written INLINE — `branches: [main]`, `tags: ['v*']`.
+
+    REFUSES what it does not model rather than guessing, which is
+    `translate_pattern`'s contract one level up: a shape parsed wrong here is a
+    ref filter this file would silently mis-classify, and a mis-classified
+    tag-only workflow is exactly the failure R7 was added to stop.
+    """
+    v = re.sub(r"\s+#.*$", "", value.strip())
+    if v.startswith("["):
+        if not v.endswith("]"):
+            raise ValueError(f"unterminated inline sequence {value!r} in an `on:` filter")
+        inner = v[1:-1].strip()
+        if not inner:
+            return []
+        if any(c in inner for c in "[]{}"):
+            raise ValueError(
+                f"nested inline collection {value!r} in an `on:` filter. This parser models "
+                f"a flat sequence of scalars; teach it the shape, with a self-test arm, "
+                f"before landing a workflow that uses one"
+            )
+        return [x.strip().strip("\"'") for x in inner.split(",") if x.strip()]
+    if v[:1] in ("{", "&", "*", "|", ">", "!"):
+        raise ValueError(
+            f"unmodelled YAML construct {value!r} in an `on:` filter (flow mapping, anchor, "
+            f"alias, block scalar or tag). REFUSED rather than guessed at — see "
+            f"`translate_pattern` for the same discipline on the glob side"
+        )
+    return [v.strip("\"'")]
+
+
+def parse_triggers(text: str) -> dict[str, dict[str, list[str]]]:
+    """`{event: {key: [...] for key in FILTER_KEYS}}` for each `on:` event.
+
+    An event with no filters maps to empty lists everywhere, which is what R2/R6
+    read as "unfiltered" — distinct from the event being absent from the dict at
+    all. Both the block form (`tags:` then `      - 'v*'`) and the inline flow
+    form (`tags: ['v*']`) are collected; ci.yml writes `branches: [main]` inline
+    and `paths-ignore:` as a block, so both shapes are live in this tree today.
     """
     lines = text.splitlines()
     out: dict[str, dict[str, list[str]]] = {}
@@ -482,13 +533,16 @@ def parse_triggers(text: str) -> dict[str, dict[str, list[str]]]:
                 j += 1
                 continue
             event = m.group(1)
-            out.setdefault(event, {"paths": [], "paths-ignore": []})
+            out.setdefault(event, {key: [] for key in FILTER_KEYS})
             sub, j = _block(body, j + 1, 2)
             key = None
             for entry in sub:
-                km = re.match(r"^    (paths|paths-ignore):\s*$", entry)
-                if km:
+                km = re.match(r"^    ([a-z][a-z-]*):\s*(\S.*)?$", entry)
+                if km and km.group(1) in FILTER_KEYS:
                     key = km.group(1)
+                    if km.group(2) is not None:
+                        out[event][key].extend(_flow_seq(km.group(2)))
+                        key = None  # an inline value is complete; no items follow
                     continue
                 im = re.match(r"^      - (\S.*)$", entry)
                 if im and key:
@@ -498,6 +552,35 @@ def parse_triggers(text: str) -> dict[str, dict[str, list[str]]]:
                     key = None
         return out
     raise ValueError("no `on:` block found — the workflow parser is broken, not the workflow")
+
+
+# The whole range of `push_ref_scope`. The self-test asserts its fixture table
+# covers every member, so a branch cannot go untested while the table looks full.
+SCOPE_RANGE = frozenset({"branches", "tags", "both", "absent"})
+
+
+def push_ref_scope(events: dict[str, dict[str, list[str]]]) -> str:
+    """Which REFS a workflow's `push` reaches: `branches`, `tags`, `both` or `absent`.
+
+    GitHub's rule, and the reason this cannot be read off `paths` alone: naming
+    only `tags`/`tags-ignore` stops the workflow running on branch pushes, and
+    naming only `branches`/`branches-ignore` stops it running on tag pushes.
+    Naming BOTH runs it on both. Naming NEITHER also runs it on both — a bare
+    `push:` is every ref — so "no ref filter" is `both`, never `tags`.
+
+    `absent` means the workflow has no `push` trigger at all, which is a
+    different statement from "an unfiltered push" and the two must not merge.
+    """
+    push = events.get("push")
+    if push is None:
+        return "absent"
+    has_branches = bool(push["branches"] or push["branches-ignore"])
+    has_tags = bool(push["tags"] or push["tags-ignore"])
+    if has_tags and not has_branches:
+        return "tags"
+    if has_branches and not has_tags:
+        return "branches"
+    return "both"
 
 
 def parse_contexts(text: str, name: str) -> list[str]:
@@ -730,11 +813,27 @@ def scan_reader(root: Path, reader: str, excluded: list[str]) -> list[tuple[int,
 
 # ── The check ───────────────────────────────────────────────────────────────
 
-def check(root: Path, docs_only: list[str] | None = None) -> Failures:
+def check(
+    root: Path,
+    docs_only: list[str] | None = None,
+    extra_workflows: dict[str, str] | None = None,
+) -> Failures:
+    """`extra_workflows` are workflow files that are NOT on disk.
+
+    The self-test's R7 arms need a tag-triggered workflow, and this repository
+    has none — the release workflow Q31 will add is the first of its kind, which
+    is the whole reason R7 must land before it. Writing a fixture into
+    `.github/workflows/` to test it would be the worst of both worlds: a real
+    workflow that GitHub would really run, restored in a `finally` that a killed
+    process never reaches. So the fixture is injected as TEXT and never exists
+    as a file — the shape docs/instrument-ledger.md (2026-08-18) records as the
+    safe one, and the shape `check-anchor-net.py` already uses.
+    """
     failures = Failures()
     docs_only = DOCS_ONLY if docs_only is None else docs_only
     files = tracked_files(root)
     texts = {p.name: read_cached(p) for p in workflows(root)}
+    texts.update(extra_workflows or {})
     if not texts:
         failures.add("R0", "no workflows found at all — the scan is vacuous")
         return failures
@@ -796,6 +895,15 @@ def check(root: Path, docs_only: list[str] | None = None) -> Failures:
         for name, events in triggers.items():
             if event not in events:
                 continue
+            # A TAG-ONLY `push` produces nothing a branch push will ever show.
+            # `on: push: tags: ['v*']` does not fire when main advances, so its
+            # jobs are not required-context candidates and counting them would
+            # force a release build into REQUIRED_CONTEXTS — a status branch
+            # protection would then wait for on every merge and never receive,
+            # hanging the branch permanently. R7 below is the countervailing
+            # assertion that keeps this skip from being a free pass.
+            if event == "push" and push_ref_scope(events) == "tags":
+                continue
             for context in contexts[name]:
                 produced.setdefault(context, []).append(name)
         for context, owners in sorted(produced.items()):
@@ -825,11 +933,49 @@ def check(root: Path, docs_only: list[str] | None = None) -> Failures:
                 f"side effect — register it here in the same commit.",
             )
 
+    # ── R7: tag-triggered pushes are not branch-protection contexts ────────
+    #
+    # THE COUNTERVAILING ASSERTION. R3 above SKIPS a tag-only workflow, and a
+    # skip is how a check quietly stops being able to fail. These two clauses
+    # are what the skip costs: a tag-only workflow may produce any context it
+    # likes EXCEPT a required one, and may not carry a path filter.
+    for name, events in sorted(triggers.items()):
+        if push_ref_scope(events) != "tags":
+            continue
+        collisions = sorted(set(contexts[name]) & set(REQUIRED_CONTEXTS))
+        if collisions:
+            failures.add(
+                "R7",
+                f"{name}'s `push` is TAG-ONLY, but it produces {collisions}, which are in "
+                f"REQUIRED_CONTEXTS. A tag push and a branch push are different events: on "
+                f"a merge to main this workflow does not run, so the context never reports "
+                f"and a protected branch waits for it for ever; on a tag push it reports a "
+                f"SECOND check run under a name ci.yml already owns. Rename the job — a "
+                f"release build is not a branch-protection status.",
+            )
+        push = events["push"]
+        if push["paths"] or push["paths-ignore"]:
+            failures.add(
+                "R7",
+                f"{name}'s `push` is TAG-ONLY and also carries a path filter "
+                f"({push['paths'] or push['paths-ignore']}). This file does not model how "
+                f"a path filter composes with a tag ref filter and REFUSES the combination "
+                f"rather than guessing — the same discipline `translate_pattern` applies to "
+                f"glob syntax. Drop one of the two, or measure the interaction and teach it "
+                f"here with a self-test arm.",
+            )
+
     # ── R6: the cheap checkers survive a docs push ─────────────────────────
+    # `push_ref_scope(...) != "tags"` is load-bearing, not decoration: a
+    # tag-only workflow producing `traceability` would otherwise satisfy this
+    # rule while never running on a docs push at all — the guard would accept a
+    # witness that cannot testify. Same root cause as R3's skip, opposite sign.
     unfiltered_push_contexts = {
         context
         for name, events in triggers.items()
-        if "push" in events and not (events["push"]["paths"] or events["push"]["paths-ignore"])
+        if "push" in events
+        and not (events["push"]["paths"] or events["push"]["paths-ignore"])
+        and push_ref_scope(events) != "tags"
         for context in contexts[name]
     }
     for context in sorted(MUST_RUN_ON_EVERY_PUSH - unfiltered_push_contexts):
@@ -930,6 +1076,38 @@ def check(root: Path, docs_only: list[str] | None = None) -> Failures:
     return failures
 
 
+# ── R7 fixtures ─────────────────────────────────────────────────────────────
+#
+# ONE workflow text, ONE variable. The three ref filters differ in a single key
+# and in nothing else, which is what makes the tag-only fixture's GREEN and the
+# branch-only fixture's RED comparable evidence: they show the skip is keyed on
+# the ref filter, not on some incidental difference between two files. A fixture
+# per branch that also varied the job name or the step shape would prove only
+# that two unlike files behave unlike.
+#
+# These are strings, never files. See `check()`'s `extra_workflows` for why.
+TAG_ONLY_PUSH = "    tags:\n      - 'v*'\n"
+BRANCH_ONLY_PUSH = "    branches: [main]\n"
+BRANCH_AND_TAG_PUSH = "    branches: [main]\n    tags: ['v*']\n"
+
+
+def fixture_workflow(ref_filter: str, job_name: str = "release-build", extra: str = "") -> str:
+    """A minimal well-formed workflow: an `on: push:` with `ref_filter`, one named job."""
+    return (
+        "name: release-fixture\n"
+        "\n"
+        "on:\n"
+        "  push:\n" + ref_filter + extra +
+        "\n"
+        "jobs:\n"
+        "  release-build:\n"
+        f"    name: {job_name}\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: echo release\n"
+    )
+
+
 # ── Self-test ───────────────────────────────────────────────────────────────
 
 def self_test(root: Path) -> int:
@@ -949,10 +1127,10 @@ def self_test(root: Path) -> int:
             print(f"    ::error:: control is RED [{rule}]: {message}")
         return 1
 
-    def arm(label: str, want: str, docs_only: list[str] | None = None,
-            mutate: tuple[str, str, str] | None = None) -> None:
-        """`mutate` = (repo-relative file, old, new), applied and reverted."""
-        nonlocal ok
+    def _run(label: str, docs_only: list[str] | None,
+             mutate: tuple[str, str, str] | None,
+             extra_workflows: dict[str, str] | None) -> Failures | None:
+        """Apply the fault, run `check()` in-process, revert. `None` = did not apply."""
         target = original = None
         if mutate:
             rel, old, new = mutate
@@ -960,14 +1138,28 @@ def self_test(root: Path) -> int:
             original = target.read_text(encoding="utf-8")
             if old not in original:
                 print(f"    ::error:: self-test fault {label!r} did not apply: {old!r} absent from {rel}")
-                ok = False
-                return
+                return None
             target.write_text(original.replace(old, new, 1), encoding="utf-8")
         try:
-            found = check(root, docs_only)
+            return check(root, docs_only, extra_workflows)
         finally:
             if target is not None and original is not None:
                 target.write_text(original, encoding="utf-8")
+
+    def arm(label: str, want: str, docs_only: list[str] | None = None,
+            mutate: tuple[str, str, str] | None = None,
+            extra_workflows: dict[str, str] | None = None) -> None:
+        """`mutate` = (repo-relative file, old, new), applied and reverted.
+
+        `extra_workflows` plants a workflow that never touches the disk — the
+        only way to exercise R7, since a tag-triggered workflow written into
+        `.github/workflows/` would be a workflow GitHub really runs.
+        """
+        nonlocal ok
+        found = _run(label, docs_only, mutate, extra_workflows)
+        if found is None:
+            ok = False
+            return
         got = found.rules()
         verdict = "RED" if want in got else "GREEN"
         print(f"  planted fault: {label:52s} -> {verdict} {sorted(got)}")
@@ -977,6 +1169,30 @@ def self_test(root: Path) -> int:
                 f"(rules that did: {sorted(got) or 'none'}). The check cannot see this "
                 f"fault, so its green says nothing about this class."
             )
+            ok = False
+
+    def stays_green(label: str, extra_workflows: dict[str, str] | None = None,
+                    mutate: tuple[str, str, str] | None = None) -> None:
+        """The other polarity: a shape that MUST NOT red, asserted to ZERO findings.
+
+        A green arm proves nothing on its own — this file's own header says a
+        check that cannot fail is the defect. It earns its keep only PAIRED: the
+        `stays_green` tag-only fixture and the `arm(..., "R3")` branch-only and
+        `both` fixtures below are the SAME workflow text differing in one key, so
+        the pair shows the skip is keyed on the ref filter and nothing else.
+        `== set()` rather than `"R3" not in got` deliberately: a fixture that
+        reds for some unrelated reason is a broken fixture, not a pass.
+        """
+        nonlocal ok
+        found = _run(label, None, mutate, extra_workflows)
+        if found is None:
+            ok = False
+            return
+        got = found.rules()
+        print(f"  must stay green: {label:52s} -> {'GREEN' if not got else 'RED'} {sorted(got)}")
+        if got:
+            for rule, message in found.items:
+                print(f"    ::error:: {label!r} must not red, but [{rule}] fired: {message}")
             ok = False
 
     # R4a — the fault this file exists for: exclude a path that ci.yml reads.
@@ -1047,6 +1263,92 @@ def self_test(root: Path) -> int:
     arm("a FOLLOW_EDGES entry whose reference is gone", "R4e",
         mutate=("scripts/cross-check.sh", "scripts/crosscheck-provenance.py",
                 "scripts/crosscheck-gone.py"))
+
+    # ── R7 / the ref axis ──────────────────────────────────────────────────
+    #
+    # No workflow in this tree is tag-triggered today, measured 2026-08-27, so
+    # every arm below runs against an in-memory fixture. That is not a weakness
+    # of the arms — it is the reason they had to land BEFORE Q31's release
+    # workflow rather than with it: on the day the first `on: push: tags:`
+    # arrives, the check must already know what it is looking at.
+    #
+    # Level 1: the classifier itself, over EVERY branch of its range.
+    scope_cases: list[tuple[str, str, str]] = [
+        ("block-sequence tags",  "on:\n  push:\n    tags:\n      - 'v*'\n", "tags"),
+        ("inline-flow tags",     "on:\n  push:\n    tags: ['v*', 'v*.*.*']\n", "tags"),
+        ("tags-ignore only",     "on:\n  push:\n    tags-ignore: ['v0.*']\n", "tags"),
+        ("inline-flow branches", "on:\n  push:\n    branches: [main]\n", "branches"),
+        ("branches-ignore only", "on:\n  push:\n    branches-ignore:\n      - gh-pages\n", "branches"),
+        ("branches AND tags",    "on:\n  push:\n    branches: [main]\n    tags: ['v*']\n", "both"),
+        ("bare push, no refs",   "on:\n  push:\n  pull_request:\n", "both"),
+        ("no push trigger",      "on:\n  workflow_dispatch:\n", "absent"),
+    ]
+    for label, text, want_scope in scope_cases:
+        got_scope = push_ref_scope(parse_triggers(text))
+        print(f"  ref-scope: {label:54s} -> {got_scope} (want {want_scope})")
+        if got_scope != want_scope:
+            print(
+                f"    ::error:: push_ref_scope classified {label!r} as {got_scope!r}, want "
+                f"{want_scope!r}. R3's skip and R6's witness test both key on this value, "
+                f"so a mis-classification silently moves a workflow's jobs in or out of the "
+                f"required-context set."
+            )
+            ok = False
+    # ...and the coverage assertion, so a deleted row reds instead of quietly
+    # shrinking the table. A fixture table is only as honest as its census.
+    covered = {want for _, _, want in scope_cases}
+    if covered != set(SCOPE_RANGE):
+        print(
+            f"    ::error:: the ref-scope table covers {sorted(covered)} but "
+            f"push_ref_scope's range is {sorted(SCOPE_RANGE)}. The uncovered branch(es) "
+            f"{sorted(set(SCOPE_RANGE) - covered)} decide whether a workflow's jobs are "
+            f"required contexts and are asserted by nothing."
+        )
+        ok = False
+    # ...and the REFUSALS, because a parser that guesses at a shape it does not
+    # model is how a tag filter gets read as no filter at all.
+    for label, text in [
+        ("a nested inline collection", "on:\n  push:\n    branches: [[main]]\n"),
+        ("an unterminated inline sequence", "on:\n  push:\n    tags: ['v*'\n"),
+        ("a YAML anchor where a sequence belongs", "on:\n  push:\n    branches: &refs\n"),
+    ]:
+        try:
+            parse_triggers(text)
+        except ValueError:
+            print(f"  refused:   {label:54s} -> ValueError")
+        else:
+            print(
+                f"    ::error:: parse_triggers ACCEPTED {label!r}. It must refuse a shape it "
+                f"does not model; accepting one yields empty filter lists, which "
+                f"push_ref_scope reads as `both` — the permissive answer, arrived at by "
+                f"accident."
+            )
+            ok = False
+
+    # Level 2: the rules, over the three ref filters. The GREEN arm and the two
+    # RED arms are the same fixture text with one key changed.
+    stays_green("a TAG-ONLY workflow's unregistered job",
+                extra_workflows={"release-fixture.yml": fixture_workflow(TAG_ONLY_PUSH)})
+    arm("the SAME job on a BRANCH-ONLY push is still unregistered", "R3",
+        extra_workflows={"release-fixture.yml": fixture_workflow(BRANCH_ONLY_PUSH)})
+    arm("the SAME job on a branches-AND-tags push is still unregistered", "R3",
+        extra_workflows={"release-fixture.yml": fixture_workflow(BRANCH_AND_TAG_PUSH)})
+    # R7's first clause: the skip is not a licence to squat on a required name.
+    arm("a tag-only workflow squats on a required context name", "R7",
+        extra_workflows={"release-fixture.yml": fixture_workflow(TAG_ONLY_PUSH, job_name="test")})
+    # R7's second clause: path filter plus tag filter is REFUSED, not modelled.
+    arm("a tag-only workflow also carries a path filter", "R7",
+        extra_workflows={"release-fixture.yml": fixture_workflow(
+            TAG_ONLY_PUSH, extra="    paths-ignore:\n      - TODO.md\n")})
+    # R6: a tag-only workflow cannot witness a docs push, however unfiltered.
+    # Without the scope test in R6 this fixture SATISFIES the rule and the arm
+    # goes green — a required checker replaced by one that never runs on a push
+    # to main, which is precisely the silent direction this file exists to stop.
+    arm("a tag-only workflow offered as the unfiltered-push witness", "R6",
+        mutate=(".github/workflows/ci-always.yml", "    name: traceability",
+                "    name: traceability-moved"),
+        extra_workflows={"release-fixture.yml": fixture_workflow(
+            TAG_ONLY_PUSH, job_name="traceability")})
     return 0 if ok else 1
 
 
@@ -1087,12 +1389,20 @@ def main(argv: list[str]) -> int:
     excluded = [f for f in files if matches_any(f, DOCS_ONLY)]
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     readers = reader_set(REPO, ci, files)
+    # The ref-axis census is PRINTED, not merely computed. `0 tag-only` is the
+    # answer today and it is the interesting one: R7 is live and guarding an
+    # empty set, so the day the count moves the log says so rather than the
+    # rule appearing from nowhere.
+    scopes = [push_ref_scope(parse_triggers(read_cached(w))) for w in workflows(REPO)]
     print(
         f"check-ci-paths: {len(excluded)} of {len(files)} tracked file(s) are excluded from "
         f"ci.yml's push trigger by {len(DOCS_ONLY)} pattern(s); none is read by any of the "
         f"{len(readers)} file(s) ci.yml runs, {len(REQUIRED_CONTEXTS)} required contexts are "
         f"each produced exactly once on pull_request, and {len(GREP_SURFACES)} registered grep "
-        f"surface(s) still match nothing excluded"
+        f"surface(s) still match nothing excluded; of {len(scopes)} workflow(s) "
+        f"{scopes.count('tags')} push on tags only (exempt from the required-context sets by "
+        f"R3, held to R7), {scopes.count('branches')} on branches only, "
+        f"{scopes.count('both')} on both refs and {scopes.count('absent')} do not push"
     )
     return 0
 

@@ -110,7 +110,7 @@ wasm-bindgen = { workspace = true }
 # cannot use dev-dependencies and a `required-features` bin would make this
 # crate declare a feature — which D18 §5 R3 forbids outright.
 [dev-dependencies]
-antseal-core = { workspace = true, features = ["test-vectors"] }
+antseal-core = { path = "../antseal-core", features = ["test-vectors"] }
 
 [lints]
 workspace = true

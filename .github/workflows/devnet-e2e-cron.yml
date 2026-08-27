@@ -129,7 +129,7 @@ jobs:
       # BEFORE the capture on purpose: a filter proven after the fact is
       # proven too late. This is the same two-step shape ci.yml already uses
       # for the cross-check's `--self-test` and `--check` halves.
-      - name: Self-test — prove the registry rules, the redaction filter and the artifact scan can go red
+      - name: Self-test — prove the registry rules, the redaction filter, the single capture path and the artifact scan can go red
         run: ./scripts/e2e-devnet.sh --self-test
 
       # The same script bytes AND, since Q243, the same INVOCATION the local
@@ -230,12 +230,26 @@ jobs:
       # knob, and why the Q243 lane returned it to planning rather than
       # picking a number.
       #
-      # WHAT THIS SETTING CANNOT REACH, measured by D145 §1: six of the eight
-      # evidence files are written through `tee` and are duplicated VERBATIM
-      # into the job log, which has its own retention and which no gate here
-      # can refuse. This setting therefore governs 525 954 of 620 748 B. The
-      # remainder leaves through the log; fixing it at the write (`| redact |
-      # tee`) rather than at the upload is Q256.
+      # WHAT THIS SETTING COULD NOT REACH, and no longer has to.
+      # **[CORRECTED 2026-08-27, wave 31 — the paragraph below described an
+      # unfixed state for five days after Q256 fixed it, in the present tense
+      # and naming its own fix as future work. Both halves were false.]**
+      # As measured by D145 §1 this once read: six of the eight evidence files
+      # are written through `tee` and duplicated VERBATIM into the job log,
+      # which has its own retention and which no gate here can refuse, so this
+      # setting governs only 525 954 of 620 748 B — with the remainder leaving
+      # through the log, and fixing it at the write rather than at the upload
+      # left to Q256.
+      #
+      # Q256 LANDED that fix on 2026-08-22. `capture_through() { redact -u |
+      # tee "$1"; }` (`scripts/e2e-devnet.sh:140`) redacts at the WRITE, and
+      # both capture sites go through it (`:349` local-up, `:366` each suite).
+      # The log leg is redacted by the same single code path as the file leg,
+      # so no evidence file reaches the job log unredacted and this setting's
+      # reach is no longer the question it was. `--self-test` holds that
+      # property closed: it asserts `capture_through()` is defined exactly
+      # once and that no capture forks to the job log outside it, so a future
+      # capture that bypasses the filter reds rather than leaking quietly.
       #
       # `always()`, not `failure()`: on failure this is the node + Anvil log
       # capture Q15's Accept requires, and on success it is the runtime

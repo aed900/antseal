@@ -79,6 +79,16 @@ COPY_SCAN: tuple[str, ...] = (
     # that makes cryptographic claims — and its scope section restates what a
     # seal does and does not prove, which is exactly what P1-P3 police.
     "SECURITY.md",
+    # The success-metric plan and its tracking artifact (Q35). A LITERAL entry
+    # under D123's rule, and PRODUCT rather than ENG on a measured argument:
+    # this file specifies the outreach text a stranger reads, and D73 §4 R6.1
+    # makes the no-receipt instruction "part of the recruitment text, not a
+    # footnote". Q264's next act is drafting the actual message into it, at
+    # which point an ENG classification would mean no lint reads the one page
+    # whose whole purpose is copy aimed at people who have never seen antseal.
+    # That is D123's defect exactly — a scan blind to the file a row authors.
+    # Measured at admission (wave 31): corpus 29 -> 30 files, zero new findings.
+    "docs/success-metric.md",
     GUIDE,
     "verifier-web/",
     # Q30's release-signing set (D71). A DIRECTORY entry for the same reason
@@ -115,6 +125,13 @@ COPY_SUFFIXES = frozenset({".md", ".html", ".htm", ".txt", ".js", ".css"})
 DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     # --- depth-1 pages ---
     "positioning-copy-style.md": ("PRODUCT", "this guide; scanned as a literal COPY_SCAN entry"),
+    "success-metric.md": (
+        "PRODUCT",
+        "Q35's success-metric plan and tracking artifact; scanned as a literal COPY_SCAN entry. "
+        "PRODUCT because it specifies recruitment copy a stranger reads, not because it makes a "
+        "claim about a seal - see the COPY_SCAN comment for the measured argument and for why "
+        "ENG would reinstate D123's defect the moment Q264 drafts the outreach message into it",
+    ),
     "ci-verification.md": ("ENG", "CI runbook for contributors; no product claim"),
     "config.md": ("ENG", "config-file reference; describes keys, makes no claim about a seal"),
     "dependency-policy.md": ("ENG", "supply-chain policy for contributors"),

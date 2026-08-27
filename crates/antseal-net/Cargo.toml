@@ -114,12 +114,12 @@ url = { workspace = true, optional = true }
 # targets (unit + integration) while leaving the default/normal graph
 # untouched — the same edge antseal-core carries for the same reason.
 [dev-dependencies]
-antseal-net = { workspace = true, features = ["test-util"] }
+antseal-net = { path = ".", features = ["test-util"] }
 # House test-support surface (fixture-secret convention): the devnet env
 # fixture's wallet key and the wallet-import fixtures derive via
 # `alternate_test_secret`, never a fresh committed key-shaped literal
 # (testdata/README.md; project rule 6).
-antseal-core = { workspace = true, features = ["test-util"] }
+antseal-core = { path = "../antseal-core", features = ["test-util"] }
 # S6's recorded tokio decision (the workspace tokio entry defers it here):
 # the adapter LIBRARY takes NO tokio edge — its futures run on the caller's
 # runtime (`antseal-cli` brings tokio at U1) and it schedules no timers or
