@@ -415,7 +415,19 @@ fn vector_runner_still_fails_on_pycache_directly_under_vectors() {
 ///
 /// `*wallet*.json` is excluded twice over: it ends in `.json`, and the
 /// ignorable arm runs AFTER the `*.json` arm (D116 R7), so this walk sees a
-/// vector regardless of what this list says.
+/// vector regardless of what this list says. `credentials.json` and
+/// `*credentials*.json` (below) are excluded twice over for the same reason.
+///
+/// **Q263 (wave 30) added the second block.** `.gitignore`'s deny-by-default
+/// rule was measured to be undelivered — 5 of 7 secret-shaped probes were not
+/// ignored — and closing that hole widened the file by four families. Every
+/// one of them lands on the DANGEROUS side of the line drawn above, so every
+/// one is registered here rather than in `IGNORED_*`: a dotenv file, an SSH
+/// private key, a credential store or a PKCS#12 bundle appearing inside the
+/// frozen vector tree is precisely the event that must stop the build, not one
+/// the walk should step over. This registration is what the guard exists to
+/// force — the pattern list and the vector walk are two rules about whether a
+/// file is expected, and Q140 is what happens when they disagree silently.
 const GITIGNORE_PATTERNS_DELIBERATELY_FATAL: &[&str] = &[
     "*.key",
     "*.pem",
@@ -425,6 +437,36 @@ const GITIGNORE_PATTERNS_DELIBERATELY_FATAL: &[&str] = &[
     "devnet-data/",
     "*.devnet/",
     ".devnet/",
+    // Q263 / D161 §2 R9 — dotenv.
+    ".env",
+    ".env.*",
+    "*.env",
+    // Q263 — SSH private-key basenames and the `<name>_<algo>` deploy-key form.
+    // `.pub` is deliberately absent from `.gitignore` (D71 §2 R5 publishes a
+    // minisign public key), so no public-key pattern appears here either.
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ecdsa_sk",
+    "id_ed25519",
+    "id_ed25519_sk",
+    "*_rsa",
+    "*_dsa",
+    "*_ecdsa",
+    "*_ecdsa_sk",
+    "*_ed25519",
+    "*_ed25519_sk",
+    ".ssh/",
+    // Q263 — credential stores.
+    "credentials.json",
+    "*credentials*.json",
+    ".netrc",
+    "_netrc",
+    ".git-credentials",
+    // Q263 — key/certificate bundles.
+    "*.p12",
+    "*.pfx",
+    "*.ppk",
 ];
 
 /// Expand a gitignore character class (`*.py[cod]` → `*.pyc`, `*.pyo`,

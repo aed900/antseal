@@ -36,6 +36,71 @@ wallets/
 *wallet*.json
 .secrets/
 
+# ── Deny-by-default for the secret-shaped NAME families (Q263 / D161 §2 R9) ─
+# The header rule above is the whole of the `private` class's enforcement:
+# D161 §2 R2 adopts THIS FILE by reference as that class's register, so a
+# family the patterns miss is a family nothing protects. Measured 2026-08-22
+# with `git check-ignore -q` on names that create no files: `.env`,
+# `.env.local`, `secrets.env`, `id_rsa` and `credentials.json` were NOT
+# ignored — five of seven probes — while `foo.key` and `.secrets/a` were.
+#
+# THE BOUNDARY, so this block can be widened without swallowing the project:
+# a name is denied here when the NAME ALONE means the content is credential
+# material. `.env` qualifies. `.envrc` and `.npmrc` do NOT and are refused
+# here on purpose — they are config files that MAY carry a token, and a token
+# inside a file that is legitimately committed is `secret-guard`'s subject
+# (Q2), which scans CONTENT over what is already staged. The two lines are
+# complementary and neither substitutes for the other: this one stops the
+# file being addable, that one stops a body slipping through a file that is.
+#
+# Patterns another pattern already covers are STATED ANYWAY, per the rule at
+# `.devnet/` above — deny-by-default patterns are explicit, never inferred.
+# Nothing here shadows a tracked path: `git ls-files -i -c --exclude-standard`
+# measured 0 before this block and 0 after, so this is a PRESERVED invariant,
+# not a repair. `scripts/ci-lanes.sh secret-guard` re-probes every family on
+# every run and requires each verdict to come from THIS file, not from a
+# developer's `.git/info/exclude` or a global excludes file.
+
+# Environment files — the conventional home of API keys and RPC secrets.
+.env
+.env.*
+*.env
+
+# OpenSSH private keys: the basenames `ssh-keygen` writes, and the
+# `<name>_<algo>` form a per-host or deploy key takes. The PUBLIC halves keep
+# their `.pub` suffix and stay trackable ON PURPOSE — D71 §2 R5 publishes a
+# minisign public key into this repository, and a rule that ate `.pub` would
+# block the release act it exists to protect.
+id_rsa
+id_dsa
+id_ecdsa
+id_ecdsa_sk
+id_ed25519
+id_ed25519_sk
+*_rsa
+*_dsa
+*_ecdsa
+*_ecdsa_sk
+*_ed25519
+*_ed25519_sk
+.ssh/
+
+# Credential files whose NAME is the declaration: cloud/service-account JSON,
+# the netrc pair, and git's own credential store — which holds
+# `https://user:token@host` in cleartext.
+credentials.json
+*credentials*.json
+.netrc
+_netrc
+.git-credentials
+
+# Key and certificate containers. `*.key` and `*.pem` above cover the PEM
+# flavours; these are the binary (PKCS#12) and PuTTY ones a TLS or EVM tool
+# can emit.
+*.p12
+*.pfx
+*.ppk
+
 # Python bytecode. The repo carries dev tooling in scripts/ and
 # testdata/vectors/v1/ (the cross-check checkers, the generators), and a
 # `python3 scripts/…` run or an importlib load drops __pycache__ beside it.

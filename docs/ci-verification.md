@@ -3079,36 +3079,182 @@ actions. Verify by running the command, never by quoting the row — and note
 that `^\s*uses:` alone silently misses every `- uses:` step, which is a check
 that cannot fail rather than a passing one.
 
-### A6 — BEFORE, and it is a branch. Read the README's minisign anchor back
+### A6 — BEFORE, and it is a branch. Read every signing-key anchor back
 
-**[D153 §2 R8, 2026-08-19.]** The publishing act and the key-publishing act are
-owned by different rows, and only one of them knows about the DNS pin. This
-step exists so the flip cannot become a key's first publication by accident.
+**[D153 §2 R8, 2026-08-19. WIDENED 2026-08-22 by `Q262`.]** The publishing act
+and the key-publishing act are owned by different rows, and only one of them
+knows about the DNS pin. This step exists so the flip cannot become a key's
+first publication by accident.
+
+**Until 2026-08-22 this step read `README.md` and nothing else, and it was
+complete only by accident.** The verifier page footer had no key element and no
+marker pair, so the README was the only place in the tree a key could sit.
+`R96` closed that gap — `verifier-web/index.template.html:172-175` now carries
+the *same* `minisign-public-key` marker pair — and the footer is the sharper of
+the two locations, because the page is **already live and public** at
+`https://antseal.org/` while this repository is private. A step that greps one
+file misses it. `Q262` owns the widening, and it is a hazard `R96` created
+rather than one it found lying there.
+
+#### A6.1 — derive the location list, never transcribe it
+
+`docs/signing/maintainer-key-procedure.md` §5 owns the list of publication
+locations and is the only thing that owns it. **Read the list out of §5.** A
+fourth location added there must be covered without a second edit to this file,
+and a list copied into this chapter would agree on the day it was copied and
+drift afterwards — which is the defect this step is a widening of.
 
 ```bash
-sed -n '/BEGIN minisign-public-key/,/END minisign-public-key/p' README.md
+a6_locations() {
+  awk '/^## 5\. Publish the key/,/^## 6\./' \
+      docs/signing/maintainer-key-procedure.md |
+    grep -oE '`[^`]+`' | tr -d '`' | sort -u |
+    while read -r t; do
+      for p in "$t" "docs/signing/$t"; do
+        [ -f "$p" ] && { printf '%s\n' "$p"; break; }
+      done
+    done | sort -u
+}
+a6_locations | tee /tmp/a6-locations
 ```
 
-**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, `README.md:50-54`:
+Every backticked token in §5, resolved against the repository root and against
+§5's own directory (`docs/signing/`, for the relative links it writes), kept
+if it names a file that exists.
+
+**[OBSERVED 2026-08-22]** — `REAL_EXIT=0`, **7** paths:
 
 ```
+crates/antseal-wasm/tests/page_template.rs
+docs/ci-verification.md
+docs/signing/key-custody.md
+docs/signing/verifying-a-release.md
+README.md
+scripts/pages-publish.sh
+verifier-web/index.template.html
+```
+
+**It is a superset of §5's three numbered items, and the superset is the safe
+direction.** `minisign.pub` and `minisign.pub.ots` are named by §5 item 3 and
+are **not** in the list: they are release assets, not tree-resident, so `[ -f ]`
+drops them and A6 — a check on the tree — has nothing to read. Four files §5
+mentions only in prose stay in, and this is deliberate rather than tolerated:
+checking them costs nothing and a key pasted into `verifying-a-release.md`,
+which §5 itself calls *"the one page a stranger actually follows"*, is exactly
+the miss this step exists to prevent. **Narrowing to the numbered items was
+refused on measurement**: §5 puts the footer's *file name* in the prose bullet
+at `:221-238`, not in item 2, which names the footer by URL. A parser that kept
+only the numbered items would drop `verifier-web/index.template.html` — the one
+location `Q262` was minted for.
+
+**This chapter is inside its own scanned set.** `docs/ci-verification.md`
+appears above because §5's hazard bullet names it. So A6 may quote the markers
+— it does, below — but **must never quote a literal key**, or A6.3 goes red on
+its own runbook. That is a constraint on this file, stated here because nothing
+else will state it.
+
+**Prove the derivation non-empty before scanning anything.** A `grep` invoked
+with no file operands reads standard input and hangs, and a derivation that
+silently returned nothing would turn A6.2 and A6.3 into checks that cannot
+fail. The floor is asserted first, and it names the two locations `Q262`
+requires by name:
+
+```bash
+grep -qx 'README.md' /tmp/a6-locations &&
+grep -qx 'verifier-web/index.template.html' /tmp/a6-locations &&
+[ "$(wc -l < /tmp/a6-locations)" -ge 2 ]
+echo $? > /tmp/a6-floor ; cat /tmp/a6-floor
+```
+
+**[OBSERVED 2026-08-22]** — `0`. **Proved able to fail**: with §5's heading
+pattern altered to one that matches nothing, `a6_locations` printed **0** paths
+and the floor read `1`.
+
+#### A6.2 — is there a key between any anchor's markers?
+
+Threshold and character set are **taken from `R96`'s own detector**
+(`crates/antseal-wasm/tests/page_template.rs`, `longest_base64_run` ≥ 40 over
+`[A-Za-z0-9+/=]`) rather than chosen here, so the two cannot drift into
+disagreeing about what a key looks like. Forty is a margin below the 56 a
+minisign public key actually is; measured 2026-08-22, the longest base64-ish
+run inside any live anchor is **23** characters, so there are 17 characters of
+headroom and no false red available.
+
+```bash
+a6_anchor_scan() {
+  local rc=1 f n
+  while read -r f; do
+    grep -q 'BEGIN minisign-public-key' "$f" || continue
+    n=$(sed -n '/BEGIN minisign-public-key/,/END minisign-public-key/p' "$f" |
+          grep -cE '[A-Za-z0-9+/=]{40}')
+    if [ "$n" != 0 ]; then
+      printf 'KEY IN ANCHOR: %s carries a key-shaped run between its minisign-public-key markers\n' "$f"
+      rc=0
+    fi
+  done < /tmp/a6-locations
+  return $rc
+}
+a6_anchor_scan ; echo $? > /tmp/a6-anchor ; cat /tmp/a6-anchor
+```
+
+**`1` is the pass and `0` is the finding**, matching `grep`'s convention rather
+than this chapter's; the inversion is stated because every other `REAL_EXIT=`
+here reads the other way. **[OBSERVED 2026-08-22]** — `1`, and the anchors read
+back:
+
+```
+README.md
 <!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 1) -->
 No key is published here yet. The 56-character public key goes between these
 two markers when it is published, alongside a pointer to
 [checking a download](docs/signing/verifying-a-release.md).
 <!-- END minisign-public-key -->
+
+verifier-web/index.template.html
+<!-- BEGIN minisign-public-key (docs/signing/maintainer-key-procedure.md §5 step 2) -->
+No signing key is published here yet. The 56-character minisign public key
+goes between these two markers when it is published.
+<!-- END minisign-public-key -->
 ```
 
-Then branch on what came back:
+Four of the seven locations carry a marker pair — those two, plus this file and
+`page_template.rs`, which quote them. **A location with no marker pair is not a
+failure**: `key-custody.md`, `verifying-a-release.md` and `pages-publish.sh`
+have none and are not supposed to, which is why A6.3 exists.
 
-- **The anchor carries no key** — its state on 2026-08-19, observed above.
+#### A6.3 — is there a key anywhere else in those files?
+
+A6.2 can only see between markers. A key pasted into a location that has no
+markers — `verifying-a-release.md`'s three placeholders are the live example —
+is invisible to it.
+
+```bash
+grep -nHE 'RW[A-Za-z0-9+/]{54}' $(cat /tmp/a6-locations)
+echo $? > /tmp/a6-outside ; cat /tmp/a6-outside
+```
+
+**[OBSERVED 2026-08-22]** — no output, `1`. Again `1` is the pass.
+
+**Why this arm is prefix-anchored where A6.2 is not.** Every minisign public
+key is base64 over a 42-byte blob whose first two bytes are the algorithm
+identifier, so every one of them begins `RW`; 56 characters total. Outside the
+markers these files are full of 64-character hex digests, and each of those
+contains a 56-character alphanumeric run — measured 2026-08-22, the unprefixed
+pattern reports **5** hits in this file alone, all of them build digests. An
+unprefixed whole-file arm is not a check, it is noise. The cost is stated
+rather than hidden: **A6.3 would miss a key written without its `RW` prefix**,
+which no real minisign key is.
+
+#### Then branch on what came back
+
+- **No anchor carries a key** — the state on 2026-08-22, observed above.
   **Record the read-back and proceed.** The flip publishes no key material and
   D71 §A R4's precondition does not fire.
-- **The anchor carries a 56-character key** — then **the flip is that key's
-  first publication**, and D71 §A R4 applies to *this* step: the pin's clock
-  starts the moment the key is first published, it cannot be retrofitted, and
-  without it the scheme's security at first contact reduces to trusting GitHub.
-  The TXT record must resolve **first**:
+- **Any anchor carries a key** — then **the flip is that key's first
+  publication**, and D71 §A R4 applies to *this* step: the pin's clock starts
+  the moment the key is first published, it cannot be retrofitted, and without
+  it the scheme's security at first contact reduces to trusting GitHub. The
+  TXT record must resolve **first**:
 
   ```bash
   dig +short TXT antseal.org
@@ -3128,8 +3274,36 @@ Then branch on what came back:
 
 **This is not a contradiction with D71 §A R5**, which deliberately release-times
 the TXT pin and the OTS anchor. Nothing here asks for them early. It asks that
-*if* the anchor already carries a key when the flip is taken, the pin precedes
+*if* an anchor already carries a key when the flip is taken, the pin precedes
 the publication — which is the same ruling read in the other direction.
+
+#### What A6 does not cover, and where the rest of it lives
+
+**A6 is a check on the repository, run once, before one act.** It does not see
+the built page. `target/verifier-web/index.html` is what a stranger loads, it
+is never committed (D131 §5 R4), and `pages.yml` deploys it on its own schedule
+to a URL that is already public — so a key in the footer reaches the world
+through a path this step never runs on. That is `Q262`'s second half and it is
+built where it belongs, in the publishing script itself:
+
+```bash
+./scripts/pages-publish.sh --check-key-anchor
+```
+
+`--build` runs it over the artifact it just produced, before anything is
+staged. Its scope is the built `<p id="signing-key">` element and **not** the
+whole page: measured 2026-08-22, the 2 542 496-byte artifact embeds the wasm
+module as one base64 string, in which `RW[A-Za-z0-9+/]{54}` matches **138**
+times by chance and the unprefixed 56-run matches **44 474** times. A
+whole-page scan is unusable in either form, and the element is 8 lines.
+
+Three further limits, stated so no reader assumes otherwise. A6 does not check
+that a key which *is* published is the **right** key — no arm here compares an
+anchor against `minisign.pub` or against the pin's value. It does not read the
+**live** site, only the tree. And a location added to §5 in a form that is not
+a backticked path — a bare URL, say — is derived by nothing and covered by
+nothing; §5 item 2 is already that shape and is reached only because the prose
+bullet beneath it names the file.
 
 ### A7 — BEFORE. D61 §9 is re-read, and the re-read is written down
 

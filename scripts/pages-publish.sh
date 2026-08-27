@@ -147,9 +147,93 @@ cmd_verify() {
   return $rc
 }
 
+# ── THE PAGE'S OWN KEY-PUBLICATION GUARD (Q262) ────────────────────────────
+#
+#   ./scripts/pages-publish.sh --check-key-anchor [file]  read the built page's signing-key anchor back
+#
+# `docs/ci-verification.md` step A6 is the other half of this, and it runs ONCE,
+# over the REPOSITORY, before Q65's flip. The page does not go out through the
+# flip: `pages.yml` deploys `target/verifier-web/index.html` on its own
+# schedule, to a URL that is ALREADY PUBLIC while the repository is private. So
+# a key written into the footer (`maintainer-key-procedure.md` §5 step 2)
+# reaches the world through THIS script and A6 never sees it — and D71 §A R4
+# makes first publication the event that starts the DNS TXT pin's clock, so
+# that route would start it silently. This is that route's own guard, and it is
+# why the disposition `Q262` asked for is "yes, it gains one".
+#
+# IT IS A PRECONDITION, NOT A PROHIBITION. §5 step 2 is a legitimate act, and a
+# guard that refused a key outright would go red on the very act it exists to
+# serve — the shape `R96` refused for the template's two-state test. So: no
+# key, nothing to check; a key, and the pin must already resolve. Nothing here
+# takes a maintainer act and nothing here publishes.
+#
+# IT READS THE BUILT ARTIFACT, NEVER THE TEMPLATE. D62 §3 R2's named hazard is
+# that the bytes checked and the bytes served can differ; `index.template.html`
+# is the source and `index.html` is what a stranger loads.
+#
+# ITS SCOPE IS THE `signing-key` ELEMENT, and that is MEASURED, not chosen. The
+# artifact embeds the wasm module as one base64 string: over the 2 542 496-byte
+# page of 2026-08-22, `RW[A-Za-z0-9+/]{54}` matches 138 times by chance and an
+# unprefixed 56-character run matches 44 474 times. A whole-page scan is not a
+# check, it is noise. The element is 8 lines.
+check_key_anchor() {
+  local page="${1:-${OUT}/index.html}" begins ends block run pin
+
+  # An `&&`/`||` pair here would fire `die` on any non-zero from `note`; the
+  # explicit form is the one that cannot be read two ways.
+  if [ ! -f "$page" ]; then
+    die "no built page at ${page} — run --build first. This guard reads the ARTIFACT, never verifier-web/index.template.html"
+  fi
+  note "read the signing-key anchor back (Q262): ${page}"
+
+  # The anchor must BE there before its contents mean anything. A page built
+  # from a template whose marker pair had been dropped would give the scan
+  # below nothing to read, and it would report green having read no bytes.
+  begins="$(grep -c 'BEGIN minisign-public-key' "$page")"
+  ends="$(grep -c 'END minisign-public-key' "$page")"
+  if [ "$begins" != "1" ] || [ "$ends" != "1" ]; then
+    die "${page}: the signing-key anchor is NOT READABLE — ${begins} BEGIN and ${ends} END minisign-public-key marker(s), expected one of each. This guard would have scanned nothing and reported green (maintainer-key-procedure.md §5 step 2; crates/antseal-wasm/tests/page_template.rs pins the pair in the template)"
+  fi
+
+  block="$(awk '/<p id="signing-key">/,/<\/p>/' "$page")"
+  [ -n "$block" ] ||
+    die "${page}: no <p id=\"signing-key\"> element, so the markers are somewhere this guard does not scan — R96 put them inside that element and this guard follows it"
+
+  # Threshold and character set are R96's own detector
+  # (crates/antseal-wasm/tests/page_template.rs, `longest_base64_run` >= 40
+  # over [A-Za-z0-9+/=]), not a second opinion about what a key looks like.
+  run="$(printf '%s\n' "$block" | grep -oE '[A-Za-z0-9+/=]{40,}' | head -1)"
+
+  if [ -z "$run" ]; then
+    note "no signing key on this page — the element carries the placeholder, so D71 §A R4 does not fire"
+    return 0
+  fi
+
+  note "THIS DEPLOY PUBLISHES A SIGNING KEY: ${page}, inside <p id=\"signing-key\">, run ${run}"
+
+  command -v dig >/dev/null ||
+    die "${page} publishes a signing key and \`dig\` is not available to read the DNS pin. D71 §A R4: the TXT pin's clock starts at first publication and cannot be retrofitted, so this fails CLOSED rather than publishing unpinned"
+
+  pin="$(dig +short TXT antseal.org 2>/dev/null | grep 'antseal-minisign-key=')"
+  [ -n "$pin" ] ||
+    die "${page} publishes a signing key and antseal.org serves no antseal-minisign-key= TXT record. D71 §A R4: the pin precedes the FIRST publication (maintainer-key-procedure.md §2, then §5). Publish the pin, then re-run"
+
+  case "$pin" in
+    *"$run"*) note "the TXT pin carries this key — D71 §A R4 satisfied: ${pin}" ;;
+    *) die "${page} publishes ${run} but antseal.org's TXT record pins a DIFFERENT value: ${pin}. One of the two is wrong and a deploy is not where that gets decided" ;;
+  esac
+}
+
+# `--build` runs the guard over the artifact it just produced, from HERE rather
+# than from inside `cmd_build`: `pages.yml` invokes this script as one step, so
+# a red still ends the job before `configure-pages` with nothing uploaded, and
+# `cmd_build`'s line numbering — cited by docs/threat-model.md and D71 — does
+# not move. `--help` derives its usage list from every `#   ./scripts/…` line
+# in this file, so a new arm documents itself in one place.
 case "${1:---build}" in
-  --build | "") cmd_build ;;
-  --verify)     shift; cmd_verify "${1:-$CANONICAL_URL}" ;;
-  --help | -h)  sed -n '3,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
-  *) die "usage: scripts/pages-publish.sh [--build | --verify [url] | --help]" ;;
+  --build | "")       cmd_build && check_key_anchor ;;
+  --check-key-anchor) shift; check_key_anchor "${1:-}" ;;
+  --verify)           shift; cmd_verify "${1:-$CANONICAL_URL}" ;;
+  --help | -h)        sed -n 's|^#   \(\./scripts/pages-publish\.sh .*\)|  \1|p' "${BASH_SOURCE[0]}" ;;
+  *) die "usage: scripts/pages-publish.sh [--build | --check-key-anchor [file] | --verify [url] | --help]" ;;
 esac

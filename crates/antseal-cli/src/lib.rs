@@ -25,6 +25,17 @@ pub mod brand;
 pub mod cli;
 mod commands;
 pub mod config;
+// U89: `ANTSEAL_DEVNET_ENV` -> `NetworkConfig`, with the three outcomes the
+// old `.ok()` collapsed into one kept apart. Deliberately NOT behind
+// `ant-backend`: `DevnetEnv`/`NetworkConfig` are antseal-net's pure half, so
+// the decision table compiles and is tested in the default feature set even
+// though its only callers sit behind the feature.
+// Its only PRODUCTION callers (`commands::seal_over_backend`,
+// `backend::payment_rpc`) are behind the feature, so in the default lane the
+// items are reachable only from their own unit tests. The allow is scoped to
+// exactly that build: under `ant-backend` dead code here is still an error.
+#[cfg_attr(not(feature = "ant-backend"), allow(dead_code))]
+pub(crate) mod devnet_env;
 pub mod error;
 pub mod init;
 pub mod listing;

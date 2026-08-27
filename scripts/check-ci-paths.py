@@ -235,6 +235,19 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
         "reached only from lane_anchor_net_policy, a ci-always.yml step.",
     ("scripts/ci-lanes.sh", "scripts/check-ci-shell.py"):
         "reached only from lane_ci_shell, a ci-always.yml step.",
+    ("scripts/ci-lanes.sh", "scripts/check-custody-log.py"):
+        "NOT REACHED FROM ANY WORKFLOW, measured 2026-08-22 (Q261, wave 30): "
+        "`custody-log` is in ci-lanes.sh's LANES and dispatchable by hand, but "
+        "grep over .github/ and scripts/local-gate.sh finds zero invocations, "
+        "so no runner and no gate step can reach it. Classified UNREACHED "
+        "rather than followed because following it would count "
+        "check-custody-log.py's reads of docs/signing/key-custody.md toward the "
+        "DOCS_ONLY exclusions on the strength of a reader that never runs. "
+        "**This is a residue, not a resting place**: Q261's implementing lane "
+        "did not hold .github/ write scope and said so. When the lane is wired "
+        "into a job — it is python-only, no cargo and no network, and belongs "
+        "beside ci-shell and anchor-net-policy on the traceability job — this "
+        "entry MOVES to FOLLOW_EDGES in the same commit, per the rule above.",
     ("scripts/ci-lanes.sh", "scripts/cargo-free.sh"):
         "named in prose about the traceability job's arming; not invoked.",
     ("scripts/ci-lanes.sh", "scripts/cross-check.sh"):

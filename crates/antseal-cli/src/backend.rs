@@ -687,7 +687,13 @@ mod ant {
                 );
             })
             .ok()?;
-        let config = NetworkConfig::select(network_id, crate::commands::devnet_env().as_ref())
+        // U89: `select_network` distinguishes "nothing pointed at a devnet"
+        // from "a devnet was pointed at and is unusable". Nothing here may
+        // fail — this runs inside a command that has already answered the
+        // user — so both still return `None`, but the trace now names which
+        // one happened, and a walletless arbitrum-sepolia export resolves
+        // instead of reading as no devnet at all.
+        let selected = crate::devnet_env::select_network(network_id)
             .inspect_err(|error| {
                 tracing::debug!(
                     network,
@@ -696,6 +702,10 @@ mod ant {
                 );
             })
             .ok()?;
+        if let Some(note) = selected.walletless_devnet {
+            tracing::debug!(network, "{note}");
+        }
+        let config = selected.config;
         let handle = match crate::vault::wallet::load_wallet_key(vault) {
             Ok(Some(handle)) => handle,
             // A real and likely arm, not a leftover: a vault created by an

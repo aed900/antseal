@@ -331,8 +331,6 @@ fn seal_over_backend(
 ) -> Result<Outcome, CliError> {
     use std::sync::Arc;
 
-    use antseal_net::NetworkConfig;
-
     use crate::backend::{ReceiptSink, SealBackend, runtime, wallet_key};
     use crate::seal_consent::TtyConsentPrompt;
     use crate::seal_run::{AnchorStageConfig, SealContext, run_seal};
@@ -358,14 +356,19 @@ fn seal_over_backend(
     // It was `config` and SHADOWED the parameter, which silently pointed U22's
     // `AnchorStageConfig::from_config` at the wrong type — a tier-2-only compile
     // error no default-features gate could see (Q112).
-    let net_config = NetworkConfig::select(plan.network, devnet_env().as_ref()).map_err(|e| {
-        CliError::Usage {
-            message: format!(
-                "{e} — export ANTSEAL_DEVNET_ENV pointing at a running devnet's .devnet/env \
-                 (scripts/devnet/local-up), or seal to --network arbitrum-sepolia"
-            ),
-        }
-    })?;
+    // U89: the resolution and its copy live in `crate::devnet_env`. The
+    // "no devnet was pointed at" message is the pre-U89 one verbatim; what
+    // is new is that an export that WAS pointed at and is unreadable or
+    // malformed now says so, instead of being reported as absence by a
+    // discarded error.
+    let selected =
+        crate::devnet_env::select_network(plan.network).map_err(|e| CliError::Usage {
+            message: e.to_string(),
+        })?;
+    if let Some(note) = selected.walletless_devnet {
+        tracing::debug!("{note}");
+    }
+    let net_config = selected.config;
 
     let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
     // S36: the vault is unlocked straight into a `SealSession`, which is
@@ -425,22 +428,6 @@ fn seal_over_backend(
         ui.line(&line);
     }
     Ok(Outcome::value(result.json()))
-}
-
-/// The devnet's exported environment, when one is present.
-///
-/// The devnet has no built-in definition anywhere by design (S5): its
-/// contract addresses are minted by the Anvil run that created it, so the
-/// only truthful source is the file that run wrote.
-/// `pub(crate)` since U67: [`crate::backend::payment_rpc`] resolves the same
-/// devnet definition when it opens a session for D33's block-number
-/// backfill, and a second reader of `ANTSEAL_DEVNET_ENV` is a second chance
-/// for one invocation to run against two devnets.
-#[cfg(feature = "ant-backend")]
-pub(crate) fn devnet_env() -> Option<antseal_net::DevnetEnv> {
-    let path = std::env::var_os("ANTSEAL_DEVNET_ENV")?;
-    let text = std::fs::read_to_string(path).ok()?;
-    antseal_net::DevnetEnv::from_env_file(&text).ok()
 }
 
 /// `list` (U19).

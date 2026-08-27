@@ -31,6 +31,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use antseal_core::crypto::secrets::SecretBuf;
 use antseal_net::ant_backend::AntCoreBackend;
 use antseal_net::wallet::WalletKey;
 use antseal_net::{
@@ -53,6 +54,20 @@ fn serial() -> MutexGuard<'static, ()> {
     }
 }
 
+/// The wallet key an arbitrum-sepolia devnet's export deliberately omits,
+/// read from the process environment (U89; the recipe in
+/// docs/devnet/sepolia-devnet.md).
+///
+/// Never printed, and never compared against — it goes straight into a
+/// [`SecretBuf`] and from there into the export.
+fn wallet_key_from_process_env() -> Option<SecretBuf> {
+    let raw = std::env::var(antseal_net::network::devnet_keys::WALLET_PRIVATE_KEY).ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    Some(SecretBuf::new(raw.into_bytes()))
+}
+
 /// The env gate: `Some((config, env))` when a live devnet is exported,
 /// `None` (after printing the skip message) otherwise.
 fn devnet() -> Option<(NetworkConfig, DevnetEnv)> {
@@ -73,12 +88,47 @@ fn devnet() -> Option<(NetworkConfig, DevnetEnv)> {
             return None;
         }
     };
-    let env = match DevnetEnv::from_env_file(&text) {
+    // U89: the OPTIONAL-wallet parse. `from_env_file` demands all ten keys,
+    // so P22's nine-key arbitrum-sepolia export used to land in the arm
+    // below and be reported as "stale or partial" — a false statement about
+    // a complete and correct export.
+    let env = match DevnetEnv::<Option<SecretBuf>>::from_env_file_optional_wallet(&text) {
         Ok(env) => env,
         Err(error) => {
             eprintln!("SKIP: devnet env export did not parse ({error}) — stale or partial export?");
             return None;
         }
+    };
+    // This suite PAYS, so it needs a funded key whatever the mode. Ten keys
+    // is the local devnet and nothing changes; nine is arbitrum-sepolia,
+    // whose key is real key material and is never written to a file, so the
+    // documented recipe supplies it through the process environment
+    // (docs/devnet/sepolia-devnet.md). If neither, the skip names the key
+    // and the mode instead of calling the devnet absent.
+    let env: DevnetEnv = if env.wallet_private_key().is_some() {
+        match env.require_wallet() {
+            Ok(env) => env,
+            // Structurally unreachable (the slot is `Some` on this arm).
+            // Reported rather than unwrapped: no panic path in a gate.
+            Err(error) => {
+                eprintln!("SKIP: the export's wallet slot disagreed with itself ({error})");
+                return None;
+            }
+        }
+    } else if let Some(key) = wallet_key_from_process_env() {
+        env.with_wallet(key)
+    } else {
+        eprintln!(
+            "SKIP: the devnet export at {} carries no {} — the designed shape of an \
+             arbitrum-sepolia devnet (this export names chain {}), whose key is real key \
+             material and is never written to a file. This suite pays, so export {} with a \
+             key funded on that chain (docs/devnet/sepolia-devnet.md) to run it.",
+            path.to_string_lossy(),
+            antseal_net::network::devnet_keys::WALLET_PRIVATE_KEY,
+            env.chain_id(),
+            antseal_net::network::devnet_keys::WALLET_PRIVATE_KEY,
+        );
+        return None;
     };
     // Stale-export guard: the launcher pid IS the devnet's lifetime
     // handle (runbook, "Lifecycle").

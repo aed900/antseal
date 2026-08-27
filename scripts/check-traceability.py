@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that a documented claim is still true of the tree.
 
-Nine checks live here, and they are the same shape: something written down in
+Ten checks live here, and they are the same shape: something written down in
 prose asserts a fact about the repository, and nothing else verifies it.
 
     --freeze-boundary   The D84 §7 v1-freeze-boundary rows are byte-identical
@@ -37,6 +37,15 @@ prose asserts a fact about the repository, and nothing else verifies it.
                         directory, to a file that exists; and the corpus has
                         not silently collapsed, asserted by two floors
                         (Q249, D159).
+    --decision-ledger-debt
+                        Every decision record whose edit list names
+                        docs/instrument-ledger.md has at least one ledger
+                        entry attributed to it in a `·`-delimited field, so
+                        a resolved ruling whose ledger edits were never
+                        executed is visible instead of being found by hand
+                        two waves later; the subject count is floored so a
+                        drifted heading regex cannot pass vacuously
+                        (D162 §2 R6).
 
 Run with no arguments to run every check.
 
@@ -2738,6 +2747,369 @@ def check_doc_links(failures: Failures) -> None:
             f"{DOC_LINK_CRATES_SRC_FLOOR}"
         )
 
+# ── check 10: a record's ledger edits actually landed (Q?/D162 §2 R6) ───────
+#
+# WHAT THIS IS FOR, and it is not "does the ledger look tidy". D162 §1.2
+# measured a cohort effect: three of wave 28's five resolved records shipped a
+# ruling whose edit set had not been executed, and one of them was found only
+# two waves later, by hand. *Resolved is not executed* — and nothing in this
+# repository could see the gap, because the surfaces that record a resolution
+# (the record file, the index row, the register) are all written by the act
+# that resolves, while the edits are written by acts that follow.
+#
+# WHY THE LEDGER AND NOTHING ELSE. D162 §1.3 tested the checker hypothesis
+# against every file class an edit set names and it failed 15–1: the general
+# form ("every file named in an edit set mentions the record's id") flags 159
+# targets against a hand-verified true rate near 2, and D162 §2 R7 REFUSED it
+# on those counts — a 35 % flag rate against a <5 % true rate is noise with a
+# threshold, and it trains lanes to ignore the check. The ledger is the one
+# target with a machine-decidable contract: rule 8 fixes ONE line per finding
+# and the entry format pins an attribution field between `·` separators, so
+# "did this record's ledger edits land" is answerable by a regex rather than by
+# reading prose. The second refused candidate ("every resolved record's edit
+# set is executed") is not parseable at all — items are prose carrying verbatim
+# quotes — and D161 §2 R6 governs: a decision is not made checkable by wrapping
+# a constant in a script.
+#
+# THE MID-ACT WINDOW IS EXPECTED AND IS NOT A DEFECT. Like `decision-index`,
+# this check reds on a record that exists before its edits land: D119 RULING 6
+# splits those halves across actors, and the registrar closes the window at
+# wave end. Measured at registration: `subject=18 findings=3`, naming D158
+# (a real two-wave-old debt) and D162/D163 (wave 30's own records, mid-act).
+# A LANE MUST NOT "FIX" THIS BY NARROWING THE SUBJECT — the narrowing is the
+# defect, and the red is the instrument working.
+
+DECISION_LEDGER = "docs/instrument-ledger.md"
+
+# D162 §2 R6 fixes both halves of the section grab, and they are deliberately
+# different levels. The OPENING regex takes any depth (`##`, `###`, `####`)
+# because records spell the heading at whatever depth their §-numbering has
+# reached; the CLOSING regex takes only `#` and `##`, so a `###` sub-heading
+# INSIDE an edit list (a per-lane split, which D162 §4 itself uses) does not
+# truncate the section and hide the ledger item that follows it.
+EDIT_SECTION_HEADING = re.compile(r"^#+ .*([Ee]dit list|[Ee]dit set)")
+EDIT_SECTION_END = re.compile(r"^#{1,2} ")
+
+# THE VACUITY GUARD, and it is mandatory (D162 §2 R6, on D159 §2 R1's floor
+# discipline). Either regex above drifting — a heading reworded, a `#` level
+# changed — yields subject 0 and a silent, permanent, vacuous pass, which is
+# this project's dominant defect class. The floor is a FLOOR, not an equality:
+# the subject was 18 when this was written and grows with every record that
+# names the ledger. LOWER-ONLY BY DECISION; an implementer who needs a run to
+# go green is exactly who this is written against.
+DECISION_LEDGER_SUBJECT_FLOOR = 16
+
+# The filename shape that carries a decision id. `README.md` is the index, not
+# a record, and does not match.
+DECISION_RECORD_NAME = re.compile(r"^D(\d+)-")
+
+
+def decision_ledger_attribution(number: int) -> re.Pattern[str]:
+    """The ledger line shape that discharges `D<number>`, per D162 §2 R6.
+
+    `^- .*·[^·]*\\bD<n>\\b[^·]*·` — an ENTRY line (rule 8's `- ` bullet, so
+    ledger prose and the format block above `## Entries` are not entries)
+    whose id sits inside a `·`-delimited field that is FOLLOWED BY ANOTHER `·`.
+
+    What that excludes, stated precisely rather than generously: the TRAILING
+    field. Nothing after the last `·` can discharge anything, and the trailing
+    field is the POINTER — which is exactly where entries cite records other
+    than their own (`· docs/decisions/D67-….md §4`, `· D67 §9(i)`). What it
+    does NOT exclude is a mention in the finding body, which is also a
+    non-trailing field; the rule is "in a delimited field, not at the end",
+    not "in the finder field". D162 §2 R6 measured that looser rule at **0**
+    false positives across 67 record-tree observations on five trees, and
+    §1.3 measured the alternative general form at a 35 % flag rate against a
+    <5 % true rate; this is the shape that survived, and its exact boundary is
+    pinned by the self-test arms below rather than left to this paragraph.
+
+    `\\b` on both sides is load-bearing in one direction that matters: `\\bD16\\b`
+    does not match `D162`, so no record is ever discharged by a longer id that
+    merely starts with its digits.
+    """
+    return re.compile(rf"^- .*·[^·]*\bD{number}\b[^·]*·", re.MULTILINE)
+
+
+def decision_ledger_debt_findings(
+    tree: pathlib.Path,
+    subject_floor: int = DECISION_LEDGER_SUBJECT_FLOOR,
+) -> tuple[list[str], int, int, int]:
+    """`(messages, subject, records, entries)` for one tree. Never raises.
+
+    A PURE FUNCTION over a tree root, for the reason `doc_link_findings` states:
+    the self-test arms must exercise it on CONSTRUCTED trees where the live
+    subject cannot reach them, and a check that can only be run against ROOT is
+    a check whose red half is never seen. `subject_floor` is a PARAMETER so a
+    three-file fixture can exercise the attribution rule without the floor
+    drowning it — `check_decision_ledger_debt` below always passes the
+    constant, and nothing else may.
+    """
+    records = 0
+    subject: list[int] = []
+    messages: list[str] = []
+
+    ledger_path = tree / DECISION_LEDGER
+    try:
+        ledger = ledger_path.read_text(encoding="utf-8")
+    except OSError:
+        ledger = ""
+    entries = sum(1 for line in ledger.splitlines() if line.startswith("- "))
+
+    for path in sorted((tree / "docs/decisions").glob("D*.md")):
+        named = DECISION_RECORD_NAME.match(path.name)
+        if not named:
+            continue
+        records += 1
+        number = int(named.group(1))
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        section: list[str] = []
+        inside = False
+        for line in body.splitlines():
+            if inside:
+                if EDIT_SECTION_END.match(line):
+                    inside = False
+                    continue
+                section.append(line)
+            elif EDIT_SECTION_HEADING.match(line):
+                inside = True
+        if DECISION_LEDGER not in "\n".join(section):
+            continue
+
+        subject.append(number)
+        if decision_ledger_attribution(number).search(ledger):
+            continue
+        messages.append(
+            f"docs/decisions/{path.name}: this record's edit set names "
+            f"`{DECISION_LEDGER}`, and the ledger carries no entry attributed "
+            f"to D{number} — no line matches `^- .*·[^·]*\\bD{number}\\b[^·]*·`, "
+            f"so the id appears in no `·`-delimited field of any entry. Either "
+            f"the ruling's ledger edits were never executed (D162 §1.2: three "
+            f"of wave 28's five records shipped a ruling whose edit set had not "
+            f"been made, and one was found two waves later by hand), or this is "
+            f"the routine mid-act window — a record landing before the "
+            f"registrar writes its entries, exactly as `decision-index` reds "
+            f"between the two halves D119 RULING 6 splits across actors. Fix it "
+            f"by WRITING THE LEDGER LINES, attributed `· D{number}'s lane (wave "
+            f"N) ·` per rule 8's entry format. NEVER by narrowing this check's "
+            f"subject, which is the defect it exists to catch (D162 §2 R6)."
+        )
+
+    if len(subject) < subject_floor:
+        messages.append(
+            f"the sweep found {len(subject)} record(s) whose edit set names "
+            f"`{DECISION_LEDGER}` where DECISION_LEDGER_SUBJECT_FLOOR requires "
+            f"at least {subject_floor}: {len(subject)} < {subject_floor}. A "
+            f"count below the floor means the SECTION GRAB collapsed, not that "
+            f"the records got tidier — check EDIT_SECTION_HEADING and "
+            f"EDIT_SECTION_END first, and note that {records} record file(s) "
+            f"were read to produce it. Without this assertion a reworded "
+            f"heading gives subject 0 and a green run for ever, which is the "
+            f"defect class D159 §2 R1 minted floors against. LOWER-ONLY BY "
+            f"DECISION (D162 §2 R6)."
+        )
+    return messages, len(subject), records, entries
+
+
+def prove_decision_ledger_debt_arms(scratch: pathlib.Path) -> list[tuple[bool, str]]:
+    """Require `decision-ledger-debt`'s branches on CONSTRUCTED trees.
+
+    D162 §4 item 3, and the constructed subject is the POINT rather than a
+    convenience. This check's live red half is D158 — a debt the registrar
+    discharges inside the same wave that mints the check, after which the live
+    subject is green for ever and the red arms would be proving nothing on a
+    tree that can no longer produce them. Every fixture below is written by
+    this function; nothing is derived from ROOT, so no amount of tree health or
+    tree sickness can decide a verdict (Q252, and Q234's general form).
+
+    Called before the staged copy for the same reason `prove_doc_link_arms` is:
+    `--self-test` stages a full copy of a tree other lanes are writing, so it
+    may not be run mid-wave, and these arms can be called directly instead.
+    """
+    results: list[tuple[bool, str]] = []
+
+    # Constructed ids, deliberately outside the allocated range, so no arm can
+    # be quietly satisfied by a real ledger line about a real record.
+    ABSENT, PRESENT, FLOOR_ONLY = 901, 902, 903
+
+    def record_text(number: int) -> str:
+        return (
+            f"# D{number} — constructed by prove_decision_ledger_debt_arms\n"
+            "\n"
+            "## 4. Edit list — per file, with the timing word\n"
+            "\n"
+            f"1. `{DECISION_LEDGER}` — one dated line for this record's finding.\n"
+            "\n"
+            "## 5. Something after the edit list\n"
+        )
+
+    def entry(number: int) -> str:
+        return (
+            f"- 2026-08-22 · D{number}'s lane (wave 30) · a constructed finding "
+            f"· docs/decisions/D{number}-constructed.md\n"
+        )
+
+    def build(name: str, ledger: str, records: dict[int, str]) -> pathlib.Path:
+        tree = scratch / name
+        path = tree / DECISION_LEDGER
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(ledger, encoding="utf-8")
+        for number, body in records.items():
+            target = tree / "docs/decisions" / f"D{number}-constructed.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        return tree
+
+    def record(passed: bool, sentence: str) -> None:
+        results.append((passed, sentence))
+
+    # ── RED 1: a record whose edit set names the ledger, and a ledger with
+    # entries but none attributed to it. D162 §2 R6's first plant (delete
+    # D157's ledger lines → RED naming D157), reconstructed rather than
+    # borrowed. The green record beside it is what makes this arm say
+    # "attribution", not "the ledger is short".
+    mixed = build(
+        "red-1-attribution-absent",
+        entry(PRESENT),
+        {ABSENT: record_text(ABSENT), PRESENT: record_text(PRESENT)},
+    )
+    messages, subject, records_read, entries = decision_ledger_debt_findings(mixed, 0)
+    if (subject, records_read, entries) != (2, 2, 1):
+        record(False, f"RED 1 (one record attributed, one not): the state is vacuous — subject/records/entries {(subject, records_read, entries)}, wanted (2, 2, 1)")
+    elif len(messages) != 1 or f"D{ABSENT}" not in messages[0]:
+        record(False, f"RED 1 (one record attributed, one not): expected exactly one finding naming D{ABSENT}, got {messages}")
+    elif f"D{PRESENT}-constructed.md" in messages[0]:
+        record(False, f"RED 1 (one record attributed, one not): the finding names the DISCHARGED record too, so it is not reading attribution: {messages}")
+    else:
+        record(True, f"RED 1 (one record attributed, one not): red on D{ABSENT} alone, naming the record file and the pattern it wanted")
+
+    # ── RED 2: the whole subject, against an EMPTY ledger. D162 §2 R6's second
+    # plant (empty the ledger → RED 16). This is the arm that separates "no
+    # entry for this record" from "no ledger at all": the failure must be per
+    # record, so a registrar reading it knows how many lines to write.
+    emptied = build(
+        "red-2-empty-ledger",
+        "# Instrument-finding ledger\n\n## Entries\n",
+        {ABSENT: record_text(ABSENT), PRESENT: record_text(PRESENT)},
+    )
+    messages, subject, _records, entries = decision_ledger_debt_findings(emptied, 0)
+    named = all(any(f"D{n}-constructed.md" in m for m in messages) for n in (ABSENT, PRESENT))
+    if (subject, entries) != (2, 0):
+        record(False, f"RED 2 (an empty ledger): the state is vacuous — subject {subject} entries {entries}, wanted 2 and 0")
+    elif len(messages) != 2 or not named:
+        record(False, f"RED 2 (an empty ledger): the whole subject must red, one finding each; got {messages}")
+    else:
+        record(True, "RED 2 (an empty ledger): red on the WHOLE subject, one finding per record rather than one for the ledger")
+
+    # ── GREEN CONTROL: the same two records, both attributed. Without this the
+    # two arms above are satisfied by a check that reds on everything for ever,
+    # which is the failure mode a red-only harness cannot see.
+    both = build(
+        "green-control-attributed",
+        entry(ABSENT) + entry(PRESENT),
+        {ABSENT: record_text(ABSENT), PRESENT: record_text(PRESENT)},
+    )
+    messages, subject, _records, entries = decision_ledger_debt_findings(both, 0)
+    if (subject, entries) != (2, 2):
+        record(False, f"GREEN CONTROL (both records attributed): the state is vacuous — subject {subject} entries {entries}, wanted 2 and 2")
+    elif messages:
+        record(False, f"GREEN CONTROL (both records attributed): must be green, got {messages}")
+    else:
+        record(True, "GREEN CONTROL (both records attributed): green — so the red arms above are a property of the state, not of the check")
+
+    # ── THE FLOOR GUARD, and it is the arm this check exists to keep honest.
+    # The subject here is FULLY DISCHARGED — every record has its line — so the
+    # attribution rule is silent and the ONLY thing that can speak is the
+    # floor. A heading regex that drifts yields subject 0 and, without this,
+    # a permanent vacuous green. Note the REAL constant is passed: an arm that
+    # invented its own floor would prove a parameter, not the shipped check.
+    below = build(
+        "floor-below",
+        entry(FLOOR_ONLY),
+        {FLOOR_ONLY: record_text(FLOOR_ONLY)},
+    )
+    messages, subject, _records, _entries = decision_ledger_debt_findings(below)
+    wanted = f"1 < {DECISION_LEDGER_SUBJECT_FLOOR}"
+    if subject != 1:
+        record(False, f"FLOOR GUARD (a discharged subject of 1 against the real floor): the state is vacuous — subject {subject}, wanted 1")
+    elif len(messages) != 1 or wanted not in messages[0]:
+        record(False, f"FLOOR GUARD (a discharged subject of 1 against the real floor): expected one finding saying {wanted!r}, got {messages}")
+    else:
+        record(True, f"FLOOR GUARD (a discharged subject of 1 against the real floor): red on the floor alone, saying {wanted}")
+
+    # ── FLOOR GUARD's other half. The same tree, the same discharged subject,
+    # with the floor lowered to what the tree actually carries: it must go
+    # GREEN. Without this, the arm above is satisfied by a floor that reds at
+    # every count, and "the floor fired" would mean nothing.
+    messages, subject, _records, _entries = decision_ledger_debt_findings(below, 1)
+    if subject != 1:
+        record(False, f"FLOOR GUARD's green half (the floor lowered to the count): the state is vacuous — subject {subject}, wanted 1")
+    elif messages:
+        record(False, f"FLOOR GUARD's green half (the floor lowered to the count): must be green at subject == floor, got {messages}")
+    else:
+        record(True, "FLOOR GUARD's green half (the floor lowered to the count): green at subject == floor, so the floor is a threshold and not a constant red")
+
+    # ── THE BOUNDARY the docstring claims, pinned rather than asserted in
+    # prose: an id in the TRAILING (pointer) field discharges NOTHING, because
+    # that is the field in which entries cite records other than their own. The
+    # same id moved one field left discharges. Two builds, one difference.
+    pointer_only = (
+        f"- 2026-08-22 · some other lane · an unrelated finding "
+        f"· docs/decisions/D{ABSENT}-constructed.md\n"
+    )
+    trailing = build("boundary-trailing-field", pointer_only, {ABSENT: record_text(ABSENT)})
+    messages, subject, _records, _entries = decision_ledger_debt_findings(trailing, 0)
+    if subject != 1:
+        record(False, f"BOUNDARY (the id in the trailing pointer field): the state is vacuous — subject {subject}, wanted 1")
+    elif len(messages) != 1:
+        record(False, f"BOUNDARY (the id in the trailing pointer field): a pointer citing another record must not discharge it; got {messages}")
+    else:
+        record(True, "BOUNDARY (the id in the trailing pointer field): red — a trailing citation of a record is not an entry attributed to it")
+
+    moved = build(
+        "boundary-field-moved-left",
+        pointer_only.replace("some other lane", f"D{ABSENT}'s lane (wave 30)"),
+        {ABSENT: record_text(ABSENT)},
+    )
+    messages, subject, _records, _entries = decision_ledger_debt_findings(moved, 0)
+    if subject != 1:
+        record(False, f"BOUNDARY's green half (the SAME id one field left): the state is vacuous — subject {subject}, wanted 1")
+    elif messages:
+        record(False, f"BOUNDARY's green half (the SAME id one field left): must be green, got {messages}")
+    else:
+        record(True, "BOUNDARY's green half (the SAME id one field left): green — the rule is the delimited field, not the substring")
+
+    return results
+
+
+def check_decision_ledger_debt(failures: Failures) -> None:
+    check = "decision-ledger-debt"
+    # THIS CHECK COUNTS ITS OWN FAILURES, for the reason `check_doc_links`
+    # states one check up: `if not failures:` reads the SHARED object, so any
+    # earlier check's finding would suppress this ok line.
+    before = len(failures.messages)
+
+    messages, subject, records, entries = decision_ledger_debt_findings(ROOT)
+    for message in messages:
+        failures.add(check, message)
+
+    if len(failures.messages) == before:
+        # Every number a reader needs is PRINTED, not left as a subtraction
+        # available to everyone and performed by nobody (D142 §2 R2). The
+        # subject count is here even when green, because "0 problems" and "0
+        # records examined" print the same word otherwise.
+        print(
+            f"[{check}] ok — {subject} record(s) of {records} name "
+            f"`{DECISION_LEDGER}` in an edit list, and every one of them "
+            f"carries at least one `·`-attributed line among the {entries} "
+            f"ledger entries; subject {subject} >= floor "
+            f"{DECISION_LEDGER_SUBJECT_FLOOR}"
+        )
+
+
 CHECKS = {
     "freeze-boundary": check_freeze_boundary,
     "matrix": check_matrix,
@@ -2748,6 +3120,7 @@ CHECKS = {
     "decision-index": check_decision_index,
     "machine-paths": check_machine_paths,
     "doc-links": check_doc_links,
+    "decision-ledger-debt": check_decision_ledger_debt,
 }
 
 
@@ -2846,6 +3219,30 @@ def self_test() -> int:
                 print(
                     f"self-test: FAILED — doc-links does not hold on a constructed "
                     f"{sentence}",
+                    file=sys.stderr,
+                )
+                ok = False
+
+        # ── the ledger-debt arms, also before anything is staged ───────────
+        # D162 §4 item 3. This check's ONE live red half is D158, a debt the
+        # registrar discharges inside the very wave that mints the check —
+        # after which the live subject is green for ever and a delta harness
+        # could never produce a red again. So every arm builds its own state
+        # on disk, with constructed ids outside the allocated range, and none
+        # of it is derived from ROOT (Q252, and Q234's general form). The one
+        # arm that DOES read a real constant is the floor guard, and it reads
+        # the shipped `DECISION_LEDGER_SUBJECT_FLOOR` rather than a fixture
+        # copy of it, because a floor proven at an invented value is a proof
+        # about a parameter.
+        for passed, sentence in prove_decision_ledger_debt_arms(
+            pathlib.Path(scratch) / "ledger-debt-arms"
+        ):
+            if passed:
+                print(f"self-test: ok — decision-ledger-debt holds on a constructed {sentence}")
+            else:
+                print(
+                    f"self-test: FAILED — decision-ledger-debt does not hold on a "
+                    f"constructed {sentence}",
                     file=sys.stderr,
                 )
                 ok = False

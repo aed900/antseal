@@ -33,6 +33,12 @@
 #                     the local gate, exactly one HTTP client is declared and
 #                     only by antseal-anchor, and every URL-valued constant
 #                     is covered by the gate's endpoint walk
+#   custody-log       self-test, then Q261's append-only guard over
+#                     docs/signing/key-custody.md §10 — the signing-key
+#                     custody log, whose own rule is "Never edit a row".
+#                     Walks every commit from the file's birth forward and
+#                     reds on any row that was edited, deleted, reordered or
+#                     pushed down, honouring the one replacement §11 registers
 #   cargo-free        the test-of-the-test for the guard that asserts CI's
 #                     `traceability` job runs no cargo (D124/Q182). The guard
 #                     itself is two steps ON that job — `cargo-free.sh --arm`
@@ -66,7 +72,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free custody-log"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -1018,6 +1024,49 @@ lane_anchor_net_policy() {
   python3 scripts/check-anchor-net.py
 }
 
+# Q261 / D157 §2 R9: `docs/signing/key-custody.md` §10 is an APPEND-ONLY log,
+# and until this lane it said so with nothing behind it.
+#
+# §10 is the record of what was done to the project signing key and when. Its
+# whole evidentiary value rests on rows never changing — the file says
+# *"Never edit a row"* in terms — and the failure mode is silent by
+# construction: a row edited to say an act was taken reads exactly like a row
+# that always said so, and the log is the only place that history lives.
+# Measured 2026-08-22, `grep -rn key-custody scripts/` returned ONE hit, a
+# prose string inside a `check-copy-style.py` rationale. Nothing checked it.
+#
+# The check walks the file from its BIRTH COMMIT forward, one state per commit
+# that touched it, then the working tree, and requires each state's §10 rows to
+# be a prefix-extension of the one before: an append passes, a disturbance to
+# an already-written row reds and NAMES the row. The one exception — the
+# placeholder row replaced on 2026-08-19 — is read out of §11's fenced quote at
+# run time rather than hardcoded, because a hardcoded list drifts from the
+# document it exists to track.
+#
+# WHY IT IS NOT A BIRTH-VERSUS-TODAY DIFF. D157 §2 R9 measured that too. Once
+# the single exception is registered, the birth baseline is EMPTY and the
+# comparison can never redden — this project's dominant defect class. The walk
+# reports `pinned=`, the count of row comparisons actually performed, and a run
+# that pins zero is a hard error rather than a pass.
+#
+# Python-only, no cargo, no network, milliseconds — so it rides beside
+# `ci-shell`, `anchor-net-policy` and `fuzz-budget` rather than costing a new
+# required-status context. Its `--self-test` runs SIXTEEN arms — 10 planted
+# faults (one per violation class, one per parser refusal, one per exception
+# failure mode), 3 GREEN CONTROLS, 2 derived property assertions and a
+# no-writes hygiene check — and prints that tally DERIVED from the arms that
+# actually ran, so this comment and the run visibly disagree if an arm is
+# added without updating it. The green controls are required by name: a suite
+# of red arms alone passes on a check that reddens on everything. It reads the
+# log ABOUT the key and never the key: no maintainer act, no secret material.
+lane_custody_log() {
+  if ! python3 scripts/check-custody-log.py --self-test; then
+    printf '::error::check-custody-log self-test FAILED — the append-only check stayed green over a planted fault, so a green run below would prove nothing\n'
+    return 1
+  fi
+  python3 scripts/check-custody-log.py
+}
+
 # D124/Q182: the guard that asserts CI's `traceability` job invokes no cargo,
 # rustc or rustup — including from steps not yet written.
 #
@@ -1038,6 +1087,291 @@ lane_anchor_net_policy() {
 # cargo, no network, milliseconds.
 lane_cargo_free() {
   ./scripts/cargo-free.sh --self-test
+}
+
+# ── Q263 / D161 §2 R9: `.gitignore`'s deny-by-default rule, ENFORCED ───────
+#
+# `.gitignore`'s header declares that "no secret material may ever be
+# committable by default". Measured 2026-08-22 it did not deliver it: of the
+# seven secret-shaped names D161 §2 R9 probed, FIVE were not ignored —
+# `.env`, `.env.local`, `secrets.env`, `id_rsa`, `credentials.json` — while
+# `foo.key` and `.secrets/a` were. D161 §2 R2 adopts `.gitignore` BY
+# REFERENCE as the register of Q65's `private` class, so that file is the
+# only enforcement the class has, and a rule nothing re-runs is an assertion
+# rather than a guard. Nothing was mis-tracked when this was found; what the
+# arm buys is that the NEXT one cannot be committed by accident.
+#
+# WHY IT SITS ON THIS LANE AND NOT ITS OWN SCRIPT. `secret-guard` is the
+# CONTENT scanner over what is already staged — the second line. This is the
+# first: it asserts the NAMES never become stageable. They are complementary,
+# neither substitutes for the other, and they fail with different messages.
+#
+# THE PROBES CREATE NO FILES. `git check-ignore` is pure pattern matching and
+# never stats the path, so the table below is free and repeatable. Writing a
+# real `.env` into the tree to test this would be planting the exact artifact
+# the rule exists to keep out.
+#
+# `--no-index` IS LOAD-BEARING, and it is the trap here. By DEFAULT
+# `check-ignore` reports a TRACKED path as not-ignored whatever the patterns
+# say — so every `visible` row below would be green even if a deny pattern
+# had swallowed it, an assertion that could not fail. `--no-index` asks the
+# patterns alone. Verified against a scratch repo where `*.md` and a tracked
+# `README.md` coexist: default says rc=1, `--no-index` says rc=0.
+#
+# SO IS THE SOURCE CHECK. `-v` prints `<source>:<line>:<pattern>`, and an
+# `ignored` verdict is accepted ONLY when the source is `.gitignore` itself.
+# This repository's `.git/info/exclude` carries ten live rules and a global
+# excludes file is one `git config` away; without the source check a
+# developer's untracked local state could green a rule the committed register
+# does not carry, and CI would go red instead.
+#
+# Each row is `<path>|<want>|<why>`. `want` is `ignored` or `visible`; `why`
+# carries no `|`. The expected count is derived from this array's length
+# (Q245) — never written as a literal that drifts away from the list.
+GITIGNORE_DENY_PROBES=(
+  # The seven D161 §2 R9 probed. The first five were the defect; the last two
+  # were already green, and the self-test below proves they can still go red.
+  '.env|ignored|dotenv, the conventional home of API keys and RPC secrets'
+  '.env.local|ignored|dotenv variant'
+  'secrets.env|ignored|dotenv under a non-dotfile basename'
+  'id_rsa|ignored|OpenSSH private key, the ssh-keygen default basename'
+  'credentials.json|ignored|cloud / service-account credential JSON'
+  'foo.key|ignored|denied before Q263 — the green arm, proven red by the self-test'
+  '.secrets/a|ignored|denied before Q263 — the green arm, proven red by the self-test'
+  # The rest of each family, so no pattern here is unprobed.
+  'id_ed25519|ignored|OpenSSH private key, the modern default basename'
+  'deploy_rsa|ignored|the <name>_<algo> form a deploy key takes'
+  'backup_ed25519|ignored|the <name>_<algo> form a per-host key takes'
+  '.ssh/config|ignored|anything under a stray .ssh directory'
+  '.netrc|ignored|cleartext login/password store'
+  '.git-credentials|ignored|git credential store, https://user:token@host in cleartext'
+  'aws-credentials.json|ignored|credential JSON under a vendor prefix'
+  'client.p12|ignored|PKCS#12 key and certificate container'
+  '.devnet/env|ignored|the P16 funded-key export this lane also excludes from its scan'
+  # The other polarity. Without these the check would pass by ignoring
+  # everything, and the deny families would be free to eat the project.
+  'README.md|visible|a tracked file — the deny patterns must not swallow the repo'
+  'crates/antseal-core/src/crypto/secrets.rs|visible|a tracked source file whose NAME says secrets'
+  'docs/format/registry-v1.json|visible|a tracked JSON — the credential rules are not *.json'
+  'minisign.pub|visible|D71 §2 R5 publishes this into the repository at release'
+  'id_ed25519.pub|visible|a public half is public — the key rules are basename-exact'
+)
+
+# The deny families the CONSTRUCTED self-test subject is built from, and the
+# probes each one owns: `<name>|<patterns>|<probes that must go red without it>`.
+# Grouped so that removing a whole family leaves its probes matched by nothing
+# — `id_rsa` is covered by both `id_rsa` and `*_rsa`, so a per-PATTERN plant
+# would be masked by its own neighbour and prove nothing.
+GITIGNORE_DENY_FAMILIES=(
+  'dotenv|.env .env.* *.env|.env .env.local secrets.env'
+  'ssh-private-keys|id_rsa id_dsa id_ecdsa id_ecdsa_sk id_ed25519 id_ed25519_sk *_rsa *_dsa *_ecdsa *_ecdsa_sk *_ed25519 *_ed25519_sk|id_rsa id_ed25519 deploy_rsa backup_ed25519'
+  'ssh-dir|.ssh/|.ssh/config'
+  'credential-files|credentials.json *credentials*.json .netrc _netrc .git-credentials|credentials.json aws-credentials.json .netrc .git-credentials'
+  'key-containers|*.p12 *.pfx *.ppk|client.p12'
+  'pre-existing-key-material|*.key *.pem wallets/ *wallet*.json .secrets/|foo.key .secrets/a'
+  'devnet|.devnet/ *.devnet/|.devnet/env'
+)
+
+# The mirror plants: `<pattern to append>|<visible probes it must swallow>`.
+# A deny-only self-test proves the ignore arm and leaves the `visible` arm
+# green-by-construction, because nothing in the family table could ever match
+# a project path. These make the other polarity load-bearing too.
+GITIGNORE_DENY_SWALLOWS=(
+  '*.md|README.md'
+  '*secrets*|crates/antseal-core/src/crypto/secrets.rs'
+  '*.json|docs/format/registry-v1.json'
+  '*.pub|minisign.pub id_ed25519.pub'
+)
+
+# Probe one work tree against the table. Prints one `FAIL <path>: …` line per
+# disagreement — naming the specific probe, never a generic verdict — and a
+# `probed=<n>` line, always. It returns nothing about pass/fail: the caller
+# asserts on the MESSAGE (Q149), because an exit status cannot say which name
+# was left committable.
+#
+# The directory is an ARGUMENT. That is what lets the self-test point this at
+# a constructed subject instead of the live `.gitignore` (Q252) — a fixture
+# whose subject is state the project is driving to green disarms itself the
+# day the project succeeds.
+gitignore_deny_probe() {
+  local dir="$1" row path want why out rc src n=0
+  for row in "${GITIGNORE_DENY_PROBES[@]}"; do
+    path="${row%%|*}"
+    want="${row#*|}"; want="${want%%|*}"
+    why="${row##*|}"
+    out="$(git -C "$dir" -c core.excludesFile=/dev/null check-ignore -v --no-index -- "$path" 2>/dev/null)"
+    rc=$?
+    n=$(( n + 1 ))
+    if [ "$rc" -gt 1 ]; then
+      printf 'FAIL %s: git check-ignore exited %s, which is neither 0 (ignored) nor 1 (visible) — the probe could not be taken, and a probe that did not run is not a pass\n' "$path" "$rc"
+      continue
+    fi
+    src="${out%%:*}"
+    if [ "$want" = ignored ]; then
+      if [ "$rc" -ne 0 ]; then
+        printf 'FAIL %s: expected IGNORED (%s) but NO pattern matches it — .gitignore does not deny this name, and its own header says no secret material may ever be committable by default\n' "$path" "$why"
+      elif [ "$src" != '.gitignore' ]; then
+        printf 'FAIL %s: expected IGNORED but the rule is `%s` — a local or global exclude is untracked developer state, and D161 §2 R2 adopts the COMMITTED .gitignore as the private class register\n' "$path" "$out"
+      fi
+    elif [ "$rc" -eq 0 ]; then
+      printf 'FAIL %s: expected VISIBLE (%s) but `%s` ignores it — a deny pattern has swallowed a path the project must be able to track\n' "$path" "$why" "$out"
+    fi
+  done
+  printf 'probed=%s\n' "$n"
+}
+
+# Write the constructed subject into <dir>/.gitignore. <skip> omits one
+# family (a removal plant); <extra> appends one pattern (a swallow plant).
+gitignore_deny_write_subject() {
+  local dir="$1" skip="$2" extra="$3" f fname fpats
+  local -a pat_arr
+  : > "$dir/.gitignore" || return 1
+  for f in "${GITIGNORE_DENY_FAMILIES[@]}"; do
+    fname="${f%%|*}"; fpats="${f#*|}"; fpats="${fpats%%|*}"
+    if [ "$fname" = "$skip" ]; then continue; fi
+    # `read -a` splits on IFS and does NOT glob-expand. An unquoted expansion
+    # here would let `*.md` and `*.key` match this repository's own files.
+    IFS=' ' read -r -a pat_arr <<<"$fpats"
+    printf '%s\n' "${pat_arr[@]}" >> "$dir/.gitignore" || return 1
+  done
+  if [ -n "$extra" ]; then printf '%s\n' "$extra" >> "$dir/.gitignore" || return 1; fi
+  return 0
+}
+
+gitignore_deny_selftest_body() {
+  local tmp="$1" fail=0 out probed expected base row name plant p fpats
+  local -a fail_arr pat_arr
+  expected="${#GITIGNORE_DENY_PROBES[@]}"
+  if ! git -C "$tmp" init -q >/dev/null 2>&1; then
+    printf '::error::gitignore deny-by-default self-test: could not init a scratch repo in %s — the constructed subject cannot be built, so nothing here was tested\n' "$tmp"
+    return 1
+  fi
+  # The constructed subject must be the ONLY source of a verdict in here.
+  : > "$tmp/.git/info/exclude"
+  base="$tmp/.git/constructed-baseline"
+
+  # Control. A red baseline means the family table does not satisfy the probe
+  # table, and every plant below would be indistinguishable from it.
+  gitignore_deny_write_subject "$tmp" "" "" || { printf '::error::gitignore deny-by-default self-test: could not write the constructed subject\n'; return 1; }
+  cp "$tmp/.gitignore" "$base"
+  out="$(gitignore_deny_probe "$tmp")"
+  probed="$(sed -n 's/^probed=//p' <<<"$out")"
+  if [ "${probed:-0}" != "$expected" ]; then
+    printf '::error::gitignore deny-by-default self-test: the control probed %s name(s) against a table of %s — the probe loop does not run to completion, so no result below can be believed\n' "${probed:-0}" "$expected"
+    return 1
+  fi
+  if grep -q '^FAIL ' <<<"$out"; then
+    grep '^FAIL ' <<<"$out" | sed 's/^/    /'
+    printf '::error::gitignore deny-by-default self-test: the CONSTRUCTED baseline is NOT green — the family table does not satisfy the probe table\n'
+    return 1
+  fi
+
+  # Plant one: remove a deny family. Every probe it owns must name itself.
+  for row in "${GITIGNORE_DENY_FAMILIES[@]}"; do
+    name="${row%%|*}"; plant="${row##*|}"
+    gitignore_deny_write_subject "$tmp" "$name" "" || { fail=1; continue; }
+    if cmp -s "$tmp/.gitignore" "$base"; then
+      printf '::error::gitignore deny-by-default self-test: removing family `%s` changed the subject not at all — the plant did not apply and this arm tested an unmodified file (a nonzero exit is not proof a fault was found, and a zero exit is not proof it was absent)\n' "$name"
+      fail=1; continue
+    fi
+    out="$(gitignore_deny_probe "$tmp")"
+    IFS=' ' read -r -a fail_arr <<<"$plant"
+    for p in "${fail_arr[@]}"; do
+      # Two greps, not one. `expected IGNORED` alone is ALSO produced by the
+      # wrong-source message below, so a single fixed string let this arm pass
+      # while the no-pattern branch was neutered — found by planting exactly
+      # that fault. The two failure classes must stay distinguishable.
+      if ! grep -F "FAIL $p: expected IGNORED (" <<<"$out" | grep -qF 'but NO pattern matches it'; then
+        printf '::error::gitignore deny-by-default self-test: with family `%s` removed, probe `%s` did NOT report itself by name as undenied — nothing in this check is load-bearing for that name\n' "$name" "$p"
+        fail=1
+      fi
+    done
+  done
+
+  # Plant two: append a pattern that swallows a path the project must track.
+  for row in "${GITIGNORE_DENY_SWALLOWS[@]}"; do
+    name="${row%%|*}"; plant="${row##*|}"
+    gitignore_deny_write_subject "$tmp" "" "$name" || { fail=1; continue; }
+    if cmp -s "$tmp/.gitignore" "$base"; then
+      printf '::error::gitignore deny-by-default self-test: appending `%s` changed the subject not at all — the plant did not apply\n' "$name"
+      fail=1; continue
+    fi
+    out="$(gitignore_deny_probe "$tmp")"
+    IFS=' ' read -r -a fail_arr <<<"$plant"
+    for p in "${fail_arr[@]}"; do
+      if ! grep -qF "FAIL $p: expected VISIBLE" <<<"$out"; then
+        printf '::error::gitignore deny-by-default self-test: with `%s` appended, tracked path `%s` was NOT reported as swallowed — the visible arm is green by construction and would not notice a pattern eating the project\n' "$name" "$p"
+        fail=1
+      fi
+    done
+  done
+
+  # Plant three: move a family OUT of `.gitignore` and into the repo's local
+  # `.git/info/exclude`. Every name stays ignored, so an exit-status check
+  # would see nothing at all — but the committed register no longer carries
+  # the rule, which is precisely the false green the source check exists to
+  # refuse. Without this plant that branch is unreachable and would be a
+  # deny-by-default guard a developer's untracked local state could satisfy.
+  for row in "${GITIGNORE_DENY_FAMILIES[@]}"; do
+    name="${row%%|*}"; plant="${row##*|}"
+    fpats="${row#*|}"; fpats="${fpats%%|*}"
+    gitignore_deny_write_subject "$tmp" "$name" "" || { fail=1; continue; }
+    IFS=' ' read -r -a pat_arr <<<"$fpats"
+    printf '%s\n' "${pat_arr[@]}" > "$tmp/.git/info/exclude"
+    out="$(gitignore_deny_probe "$tmp")"
+    : > "$tmp/.git/info/exclude"
+    IFS=' ' read -r -a fail_arr <<<"$plant"
+    for p in "${fail_arr[@]}"; do
+      if ! grep -qF "FAIL $p: expected IGNORED but the rule is" <<<"$out"; then
+        printf '::error::gitignore deny-by-default self-test: family `%s` moved from .gitignore into .git/info/exclude and probe `%s` still passed — the check accepts untracked local developer state as the private class register, which D161 §2 R2 does not\n' "$name" "$p"
+        fail=1
+      fi
+    done
+  done
+
+  # Restored: byte-identical to the control, and green again.
+  gitignore_deny_write_subject "$tmp" "" "" || { fail=1; }
+  if ! cmp -s "$tmp/.gitignore" "$base"; then
+    printf '::error::gitignore deny-by-default self-test: the restored subject differs from the control — the plants left damage behind\n'
+    fail=1
+  fi
+  out="$(gitignore_deny_probe "$tmp")"
+  if grep -q '^FAIL ' <<<"$out"; then
+    grep '^FAIL ' <<<"$out" | sed 's/^/    /'
+    printf '::error::gitignore deny-by-default self-test: still red after restoring the control\n'
+    fail=1
+  fi
+
+  [ "$fail" -eq 0 ] || return 1
+  printf 'self-test OK: %s probes against a CONSTRUCTED .gitignore; %s deny families each proven load-bearing by removal, %s swallow patterns each proven to red a trackable path, and %s families re-proven via .git/info/exclude so the source check cannot be dead code — %s plants, every assertion on the MESSAGE and none on exit status.\n' \
+    "$expected" "${#GITIGNORE_DENY_FAMILIES[@]}" "${#GITIGNORE_DENY_SWALLOWS[@]}" "${#GITIGNORE_DENY_FAMILIES[@]}" \
+    "$(( ${#GITIGNORE_DENY_FAMILIES[@]} * 2 + ${#GITIGNORE_DENY_SWALLOWS[@]} ))"
+}
+
+# Self-test on a constructed subject, then the live repository.
+assert_gitignore_deny_by_default() {
+  local tmp rc out probed expected ign vis
+  tmp="$(mktemp -d)" || { printf '::error::gitignore deny-by-default: mktemp failed; the self-test cannot run and an unproven check is not a pass\n'; return 1; }
+  gitignore_deny_selftest_body "$tmp"; rc=$?
+  rm -rf "$tmp"
+  [ "$rc" -eq 0 ] || return 1
+
+  expected="${#GITIGNORE_DENY_PROBES[@]}"
+  ign="$(printf '%s\n' "${GITIGNORE_DENY_PROBES[@]}" | grep -c '|ignored|')"
+  vis="$(printf '%s\n' "${GITIGNORE_DENY_PROBES[@]}" | grep -c '|visible|')"
+  out="$(gitignore_deny_probe "$repo")"
+  probed="$(sed -n 's/^probed=//p' <<<"$out")"
+  if [ "${probed:-0}" != "$expected" ]; then
+    printf '::error::gitignore deny-by-default: probed %s name(s) against a table of %s — the loop did not run to completion, and a partial probe is not a pass\n' "${probed:-0}" "$expected"
+    return 1
+  fi
+  if grep -q '^FAIL ' <<<"$out"; then
+    grep '^FAIL ' <<<"$out" | sed 's/^/    /'
+    printf '::error::gitignore deny-by-default (Q263 / D161 §2 R9): .gitignore does not deliver the rule its own header declares — "no secret material may ever be committable by default". WIDEN the patterns; never narrow this table or the file to make it green.\n'
+    return 1
+  fi
+  printf 'OK: %s deny-by-default probes (%s secret-shaped names denied, %s project paths still trackable), every verdict sourced from the committed .gitignore.\n' \
+    "$expected" "$ign" "$vis"
 }
 
 # Q2: vault-export / wallet-key signature guard.
@@ -1322,6 +1656,16 @@ lane_secret_guard() {
       return 1
     fi
     printf 'OK: .devnet/ is gitignored, so excluding it from the scan removes nothing committable.\n'
+    # ... and the same question asked of the whole secret-shaped family
+    # (Q263 / D161 §2 R9). The arm above answers it for ONE name and only
+    # about the exclusion above; this one answers it for the family the
+    # `private` class is defined by, and additionally requires each verdict
+    # to come from the COMMITTED .gitignore rather than a local exclude.
+    if ! assert_gitignore_deny_by_default; then
+      return 1
+    fi
+  else
+    printf 'SKIP: not a git work tree, so neither the .devnet/ exclusion nor the .gitignore deny-by-default family (Q263) was verified. The content scan below still ran; the name-level line did NOT.\n'
   fi
   # The real scan.
   if ! scan .; then
@@ -1641,5 +1985,6 @@ case "${1:-}" in
   fuzz-budget)      lane_fuzz_budget ;;
   anchor-net-policy) lane_anchor_net_policy ;;
   cargo-free)       lane_cargo_free ;;
+  custody-log)      lane_custody_log ;;
   *) die "usage: scripts/ci-lanes.sh <$(printf '%s' "$LANES" | tr ' ' '|')> | --list | --self-test" ;;
 esac
