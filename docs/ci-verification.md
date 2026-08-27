@@ -3609,6 +3609,14 @@ would run as, and this host has **two**:
 authenticated account on the same host is exactly how a named-destination
 consent gets executed somewhere else.
 
+**[REDACTED 2026-08-27, wave 31, at the maintainer's instruction — `Q268`.]**
+The second account's name is replaced by `<second-account>` above. **Do not
+restore it**: the check this step prescribes is *"is the active account
+`aed900`?"*, and that question is answered by the `Active account: true` line
+alone — the other account's name was never an input to it. Read the name off
+`gh auth status` live when you run the step; it does not belong in a file that
+goes public.
+
 ### B1 — AT THE FLIP. The visibility change
 
 Either the web UI (Settings → General → Danger Zone → Change visibility, which
