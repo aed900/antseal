@@ -11,6 +11,47 @@ today:
   [docs/toolchain.md](docs/toolchain.md)) — build with the pin; CI does.
 - No secret material (master secrets, unit keys, salts, wallet keys) in
   code, logs, error messages, or test fixtures. Ever.
+- **No personal data.** No personal email address, no account name other than
+  the project's own, no home directory naming a real user. Enforced by
+  `scripts/check-personal-data.py` — see below.
+
+## Personal data, and arming the hook that stops it (Q268/Q269)
+
+**Install this once per clone. It is one command and it is the difference
+between a typo and a history rewrite:**
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-commit` runs `scripts/check-personal-data.py` and **refuses the
+commit** if personal data would enter the tree. The same checker is a required
+lane in `scripts/local-gate.sh`, because a hook is not committed, is not
+installed by default, and is skipped by `--no-verify` — so the hook is the
+early warning and the gate has the last word.
+
+**Why this exists.** The pre-public scrub reports certified the maintainer's
+email address at *"0 occurrences, in bold"* — while themselves containing it,
+because a report that documents *what it searched for* reproduces the string it
+was looking for. Ten occurrences reached `HEAD`, sixteen blobs reached history,
+and the remote carried all of it before anyone noticed. Removing it cost a
+history rewrite and a force-push. **Catching it at `git commit` costs nothing.**
+
+**The rule, in one line: name the class, never the literal.** Write *"the
+maintainer's address"*, not the address. This applies to scrub reports and
+audit records most of all — they are the documents most tempted to quote what
+they are hunting for.
+
+**If a real value is genuinely load-bearing** — a third-party certificate
+subject, for instance — register its **SHA-256 digest** with a reason in
+`REGISTERED_EMAILS`, never the value itself. The checker holds digests only, so
+it can name the class and location of a hit while being unable to print or leak
+what it matched.
+
+**Home directories** must use a reserved placeholder (`user`, `fixture`,
+`runner`, `u`, `x` — see the next section) or be registered per name with a
+count. Counts are ceilings: removing occurrences is always fine, adding one is
+what must be deliberate.
 
 ## Machine paths in examples (D144)
 

@@ -521,6 +521,27 @@ run traceability scripts/ci-lanes.sh traceability
 run copy-style-selftest scripts/check-copy-style.py --self-test
 run copy-style          scripts/check-copy-style.py
 
+# Q269 — the personal-data guard (Q268's prevention half). Self-test first, as
+# everywhere above. Pure stdlib, no cargo, no network; it shells out to `git
+# ls-files` only, so it sees exactly the tracked set.
+#
+# WHY IT IS A GATE LANE AND NOT ONLY A HOOK. `.githooks/pre-commit` runs this
+# same checker and refuses the commit, which is the cheap moment to catch a
+# disclosure -- but hooks are not committed, are not installed unless someone
+# runs `git config core.hooksPath .githooks`, and `--no-verify` skips them.
+# A control that can be skipped is not a control. The hook is the early
+# warning; THIS is the one that has to pass.
+#
+# WHAT IT ASSERTS, and why the shape is unusual: it holds SHA-256 DIGESTS of
+# the forbidden identifiers and never the identifiers, so it can name the class
+# and the file:line of a hit while being physically unable to print or to leak
+# the value it matched. A denylist you cannot read is one that survives
+# publication. Home-directory names are counted PER NAME against registered
+# ceilings, because a single total lets a new username appear while an accepted
+# one loses an occurrence and the sum never moves.
+run personal-data-selftest scripts/check-personal-data.py --self-test
+run personal-data          scripts/check-personal-data.py
+
 # S22 — TIER 2: the heavy feature paths, per package. Required, but only for
 # the changes that can break them — the same storage-touching path list the
 # D52 devnet E2E gate uses, because the two gates guard the same surface.

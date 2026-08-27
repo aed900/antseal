@@ -1,0 +1,39 @@
+#!/bin/sh
+# Refuse a commit that would add personal data (Q268).
+#
+# WHY A HOOK AND NOT A GATE LANE ALONE. The gate runs at wave close; a commit
+# happens hours earlier, and by the time the gate is red the string is already
+# in history -- which is the whole problem, because removing it from history
+# costs a rewrite and a force-push. This hook is the only instrument in this
+# repository that can refuse the disclosure BEFORE it becomes expensive.
+#
+# WHY IT IS NOT SUFFICIENT ON ITS OWN. Hooks are not committed to git and are
+# not installed by default: this file lives at .githooks/pre-commit and is
+# armed by `git config core.hooksPath .githooks`, which every clone must do
+# once. So `check-personal-data.py` also runs in the local gate, where it
+# cannot be skipped or forgotten. Two venues, one checker, on purpose --
+# and `--no-verify` bypasses this one, which is why the gate has the last word.
+#
+# It scans the WORKING TREE via the checker's own `git ls-files`, so a staged
+# addition is visible to it. Bypass with `git commit --no-verify` only if you
+# have read what it printed and can say why the finding is wrong.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+checker="$root/scripts/check-personal-data.py"
+
+[ -f "$checker" ] || exit 0   # checker absent (e.g. an old commit checked out)
+
+if ! python3 "$checker"; then
+  printf '\n'
+  printf 'pre-commit: REFUSED — personal data would enter the tree.\n'
+  printf '\n'
+  printf 'This is cheap to fix now and expensive to fix later: once it is\n'
+  printf 'committed and pushed, removing it needs a history rewrite and a\n'
+  printf 'force-push, and the old objects survive on the remote until the\n'
+  printf 'host garbage-collects them.\n'
+  printf '\n'
+  printf 'Name the class, never the literal. If a value is third-party and\n'
+  printf 'load-bearing, register its DIGEST with a reason in the checker.\n'
+  exit 1
+fi
