@@ -1,0 +1,94 @@
+# scrub-history baseline — RESOLVED standing hits, held BY DIGEST.
+#
+# Format, one record per line, TAB separated:
+#     <sha256-hex>	<rule-id>	<class>	<reason>
+#
+# The digest is the SHA-256 of the MATCHED LINE with leading and trailing
+# whitespace stripped, no other normalisation, hashed with NO trailing
+# newline. The key is (rule-id, digest). Blank lines and lines beginning
+# with `#` are ignored.
+#
+# NO ENTRY MAY REPRODUCE A MARKER. The reason names the class and the site in
+# prose and nothing else. History is append-only: a secret-shaped literal
+# committed here would be reported by scripts/scrub-history.sh on every
+# future run, permanently, and could not be removed without a gc — the
+# allowlist would manufacture the very population it exists to resolve.
+# scripts/scrub-history.sh refuses to load a baseline that matches one of its
+# own rules, so this is asserted rather than promised.
+#
+# Registration is a MAINTAINER ACT performed in the commit that adds the
+# entry, with the reason written then, never batched afterwards. Two clauses
+# keep it honest and both are exercised by `--self-test`:
+#   * a registered line that is, stripped, EXACTLY its rule's marker form is
+#     REFUSED — that is the shape a real committed key takes;
+#   * a registered digest that suppresses nothing in a full run is a HARD
+#     FAILURE naming the digest.
+#
+# Classes:
+#   GUARD-PATTERN     a detection pattern quoted in a checker, a CI lane or a
+#                     workflow — the string is the guard, not the secret.
+#   FIXTURE-ASSEMBLY  a line that ASSEMBLES a fixture at run time from pieces
+#                     (printf arguments, character classes), so the marker
+#                     exists only while a self-test runs.
+#   RECORD            a review record, decision or verification note quoting a
+#                     marker as evidence of what was scanned for.
+#   RESERVED-MAGIC    the reserved antseal vault-export format constant where
+#                     it is SPECIFIED or DEFINED — the decision that reserves
+#                     it and the const that declares it. A format constant
+#                     this project owns is not key material.
+#   TRACKER           a task/TODO row naming a marker as the subject of work.
+#
+# Derived from a full-store run at ae4e167 (wave 32): 612 raw hits in 407
+# objects carrying 50 distinct (rule, digest) pairs between them. Every one
+# was read and named by hand before it was written here.
+#
+1c9c815bec911cbf22f69a03d7a3e34b3791d07266262344947d8c26d542b5d5	E1	RECORD	docs/instrument-ledger.md — a ledger entry recording that the guard rule could not match the PGP flavour
+5d2acd8b87a4e440492aab6852ec806eb3ebfc852a9c06164ec06df2e2ea2c2c	E1	TRACKER	tasks/Q.md — a task row whose Notes name the PGP block label as the gap a rule was added to close
+7a97015aa2f4f461b8a1fd715da4895c2a273e383f139774dba3e585aaf33416	E1	RECORD	docs/reviews/pre-public-scrub-history.md — the 2026-08-16 scrub quoting the PGP label as the gap it measured
+26dc022711b6975f5152a4d3fbf74d4a5a8073383770a751f83793dda9c573cc	R1	FIXTURE-ASSEMBLY	.github/workflows/ci.yml — a printf that assembles the guard self-test PEM fixture at run time
+6d4474107d0a629e175c44414f3fd1270a98ee11b7c55cc356857b1bb578cd1b	R1	RECORD	docs/decisions/D71 — a table row naming a sigstore PEM label beside the guard pattern that matches it
+7075c3b91d103a86ab1172bbc710c04079ab59008270e0ab7e09f00d67b2a771	R1	RECORD	docs/reviews/pre-public-scrub-history.md — the scrub quoting the CI PEM fixture-assembly line as evidence
+c339697b6287b5212e97e41dad85bb5a75eb2569bf4145038a930c16a85eb7a9	R1	RECORD	docs/reviews/pre-public-scrub-github-side.md — a pasted Actions log line carrying the CI PEM fixture assembly
+cc264731224ba5cddc681c00e88fdb2e33ffdffa98901ab56e315b5ca2ddc7cb	R1	RECORD	docs/decisions/D71 — a table row naming a cosign PEM label as a signing-format option
+cce6f044ffbb58f6095e328e06596521e87161ebf80cf8122601c9ac3890a185	R1	RECORD	docs/reviews/pre-public-scrub-worktree.md — the worktree scrub quoting the CI fixture-assembly line as evidence
+035668a965c9b80949a28235b414d5ec9f832825552d4152735fc2291006e5bc	R2	FIXTURE-ASSEMBLY	.github/workflows/ci.yml — a printf that assembles the guard self-test keystore JSON fixture at run time
+4169d3e8a297c7de67e0c8b173e66fe5fecb709a06158304d4c29f20c6a34e09	R2	GUARD-PATTERN	.github/workflows/ci.yml — the secret-guard lane deriving its two keystore JSON conjuncts; the string IS the detector
+5135d3327c18cdafd04ac9ba1d203e3f287696e4f4a6d709a63eacb8762d364e	R2	RECORD	docs/ci-verification.md — a verification note describing what the keystore conjunction rule looks for
+801637d9ee8c59d470a50d873d5162c29c2e49cf17147d065e477f2c875b8862	R2	RECORD	docs/reviews/pre-public-scrub-github-side.md — a pasted Actions log line carrying the CI keystore fixture assembly
+0a93a3963e3c5aaafe1135a4136e52a185ee0ef30afb6d93fd8f5d357e5ac4a0	R3	RESERVED-MAGIC	docs/decisions/D47 — the decision reasoning about the reserved constant entering fixtures
+3673c487814faa1787df2edef03758f99c773be4fee0fb567766b04f2ae02126	R3	RECORD	docs/research/paper-key-transport-design-round.md — a design round quoting the export module grammar
+49389948e844050a149472835bf97e244319c11ea2710a6c035814db4e59f33e	R3	RECORD	CONTRIBUTING.md — the gate table row describing the secret-guard lane subject
+509b41803263396c1dc0aa590d8751127b05df0208b6d761c9d4c7571bac4b8d	R3	RESERVED-MAGIC	crates/antseal-cli/src/vault/export.rs — the module doc stating the format grammar
+7036488acbb2fdd96a5c7a640ecc1563a2e5fb9329d873610f50151af9435818	R3	FIXTURE-ASSEMBLY	.github/workflows/ci.yml — a printf that assembles the guard self-test vault-export fixture at run time
+8b2960897d66be7f378c834551a7a14bb24afc44a68e3d9e3217b7668288f5d6	R3	TRACKER	tasks/U.md — the U-domain Do clause naming the reserved format constant it must emit
+9962f9f7d94aff97ba2381a6d115d28e59a3c869e97dc1fa2ce3c17e62832666	R3	RESERVED-MAGIC	docs/decisions/D47 — the format grammar line that RESERVES the constant; this is the specification, not key material
+9b1a188a38cf2bd1c99b8fbae887587e4571f7f59c1cfa3cb694b9c1796e5298	R3	RESERVED-MAGIC	docs/decisions/D47 — the sentence recording that Q2 reserved the constant for this format
+9d90a6038a829748d7f35bfa4d9f4ccd9b43a479b8ede7b563c76817013f40cf	R3	RECORD	testdata/README.md — fixture conventions naming the reserved format constant
+9f5eb166b3615b50092e5e3dbe9793769c2460707e29807acb3e0aa5469b17ae	R3	RECORD	docs/ci-verification.md — a verification note listing what the guard scans for
+b54e53c87759e9ad4a0145533fd9fddf9a761a0a7fbaaa450aae17ea51c00624	R3	RECORD	docs/threat-model.md — a line citing the format constant and its offset while auditing the export path
+cb301d36e3a5f70807326482dbef77fd1cdf0b9dc5f1b53a07cdf6f5f64af9a0	R3	RESERVED-MAGIC	docs/decisions/D47 — the decision body reserving the constant and the header that follows it
+dc63c2e8b349da418e038bb13a5ba591a820578f099a1d590e3cda2dbb95e554	R3	RECORD	docs/reviews/pre-public-scrub-history.md — the BENIGN-4 resolution recording that no vault-export file was ever committed
+dd315ff134138a8d26a095401eb722d54545650e00eafc8692d3d966cdf62870	R3	RESERVED-MAGIC	crates/antseal-cli/src/vault/export.rs — the const that DEFINES the format constant; the one source of truth for it
+e56588d2badd253d5aa6e7ece83c00520aa6ecb3eaa6bca61ca15d4d00ab6e8a	R3	TRACKER	TODO.md — the Q2 row, which reserved the format constant as part of the fixture-convention work
+ed50bbd8b4e618297bf3ed7309d6af37b5b3ee1a6c3025b1dfca04e0214fd59c	R3	RECORD	docs/reviews/pre-public-scrub-github-side.md — a pasted Actions log line carrying the CI vault-export fixture assembly
+ee981eda2148d2258540e38041216df21b58bce39a1b3df0c316b79104137e0d	R3	TRACKER	TODO.md — the D47 row, which names the reserved vault-export format constant as the subject of the decision
+f1a8d5f0f7977c6871c9b35ba4540fb860b63d52aa449a9faafa296db2995069	R3	RECORD	docs/decisions/README.md — the decision index row summarising D47
+481ff64c7217da8d895916cf91e35f004db7606dfd82bff81ed06ff87f37268a	R4a	RECORD	docs/reviews/pre-public-scrub-github-side.md — a pasted Actions log line carrying the CI age fixture assembly
+5c7db045df59c59b315ba85988037187198b56e0b679255efe81d913f7953e0d	R4a	RECORD	docs/reviews/pre-public-scrub-worktree.md — the worktree scrub quoting the CI age fixture-assembly line as evidence
+7faf86a39f7859231714ccd3c4bd1877666b3e5092dbdb1a42a03b10ac8eb455	R4a	FIXTURE-ASSEMBLY	.github/workflows/ci.yml — a printf that assembles the guard self-test age fixture at run time
+a553d02e452a41bf53acd02966c26c6aff51f47afea6ca3a8c82d507c392998a	R4a	RECORD	docs/decisions/D71 — a table row naming the age marker beside the guard pattern that matches it
+bc10b3e81dd29aa7c65df8a827b48c0ad7d6acbb537af793be2a0421bae713c2	R4a	RECORD	docs/reviews/pre-public-scrub-history.md — a counts table row for the age marker across the store
+d34f7b94dfe66fbc5106d155781480abbcd0c12eddeb9d4d91f2e3a096f99d23	R4a	RECORD	docs/reviews/pre-public-scrub-history.md — the scrub quoting the CI age fixture-assembly line as evidence
+23a218b62d55aae0e5741f4f12d280723ba6469b05a4a04cfcee33d2d3a686b4	R4b	RECORD	docs/decisions/D71 — a review row auditing the header-comment rule and quoting the form it anchors to
+694fe6073dc4ef26b44ea8980cf544b139f6204b45a14c9969bbc1012e27e12c	R4b	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the encrypted rsign header fixture for the guard self-test
+86b58c9d273700cb39ced894d13983688247a77f684cf951c5b7e4cf41b80d07	R4b	RECORD	docs/decisions/D71 — a table row naming the header-comment form beside the guard pattern that matches it
+a8378a8eab62cff1c2f6519cffd04778ad93a0bb98453c15261593a062b4e71c	R4b	RECORD	docs/decisions/D71 — prose naming the header-comment form the guard anchors on
+b064413ed761b657be4f6e68c3a909cb0195944fae42f62efe46e9845fb2eb97	R4b	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the plain minisign header fixture for the guard self-test
+dc9c6ae5eb02b983a78227fb14ce192f9b9a0b29412b539c0f09cd16eb6ca3df	R4b	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the plain rsign header fixture for the guard self-test
+ebc199273d43ddca662c10263c0403a16f5b634e46ec8def9d93bf3f6610cc54	R4b	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the encrypted minisign header fixture for the guard self-test
+299f1678b2977d815dd463de875e1acc6b8c83e4d23cdb36c315d17ccbde1ade	R4c	GUARD-PATTERN	scripts/ci-lanes.sh — a comment explaining what the unencrypted body type tag decodes to, so the rule can be audited
+7a0faaf1acb3d9e5443bb2e4e81bbe1bbcd5ef33f9c9ca4bdc61125efc2f761d	R4c	GUARD-PATTERN	scripts/ci-lanes.sh — a comment deriving the passphrase-wrapped body type tag from the key struct bytes; the string IS the detector
+8dab427787a22408dc35a01982f927b6440fa117229c7f28c876378b1e1bf9cc	R4c	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the unencrypted minisign body fixture at run time from a non-key base64 tail
+b72692d8fd6ab0b9ee32c9e1a92b05ac9aa2b6cbd303a570f572cfb44edfafd5	R4c	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the renamed-extension body fixture that proves the rule is not extension-scoped
+cf905847d3e46274ce70a35383301c6e4e8a602c90dbfbd65b80fe87072f9bec	R4c	GUARD-PATTERN	scripts/ci-lanes.sh — a comment deriving the unencrypted body type tag from the key struct bytes; the string IS the detector
+f90f8e964c9e7338b97297feb22d51bea3f2073a930d075d3952bcad51b2d565	R4c	FIXTURE-ASSEMBLY	scripts/ci-lanes.sh — a printf assembling the passphrase-wrapped minisign body fixture at run time from a non-key base64 tail

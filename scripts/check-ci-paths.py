@@ -258,6 +258,27 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
         "into a job — it is python-only, no cargo and no network, and belongs "
         "beside ci-shell and anchor-net-policy on the traceability job — this "
         "entry MOVES to FOLLOW_EDGES in the same commit, per the rule above.",
+    ("scripts/ci-lanes.sh", "scripts/check-ci-paths.py"):
+        "THIS FILE, named in the same D165 comment, which says the "
+        "scrub-history reference below is classified here. Not invoked from "
+        "any lane. Recorded because the checker caught it: the wave-32 edit "
+        "added the sentence, R4e went red on the unclassified edge in the same "
+        "run, and the entry is the answer rather than a deletion of the "
+        "sentence — a comment that names where a rule is enforced is worth "
+        "more than one that gestures at it.",
+    ("scripts/ci-lanes.sh", "scripts/scrub-history.sh"):
+        "named in lane_secret_guard's comment explaining why `--exclude-dir=.git` "
+        "is DELIBERATE (D165, wave 32): that lane's subject is the working tree, "
+        "history is a separate subject, and scrub-history.sh is the check that "
+        "owns it. Not invoked — a grep for secrets is not a walk of commits, and "
+        "the two must not be run from one entry point or a green on either would "
+        "be read as a green on both. The reference is spelled with the file name "
+        "on purpose: R4e then reddens if scrub-history.sh is renamed or removed, "
+        "so the comment cannot rot into a pointer at a check that no longer "
+        "exists. NOTE for whoever wires the wave-32 `package-smoke` lane: that "
+        "lane needs NO entry here (it calls cargo directly and names no script), "
+        "but it is unreached in the same sense as custody-log below — see its "
+        "header comment in ci-lanes.sh, which records that and why.",
     ("scripts/ci-lanes.sh", "scripts/cargo-free.sh"):
         "named in prose about the traceability job's arming; not invoked.",
     ("scripts/ci-lanes.sh", "scripts/cross-check.sh"):

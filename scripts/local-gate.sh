@@ -503,6 +503,26 @@ run fuzz-budget scripts/ci-lanes.sh fuzz-budget
 # in its local dual).
 run traceability scripts/ci-lanes.sh traceability
 
+# Q241 Accept row 2 — the packaging smoke lane, wired here for the reason the
+# traceability line above states: A LANE THAT NEVER RUNS LOCALLY IS NOT
+# EVIDENCE EITHER. The implementing lane (wave 32) held neither `.github/` nor
+# this file's write scope and left it dispatchable-by-hand only, in
+# `custody-log`'s "residue, not a resting place" shape; that residue is closed
+# here rather than re-homed, because it costs 15 s and is green on arrival —
+# which is the precondition D158 set (`a check that is red on arrival cannot
+# join a gate`), and which only became true when wave 31's dev-edge fix landed.
+# WHAT IT ASSERTS: `cargo package --no-verify` resolves for every publishable
+# crate. RESOLUTION, NOT COMPILATION — `--no-verify` means no packaged crate is
+# ever built from its archive. The publishable set is derived at RUN TIME from
+# `cargo metadata` and cross-checked against a line-anchored manifest grep, so
+# a new crate joins and a `publish = false` flip drops it with no edit here;
+# the lane reds if the two witnesses disagree or the set is empty, which is
+# what stops it degenerating into an assertion that cannot fail.
+# STILL OWED: a CI home (`advisory-cron.yml`, beside `audit-deny`, is the
+# lane's own suggestion) — owner: the wave-33 CI lane, timing: with the first
+# green hosted run after Maintainer actions (11). Not a blocker for this step.
+run package-smoke scripts/ci-lanes.sh package-smoke
+
 # Q20 — the positioning-copy lint over product copy (MVP-SPEC.md line 28's
 # rules, the dictated spellings, the one canonical verifier URL, R18's Class V
 # vocabulary). Self-test first, as everywhere above. Pure stdlib, no cargo, no
@@ -541,6 +561,25 @@ run copy-style          scripts/check-copy-style.py
 # one loses an occurrence and the sum never moves.
 run personal-data-selftest scripts/check-personal-data.py --self-test
 run personal-data          scripts/check-personal-data.py
+
+# D165 (Q266) — THE GIT HISTORY IS SCANNED HERE, AND ONLY HERE.
+# WHY THIS VENUE AND NOT CI: the flip publishes HISTORY, and no committed
+# instrument read it. `secret-guard` excludes `.git` outright by design, and
+# `personal-data` above scans `git ls-files` — the WORKING TREE. A hosted
+# runner is the wrong venue for the opposite reason: all 24 `actions/checkout`
+# steps run at the default `fetch-depth: 1`, and a --depth 1 clone's
+# reachability arithmetic BALANCES, so the script would print `mode=full` and a
+# confident verdict over 1 of 718 commits under a summary line textually
+# identical to a real run's. The maintainer's machine is the only venue that
+# holds the subject. The script now REFUSES a shallow store before enumerating,
+# which is what makes deferring the CI arm (D165 R7b) safe.
+# WHY FULL-STORE AND NOT `--since`: a high-water-mark state file that goes
+# stale between waves IS the dated document Q266 exists to abolish, in a
+# different file format. The full arm has no state to rot. Cost is ~26 s.
+# The 612 standing hits are resolved by digest in scripts/scrub-history-baseline.tsv;
+# `findings=` counts UNSUPPRESSED hits only.
+run scrub-history-selftest scripts/scrub-history.sh --self-test
+run scrub-history          scripts/scrub-history.sh
 
 # S22 — TIER 2: the heavy feature paths, per package. Required, but only for
 # the changes that can break them — the same storage-touching path list the

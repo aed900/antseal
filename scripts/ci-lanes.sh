@@ -46,6 +46,13 @@
 #                     runner; what CAN be run before a push is the proof that
 #                     the guard can go red, and Q43's own opening defect is a
 #                     guard whose command had never been executed
+#   package-smoke     Q241/D158: every publishable crate still resolves as a
+#                     CONSUMER sees it. `cargo package --no-verify` strips
+#                     the `path` from every versioned dependency and answers
+#                     the remainder from the registry; nine dev edges written
+#                     `{ workspace = true, features = [...] }` made that
+#                     refuse. A resolver refusal, not a compile error — build,
+#                     test and clippy are all green while it holds
 #
 # Exit: 0 pass · 1 failure. Every lane is runnable locally; the ones that
 # need a pinned external tool say which and how (audit-deny).
@@ -72,7 +79,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free custody-log"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free custody-log package-smoke"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -1403,6 +1410,24 @@ lane_secret_guard() {
     # The exclusion cannot become a hole: `assert_gitignored` below fails
     # the lane if `.devnet/` ever stops being ignored, so "not scanned"
     # stays welded to "not committable".
+    #
+    # `--exclude-dir=.git` IS DELIBERATE, AND IT IS NOT THE HOLE IT LOOKS
+    # LIKE. This lane's subject is the WORKING TREE — what a push would add
+    # to the tip. Pointing a `grep -r` at `.git/` would scan packfiles and
+    # loose objects as bytes, which is neither a read of history nor a
+    # decision about it: compressed objects do not match plaintext patterns,
+    # so it would report clean over a key that is genuinely in the history
+    # and would be the worst possible outcome — a green that means nothing.
+    # HISTORY IS A SEPARATE SUBJECT WITH A SEPARATE CHECK (D165): the
+    # `scrub-history` gate step — `scripts/scrub-history.sh`, landing this
+    # wave — walks commits, not files, and owns the question "was a secret
+    # ever committed and is it still fetchable". This lane never runs it;
+    # the reference is classified in scripts/check-ci-paths.py so that
+    # renaming or deleting that script reddens R4e rather than leaving a
+    # dead pointer in a comment about a hole. Two
+    # subjects, two checks; neither one's exclusion is the other's blind
+    # spot. Do not "fix" this by dropping the exclusion — that swaps a real
+    # check for a vacuous one.
     ex() { grep -rlaE --exclude-dir=.git --exclude-dir=target --exclude-dir=.devnet \
              --exclude='ci-lanes.sh' --exclude='*.md' -e "$1" "$root" || true; }
     # (1) PEM private-key blocks (wallet/signing keys, any flavor).
@@ -1919,6 +1944,149 @@ lane_audit_deny() {
   cargo deny --locked check advisories bans sources licenses
 }
 
+# ── Q241 / D158 Accept row 2: the publish-ability smoke lane ───────────────
+#
+# WHAT WENT WRONG, AND WHY A COMPILE-CLEAN WORKSPACE COULD NOT SEE IT.
+# `cargo package` re-resolves each crate AS A CONSUMER WOULD SEE IT: the
+# `path` is stripped from every dependency that also carries a version, and
+# the remaining `=0.0.0` requirement is answered from the registry. Nine
+# `[dev-dependencies]` edges across four crates were written
+#
+#     antseal-core = { workspace = true, features = ["test-util"] }
+#
+# — two of them SELF-edges — and the workspace table gives those a version.
+# So packaging asked crates.io for `antseal-net =0.0.0` with `test-util`, got
+# the reserved 0.0.0 name-placeholder, which carries no features, and refused:
+#
+#     package `antseal-net` depends on `antseal-net` with feature
+#     `test-util` but `antseal-net` does not have that feature.
+#
+# That is a RESOLVER refusal, not a compile error. It has no `error[E….]`
+# code, it happens before a byte is compiled, and `cargo build`, `cargo test`
+# and `cargo clippy` stay green the whole time it holds — which is why the
+# entire gate could not see it. Wave 31 (`170f1ad`) fixed it by writing those
+# edges as `{ path = "...", features = [...] }` with NO version, because
+# cargo DROPS a versionless dev-dependency when it packages. This lane is
+# what keeps them that way, and it lands green (D158: a check that is red on
+# arrival cannot join a gate).
+#
+# WHY `--no-verify`. The defect is in the resolve, which runs first.
+# Verification then unpacks each `.crate` and rebuilds it from scratch
+# outside the workspace — minutes per crate, and it can find nothing this
+# lane is for. `--no-verify` reproduces the failure at full fidelity in
+# seconds. Proven: the plant below (revert ONE of the nine lines) reddens
+# this lane on the message quoted above.
+#
+# WHY ONE INVOCATION CARRYING EVERY `-p`, NOT A LOOP. Since cargo 1.83 a
+# single `cargo package` over several workspace members resolves those
+# members against EACH OTHER rather than the registry. Run one crate at a
+# time, `antseal-cli` cannot package at all, and no manifest edit here can
+# make it: its NORMAL edge forwards `ant-backend =
+# ["antseal-net/ant-backend", ...]`, and the registry placeholder
+# `antseal-net 0.0.0` has no such feature (measured 2026-08-29 —
+# `cargo package --no-verify -p antseal-cli` alone exits 101 on exactly
+# that resolver error). Publishing this workspace is bottom-up-or-together
+# by construction, so the co-packaged form is also the one that matches how
+# it will actually be released.
+#
+# WHY `--allow-dirty`. `cargo package` refuses on any uncommitted file inside
+# a crate directory, and it refuses BEFORE it resolves — so without the flag
+# the lane stops reporting on the very thing it exists to check the moment a
+# contributor edits a manifest. That is `lane_secret_guard`'s `.devnet` trap
+# repeated exactly: a lane that goes red for doing the right thing is a lane
+# people learn to skip. On a runner the tree is clean and the flag is inert;
+# locally it makes the lane test the working tree, which is what a pre-push
+# check is for.
+#
+# THIS LANE NEEDS THE crates.io INDEX (like `audit-deny`), because resolution
+# IS the check — so it can never ride the cargo-free `traceability` job.
+#
+# WHERE IT RUNS, STATED PLAINLY: NOWHERE YET. Measured 2026-08-29 — no
+# `run:` line in any workflow and no `run` step in scripts/local-gate.sh
+# dispatches `package-smoke`; it is in LANES and runnable by hand, and that
+# is all. THIS IS A RESIDUE, NOT A RESTING PLACE, in exactly the sense the
+# `custody-log` entry in scripts/check-ci-paths.py uses the phrase: the
+# implementing lane held write scope over this file and check-ci-paths.py
+# only, and says so rather than pretending a runner exists. It wants cargo
+# and the network but no build, which is `advisory-cron.yml`'s shape beside
+# `audit-deny`; a local-gate step is the other candidate. Wiring it is a
+# `.github/` + local-gate act for whoever holds that scope.
+lane_package_smoke() {
+  # The publishable set is DERIVED, never hand-listed: a new crate joins
+  # automatically and a `publish = false` flip drops it automatically. TWO
+  # independent witnesses must agree — cargo's own resolved view (absent
+  # `publish` renders as null, `publish = false` as `[]`) and a line-anchored
+  # grep of the committed manifests — because a derived set that quietly
+  # comes back empty, or wrong, is a lane that asserts nothing.
+  local meta pubs skipped npub nskip greps
+  meta="$(mktemp)" || die "mktemp failed"
+  trap 'rm -f "$meta"' RETURN
+  cargo metadata --no-deps --format-version 1 >"$meta" 2>/dev/null \
+    || die "cargo metadata failed — the publishable crate set cannot be derived"
+  local derived
+  derived="$(python3 - "$meta" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+pub  = sorted(p["name"] for p in m["packages"] if p.get("publish") is None)
+skip = sorted(p["name"] for p in m["packages"] if p.get("publish") == [])
+print(" ".join(pub))
+print(" ".join(skip))
+PY
+)" || die "could not parse cargo metadata"
+  pubs="$(printf '%s\n' "$derived" | sed -n 1p)"
+  skipped="$(printf '%s\n' "$derived" | sed -n 2p)"
+  npub=$(printf '%s' "$pubs" | wc -w)
+  nskip=$(printf '%s' "$skipped" | wc -w)
+
+  if [ "$npub" -eq 0 ]; then
+    printf '::error::package-smoke: the derived publishable set is EMPTY — either every crate now carries `publish = false` or the derivation is broken. A lane with nothing to package proves nothing.\n'
+    return 1
+  fi
+  # Second witness. `^publish` is line-anchored on purpose: three manifests
+  # DISCUSS `publish = false` in comments, and a witness that counted those
+  # would agree with the first one for the wrong reason.
+  greps=$(grep -lE '^publish[[:space:]]*=[[:space:]]*false' crates/*/Cargo.toml 2>/dev/null | wc -l)
+  if [ "$greps" -ne "$nskip" ]; then
+    printf '::error::package-smoke: the two witnesses disagree — cargo metadata reports %s crate(s) with `publish = false` [%s], the manifests carry %s. Reconcile before trusting either.\n' \
+      "$nskip" "$skipped" "$greps"
+    return 1
+  fi
+
+  note "Q241/D158: $npub publishable crate(s) [$pubs] must still resolve as a consumer sees them"
+  local args=() c
+  for c in $pubs; do args+=(-p "$c"); done
+  local out status
+  # Command substitution, never a `| tee`: a pipeline reports its LAST
+  # element's status, and this project has been burned by exactly that.
+  out="$(cargo package --no-verify --locked --allow-dirty "${args[@]}" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    # THE WHOLE OUTPUT ON FAILURE, never the filtered summary. cargo puts the
+    # sentence that discriminates a RESOLVER refusal from every other kind of
+    # failure — "…does not have that feature" — inside the `Caused by:` block,
+    # and a summary grep eats it. Measured: the first cut of this lane went
+    # red on the plant with only `error: failed to prepare local package for
+    # uploading` on screen, which is a red you cannot diagnose and cannot
+    # tell apart from a compile error. This project judges a failure BY ITS
+    # MESSAGE, so the message has to survive to the log.
+    printf '%s\n' "$out" | sed 's/^/    /'
+    printf '::error::package-smoke: `cargo package --no-verify` FAILED (exit %s). If the message above names a feature the registry copy "does not have", a dependency edge has regained a version — write it `{ path = "...", features = [...] }` with no version and no `workspace = true`, per Q241/D158.\n' "$status"
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -E '^[[:space:]]*(Packaging|Packaged)' | sed 's/^/    /'
+  # A zero exit that packaged NOTHING would be the vacuous green this
+  # project keeps finding: assert the count, read back from the output.
+  local packaged
+  packaged=$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*Packaged ')
+  if [ "$packaged" -ne "$npub" ]; then
+    printf '::error::package-smoke: cargo exited 0 but emitted %s `Packaged` line(s) for %s publishable crate(s) — a green run that packaged nothing is not evidence\n' \
+      "$packaged" "$npub"
+    return 1
+  fi
+  printf 'OK: %s/%s publishable crate(s) packaged [%s]; %s skipped by `publish = false` [%s]; both witnesses agree.\n' \
+    "$packaged" "$npub" "$pubs" "$nskip" "$skipped"
+}
+
 # Q43's test-of-the-test: reproduce the Q8 defect and watch this lane go red
 # WITHOUT a push. Not a description of the defect — the defect itself, put
 # back into a copy of this script and executed.
@@ -1986,5 +2154,6 @@ case "${1:-}" in
   anchor-net-policy) lane_anchor_net_policy ;;
   cargo-free)       lane_cargo_free ;;
   custody-log)      lane_custody_log ;;
+  package-smoke)    lane_package_smoke ;;
   *) die "usage: scripts/ci-lanes.sh <$(printf '%s' "$LANES" | tr ' ' '|')> | --list | --self-test" ;;
 esac
