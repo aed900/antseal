@@ -3036,6 +3036,20 @@ changed direction as well: an unstated required clause no longer has an entry
 to excuse it and is a **finding**, so *"neither reddens a checker"* is now
 historical for this half.
 
+**[UPDATED 2026-09-02, wave 33. Both decisions named above are TAKEN and both
+rows are CLOSED.]** `Q266` ticked at wave 32 — D165 wired `scrub-history.sh`
+into the local gate as a full-store step against a digest baseline. `Q268`
+ticked 2026-09-02: the maintainer chose *remove completely*, the rewrite and
+force-push landed at wave 31, and GitHub's Support GC (requested 2026-08-28)
+has now run — measured by the exact fetch that proved the exposure, which
+answers *"No commit found for SHA"* (HTTP 422, byte-identical to a
+never-existed control; the ruled 404 appears verbatim on the contents-at-ref
+and tarball routes). Live refs untouched (`main` at `ae4e167…`,
+`format-v1-freeze` at `d3345e1…`). Evidence: `tasks/Q.md` `### Q268`; the
+predicate's status-code correction is at the instrument ledger. **The
+pre-flip set now contains no agent-side item: what stands before B0 is the
+maintainer's alone.**
+
 ### A2 — BEFORE. The machine-path lint is green on the live surface
 
 Q65 `Accept` row 2, as amended by D144 §2 R1. The check is the **flagless**
