@@ -229,6 +229,24 @@ FOLLOW_EDGES: dict[tuple[str, str], str] = {
         "the import-surface assertion, run by the same lane.",
     ("scripts/cross-check.sh", "scripts/crosscheck-provenance.py"):
         "runs FIRST on every --check/--self-test (D31 §6b ordering).",
+    # ── ledger 256 / R96: ci.yml's `test` job now builds the verifier page ─────
+    # It runs `./scripts/verifier-page-build.sh --build-only` before `cargo test
+    # --workspace`, so crates/antseal-wasm/tests/page_template.rs can read the
+    # built target/verifier-web/index.html instead of panicking on its absence.
+    # That pulls verifier-page-build.sh and its real callees into ci.yml's reader
+    # set for the first time; these are the edges the test job actually reaches.
+    ("scripts/verifier-page-build.sh", "scripts/wasm-pack-build.sh"):
+        "stale_guard (:66-67) rebuilds the module via `wasm-pack-build.sh "
+        "--build-only` on every build, the --build-only path the test job takes "
+        "included; reached.",
+    ("scripts/verifier-page-build.sh", "scripts/verifier-page-pack.mjs"):
+        "cmd_build (:88) packages the page with it on the --build-only path — this "
+        "is the call that writes target/verifier-web/index.html; reached.",
+    ("scripts/wasm-pack-build.sh", "scripts/wasm-imports.mjs"):
+        "the import allow-list over the built module (:295-296), run BEFORE the "
+        "--build-only early return, so reached from the test job's page build. "
+        "(wasm-imports.mjs is already a reader via wasm-bitmatch.sh; its own "
+        "outbound edges are already in UNREACHED_EDGES.)",
 }
 # Edges that exist in the file but are NOT reachable from the arguments ci.yml
 # actually passes. Each names why. If ci.yml ever gains the subcommand named
@@ -342,6 +360,34 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
         "header comment naming its own CALLER (:6) — the edge points backwards.",
     ("scripts/wasm-bitmatch.mjs", "scripts/wasm-test-runner.mjs"):
         "header comment citing the shared technique (:13); not invoked.",
+    # ── ledger 256 / R96: script literals SURFACED by the test job's page build ─
+    # verifier-page-build.sh, wasm-tools-provision.sh, wasm-pack-build.sh and
+    # verifier-page-pack.mjs entered ci.yml's reader set with the two page-build
+    # steps (see FOLLOW_EDGES above). These are the `scripts/x` literals in them
+    # that the test job does NOT reach — prose, or code behind the --build-only
+    # early return.
+    ("scripts/wasm-tools-provision.sh", "scripts/wasm-pack-build.sh"):
+        "header comment (:15) noting wasm-pack-build.sh `die`s when a tool is "
+        "missing; this script only `cargo install`s the tools and invokes nothing.",
+    ("scripts/wasm-tools-provision.sh", "scripts/pages-publish.sh"):
+        "header comment (:41) recording that this script's version grep was moved "
+        "out of pages-publish.sh; a prose mention, not an invocation.",
+    ("scripts/wasm-pack-build.sh", "scripts/wasm-boundary.mjs"):
+        "the native<->JS boundary comparison (:310), reached only AFTER the "
+        "--build-only early return (:301-304). ci.yml invokes wasm-pack-build.sh "
+        "EXCLUSIVELY as --build-only (via verifier-page-build.sh's stale_guard), so "
+        "the boundary run never happens on a page build; the R9 corpus is the "
+        "`wasm-bitmatch` lane's subject, not this one's.",
+    ("scripts/wasm-pack-build.sh", "scripts/wasm-toolchain-audit.sh"):
+        "header comment (:115) naming the script whose line-grep idiom recorded_pin "
+        "reuses; wasm-pack-build.sh runs its own grep and calls nothing.",
+    ("scripts/wasm-pack-build.sh", "scripts/reproducible-build.sh"):
+        "comment (:224) naming the one caller that sets ANTSEAL_SOURCE_COMMIT; not "
+        "invoked from here.",
+    ("scripts/verifier-page-pack.mjs", "scripts/page-build.mjs"):
+        "the module's own usage banner (:5-6), which still spells its pre-rename "
+        "name page-build.mjs (no such file exists today). A node module here shells "
+        "out to nothing — it imports only node: builtins — so the mention is prose.",
 }
 
 # Reader files are scanned for path literals; these suffixes are the ones that

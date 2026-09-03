@@ -194,6 +194,25 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup show
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # ── ledger 256 / R96: build the verifier page BEFORE the workspace suite ──
+      #
+      # `cargo test --workspace` runs crates/antseal-wasm/tests/page_template.rs,
+      # whose `the_built_page_carries_the_footers_signing_key_element_byte_for_byte`
+      # READS target/verifier-web/index.html and by design REFUSES to skip when it
+      # is absent (R96). A cold hosted runner has built no page, so the suite
+      # panicked and this job was red from ~2026-08-16 (measured, ledger 256: the
+      # `test` job failed at step 8 on run 33756110493). The local gate masked it
+      # by building the page in a later lane and living off a leftover target/. The
+      # two steps below give the test its subject, mirroring verifier-page.yml's
+      # `browser` job. Neither is a new `uses:` — both call committed scripts (Q43).
+      # `verifier-page-build.sh --build-only` needs no separate module step: its
+      # stale_guard invokes `wasm-pack-build.sh --build-only` (whose `rm -rf` also
+      # moots the rust-cache STALE-ARTIFACT hazard, exactly as the browser job's
+      # comment records) and it then packages target/verifier-web/index.html.
+      - name: install the pinned wasm tools this image does not ship
+        run: ./scripts/wasm-tools-provision.sh
+      - name: build the verifier page the workspace suite asserts against (R96, ledger 256)
+        run: ./scripts/verifier-page-build.sh --build-only
       - run: cargo test --workspace --locked
 
   # antseal-core must ALWAYS build for wasm32-unknown-unknown: WASM-safety is
