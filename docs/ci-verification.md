@@ -1863,6 +1863,15 @@ Restoring dispatch is a maintainer action: raise the spending limit, wait for
 the monthly reset, or reduce what the workflow spends — `cross-os-macos` bills
 at a 10x multiplier and is by far the most expensive of the 19 jobs.
 
+**[CORRECTED 2026-09-03.]** A fourth option is the one the register had missed
+and it is the only one available to this maintainer, who has no funds for
+private Actions: **standard GitHub-hosted runners are free and unlimited on
+PUBLIC repositories** (verified against docs.github.com 2026-09-03), and every
+job here uses a standard runner. So the public flip restores dispatch at $0 —
+the `10x` macOS multiplier and the whole spending question apply to the
+**private** repo only. Dispatch unblocks as a free side-effect of going public,
+not as a paid step before it.
+
 ---
 
 ## Q153 — three gate lanes moved onto the remote, and two ruled to stay local (2026-08-10, M2 wave 14)

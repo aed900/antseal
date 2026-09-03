@@ -290,7 +290,7 @@ The register's *"the annotation is a disjunction"* note is **SUPERSEDED**: the
 disjunction is **internal to billing** (§1.3). **Separable from the publish flip
 — confirmed.**
 
-- **OWED: clearing the GitHub Actions billing gate.**
+- **OWED: clearing the GitHub Actions billing gate.** **[ADDENDUM 2026-09-03, D117-style — the owed act is re-identified, not the diagnosis.]** This ruling framed the owed act as a *Billing & plans* payment/limit change. The maintainer has no funds for private Actions, and **standard runners are free on PUBLIC repos** (verified 2026-09-03; every job here is standard). So the act that clears the gate is **the public flip itself**, at $0 — the billing→flip sequencing this record implied is inverted to flip→(free Actions). §1.3's diagnosis (cause = billing, not workflow contents) is unaffected; only the remedy and its ordering are corrected. See TODO.md Maintainer action (11) and the ledger.
 - **OWNER: the maintainer (`aed900`)**, in the GitHub web UI, under **Billing &
   plans**.
 - **TIMING: before the next wave's survey**, because **every hosted-witness row
