@@ -523,6 +523,24 @@ run traceability scripts/ci-lanes.sh traceability
 # green hosted run after Maintainer actions (11). Not a blocker for this step.
 run package-smoke scripts/ci-lanes.sh package-smoke
 
+# Q261's residue, closed where package-smoke's was: the custody-log lane has
+# existed in ci-lanes.sh since the row ticked and ran in NO ritual —
+# "dispatchable-by-hand only" — so when the 2026-08-27 history rewrite killed
+# the checker's pinned birth commit, the red sat invisible for SIX DAYS and
+# was found by a wave-33 planning sweep, not by a gate. A LANE THAT NEVER
+# RUNS LOCALLY IS NOT EVIDENCE EITHER (the traceability line above; Q43's
+# rule in its local dual). WHAT IT ASSERTS: docs/signing/key-custody.md §10
+# is append-only from its pinned birth and §11's exception register matches
+# — via ci-lanes.sh custody-log, which first self-tests all four planted
+# fault classes, then runs the check. Green on arrival per D158: the baseline
+# was re-derived in this same commit (see BIRTH in check-custody-log.py) and
+# the drift arm re-proven red on a planted pin AFTER the fix. STILL OWED:
+# the hosted home (the traceability job, per check-ci-paths.py's UNREACHED
+# entry, which moves to FOLLOW_EDGES only in the commit that wires it there)
+# — owner: a CI lane, timing: with the first green hosted run after
+# Maintainer actions (11).
+run custody-log scripts/ci-lanes.sh custody-log
+
 # Q20 — the positioning-copy lint over product copy (MVP-SPEC.md line 28's
 # rules, the dictated spellings, the one canonical verifier URL, R18's Class V
 # vocabulary). Self-test first, as everywhere above. Pure stdlib, no cargo, no

@@ -170,6 +170,15 @@ DOCS_CLASSIFICATION: dict[str, tuple[str, str]] = {
     "anchors/": ("ENG", "operator runbooks"),
     "decisions/": ("ENG", "decision records; a record's job includes proposing work (D109 §3.3)"),
     "devnet/": ("ENG", "developer network setup"),
+    "drills/": (
+        "ENG",
+        "Q32's operator drill procedures and their fill-in evidence templates "
+        "(disk-loss vault-backup-only recovery). An internal evidence-producing "
+        "exercise a contributor/operator runs and records - the class of "
+        "docs/anchors/ operator runbooks - not user-facing product copy: it "
+        "makes no claim about a seal and specifies a procedure, not positioning. "
+        "The user-facing recovery guidance lives in docs/user/ (Q24)",
+    ),
     "format/": ("ENG", "the wire registry and its freeze"),
     "naming/": ("ENG", "registration/outreach runbooks"),
     "research/": ("ENG", "design-round records"),

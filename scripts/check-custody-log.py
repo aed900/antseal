@@ -64,7 +64,21 @@ SUBJECT = "docs/signing/key-custody.md"
 # Pinned in full, and asserted to be the first commit the walk finds — if
 # history is rewritten or the file is deleted and recreated, this reds rather
 # than quietly re-baselining onto whatever is oldest today.
-BIRTH = "2cdf0fb48ea72858786c4276371b93a774c30828"
+#
+# RE-DERIVED 2026-09-03 (wave 33), exactly as the drift message prescribes.
+# The 2026-08-27 identifier rewrite (Q268/Q269; 72 commits over 873a1cf^..main)
+# gave every commit in its range a new SHA, so the original pin
+# (2cdf0fb48ea72858786c4276371b93a774c30828) stopped existing and this check
+# went red by design — and sat red, unseen, for six days, because no ritual
+# ran it (Q261's registered residue; closed in the same commit by the
+# local-gate step). The new pin is re-derived deliberately, not inherited:
+# `git log --diff-filter=A -- docs/signing/key-custody.md` returns exactly
+# one commit, and the drift arm was re-proven red on a planted bogus pin
+# AFTER the fix. A SHA pin is an INPUT to any history rewrite; the
+# one-command sweep for the class is  grep -rnoE '[0-9a-f]{40}' scripts/
+# (1 live pin — this one; 3 fixture literals in verify-release.sh and
+# reproducible-build.sh, excluded by inspection).
+BIRTH = "af38d1871a59087f9a5fc7590b5e892694f1b5a5"
 
 LOG_SECTION = 10          # `## 10. Log` — the append-only custody table
 AMENDMENTS_SECTION = 11   # `## 11. Amendments to this document` — the register
