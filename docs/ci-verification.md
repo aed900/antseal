@@ -3069,39 +3069,100 @@ copy and must not be run mid-wave.
 python3 scripts/check-traceability.py
 ```
 
-**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, all eight checks ok. The line that
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0`, all **ten** checks ok. The line that
 matters here:
 
 ```
 [machine-paths] ok — 0 absolute home paths outside the reserved vocabulary
-(user, fixture, runner, u, x) across 455 live file(s) in 14 scan root(s);
-1 registered divergence(s) still present verbatim and exactly once (MVP-SPEC.md)
+(user, fixture, runner, u, x) across 465 live file(s) in 14 scan root(s);
+1 registered divergence(s) still present verbatim and exactly once (MVP-SPEC.md);
+the vocabulary is declared for contributors at CONTRIBUTING.md:62, naming
+exactly the 5 reserved name(s)
 ```
 
-Read the numbers, not the word `ok`: the scan-root count and the live-file
-count both move as the tree grows, and a scan that silently stopped covering a
-directory would still print `ok`. **This lint does not buy confidentiality**
+Summary line, which is the one to read back: `check-traceability: ok
+(freeze-boundary, matrix, decisions, task-citations, task-entries,
+decision-owners, decision-index, machine-paths, doc-links,
+decision-ledger-debt)`.
+
+**[CORRECTED 2026-09-12 — this step told the reader to read the numbers and
+then quoted two that had moved.]** It said *"all **eight** checks ok"* and
+*"across **455** live file(s)"*. Measured today: **ten** checks and **465**
+live files; the scan-root count held at 14, and the checker has since grown a
+clause naming `CONTRIBUTING.md:62` that was not in the 2026-08-19 output at
+all. A step whose whole instruction is *read the numbers* must not itself be a
+stale number, or the reader's only check is the word `ok` again.
+
+Read the numbers, not the word `ok`: the check count, the scan-root count and
+the live-file count all move as the tree grows, and a scan that silently
+stopped covering a directory would still print `ok`. **This lint does not buy
+confidentiality**
 and Q65 says so itself — `/home/deb` is already in the published history at
 `01cdc83` and at `format-v1-freeze`. What it buys is machine-independence of
 live instructions.
 
-### A3 — BEFORE. All three scrub halves exist and are committed
+### A3 — BEFORE. All FOUR scrub halves exist and are committed
+
+**[CORRECTED 2026-09-12 — this step expected three halves and there are four,
+all three recorded sizes moved, and the one sentence a maintainer would read
+aloud from it is now materially incomplete.]** The heading said *"All three
+scrub halves"*. Re-measured:
 
 ```bash
 ls -l docs/reviews/pre-public-scrub-*.md
+git ls-files docs/reviews/pre-public-scrub-*.md | wc -l
 ```
 
-**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, three files:
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0`, **four** files, all four tracked:
 
 ```
-47278  docs/reviews/pre-public-scrub-github-side.md
-27644  docs/reviews/pre-public-scrub-history.md
-33364  docs/reviews/pre-public-scrub-worktree.md
+47287  docs/reviews/pre-public-scrub-github-side.md
+24569  docs/reviews/pre-public-scrub-history-delta.md
+27653  docs/reviews/pre-public-scrub-history.md
+33385  docs/reviews/pre-public-scrub-worktree.md
 ```
 
-Zero credential findings in all three. **They are dated documents, not live
-guards**: the worktree half's own figures were stale by the commits that landed
-it. A2 is the live check; these are the record of the sweep.
+**[SUPERSEDED — the 2026-08-19 reading]** was three files at `47278`, `27644`
+and `33364` bytes. All three grew (by 9, 9 and 21 bytes), which is the ordinary
+staleness this file warns about; the fourth file is the finding.
+
+**`pre-public-scrub-history-delta.md` is the fourth half.** It landed at
+`170f1ad` (wave 31) and is tracked. Two things about it belong in the sitting:
+
+```bash
+git log --oneline --diff-filter=A -- docs/reviews/pre-public-scrub-history-delta.md
+grep -rn 'pre-public-scrub-history-delta' . | grep -v '^\./\.git/'
+```
+
+**[OBSERVED 2026-09-12]** — the first prints `170f1ad`; the second prints
+**nothing but the file's own lines**, `REAL_EXIT=1`. **No file in this
+repository references the delta half.** It is reachable only by globbing the
+directory, which is exactly what this step does and why the step is the thing
+that found it. A reader who follows links rather than globs will never see it.
+
+**`ls` is the right instrument here and a hand-maintained list is not.** The
+glob is what turns a new half into a visible change; had this step named its
+three files, the fourth would have been invisible to it forever.
+
+**"Zero credential findings in all three" is no longer the whole truth, and
+the exception is the most consequential measurement in the entire scrub.** The
+three original halves reported zero credential findings. The **delta half
+carries finding `N-1`** — the one 2026-08-16 measurement that later
+**reversed**. It became **`Q268`**: the scrub reports had put the maintainer's
+personal address into the very history they were certifying clean, and closing
+it took the maintainer's *remove completely* ruling, a `filter-branch`
+rewrite, a force-push, and a GitHub Support GC request that only completed on
+2026-09-02. Say that aloud at the flip. The honest summary is: **zero
+credential findings across four halves; one non-credential personal-data
+finding, reversed once, and it drove a history rewrite.** A chapter that still
+says *"zero findings in all three"* invites the reader to conclude the scrub
+never found anything, and the scrub's single most expensive consequence came
+out of the half the sentence omits.
+
+**They are dated documents, not live guards**: the worktree half's own figures
+were stale by the commits that landed it, and three of the four sizes above
+moved between two readings of this step. A2 is the live check; these are the
+record of the sweep.
 
 ### A4 — BEFORE, strictly. Q243's evidence-artifact gate is in the publishing job
 
@@ -3127,10 +3188,23 @@ environment before capture, and `--scan-evidence` asserts the **artifact
 itself** after capture and before upload — the one that survives a refactor
 that stops calling `redact()` at all.
 
-**The existing artifact is not covered by this gate and is kept anyway.**
-D145 §2 R2: run `9132238802` predates the gate by five days, was scanned by
-hand instead (`files=8 findings=0 verdict=CLEAN`), and is retained. Record that
-when the flip is taken; do not claim the gate covers it.
+**One of the three existing evidence artifacts is not covered by this gate and
+is kept anyway.** D145 §2 R2: artifact `9132238802` predates the gate, was
+scanned by hand instead (`files=8 findings=0 verdict=CLEAN`), and is retained.
+Record that when the flip is taken; do not claim the gate covers it.
+
+**[CORRECTED 2026-09-12 — this paragraph said "the existing artifact",
+singular, and it said "five days".]** Both are wrong today, and the singular is
+the one that misleads. There are now **three** `devnet-e2e-evidence`
+artifacts and **two of them are gate-covered** — see B7, which carries the
+split, the ids and the byte totals. And the gap is **six days**, not five:
+artifact `9132238802` was created **2026-08-12T07:19:54Z** and the gate landed
+at `af38d18`, authored **2026-08-18T13:09:04+01:00** — a delta of 6 days
+4h 49m, measured with `gh api …/actions/artifacts/9132238802 --jq .created_at`
+and `git log -1 --format=%aI af38d18`. Neither correction changes what this
+step *does*; both change what a maintainer would say aloud about coverage, and
+the singular would have understated the covered fraction as 0 of 1 instead of
+2 of 3.
 
 ### A5 — BEFORE, strictly. Q244's SHA pins are landed
 
@@ -3472,69 +3546,189 @@ the flip, and that read-back is what makes the *"predicted"* half honest.
 git push origin main
 ```
 
-**[UNOBSERVED — this is a write to the remote, and no agent may take it.]**
-Expected: the remote's `refs/heads/main` advances to the local `main`. Read it
-back with the same command that establishes the pre-state:
+**[OBSERVED 2026-09-12 — the step's post-condition ALREADY HOLDS and the
+command is a NO-OP today. It was tagged `[UNOBSERVED]` until this date, and
+that tag had been false since 2026-09-03.]** The write is still one no agent
+may take on its own; what has changed is that there is nothing left for it to
+push. Measured:
+
+```bash
+git rev-parse main origin/main
+git rev-list --count origin/main..main    # what a push would send
+git rev-list --count main..origin/main    # what a fetch would bring
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0`; both refs at
+`34378906c36ca19a7d45a72e04cef56c09ad368b` (`3437890`), and **both counts are
+`0`**. So `git push origin main` transmits no object and advances no ref: the
+step is green **by being already done**, not by being taken in the sitting. If
+either count is non-zero when this is read at the flip, the write ban is back
+in force exactly as written above — re-derive the counts, never inherit this
+line.
+
+Read it back with the same command that establishes the pre-state:
 
 ```bash
 git ls-remote origin
 ```
 
-**[OBSERVED 2026-08-19]** — `REAL_EXIT=0`, four lines and no more:
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0`, four lines and no more:
 
 ```
-dc0bac80964172ea3a458cc1a495f003a32cd6f0	HEAD
-dc0bac80964172ea3a458cc1a495f003a32cd6f0	refs/heads/main
+34378906c36ca19a7d45a72e04cef56c09ad368b	HEAD
+34378906c36ca19a7d45a72e04cef56c09ad368b	refs/heads/main
 5b72bb0fdfaf4e50ab953c4b0d36d5a12c666e8f	refs/tags/format-v1-freeze
 d3345e1622bf4ae8d90d5d02b9e80317c73b7683	refs/tags/format-v1-freeze^{}
 ```
 
-The remote carries **one branch and one tag**. Locally: `main` is **3 commits
-ahead** of `dc0bac8` (waves 25–27), **549** commits total, **36** branches,
-**2** tags, and **1** ref under `refs/original`.
+The remote still carries **one branch and one tag**, and the freeze tag is at
+the same two SHAs it was at on 2026-08-19 — the force-push of wave 31 did not
+touch it. Locally: `main` is **0 commits ahead**, **569** commits total,
+**36** branches, **2** tags, and **0** refs under `refs/original`.
+
+**[SUPERSEDED — the 2026-08-19 reading, kept because four figures in it are
+now wrong and a reader must be able to see which.]** It recorded:
+
+```
+dc0bac80964172ea3a458cc1a495f003a32cd6f0	HEAD
+dc0bac80964172ea3a458cc1a495f003a32cd6f0	refs/heads/main
+```
+
+with *"`main` is **3 commits ahead** of `dc0bac8` (waves 25–27), **549**
+commits total, **36** branches, **2** tags, and **1** ref under
+`refs/original`."* Four of those five moved: the remote head is `3437890` not
+`dc0bac8`, the ahead-count is **0** not 3, the commit total is **569** not 549,
+and `refs/original` is **0** not 1 — a local `gc` has run since. Only the
+branch and tag counts held. **Every one of the four moved in the direction that
+makes the step look safer**, which is why the whole of it is re-measured here
+rather than patched figure by figure.
 
 **Why this step is before the flip and not after.** The pre-public scrub scanned
 *this clone*; publishing a remote whose content is a subset of what was scanned
 keeps that coverage true, and it means the repository that becomes public is the
 one the scrub describes rather than one that grows into public view commit by
-commit. The cost is that the first push still lands on a CI that refuses jobs —
-the free-minutes change arrives only with the flip — so **expect no green run
-from this step**. The first genuine remote verdict is C4.
+commit.
 
-#### `git push --all` and `git push --mirror` are FORBIDDEN, and the reason is measured
+**[CORRECTED 2026-09-12 — the cost this paragraph priced no longer exists.]**
+It read: *"The cost is that the first push still lands on a CI that refuses
+jobs — the free-minutes change arrives only with the flip — so **expect no
+green run from this step**. The first genuine remote verdict is C4."* All three
+clauses are now false. The push of 2026-09-03 **did** get a runner, it **did**
+produce verdicts, and one of them was **red on a real defect** (`Q270`); the
+free-minutes change did not arrive with the flip because it did not have to.
+**The first genuine remote verdict has already happened, before the flip, on a
+private repository** — see C4, which is where the measurement lives. Expect a
+run from a push made today, and read its verdict rather than discounting it.
 
-Not style. Measured on this host, 2026-08-19:
+#### `git push --tags`, `git push --all` and `git push --mirror` are FORBIDDEN, and the reason is measured
 
-| Local-only object class | Count | On the remote? |
-| --- | --- | --- |
-| Branches besides `main` | **35** (36 total) | no |
-| `refs/original` filter-branch backup | **1** (`refs/original/refs/heads/m2w4-kappa` → `d286d4e`) | no |
-| Unreachable commits | **61** | no |
-| Unreachable blobs | **83** | no |
-| Unreachable trees | **279** | no |
-| Unreachable tags | **1** | no |
-| Local-only tags | **1** (`pre-trailer-strip-949dd9d` → `949dd9d`) | no |
+**[RE-MEASURED AND REORDERED 2026-09-12. `--tags` was named last and in
+passing; it is now the highest-consequence flag in this ban, and two of the
+table's scariest rows have gone to zero without relaxing the ban by one
+line.]** The flag order in this heading is the consequence order as of today,
+and it is the reverse of how the section originally read.
 
-Going public exposes what the **remote** holds — 533 commits and 3 364 blobs at
-the scrub's measurement — **not** the larger set in this clone. Every row above
-is local-only **and stops being local the instant anyone runs `git push --all`
-or `git push --mirror`**. `--mirror` is the worse of the two: it pushes
-`refs/*` entire, including `refs/original` and every tag, **and it deletes
-remote refs that are absent locally**, so it is destructive in both directions
-against a remote carrying a published freeze tag.
+Not style. Measured on this host, 2026-09-12:
 
-Two specifics worth naming, because the summary hides them:
+| Local-only object class | Count today | 2026-08-19 | On the remote? |
+| --- | --- | --- | --- |
+| Branches besides `main` | **35** (36 total) | 35 | no |
+| Local-only tags | **1** (`pre-trailer-strip-949dd9d` → `949dd9d`) | 1 | no |
+| `refs/original` filter-branch backup | **0** | 1 (`refs/original/refs/heads/m2w4-kappa` → `d286d4e`) | — |
+| Unreachable commits | **0** | 61 | — |
+| Unreachable blobs | **1** | 83 | — |
+| Unreachable trees | **1** | 279 | — |
+| Unreachable tags | **0** | 1 | — |
 
-- **`refs/original/refs/heads/m2w4-kappa`** is a filter-branch backup. Pushing
-  it republishes precisely the history a rewrite was taken to remove — it
-  undoes the rewrite while leaving the rewritten branch in place, which is
-  worse than never having rewritten.
-- **`pre-trailer-strip-949dd9d`** points at `949dd9d`, and
-  `git merge-base --is-ancestor 949dd9d main` **exits 1** — it is *not* an
-  ancestor of `main`. It is a second pre-rewrite line, and `--mirror` publishes
-  it. So does the smaller, more tempting `git push --tags`, which is why the
-  ban is stated as *push `main` by name* rather than as a list of two flags to
-  avoid.
+```bash
+git branch | wc -l                                   # 36
+git tag                                              # format-v1-freeze, pre-trailer-strip-949dd9d
+git for-each-ref refs/original | wc -l               # 0
+git fsck --unreachable --no-progress | awk '{print $2}' | sort | uniq -c
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0` for each; `fsck` prints exactly two
+lines, `1 blob` and `1 tree`. **Unreachable objects collapsed 424 → 2** (the
+2026-08-19 rows sum to 61 + 83 + 279 + 1 = 424) and `refs/original` is gone: a
+local `gc` has run in between.
+
+**READ THIS BEFORE CONCLUDING ANYTHING FROM THE ZEROES. The empty rows do not
+relax the ban.** A reader who checks this table, finds the filter-branch backup
+gone and the unreachable pile collapsed, and concludes the push ban is obsolete
+is **wrong**, and this is the most likely misreading in the chapter. What
+remains do-not-publish today is exactly two things, and both are *reachable,
+live, named refs* — which is precisely the class a `gc` cannot touch and a
+push flag can:
+
+1. **35 branches other than `main`.** Unchanged in count since 2026-08-19.
+2. **The local-only lightweight tag `pre-trailer-strip-949dd9d`.**
+
+Going public exposes what the **remote** holds — `main` and
+`format-v1-freeze`, and nothing else per the filter below — **not** the larger
+set in this clone. Both rows above are local-only **and stop being local the
+instant anyone runs `git push --tags`, `git push --all` or `git push
+--mirror`**.
+
+**`git push --tags` is now the one to fear, and it is the smallest, most
+innocent-looking of the three.** It is the flag a maintainer reaches for
+absent-mindedly at a milestone — *"push the tags while we're here"* — and on
+this clone it does this, measured:
+
+```bash
+git rev-parse pre-trailer-strip-949dd9d           # 949dd9d4055b35868355817c9f51e789f5d5b0a1
+git cat-file -t pre-trailer-strip-949dd9d         # commit  → LIGHTWEIGHT tag, no tag object
+git merge-base --is-ancestor 949dd9d main         # REAL_EXIT=1 → NOT an ancestor of main
+git branch --contains 949dd9d | wc -l             # 0 → no local branch contains it either
+git rev-list 949dd9d | wc -l                      # 386
+git rev-list 949dd9d --not main | wc -l           # 95
+```
+
+**[OBSERVED 2026-09-12]** — as annotated. So `--tags` publishes **95 commits
+that are reachable from no other ref on either side**, a pre-rewrite line that
+`Q268`'s rewrite, its force-push and GitHub's GC were taken to end. It would
+republish that line **after** all three, on a repository that had just become
+world-readable, and — unlike the branches, which at least show up in a branch
+list — a stray tag is easy to miss because the stray-ref filter below is the
+only thing in this procedure that looks for it.
+
+**The consequence is bounded, and the bound is measured rather than assumed.**
+The pre-rewrite line does **not** re-expose `Q268`'s literal. Both axes were
+checked, because `git grep` searches trees and cannot see a commit message:
+
+```bash
+ADDR='<the Q268 literal, read from the register at the time; never written here>'
+git grep -I -F -e "$ADDR" 949dd9d -- ; echo "REAL_EXIT=$?"            # 1  → absent from every tree
+git log --format='%B%n%an <%ae>%n%cn <%ce>' 949dd9d | grep -c -F "$ADDR"  # 0  → absent from every message and identity
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=1` on the tree axis and `0` hits on the
+message axis. **Both arms carry a live control on the same stream**, because a
+grep that finds nothing is the shape of a grep that is looking in the wrong
+place: `git grep -I -F -e 'antseal' 949dd9d` exits **0** and matches **385**
+files, and the same `git log` stream piped to `grep -c -F 'Claude'` returns
+**224**. Distinct author/committer identities reachable from the tag: **1**,
+the account's GitHub noreply form. So the exposure `--tags` creates is *95
+republished commits of a superseded line*, not a second `Q268` — which is the
+difference between a bookkeeping embarrassment and a rewrite that has to be
+requested from Support all over again. It is still not a thing to publish.
+
+`--mirror` remains the worst of the three: it pushes `refs/*` entire, including
+every tag and any `refs/original` that a future rewrite creates, **and it
+deletes remote refs that are absent locally**, so it is destructive in both
+directions against a remote carrying a published freeze tag. `--all` publishes
+the 35 branches.
+
+**[SUPERSEDED — the 2026-08-19 reading, kept verbatim in substance because two
+of its rows no longer exist and the record of what a rewrite leaves behind is
+the point.]** It named `refs/original/refs/heads/m2w4-kappa` as a
+filter-branch backup whose push *"republishes precisely the history a rewrite
+was taken to remove — it undoes the rewrite while leaving the rewritten branch
+in place, which is worse than never having rewritten"*, and it recorded
+533 commits and 3 364 blobs on the remote at the scrub's measurement. That
+backup ref is **gone as of 2026-09-12**. The sentence is kept because the
+hazard class is not: any future `filter-branch` or `filter-repo` run recreates
+exactly that ref, and the next reader of this table needs to know what the row
+was for rather than inferring from a zero that it never mattered.
 
 The read-back for the ban is the same `git ls-remote origin` above: after any
 push in this procedure it must still print `refs/heads/main` and
@@ -3545,10 +3739,17 @@ git ls-remote origin | awk '{print $2}' | grep -vE '^(HEAD|refs/heads/main|refs/
 ```
 
 Expected: **no output**. Any line printed is a ref that should not be there.
-**[OBSERVED 2026-08-19]** — no output; the trailing `grep` exits **1**, which is
-the clean result and the inverse of the usual convention, so read the *lines*,
-not the status. Run against a synthetic list carrying `refs/heads/m2w4-kappa`,
-the same filter printed that one line and exited 0 — the check can fail.
+**[OBSERVED 2026-08-19, RE-OBSERVED 2026-09-12]** — no output on either date;
+the trailing `grep` exits **1**, which is the clean result and the inverse of
+the usual convention, so read the *lines*, not the status.
+
+**Proved able to fail, on both of the two classes that actually remain.** Run
+against a synthetic six-line list carrying `refs/heads/m2w4-kappa` **and**
+`refs/tags/pre-trailer-strip-949dd9d` alongside the four legitimate lines, the
+same filter printed **exactly those two** and exited **0** —
+**[OBSERVED 2026-09-12]**. The 2026-08-19 plant used the stray *branch* only,
+which is the `--all`/`--mirror` shape; the tag line is the `--tags` shape, and
+until today nothing had demonstrated that this filter catches it. It does.
 
 ### A9 — BEFORE, and it is a branch. `Q238`/`Q265` — the required-context promotion
 
@@ -3579,8 +3780,59 @@ gh api repos/aed900/antseal/commits/main/check-runs \
 - **Branch 2 — it has not.** Arming becomes a **Phase C** act tied to `C4`,
   and **the flip proceeds** carrying a recorded exposure in `B6`'s shape:
   dated, owned by `Q265`, and named aloud in the sitting rather than
-  discovered afterwards. This is the expected branch today — no hosted job has
-  produced a verdict since 2026-08-15.
+  discovered afterwards. This is still the expected branch today, and the
+  reason is **[CORRECTED 2026-09-12]** below.
+
+**[CORRECTED 2026-09-12 — the verdict stands and the reason was false. The
+reason mattered, because it was the kind that expires.]** The superseded
+sentence read: *"This is the expected branch today — no hosted job has produced
+a verdict since 2026-08-15."* That was true when written and is now flatly
+wrong: hosted jobs have produced verdicts on **2026-09-02, 09-03, 09-06,
+09-07, 09-09 and 09-10** (C4 has the run list), including a 15-context `ci` run
+that went **green** and, eight hours earlier, one that went **red**. Read
+literally, the old reason would have flipped this step to **branch 1** the
+moment CI came back — and branch 1 says *arm it*. It would have armed a context
+that cannot report.
+
+**The verdict survives for a stronger reason, and this one does not expire:
+the context does not exist.** Nothing can report it, so no number of green runs
+moves this step. Three measurements, none of which depends on CI being alive:
+
+All three are `grep`/`sed`, deliberately — A5's reason applies here too, and
+the sitting must be able to settle this without running Python:
+
+```bash
+grep -nE '^- \[.\] \*\*Q238\*\*' TODO.md | cut -c1-60
+sed -n '/^REQUIRED_CONTEXTS = {/,/^}/p' scripts/check-ci-paths.py |
+  grep -oE '"[a-z0-9-]+"' | wc -l                       # how many names
+sed -n '/^REQUIRED_CONTEXTS = {/,/^}/p' scripts/check-ci-paths.py |
+  grep -c 'repro'                                       # how many are the lane
+grep -rn 'repro' .github/workflows/
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0` for all four:
+
+- `Q238` is **`[ ]`** at `TODO.md:933`, and `Q265` is **`[ ]`** at `:934`.
+- `REQUIRED_CONTEXTS` holds **19** names and **`0`** of them match `repro`
+  (the `grep -c` prints `0` and exits **1**, which is the clean result here).
+  Cross-checked with an AST read of the same assignment, which agrees at 19 and
+  returns an empty `repro` subset. The lane is not in the authoritative set, so
+  regenerating the protection payload from it — which is what branch 1
+  instructs, and what D164 §2 R7 requires — would produce a payload that does
+  not contain the context branch 1 exists to arm. **The `grep -c 'repro'` arm
+  is proved able to fail**: the same `sed` range with `"repro-compare"` spliced
+  in ahead of `"fmt"` returns **1** — **[OBSERVED 2026-09-12]** — so the `0` is
+  a measurement on a populated range, not a `sed` that matched nothing.
+- `grep -rn 'repro' .github/workflows/` prints **8** lines and **every one is a
+  comment**: `verifier-page.yml:40,114`, `pages.yml:38`, `ci.yml:180,673`,
+  `fuzz-nightly.yml:104,149,151`. No job id, no step name, no context.
+
+So the `gh api … check-runs` read at the head of this step returns **nothing**
+not because CI is refusing but because **no such check run has ever been
+producible**, and it will keep returning nothing until `Q238` lands a lane.
+That is a fact about this repository, not about this month's billing. **Do not
+re-derive this step's branch from CI liveness.** Re-derive it from the three
+commands above.
 
 **Do not arm on the strength of an expectation.** C2's prohibition stands for
 the case where nothing has reported. What D164 §2 R2 removed is the *reason*
@@ -3599,11 +3851,13 @@ here.
 
 ## Phase B — AT THE FLIP. One sitting. Every step here is co-timed, none is a prerequisite
 
-**Read this heading literally.** B1 through B7 are **not** a queue in which B1
+**Read this heading literally.** B1 through B8 are **not** a queue in which B1
 must be finished and verified before B2 is attempted on some later day. They
-are one act. B1 is first only because the API refuses B2 and B5 until it has
-happened, and each hour between B1 and B7 is an hour in which the repository is
-public and its hardening is not yet true.
+are one act. B1 is first only because the API refuses B2, B5 and three of B8's
+five switches until it has happened, and each hour between B1 and B8 is an hour
+in which the repository is public and its hardening is not yet true.
+**[UPDATED 2026-09-12 — the range was `B1 through B7` before B8 was added; the
+sentence is otherwise unchanged, and no existing step's number moved.]**
 
 Have every command below open before consent is sought. The read-backs are the
 deliverable; run them all again at the end of the sitting.
@@ -3612,8 +3866,16 @@ deliverable; run them all again at the end of the sitting.
 
 Before B1: the maintainer states, in the moment, that they are making
 **`github.com/aed900/antseal` public** under the account **`aed900`**, and that
-the settings writes in B2–B5 are included. Nothing in this file, in `TODO.md`,
-in a decision record or in an agent's brief substitutes for that.
+the settings writes in **B2–B5 and B8** are included. Nothing in this file, in
+`TODO.md`, in a decision record or in an agent's brief substitutes for that.
+
+**[UPDATED 2026-09-12 — this sentence read "the settings writes in B2–B5", and
+B8 adds five more.]** The consent must name them, because the rule at the head
+of this chapter is that *consent to the flip is not consent to the settings
+changes that share its window*. B8's five are: secret scanning, secret-scanning
+push protection, Dependabot alerts, Dependabot security updates, and code
+scanning / default setup. **Say all five out loud, and say so if any is
+dropped.**
 
 ```bash
 gh auth status
@@ -3841,12 +4103,34 @@ gh api repos/aed900/antseal/actions/permissions
 ```
 
 Expected after: **the same**. This is a **recorded exposure, not a step to
-execute.** A5 established that all 46 `uses:` invocations are already pinned to
-40-hex, so the setting is currently weaker than the files — but flipping it to
-`true` is gated behind **Q255**, whose action set is stale and whose middle
-action carries a transitive moving tag into the only write-scope job. Turning
-the enforcement on before Q255 resolves risks blocking the very change that
-would fix it.
+execute.** A5 established that all **57** `uses:` invocations are already
+pinned to 40-hex, so the setting is currently weaker than the files — but
+flipping it to `true` is gated behind **Q255**, whose action set is stale and
+whose middle action carries a transitive moving tag into the only write-scope
+job. Turning the enforcement on before Q255 resolves risks blocking the very
+change that would fix it.
+
+**[CORRECTED 2026-09-12 — this step said `46` and A5 says `57`, and the two
+sat sixteen days apart in the same chapter.]** The superseded sentence read
+*"A5 established that all 46 `uses:` invocations are already pinned to
+40-hex"*. `46` was never A5's number after 2026-08-27: it is the count A5's
+**blind** command produced, and A5's own correction box struck it in favour of
+**57**. A maintainer reading this chapter aloud from front to back would have
+read `57` at A5 and `46` at B6 and had no way to tell which was live.
+Re-measured here rather than copied from A5:
+
+```bash
+grep -rhoE '^[[:space:]]*-?[[:space:]]*uses: \S+' .github/workflows/ | wc -l
+grep -rhoE '^[[:space:]]*-?[[:space:]]*uses: \S+' .github/workflows/ |
+  grep -vE '@[0-9a-f]{40}'
+```
+
+**[OBSERVED 2026-09-12]** — **57** invocations across **8** workflow files;
+the unpinned filter prints **nothing**, its first pipeline element at
+`REAL_EXIT=0` read back from `PIPESTATUS[0]` and the trailing `grep` at **1**,
+which is the clean result. So the reading this step records is unchanged —
+`sha_pinning_required` is still looser than the files — and the figure it
+records it with is now A5's.
 
 Write the reading into the wave record with its owner. **Do not tick anything
 on the strength of this step** — it asserts that a known-loose setting is still
@@ -3854,29 +4138,61 @@ exactly as loose as it was, which is evidence, not progress.
 
 ### B7 — AT THE FLIP, co-timed. The artifacts that become publicly downloadable
 
+**[RE-MEASURED 2026-09-12. Every figure in this step had moved, and the class
+that matters is 9.25× larger by bytes than it recorded.]**
+
 ```bash
 gh api repos/aed900/antseal/actions/artifacts --paginate \
-  --jq '.artifacts[] | [.name,.size_in_bytes,.expired,.expires_at] | @tsv'
+  --jq '.artifacts[] | [.name,.id,.size_in_bytes,.expired,.expires_at,.created_at] | @tsv'
 ```
 
-**[OBSERVED 2026-08-19]** — `REAL_EXIT=0` via `PIPESTATUS[0]`, ten artifacts:
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0` via `PIPESTATUS[0]`, **twelve**
+artifacts (`.total_count` agrees at 12) — **eleven live, one expired**:
 
 ```
-github-pages           865661  true   2026-08-16T08:02:37Z
-devnet-e2e-evidence     52269  false  2026-11-10T06:56:33Z
-fuzz-smoke-artifacts       672 false  2026-11-05T09:42:20Z
-fuzz-smoke-artifacts      1100 false  2026-11-04T21:46:09Z
-fuzz-smoke-artifacts       820 false  2026-11-04T20:36:04Z
-fuzz-smoke-artifacts       854 false  2026-11-04T15:45:58Z
-fuzz-smoke-artifacts       854 false  2026-11-04T12:16:46Z
-fuzz-smoke-artifacts       812 false  2026-11-04T11:47:50Z
-fuzz-smoke-artifacts       490 false  2026-11-04T09:30:30Z
-fuzz-smoke-artifacts       402 false  2026-11-04T08:45:26Z
+devnet-e2e-evidence  10099660953  215395  false  2026-10-09T10:33:50Z  2026-09-09
+devnet-e2e-evidence   9842159422  215779  false  2026-10-02T10:22:23Z  2026-09-02
+github-pages          9244072894  865661  true   2026-08-16T08:02:37Z  2026-08-15
+devnet-e2e-evidence   9132238802   52269  false  2026-11-10T06:56:33Z  2026-08-12
+fuzz-smoke-artifacts  8989696621     672  false  2026-11-05T09:42:20Z  2026-08-07
+fuzz-smoke-artifacts  8975003590    1100  false  2026-11-04T21:46:09Z  2026-08-06
+fuzz-smoke-artifacts  8974840948     820  false  2026-11-04T20:36:04Z  2026-08-06
+fuzz-smoke-artifacts  8974019468     854  false  2026-11-04T15:45:58Z  2026-08-06
+fuzz-smoke-artifacts  8967678641     854  false  2026-11-04T12:16:46Z  2026-08-06
+fuzz-smoke-artifacts  8966840314     812  false  2026-11-04T11:47:50Z  2026-08-06
+fuzz-smoke-artifacts  8963085462     490  false  2026-11-04T09:30:30Z  2026-08-06
+fuzz-smoke-artifacts  8961805776     402  false  2026-11-04T08:45:26Z  2026-08-06
 ```
 
-Q65 finding 4's figures reproduce exactly: **eight** live `fuzz-smoke-artifacts`
-totalling **6 004 bytes**, `github-pages` already **expired**, and
-`devnet-e2e-evidence` at **52 269 B** retained to **2026-11-10**.
+Sums, read back from the same capture rather than added by eye:
+
+```bash
+gh api repos/aed900/antseal/actions/artifacts --paginate \
+  --jq '.artifacts[] | [.name,.size_in_bytes,.expired] | @tsv' \
+| awk -F'\t' '$3=="false"{n++;t+=$2; if($1=="devnet-e2e-evidence"){e++;et+=$2}}
+              END{printf "live=%d bytes=%d evidence=%d/%d\n",n,t,e,et}'
+```
+
+**[OBSERVED 2026-09-12]** — `live=11 bytes=489447 evidence=3/483443`. So
+**three** `devnet-e2e-evidence` artifacts totalling **483 443 B (~472 KiB)**,
+plus eight `fuzz-smoke-artifacts` totalling **6 004 B**, and one expired
+`github-pages` at 865 661 B.
+
+**[SUPERSEDED — the 2026-08-19 reading, and the direction of every drift.]**
+It recorded **ten** artifacts, **one** `devnet-e2e-evidence` at **52 269 B**,
+and *"Q65 finding 4's figures reproduce exactly"*. Measured today: twelve
+artifacts, three evidence artifacts, **483 443 B** of live evidence. **Two
+different multipliers, and they must not be swapped** — the denominators are
+different sets:
+
+- **Evidence class**: 52 269 → 483 443 B = **9.25×** by bytes, **1 → 3** =
+  **3×** by count. This is the class that contains captured devnet output
+  rather than crash fragments, and it is the one that matters.
+- **All live artifacts**: 58 273 → 489 447 B = **8.40×** by bytes, **9 → 11**
+  by count.
+
+The fuzz total (6 004 B) and the expired `github-pages` (865 661 B) are the two
+rows that did hold.
 
 The ruling is **leave them to expire, do not delete them**, and the deletion
 endpoint is not in this chapter for that reason. What this step owes is the
@@ -3884,12 +4200,166 @@ record:
 
 - The eight fuzz artifacts are crash-corpus fragments of a few hundred bytes
   each and carry no key material; they expire on their own on 2026-11-04/05.
-- **`devnet-e2e-evidence` is the one to read twice.** A4 is why: this artifact
-  predates Q243's gate, is covered by a **hand** scan (`files=8 findings=0
-  verdict=CLEAN`, D145 §2 R2) rather than by the job, and it becomes publicly
-  downloadable at B1. State that in the record — that the coverage is a manual
-  sweep on a dated artifact, and that every artifact produced from now on is
-  covered by `--scan-evidence` in the uploading job instead.
+- **The gate coverage now SPLITS across the three evidence artifacts, and this
+  is a strict improvement that the old figures hid.** `--scan-evidence` landed
+  in `devnet-e2e-cron.yml` at **`af38d18`, 2026-08-18** (`git log -S
+  '--scan-evidence' -- .github/workflows/devnet-e2e-cron.yml` returns exactly
+  **one** commit, so there is no ambiguity about which landing is meant;
+  `git merge-base --is-ancestor af38d18 main` → `REAL_EXIT=0`). So:
+  - `10099660953` (2026-09-09, run `34338263485`) and `9842159422`
+    (2026-09-02, run `33616516399`) were produced **after** the gate landed and
+    are **gate-covered** — the assertion ran on the artifact itself, in the
+    uploading job, before upload.
+  - `9132238802` (2026-08-12, run `31571938292`) **predates the gate by six
+    days** and is the **only** one covered by a hand scan (`files=8 findings=0
+    verdict=CLEAN`, D145 §2 R2). A4 says the same thing and is the ordering
+    reason.
+  - State it that way at the flip: **two of three covered by the job, one of
+    three by a dated manual sweep** — not *"the evidence artifact is covered by
+    a hand scan"*, which was true of the whole class in August and is now true
+    of 52 269 B of 483 443 B, or **10.8%** of it.
+- **102 Actions run-log sets become world-readable at B1, and no step in this
+  chapter had ever counted them.** `gh api
+  repos/aed900/antseal/actions/runs --jq '.total_count'` → **102**,
+  `REAL_EXIT=0`, **[OBSERVED 2026-09-12]**. Logs are a separate surface from
+  artifacts: they are not in the artifacts list, they have their own retention,
+  and `--scan-evidence` does not look at them. **39** of the 102 are zero-step
+  refusals with nothing in them (C4 classifies all 39), but the remaining
+  **63** contain full job output. Record the counts; this chapter does not rule
+  on them, and a ruling on log retention is not Q254's to take.
+
+### B8 — AT THE FLIP, co-timed. The five security switches that are free on a public repository and are all OFF today
+
+**[ADDED 2026-09-12. The chapter had no step for these, and every one of them
+is free on a public repository, off on this one, and cheaper to turn on in the
+flip window than in any later sitting.]**
+
+**The count is FIVE switches across four features**, and it is stated that way
+on purpose, because this chapter's recurring defect is a count that drifts
+between two sentences: secret scanning **(1)**, secret-scanning push protection
+**(2)**, Dependabot alerts **(3)**, Dependabot security updates **(4)**, code
+scanning / default setup **(5)**. Secret scanning and push protection are one
+feature with two switches and one `PATCH`; everything else is one switch each.
+
+**Why B8 and not folded into B2 or B5.** B2 owns *one* Advanced-Security
+switch and is scoped to `Q242`, whose `Accept` row names private vulnerability
+reporting and nothing else; folding five more writes into it would hide them
+behind a step whose read-back is a single boolean, and would make `Q242`'s row
+look like it owns switches it does not. B5 is the Actions-permissions step.
+So this is a **new step at the end of the co-timed block**, which also keeps
+the existing numbering stable — A1–A9, B0–B7 and C1–C5 all mean exactly what
+they meant before this was added — and puts it inside the reach of Phase B's
+standing instruction to *run every read-back again at the end of the sitting*.
+
+**Nothing here is branch protection.** `branches/main/protection` is **`Q1`**'s
+act, C2 forbids arming a context in this sitting, and this step does not touch
+either. Measured for the record, not as an invitation:
+
+```bash
+gh api repos/aed900/antseal/branches/main/protection   # 404 "Branch not protected", REAL_EXIT=1
+gh api repos/aed900/antseal/rulesets                   # [] , REAL_EXIT=0
+```
+
+**[OBSERVED 2026-09-12]** — as annotated, unchanged from C2's 2026-08-19
+reading. **Do not absorb `Q1` into this step.**
+
+#### The pre-state, measured. All five are OFF
+
+```bash
+gh api repos/aed900/antseal --jq '.security_and_analysis'
+gh api repos/aed900/antseal/secret-scanning/alerts
+gh api repos/aed900/antseal/vulnerability-alerts
+gh api repos/aed900/antseal/automated-security-fixes
+gh api repos/aed900/antseal/code-scanning/default-setup
+```
+
+**[OBSERVED 2026-09-12]**, each exit read back from `$?` on its own line:
+
+```
+(1) prints NOTHING — and the repo object has no `security_and_analysis` KEY at all   REAL_EXIT=0
+(2) {"message":"Secret scanning is disabled on this repository.","status":"404"}      REAL_EXIT=1
+(3) {"message":"Vulnerability alerts are disabled.","status":"404"}                   REAL_EXIT=1
+(4) {"enabled":false,"paused":false}                                                  REAL_EXIT=0
+(5) {"message":"Code scanning is not enabled for this repository. …","status":"403"}   REAL_EXIT=1
+```
+
+**Read (1) as ABSENCE, not as `false`.** `--jq '.security_and_analysis'`
+printing an empty line looks like a feature reported off; it is GitHub omitting
+the whole block on this repository — measured directly: the parsed repo object
+**has no `security_and_analysis` key**, so the empty line is `jq` on a missing
+path, not a reported value. A reader who greps the repo object for
+`"secret_scanning":{"status":"disabled"}` finds nothing and cannot tell *off*
+from *unreported*, which is why (2) and (5) — the per-feature endpoints, which
+say something — are in the list beside it.
+
+**Switch (2), push protection, is the one with no independent pre-state read.**
+The five commands above cover switches 1, 3, 4 and 5 individually; push
+protection's only visible state today is inside the block that is absent. So
+its `OFF` is an inference from (1) rather than a reading, and its read-back
+after the write is the first direct measurement of it this chapter will ever
+have. Say that when it is read back, and do not record its pre-state as
+measured.
+
+**And read the asymmetry between (3)/(4) and (2)/(5), because it is the only
+evidence this host can produce about what is plan-gated.** The Dependabot pair
+answers *about the feature's state* on a private repository (*"disabled"*,
+`enabled:false`); the scanning pair answers with availability-flavoured
+messages (*"is disabled on this repository"*, *"is not enabled for this
+repository"*, and a **403** rather than a 404 on code scanning). That is
+consistent with the documented plan split, and it is not proof of it.
+
+#### The writes, and which of them can only land once public
+
+| Feature | Write | Read-back | Expected after | Public-only? |
+| --- | --- | --- | --- | --- |
+| Secret scanning | `PATCH /repos/…` `security_and_analysis.secret_scanning.status=enabled` | `gh api repos/aed900/antseal --jq '.security_and_analysis.secret_scanning.status'` | `enabled` | **Yes** on this plan — see (2)/(5) asymmetry |
+| Secret-scanning **push protection** | same `PATCH`, `secret_scanning_push_protection.status=enabled` | `… --jq '.security_and_analysis.secret_scanning_push_protection.status'` | `enabled` | **Yes**, and it also requires secret scanning itself |
+| Dependabot **alerts** | `gh api -X PUT repos/aed900/antseal/vulnerability-alerts` | `gh api repos/aed900/antseal/vulnerability-alerts` | **204**, no body, `REAL_EXIT=0` (today: 404/`1`) | **No** — settable while private |
+| Dependabot **security updates** | `gh api -X PUT repos/aed900/antseal/automated-security-fixes` | `gh api repos/aed900/antseal/automated-security-fixes` | `{"enabled":true,"paused":false}` | **No** — settable while private |
+| Code scanning / default setup | `gh api -X PATCH repos/aed900/antseal/code-scanning/default-setup -f state=configured` | `gh api repos/aed900/antseal/code-scanning/default-setup` | a body with `"state":"configured"`, not a 403 | **Yes** on this plan |
+
+The two scanning rows share one request, and it is a nested body, so it does
+not fit `-f key=value`:
+
+```bash
+gh api -X PATCH repos/aed900/antseal --input - <<'JSON'
+{"security_and_analysis": {
+   "secret_scanning":                 {"status": "enabled"},
+   "secret_scanning_push_protection": {"status": "enabled"}}}
+JSON
+```
+
+The heredoc delimiter is **quoted** (`<<'JSON'`) deliberately: an unquoted
+heredoc expands backticks and `$` inside the body, which is a live hazard in
+this project's own history and has no business inside a JSON payload aimed at
+a settings endpoint.
+
+**[UNOBSERVED — all five are writes, and three of them are additionally refused
+while the repository is private. No agent may take any of them.]** The
+**Public-only?** column is a **prediction** drawn from the measured asymmetry
+above plus GitHub's documented plan split, not from a write attempt — treat a
+mismatch as new information about GitHub. The **pre-state** block above is the
+measured half, and a pre-state is not a result.
+
+#### Why this belongs in the flip window rather than a later sitting
+
+- **Push protection is the only one of the five that is preventive rather than
+  detective**, and the window it protects opens at B1: once the repository is
+  public, a pushed secret is a leaked secret at the instant of the push, not
+  at the instant someone reads the alert. Turning it on in the same hour as B1
+  is the D140 false-window discipline applied to the one feature that can stop
+  a mistake instead of reporting it.
+- **Secret scanning's backfill is retroactive over existing history**, which
+  is the 569 commits A8 publishes. Enabling it later still scans them, but it
+  scans them after the world has had them.
+- **Dependabot's two are not public-gated and could be taken before the flip.**
+  If the maintainer prefers that, it is **a separate named consent** for two
+  reversible writes that expose nothing, and **this step does not decide it** —
+  it is recorded here so the sitting does not discover the option at B8. What
+  this step fixes is that the writes happen in the window and are read back,
+  not which side of B1 the Dependabot pair falls on.
+- **None of the five is a required status context**, so C2's prohibition is
+  untouched by all of it.
 
 ## Phase C — AFTER. Reading back what only exists once the repository is public
 
@@ -3998,11 +4468,125 @@ wrongly.
 
 ### C4 — AFTER. The first CI run that a hosted runner actually executes
 
+**[OBSERVED 2026-09-12. THE STREAK IS OVER, AND IT ENDED WITHOUT THE FLIP. This
+step's entire framing — a prediction about whether going public would restore
+CI — is now a settled question, answered NO-IT-DID-NOT-NEED-TO. Everything
+below the next two blocks is kept as the record of how the question was
+reasoned about while it was still open.]**
+
+The measurement, run before anything in this chapter was taken and on a
+**private** repository:
+
+```bash
+gh api 'repos/aed900/antseal/actions/runs?per_page=100' --paginate \
+  --jq '.workflow_runs[] | select(.created_at >= "2026-09-01")
+        | [.name,.id,(.head_sha[0:7]),.status,.conclusion,.created_at,.updated_at,.event]
+        | @tsv' | sort -t$'\t' -k6
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0` via `PIPESTATUS[0]`, **14** runs
+since 2026-09-01, **13 `success` and 1 `failure`**:
+
+```
+devnet-e2e-cron   33616516399 ae4e167 completed success 2026-09-02T09:52:51Z 2026-09-02T10:22:29Z schedule
+fuzz-nightly      33732476854 ae4e167 completed success 2026-09-03T08:16:33Z 2026-09-03T09:20:51Z schedule
+cross-os-extended 33755621723 ae4e167 completed success 2026-09-03T12:30:36Z 2026-09-03T12:39:25Z dispatch
+ci-always         33756110510 b529013 completed success 2026-09-03T12:35:43Z 2026-09-03T12:36:29Z push
+ci                33756110493 b529013 completed FAILURE 2026-09-03T12:35:43Z 2026-09-03T13:11:06Z push
+advisory-cron     33756183563 b529013 completed success 2026-09-03T12:36:30Z 2026-09-03T12:40:05Z dispatch
+ci-always         33808001081 faf270a completed success 2026-09-03T21:27:00Z 2026-09-03T21:27:57Z push
+ci                33808001048 faf270a completed success 2026-09-03T21:27:00Z 2026-09-03T22:03:00Z push
+ci-always         33811475771 3437890 completed success 2026-09-03T22:07:02Z 2026-09-03T22:08:00Z push
+cross-os-extended 34023340657 3437890 completed success 2026-09-06T08:58:48Z 2026-09-06T09:07:31Z schedule
+fuzz-nightly      34101523198 3437890 completed success 2026-09-07T08:36:54Z 2026-09-07T09:39:05Z schedule
+advisory-cron     34123280049 3437890 completed success 2026-09-07T12:41:54Z 2026-09-07T12:42:28Z schedule
+devnet-e2e-cron   34338263485 3437890 completed success 2026-09-09T10:04:44Z 2026-09-09T10:33:53Z schedule
+fuzz-nightly      34454829316 3437890 completed success 2026-09-10T08:22:44Z 2026-09-10T09:26:25Z schedule
+```
+
+**The `failure` is the strongest row in the table, and it is why this is a
+measurement rather than an absence of one.** `ci` run `33756110493` on
+`b529013` ran **35 minutes** and its `test` job reported `failure` with **8**
+non-empty steps — a real code verdict on a real defect (`Q270`: `ci.yml`'s
+`test` job built no verifier page, so `R96`'s built-artifact assertion
+panicked). Eight hours later `33808001048` on `faf270a` ran **36 minutes**
+(21:27:00Z → 22:03:00Z), 15 jobs, **8–15 steps each**, all `success`. **A
+hosted runner that can go red on this repository's code is the thing this step
+was written to wait for, and it did both — red, then green, on consecutive
+pushes.** A table of greens alone would not have distinguished a live pipeline
+from a pipeline that cannot fail.
+
+**The refusal signature does not appear anywhere in that window, and that was
+checked rather than assumed:**
+
+```bash
+for id in <the 14 ids above>; do
+  gh api "repos/aed900/antseal/actions/runs/$id/jobs?per_page=100" --paginate \
+    --jq '.jobs[] | select((.steps|length)==0) | "\(.name) steps=0"'
+done
+```
+
+**[OBSERVED 2026-09-12]** — **0 lines** across all 14 runs. For contrast, the
+**last** refused run, `33400051889` (`advisory-cron`, 2026-08-31T13:59:51Z),
+has exactly one job: `advisory-weekly failure steps=0`, 13:59:51Z → 13:59:54Z,
+**3 seconds**. That is the signature, and it is measured on both sides.
+
+**The streak, bounded at both ends, by the `steps == []` test rather than by
+wall time.** Every `failure` run in the archive under 60 s was classified:
+
+```bash
+gh api "repos/aed900/antseal/actions/runs/$id/jobs?per_page=100" --paginate \
+  --jq '[[.jobs[]|select((.steps|length)==0)]|length, [.jobs[]]|length]'
+```
+
+**[OBSERVED 2026-09-12]** — **39** candidate runs, and in **all 39 every job
+has `steps == []`** (`19/19`, `15/15`, `2/2`, `1/1`; no run is partially
+refused). So:
+
+- **39 of the 102 archive runs are zero-step refusals**, 2026-08-10T17:03:12Z
+  → 2026-08-31T13:59:51Z.
+- **38 of them are consecutive**, 2026-08-16T11:08:35Z → 2026-08-31T13:59:51Z.
+- **One is isolated and earlier**: `31412086640` (`ci`, 2026-08-10T17:03:12Z,
+  13 s, 19/19 jobs refused) — and real runs executed either side of it
+  (`31436791456` succeeded at 2026-08-10T22:05 in 1 577 s, and every `ci` run
+  through 2026-08-15 had a runner). **That isolated refusal is the measured
+  core of the third bullet below**: whatever cleared it on 2026-08-10 was not a
+  visibility change.
+- Last run with a runner before the streak: `ci` `31873411737`, 2026-08-15,
+  **1 922 s**. First after it: `33616516399`, 2026-09-02, **1 778 s**.
+- **The repository was private on every one of those dates, 2026-09-02
+  included.**
+
+**[CORRECTED 2026-09-12 — the refusal signature this step stated was TOO NARROW
+by 4×, and it is the one figure here that could still mislead a reader.]** The
+superseded wording was *"A refused job reports `conclusion: failure` with an
+empty `steps` array, in **3–5 seconds**, having never reached a code verdict"*.
+Measured across all 39: **4 s to 20 s**, 38 of them ≤ 13 s and the outlier
+`33127132893` (`ci`, 2026-08-27T23:40:58Z) at **20 s with all 15 jobs at
+`steps == []`**. A reader applying a 3–5 s rule would have called that one a
+real failure and gone looking for a code defect. **`steps == []` is the
+discriminator; wall time is a hint.** Read the steps array, and use the range
+4–20 s only as a sanity check.
+
+**What this does to the argument below.** Free minutes on a public repository
+is now a **cost** argument, not a **capability** one: hosted CI works today at
+whatever the account is being charged, and the flip changes the bill rather
+than the ability. Nothing in the reasoning kept below is retracted — the
+disjunction really was undiscriminable from here, and Maintainer action **(9)**
+(check the spending limit first, because it is free and reversible and the flip
+is neither) was the right routing and is the one that appears to have fired.
+The one figure worth re-recording: `/user/settings/billing/actions` → **404**
+still reproduces (`REAL_EXIT=1`, **[OBSERVED 2026-09-12]**) and the active
+token's scopes are `'gist', 'read:org', 'repo', 'workflow'` — **no `user`
+scope**, which is what the 404 is about — but it **no longer matters**, because
+the question it could not answer has been answered by the runs themselves.
+
 **[QUALIFIED 2026-08-27 by D164 §2 R5 — the sentence below is a PREDICTION,
 and it is labelled as one because D161 §2 R7's own rider says *"the expectation
-is not a measurement"*.]** *Free minutes on public repositories is the mechanism
-that ends the refusal streak* — expected, not established. Three things are
-measured and they do not settle it:
+is not a measurement"*. SUPERSEDED 2026-09-12 by the block above; kept because
+four surfaces quote its disjunction.]** *Free minutes on public repositories is
+the mechanism that ends the refusal streak* — expected, not established. Three
+things are measured and they do not settle it:
 
 - **The refusal annotation is a DISJUNCTION and cannot discriminate.** Verbatim
   from the check-run annotation on run `33083210871` (2026-08-27): *"The job was
@@ -4021,6 +4605,20 @@ measured and they do not settle it:
   routes the cheap one: check the Actions spending limit first, because it is
   free and reversible and the flip is neither.
 
+  **[CORRECTED 2026-09-12 — the conclusion stands and two of its three run
+  facts are misattributed. Off the 2026-09-12 correction list; found while
+  classifying the refusals.]** Measured, `REAL_EXIT=0`: `31407751482`
+  (2026-08-10T16:12:49Z) ran **2 623 s** and was a `failure` **with a
+  runner** — it is not a refusal by the `steps == []` test. The run that
+  succeeded at **22:05** is `31436791456` and it took **1 577 s**, not 1 589;
+  `1 589 s` is `31432412612` at **21:08**, which was a `failure`. The isolated
+  refusal of 2026-08-10 is `31412086640` at **17:03:12Z**, 13 s, all 19 jobs
+  at `steps == []`. **The bullet's claim is unharmed and is now better
+  evidenced**: a genuine zero-step refusal at 17:03 and genuine runs from 22:05
+  onward, on a private repository, is exactly *"a billing-side action alone has
+  already cleared this, with no flip"* — and it is stronger than the run pair
+  originally cited, because one of those had a runner all along.
+
 **In a genuinely delinquent-payment state it is not established that the flip
 helps at all**, and no read-only endpoint reachable with this host's scopes
 distinguishes the two states (`/user/settings/billing/actions` → **404**, not
@@ -4028,34 +4626,147 @@ distinguishes the two states (`/user/settings/billing/actions` → **404**, not
 because the repository went public; record it as ended when a runner produces a
 verdict. Confirm with a **verdict**, not with a queued job:
 
-```bash
+**[CORRECTED 2026-09-12 — the read-back below CANNOT produce its stated
+expectation on this repository, and its failure mode looks exactly like a CI
+refusal. This is the defect in this step most likely to mislead the flip
+sitting, because the sitting's own commits trigger it by design.]** The
+superseded command was
+
+```
 gh api "repos/aed900/antseal/commits/$(git rev-parse main)/check-runs" \
   --paginate --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv' | sort
 ```
 
-**[UNOBSERVED — needs a run on a public repository; on this account today every
-job is refused.]** Expected: one row per context, `completed` with `success`.
+with *"Expected: one row per context, `completed` with `success`."* Run against
+`main` = `3437890` today it returns **8** rows, all `completed`/`success`, and
+**none of the 15 `ci` contexts is among them**:
 
-**The refusal signature is what to watch for, and it is not an error message.**
-A refused job reports `conclusion: failure` with an empty `steps` array, in
-3–5 seconds, having never reached a code verdict. Confirm the run took a
-plausible wall time and that its steps are non-empty before calling the streak
-over:
+```
+advisory-weekly cross-os-macos cross-os-windows devnet-e2e-scheduled
+fuzz-long fuzz-long secret-guard traceability
+```
+
+**[OBSERVED 2026-09-12]**, `REAL_EXIT=0`. The reason is not a refusal.
+`3437890` changes **`TODO.md` and `tasks/Q.md` and nothing else**, and `ci.yml`'s
+`on.push.paths-ignore` is exactly `TODO.md`, `tasks/**`,
+`docs/ci-verification.md` — so `ci` was **skipped by path filter** and never
+created a check suite. The 8 rows are `ci-always`'s contexts (which carry no
+path filter, by `check-ci-paths.py` R6) plus the scheduled workflows. On
+`faf270a`, the previous commit, the same command returns **17** rows, all
+`completed`/`success`: `ci`'s **15** from check suite `91627144979` plus
+`ci-always`'s **2** from `91627145071` — two suites, which is why the row count
+exceeds `ci.yml`'s job count. **Both the 15 and the 2 are job counts on the
+day, not constants**; derive them rather than carrying them, exactly as C2
+says about its own payload.
+
+**This recurs by design in the flip sitting.** `TODO.md`, `tasks/**` and *this
+very file* are in the ignore list, and a flip sitting lands docs-only commits
+— so a maintainer who pushes the wave record and then runs the old command sees
+`ci`'s contexts missing and has no way to tell that from the thing this step
+exists to detect.
+
+**The corrected read-back reads the last commit `ci` was allowed to see, and
+derives the exclusion from `ci.yml` rather than carrying a prose copy of it**
+(the D164 §2 R7 rule, and Q56's whole lesson):
 
 ```bash
+mapfile -t IG < <(awk '/^    paths-ignore:$/{p=1;next}
+                       p && /^      - /{sub(/^      - /,"");print;next}
+                       p{exit}' .github/workflows/ci.yml)
+[ "${#IG[@]}" -gt 0 ] || { echo "ANTI-VACUITY: derived no paths-ignore — STOP"; }
+SPEC=(); for p in "${IG[@]}"; do SPEC+=(":(exclude)$p"); done
+CI_SHA=$(git log -1 --format=%H main -- . "${SPEC[@]}")
+echo "reading check-runs on $CI_SHA (main is $(git rev-parse --short main))"
+gh api "repos/aed900/antseal/commits/$CI_SHA/check-runs" \
+  --paginate --jq '.check_runs[] | [.name,.status,.conclusion] | @tsv' | sort
+```
+
+**[OBSERVED 2026-09-12]** — the derivation prints `TODO.md`, `tasks/**`,
+`docs/ci-verification.md`; `CI_SHA` resolves to
+`faf270aaa2ff97cf3d2c7a069eea11283d26c048`; the read-back returns **17** rows,
+all `completed`/`success`, `REAL_EXIT=0`. Expected in the sitting: one row per
+context on `$CI_SHA`, `completed` with `success` — **and `$CI_SHA` will
+usually not be `main`**, which is the whole point.
+
+**The `[ "${#IG[@]}" -gt 0 ]` guard is not decoration.** If `ci.yml`'s
+indentation ever moves, the `awk` anchor matches nothing, `SPEC` is empty, and
+`git log -1 -- .` silently returns **`main`** — i.e. the corrected command
+degrades exactly into the broken one, with no error. Proved: with the
+exclusions the command returns `faf270a`; with `SPEC` empty it returns
+`3437890`; with the anchor's indent altered by two spaces the `awk` prints
+**0** lines. **[OBSERVED 2026-09-12]** for all three.
+
+**And there is no trigger route, which is why reading `$CI_SHA` is not merely
+the convenient option.** The obvious alternative — dispatch `ci` by hand and
+get a verdict on `main` itself — **does not exist on this repository**:
+
+```bash
+for f in .github/workflows/*.yml; do printf '%-24s %s\n' "$(basename "$f")" \
+  "$(grep -c 'workflow_dispatch' "$f")"; done
+```
+
+**[OBSERVED 2026-09-12]** — `REAL_EXIT=0`. Six of the eight workflows declare
+`workflow_dispatch` (`advisory-cron` 2, `cross-os-extended` 1,
+`devnet-e2e-cron` 2, `fuzz-nightly` 3, `pages` 2, `verifier-page` 2); **`ci.yml`
+and `ci-always.yml` declare it zero times.** So on a docs-only `main` the only
+ways to make `ci`'s 15 contexts report are a `pull_request` — which R2
+guarantees is never path-filtered, but which reports on the PR's merge commit
+and not on `main` — or a push that touches a path outside `paths-ignore`.
+Neither is a thing to do in a flip sitting. **Read `$CI_SHA`.**
+
+**Two failure shapes, and they are told apart by different evidence.** Do not
+read either from the absence of rows alone:
+
+| | Path-filter skip | Runner refusal |
+| --- | --- | --- |
+| What you see | the workflow's contexts are simply **absent** from `check-runs`; no check suite exists for it | the contexts are **present**, `conclusion: failure` |
+| Wall time | there is no run to time | **4–20 s** across all 39, measured — a hint, not the test |
+| `steps` | there is no job | `steps == []` — **0**, measured |
+| Annotation | none | the *"payments have failed **or** your spending limit"* disjunction |
+| Discriminator | compare the commit's changed files against `ci.yml`'s `paths-ignore` | count the jobs whose `steps` array is empty |
+
+The two discriminator commands, which do not fit in a table cell:
+
+```bash
+# path-filter skip: what did the commit actually change?
+git show --name-only --format= "$(git rev-parse main)"
+
+# runner refusal: how many of the run's jobs never got a step?
+gh api "repos/aed900/antseal/actions/runs/<id>/jobs?per_page=100" --paginate \
+  --jq '[[.jobs[] | select((.steps|length)==0)] | length, [.jobs[]] | length]'
+
+# and the cheap sanity sweep over recent runs
 gh run list --limit 5 --json databaseId,conclusion,createdAt,updatedAt
 ```
 
-Until a run passes that test, the local gate remains the only witness this
-project has, and every gate claim in this file keeps saying so.
+Confirm a run took a plausible wall time **and** that its steps are non-empty
+before calling anything green; of the two, only the second is the test.
+
+**[SUPERSEDED 2026-09-12 — the closing sentence is no longer true.]** It read:
+*"Until a run passes that test, the local gate remains the only witness this
+project has, and every gate claim in this file keeps saying so."* A run has
+passed that test: `33808001048`, 15 jobs, 8–15 steps each, 36 minutes, all
+green, plus a red predecessor eight hours earlier that reached a genuine code
+verdict. The local gate is still the **richer** witness — it runs lanes no CI
+job repeats, and this file names them — but it is no longer the **only** one,
+and a gate claim that says otherwise is now the stale kind.
 
 ### C5 — AFTER. One block, run again, at the end of the sitting
 
 Every read-back in this chapter, in one place, so the closing record is a single
 capture rather than a reconstruction:
 
+**[CORRECTED 2026-09-12 — this block wrote its capture into the repository.]**
+`> flip-readback.txt` is a **relative** redirect, so it landed in whatever
+directory the sitting was run from — which for every command in this chapter is
+the repository root. The closing act of a sitting whose whole discipline is
+*not touching the tree* was creating an untracked file in it, at the one moment
+`git status` is being read to prove nothing moved. The capture now goes
+**outside the repository**, and the block ends by asserting the tree is clean:
+
 ```bash
 set -o pipefail
+OUT="${TMPDIR:-/tmp}/flip-readback-$(date -u +%Y%m%dT%H%M%SZ).txt"
 {
   gh auth status
   gh api repos/aed900/antseal --jq '{visibility:.visibility,private:.private,homepage:.homepage,topics:.topics}'
@@ -4066,11 +4777,21 @@ set -o pipefail
   gh api repos/aed900/antseal/actions/permissions/workflow
   gh api repos/aed900/antseal/actions/permissions/access
   gh api repos/aed900/antseal/actions/permissions/fork-pr-contributor-approval
+  # B8's five switches (four endpoints; push protection reads off the first), added 2026-09-12
+  gh api repos/aed900/antseal --jq '.security_and_analysis'
+  gh api repos/aed900/antseal/vulnerability-alerts
+  gh api repos/aed900/antseal/automated-security-fixes
+  gh api repos/aed900/antseal/code-scanning/default-setup
+  gh api repos/aed900/antseal/branches/main/protection   # C2/Q1: expect 404
+  gh api repos/aed900/antseal/rulesets                   # C2/Q1: expect []
   gh api repos/aed900/antseal/actions/artifacts --paginate \
-    --jq '.artifacts[] | [.name,.size_in_bytes,.expired,.expires_at] | @tsv'
+    --jq '.artifacts[] | [.name,.id,.size_in_bytes,.expired,.expires_at] | @tsv'
+  gh api repos/aed900/antseal/actions/runs --jq '.total_count'
   git ls-remote origin
-} > flip-readback.txt 2>&1
-echo "REAL_EXIT=$?" >> flip-readback.txt
+} > "$OUT" 2>&1
+echo "REAL_EXIT=$?" >> "$OUT"
+git status --porcelain >> "$OUT"        # must add NO line for an untracked capture
+echo "CAPTURE=$OUT"
 ```
 
 Then **read `REAL_EXIT=` back out of the file**. The exit status a harness or a
@@ -4078,6 +4799,24 @@ terminal reports is the status of the *last* command in the wrapper, which here
 is `echo`; it has announced `0` for runs that exited `1` and `101`. Paste the
 captured file into the wave record — a measurement that lives only in a
 transcript is not evidence.
+
+Three notes on the block as corrected:
+
+- **`REAL_EXIT` will not be `0`, and that is correct.** `pipefail` plus
+  `set -o` is not `set -e`, so the brace group runs every line, but several
+  endpoints in it are *expected* to be non-200 at various points in the sitting
+  — `branches/main/protection` must 404 (C2), `private-vulnerability-reporting`
+  404s before B2, `code-scanning/default-setup` 403s before B8. `REAL_EXIT` is
+  the status of the **last** command in the group. **Read the bodies, not the
+  status** — the same instruction A8's stray-ref filter carries for the same
+  reason.
+- **`git status --porcelain` is appended for its emptiness.** If it prints a
+  line naming the capture file, the redirect has gone back inside the tree.
+  This is the one assertion in the block that is about the block itself.
+- **`$TMPDIR` is machine-independent on purpose.** A literal home path here
+  would be a `check-traceability.py --machine-paths` finding in the file A2
+  runs that very lint against, which is the sort of circularity this chapter
+  is supposed to notice.
 
 ## What this checklist does NOT cover
 
@@ -4103,20 +4842,65 @@ transcript is not evidence.
   that none is warranted. If that verdict ever changes, this chapter is the
   wrong instrument — a rewrite against a published freeze tag is its own
   decision.
-- **It does not arm branch protection** (C2), **does not set
-  `sha_pinning_required`** (B6, behind Q255), and **does not delete any
-  artifact** (B7, ruled expire-not-delete).
-- **Seven of its steps were never executed.** A8, B1, B2, B3, B4, B5 and C4
+- **It does not arm branch protection** (C2 and B8 both say so; the act is
+  `Q1`'s), **does not set `sha_pinning_required`** (B6, behind Q255), and
+  **does not delete any artifact** (B7, ruled expire-not-delete).
+- **It does not rule on Actions run logs.** **[ADDED 2026-09-12.]** B7 counts
+  them — **102** run-log sets become world-readable at B1 — and stops there.
+  Logs are a separate surface from artifacts: separate retention, not in the
+  artifacts list, and **not** looked at by `--scan-evidence`. No row in this
+  register owns log retention today, and B7 deliberately does not invent one.
+- **It does not decide when the two non-public-gated security writes are
+  taken.** **[ADDED 2026-09-12.]** B8 records that Dependabot alerts and
+  security updates are settable while the repository is private and are
+  therefore not strictly co-timed; whether to take them before B1 is a separate
+  named consent and is the maintainer's, not this chapter's.
+- **Six of its steps have never been executed.** B1, B2, B3, B4, B5 and B8
   carry expectations, not observations; each is tagged `[UNOBSERVED]` with its
   reason at the step, and the count is checkable without counting this sentence:
   every step-level tag opens its own line, so
-  `grep -c '^..\[UNOBSERVED' docs/ci-verification.md` returns **7** while the
-  legend entry and this paragraph, which are indented, do not. Six of the seven are
-  writes no agent may take; C4 is a read that has no public repository to read
-  yet. Every pre-state around them was measured on 2026-08-19 on this host with
-  the `aed900` token, and **a pre-state is not a result**.
+  `grep -c '^..\[UNOBSERVED' docs/ci-verification.md` returns **6** while the
+  legend entry and this paragraph, which are indented, do not. **All six are
+  writes no agent may take**, and three of the five in B8 are additionally
+  refused while the repository is private. The pre-states around them were
+  measured on 2026-08-19 and re-measured 2026-09-12, on this host with the
+  `aed900` token, and **a pre-state is not a result**.
+
+  **[UPDATED 2026-09-12 — the count moved from 7 to 6, and the moving IS the
+  fault plant.]** The superseded sentence read *"**Seven** of its steps were
+  never executed. A8, B1, B2, B3, B4, B5 and C4 … returns **7** … Six of the
+  seven are writes no agent may take; C4 is a read that has no public
+  repository to read yet."* Three changes, each measured:
+  - **A8 left the set.** Its post-condition holds: `origin/main` and local
+    `main` are both at `3437890` and `git rev-list --count origin/main..main`
+    is **0**, so the push is a no-op. Retagged `[OBSERVED 2026-09-12]`.
+  - **C4 left the set.** Its stated reason — *"no public repository to read
+    yet"* — was answered by the world instead: 14 hosted runs since
+    2026-09-01, 13 green and one genuinely red, on a **private** repository.
+    Retagged `[OBSERVED 2026-09-12]`.
+  - **B8 joined it**, as one step-level tag covering five writes.
+  `grep -c` was run on both sides of this edit and returned **7** before and
+  **6** after. **That is the plant this claim needed and never had**: a count
+  asserted in prose next to the command that produces it is worthless unless
+  the two have been seen to move together, and until today nothing in this file
+  had ever seen this one move. The remaining vacuity risk is the opposite one —
+  a future step-level tag written **indented**, which the `^..` anchor would
+  not see; if a tag is ever added that the count does not move for, the tag is
+  wrong, not the count.
 - **The read-backs are only as good as the moment they were run.** Q242's own
   row carried a 2026-08-17 measurement that this chapter found stale two days
-  later (B2), Q244's invocation count moved from 57 to 46 (A5), and `ci.yml`'s
-  job count moved from 17 to 15 (C2). Re-run every command; quote no figure
-  from a row.
+  later (B2), and `ci.yml`'s job count moved from 17 to 15 (C2). Re-run every
+  command; quote no figure from a row.
+
+  **[CORRECTED 2026-09-12 — this bullet recorded the Q244 drift BACKWARDS, and
+  in doing so blamed the row for the chapter's own defect.]** It read *"Q244's
+  invocation count moved from 57 to 46 (A5)"*. Nothing moved from 57 to 46.
+  **`Q244` said 57 and `Q244` was right**; this chapter's A5 command said 46
+  because it anchored on line-start-or-`- ` and could not see a bare-indented
+  `uses:` line, and A5's own 2026-08-27 box says so at length. The drift was
+  **46 → 57 in this file's reading of a constant**, not 57 → 46 in the world.
+  Re-measured 2026-09-12: **57**, 0 unpinned (see B6). The lesson the bullet
+  wanted is still the right one and is now the right way round — *re-run the
+  command* — but the failure mode it illustrates is **a chapter quoting its own
+  stale instrument at a row that was never wrong**, which is the more dangerous
+  of the two because the row is where a reader goes to check.

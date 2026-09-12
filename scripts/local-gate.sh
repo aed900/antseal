@@ -577,27 +577,54 @@ run copy-style          scripts/check-copy-style.py
 # publication. Home-directory names are counted PER NAME against registered
 # ceilings, because a single total lets a new username appear while an accepted
 # one loses an occurrence and the sum never moves.
+# WHY THERE ARE NOW THREE CALLS AND NOT TWO (wave 34): the bare mode walks
+# `git ls-files` -- the WORKING TREE -- and a flip publishes HISTORY. Until
+# `--history` landed, NO committed instrument scanned history for an
+# identifier: `scrub-history.sh` below walks the whole object store but all
+# eleven of its rules are CREDENTIAL-shaped, so its `verdict=CLEAN` is
+# structurally incapable of speaking to an email, a username or a host. The
+# two scans are the two halves of one claim and neither implies the other.
+# `--history` scopes itself to what pushing `main` and the freeze tag actually
+# publishes, so its answer is about the flip rather than about this disk; it
+# costs ~114 s, which is why it belongs in this heavy venue and not on a
+# per-commit path.
 run personal-data-selftest scripts/check-personal-data.py --self-test
 run personal-data          scripts/check-personal-data.py
+run personal-data-history  scripts/check-personal-data.py --history
 
-# D165 (Q266) — THE GIT HISTORY IS SCANNED HERE, AND ONLY HERE.
-# WHY THIS VENUE AND NOT CI: the flip publishes HISTORY, and no committed
-# instrument read it. `secret-guard` excludes `.git` outright by design, and
-# `personal-data` above scans `git ls-files` — the WORKING TREE. A hosted
-# runner is the wrong venue for the opposite reason: all 24 `actions/checkout`
-# steps run at the default `fetch-depth: 1`, and a --depth 1 clone's
-# reachability arithmetic BALANCES, so the script would print `mode=full` and a
-# confident verdict over 1 of 718 commits under a summary line textually
-# identical to a real run's. The maintainer's machine is the only venue that
-# holds the subject. The script now REFUSES a shallow store before enumerating,
-# which is what makes deferring the CI arm (D165 R7b) safe.
+# D165 (Q266) — THE HISTORY IS SCANNED FOR CREDENTIALS HERE, AND SINCE WAVE 34
+# IN CI TOO. THIS IS HALF OF THE SUBJECT, NOT ALL OF IT: all eleven rules below
+# are CREDENTIAL-shaped (PEM, keystore, vault magic, age, minisign, wallet-key
+# export, PGP, forge token, AWS, Slack), so a `verdict=CLEAN` here says nothing
+# about an email, a username, a hostname or an IP. The IDENTIFIER half is
+# `check-personal-data.py --history`, called above; do not read either one as
+# the other, and do not let a green here answer a question it cannot hear.
+# WHY THIS VENUE: the flip publishes HISTORY, and `secret-guard` excludes
+# `.git` outright by design.
+# WHY CI WAS THE WRONG VENUE AND NO LONGER IS: every `actions/checkout` step
+# ran at the default `fetch-depth: 1`, and a --depth 1 clone's reachability
+# arithmetic BALANCES, so the script would print `mode=full` and a confident
+# verdict over 1 of 726 commits (718 at wave 33) under a summary line textually
+# identical to a real run's. The script now REFUSES a shallow store before
+# enumerating, and D165 R7b's deferral is DISCHARGED this wave: the
+# `traceability` job in ci-always.yml checks out at `fetch-depth: 0` and runs
+# this same lane on push, while check-ci-paths.py's R8 asserts by count that
+# the depth stays 0. The two venues scan deliberately different corpora — this
+# one the local superset (2 unreachable objects that were never pushed), CI the
+# reachable-only set a public cloner actually receives — over ONE script and
+# ONE baseline, so they cannot disagree about a finding.
+# WHY THE LANE WRAPPER AND NOT THE SCRIPT DIRECTLY: the two direct calls this
+# line replaces left `lane_scrub_history`, and with it the depth assertion,
+# running in NO local ritual — which is exactly how check-custody-log.py sat
+# RED for six days on a ticked row. One caller shape, exercised every wave
+# close. The lane runs the scanner's --self-test before the scan, so the arm
+# that proves the shallow refusal still fires is covered by this one call.
 # WHY FULL-STORE AND NOT `--since`: a high-water-mark state file that goes
 # stale between waves IS the dated document Q266 exists to abolish, in a
-# different file format. The full arm has no state to rot. Cost is ~26 s.
-# The 612 standing hits are resolved by digest in scripts/scrub-history-baseline.tsv;
-# `findings=` counts UNSUPPRESSED hits only.
-run scrub-history-selftest scripts/scrub-history.sh --self-test
-run scrub-history          scripts/scrub-history.sh
+# different file format. The full arm has no state to rot. Cost is ~28 s.
+# The 640 standing hits (612 at wave 32) are resolved by digest in
+# scripts/scrub-history-baseline.tsv; `findings=` counts UNSUPPRESSED hits only.
+run scrub-history scripts/ci-lanes.sh scrub-history
 
 # S22 — TIER 2: the heavy feature paths, per package. Required, but only for
 # the changes that can break them — the same storage-touching path list the

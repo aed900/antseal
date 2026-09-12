@@ -63,6 +63,14 @@ R7  A workflow whose `push` is TAG-ONLY (`on: push: tags:` with no
     way to green it would be to write a tag build into REQUIRED_CONTEXTS,
     i.e. into branch protection, where it can never report on a merge to main
     and would hang the branch for ever. R7 is what makes R3's skip safe.
+R8  A job that runs a lane whose subject is the OBJECT STORE carries
+    `fetch-depth: 0` on EVERY `actions/checkout` in that job. This is R1's
+    problem in a second suit: reverted to the default, `fetch-depth` does not
+    error — it silently hands the lane a smaller corpus, and the verdict reads
+    exactly like a real one (D165 §1.7 measured `mode=full` over 1 of 718
+    commits). Asserted BY COUNT, over every checkout in the job rather than
+    merely one, so a second checkout added later reds too. See
+    FULL_HISTORY_STEPS.
 
 ── WHAT IT CANNOT CATCH. READ THIS BEFORE TRUSTING A GREEN ─────────────────
 
@@ -166,6 +174,59 @@ PUSH_EXEMPT = {
 # R6. A docs push that changes TODO.md and gets no traceability check is
 # strictly worse than no filter at all.
 MUST_RUN_ON_EVERY_PUSH = {"traceability", "secret-guard"}
+
+# ── R8: the depth discipline (D165 §2 R7b) ──────────────────────────────────
+#
+# THE SAME DEFECT SHAPE THIS FILE OPENS WITH. A path filter fails silently in
+# the direction of running less; `fetch-depth` fails silently in the direction
+# of SCANNING less. Measured on a real `--depth 1` clone of this repository
+# 2026-08-29: the history scanner's reachability invariant BALANCES —
+# objects=1384, commit=1, reachable=1384, unreachable=0 — so nothing downstream
+# had anything to complain about and it printed `mode=full` with a confident
+# verdict over 1 of 718 commits, under a summary line textually identical to a
+# real run's. All 24 `actions/checkout` steps in this directory ran at the
+# default `fetch-depth: 1` on the day that was measured.
+#
+# Each key is a `run:` substring naming a lane whose CORPUS IS THE OBJECT STORE
+# rather than the worktree; the value says why whole history is the subject. A
+# job containing such a step must carry `fetch-depth: 0` on every
+# `actions/checkout` it has — by COUNT, because a job with one full checkout
+# and one default checkout re-clones shallowly over the workspace and the first
+# one's depth stops meaning anything.
+#
+# This rule is the STATIC half of the assertion. The runtime half is
+# `lane_scrub_history` in scripts/ci-lanes.sh, which asserts the PROPERTY (not
+# shallow, not a partial clone, commit graph walkable) rather than this
+# literal, and scripts/scrub-history.sh (D165 §2 R6) refuses a shallow store
+# before it enumerates anything. Neither half subsumes the other: this one reds
+# in the commit that edits the workflow, on the maintainer's machine, with no
+# runner and no Actions billing involved — which matters here, because this
+# repository's hosted CI was refused for weeks and a runtime-only assertion is
+# an assertion whose failure nobody may ever see. The runtime half reds on a
+# truncation the YAML does not describe.
+#
+# An entry no workflow runs any more is a hard failure, not a silent pass: the
+# INERT_MENTIONS / FOLLOW_EDGES rule, because a register of lanes that used to
+# need full history buys nothing while reading as protection.
+FULL_HISTORY_STEPS: dict[str, str] = {
+    "scripts/ci-lanes.sh scrub-history":
+        "D165 §2 R7b / Q266. scrub-history.sh scans EVERY OBJECT IN THE STORE "
+        "for credential material, because the public flip publishes HISTORY and "
+        "not a worktree (D161) — so its corpus is every blob ever committed, and "
+        "a truncated store is a different subject wearing the same summary line. "
+        "Riding on the `traceability` job of ci-always.yml, which is unfiltered.",
+}
+
+# `uses: actions/checkout@<40-hex>`. The pin itself is scripts/check-action-pins.py's
+# subject, not this file's; the 40-hex is here only so a `uses:` line in a
+# comment or in prose cannot be counted as a checkout step.
+CHECKOUT_USES = re.compile(r"^\s*-\s*uses:\s*actions/checkout@[0-9a-f]{40}\b", re.M)
+
+# `fetch-depth: 0`, quoted or not. Comment-only lines are stripped before this
+# is counted, so the comment block that EXPLAINS the key cannot satisfy the rule
+# it explains — an assertion satisfiable by its own documentation is the
+# assertion-that-cannot-fail class this file is about.
+FETCH_DEPTH_ZERO = re.compile(r"^\s*fetch-depth:\s*['\"]?0['\"]?\s*(?:#.*)?$", re.M)
 
 # ── R4c: grep surfaces ──────────────────────────────────────────────────────
 #
@@ -285,18 +346,30 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
         "sentence — a comment that names where a rule is enforced is worth "
         "more than one that gestures at it.",
     ("scripts/ci-lanes.sh", "scripts/scrub-history.sh"):
-        "named in lane_secret_guard's comment explaining why `--exclude-dir=.git` "
-        "is DELIBERATE (D165, wave 32): that lane's subject is the working tree, "
-        "history is a separate subject, and scrub-history.sh is the check that "
-        "owns it. Not invoked — a grep for secrets is not a walk of commits, and "
-        "the two must not be run from one entry point or a green on either would "
-        "be read as a green on both. The reference is spelled with the file name "
-        "on purpose: R4e then reddens if scrub-history.sh is renamed or removed, "
-        "so the comment cannot rot into a pointer at a check that no longer "
-        "exists. NOTE for whoever wires the wave-32 `package-smoke` lane: that "
-        "lane needs NO entry here (it calls cargo directly and names no script), "
-        "but it is unreached in the same sense as custody-log below — see its "
-        "header comment in ci-lanes.sh, which records that and why.",
+        "INVOKED since wave 33 (D165 §2 R7b discharged), from lane_scrub_history "
+        "— and still UNREACHED FROM ci.yml, which is the only question this "
+        "register asks. The lane is a `traceability`-job step on ci-always.yml; "
+        "ci.yml calls ci-lanes.sh with --self-test, audit-deny, cbor-drift-guard, "
+        "dep-graph, golden-vectors, tamper-matrix and cross-os, and `scrub-history` "
+        "is not among them. Exactly the shape of the check-ci-shell.py and "
+        "check-anchor-net.py entries above, and the reason the placement is on "
+        "ci-always.yml is the same one: ci.yml's push is path-filtered, so a "
+        "docs-only push — a push that ADDS OBJECTS to this scanner's corpus, "
+        "since the corpus is every blob ever committed, TODO.md's included — "
+        "would skip the very scan that is about it. Wave 32's entry said 'Not "
+        "invoked', which was true then and is false now; the edge did not move to "
+        "FOLLOW_EDGES because reachability here is reachability FROM ci.yml, and "
+        "that has not changed. If ci.yml ever gains the `scrub-history` "
+        "subcommand, this entry MOVES to FOLLOW_EDGES in the same commit and "
+        "scrub-history.sh's own three outbound `scripts/x` literals "
+        "(check-personal-data.py, ci-lanes.sh, local-gate.sh — all prose) need "
+        "classifying with it. The reference stays spelled with the file name on "
+        "purpose: R4e reddens if scrub-history.sh is renamed or removed, so "
+        "neither the comment nor the lane can rot into a pointer at a check that "
+        "no longer exists. NOTE for whoever wires the wave-32 `package-smoke` "
+        "lane: that lane needs NO entry here (it calls cargo directly and names "
+        "no script), but it is unreached in the same sense as custody-log below — "
+        "see its header comment in ci-lanes.sh, which records that and why.",
     ("scripts/ci-lanes.sh", "scripts/cargo-free.sh"):
         "named in prose about the traceability job's arming; not invoked.",
     ("scripts/ci-lanes.sh", "scripts/cross-check.sh"):
@@ -695,6 +768,38 @@ def parse_contexts(text: str, name: str) -> list[str]:
     return out
 
 
+def parse_jobs(text: str, name: str) -> dict[str, str]:
+    """`{job key: the job's body text, original indentation kept}`.
+
+    `parse_contexts`' walk, stopping one level higher: R8 needs a PER-JOB view
+    because `actions/checkout` is a step and a job is the unit that shares a
+    workspace. Whole-file matching would let one job's `fetch-depth: 0` satisfy
+    a rule about a different job's checkout, which is the vacuous-green shape
+    this file exists to refuse.
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^jobs:\s*$", line):
+            start = i + 1
+            break
+    if start is None:
+        raise ValueError(f"{name}: no `jobs:` block")
+    body, _ = _block(lines, start, 0)
+    out: dict[str, str] = {}
+    i = 0
+    while i < len(body):
+        m = re.match(r"^  ([\w-]+):\s*$", body[i])
+        if not m:
+            i += 1
+            continue
+        job_body, i = _block(body, i + 1, 2)
+        out[m.group(1)] = "\n".join(job_body)
+    if not out:
+        raise ValueError(f"{name}: parsed zero jobs — the parser is broken")
+    return out
+
+
 # ── Reader set ──────────────────────────────────────────────────────────────
 
 def run_bodies(text: str) -> list[str]:
@@ -728,6 +833,23 @@ def run_bodies(text: str) -> list[str]:
 
 
 SCRIPT_LITERAL = re.compile(r"scripts/[\w.-]+\.(?:sh|py|mjs|js)")
+
+
+@functools.lru_cache(maxsize=None)
+def _call_re(call: str) -> re.Pattern[str]:
+    """`call`, not followed by another word character or `-`.
+
+    A plain `call in body` test would let `ci-lanes.sh scrub-history-renamed`
+    satisfy a register keyed on `ci-lanes.sh scrub-history`, so a respelling —
+    the likeliest way a lane silently stops running — would keep R8's entry
+    looking used while the lane it names had gone. The trailing guard is what
+    makes the stale-entry half of R8 able to fire.
+    """
+    return re.compile(re.escape(call) + r"(?![\w-])")
+
+
+def runs_call(bodies: list[str], call: str) -> bool:
+    return any(_call_re(call).search(body) for body in bodies)
 
 
 def reader_set(
@@ -1053,6 +1175,55 @@ def check(
             f"worse than no path filter at all — that lane's inputs ARE the docs.",
         )
 
+    # ── R8: an object-store lane gets a full-history checkout ──────────────
+    used_full_history: set[str] = set()
+    for wf_name, text in sorted(texts.items()):
+        for job_key, job_text in parse_jobs(text, wf_name).items():
+            bodies = run_bodies(job_text)
+            calls = sorted(c for c in FULL_HISTORY_STEPS if runs_call(bodies, c))
+            if not calls:
+                continue
+            used_full_history.update(calls)
+            # Comment-only lines out, so the block that EXPLAINS `fetch-depth: 0`
+            # cannot be what satisfies the rule.
+            code = "\n".join(
+                line for line in job_text.splitlines() if not line.lstrip().startswith("#")
+            )
+            n_checkout = len(CHECKOUT_USES.findall(code))
+            n_depth0 = len(FETCH_DEPTH_ZERO.findall(code))
+            if n_checkout == 0:
+                failures.add(
+                    "R8",
+                    f"{wf_name}: job `{job_key}` runs {calls}, whose corpus is the git "
+                    f"OBJECT STORE, but the job has no `actions/checkout` step at all — so "
+                    f"there is no store to scan and no depth to assert. "
+                    f"{FULL_HISTORY_STEPS[calls[0]]}",
+                )
+            elif n_depth0 != n_checkout:
+                failures.add(
+                    "R8",
+                    f"{wf_name}: job `{job_key}` runs {calls}, whose corpus is the git "
+                    f"OBJECT STORE, but only {n_depth0} of its {n_checkout} "
+                    f"`actions/checkout` step(s) carry `fetch-depth: 0`. The default is "
+                    f"`fetch-depth: 1`, and a shallow store does not error — it makes the "
+                    f"scan SMALLER and leaves the verdict looking identical: measured "
+                    f"2026-08-29 on a real `--depth 1` clone, the scanner's reachability "
+                    f"arithmetic balanced (objects=1384 commit=1 reachable=1384 "
+                    f"unreachable=0) and it reported `mode=full` over 1 of 718 commits. "
+                    f"Restore `fetch-depth: 0` on every checkout in this job. "
+                    f"{FULL_HISTORY_STEPS[calls[0]]}",
+                )
+    for call in sorted(set(FULL_HISTORY_STEPS) - used_full_history):
+        failures.add(
+            "R8",
+            f"FULL_HISTORY_STEPS registers {call!r}, but no job in any workflow runs it "
+            f"any more. Either the lane was unwired — in which case the `fetch-depth: 0` "
+            f"it justifies is now unexplained and should go with it — or the call was "
+            f"respelled and this rule has silently stopped guarding anything. A register "
+            f"of lanes that USED TO need full history buys nothing while reading as "
+            f"protection.",
+        )
+
     # ── R5: anti-vacuity ───────────────────────────────────────────────────
     try:
         excluded_files = [f for f in files if matches_any(f, docs_only)]
@@ -1330,6 +1501,36 @@ def self_test(root: Path) -> int:
     arm("a FOLLOW_EDGES entry whose reference is gone", "R4e",
         mutate=("scripts/cross-check.sh", "scripts/crosscheck-provenance.py",
                 "scripts/crosscheck-gone.py"))
+    # ── R8, the depth discipline (D165 §2 R7b) ─────────────────────────────
+    #
+    # FOUR arms, because `fetch-depth` can stop being 0 in four different ways
+    # and three of them do not look like a deletion. The measured consequence
+    # of any of them is the same: a scan over 1 of 718 commits, reporting
+    # `mode=full`, under a summary line textually identical to a real run's.
+    arm("fetch-depth reverted to a shallow literal", "R8",
+        mutate=(".github/workflows/ci-always.yml",
+                "          fetch-depth: 0", "          fetch-depth: 1"))
+    # Commented out rather than deleted — which also proves the rule cannot be
+    # satisfied by the comment block that explains it, since the surviving
+    # prose above still contains the words `fetch-depth: 0` several times.
+    arm("fetch-depth: 0 commented out, its explanation left in place", "R8",
+        mutate=(".github/workflows/ci-always.yml",
+                "          fetch-depth: 0", "          # fetch-depth: 0"))
+    # The count arm. One full checkout plus one default checkout in the same
+    # job re-clones shallowly over the workspace, so the first one's depth stops
+    # meaning anything — and a rule asking only "is there a fetch-depth: 0
+    # somewhere in this job" would have called that green.
+    arm("a second checkout in the job, at the default depth", "R8",
+        mutate=(".github/workflows/ci-always.yml",
+                "      - name: Q182 — self-test the cargo-free guard, then arm it",
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n"
+                "      - name: Q182 — self-test the cargo-free guard, then arm it"))
+    # The stale-register direction: the lane respelled, so the entry would still
+    # look used under a substring test and R8 would guard nothing.
+    arm("the registered full-history lane is respelled away", "R8",
+        mutate=(".github/workflows/ci-always.yml",
+                "run: ./scripts/ci-lanes.sh scrub-history",
+                "run: ./scripts/ci-lanes.sh scrub-history-renamed"))
 
     # ── R7 / the ref axis ──────────────────────────────────────────────────
     #
@@ -1469,7 +1670,9 @@ def main(argv: list[str]) -> int:
         f"surface(s) still match nothing excluded; of {len(scopes)} workflow(s) "
         f"{scopes.count('tags')} push on tags only (exempt from the required-context sets by "
         f"R3, held to R7), {scopes.count('branches')} on branches only, "
-        f"{scopes.count('both')} on both refs and {scopes.count('absent')} do not push"
+        f"{scopes.count('both')} on both refs and {scopes.count('absent')} do not push; "
+        f"{len(FULL_HISTORY_STEPS)} object-store lane(s) each have `fetch-depth: 0` on "
+        f"every checkout of their job (R8)"
     )
     return 0
 

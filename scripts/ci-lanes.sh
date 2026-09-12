@@ -79,7 +79,7 @@ cd "$repo" || exit 1
 note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m::error::ci-lanes: %s\033[0m\n' "$*" >&2; exit 1; }
 
-LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard audit-deny fuzz-budget anchor-net-policy cargo-free custody-log package-smoke"
+LANES="dep-graph cross-os golden-vectors tamper-matrix cbor-drift-guard traceability ci-shell secret-guard scrub-history audit-deny fuzz-budget anchor-net-policy cargo-free custody-log package-smoke"
 
 # Count the tests a libtest filter actually selects.
 #
@@ -1006,6 +1006,95 @@ lane_ci_shell() {
     return 1
   fi
   python3 scripts/check-ci-shell.py
+}
+
+# D165 §2 R7b: THE HISTORY SCAN'S CI ARM, AND THE DEPTH DISCIPLINE IT NEEDS.
+#
+# `scripts/scrub-history.sh` scans EVERY OBJECT IN THE STORE for credential
+# material, because making the repository public publishes HISTORY rather than
+# a worktree (D161). Its subject is therefore the object store itself, and a
+# TRUNCATED store is a different subject wearing the same summary line.
+#
+# THE DEFECT THIS WRAPPER EXISTS TO STOP, measured on a real shallow clone of
+# this repository 2026-08-29 (D165 §1.7): at `--depth 1` the scanner's
+# reachability invariant BALANCES — objects=1384, commit=1, reachable=1384,
+# unreachable=0 — so the arithmetic had nothing to complain about, and the
+# script printed `mode=full` with a confident verdict over 1 of 718 commits
+# under a summary line TEXTUALLY IDENTICAL to a real run's. Every
+# `actions/checkout` in this directory runs at the default `fetch-depth: 1`
+# except the one that feeds this lane. So `fetch-depth: 0` is not a
+# performance note on that step, it IS the correctness condition of this lane,
+# and what follows asserts the PROPERTY (an untruncated store) rather than the
+# YAML literal that is supposed to produce it.
+#
+# WHY THIS REPEATS scrub-history.sh's OWN §2 R6 REFUSAL, DELIBERATELY. The
+# scanner already refuses a shallow store before enumerating, and that refusal
+# is what made deferring this arm safe. It is kept, and it is not enough on its
+# own: its message is venue-blind ("re-run in a full clone", which is not an
+# act anyone can perform on a hosted runner), and shallowness is only one of
+# the three ways a checkout can hand this lane less than the whole store. The
+# two cannot DISAGREE in the direction that matters — a green needs both to
+# pass and either alone reds — so this is defence in depth, not a second
+# authority. What the copy buys: the remedy named in the venue's own terms,
+# two truncations `--is-shallow-repository` cannot see, and a check that
+# survives a future edit to the scanner.
+#
+# The STATIC half of "the depth stays 0" is `scripts/check-ci-paths.py` R8,
+# which asserts the literal on the checkout step feeding this lane. The two
+# halves fire on different inputs and neither subsumes the other: R8 reds in
+# the commit that edits the workflow, on the maintainer's machine, with no
+# runner and no billing at all; this lane reds on a truncation the YAML does
+# not describe.
+lane_scrub_history() {
+  local gitdir shallow_file promisor filter commits
+
+  gitdir="$(git rev-parse --absolute-git-dir 2>/dev/null || true)"
+  [ -n "$gitdir" ] || { printf '::error::%s\n' "scrub-history lane: this is not a git repository, so there is no object store to scan. The lane's subject is git history; a workspace without one is not an empty corpus, it is the wrong corpus."; return 1; }
+  shallow_file="$gitdir/shallow"
+
+  # (a) DEPTH. `$GIT_DIR/shallow` is git's own record that some ref's parent
+  #     list was grafted, so this is the property `fetch-depth: 1` produces
+  #     rather than a proxy for it. NEVER keyed on the commit count: one
+  #     commit is a legitimate state for a new repository (D165 §2 R6).
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo unknown)" != false ] \
+     || [ -e "$shallow_file" ]; then
+    printf '::error::%s\n' "scrub-history lane: the checkout is a SHALLOW store, so this lane would scan a truncated commit graph. A shallow clone's reachability arithmetic BALANCES, which is why nothing downstream can catch this: D165 §1.7 measured mode=full and a confident verdict over 1 of 718 commits, under a summary line textually identical to a real run's. Set 'fetch-depth: 0' on this job's actions/checkout step. scripts/check-ci-paths.py R8 is the static assertion that it stays there."
+    return 1
+  fi
+
+  # (b) PARTIAL CLONE. A partial clone is NOT shallow — `is-shallow-repository`
+  #     is false and there is no `shallow` file — but `git cat-file
+  #     --batch-all-objects` enumerates only the objects actually PRESENT, so a
+  #     lazily-fetched blob is simply absent from the corpus. This is the
+  #     truncation mode the scanner's own refusal cannot see.
+  promisor="$(git config --get extensions.partialclone 2>/dev/null || true)"
+  filter="$(git config --get-regexp '^remote\..*\.partialclonefilter$' 2>/dev/null || true)"
+  if [ -n "$promisor" ] || [ -n "$filter" ]; then
+    printf '::error::%s\n' "scrub-history lane: the checkout is a PARTIAL clone (promisor='${promisor}' filter='${filter}'). git cat-file --batch-all-objects enumerates only the objects that are locally present, so every lazily-fetched blob is missing from the corpus while the store reports as non-shallow. Drop the checkout step's 'filter:' input — this lane needs whole objects, not a usable worktree."
+    return 1
+  fi
+
+  # (c) CONNECTIVITY. Neither (a) nor (b) covers a store that is simply
+  #     missing an ancestor. `rev-list --all` walks every ref to its roots and
+  #     dies on an absent parent, which is the cheapest honest statement that
+  #     the commit graph this lane is about is walkable end to end.
+  if ! git rev-list --all >/dev/null 2>&1; then
+    printf '::error::%s\n' "scrub-history lane: 'git rev-list --all' could not walk the commit graph, so an ancestor object is missing from this store. The corpus is incomplete for a reason that is neither shallowness nor a partial-clone filter — no verdict may be reported over it."
+    return 1
+  fi
+
+  commits="$(git rev-list --count --all 2>/dev/null || printf '?')"
+  note "depth discipline OK: store is not shallow, is not a partial clone, and its commit graph walks end to end from every ref (${commits} commits). This is the assertion that keeps 'fetch-depth: 0' load-bearing rather than decorative."
+
+  # Self-test FIRST, the house pattern. Seven arms in a mktemp throwaway repo,
+  # ~2 s, and one of them is the shallow refusal itself — so a green scan below
+  # is backed by a run in which the refusal was observed to fire.
+  if ! scripts/scrub-history.sh --self-test; then
+    printf '::error::%s\n' "scrub-history self-test FAILED — the scanner stayed green over a planted fault (or its shallow refusal stopped firing), so a green scan below would prove nothing"
+    return 1
+  fi
+
+  scripts/scrub-history.sh
 }
 
 # Q16: the STATIC half of the no-real-anchor-network policy.
@@ -2149,6 +2238,7 @@ case "${1:-}" in
   traceability)     lane_traceability ;;
   ci-shell)         lane_ci_shell ;;
   secret-guard)     lane_secret_guard ;;
+  scrub-history)    lane_scrub_history ;;
   audit-deny)       lane_audit_deny ;;
   fuzz-budget)      lane_fuzz_budget ;;
   anchor-net-policy) lane_anchor_net_policy ;;

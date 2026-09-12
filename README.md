@@ -46,6 +46,22 @@ would rather not use a browser, `antseal verify` runs the same `antseal-core`
 code natively. Neither route contacts Autonomi, and neither needs anything from
 you after you have sent the file.
 
+**One planned use is not built yet: releasing sealed material after death** —
+the "digital will" idea, in function though never in law. Wallet keys or
+login credentials can be sealed today, and a reveal bundle is a
+self-contained file a chosen person could one day be handed; but nothing in
+antseal watches for your absence or delivers anything on its own, and sealed
+data is ciphertext on a permanent public network, so everything rests on who
+holds keys and bundles, and on when they let go. Weigh what sealing a secret
+costs before you do it: the ciphertext is permanent and public, so anyone who
+ever obtains your vault decrypts it retroactively, and there is no rotation
+and no recall ([vault theft](docs/user/vault-theft.md)). That release layer —
+a dead-man switch, delivering prepared reveal bundles only after missed
+check-ins, resettable until it fires — is registered as a **later-tier**
+feature ([TODO.md](TODO.md)'s dead-man entry). It adds a trust layer the MVP
+deliberately has none of; until it lands, do not plan an estate around this
+tool.
+
 ## Install
 
 There is no released binary and no signed artifact to check, so building from
@@ -62,9 +78,14 @@ cargo build -p antseal-cli --release    # ./target/release/antseal, optimised
 ./target/debug/antseal --version
 ```
 
-That default build does everything except reach the network: it reads and
-writes vaults and it checks proof bundles. **The build that can seal is a
-different one**, opt-in because it pulls in a much heavier dependency graph:
+That default build does everything except reach Autonomi: it reads and
+writes vaults, it checks proof bundles, and it reaches the timestamp
+network — `verify --online` probes a bundle's anchors, `status --upgrade`
+polls the calendars to complete pending attestations, and an opportunistic
+pass does the same after any command that opened a vault. The timestamp
+side is deliberately not feature-gated; only the Autonomi side is.
+**The build that can seal is a different one**, opt-in because it pulls in
+a much heavier dependency graph:
 
 ```sh
 cargo build -p antseal-cli --features ant-backend
@@ -158,9 +179,9 @@ and pays on Arbitrum One. It needs a funded wallet, a live network and the
 `--features ant-backend` build, so there is no offline demonstration of it and
 no command block for it here. On the default build `seal` stops with an error
 naming the build feature it is missing rather than implying an outage;
-`restore`, `status --upgrade` and `verify --live` are not available in either
-build yet. [Funding your wallet](docs/user/funding-your-wallet.md) is the page
-that gets you to where `seal` will run.
+`restore` and `verify --live` are not available in either build yet.
+[Funding your wallet](docs/user/funding-your-wallet.md) is the page that gets
+you to where `seal` will run.
 
 ### Passphrases in scripts
 

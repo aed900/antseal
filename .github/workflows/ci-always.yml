@@ -111,6 +111,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # D165 §2 R7b — THE CORRECTNESS CONDITION of the `scrub-history` step
+          # at the foot of this job, not a performance note. That lane's subject
+          # is the OBJECT STORE, and the default `fetch-depth: 1` hands it a
+          # truncated one whose reachability arithmetic BALANCES: measured on a
+          # real shallow clone 2026-08-29, objects=1384 / commit=1 /
+          # reachable=1384 / unreachable=0, so the scanner printed `mode=full`
+          # and a confident verdict over 1 of 718 commits under a summary line
+          # textually identical to a real run's (D165 §1.7). Every other
+          # `actions/checkout` in this directory is deliberately left at the
+          # default; this one is not.
+          #
+          # THREE THINGS ASSERT THAT THIS LINE STAYS, because a reverted
+          # `fetch-depth` does not error — it produces a smaller corpus and a
+          # cheerful green:
+          #   * scripts/check-ci-paths.py R8, statically, in the commit that
+          #     edits this file, with no runner involved — it requires every
+          #     `actions/checkout` in a job that runs a FULL_HISTORY_STEPS call
+          #     to carry `fetch-depth: 0`, by count, so a second checkout added
+          #     without it reds too;
+          #   * `lane_scrub_history` in scripts/ci-lanes.sh, at run time, on
+          #     the PROPERTY (not shallow, not a partial clone, commit graph
+          #     walkable) rather than on this literal;
+          #   * scripts/scrub-history.sh itself (D165 §2 R6), which refuses a
+          #     shallow store before it enumerates anything.
+          # Measured cost of the full fetch: 13 MB and ~2 s against this repo's
+          # 726 commits (2026-09-12), so cost is not the trade here.
+          fetch-depth: 0
       # D124/Q182 — this job's cargo-free property, ASSERTED instead of
       # stated. Installs failing `cargo`/`rustc`/`rustup` shims ahead of the
       # real ones for every step below, INCLUDING STEPS NOT YET WRITTEN, and
@@ -290,6 +318,55 @@ jobs:
         run: ./scripts/check-copy-style.py --self-test
       - name: Q20/U31 — product copy satisfies MVP-SPEC.md line 28's positioning rules
         run: ./scripts/check-copy-style.py
+      # D165 §2 R7b (Q266) — THE PUBLISHED OBJECT STORE IS SCANNED HERE. The
+      # debt this discharges was recorded with an owner and a deadline: a CI
+      # arm needed `fetch-depth: 0`, an assertion that the depth stays 0, a
+      # `ci-lanes.sh` lane and a `check-ci-paths.py` edge, none of which
+      # existed. All four are now in place.
+      #
+      # WHY THIS WORKFLOW AND NOT ci.yml. ci.yml's `push` carries
+      # `paths-ignore: [TODO.md, tasks/**, docs/ci-verification.md]`. A
+      # docs-only push is therefore exactly a push that ADDS OBJECTS TO THIS
+      # LANE'S SUBJECT while skipping ci.yml entirely — the scan's corpus is
+      # every blob ever committed, TODO.md's included. Placed on ci.yml it
+      # would be blind to the pushes that most change what it is about. This is
+      # D138's inversion applied a second time, and it is the same argument
+      # that put `traceability` and the path-filter guard on this file.
+      #
+      # WHY THIS JOB AND NOT A NEW ONE. A new job here produces a new check-run
+      # name, and scripts/check-ci-paths.py R3 fails on a context that is not
+      # in REQUIRED_CONTEXTS — so a separate job is a branch-protection change
+      # (docs/ci-verification.md's payload), not a placement decision. This job
+      # is already the project's ruled home for cheap no-toolchain checkers:
+      # `ci-shell`, `fuzz-budget`, `anchor-net-policy`, the path-filter guard,
+      # the action-pin ledger and the copy lint all ride here for the stated
+      # reason that they cost ZERO new required contexts, and the set stays at
+      # 19. The scanner is shell + git + coreutils, no cargo (this job's
+      # `--arm`/`--verdict` pair asserts that), no network, no toolchain.
+      #
+      # WHY `push` ONLY. The corpus this lane is about is what a CLONER OF THIS
+      # REPOSITORY gets, and that changes when the published ref moves. On a
+      # fork `pull_request` the checkout is base+fork, so a finding could be a
+      # line in the FORK's history — which, per D165 §2 R2, only the maintainer
+      # can register, so the contributor would face a red they cannot clear
+      # over a corpus that is not this repository's. The pre-merge venue is
+      # scripts/local-gate.sh (D165 §2 R7), which runs the same script over a
+      # SUPERSET: the maintainer's store holds unreachable objects a clone
+      # never receives (measured 2026-09-12 — 8099 objects locally, 8097 in a
+      # fresh full clone). The two venues scan different corpora on purpose and
+      # share one baseline, so they cannot disagree about a finding.
+      #
+      # COST, measured 2026-09-12 in a real reachable-only full clone of this
+      # repository: `--self-test` 1.82 s (7 arms, mktemp throwaway repos) and
+      # the scan 31.3 s over 4467 objects / 246 798 011 bytes / 11 rules, with
+      # `findings=0 baselined=640 baseline_entries=50 verdict=CLEAN` — the
+      # green-on-arrival measurement, taken in the runner's corpus rather than
+      # the maintainer's, because a baseline entry whose only match were a
+      # local-only unreachable object would have made this lane permanently red
+      # on arrival with a "stale digest" message that is true nowhere else.
+      - name: D165/Q266 — no credential in the object store this repository publishes
+        if: github.event_name == 'push'
+        run: ./scripts/ci-lanes.sh scrub-history
       # D124/Q182 — reads the marker back, and MUST STAY LAST. Red if any step
       # above invoked cargo, red if the arming step above is gone, and red if
       # the shims are not what PATH resolves — so the two steps guard each
