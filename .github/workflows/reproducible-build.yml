@@ -1,0 +1,87 @@
+# R86 / Q238 — the two-environment build comparison, as a REQUIRED STATUS
+# CONTEXT on every push to `main` and every pull request (D168 §2 R1).
+#
+# ── WHAT IT ASSERTS ─────────────────────────────────────────────────────────
+#
+# `scripts/reproducible-build.sh --compare` runs its own planted faults, then
+# builds this commit's wasm module a second time under a different checkout
+# path and a different `$CARGO_HOME`, and goes red unless
+# `antseal_wasm_bg.wasm` and `antseal_wasm.js` are byte-identical to build A.
+# It checks the TREE. The artifact that is actually SERVED is checked only by
+# the same comparison inside `pages.yml`'s deploy, which stays (D168 §2 R3).
+#
+# ── NO PATH FILTER, EVER, AND NO JOB-LEVEL `if:` ────────────────────────────
+#
+# `scripts/wasm-pack-build.sh` stamps `git rev-parse HEAD` into the module, so
+# HEAD itself is an input: every commit, a docs-only one included, changes the
+# bytes this compares, and no path filter can describe that input set
+# (D168 §1.2). A path-filtered required context also never reports on a push
+# it skips, so it sits Pending (D168 §1.3). Refused by D168 §2 R1, so nobody
+# rebuilds them: the path-filtered separate workflow D135 §10 R2 pre-priced
+# (red on `scripts/check-ci-paths.py` R1, R2 and R3), a job that short-circuits
+# to success, and this job moved into `ci-always.yml`. `check-ci-paths.py`
+# reds on R1 and R6 if a filter is added here, and on R3 and R6 if the `push`
+# trigger is removed.
+#
+# ── THE TIER HOLDS WHILE D168 §2 R2 HOLDS ───────────────────────────────────
+#
+# Standard hosted runners bill nothing on a public repository. The raise holds
+# while ALL of: the repository is public; every `runs-on` label in this
+# directory is a standard GitHub-hosted label; the D135 §1.1 proxy bill is
+# recorded with its window and command. A visibility change, a larger or
+# non-standard runner label, or a billing read showing Actions charges returns
+# the tier to a decision. Keep `runs-on: ubuntu-latest`.
+#
+# ── NOT YET WITNESSED ───────────────────────────────────────────────────────
+#
+# This comparison has never executed on a hosted runner (D168 §1.4). Its first
+# run is the witness `Q238` stays open for, and that run needs a consented
+# push. Until a run has reported this context green on `main`, it must not be
+# armed in branch protection (docs/ci-verification.md, C2; `Q265`).
+name: reproducible-build
+
+on:
+  # NO PATH FILTER on either trigger. See above.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Armed at WORKFLOW level, like every other workflow in this repository, so a
+# job added here later inherits the policy rather than quietly opting out of it
+# (docs/testing/anchor-ci-policy.md; asserted by `scripts/ci-lanes.sh
+# anchor-net-policy`, which requires this key in EVERY workflow file). The
+# comparison touches no calendar, esplora or RPC, so it costs nothing here.
+env:
+  ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+
+jobs:
+  # The job id and its `name:` are both `reproducible-build`. The name IS the
+  # required status context (`scripts/check-ci-paths.py` REQUIRED_CONTEXTS and
+  # MUST_RUN_ON_EVERY_PUSH), and docs/ci-verification.md's A9 selects on
+  # `repro`. Never rename it without moving both in the same commit.
+  reproducible-build:
+    name: reproducible-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: rustup show (toolchain from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: install the pinned wasm tools this image does not ship
+        run: ./scripts/wasm-tools-provision.sh
+      # BUILD A, EXPLICITLY, BEFORE THE COMPARISON (D168 §2 R1). `prepare()` in
+      # reproducible-build.sh skips build A whenever an artifact already
+      # exists, and the cache restored above can supply one built from a
+      # different commit. `build()` in wasm-pack-build.sh deletes its own
+      # output directory before it builds, so this step makes that hazard moot
+      # — the same answer `verifier-page.yml` records. Remove this step and the
+      # comparison can compare a stale module with a fresh one.
+      - name: build A — the module from this tree
+        run: ./scripts/wasm-pack-build.sh --build-only
+      - name: build B in a second environment, then compare the two (R86)
+        run: ./scripts/reproducible-build.sh --compare

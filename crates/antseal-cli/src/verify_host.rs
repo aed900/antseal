@@ -44,7 +44,8 @@ use antseal_core::anchor::model::OnlineEvidence;
 use antseal_core::bundle::BundleV1;
 use antseal_core::crypto::unit_aead::Nonce24 as AeadNonce;
 use antseal_core::manifest::Manifest;
-use antseal_core::verify::orchestration::{LiveInputs, OnlineInputs, VerifyHost};
+use antseal_core::verify::VerifyOptions;
+use antseal_core::verify::orchestration::{LiveInputs, OnlineInputs, VerifyHost, VerifyModes};
 use antseal_core::verify::overlay::{
     BlockProbe, EndpointProbeFailure, ProbeEndpoints, ProbeFailureClass, ProbeLog, ReceiptProbe,
 };
@@ -58,6 +59,7 @@ use antseal_net::{
 };
 
 use crate::error::CliError;
+use crate::verify_out::{VerifyRun, run_verify};
 
 #[cfg(test)]
 mod tests;
@@ -388,6 +390,78 @@ fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
 // ---------------------------------------------------------------------------
 // `--live` (S15's re-fetch, over the bundle's own embedded ciphertexts)
 // ---------------------------------------------------------------------------
+
+/// `verify --live`'s whole composition, **verification first** (D170 §2 R6):
+/// verify offline, and only for a bundle that passed is the network touched.
+///
+/// # The order is the ruling
+///
+/// 1. **Offline verification**, exactly as a plain `verify` runs it — the same
+///    [`run_verify`], [`VerifyModes::OFFLINE`], nothing collected. A rejected
+///    bundle returns that run's own error here — `verify-bundle-rejected`
+///    (40), its rejection code in the message.
+/// 2. **Connection**: `connect` is awaited only now. It is a future, not a
+///    backend, so that a rejected bundle costs **no connection at all** rather
+///    than merely no fetch: an unreachable bootstrap set takes seconds to
+///    connect (6.3 s for a dead loopback peer, measured on a devnet
+///    2026-09-13), and asking the network about addresses an adversary chose
+///    in a bundle that failed would publish interest in them for nothing.
+///    Futures are lazy, so a caller hands over `connect_something(..)`
+///    without anything starting.
+/// 3. **Collection**, over the bundle that verified: [`collect_live`].
+/// 4. **The run the user sees**: `modes` with the live layer switched on and
+///    the collected rows attached to `host`, which may already carry
+///    `--online`'s probe results.
+///
+/// Verification runs twice over the same bytes and the same `options`
+/// (whose clock is fixed once, by the caller), so the two runs cannot
+/// disagree about the evidence; the second exists because the live section
+/// is rendered by the run, and D69 §3 R6 keeps it out of the verdict either
+/// way.
+///
+/// # What a network failure does here
+///
+/// Nothing to the exit code. A backend that cannot reach the network —
+/// [`crate::backend::UnreachableBackend`], which a failed connection degrades
+/// to, or a connected reader whose every fetch fails in the network class —
+/// fails each fetch, R11 reports the section *Inconclusive*, and the run exits
+/// with its evidence verdict's code. A refusal in the network class (23) is
+/// D69 §3 R6's sanction for a build with **no** backend compiled in, and this
+/// function is never reached there.
+///
+/// # Errors
+///
+/// [`CliError::VerifyBundleRejected`] (40) from step 1, with `connect` never
+/// awaited; [`CliError::Internal`] if a bundle that verified then fails to
+/// decode or to yield its manifest, which is an antseal bug rather than an
+/// input problem; and whatever the final [`run_verify`] reports, which for a
+/// bundle that already verified is its serializer arm only.
+pub async fn run_verify_live<B, C>(
+    bundle: &[u8],
+    options: &VerifyOptions,
+    modes: VerifyModes,
+    host: CollectedInputs,
+    connect: C,
+) -> Result<VerifyRun, CliError>
+where
+    B: StorageBackend,
+    C: core::future::Future<Output = B>,
+{
+    run_verify(
+        bundle,
+        options,
+        VerifyModes::OFFLINE,
+        &CollectedInputs::none(),
+    )?;
+
+    let decoded = BundleV1::decode(bundle).map_err(|source| CliError::Internal {
+        detail: format!("a verified bundle did not decode for the live check: {source}"),
+    })?;
+    let backend = connect.await;
+    let live = collect_live(&decoded, &backend).await?;
+
+    run_verify(bundle, options, modes.with_live(), &host.with_live(live))
+}
 
 /// Re-fetch every blob this bundle embeds and byte-compare it — R11's live
 /// check, driven from a `.sealproof` instead of from a vault record.

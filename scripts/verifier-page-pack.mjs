@@ -213,7 +213,7 @@ function assertBuilt({ html, glue, wasm, base64, moduleDigest, template, h1, h2,
   }
   for (const refused of ["'unsafe-inline'", "'unsafe-eval'"]) {
     // 'wasm-unsafe-eval' contains 'unsafe-eval' as a substring; match the token.
-    if (new RegExp(`(^|[\\s;])${refused.replace(/'/g, "'")}`).test(policy)) {
+    if (new RegExp(`(^|[\\s;])${refused}`).test(policy)) {
       die(`the policy carries ${refused}, which D129 §6 refuses`);
     }
   }
@@ -284,13 +284,38 @@ function selfTest(pkgDir, templatePath) {
     ["a one-byte edit to the payload", (s) => { s.base64 = `${s.base64[0] === "B" ? "C" : "B"}${s.base64.slice(1)}`; }, /does not decode to the wasm-pack module/],
     ["a transformed (bundled) glue", (s) => { s.glue = s.glue.replace("initSync", "initSync2"); }, /does not contain the wasm-pack glue as a contiguous substring/],
     ["a footer digest that is not the module's", (s) => { s.moduleDigest = "0".repeat(64); }, /is not the digest of the module the page carries|footer digest is absent/],
+    // D129 §6's two refusals. Planted in the TEMPLATE and rebuilt, never in the
+    // page alone: a page edited on its own fails assertion 3's decomposition
+    // first, and an arm red there says nothing about assertion 7. `inPolicy`
+    // confines each plant to the CSP <meta>'s content attribute.
+    ["script-src-attr 'unsafe-inline'", (s) => {
+      s.template = inPolicy(s.template, (policy) => policy.replace("default-src 'none';", "default-src 'none'; script-src-attr 'unsafe-inline';"));
+      s.html = buildFor(s);
+    }, /the policy carries 'unsafe-inline'/],
+    // Adjacent to the one eval token that must stay. The real build is the
+    // other half: it carries 'wasm-unsafe-eval' alone and must stay green. A
+    // match too loose (unquoted unsafe-eval) reds that build; one too tight (a
+    // boundary of `;` only) leaves this arm green.
+    ["'unsafe-eval' beside 'wasm-unsafe-eval'", (s) => {
+      s.template = inPolicy(s.template, (policy) => policy.replace("'wasm-unsafe-eval'", "'wasm-unsafe-eval' 'unsafe-eval'"));
+      s.html = buildFor(s);
+    }, /the policy carries 'unsafe-eval'/],
   ];
 
   let failures = 0;
   for (const [label, corrupt, expected] of arms) {
     const state = { ...good };
     state.html = buildFor(state);
+    const before = { ...state };
     corrupt(state);
+    // A plant that matched nothing leaves the page as it was, and the arm would
+    // then report on an unplanted page — green blamed on the assertions, or red
+    // for a reason the plant never supplied.
+    if (Object.keys(before).every((key) => before[key] === state[key])) {
+      console.error(`::error::page-build self-test: the planted fault "${label}" changed nothing — the arm has no subject`);
+      failures += 1;
+      continue;
+    }
     let message = null;
     const realExit = process.exit;
     const realError = console.error;
@@ -319,6 +344,15 @@ function buildFor({ template, glue, base64, moduleDigest, h1, h2, h3 }) {
     .replace(TOKENS.digest, () => moduleDigest)
     .replace(TOKENS.scriptHashes, () => `'sha256-${h1}' 'sha256-${h2}'`)
     .replace(TOKENS.styleHash, () => `'sha256-${h3}'`);
+}
+
+// `edit` applied to the policy text of the CSP <meta> and nowhere else, so a
+// plant cannot land in a comment that happens to quote a directive.
+function inPolicy(text, edit) {
+  return text.replace(
+    /(<meta http-equiv="Content-Security-Policy" content=")([^"]+)(">)/,
+    (_, open, policy, close) => `${open}${edit(policy)}${close}`,
+  );
 }
 
 // ── entry ──────────────────────────────────────────────────────────────────

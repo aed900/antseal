@@ -331,7 +331,7 @@ jobs:
       #
       # It rides as a STEP of an existing job for the reason `ci-shell`,
       # `fuzz-budget` and `anchor-net-policy` do on `traceability`: ZERO
-      # new required-status contexts (the set stays at 19; Q56's generated
+      # new required-status contexts (it adds none to the set; Q56's generated
       # context list is untouched). Self-test first, as everywhere else —
       # four planted faults plus both trigger directions — because a green
       # partition verdict means nothing until the guard has been shown able
@@ -762,7 +762,8 @@ jobs:
   # a docs-only push is its busiest case, not its emptiest. Skipping it there
   # would have been strictly worse than having no filter at all.
   #
-  # Nothing about the required-status set changed: still 19 contexts, still one
-  # producer each. Do not re-add either job here — `check-ci-paths.py` R3 fails
+  # The split changed nothing about the required-status set: 19 contexts then,
+  # one producer each (20 since D168 §2 R1 added `reproducible-build.yml`'s, and
+  # still one producer each). Do not re-add either job here — `check-ci-paths.py` R3 fails
   # on a context produced by two workflows, and R6 fails if either stops being
   # produced by an unfiltered `push`.

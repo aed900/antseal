@@ -16,20 +16,29 @@
 //!
 //! # The venue, stated exactly, because it is not the process
 //!
-//! The deepest reachable route today is
-//! `collect_live` → `CollectedInputs::with_live` → `run_verify`, which is what
+//! The route here is `collect_live` → `CollectedInputs::with_live` →
+//! `run_verify`, which is also what
 //! `crates/antseal-cli/tests/verify_command.rs`'s
 //! `a_live_check_with_no_reachable_network_is_inconclusive_and_moves_nothing`
-//! already drives. It is **not** the spawned binary, and the reason is a
-//! measured property of the tree rather than a convenience: `commands.rs:677`
-//! returns `backend::unavailable("verify")` for `--live` **unconditionally**,
-//! before verification and in both feature arms, so `collect_live` has no
-//! caller in `commands.rs` at all and no process invocation can reach it.
-//! `verify_command.rs`'s `live_without_a_compiled_backend_refuses_at_the_seam`
-//! pins that refusal. Everything downstream of the collector here *is* the
-//! production path: `run_verify` is the handler's own call, `VerifyRun::render`
-//! is the handler's own rendering, and `VerifyRun::json` is the handler's own
-//! `--json` document.
+//! drives. It is **not** the spawned binary, and for the divergent case it
+//! cannot be.
+//!
+//! When this file was written no process could reach the collector at all:
+//! `commands::verify` refused `--live` unconditionally, in both feature arms.
+//! **D170 wired it** in the `ant-backend` build — `verify_host::run_verify_live`
+//! verifies offline, connects the wallet-less reader and calls `collect_live`
+//! — so the manifest row **persisted** is now reachable through the binary on
+//! a real network (`tests/e2e_restore.rs`, on a devnet), and the build with no
+//! backend still refuses (`verify_command.rs`'s
+//! `live_without_a_compiled_backend_refuses_at_the_seam`). What stays here is
+//! the case the binary can never show: a spawned process holds no mock, and
+//! the production adapter reports bytes that do not hash to their address in
+//! the network class (R79's recorded cost), so `Different` never arises from a
+//! real network. D170 §2 R7 restated U75's `Accept` on exactly that ground, and
+//! this file is where the divergent row is proven. Everything downstream of the
+//! collector here *is* the production path: `run_verify` is the handler's own
+//! call, `VerifyRun::render` is the handler's own rendering, and
+//! `VerifyRun::json` is the handler's own `--json` document.
 //!
 //! # Why the divergent case needs a dishonest responder
 //!

@@ -18,10 +18,8 @@
 {"command":"vault export","error":{"class":"passphrase-unavailable","exit_code":11,"message":"passphrase unavailable: no TTY on stdin and no --passphrase-fd was given; supply the passphrase over a file descriptor, e.g. `printf '%s' \"$PASS\" | antseal … --passphrase-fd 0`"},"network":"arbitrum-one","ok":false,"v":1}
 [vault import] error
 {"command":"vault import","error":{"class":"consent-not-obtained","exit_code":10,"message":"refusing to import over the existing vault at /home/user/.antseal: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move that directory aside yourself first — moving it keeps everything, and no antseal command has to run first; delete it only when you are certain nothing in it matters. Scripted overwrite-import is deliberately unsupported (D51)"},"network":"arbitrum-one","ok":false,"v":1}
-[seal] error [arm: backend-compiled-in-command-unwired]
-{"command":"seal","error":{"class":"network-failure","exit_code":23,"message":"network failure: `seal` has a storage backend compiled in, but this command does not construct one yet: the construction seam exists and the devnet harness drives it end to end — connecting this command to it is still to come. Nothing is wrong with the network"},"network":"arbitrum-one","ok":false,"v":1}
-[restore] error [arm: backend-compiled-in-command-unwired]
-{"command":"restore","error":{"class":"network-failure","exit_code":23,"message":"network failure: `restore` has a storage backend compiled in, but this command does not construct one yet: the construction seam exists and the devnet harness drives it end to end — connecting this command to it is still to come. Nothing is wrong with the network"},"network":"arbitrum-one","ok":false,"v":1}
+[reveal] error [arm: backend-compiled-in-command-unwired]
+{"command":"reveal","error":{"class":"network-failure","exit_code":23,"message":"network failure: unit 3 could not be fetched from the network (network error: `reveal` has a storage backend compiled in, but this command does not construct one yet: the construction seam exists and the devnet harness drives it end to end — connecting this command to it is still to come. Nothing is wrong with the network) and no verified local copy exists"},"network":"arbitrum-one","ok":false,"v":1}
 [init] result
 {"command":"init","network":"arbitrum-one","ok":true,"result":{"address":"0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf","kdf":"argon2id","keyfile":null,"network":"arbitrum-one","vault_dir":"/home/user/.antseal","wallet_source":"generate"},"v":1}
 [list] result

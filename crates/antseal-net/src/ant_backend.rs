@@ -17,7 +17,7 @@
 //! | `quote_batch` | `Client::prepare_chunk_payment` per blob; `Ok(None)` = already stored | `ant-core-0.5.0/src/data/client/batch.rs:354-415` |
 //! | `pay` | **external-signer flow**: per-sub-batch `payForQuotes` calldata (`PaymentVaultHandler::pay_for_quotes_calldata`), signed and submitted over our own provider, each tx's receipt awaited; proofs built via the pure `finalize_batch_payment` | `evmlib-0.9.0/src/contract/payment_vault/handler.rs:112-127`; `ant-core-0.5.0/src/data/client/batch.rs:337-343` |
 //! | `finalize_batch` | `chunk_exists` skip probe + `chunk_put_with_proof` to `CLOSE_GROUP_MAJORITY` targets | `ant-core-0.5.0/src/data/client/chunk.rs:534-541,1011-1013`; `ant-protocol-2.3.0/src/chunk.rs:40` |
-//! | `get_data` | `chunk_get` (D32: blob = one chunk; no `DataMap`) | `ant-core-0.5.0/src/data/client/chunk.rs:632-636` |
+//! | `get_data` | `chunk_get` (D32: blob = one chunk; no `DataMap`); on `Ok(None)`, `chunk_get_from_close_group` so that only an authoritative sweep reports absence | `ant-core-0.5.0/src/data/client/chunk.rs:632-636,851-857,168-170` |
 //!
 //! **Explicitly never driven** (their results carry no payment data, or
 //! their error paths destroy capture): `data_upload*`, `chunk_put`,
@@ -31,6 +31,14 @@
 //! external-signer driver, `ant-core-0.5.0/src/data/client/mod.rs:451-455`)
 //! and **never** `with_wallet`, so upstream's wallet-gated payment paths
 //! (`require_wallet`) cannot even be reached from this adapter.
+//!
+//! # The second client: [`AntCoreReader`] (D170 §2 R1)
+//!
+//! Read-only commands get a client built with **neither** `with_wallet` nor
+//! `with_evm_network`, which drives `chunk_get` and nothing else. It lives in
+//! this file for the same reason the payer does — an ant-core bump re-verifies
+//! one file — and it shares the payer's connect configuration and its
+//! `get_data` address re-check rather than copying them.
 //!
 //! # Payment mechanics (D37 Decision 2, D33 Decision 1)
 //!
@@ -255,13 +263,7 @@ impl AntCoreBackend {
             });
         }
 
-        let client_config = ClientConfig {
-            // Loopback handshakes are a devnet-only transport variant;
-            // production peers reject them (ClientConfig docs).
-            allow_loopback: config.id == NetworkId::Devnet,
-            ..ClientConfig::default()
-        };
-        let client = Client::connect(&config.bootstrap, client_config)
+        let client = Client::connect(&config.bootstrap, client_config(config))
             .await
             .map_err(|e| map_ant_error(ErrContext::Connect, &e))?
             .with_evm_network(evm_network);
@@ -994,31 +996,7 @@ impl StorageBackend for AntCoreBackend {
     }
 
     async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
-        let chunk = self
-            .client
-            .chunk_get(address.as_bytes())
-            .await
-            .map_err(|e| map_ant_error(ErrContext::Get, &e))?;
-        let Some(chunk) = chunk else {
-            return Err(StorageError::NotFound { address });
-        };
-        // Integrity re-check at our boundary (upstream checks too;
-        // defense in depth): the D32 address rule must hold over the
-        // returned bytes.
-        let derived = antseal_core::storage::compute_storage_address(&chunk.content)
-            .map(Address::from)
-            .map_err(|_| StorageError::Network {
-                reason: format!("network returned an over-cap chunk for address {address}"),
-            })?;
-        if derived != address {
-            return Err(StorageError::Network {
-                reason: format!(
-                    "network returned bytes whose BLAKE3-256 address does not match the \
-                     requested {address} — integrity failure"
-                ),
-            });
-        }
-        Ok(chunk.content.to_vec())
+        fetch_chunk(&self.client, address).await
     }
 
     /// ANT (ERC-20 `balanceOf`) and ETH (`eth_getBalance`) balances of
@@ -1039,8 +1017,311 @@ impl StorageBackend for AntCoreBackend {
 }
 
 // ---------------------------------------------------------------------------
+// The wallet-less download-only reader (D170 §2 R1)
+// ---------------------------------------------------------------------------
+
+/// Why every non-fetching method of [`AntCoreReader`] refuses.
+///
+/// One sentence for all four, carried inside the variant each method's own
+/// trait contract names for that operation failing with nothing at risk
+/// (`quote_batch` → [`StorageError::Quote`], `pay` → [`StorageError::Payment`],
+/// `finalize_batch` → [`StorageError::Finalize`], `balances` →
+/// [`StorageError::Network`]). No new variant: `fetch_failure_class` stays
+/// total over the same closed set, so the class vocabulary a `--live` row can
+/// carry does not grow. Names no key, no receipt field, no address.
+const READER_REFUSAL: &str = "this is the download-only reader: it was connected with no wallet \
+     and no EVM network, so it cannot quote, pay, store or read balances — a command that pays \
+     must use the payment backend, which carries the D37 capture hook";
+
+/// A connected Autonomi client that can **fetch and nothing else** — no
+/// wallet, no EVM network, no payment RPC (D170 §2 R1).
+///
+/// # Why a second type, not an optional wallet on [`AntCoreBackend`]
+///
+/// `restore` and `verify --live` only ever call `get_data`, and upstream
+/// needs no wallet for it: `Client::connect(peers, ClientConfig)` builds a
+/// client with `wallet: None, evm_network: None`
+/// (`ant-core-0.5.0/src/data/client/mod.rs:410-433`) and `chunk_get` reads
+/// neither (`chunk.rs:632-636`). [`AntCoreBackend::connect`] instead demands
+/// a signing wallet and an `eth_chainId` answer before it will dial a single
+/// peer — `verify` holds no vault and so no key (D99 R2), and a vault made by
+/// `create_vault` holds no wallet record. D170 refused the two cheaper
+/// shapes: a throwaway wallet would mint key material to read public
+/// ciphertext, and an `Option` wallet on the payer would put a runtime `None`
+/// check between D37's capture guarantee and every payment.
+///
+/// # It cannot pay, structurally
+///
+/// The client is built **without** `with_evm_network` and without
+/// `with_wallet`, so even upstream's own payment paths would fail their
+/// `require_evm_network` guard; and this type's `quote_batch`, `pay`,
+/// `finalize_batch` and `balances` never touch the client at all — they
+/// return `READER_REFUSAL` in the variant their trait contract names. The
+/// CLI additionally holds it behind a read-only wrapper, so a command that
+/// needs to pay cannot be handed one by accident.
+///
+/// # Shared, not copied
+///
+/// `client_config` (the devnet-only loopback rule) and `fetch_chunk` (the
+/// `chunk_get` call, its absence confirmation and its D32 address re-check)
+/// are the same two functions
+/// [`AntCoreBackend`] uses, so the payer and the reader cannot drift on which
+/// networks may dial loopback or on what bytes count as the chunk asked for.
+pub struct AntCoreReader {
+    client: Client,
+    config: NetworkConfig,
+}
+
+impl AntCoreReader {
+    /// Connect to `config.bootstrap` with no wallet and no EVM network.
+    ///
+    /// Nothing about the payment side of `config` is read: no RPC is dialed
+    /// and no chain id is checked, because nothing this type does can reach
+    /// a chain. Loopback handshakes are allowed only for
+    /// [`NetworkId::Devnet`], exactly as for the payer (`client_config`).
+    ///
+    /// # A connection that succeeded is not a network that answers
+    ///
+    /// Upstream does not gate client start-up on reaching a peer: saorsa-core
+    /// 0.26.2's `connect_bootstrap_peers` returns `Ok` when it has nothing to
+    /// dial (`src/network.rs:2099`) and, after every dial has failed, *"Starting
+    /// a node should not be gated on immediate bootstrap connectivity"*
+    /// (`:2166`). Measured on a live devnet (2026-09-13): a dead loopback
+    /// bootstrap connected `Ok` in 6.3 s and an empty one in 45 ms. So an
+    /// unreachable network surfaces at the first `get_data`, not here — and
+    /// `fetch_chunk` is what keeps that fetch from calling the chunk absent.
+    /// `tests/devnet_backend.rs`'s
+    /// `devnet_d170_an_unreachable_network_is_never_reported_as_absence` holds
+    /// both halves.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Network`] when upstream cannot create or start the
+    /// client node.
+    pub async fn connect(config: &NetworkConfig) -> Result<Self, StorageError> {
+        let client = Client::connect(&config.bootstrap, client_config(config))
+            .await
+            .map_err(|e| map_ant_error(ErrContext::Connect, &e))?;
+        Ok(Self {
+            client,
+            config: config.clone(),
+        })
+    }
+
+    /// The network this reader is bound to.
+    #[must_use]
+    pub fn network_config(&self) -> &NetworkConfig {
+        &self.config
+    }
+}
+
+impl StorageBackend for AntCoreReader {
+    async fn quote_batch(&self, _blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+        Err(StorageError::Quote {
+            reason: READER_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn pay(&self, _quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+        Err(StorageError::Payment {
+            reason: READER_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn finalize_batch(
+        &self,
+        _receipt: &PaymentReceipt,
+        _blobs: &[Blob],
+    ) -> Result<Vec<Address>, StorageError> {
+        Err(StorageError::Finalize {
+            reason: READER_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+        fetch_chunk(&self.client, address).await
+    }
+
+    async fn balances(&self) -> Result<BalanceReport, StorageError> {
+        Err(StorageError::Network {
+            reason: READER_REFUSAL.to_owned(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Conversion + helper functions
 // ---------------------------------------------------------------------------
+
+/// The upstream client configuration **both** adapters connect with.
+///
+/// Loopback handshakes are a devnet-only transport variant; production peers
+/// reject them (`ClientConfig` docs, `ant-core-0.5.0/src/data/client/mod.rs:
+/// 238-247`). One function, so the payer and the reader cannot disagree about
+/// which network may dial loopback.
+fn client_config(config: &NetworkConfig) -> ClientConfig {
+    ClientConfig {
+        allow_loopback: config.id == NetworkId::Devnet,
+        ..ClientConfig::default()
+    }
+}
+
+/// `get_data` for **both** adapters: `chunk_get` (D32: blob = one chunk, no
+/// `DataMap`); when that finds nothing, a confirming close-group sweep that
+/// alone may call the chunk absent; then the address re-check at our own
+/// boundary.
+///
+/// # `chunk_get`'s `Ok(None)` is not an answer
+///
+/// ant-core 0.5.0 returns `Ok(None)` from `chunk_get` for authoritative
+/// absence **and** for three things that are not absence at all: a first
+/// close-group lookup that failed (swallowed, `chunk.rs:678-690`), a retry
+/// lookup that failed too (`:747`), and a sweep that timed out or erred
+/// without a unanimous answer (`:771`). Mapping every `None` to
+/// [`StorageError::NotFound`] — which this adapter used to do — made an
+/// unreachable network report *"no such chunk"*: measured on a live devnet
+/// before this change (2026-09-13), a reader whose bootstrap was a dead
+/// loopback port, or empty, connected `Ok` and answered `NotFound` in 1.0 s
+/// for a chunk the devnet held. The live
+/// check renders `NotFound` as a negative fact (*"no longer on the
+/// network"*), so that was a false statement about stored evidence.
+/// `devnet_d170_an_unreachable_network_is_never_reported_as_absence` is the
+/// negative control that now holds the line.
+///
+/// So a `None` is re-asked through `chunk_get_from_close_group`
+/// (`chunk.rs:851`), which reports every close-group peer's own answer, and
+/// [`classify_sweep`] applies upstream's absence rule to it. Only a verdict
+/// of absence becomes `NotFound`; anything less is the network class, and a
+/// peer that serves the chunk during the sweep serves it.
+///
+/// # Errors
+///
+/// [`StorageError::NotFound`] only when a close-group sweep established
+/// absence authoritatively; [`StorageError::Network`] for a transport
+/// failure, a lookup or sweep that established nothing, an over-cap chunk, or
+/// bytes that do not hash to `address` (R79's recorded cost: a mismatch is
+/// reported in the network class, so `Different` cannot arise from this
+/// adapter).
+async fn fetch_chunk(client: &Client, address: Address) -> Result<Vec<u8>, StorageError> {
+    let fetched = client
+        .chunk_get(address.as_bytes())
+        .await
+        .map_err(|e| map_ant_error(ErrContext::Get, &e))?;
+    let content = match fetched {
+        Some(chunk) => chunk.content,
+        None => confirm_absence(client, address).await?,
+    };
+    // Integrity re-check at our boundary (upstream checks too; defense in
+    // depth): the D32 address rule must hold over the returned bytes.
+    let derived = antseal_core::storage::compute_storage_address(&content)
+        .map(Address::from)
+        .map_err(|_| StorageError::Network {
+            reason: format!("network returned an over-cap chunk for address {address}"),
+        })?;
+    if derived != address {
+        return Err(StorageError::Network {
+            reason: format!(
+                "network returned bytes whose BLAKE3-256 address does not match the requested \
+                 {address} — integrity failure"
+            ),
+        });
+    }
+    Ok(content.to_vec())
+}
+
+/// Re-ask the close group about a chunk `chunk_get` did not find.
+///
+/// Returns the chunk if a peer serves it; otherwise an error that is
+/// [`StorageError::NotFound`] only when the sweep's answers are authoritative
+/// ([`classify_sweep`]), and [`StorageError::Network`] — naming the counts,
+/// never a peer or a byte — when they are not. A lookup that fails outright
+/// (no peers to ask) is the network class too, through [`map_ant_error`].
+async fn confirm_absence(client: &Client, address: Address) -> Result<Bytes, StorageError> {
+    let answers = client
+        .chunk_get_from_close_group(address.as_bytes())
+        .await
+        .map_err(|e| map_ant_error(ErrContext::Get, &e))?
+        .into_iter()
+        .map(|peer| match peer.chunk_result {
+            Ok(Some(chunk)) => PeerAnswer::Served(chunk.content),
+            Ok(None) => PeerAnswer::NotFound,
+            Err(_) => PeerAnswer::Failed,
+        });
+    match classify_sweep(answers) {
+        SweepVerdict::Served(content) => Ok(content),
+        SweepVerdict::Absent => Err(StorageError::NotFound { address }),
+        SweepVerdict::Unestablished { queried, not_found } => Err(StorageError::Network {
+            reason: format!(
+                "the network did not establish whether {address} is stored: {not_found} of \
+                 {queried} close-group peer(s) answered not-found, and absence needs a unanimous \
+                 answer from at least {CLOSE_GROUP_MAJORITY}"
+            ),
+        }),
+    }
+}
+
+/// One close-group peer's answer to a chunk GET, reduced to what
+/// [`classify_sweep`] needs.
+enum PeerAnswer {
+    /// The peer served the chunk (upstream verified address and hash).
+    Served(Bytes),
+    /// The peer answered that it holds no such chunk.
+    NotFound,
+    /// No usable answer: timeout, transport or protocol error, bad bytes.
+    Failed,
+}
+
+/// What a close-group sweep established about one address.
+#[derive(Debug, PartialEq, Eq)]
+enum SweepVerdict {
+    /// A peer served the chunk.
+    Served(Bytes),
+    /// Absence, established by upstream's own rule.
+    Absent,
+    /// Neither: too few peers answered, or not unanimously.
+    Unestablished {
+        /// Peers the sweep asked.
+        queried: usize,
+        /// Of those, peers that answered not-found.
+        not_found: usize,
+    },
+}
+
+/// Classify a sweep's answers: the first served chunk wins; otherwise absence
+/// only by [`is_authoritative_absence`]; otherwise nothing was established.
+fn classify_sweep(answers: impl IntoIterator<Item = PeerAnswer>) -> SweepVerdict {
+    let mut queried = 0usize;
+    let mut not_found = 0usize;
+    for answer in answers {
+        queried += 1;
+        match answer {
+            PeerAnswer::Served(content) => return SweepVerdict::Served(content),
+            PeerAnswer::NotFound => not_found += 1,
+            PeerAnswer::Failed => {}
+        }
+    }
+    if is_authoritative_absence(not_found, queried) {
+        SweepVerdict::Absent
+    } else {
+        SweepVerdict::Unestablished { queried, not_found }
+    }
+}
+
+/// ant-core 0.5.0's own absence rule, mirrored: a **majority-sized** sample
+/// (`CLOSE_GROUP_MAJORITY`, the replica count, `ant-protocol-2.3.0/src/
+/// chunk.rs:40`) that answered not-found **unanimously**.
+///
+/// Upstream's `is_authoritative_not_found` (`ant-core-0.5.0/src/data/client/
+/// chunk.rs:168`) is private, so the two lines are restated here — which makes
+/// this function an S20 bump-checklist item: an upstream change to that rule
+/// must be carried here by hand, and `absence_needs_a_unanimous_majority_
+/// sized_sample` pins today's table. The reasoning is upstream's and is worth
+/// keeping: replicas sit on 4 of 7 peers, so a non-unanimous answer can be
+/// storers that did not reply, and a thin lookup of 1–3 peers can miss the
+/// replica set entirely.
+const fn is_authoritative_absence(not_found: usize, queried: usize) -> bool {
+    queried >= CLOSE_GROUP_MAJORITY && not_found == queried
+}
 
 /// S4 address of a blob — the single address authority (D32).
 fn s4_address(blob: &Blob) -> Result<Address, StorageError> {
@@ -1489,6 +1770,79 @@ mod tests {
         assert_eq!(json["available_gas_wei"], 42);
         let back: PreflightReport = serde_json::from_value(json).expect("round-trips");
         assert_eq!(back, report);
+    }
+
+    /// Upstream's absence rule, restated as a table (`is_authoritative_
+    /// absence` mirrors a private ant-core function, so this is the pin an
+    /// S20 bump re-reads it against).
+    #[test]
+    fn absence_needs_a_unanimous_majority_sized_sample() {
+        assert_eq!(
+            CLOSE_GROUP_MAJORITY, 4,
+            "the replica count this table was written against"
+        );
+        for (not_found, queried, absent) in [
+            (0, 0, false), // nobody could be asked: an unreachable network
+            (1, 1, false), // a thin lookup
+            (3, 3, false), // unanimous, but below the replica count
+            (4, 4, true),
+            (7, 7, true),
+            (4, 5, false), // one peer gave no usable answer — it may hold a replica
+            (6, 7, false),
+            (0, 7, false),
+        ] {
+            assert_eq!(
+                is_authoritative_absence(not_found, queried),
+                absent,
+                "{not_found} not-found of {queried} queried"
+            );
+        }
+    }
+
+    /// The sweep classifier: a served chunk wins wherever it sits, absence
+    /// only by the rule above, and every other shape — including a sweep with
+    /// no peers at all — establishes nothing.
+    #[test]
+    fn a_sweep_that_established_nothing_is_never_absence() {
+        use PeerAnswer::{Failed, NotFound, Served};
+
+        assert_eq!(
+            classify_sweep(Vec::new()),
+            SweepVerdict::Unestablished {
+                queried: 0,
+                not_found: 0
+            }
+        );
+        assert_eq!(
+            classify_sweep((0..7).map(|_| Failed)),
+            SweepVerdict::Unestablished {
+                queried: 7,
+                not_found: 0
+            }
+        );
+        assert_eq!(
+            classify_sweep((0..6).map(|_| NotFound).chain([Failed])),
+            SweepVerdict::Unestablished {
+                queried: 7,
+                not_found: 6
+            }
+        );
+        assert_eq!(
+            classify_sweep((0..3).map(|_| NotFound)),
+            SweepVerdict::Unestablished {
+                queried: 3,
+                not_found: 3
+            }
+        );
+        assert_eq!(
+            classify_sweep((0..7).map(|_| NotFound)),
+            SweepVerdict::Absent
+        );
+        let chunk = Bytes::from_static(b"served during the sweep");
+        assert_eq!(
+            classify_sweep([NotFound, Failed, Served(chunk.clone()), NotFound]),
+            SweepVerdict::Served(chunk)
+        );
     }
 
     #[test]

@@ -351,8 +351,8 @@ hard rows is worse than one that names them.
 | row | state | why |
 | --- | --- | --- |
 | a dry-run tag produces a complete signed draft release | **not attempted** | no release workflow exists (0 hits for `--release` across the 8 workflows), and signing is a local maintainer act by D71 §2 R1 |
-| the WASM hash is identical across two independent builds | **not attempted** | needs the release pipeline above; the deploy-gated reproducibility step has executed zero times on a hosted runner |
-| licence text reaches the **deployed page artifact** | **open** | `verifier-web/` cannot hold a licence file — a test asserts that directory holds exactly `index.template.html` — so the obligation moves to the published artifact. **VENUE DECIDED 2026-09-03 (wave 33): a sibling file the deploy writes** — one `pages.yml` step copies root `LICENSE-MIT`/`LICENSE-APACHE`/`COPYRIGHT` into `target/verifier-web/` before `upload-pages-artifact`. Footer REFUSED (the template is a tracked page input: STALE-ARTIFACT cascade and a double gate for a delta unverifiable behind the billing gate); release archive REFUSED (the clause's subject is the page artifact a static-host copier takes — an archive never reaches it). Mechanism deliberately UNWRITTEN until witnessable: owner = the first CI-capable lane after Maintainer action (11); timing = with the first green hosted Pages run; closes on licence CONTENT served at the sibling URLs, never a status code alone. Full record: `tasks/Q.md` Q31 Accept row 6 |
+| the WASM hash is identical across two independent builds | **not attempted** | needs the release pipeline above; the deploy-gated reproducibility step has executed zero times on a hosted runner. **[2026-09-13]** D168 §2 R1 adds the push-tier enforcement: the required status context `reproducible-build` (`.github/workflows/reproducible-build.yml`) runs the same two-environment comparison on every push to `main` and every pull request. It is built locally and NOT YET WITNESSED, so it too has executed zero times on a hosted runner; and because it compares two environments on one runner at one commit, it does not by itself close this row |
+| licence text reaches the **deployed page artifact** | **open** | `verifier-web/` cannot hold a licence file — a test asserts that directory holds exactly `index.template.html` — so the obligation moves to the published artifact. **VENUE DECIDED 2026-09-03 (wave 33): a sibling file the deploy writes** — one `pages.yml` step copies root `LICENSE-MIT`/`LICENSE-APACHE`/`COPYRIGHT` into `target/verifier-web/` before `upload-pages-artifact`. Footer REFUSED (the template is a tracked page input: STALE-ARTIFACT cascade and a double gate for a delta unverifiable behind the billing gate); release archive REFUSED (the clause's subject is the page artifact a static-host copier takes — an archive never reaches it). Mechanism deliberately UNWRITTEN until witnessable: owner = the first CI-capable lane after Maintainer action (11); timing = with the first green hosted Pages run; closes on licence CONTENT served at the sibling URLs, never a status code alone. Full record: `tasks/Q.md` Q31 Accept row 6. **[2026-09-13]** Maintainer action (11), the billing act that owner clause waited on, is dissolved: the refusal it named was the private repository's Actions allowance, which the public flip retired (see the note below this table). The owner is `Q31` `Accept` row 6 itself. And the decided venue collides with `scripts/pages-publish.sh`'s own guard that the deploy directory holds exactly what `SHA256SUMS` lists (`scripts/pages-publish.sh:85-95`): wave 35's planning round measured that copying the three licence files in reds with *the deploy directory and SHA256SUMS disagree*, exit 1, against exit 0 without them. The mechanism needs a ruling before it is written |
 | `sha_pinning_required` armed | **blocked** | `Q255`, section G |
 
 A further constraint applies to all four and to any row here that needs a
@@ -360,6 +360,16 @@ hosted run: **the hosted CI provider has refused every job since 2026-08-15** �
 runs complete in seconds with `steps: 0` and no runner assigned, which
 `docs/ci-verification.md` diagnoses as an exhausted minute allowance rather than
 a verdict on the code. No row above may be ticked on a run with that signature.
+
+**[2026-09-13] Corrected: hosted jobs execute again.** Read back from the API:
+`ci` run `34719132556` at `4a7f524` — 15 of 15 jobs `success`, 8 to 15 steps
+each, a runner assigned to every job — and `ci-always` run `34720769800` at
+`ef5f6d9` — 2 of 2 jobs `success`, 5 and 18 steps, both with a runner assigned —
+each triggered by a push on 2026-09-12. The refusal above was the private
+repository's Actions allowance; standard hosted runners are not billed on a
+public repository, so the public flip of 2026-09-12 retired it. The rule in the
+paragraph above stands: a job with `steps: 0` or an empty `runner_name` was
+refused, not run, and no row is ever ticked on such a run.
 
 ## What this checklist does not cover
 

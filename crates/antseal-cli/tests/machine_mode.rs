@@ -7,6 +7,11 @@
 
 #[path = "common/spawn.rs"]
 mod spawn;
+
+// The pipeline harness, for the one row that seals a work: the registered
+// `[reveal]` refusal is checked against the engine's own (D170 §2 R8).
+mod common;
+
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -125,7 +130,15 @@ fn fixture_vault(dir: &TestDir) -> PathBuf {
 /// the fixture vault and machine mode never prompts; import over the
 /// fixture vault: the refusal → consent-not-obtained). Extends as handlers
 /// land.
+///
+/// **One row answers per build** — `restore`'s, since D170 — and it is
+/// selected by a runtime read of `BackendArm::THIS_BUILD` rather than by
+/// `#[cfg]`, U73's shape: both answers are compiled into both builds, so the
+/// default build, which every CI job runs, still type-checks the feature
+/// build's expectation.
 fn expected_class(name: &str) -> (i32, &'static str) {
+    use antseal_cli::backend::BackendArm;
+
     match name {
         // U23's handler joined this arm rather than gaining one of its
         // own: `status` reads the vault and nothing else, so it stops
@@ -142,10 +155,20 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // passphrase-unavailable. The refusal is first for a reason:
         // overwriting a vault destroys every sealed work's keys.
         "init" => (2, "usage"),
-        // U20's handler refuses at the backend seam before it would ask
-        // for a passphrase — a build with no network cannot restore, and
-        // collecting a secret first would be rude as well as pointless.
-        "restore" => (23, "network-failure"),
+        // **Per build (D170 §2 R4, U90).** A build with NO backend refuses
+        // at the seam before it would ask for a passphrase — U74's
+        // refuse-always: a build that cannot attempt the network cannot be
+        // network-normative, and collecting a secret first would be rude as
+        // well as pointless. A build WITH one wires `restore` and opens the
+        // vault first (U73's precedent), so over the fixture vault, in
+        // machine mode with no channel, it stops at `list`'s and `show`'s
+        // gate. This row is the process-level witness of both halves: it
+        // fails with 23 on a feature build whose handler kept the refusal,
+        // and with 11 on a default build that stopped refusing first.
+        "restore" => match BackendArm::THIS_BUILD {
+            BackendArm::NotCompiled => (23, "network-failure"),
+            BackendArm::Compiled => (11, "passphrase-unavailable"),
+        },
         // **U72 moved `reveal` OFF that arm and onto the passphrase one.**
         // It joined `restore` at U28/U29 on the reasoning that a reveal
         // *may* have to fetch a ciphertext this vault no longer caches —
@@ -366,9 +389,30 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// feature would be a lie in a build that has it"*) — and R82 says it may
 /// not be slipped in as a snapshot repair.
 ///
-/// `reveal` is no longer one of the feature-varying documents. U72 moved it
-/// off the seam entirely; its registered exemplar is the passphrase gate,
-/// which is feature-invariant.
+/// `reveal`'s **minimal-argv** exemplar is not feature-varying: U72 moved it
+/// off the entry seam, and what it meets under that argv is the passphrase
+/// gate in both builds.
+///
+/// # Which command carries the feature-ON sentence now (D170 §2 R8)
+///
+/// Until D170 the per-arm documents were `seal`'s and `restore`'s. Both are
+/// gone, for the reason U19's rule gives — a document of text no build emits
+/// is worse than none. `seal`'s feature build has constructed a backend since
+/// U13, so its `[seal] … [arm: backend-compiled-in-command-unwired]` document
+/// had described a refusal nothing could print; and `restore`'s feature build
+/// is wired by U90, so its document went the same way the moment that landed.
+/// Removing both without a replacement would have left the feature-ON
+/// sentence witnessed by no file CI compares, which is R82's defect again.
+///
+/// `reveal` still reaches that sentence: its handler holds
+/// `VaultLocalBackend` in every build (U91 wires the rest), so a cache miss in
+/// the feature build is refused with it. Its registered document is that
+/// refusal **as a user receives it** — wrapped in the reveal engine's unit
+/// sentence, not the bare seam text — built through the real producers: the
+/// storage error's `Display`, `RevealError`'s `Display`, and
+/// `From<RevealError> for CliError`. One step is restated rather than called:
+/// the engine's `storage_detail`, which is `pub(super)` and returns exactly
+/// the error's `Display` for every class except not-found.
 fn render_fixture() -> String {
     use antseal_cli::backend::{BackendArm, unavailable_arm};
     use antseal_cli::error::{CliError, PassphraseFailure};
@@ -451,25 +495,27 @@ fn render_fixture() -> String {
             error_envelope(name, "arbitrum-one", &err)
         ));
     }
-    // R82 arm (b): the **other** feature build's refusal, for every command
-    // that still routes through the seam. Rendered here — in the default
-    // build as much as the feature one — so the `ant-backend` machine
-    // surface is documented by the file every CI job compares, instead of by
-    // a file only a local `--features ant-backend` run would ever read
-    // (Q153). `seal` and `restore` are the two; `reveal` left the seam at
-    // U72 and `verify --live` refuses before it has a command envelope of
-    // its own registered here.
-    for name in ["seal", "restore"] {
-        out.push_str(&format!(
-            "[{name}] error [arm: {}]\n{}\n",
-            BackendArm::Compiled.name(),
-            error_envelope(
-                name,
-                "arbitrum-one",
-                &unavailable_arm(name, BackendArm::Compiled)
-            )
-        ));
-    }
+    // R82 arm (b): the **other** feature build's refusal, rendered here — in
+    // the default build as much as the feature one — so the `ant-backend`
+    // machine surface is documented by the file every CI job compares,
+    // instead of by a file only a local `--features ant-backend` run would
+    // ever read (Q153).
+    //
+    // **D170 §2 R8: `reveal` is now the one command that reaches it.** `seal`
+    // (U13) and `restore` (U90) construct a backend in that build and never
+    // emit this sentence, and `verify --live` connects there too; see this
+    // function's rustdoc for why their documents were removed rather than
+    // kept. The unit id is the fixture's choice; a real refusal names the
+    // first unit the cache could not serve.
+    out.push_str(&format!(
+        "[reveal] error [arm: {}]\n{}\n",
+        BackendArm::Compiled.name(),
+        error_envelope(
+            "reveal",
+            "arbitrum-one",
+            &reveal_cache_miss_refusal(BackendArm::Compiled, 3)
+        )
+    ));
     // Success examples for the commands with real handlers today.
     //
     // `list`'s is rendered by the real U19 renderer over a fixture
@@ -602,6 +648,28 @@ fn render_fixture() -> String {
         )
     ));
     out
+}
+
+/// `reveal`'s refusal for a unit its cache cannot serve, in `arm`'s words —
+/// the registered `[reveal]` Compiled-arm document's producer.
+///
+/// Built through the real producers: the storage error's `Display`,
+/// `RevealError`'s `Display` and `From<RevealError> for CliError`. The one
+/// step restated rather than called is the engine's `pub(super)`
+/// `storage_detail`, which returns the error's `Display` for every class but
+/// not-found; `the_registered_reveal_refusal_is_the_one_the_engine_emits`
+/// holds the restatement to the engine's actual output.
+fn reveal_cache_miss_refusal(
+    arm: antseal_cli::backend::BackendArm,
+    unit_id: u64,
+) -> antseal_cli::error::CliError {
+    antseal_cli::error::CliError::from(antseal_cli::pipeline::reveal::RevealError::Unfetchable {
+        unit_id,
+        detail: antseal_net::StorageError::Network {
+            reason: arm.message("reveal"),
+        }
+        .to_string(),
+    })
 }
 
 /// The tampered bundle `verify`'s registered refusal is produced from —
@@ -1405,6 +1473,130 @@ fn the_refusal_messages_name_no_task_row() {
     }
 }
 
+/// **U19's rule for the document D170 §2 R8 added: the registered `[reveal]`
+/// refusal is text a build emits.**
+///
+/// `seal`'s old Compiled-arm document is why this row exists — it described
+/// a refusal nothing could print for as long as it was registered, because it
+/// was rendered from a producer no production path reached. The `[reveal]`
+/// document replacing it is rendered by [`reveal_cache_miss_refusal`], which
+/// restates one private engine step. So this drives the **real** engine over
+/// the backend the handler holds: a work sealed into a fresh vault, one cached
+/// unit evicted, then `RevealEngine::prepare` — where the gathering, and so the
+/// refusal, happens — over `VaultLocalBackend::new("reveal")`, the backend
+/// `commands::reveal` holds in both builds. The refusal, mapped the way
+/// `run_reveal`'s `?` maps it (`From<RevealError> for CliError`), must equal
+/// the helper's rendering member for member, for this build's arm and the
+/// evicted unit.
+///
+/// `prepare` rather than `run_reveal`, deliberately: `run_reveal` takes the
+/// consent gate, and U71's closed list of its callers
+/// (`reveal_consent.rs`) exists to keep permissive closures out of the tree.
+/// This row asks nothing about consent — the refusal lands before the gate
+/// by R16's `prepare → build` split — so it has no business being a caller.
+///
+/// Both builds run it, so both arms' renderings are pinned: the default build
+/// pins `NotCompiled`'s, and the `ant-backend` build pins `Compiled`'s — the
+/// one the snapshot carries.
+#[test]
+fn the_registered_reveal_refusal_is_the_one_the_engine_emits() {
+    use antseal_cli::backend::{BackendArm, VaultLocalBackend, block_on_vault_local};
+    use antseal_cli::error::CliError;
+    use antseal_cli::pipeline::journal::UNIT_ENTRY_BASE;
+    use antseal_cli::pipeline::{
+        NoBarriers, Pipeline, RevealEngine, RevealRequest, SealFile, SealRequest, SealResult,
+        UnitSelection, VaultJournal,
+    };
+    use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
+    use antseal_core::content::{FileFlags, SplitMode};
+    use antseal_core::crypto::sig_policy::SigPolicy;
+    use antseal_net::test_util::{MockBackend, block_on};
+    use common::{IsolatedVault, RecordingGate, ScriptedConsent};
+
+    /// NON-SECRET: three paragraphs, so `--split blank-lines` caches three
+    /// units and evicting one leaves a partial cache rather than an empty one.
+    const TEXT: &[u8] = b"first paragraph\n\nsecond paragraph\n\nthird paragraph\n";
+
+    let vault = IsolatedVault::create("machine-reveal-refusal");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+
+    {
+        let files = [SealFile {
+            path_as_given: "notes.txt",
+            path_absolute: "/w/notes.txt",
+            bytes: TEXT,
+            flags: FileFlags::new().with_split(SplitMode::BlankLines),
+        }];
+        let mock = MockBackend::new();
+        let mut journal_rng = ChaCha20Rng::from_seed([0x6D; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+        let gate = RecordingGate::new();
+        let consent = ScriptedConsent::always_yes();
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+        let request = SealRequest {
+            files: &files,
+            title: "machine-mode reveal refusal".to_owned(),
+            claimed_time_unix_secs: 1_800_000_000,
+            app_version: "antseal-test/1".to_owned(),
+            network: antseal_net::NetworkId::Devnet,
+            no_anchor: false,
+            degraded: false,
+            dry_run: false,
+            sig_policy: SigPolicy::hybrid(),
+            shaping: SealShapingFlags::default(),
+        };
+        match block_on(pipeline.seal(&request, &mut ChaCha20Rng::from_seed([0x6E; 32])))
+            .expect("the fixture seals")
+        {
+            SealResult::Sealed(_) => {}
+            SealResult::DryRun(_) => panic!("not a dry run"),
+        }
+    }
+
+    let works = store.list_works().expect("list");
+    assert_eq!(works.len(), 1, "one work");
+    let mut units: Vec<u64> = store
+        .list_journal_entries(&works[0])
+        .expect("entries")
+        .into_iter()
+        .filter(|entry| *entry >= UNIT_ENTRY_BASE)
+        .collect();
+    units.sort_unstable();
+    assert!(
+        units.len() >= 2,
+        "a partial cache needs more than one cached unit: {units:?}"
+    );
+    store
+        .delete_journal_entry(&works[0], units[0])
+        .expect("evict one unit");
+    let evicted_unit = units[0] - UNIT_ENTRY_BASE;
+
+    let backend = VaultLocalBackend::new("reveal");
+    let request = RevealRequest {
+        selection: UnitSelection::All,
+        include_receipt: false,
+    };
+    let prepared =
+        block_on_vault_local(RevealEngine::new(&backend, &store).prepare(&works[0], &request))
+            .expect("the vault-local path performs no I/O");
+    let refusal = match prepared {
+        Ok(_) => panic!("a partial cache must refuse the whole reveal (U72)"),
+        Err(error) => CliError::from(error),
+    };
+
+    assert!(
+        backend.refusals() >= 1,
+        "the refusal came from the seam, not from somewhere earlier"
+    );
+    assert_eq!(
+        refusal.error_object(),
+        reveal_cache_miss_refusal(BackendArm::THIS_BUILD, evicted_unit).error_object(),
+        "the registered `[reveal]` refusal must be rendered exactly as the engine emits it — a \
+         fixture of text no build prints is the defect D170 §1.5 removed"
+    );
+}
+
 /// **R82**: `unavailable` really is this build's arm.
 ///
 /// The per-arm fixture above is feature-invariant by construction, which is
@@ -1463,16 +1655,18 @@ fn unavailable_selects_this_builds_arm() {
 /// `error:` is what the old `into_error()` fold would have produced, and it
 /// is what D48 §6 promised not to do.
 ///
-/// **What this does not assert, and why**: the exit code is read from
-/// `RestoreOutput::exit_class` — the value `main_entry`'s third arm turns
-/// into the process code — and **not** from a spawned `antseal restore`.
-/// U69's Accept asks for the latter and no build can supply it:
-/// `commands::restore` still returns `backend::unavailable("restore")` at
-/// U36's seam, so no process reaches the fold. The process-level half of
-/// this row is blocked on that seam, not on this fold. What *is* pinned
-/// process-level today is the same third arm under `verify`, which does
-/// reach it (`[verify] result` above is a nonzero-exit success envelope, and
-/// `tests/verify_command.rs` reads that code off the process).
+/// **What this does not assert, and where that lives**: the exit code is
+/// read from `RestoreOutput::exit_class` — the value `main_entry`'s third arm
+/// turns into the process code — and **not** from a spawned `antseal
+/// restore`. When this row was written no build could supply the latter,
+/// because `commands::restore` refused at U36's seam in both. Since D170 the
+/// `ant-backend` build's handler reaches the fold, and the process-level half
+/// is read off real processes there: `tests/restore_output.rs`'s
+/// `an_uncached_work_over_an_unreachable_network_is_a_result_document_at_exit_23`
+/// (a success envelope at exit 23 whose every row is `fetch-failed`) and
+/// `tests/e2e_restore.rs` on a devnet (exit 0, then `already-restored`). The
+/// default build still refuses first (U74), so this row stays the witness
+/// every CI job runs.
 #[test]
 fn the_restore_document_is_a_success_envelope_at_its_d48_exit_code() {
     use antseal_cli::error::ErrorClass;

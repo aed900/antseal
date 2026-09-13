@@ -98,6 +98,21 @@ impl Outcome {
             exit_class,
         }
     }
+
+    /// A `Value` result at the class its run folded — `restore`'s D48 §6
+    /// rung, which is the second consumer this type's docs name. The result
+    /// document is emitted whatever the code, because `ok` means *a result
+    /// document is present*.
+    #[cfg(feature = "ant-backend")]
+    pub(crate) const fn value_at(
+        json: serde_json::Value,
+        exit_class: Option<crate::error::ErrorClass>,
+    ) -> Self {
+        Self {
+            json: MachineResult::Value(json),
+            exit_class,
+        }
+    }
 }
 
 /// Human-copy channel selector: plain mode prints to stdout; under
@@ -208,10 +223,11 @@ pub(crate) fn init(
 /// problem, the `--no-anchor` × `arbitrum-one` refusal and the M1
 /// anchor-stage gate are answerable from argv and `stat` alone, and a
 /// build that cannot reach the network should not be the reason a user
-/// never learns that one of their arguments is a directory. (`restore`
-/// reaches its seam first because it has no argument validation to do —
-/// the shared rule is "the cheapest thing that can say no goes first",
-/// not "the seam goes first".)
+/// never learns that one of their arguments is a directory. (`restore`, in
+/// a build with no backend, reaches its seam first because it has no
+/// argument validation to do; in a build with one it opens the vault first,
+/// as this handler's feature arm does — the shared rule is "the cheapest
+/// thing that can say no goes first", not "the seam goes first".)
 ///
 /// # U73: what a **valid** plan meets next differs by build, and that is
 /// the correct answer
@@ -581,22 +597,159 @@ pub(crate) fn status(
     Ok(Outcome::value(status.json()))
 }
 
-/// `restore <WORK-ID> [-o DIR]` (U20; policy and engine in
-/// [`crate::restore_out`] and [`crate::pipeline::restore`]).
+/// `restore <WORK-ID> [-o DIR]` in a build with **no** storage backend
+/// (U20; policy and engine in [`crate::restore_out`] and
+/// [`crate::pipeline::restore`]).
 ///
-/// The backend seam is reached **first**, before the vault is opened and
-/// before any passphrase is asked for: a build that cannot reach the
-/// network should say so rather than collect a secret and then refuse.
+/// # U74: refuse, always — the opposite of `reveal`'s answer, on purpose
+///
+/// This arm refuses at the backend seam **first**, before the vault is
+/// opened and before any passphrase is asked for, **whatever the vault
+/// holds** — a work whose D43 cache is complete included. That is D170 §2
+/// R4's answer to U74, on D43 §5: `restore` is **network-normative**, so
+/// every unit is asked of the network first and a verified cache copy is
+/// only the fallback when that fetch fails, because `restore`'s job is to
+/// reconstruct what may be gone. A build that cannot attempt the network
+/// cannot be network-normative; what it could offer instead is a cache read
+/// presenting itself as a restore. Refusing before the vault also keeps the
+/// old courtesy: a build that cannot do the job does not collect a secret
+/// and then say so.
+///
+/// `reveal` answers the other way (U72) and is not wrong to: its job is to
+/// disclose what the user already holds, so its gathering is cache-**first**
+/// and a fully cached reveal needs no network in any build. The two handlers
+/// differ because D43 gave them different jobs. U74's arm (ii) — what a
+/// partial cache would promise here — does not arise.
+///
+/// A build **with** a backend opens the vault first instead (U73's
+/// precedent): see this function's `ant-backend` arm.
+/// `restore_output.rs`'s `a_fully_cached_restore_answers_per_build` holds
+/// both arms through the spawned binary.
+#[cfg(not(feature = "ant-backend"))]
 pub(crate) fn restore(
     _globals: &GlobalArgs,
     _work_id: &str,
     _output: Option<&Path>,
-    // U20's live path unlocks through `unlock_for_command` like every other
-    // vault-holding command; this build refuses at the backend seam first, so
-    // nothing is ever armed.
+    // The vault is never opened on this build, so nothing is ever armed —
+    // the honest reading of D42's rule, as for `seal_over_backend`'s arm.
     _slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
     Err(crate::backend::unavailable("restore"))
+}
+
+/// `restore <WORK-ID> [-o DIR]` — the live path (D170 §2 R1–R5): unlock,
+/// read the work's **own** network, connect a reader that cannot pay, run
+/// U20's engine and D48's policy, render.
+///
+/// # The order
+///
+/// 1. **The vault** — `open_layout`, one `stat`, first (U73's precedent: the
+///    cheapest thing that can say no goes first).
+/// 2. **The passphrase and the unlock**, through `unlock_for_command`, which
+///    arms D42's upgrade hook as for every vault-holding command.
+/// 3. **The work**: its id resolved, then its state. A work that is not
+///    complete is refused here with the restore engine's own refusal, before
+///    any connection is made — nothing of it is on the network to fetch, and
+///    a connection costs seconds. The engine re-checks the state itself; it
+///    stays the authority for every library caller.
+/// 4. **The work's recorded network** (D170 §2 R3). The work was stored on
+///    one network and is readable only there. An explicit `--network` that
+///    names another is a **usage error (2)**, never a silent override; with
+///    no flag, `config.toml`'s default network is not consulted, because it
+///    says where new work goes, not where this work went.
+/// 5. **The network definition.** For `restore` **alone** a definition error
+///    — a `devnet` work with no exported environment — therefore lands
+///    **after the passphrase**: the definition depends on the recorded
+///    network, and the record is inside the vault. `seal` checks its
+///    definition before the passphrase because its network comes from argv
+///    and config.
+/// 6. **The connection**: the wallet-less reader under its hang-guard bound,
+///    degraded rather than propagated (`backend::connect_read_only`). An
+///    unreachable network fails each fetch on its own, so D43 §5's
+///    verified-cache fallback decides unit by unit, and a run whose every
+///    fetch failed with nothing cached still returns its result document —
+///    in the network-failure class (D48 §6), never the unavailable refusal.
+/// 7. **The run and the exit**: `run_restore`, then an [`Outcome`] carrying
+///    D48 §6's rung as D69 §3 R1's third arm, so the per-file array reaches
+///    `--json` at every exit code.
+///
+/// # No vault lock (D170 §2 R5)
+///
+/// `restore` writes nothing to the vault — its output is the user's files,
+/// under D48's byte-aware policy — so, like `list`, `show` and `status`, it
+/// deliberately skips the U5 single-writer lock: the command a user reaches
+/// for after a disk loss must not queue behind a running seal.
+///
+/// # It cannot pay
+///
+/// The backend is built by `connect_read_only` and held as the read-only
+/// wrapper, which delegates fetches and refuses every other call itself; the
+/// reader inside it was connected with no wallet and no EVM network. So
+/// `U36`'s restated `Accept` — *anything that can pay goes through
+/// `SealBackend::connect`* — holds here without this handler constructing a
+/// receipt sink at all.
+#[cfg(feature = "ant-backend")]
+pub(crate) fn restore(
+    globals: &GlobalArgs,
+    work_id: &str,
+    output: Option<&Path>,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    use core::str::FromStr as _;
+
+    use antseal_net::NetworkId;
+
+    use crate::pipeline::restore::{RestoreError, resolve_work_id};
+    use crate::vault::store::WorkState;
+
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let vault = unlock_for_command(&layout, &passphrase, slot)?;
+    let store = WorkStore::new(&vault);
+
+    let seal_id = resolve_work_id(&store, work_id)?;
+    let recorded = {
+        // Scoped: the record carries `W`, and nothing below needs it.
+        let record = store.load_meta(&seal_id).map_err(RestoreError::from)?;
+        if record.state != WorkState::Complete {
+            return Err(RestoreError::NotRestorable {
+                state: crate::status::detail_state_name(record.state),
+            }
+            .into());
+        }
+        NetworkId::from_str(&record.network).map_err(|_| RestoreError::MalformedRecord {
+            detail: format!(
+                "this work records the network `{}`, which this build cannot resolve: the record \
+                 was written by a different antseal, or it is damaged",
+                record.network
+            ),
+        })?
+    };
+    if let Some(flag) = globals.network {
+        let asked = NetworkId::from(flag);
+        if asked != recorded {
+            return Err(CliError::Usage {
+                message: format!(
+                    "this work was sealed on `{recorded}`, and `restore` reads a work back from \
+                     the network it was sealed on; `--network {asked}` names a different one. \
+                     Drop `--network`, or pass `--network {recorded}`"
+                ),
+            });
+        }
+    }
+    let network = crate::backend::read_only_network(recorded)?;
+
+    let rt = crate::backend::runtime()?;
+    let restored = rt.block_on(async {
+        let backend = crate::backend::connect_read_only("restore", &network).await;
+        crate::restore_out::run_restore(&backend, &store, work_id, output).await
+    })?;
+
+    for line in restored.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome::value_at(restored.json(), restored.exit_class()))
 }
 
 /// `reveal <WORK-ID> (--all | --units …) [-o FILE] [--include-receipt]
@@ -606,7 +759,8 @@ pub(crate) fn restore(
 /// # U72: the backend seam is **not** reached first any more
 ///
 /// This handler used to return `backend::unavailable("reveal")`
-/// unconditionally, at entry — `restore`'s order, on the reasoning that a
+/// unconditionally, at entry — `restore`'s order at the time, which its
+/// build with no backend still keeps (U74) — on the reasoning that a
 /// reveal may have to fetch a ciphertext this vault no longer caches. That
 /// reasoning is right about *may* and wrong about *must*. R16's gathering
 /// is cache-first by D43's ruling, so a work whose retained cache is intact
@@ -691,20 +845,45 @@ pub(crate) fn reveal(
 /// or touches [`VaultSlot`]. `verify` is the third party's command
 /// (MVP-SPEC.md line 38), and a third party has no vault to open.
 ///
-/// # Order of operations, and why `--live` refuses first
+/// # Order of operations, and what `--live` does in each build
 ///
-/// `--live` needs the storage-backend construction seam (U36's, shared with
-/// `seal`/`restore`/`reveal`). A build without one cannot attempt the check
-/// at all, so it refuses **before verification** in the transient network
-/// class (23) — D69 §3 R6's one carve-out, and a *process* outcome rather
-/// than a verdict. A build that *can* fetch behaves the other way entirely:
-/// the offline verdict renders in full, the live section reports R11's own
-/// `Inconclusive`, and the exit code is still the evidence verdict's.
+/// `--live` needs a storage backend. **A build with none** cannot attempt the
+/// check at all, so it refuses **before verification** in the transient
+/// network class (23) — D69 §3 R6's one carve-out, and a *process* outcome
+/// rather than a verdict.
+///
+/// **A build with one** does the check, and its live layer reaches no exit
+/// code (D170 §2 R6/R7, `U75`'s arm (a), for the reason R81 and U36 set out):
+///
+/// 1. The network is resolved from config **before verification**, so a
+///    `devnet` with no exported definition is a usage error (2) before
+///    anything is verified — `--online`'s precedent, whose endpoint
+///    configuration errors are usage errors before any network work.
+/// 2. The bundle is verified offline **first**. A bundle rejected there exits
+///    with its own class (40) and the network is never connected to: the
+///    connection is handed to `verify_host::run_verify_live` as a lazy
+///    future, awaited only for a bundle that verified.
+/// 3. Only then does the wallet-less reader connect — bounded, and degraded
+///    rather than propagated (`backend::connect_read_only`) — and
+///    `collect_live` re-fetch every blob the bundle embeds, the encrypted
+///    manifest included (R81).
+/// 4. The run renders its offline verdict in full with the live section
+///    attached and exits with the **evidence** verdict's code. An unreachable
+///    network makes the section *Inconclusive*; it never makes the run 23.
+///
+/// So `collect_live` has a production caller, and R81's manifest row is
+/// reachable through the binary on a real network. Its **divergent** case is
+/// not, and cannot be: a spawned binary holds no mock, and the production
+/// adapter reports mismatched bytes in the network class (R79's recorded
+/// cost), so it stays proven at the library route
+/// (`tests/verify_live_manifest.rs`, D170 §2 R7).
 ///
 /// `--online` probes before the run because R21's host seam is a pure
 /// accessor over already-collected data. A bundle that will not even decode
 /// is not probed — there is nothing to ask about — and the rejection its
-/// verification produces is the authoritative one.
+/// verification produces is the authoritative one. With `--online --live`
+/// both halves read one load of the config, so one invocation cannot resolve
+/// its endpoints from one read of the file and its network from another.
 pub(crate) fn verify(
     globals: &GlobalArgs,
     bundle_path: &Path,
@@ -725,26 +904,40 @@ pub(crate) fn verify(
         source,
     })?;
 
+    // A build with NO storage backend: the seam, before any verification
+    // (D69 §3 R6). It compiles no backend at all, and the message names that
+    // cause rather than implying an outage.
+    #[cfg(not(feature = "ant-backend"))]
     if live {
-        // The seam, before any verification (D69 §3 R6). A default build
-        // compiles no storage backend at all; the message names the actual
-        // cause rather than implying an outage.
         return Err(crate::backend::unavailable("verify"));
     }
 
     let mut modes = VerifyModes::OFFLINE;
     let mut host = crate::verify_host::CollectedInputs::none();
-    if online {
-        modes = modes.with_online();
+    // A build WITH one: the network `--live` reads from, resolved here —
+    // before verification — so a missing devnet definition is a usage error
+    // ahead of any verdict (D170 §2 R6). It is connected to much later, and
+    // only for a bundle that verified.
+    #[cfg(feature = "ant-backend")]
+    let mut live_network = None;
+    if online || live {
         let config = crate::config::load()?;
         let network = crate::config::effective_network(globals.network, &config);
-        if let Some(endpoints) = crate::verify_host::endpoints_from_config(&config, network)? {
-            let client =
-                antseal_anchor::http::HttpClient::new(antseal_anchor::http::HttpPolicy::verify());
-            if let Ok(decoded) = antseal_core::bundle::BundleV1::decode(&bytes) {
-                host = host.with_online(crate::verify_host::probe_online(
-                    &client, &decoded, &endpoints, network,
-                ));
+        #[cfg(feature = "ant-backend")]
+        if live {
+            live_network = Some(crate::backend::read_only_network(network)?);
+        }
+        if online {
+            modes = modes.with_online();
+            if let Some(endpoints) = crate::verify_host::endpoints_from_config(&config, network)? {
+                let client = antseal_anchor::http::HttpClient::new(
+                    antseal_anchor::http::HttpPolicy::verify(),
+                );
+                if let Ok(decoded) = antseal_core::bundle::BundleV1::decode(&bytes) {
+                    host = host.with_online(crate::verify_host::probe_online(
+                        &client, &decoded, &endpoints, network,
+                    ));
+                }
             }
         }
     }
@@ -753,7 +946,27 @@ pub(crate) fn verify(
     // time twice could straddle a certificate expiry inside one output
     // (`status`'s own rule, for the same reason).
     let options = VerifyOptions::new().with_verify_at_unix(now_unix_secs());
+    #[cfg(not(feature = "ant-backend"))]
     let run = crate::verify_out::run_verify(&bytes, &options, modes, &host)?;
+    // D170 §2 R6's composition: offline verification, then — for a bundle
+    // that passed — the connection (a lazy future, so a rejected bundle never
+    // dials) and the collection. Nothing on the live side can reach the exit
+    // code: `run_verify_live` returns the run, and the run's code is the
+    // evidence verdict's.
+    #[cfg(feature = "ant-backend")]
+    let run = match live_network {
+        Some(network) => {
+            let rt = crate::backend::runtime()?;
+            rt.block_on(crate::verify_host::run_verify_live(
+                &bytes,
+                &options,
+                modes,
+                host,
+                crate::backend::connect_read_only("verify", &network),
+            ))?
+        }
+        None => crate::verify_out::run_verify(&bytes, &options, modes, &host)?,
+    };
 
     for line in run.render() {
         ui.line(&line);

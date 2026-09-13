@@ -263,8 +263,18 @@ pub trait StorageBackend {
     ///
     /// # Errors
     ///
-    /// [`StorageError::NotFound`] (the network answered: no such chunk)
-    /// distinctly from [`StorageError::Network`] (no answer).
+    /// [`StorageError::NotFound`] **only** when the network answered, with
+    /// authority, that no such chunk is stored; [`StorageError::Network`]
+    /// whenever that could not be established — no answer, a lookup that
+    /// found no peers, or a sample too small or too divided to count.
+    ///
+    /// *Could not find* is never *not found*. Consumers render `NotFound` as a
+    /// negative fact about the network (`crate::fetch_failure_class` makes it
+    /// an answer rather than a failure, and the live check reports the blob
+    /// missing), so an implementation that reports an unreachable network as
+    /// `NotFound` publishes a false statement about stored evidence. The
+    /// ant-core adapter holds this with a confirming close-group sweep and
+    /// ant-core's own absence rule (`ant_backend.rs`, `fetch_chunk`).
     async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError>;
 
     /// The paying wallet's ANT and ETH balances (task S8) — read-only,

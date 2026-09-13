@@ -41,6 +41,8 @@ R3  The per-event required-context sets are exactly REQUIRED_CONTEXTS and
     REQUIRED_CONTEXTS - PUSH_EXEMPT, with no context produced twice on the
     same event by two workflows. A workflow whose `push` is TAG-ONLY is not
     counted on `push` at all — see R7 for why, and for what that skip costs.
+    A context produced on `push` that IS required but sits in PUSH_EXEMPT is
+    reported as that mis-registration, never as unregistered (D168 §2 R5).
 R4  THE LOAD-BEARING RULE. No excluded path is read by anything the filtered
     workflow runs. Three detectors, because no one of them is complete:
       R4a a whole-string path literal, on a non-comment line, in a reader;
@@ -52,9 +54,12 @@ R5  Anti-vacuity: every pattern matches at least one tracked file, the
     exclusion does not match everything, and every file it matches has a
     suffix on ALLOWED_EXCLUDED_SUFFIXES — so a `.py` dropped into `tasks/`
     reds instead of quietly becoming unbuilt code.
-R6  The cheap checkers that must survive a docs push are in a workflow whose
-    `push` carries no path filter at all AND reaches branches — a tag-only
-    workflow cannot witness a docs push, however unfiltered it looks.
+R6  Every MUST_RUN_ON_EVERY_PUSH context is produced by a workflow whose
+    `push` carries no path filter at all AND reaches branches, and a miss
+    prints THAT context's own reason: the cheap checkers that must survive a
+    docs push, and since D168 §2 R1 the reproducibility comparison, whose input
+    is HEAD itself. A tag-only workflow cannot witness a push to `main`,
+    however unfiltered it looks.
 R7  A workflow whose `push` is TAG-ONLY (`on: push: tags:` with no
     `branches:`) produces no required context and carries no path filter.
     `push` has TWO axes — which files changed, and which REF moved — and
@@ -153,15 +158,20 @@ ALLOWED_EXCLUDED_SUFFIXES = {".md"}
 
 # ── The context set (R3) ────────────────────────────────────────────────────
 #
-# Nineteen, unchanged by D138: the split MOVED jobs between workflows and
-# removed none, so branch protection's payload (docs/ci-verification.md) is
-# untouched. NEVER shrink this list to make a check pass — a context that
-# stops being produced is a required check that hangs a PR for ever.
+# TWENTY since D168 §2 R1 (2026-09-13) added `reproducible-build`, produced by
+# `.github/workflows/reproducible-build.yml`. Nineteen before that, unchanged by
+# D138, whose split MOVED jobs between workflows and removed none. Branch
+# protection's payload is REGENERATED from this set (docs/ci-verification.md,
+# C2) — never incremented by hand. NEVER shrink this list to make a check pass
+# — a context that stops being produced is a required check that hangs a PR for
+# ever. No quoted word may appear in a comment inside the braces: the runbook's
+# `sed | grep -oE '"[a-z0-9-]+"' | wc -l` counts every one.
 REQUIRED_CONTEXTS = {
     "fmt", "clippy", "test", "wasm32-core", "wasm32-core-tests", "core-dep-graph",
     "cross-os-linux", "cross-os-macos", "cross-os-windows", "golden-vectors",
     "cross-check", "vector-freeze", "format-freeze", "wasm-bitmatch",
     "tamper-matrix", "fuzz-smoke", "audit-deny", "secret-guard", "traceability",
+    "reproducible-build",
 }
 
 # Contexts deliberately NOT produced on a push, each with the reason. They are
@@ -171,9 +181,29 @@ PUSH_EXEMPT = {
     "cross-os-windows": "bills 2x (9.7 weighted min/run); weekly on cross-os-extended.yml",
 }
 
-# R6. A docs push that changes TODO.md and gets no traceability check is
-# strictly worse than no filter at all.
-MUST_RUN_ON_EVERY_PUSH = {"traceability", "secret-guard"}
+# R6. Each context that must be produced by a workflow whose `push` is
+# unfiltered and reaches branches, mapped to ITS OWN reason — R6's message
+# prints that reason, so a member added for a different cause is never
+# explained with another member's (D168 §2 R5: this was a set, and R6's text
+# hard-coded the docs-lane reason for every member).
+MUST_RUN_ON_EVERY_PUSH: dict[str, str] = {
+    "traceability":
+        "Its inputs ARE the docs — it reads TODO.md, every tasks/*.md and every "
+        "docs/decisions/D*.md, so a docs-only push is its busiest case, and a docs "
+        "push that edits TODO.md with no `traceability` check is strictly worse than "
+        "no path filter at all (D138 §2).",
+    "secret-guard":
+        "Its corpus is every committable file, the excluded docs included — a key "
+        "pasted into TODO.md, tasks/** or docs/ci-verification.md arrives on exactly "
+        "the push ci.yml's filter skips, and a scan that skips that push skips the "
+        "one carrying the key (D138 §2).",
+    "reproducible-build":
+        "HEAD itself is its input — scripts/wasm-pack-build.sh stamps `git rev-parse "
+        "HEAD` into the module, so every commit, a docs-only one included, changes "
+        "the bytes it compares, and no path filter can describe that input set "
+        "(D168 §1.2). A path-filtered required context also never reports on a push "
+        "it skips, and sits Pending (D168 §1.3).",
+}
 
 # ── R8: the depth discipline (D165 §2 R7b) ──────────────────────────────────
 #
@@ -1006,8 +1036,15 @@ def check(
     root: Path,
     docs_only: list[str] | None = None,
     extra_workflows: dict[str, str] | None = None,
+    push_exempt: dict[str, str] | None = None,
 ) -> Failures:
     """`extra_workflows` are workflow files that are NOT on disk.
+
+    An entry named like an on-disk workflow REPLACES that file's text in memory
+    (`texts.update` below), which is how the D168 arms decay the real
+    `reproducible-build.yml` without writing it. `push_exempt` overrides
+    PUSH_EXEMPT the same way `docs_only` overrides DOCS_ONLY: in memory, for one
+    call, so a mis-registration can be planted without editing this file.
 
     The self-test's R7 arms need a tag-triggered workflow, and this repository
     has none — the release workflow Q31 will add is the first of its kind, which
@@ -1020,6 +1057,7 @@ def check(
     """
     failures = Failures()
     docs_only = DOCS_ONLY if docs_only is None else docs_only
+    push_exempt = PUSH_EXEMPT if push_exempt is None else push_exempt
     files = tracked_files(root)
     texts = {p.name: read_cached(p) for p in workflows(root)}
     texts.update(extra_workflows or {})
@@ -1078,7 +1116,7 @@ def check(
     # ── R3: contexts, per event ────────────────────────────────────────────
     for event, expected in (
         ("pull_request", set(REQUIRED_CONTEXTS)),
-        ("push", set(REQUIRED_CONTEXTS) - set(PUSH_EXEMPT)),
+        ("push", set(REQUIRED_CONTEXTS) - set(push_exempt)),
     ):
         produced: dict[str, list[str]] = {}
         for name, events in triggers.items():
@@ -1113,11 +1151,31 @@ def check(
                 f"{sorted(missing)}. On `pull_request` that hangs a protected PR for "
                 f"ever; on `push` it means a lane silently stopped running.",
             )
-        if extra:
+        # Two different faults land in `extra`, and they need different fixes.
+        # On `push`, a context can be IN REQUIRED_CONTEXTS and still be
+        # unexpected, because PUSH_EXEMPT removed it; calling that
+        # "unregistered" sends the reader to add a name that is already there
+        # (D168 §2 R5 — the message D164's filtered shape produced).
+        exempt_but_produced = sorted(c for c in extra if c in REQUIRED_CONTEXTS)
+        unregistered = sorted(c for c in extra if c not in REQUIRED_CONTEXTS)
+        if exempt_but_produced:
+            failures.add(
+                "R3",
+                f"on `{event}` these contexts are produced, and they ARE in "
+                f"REQUIRED_CONTEXTS, but PUSH_EXEMPT registers them as NOT produced "
+                f"on a push: {exempt_but_produced}. A `push` trigger counts here "
+                f"whatever path filter it carries — the filter decides WHEN the "
+                f"workflow runs, not whether this event produces the context. Either "
+                f"delete the PUSH_EXEMPT entry, since a context that runs on push is "
+                f"not exempt from it, or remove the `push` trigger — which is what "
+                f"the existing entries' precedent is: cross-os-extended.yml has no "
+                f"`push:` at all.",
+            )
+        if unregistered:
             failures.add(
                 "R3",
                 f"on `{event}` these contexts are produced but are not in "
-                f"REQUIRED_CONTEXTS: {sorted(extra)}. A new context is a "
+                f"REQUIRED_CONTEXTS: {unregistered}. A new context is a "
                 f"branch-protection change (docs/ci-verification.md), never a "
                 f"side effect — register it here in the same commit.",
             )
@@ -1167,12 +1225,11 @@ def check(
         and push_ref_scope(events) != "tags"
         for context in contexts[name]
     }
-    for context in sorted(MUST_RUN_ON_EVERY_PUSH - unfiltered_push_contexts):
+    for context in sorted(set(MUST_RUN_ON_EVERY_PUSH) - unfiltered_push_contexts):
         failures.add(
             "R6",
-            f"`{context}` is not produced by any workflow whose `push` is unfiltered. "
-            f"A docs push that edits TODO.md and gets no `{context}` check is strictly "
-            f"worse than no path filter at all — that lane's inputs ARE the docs.",
+            f"`{context}` is not produced by any workflow whose `push` is unfiltered "
+            f"and reaches branches, and it must be. {MUST_RUN_ON_EVERY_PUSH[context]}",
         )
 
     # ── R8: an object-store lane gets a full-history checkout ──────────────
@@ -1346,6 +1403,38 @@ def fixture_workflow(ref_filter: str, job_name: str = "release-build", extra: st
     )
 
 
+# ── D168 fixtures ───────────────────────────────────────────────────────────
+#
+# Arm (iii) — the shape D168 §2 R1 ruled — and its two decays. ONE text, ONE
+# variable, the R7 fixtures' discipline: each variant differs from the green one
+# in its `on:` block and in nothing else. Each is injected under the REAL file's
+# name, so it REPLACES `reproducible-build.yml` in memory rather than producing
+# the context a second time; none is ever written to disk. If the real file is
+# renamed, the green arm below reds on R3's duplicate — loudly, not vacuously.
+REPRO_WORKFLOW = "reproducible-build.yml"
+REPRO_ON_ARM_III = "  push:\n    branches: [main]\n  pull_request:\n"
+REPRO_ON_PATHS_IGNORE = (
+    "  push:\n    branches: [main]\n    paths-ignore:\n      - TODO.md\n  pull_request:\n"
+)
+REPRO_ON_NO_PUSH = "  pull_request:\n"
+
+
+def repro_fixture(on_block: str) -> str:
+    """A minimal well-formed workflow producing the `reproducible-build` context."""
+    return (
+        "name: reproducible-build\n"
+        "\n"
+        "on:\n" + on_block +
+        "\n"
+        "jobs:\n"
+        "  reproducible-build:\n"
+        "    name: reproducible-build\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: ./scripts/reproducible-build.sh --compare\n"
+    )
+
+
 # ── Self-test ───────────────────────────────────────────────────────────────
 
 def self_test(root: Path) -> int:
@@ -1367,7 +1456,8 @@ def self_test(root: Path) -> int:
 
     def _run(label: str, docs_only: list[str] | None,
              mutate: tuple[str, str, str] | None,
-             extra_workflows: dict[str, str] | None) -> Failures | None:
+             extra_workflows: dict[str, str] | None,
+             push_exempt: dict[str, str] | None = None) -> Failures | None:
         """Apply the fault, run `check()` in-process, revert. `None` = did not apply."""
         target = original = None
         if mutate:
@@ -1379,7 +1469,7 @@ def self_test(root: Path) -> int:
                 return None
             target.write_text(original.replace(old, new, 1), encoding="utf-8")
         try:
-            return check(root, docs_only, extra_workflows)
+            return check(root, docs_only, extra_workflows, push_exempt)
         finally:
             if target is not None and original is not None:
                 target.write_text(original, encoding="utf-8")
@@ -1431,6 +1521,40 @@ def self_test(root: Path) -> int:
         if got:
             for rule, message in found.items:
                 print(f"    ::error:: {label!r} must not red, but [{rule}] fired: {message}")
+            ok = False
+
+    def exact(label: str, want: set[str], extra_workflows: dict[str, str],
+              push_exempt: dict[str, str] | None = None,
+              must_say: list[tuple[str, tuple[str, ...]]] | None = None) -> None:
+        """The WHOLE finding set, not merely one rule in it (D168 §2 R5).
+
+        `arm()` asks whether rule X fired, and a fixture that ALSO reds for some
+        unrelated reason satisfies that — a broken fixture passing as a planted
+        fault. These arms name the exact set. Each `must_say` entry is
+        `(rule, substrings)`: some finding of that rule must carry every
+        substring, so a rule that fires with another rule's words, or with
+        another context's reason, cannot pass either.
+        """
+        nonlocal ok
+        found = _run(label, None, None, extra_workflows, push_exempt)
+        if found is None:
+            ok = False
+            return
+        got = found.rules()
+        unsaid = [
+            (rule, needles) for rule, needles in (must_say or [])
+            if not any(r == rule and all(n in message for n in needles) for r, message in found.items)
+        ]
+        verdict = "EXACT" if got == want and not unsaid else "WRONG"
+        print(f"  exact findings: {label:53s} -> {verdict} {sorted(got)}")
+        if got != want:
+            print(f"    ::error:: {label!r} must produce exactly {sorted(want) or 'nothing'}, "
+                  f"and produced {sorted(got) or 'nothing'}")
+        for rule, needles in unsaid:
+            print(f"    ::error:: {label!r}: no [{rule}] finding carries all of {needles!r}")
+        if got != want or unsaid:
+            for rule, message in found.items:
+                print(f"      got [{rule}]: {message}")
             ok = False
 
     # R4a — the fault this file exists for: exclude a path that ci.yml reads.
@@ -1617,6 +1741,29 @@ def self_test(root: Path) -> int:
                 "    name: traceability-moved"),
         extra_workflows={"release-fixture.yml": fixture_workflow(
             TAG_ONLY_PUSH, job_name="traceability")})
+
+    # ── D168 §2 R5: the required push context and its decay arms ───────────
+    #
+    # Each arm REPLACES the real reproducible-build.yml in memory and asserts
+    # the WHOLE finding set. The green arm is the control the reds are read
+    # against: same text, one `on:` block apart.
+    exact("D168 arm (iii): unfiltered push to main + pull_request", set(),
+          extra_workflows={REPRO_WORKFLOW: repro_fixture(REPRO_ON_ARM_III)})
+    exact("D168 arm (iii) gains `paths-ignore` on its push", {"R1", "R6"},
+          extra_workflows={REPRO_WORKFLOW: repro_fixture(REPRO_ON_PATHS_IGNORE)},
+          must_say=[("R1", (REPRO_WORKFLOW,)),
+                    ("R6", ("`reproducible-build`", "HEAD itself is its input"))])
+    exact("D168 arm (iii) loses its push trigger", {"R3", "R6"},
+          extra_workflows={REPRO_WORKFLOW: repro_fixture(REPRO_ON_NO_PUSH)},
+          must_say=[("R3", ("produced by no workflow", "reproducible-build")),
+                    ("R6", ("`reproducible-build`", "HEAD itself is its input"))])
+    # The mis-registration D164's shape carried: required AND in PUSH_EXEMPT,
+    # while its workflow still runs on push. R3 used to call it "not in
+    # REQUIRED_CONTEXTS" — sending the reader to add a name already there.
+    exact("D168 a push-running required context put in PUSH_EXEMPT", {"R3"},
+          extra_workflows={REPRO_WORKFLOW: repro_fixture(REPRO_ON_ARM_III)},
+          push_exempt={**PUSH_EXEMPT, "reproducible-build": "planted by the self-test"},
+          must_say=[("R3", ("PUSH_EXEMPT", "reproducible-build"))])
     return 0 if ok else 1
 
 

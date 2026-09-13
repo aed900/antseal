@@ -45,6 +45,14 @@
 # deploys — a commit that breaks reproducibility is caught at the next deploy,
 # not at the push that broke it, and this repository's whole history contains
 # two deploys.
+#
+# [CORRECTED 2026-09-13 by D168 §2 R1 — the tier is RAISED. The same comparison
+# is now the required push context `reproducible-build`, in its own workflow,
+# so a commit that breaks reproducibility is meant to be caught at the push that
+# broke it. That lane is built locally and NOT YET WITNESSED on a hosted runner.
+# This deploy gate stays (D168 §2 R3), because only it checks the build that is
+# served; the tier's conditions and the refused arms are at the top of that
+# script.]
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

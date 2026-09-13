@@ -211,14 +211,18 @@ impl RestoreOutput {
     /// detail always available in output and in the `--json` result"*.
     ///
     /// The old shape was latent rather than shipped — `commands::restore`
-    /// still refuses at U36's seam, so nothing in production ever called
-    /// `into_error` — but the registered fixture had already been composed
-    /// around its impossible consequence: a `success_envelope` over a
+    /// refused at U36's seam in every build then, so nothing in production
+    /// ever called `into_error` — but the registered fixture had already been
+    /// composed around its impossible consequence: a `success_envelope` over a
     /// `RestoreOutput` carrying a `verification-failed` row, i.e. `ok:true`
     /// beside a run D48 §3 requires to exit 35, which **no build could
     /// emit**, because `main_entry` had only two arms and the success one was
     /// `ExitCode::SUCCESS`. U30 added the third arm; this is its second
-    /// consumer.
+    /// consumer — and since D170 a production one: the `ant-backend` build's
+    /// `restore` handler hands this value to the process as its code, so a run
+    /// whose every fetch failed with nothing cached exits 23 **with** its
+    /// per-file array (D48 §6). The build with no backend still refuses before
+    /// the vault (U74).
     ///
     /// `ok` means *a result document is present*, never *the exit code is 0*
     /// (maintainer-confirmed 2026-08-12; `ENVELOPE_VERSION` stays 1). A
@@ -312,6 +316,11 @@ impl RestoreOutput {
 
 /// Resolve, fetch, verify and write one work — the whole `restore`
 /// command minus argument parsing and the backend's construction.
+///
+/// The production caller is `commands::restore`'s `ant-backend` arm, over
+/// the read-only backend D170 §2 R1/R2 builds; that backend degrades an
+/// unreachable network into per-fetch failures, so this function's per-file
+/// rows — not an early error — are what an outage produces.
 ///
 /// # Errors
 ///

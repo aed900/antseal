@@ -34,9 +34,11 @@
 #
 # The two job `name:` values below are UNCHANGED from ci.yml, byte for byte, so
 # `secret-guard` and `traceability` remain the same two required status
-# contexts they have always been. The set across all workflows stays at 19 and
-# branch protection's payload (docs/ci-verification.md) is untouched — the jobs
-# MOVED, none was added or removed. Never rename a job here.
+# contexts they have always been. The move changed no count — the jobs MOVED,
+# none was added or removed. (The set was 19 then; it is 20 since D168 §2 R1 gave
+# `reproducible-build` a workflow of its own. Branch protection's payload is
+# regenerated from `scripts/check-ci-paths.py`, never edited by hand —
+# docs/ci-verification.md, C2.) Never rename a job here.
 #
 # ── NO LOGIC IN THIS FILE (Q43) ─────────────────────────────────────────────
 #
@@ -168,7 +170,7 @@ jobs:
       # subject. It also rides here for the reasons `ci-shell`, `fuzz-budget`
       # and `anchor-net-policy` do: Python stdlib only, no network, no git, and
       # cargo-free by this job's `--arm`/`--verdict` pair (D124/Q182). ZERO new
-      # required-status contexts — the set stays at 19.
+      # required-status contexts — this step adds none to the set.
       #
       # SELF-TEST FIRST, as everywhere here. Eighteen planted faults, each
       # required to go red BY ITS OWN RULE TAG rather than by exit status
@@ -212,8 +214,8 @@ jobs:
       # `ci-shell`, `fuzz-budget`, `anchor-net-policy`, the bitmatch trigger
       # and the copy-style lint do: Python stdlib only, no network, no git, no
       # cargo (asserted by this job's `--arm`/`--verdict` pair, D124/Q182). So
-      # it costs SECONDS and ZERO new required-status contexts — the set stays
-      # at 19 and Q56's generated context list is untouched. That is not
+      # it costs SECONDS and ZERO new required-status contexts — it adds none to
+      # the set, and Q56's generated context list is untouched. That is not
       # thrift: Q253 is a latent required-context red and every hosted run is
       # refused before a step is created, so a context added now would be a
       # red no run can clear (D143 §2 R8, §3.6).
@@ -243,8 +245,8 @@ jobs:
       # job, for the reason `ci-shell` does: it needs no network, and the
       # cargo half of that argument is asserted by this job's `--arm`/
       # `--verdict` pair rather than claimed here (D124/Q182). So folding it
-      # in costs SECONDS and ZERO new required-status contexts (the set stays
-      # at 19; Q56's generated context list is untouched). A separate job
+      # in costs SECONDS and ZERO new required-status contexts (it adds none to
+      # the set; Q56's generated context list is untouched). A separate job
       # would have added a context for a check that reads four literals out
       # of committed files.
       - name: Q81 — the scheduled fuzz lane fits its named minutes ceiling
@@ -253,8 +255,8 @@ jobs:
       # for the same reason `ci-shell` and `fuzz-budget` do: Python only, no
       # network, and cargo-free by this job's asserted property rather than by
       # this comment (D124/Q182). So it costs SECONDS and ZERO new
-      # required-status contexts (the set stays at 19; Q56's generated context
-      # list is untouched). The policy's *enforcing* half is a runtime gate inside
+      # required-status contexts (it adds none to the set; Q56's generated
+      # context list is untouched). The policy's *enforcing* half is a runtime gate inside
       # the anchor HTTP substrate and is executed by the `test` lane above;
       # this step checks the parts of the policy that live outside Rust —
       # the workflow-level arming three lines from the top of this file, the
@@ -280,8 +282,8 @@ jobs:
       # Its cargo-freeness is no longer a measurement recorded here — it is
       # asserted on every run by this job's `--arm`/`--verdict` pair
       # (D124/Q182), which is where the one-off "verified with cargo off
-      # PATH, rc 0" became permanent. ZERO new required-status contexts (the
-      # set stays at 19). Measured locally, 3 runs, 2-core host:
+      # PATH, rc 0" became permanent. ZERO new required-status contexts (it
+      # adds none to the set). Measured locally, 3 runs, 2-core host:
       # 0.08 s / 0.08 s / 0.08 s.
       - name: Q153/Q128 — the wasm-bitmatch trigger still selects a vectors-only change
         run: ./scripts/wasm-bitmatch.sh --trigger-self-test
@@ -292,8 +294,8 @@ jobs:
       # `anchor-net-policy` and the bitmatch trigger do, and Q153 ruled for
       # three cheap lanes: Python only, no network, no cargo (asserted by this
       # job's `--arm`/`--verdict` pair, D124/Q182), no git. So it costs SECONDS
-      # and ZERO new required-status contexts — the set stays at 19 and Q56's
-      # generated context list is untouched. A separate job would have added a
+      # and ZERO new required-status contexts — it adds none to the set, and
+      # Q56's generated context list is untouched. A separate job would have added a
       # branch-protection change for a check that reads 14 committed files.
       #
       # SELF-TEST FIRST, EVERY RUN, like every other instrument here: fourteen
@@ -340,8 +342,8 @@ jobs:
       # is already the project's ruled home for cheap no-toolchain checkers:
       # `ci-shell`, `fuzz-budget`, `anchor-net-policy`, the path-filter guard,
       # the action-pin ledger and the copy lint all ride here for the stated
-      # reason that they cost ZERO new required contexts, and the set stays at
-      # 19. The scanner is shell + git + coreutils, no cargo (this job's
+      # reason that they cost ZERO new required contexts and add none to the
+      # set. The scanner is shell + git + coreutils, no cargo (this job's
       # `--arm`/`--verdict` pair asserts that), no network, no toolchain.
       #
       # WHY `push` ONLY. The corpus this lane is about is what a CLONER OF THIS

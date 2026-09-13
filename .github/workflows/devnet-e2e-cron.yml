@@ -8,11 +8,27 @@
 # unenforceable (docs/ci-verification.md, "Branch protection is BLOCKED BY
 # PLAN"); the hosted runner is the same 2-core class as the dev machine, so
 # it adds no headroom; the devnet target dir would fight the 10 GiB per-repo
-# cache cap with all 19 existing lanes; and S18's SIGKILL/timing matrix is
+# cache cap with all 19 existing lanes [20 required lanes since D168 §2 R1, so a
+# devnet context would now be the 21st]; and S18's SIGKILL/timing matrix is
 # flake-prone on shared runners, where a non-required red trains people to
 # ignore red. What this leg is FOR is the other half of Q43's evidence rule
 # — "a lane that has never run on the remote is not evidence" — plus an
 # upstream-drift tripwire between pushes.
+#
+# [STALE VENUE PREMISES, 2026-09-13 — D167 §5. Recorded, NOT re-decided: the
+# per-PR refusal above is D52's, and nothing here re-rules it.] Two of those
+# four grounds described a PRIVATE repository on a 2-core runner, and the
+# repository has been PUBLIC since 2026-09-12 (Q65):
+#   1. "branch protection 403s on this plan" no longer holds. A read-only GET
+#      of main's protection answered 404 "Branch not protected" on 2026-09-13
+#      — the feature is available and simply unarmed (arming is Q1's act) —
+#      where the private plan answered 403. A required context is now
+#      enforceable once armed.
+#   2. "the same 2-core class as the dev machine" no longer holds: public
+#      repositories run standard jobs on the 4-CPU class (D167 §2 R7). No run
+#      of this lane has been measured there — every recorded run predates the
+#      flip, and the first is the schedule due 2026-09-16.
+# The cache-cap and flake-prone grounds stand as written.
 #
 # GitHub runs `schedule:` triggers against the DEFAULT BRANCH only, so this
 # file is inert until it lands on main (docs/ci-verification.md tracks the
@@ -22,17 +38,38 @@
 # recorded instead (D52 §Decision 2, the D→C degradation).
 #
 # Job name `devnet-e2e-scheduled` is NOT a PR status context and never
-# becomes one; the required-context set stays at 19 (Q56).
+# becomes one; the required-context set stays at 19 [20 since D168 §2 R1] (Q56).
 #
 # TRIAGE (D52 residual risk 2, verbatim in intent): a red scheduled run gets
 # a tracking note in the next wave's bookkeeping; **two consecutive reds
 # block storage-wave starts** until diagnosed.
 #
-# PROMOTE TO REQUIRED — the recorded trigger: a plan upgrade (Pro) or the
-# Q65-gated public flip makes required contexts real; then, after **>=20
-# clean scheduled runs with warm runtime <=15 min**, this lane may be
-# promoted to a required context by adding it to the branch-protection
-# payload (docs/ci-verification.md, "Maintainer runbook"). Not before.
+# PROMOTE TO REQUIRED — the recorded trigger, RESTATED 2026-09-13 by D167
+# §2 R1-R4 (Q247). The flip that makes a required context real is taken
+# (Q65, 2026-09-12). This lane may be promoted to a required context — by
+# adding it to the branch-protection payload (docs/ci-verification.md,
+# "Maintainer runbook") — only after **20 CONSECUTIVE CLEAN SCHEDULED RUNS**:
+#   * CLEAN = a runner executed it, verdict PASS, nodes >= 14, failed=[],
+#     pending=[], and NON-COMPILE runtime (`secs=` minus the summed cargo
+#     `Finished … in` markers) measured and <= 15 min. A refused run neither
+#     extends nor breaks the count; any executed non-clean run resets it; a
+#     dispatched run or a re-run attempt is recorded and does not count.
+#   * THE EVIDENCE lives in docs/testing/devnet-e2e-ledger.tsv, one line per
+#     completed run attempt, appended at wave close by
+#     `scripts/check-devnet-ledger.py --append` from read-only GETs and
+#     audited by its flagless run in scripts/local-gate.sh. It is NOT the
+#     artifact below, which expires after 30 days — no GitHub store can hold
+#     20 weekly runs (a public repository's ceiling is 90 days; 20 runs span
+#     133). Nothing in THIS workflow writes the ledger, and nothing should:
+#     that would be the repository's first `contents: write` grant (D167 §1.5).
+#   * The earliest a 20th consecutive clean weekly run can exist, counting
+#     33616516399 as the first, is 2027-01-13 (D167 §1.2).
+# This paragraph once read: "a plan upgrade (Pro) or the Q65-gated public
+# flip makes required contexts real; then, after **>=20 clean scheduled runs
+# with warm runtime <=15 min**, this lane may be promoted". "Warm" was never
+# defined (D52) and no run of this uncached lane is warm: the cold `secs=` of
+# the two recorded greens is 1745 / 1721 s against 900, while their
+# non-compile runtime is 413.6 / 440.3 s (D167 §1.3). Not before.
 name: devnet-e2e-cron
 
 on:
@@ -91,9 +128,10 @@ jobs:
       # NO `Swatinem/rust-cache` here, deliberately — this is the one lane
       # in the repo that omits it. D52 evidence E3: the devnet target dir
       # (est. 4-8 GiB) would compete inside GitHub's 10 GiB per-repo cache
-      # budget with the caches of all 19 required lanes plus the fuzz corpus
-      # round-trip, and eviction thrash would slow every lane to speed this
-      # one. A non-required weekly job does not get to tax the required
+      # budget with the caches of all 19 required lanes [20 since D168 §2 R1,
+      # whose `reproducible-build` lane restores a Rust cache as well] plus
+      # the fuzz corpus round-trip, and eviction thrash would slow every lane
+      # to speed this one. A non-required weekly job does not get to tax the required
       # ones. Revisit only if the plan's cache budget changes.
 
       # anvil is host tooling the launcher spawns via PATH (evmlib / alloy

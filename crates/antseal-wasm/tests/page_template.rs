@@ -622,3 +622,204 @@ fn the_built_page_carries_the_footers_signing_key_element_byte_for_byte() {
          maintainer-key-procedure.md §5 step 2 names."
     );
 }
+
+// ---------------------------------------------------------------------------
+// D129 §7 — bundle-derived text reaches the DOM by `textContent`
+// ---------------------------------------------------------------------------
+
+/// The DOM members that parse a string as markup.
+///
+/// D129 §7, verbatim: *"All bundle-derived text reaches the DOM by
+/// `textContent`, extending D66 §3 R5.3's rule from endpoint strings to every
+/// sealer-authored string the page renders; the CSP is the second line, not the
+/// first."* D66 §3 R5 item 3 names the refused spelling: *"`textContent`, never
+/// `innerHTML`."* The policy is only the second line because it refuses an
+/// injected `<script>` and nothing more: markup parsed out of a sealer-authored
+/// string can still forge the rows this page exists to show.
+///
+/// `document.write` also matches `document.writeln`, which it prefixes.
+const HTML_PARSING_SINKS: &[&str] = &[
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "document.write",
+];
+
+/// Prose that names a sink in order to forbid it, pinned byte for byte.
+///
+/// # Why comments are scanned rather than stripped
+///
+/// A stripper that drops `//` to the end of a line also drops everything after
+/// `"https://` on a line of code, and the template carries such lines, so
+/// `a.textContent = "https://"; b.innerHTML = c;` would scan clean. Instead the
+/// whole template is scanned, comments included, and an occurrence is excused
+/// only when its bytes lie inside a pin. The excuse is per MATCH, not per line:
+/// live code written on the pinned comment's own line lies outside the pinned
+/// bytes and still reds. A pin may carry no quote, backtick, `*/`, angle
+/// bracket or newline, so no string, comment or element boundary can fall
+/// inside it — asserted by [`html_sink_findings`], not assumed.
+///
+/// Each pin must occur exactly once: one that matches nothing is a stale
+/// exemption, and one that matches twice excuses a copy nobody reviewed.
+const SINK_PROSE: &[&str] = &["// textContent (D129 §7), never by innerHTML."];
+
+/// Every [`HTML_PARSING_SINKS`] occurrence in `text` that no pin excuses, and
+/// every pin that cannot safely excuse anything — one sentence each.
+///
+/// The subject is the whole text, a superset of the template's two `<script>`
+/// elements, so no script-boundary parser stands between the rule and the code;
+/// an inline handler attribute is caught as well.
+///
+/// **Blind spot, recorded rather than implied away.** Names are matched as
+/// written. A sink reached through a computed name (`el["inner" + "HTML"]`), a
+/// `document` alias or spaced member access (`d.write`, `document . write`), or
+/// a parser outside the list (`DOMParser`, `createContextualFragment`,
+/// `setHTMLUnsafe`, `srcdoc`) is invisible here, and so is the wasm-pack glue,
+/// which enters at the glue token during packaging and is not in the template.
+fn html_sink_findings(text: &str, pins: &[&str]) -> Vec<String> {
+    let mut findings = Vec::new();
+    let mut excused = Vec::new();
+    for pin in pins {
+        if let Some(delimiter) = ["'", "\"", "`", "*/", "<", ">", "\n"]
+            .into_iter()
+            .find(|delimiter| pin.contains(delimiter))
+        {
+            findings.push(format!(
+                "the pin {pin:?} carries {delimiter:?}, so a string, comment or element boundary \
+                 could fall inside it and the pin could excuse live code"
+            ));
+            continue;
+        }
+        let at = offsets(text, pin);
+        match at.as_slice() {
+            [start] => excused.push(*start..*start + pin.len()),
+            _ => findings.push(format!(
+                "the pin {pin:?} occurs {} times, not exactly once. A pin that matches nothing is \
+                 a stale exemption; one that matches twice excuses a copy nobody reviewed",
+                at.len()
+            )),
+        }
+    }
+    for sink in HTML_PARSING_SINKS {
+        for start in offsets(text, sink) {
+            let end = start + sink.len();
+            if excused
+                .iter()
+                .any(|span| span.start <= start && end <= span.end)
+            {
+                continue;
+            }
+            let line = text[..start].matches('\n').count() + 1;
+            let source = text.lines().nth(line - 1).unwrap_or_default().trim();
+            findings.push(format!("line {line}: `{sink}` in `{source}`"));
+        }
+    }
+    findings
+}
+
+/// **D129 §7 on the committed source** — and the green control for the arms
+/// below: the real template names a sink exactly once, in the pinned sentence
+/// that forbids it.
+#[test]
+fn the_template_writes_nothing_through_an_html_parsing_dom_sink() {
+    let text = template();
+    assert!(
+        text.contains(r#"<script type="module">"#),
+        "the template carries no module script, so a sink scan over it has no rendering code to \
+         find anything in"
+    );
+    let findings = html_sink_findings(&text, SINK_PROSE);
+    assert!(
+        findings.is_empty(),
+        "the template reaches an HTML-parsing DOM sink. D129 §7: all bundle-derived text reaches \
+         the DOM by textContent, and the CSP is the second line, not the first. Write it with \
+         textContent — or, if the occurrence only names the rule, pin that exact prose in \
+         SINK_PROSE:\n  {}",
+        findings.join("\n  ")
+    );
+}
+
+/// **The guard above, seen to go red.** Each arm plants into a copy of the
+/// real template and is judged by the exact finding it must produce.
+#[test]
+fn the_html_sink_guard_reds_on_planted_sinks_that_a_comment_cannot_excuse() {
+    let text = template();
+    let anchor = "\nconst $ = (id) => document.getElementById(id);\n";
+    assert_eq!(
+        text.matches(anchor).count(),
+        1,
+        "the arms plant after the module script's `const $ = …` line, which must occur exactly once"
+    );
+    let pinned = *SINK_PROSE
+        .first()
+        .expect("SINK_PROSE pins the template's one sentence naming the rule");
+    let findings_for = |planted: &str| {
+        assert_ne!(planted, text, "the plant did not apply");
+        html_sink_findings(planted, SINK_PROSE)
+    };
+    let expect_one = |findings: Vec<String>, want: String, why: &str| {
+        assert!(
+            findings.len() == 1 && findings.iter().any(|finding| finding.contains(&want)),
+            "{why}\n  wanted exactly one finding containing: {want}\n  got: {findings:#?}"
+        );
+    };
+
+    // 1. One arm per listed sink, so a name dropped from the list reds HERE
+    //    while the green control above stays green.
+    for (code, sink) in [
+        ("el.innerHTML = x;", "innerHTML"),
+        ("el.outerHTML = x;", "outerHTML"),
+        (
+            r#"el.insertAdjacentHTML("beforeend", x);"#,
+            "insertAdjacentHTML",
+        ),
+        ("document.write(x);", "document.write"),
+    ] {
+        let planted = text.replacen(anchor, &format!("{anchor}{code}\n"), 1);
+        expect_one(
+            findings_for(&planted),
+            format!("`{sink}` in `{code}`"),
+            &format!(
+                "the guard stayed green over a planted `{code}` — it is not checking `{sink}`"
+            ),
+        );
+    }
+
+    // 2. What a comment stripper loses: `//` inside a string literal, the shape
+    //    the template's pinned endpoint URLs already have in live code.
+    let code = r#"a.textContent = "https://"; b.innerHTML = c;"#;
+    let planted = text.replacen(anchor, &format!("{anchor}{code}\n"), 1);
+    expect_one(
+        findings_for(&planted),
+        format!("`innerHTML` in `{code}`"),
+        "a sink after `\"https://` on the same line scanned clean — the guard is treating `//` \
+         inside a string as a comment",
+    );
+
+    // 3. Per match, not per line: live code on the pinned comment's own line.
+    let planted = text.replacen(pinned, &format!("b.innerHTML = c; {pinned}"), 1);
+    expect_one(
+        findings_for(&planted),
+        format!("`innerHTML` in `b.innerHTML = c; {pinned}`"),
+        "a sink on the pinned comment's line was excused with it — the exemption is per line, so \
+         one benign mention hides live code beside it",
+    );
+
+    // 4. An edited sentence leaves its pin stale, and that is a finding.
+    let planted = text.replacen(pinned, "// textContent (D129 §7), never by markup.", 1);
+    expect_one(
+        findings_for(&planted),
+        format!("the pin {pinned:?} occurs 0 times"),
+        "a pin that matches nothing went unreported — a stale exemption is silent",
+    );
+
+    // 5. A pin that could straddle a string boundary is refused before it is used.
+    let quoted_pin = "b.innerHTML = \"never\"";
+    let findings = html_sink_findings(&text, &[quoted_pin]);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.starts_with(&format!("the pin {quoted_pin:?} carries"))),
+        "a pin carrying a quote was accepted, so it could excuse the code around it: {findings:?}"
+    );
+}

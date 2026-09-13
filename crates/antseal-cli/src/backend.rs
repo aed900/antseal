@@ -1,11 +1,14 @@
 //! The CLI's storage-backend construction seam.
 //!
-//! Every network-touching command (`seal`, `restore`, `status --upgrade`,
-//! `verify --live`) needs the same three things assembled in the same
-//! order: U4's resolved [`NetworkConfig`], U10's vault-held wallet key,
-//! and an async runtime to drive S6's `AntCoreBackend` on. That assembly
-//! is one job with one right answer, so it lives here rather than being
-//! re-derived per command.
+//! A command that **pays** (`seal`, and the payment-RPC read `status` makes
+//! for D33's block-number backfill) needs three things assembled in one
+//! order: U4's resolved [`NetworkConfig`], U10's vault-held wallet key, and
+//! an async runtime to drive S6's `AntCoreBackend` on. A command that only
+//! **reads** (`restore`, `verify --live`) needs the network definition and
+//! the runtime and must not be handed a wallet at all — see *The commands
+//! that only read* below. Each assembly is one job with one right answer, so
+//! both live here rather than being re-derived per command, and the raw
+//! adapter types are nameable in this file and no other.
 //!
 //! # The D37 obligation, made structural (U36/S27)
 //!
@@ -62,7 +65,26 @@
 //! runs over any [`StorageBackend`](antseal_net::StorageBackend) —
 //! [`crate::restore_out::run_restore`] is generic and is driven end to end
 //! in the test suites, which is also how D34 says the M1 E2E drives the
-//! pipeline (library APIs, never a spawned binary).
+//! pipeline (library APIs, never a spawned binary). Since D170 the
+//! `ant-backend` build's `restore` handler drives it too, and
+//! `tests/e2e_restore.rs` spawns that binary against a devnet.
+//!
+//! # The commands that only read (D170)
+//!
+//! `restore` and `verify --live` fetch and never pay, so they do not need a
+//! wallet and must not be handed anything that can pay. In the `ant-backend`
+//! build their handlers resolve the network with `read_only_network` and
+//! connect with `connect_read_only`: a wallet-less, download-only reader
+//! (`antseal_net`'s, named in this file only) under a hang-guard bound,
+//! wrapped in a [`ReadOnlyBackend`], which delegates `get_data` and refuses
+//! everything else itself, and which only [`degrade`] builds. A connection
+//! attempt that failed becomes an [`UnreachableBackend`] whose every fetch
+//! fails on its own, so D43 §5's per-unit cache fallback still runs during an
+//! outage instead of the command ending at `connect`. Neither command goes
+//! through `SealBackend::connect`: that door is for what can pay (`U36`'s
+//! `Accept`, restated by D170 §2 R1). A build with no
+//! backend compiles none of this, and both commands refuse at
+//! [`unavailable`] exactly as before.
 //!
 //! [`NetworkConfig`]: antseal_net::NetworkConfig
 
@@ -82,8 +104,16 @@ use crate::error::CliError;
 // thing this module exists to make impossible. Widening is sanctioned by
 // the crate-root stability note: this library's API serves the binary and
 // the workspace's own harnesses.
+//
+// D170 §2 R1 adds the read-only half beside it: `read_only_network` and
+// `connect_read_only`, and the bound the second runs under. They are `pub`
+// for the same reason — the construction is the seam, and a harness that
+// had to rebuild it would be testing its own copy.
 #[cfg(feature = "ant-backend")]
-pub use ant::{ReadOnly, ReceiptSink, SealBackend, runtime, wallet_key};
+pub use ant::{
+    READ_ONLY_CONNECT_TIMEOUT, ReadOnly, ReceiptSink, SealBackend, connect_read_only,
+    read_only_network, runtime, wallet_key,
+};
 
 /// The refusal a command gets when it needs the network and this build
 /// cannot reach it.
@@ -408,6 +438,262 @@ pub fn block_on_vault_local<F: core::future::Future>(future: F) -> Result<F::Out
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// The read-only commands' backend (D170 §2 R1/R2)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A [`StorageBackend`](antseal_net::StorageBackend) for a network that
+/// **could not be reached**: every call fails on its own, in the transient
+/// network class, and is counted.
+///
+/// # Why a connect failure becomes this rather than an error (D170 §2 R2)
+///
+/// D43 §5 makes `restore` network-normative **with a verified-cache
+/// fallback**, and S14 implements that fallback per fetch: `get_data` first,
+/// the address-rechecked cache copy when it fails. An eager
+/// `connect(..).await?` would end the command before a single fetch was
+/// attempted, so a work whose cache is intact could not be restored during an
+/// outage — the one case the fallback exists for. Handing the engine this
+/// backend instead lets each fetch fail individually, so the engine's own
+/// fallback decides, unit by unit, exactly as it would for a network that
+/// connected and then lost every chunk. `verify --live` gets the same shape
+/// for the same reason: its offline verdict renders in full and each live row
+/// is a fetch failure, which R11 reports as *Inconclusive*.
+///
+/// # Not [`VaultLocalBackend`]
+///
+/// That type is U72's *"this build cannot fetch"*, and its sentence blames the
+/// build. This one exists only in a build that **can** fetch and tried: its
+/// reason is the connection failure's, so a user reading a per-file
+/// `fetch-failed` row is told the network was unreachable rather than that a
+/// feature is missing. The class is the same because the situation, from the
+/// caller's side, is the same: no bytes could be obtained.
+///
+/// # The instrument
+///
+/// [`Self::calls`] counts every seam call, so a test can tell *"restored from
+/// verified copies after the network was asked and failed"* from *"restored
+/// without the network being asked at all"* — two runs that look identical
+/// from their output.
+#[derive(Debug)]
+pub struct UnreachableBackend {
+    /// Why the network could not be reached — carried into every failure.
+    /// Never key material: it is rendered from a connection error, which
+    /// names peers and transports at most.
+    reason: String,
+    /// How many seam calls were made.
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl UnreachableBackend {
+    /// A backend whose every call fails with `reason` in the network class.
+    #[must_use]
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// How many seam calls this backend has failed.
+    #[must_use]
+    pub fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Count the call and produce its failure.
+    fn fail(&self) -> antseal_net::StorageError {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        antseal_net::StorageError::Network {
+            reason: self.reason.clone(),
+        }
+    }
+}
+
+impl antseal_net::StorageBackend for UnreachableBackend {
+    async fn quote_batch(
+        &self,
+        _blobs: &[antseal_net::Blob],
+    ) -> Result<antseal_net::CostQuote, antseal_net::StorageError> {
+        Err(self.fail())
+    }
+
+    async fn pay(
+        &self,
+        _quote: &antseal_net::CostQuote,
+    ) -> Result<antseal_net::PaymentReceipt, antseal_net::StorageError> {
+        Err(self.fail())
+    }
+
+    async fn finalize_batch(
+        &self,
+        _receipt: &antseal_net::PaymentReceipt,
+        _blobs: &[antseal_net::Blob],
+    ) -> Result<Vec<antseal_net::Address>, antseal_net::StorageError> {
+        Err(self.fail())
+    }
+
+    async fn get_data(
+        &self,
+        _address: antseal_net::Address,
+    ) -> Result<Vec<u8>, antseal_net::StorageError> {
+        Err(self.fail())
+    }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, antseal_net::StorageError> {
+        Err(self.fail())
+    }
+}
+
+/// Why [`ReadOnlyBackend`] refuses every call that is not a fetch.
+const READ_ONLY_REFUSAL: &str = "this command is read-only: its storage backend fetches and \
+     never quotes, pays, stores or reads a wallet. Anything that pays is constructed through \
+     `SealBackend::connect`, which carries the D37 capture hook";
+
+/// The backend a **read-only** command (`restore`, `verify --live`) holds:
+/// the network reader when the connection attempt succeeded, an
+/// [`UnreachableBackend`] when it did not (D170 §2 R1/R2).
+///
+/// # Read-only is a property of this type, not of what it wraps
+///
+/// Only [`get_data`](antseal_net::StorageBackend::get_data) is ever
+/// delegated. `quote_batch`, `pay`, `finalize_batch` and `balances` refuse
+/// **here**, without reaching the inner backend, in the variant each method's
+/// trait contract names for that operation failing with nothing at risk — so
+/// even a backend that *can* pay, wrapped by mistake, cannot be made to pay
+/// through this type. That is U36's `Accept` restated rather than bypassed:
+/// *anything that can pay goes through `SealBackend::connect`*, and nothing
+/// held as a `ReadOnlyBackend` can pay.
+///
+/// # One constructor
+///
+/// [`degrade`] is the only way to build one. It takes the connection attempt
+/// whole, so a caller cannot forget to degrade: there is no constructor that
+/// takes a bare connected reader and no `?` between the attempt and this
+/// type for an early return to hide in.
+pub struct ReadOnlyBackend<R> {
+    /// What fetches go to.
+    source: ReadOnlySource<R>,
+}
+
+/// Where a [`ReadOnlyBackend`]'s fetches go.
+enum ReadOnlySource<R> {
+    /// The connection attempt succeeded.
+    Connected(R),
+    /// The connection attempt failed; every fetch fails on its own.
+    Unreachable(UnreachableBackend),
+}
+
+impl<R> ReadOnlyBackend<R> {
+    /// The unreachable backend this degraded to, or `None` when the
+    /// connection attempt succeeded.
+    #[must_use]
+    pub const fn degraded(&self) -> Option<&UnreachableBackend> {
+        match &self.source {
+            ReadOnlySource::Connected(_) => None,
+            ReadOnlySource::Unreachable(unreachable) => Some(unreachable),
+        }
+    }
+}
+
+impl<R: antseal_net::StorageBackend> antseal_net::StorageBackend for ReadOnlyBackend<R> {
+    async fn quote_batch(
+        &self,
+        _blobs: &[antseal_net::Blob],
+    ) -> Result<antseal_net::CostQuote, antseal_net::StorageError> {
+        Err(antseal_net::StorageError::Quote {
+            reason: READ_ONLY_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn pay(
+        &self,
+        _quote: &antseal_net::CostQuote,
+    ) -> Result<antseal_net::PaymentReceipt, antseal_net::StorageError> {
+        Err(antseal_net::StorageError::Payment {
+            reason: READ_ONLY_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn finalize_batch(
+        &self,
+        _receipt: &antseal_net::PaymentReceipt,
+        _blobs: &[antseal_net::Blob],
+    ) -> Result<Vec<antseal_net::Address>, antseal_net::StorageError> {
+        Err(antseal_net::StorageError::Finalize {
+            reason: READ_ONLY_REFUSAL.to_owned(),
+        })
+    }
+
+    async fn get_data(
+        &self,
+        address: antseal_net::Address,
+    ) -> Result<Vec<u8>, antseal_net::StorageError> {
+        match &self.source {
+            ReadOnlySource::Connected(reader) => reader.get_data(address).await,
+            ReadOnlySource::Unreachable(unreachable) => unreachable.get_data(address).await,
+        }
+    }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, antseal_net::StorageError> {
+        Err(antseal_net::StorageError::Network {
+            reason: READ_ONLY_REFUSAL.to_owned(),
+        })
+    }
+}
+
+/// Turn a read-only command's connection attempt into the backend it holds —
+/// **D170 §2 R2's degrade**.
+///
+/// `Ok` wraps the connected reader. `Err` becomes an [`UnreachableBackend`]
+/// carrying the failure's reason, so every fetch fails individually and the
+/// engine's own per-fetch policy runs: `restore` serves each unit from a
+/// verified cache copy where one exists (D43 §5) and reports `fetch-failed`
+/// where none does; `verify --live` renders its offline verdict with an
+/// *Inconclusive* live section. Nothing here returns an error, which is the
+/// point: in a build that has a backend compiled in, a read-only command never
+/// ends at the connection (D170 §2 R2 — and for `--live`, D69 §3 R6's
+/// sanction for a seam refusal belongs to the build with no backend only).
+///
+/// `command` names the caller in the one trace this emits. The trace is at
+/// `warn`, like the engine's own cache-fallback trace, because a run that
+/// continues without the network is a run the user should be able to see
+/// continued without it.
+///
+/// Any bound on how long the attempt may take is the caller's: this function
+/// is handed the attempt's outcome, so a timeout is simply an `Err`.
+#[must_use]
+pub fn degrade<R>(
+    command: &'static str,
+    attempt: Result<R, antseal_net::StorageError>,
+) -> ReadOnlyBackend<R> {
+    match attempt {
+        Ok(reader) => ReadOnlyBackend {
+            source: ReadOnlySource::Connected(reader),
+        },
+        Err(error) => {
+            // The network class's own text, without its `network error:`
+            // prefix, so the per-fetch failure does not read it twice.
+            let detail = match error {
+                antseal_net::StorageError::Network { reason } => reason,
+                other => other.to_string(),
+            };
+            tracing::warn!(
+                command,
+                error = %detail,
+                "the Autonomi network could not be reached; every fetch will fail on its own, so \
+                 verified local copies can still be used (D170 §2 R2)"
+            );
+            ReadOnlyBackend {
+                source: ReadOnlySource::Unreachable(UnreachableBackend::new(format!(
+                    "the Autonomi network could not be reached: {detail}"
+                ))),
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // The payment-RPC block-number source (U67's gated half)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -471,12 +757,13 @@ pub fn payment_rpc(
     ant::payment_rpc(vault, network)
 }
 
-// U36 built the seam and its tests; the devnet harness (S17/S18/S19) is
-// the first consumer that actually calls `connect`/`runtime`/`ReadOnly`
-// against a network, which is why the `dead_code` allow this module
-// carried until now is gone: the items are publicly re-exported above and
-// driven by `tests/e2e_devnet.rs`. `seal`'s command wiring (U13) is still
-// to come and is tracked there, not here.
+// U36 built the seam and its tests; the devnet harness (S17/S18/S19) was
+// the first consumer that actually called `connect`/`runtime`/`ReadOnly`
+// against a network, which is why the `dead_code` allow this module once
+// carried is gone: the items are publicly re-exported above. Their
+// production callers since are `seal` (U13, `SealBackend::connect`),
+// `status`'s D33 backfill (U67, `payment_rpc`), and `restore` and
+// `verify --live` (D170, `connect_read_only`).
 #[cfg(feature = "ant-backend")]
 mod ant {
     use std::sync::Arc;
@@ -484,8 +771,8 @@ mod ant {
     use antseal_core::crypto::secrets::SecretBuf;
     use antseal_net::wallet::WalletKey;
     use antseal_net::{
-        Address, AntCoreBackend, BalanceReport, Blob, CaptureHook, CostQuote, NetworkConfig,
-        PaymentReceipt, StorageBackend, StorageError,
+        Address, AntCoreBackend, AntCoreReader, BalanceReport, Blob, CaptureHook, CostQuote,
+        NetworkConfig, NetworkId, PaymentReceipt, StorageBackend, StorageError,
     };
 
     use crate::error::CliError;
@@ -527,14 +814,22 @@ mod ant {
         }
     }
 
-    /// The sink for commands that never pay.
+    /// The sink for a [`SealBackend`] that is never asked to pay.
     ///
-    /// `restore`, `verify --live` and `status --upgrade` call `get_data`
-    /// and nothing else, so this can only fire if such a command grows a
-    /// payment path without growing a journal — which is a bug, and is
-    /// logged as one rather than silently dropped. It exists so those
-    /// commands still go through the one constructor: "this path does not
-    /// pay" is then a statement in the code, not an omission.
+    /// Its one production holder is `status`'s D33 block-number backfill
+    /// (`payment_rpc` below), which needs `SealBackend::connect`'s
+    /// payment-RPC session to read receipts and never pays, so this can only
+    /// fire if that path grows a payment without growing a journal — which is
+    /// a bug, and is logged as one rather than silently dropped. "This path
+    /// does not pay" is then a statement in the code, not an omission.
+    ///
+    /// **`restore` and `verify --live` no longer hold one** (D170 §2 R1).
+    /// They used to be described here as going through this door; they never
+    /// did, because their handlers refused before constructing anything, and
+    /// the door could not have served them: it demands a wallet key `verify`
+    /// does not have and a vault record `create_vault` does not write. They
+    /// hold [`connect_read_only`]'s wallet-less reader instead, which has no
+    /// payment path to capture.
     pub struct ReadOnly;
 
     impl ReceiptSink for ReadOnly {
@@ -761,6 +1056,122 @@ mod ant {
         Some(Box::new(PaymentRpc { backend, runtime }))
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // The read-only half (D170 §2 R1/R2): no wallet, no payment path
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// The longest a read-only command's reader may spend **connecting**
+    /// before the attempt is abandoned and the command degrades — a **hang
+    /// guard**, not an outage detector (D170 §2 R2; the value is the ruling
+    /// on the one number D170 §4 left to the handler lane).
+    ///
+    /// # Why it guards hangs and not outages
+    ///
+    /// On the pinned stack an unreachable network does not fail at connect.
+    /// saorsa-core does not gate client start-up on reaching a peer, and on a
+    /// live devnet (2026-09-13) the wallet-less reader connected `Ok` in 6.3 s
+    /// over a dead loopback bootstrap and in 45 ms over an empty one. An
+    /// outage is therefore carried by the **per-fetch** path — each fetch
+    /// then fails in about a second, in the network class and never as
+    /// absence (D170 §2 R12) — and that path is what lets `restore`'s
+    /// verified-cache fallback and `verify --live`'s *Inconclusive* section
+    /// run. What is left for this bound is a connect that never returns at
+    /// all; without it, such a connect would hang the command in front of a
+    /// user with nothing on the screen.
+    ///
+    /// # Why it is generous
+    ///
+    /// A bound under the measured ~6.3 s would send a dead bootstrap down the
+    /// degraded path a few seconds sooner, and in exchange risk cutting off a
+    /// slow **live** bootstrap — turning a network that answers into a page of
+    /// `fetch-failed` rows and an *Inconclusive* section. Those few seconds buy
+    /// nothing the per-fetch failures do not already deliver, so the bound sits
+    /// an order of magnitude above every measured connect: **60 seconds**.
+    /// Contrast `PAYMENT_RPC_BUDGET`'s 10 s above, which bounds an enrichment
+    /// `status` may skip silently; nothing may be skipped here, because a
+    /// reader cut off early costs the whole command its network.
+    pub const READ_ONLY_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// The network definition a read-only command reads from.
+    ///
+    /// The same resolution `seal` uses (U89's `select_network`), so a
+    /// `devnet` with no exported environment is refused in the same words and
+    /// the same class — a usage error (2) — and always before anything is
+    /// connected. The walletless-export note `seal` logs is not repeated: it
+    /// tells a user how to fund a signing key, and a reader signs nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`CliError::Usage`] when `network` has no usable definition here.
+    pub fn read_only_network(network: NetworkId) -> Result<NetworkConfig, CliError> {
+        crate::devnet_env::select_network(network)
+            .map(|selected| selected.config)
+            .map_err(|error| CliError::Usage {
+                message: error.to_string(),
+            })
+    }
+
+    /// Connect a read-only command's reader — the wallet-less, download-only
+    /// client of D170 §2 R1 — and return what the command holds.
+    ///
+    /// **Never an error.** The attempt runs under
+    /// [`READ_ONLY_CONNECT_TIMEOUT`], and whatever it produces — a connected
+    /// reader, a connection error, or an attempt abandoned at the bound —
+    /// goes through [`degrade`](super::degrade). So in a build that has a
+    /// backend compiled in, a read-only command never ends at the connection
+    /// and never with the unavailable refusal (D69 §3 R6): an unreachable
+    /// network becomes one failure per fetch.
+    ///
+    /// **Lazy, like every future.** Nothing is dialled until this is awaited,
+    /// which is what lets `verify --live` hand it to
+    /// [`crate::verify_host::run_verify_live`] and connect only for a bundle
+    /// that verified (D170 §2 R6).
+    ///
+    /// The raw reader type is named here and in no other file of this crate —
+    /// `the_raw_backend_type_is_named_in_exactly_one_file` holds that for the
+    /// reader as it does for the payer — so a handler holds only the returned
+    /// [`ReadOnlyBackend`](super::ReadOnlyBackend), which can fetch and do
+    /// nothing else.
+    pub async fn connect_read_only(
+        command: &'static str,
+        config: &NetworkConfig,
+    ) -> super::ReadOnlyBackend<AntCoreReader> {
+        tracing::debug!(
+            command,
+            network = %config.id,
+            "connecting the read-only reader: no wallet, no EVM network (D170 §2 R1)"
+        );
+        connect_within(
+            command,
+            READ_ONLY_CONNECT_TIMEOUT,
+            AntCoreReader::connect(config),
+        )
+        .await
+    }
+
+    /// [`connect_read_only`]'s bound and degrade over **any** connection
+    /// attempt, so the bound's arm can be driven by a test without a network
+    /// or a sixty-second wait.
+    ///
+    /// An attempt still running at `budget` is dropped — which cancels it —
+    /// and reported in the network class, naming the bound and nothing else.
+    pub(super) async fn connect_within<R, F>(
+        command: &'static str,
+        budget: std::time::Duration,
+        attempt: F,
+    ) -> super::ReadOnlyBackend<R>
+    where
+        F: core::future::Future<Output = Result<R, StorageError>>,
+    {
+        let outcome = match tokio::time::timeout(budget, attempt).await {
+            Ok(outcome) => outcome,
+            Err(_elapsed) => Err(StorageError::Network {
+                reason: format!("the connection attempt did not finish within {budget:?}"),
+            }),
+        };
+        super::degrade(command, outcome)
+    }
+
     pub use sealed::SealBackend;
 
     /// The private module is the enforcement: `SealBackend`'s field is
@@ -923,10 +1334,40 @@ mod tests {
     /// Deliberately ungated — under a default build the name should not
     /// appear anywhere at all, and this is the lane where regressions land
     /// first.
+    ///
+    /// # The reader too (D170 §2 R1)
+    ///
+    /// The wallet-less reader is the second raw adapter type, and the scan
+    /// holds it to the same rule for a different reason: a handler that named
+    /// it could connect it bare — no bound, no [`super::degrade`], no
+    /// read-only wrapper — and so end at `connect` during the outage D43 §5's
+    /// cache fallback exists for, or hand a fetch-only client to a path that
+    /// expects the payer. Handlers hold what
+    /// `connect_read_only` returns. Both names are scanned as **text**,
+    /// prose included — the same trap U71's and U67's lanes each met once —
+    /// so a rustdoc paragraph elsewhere that spells either type reddens this
+    /// too, and the remedy there is to describe the type rather than name it.
     #[test]
     fn the_raw_backend_type_is_named_in_exactly_one_file() {
+        /// `(raw type, why it may not leave the seam)`.
+        const RAW_TYPES: [(&str, &str); 2] = [
+            (
+                "AntCoreBackend",
+                "A command that names it directly gets a backend with no D37 capture hook, and \
+                 a crash in the post-pay window then costs a second payment (S27). Go through \
+                 `backend::SealBackend::connect`",
+            ),
+            (
+                "AntCoreReader",
+                "A command that names it can connect the wallet-less reader bare — no bound, no \
+                 degrade, no read-only wrapper — and end at `connect` during the very outage \
+                 D43 §5's cache fallback exists for (D170 §2 R1/R2). Go through \
+                 `backend::connect_read_only`",
+            ),
+        ];
+
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut named = Vec::new();
+        let mut named: Vec<Vec<String>> = vec![Vec::new(); RAW_TYPES.len()];
         let mut visited = 0usize;
         let mut stack = vec![src.clone()];
         while let Some(dir) = stack.pop() {
@@ -937,13 +1378,15 @@ mod tests {
                 } else if path.extension().is_some_and(|e| e == "rs") {
                     visited += 1;
                     let text = std::fs::read_to_string(&path).expect("read source");
-                    if text.contains("AntCoreBackend") {
-                        named.push(
-                            path.strip_prefix(&src)
-                                .unwrap_or(&path)
-                                .to_string_lossy()
-                                .into_owned(),
-                        );
+                    for (index, (raw_type, _)) in RAW_TYPES.iter().enumerate() {
+                        if text.contains(raw_type) {
+                            named[index].push(
+                                path.strip_prefix(&src)
+                                    .unwrap_or(&path)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            );
+                        }
                     }
                 }
             }
@@ -952,13 +1395,95 @@ mod tests {
             visited > 10,
             "the scan found only {visited} source files — it is not looking where it thinks"
         );
-        named.sort();
+        for ((raw_type, why), mut files) in RAW_TYPES.into_iter().zip(named) {
+            files.sort();
+            assert_eq!(
+                files,
+                vec!["backend.rs".to_owned()],
+                "`{raw_type}` may be named only in the construction seam, and it is named in \
+                 {files:?}. {why}"
+            );
+        }
+    }
+
+    /// **D170 §2 R2's bound, driven without a network or a minute.** A
+    /// connection attempt that never finishes degrades once its budget
+    /// passes: the command gets a backend whose fetch fails **in the network
+    /// class**, carrying a reason that names the bound — never a hang, never
+    /// an error that ends the command, and never the payer's quote or payment
+    /// vocabulary.
+    ///
+    /// The outer timeout is the watchdog that turns a missing bound into a
+    /// failed assertion rather than a hung suite.
+    #[cfg(feature = "ant-backend")]
+    #[test]
+    fn a_connection_that_never_finishes_degrades_at_its_bound_in_the_network_class() {
+        use std::time::Duration;
+
+        use antseal_net::{Address, StorageBackend, StorageError};
+
+        use super::UnreachableBackend;
+
+        let rt = super::runtime().expect("runtime builds");
+        let degraded = rt
+            .block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    super::ant::connect_within(
+                        "restore",
+                        Duration::from_millis(20),
+                        std::future::pending::<Result<UnreachableBackend, StorageError>>(),
+                    ),
+                )
+                .await
+            })
+            .expect(
+                "a connection attempt that never finishes must be abandoned at its bound — the \
+                 watchdog fired first, so the bound is not applied",
+            );
+        let unreachable = degraded
+            .degraded()
+            .expect("an abandoned attempt degrades to the unreachable backend");
+        let fetch = rt
+            .block_on(degraded.get_data(Address::from_bytes([0x5A; 32])))
+            .expect_err("every fetch of a degraded backend fails");
+        assert!(
+            matches!(fetch, StorageError::Network { .. }),
+            "the fetch fails in the network class, so restore's cache fallback and \
+             verify --live's Inconclusive section both run: {fetch:?}"
+        );
         assert_eq!(
-            named,
-            vec!["backend.rs".to_owned()],
-            "`AntCoreBackend` may be named only in the construction seam. A command that names \
-             it directly gets a backend with no D37 capture hook, and a crash in the post-pay \
-             window then costs a second payment (S27). Go through `backend::SealBackend::connect`"
+            fetch.to_string(),
+            "network error: the Autonomi network could not be reached: the connection attempt \
+             did not finish within 20ms",
+            "the reason names the bound and nothing else"
+        );
+        assert_eq!(unreachable.calls(), 1, "the one fetch reached the seam");
+
+        // CONTROL: an attempt that finishes inside the bound is not degraded.
+        let connected = rt.block_on(super::ant::connect_within(
+            "restore",
+            Duration::from_secs(10),
+            async { Ok::<_, StorageError>(UnreachableBackend::new("the inner backend")) },
+        ));
+        assert!(
+            connected.degraded().is_none(),
+            "an attempt that finished inside its bound is the connected arm"
+        );
+    }
+
+    /// The bound's value, pinned against the measurement it was chosen
+    /// from: an order of magnitude above the slowest connect D170 recorded
+    /// (6.3 s over a dead loopback bootstrap), so it can only ever catch a
+    /// connect that does not return, and never a slow one that would.
+    #[cfg(feature = "ant-backend")]
+    #[test]
+    fn the_read_only_connect_bound_is_a_hang_guard_not_an_outage_detector() {
+        const SLOWEST_MEASURED_CONNECT_MS: u128 = 6_300;
+        assert_eq!(super::READ_ONLY_CONNECT_TIMEOUT.as_secs(), 60);
+        assert!(
+            super::READ_ONLY_CONNECT_TIMEOUT.as_millis() >= 9 * SLOWEST_MEASURED_CONNECT_MS,
+            "a bound near the measured connect time would cut off a slow live bootstrap"
         );
     }
 

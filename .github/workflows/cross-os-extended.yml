@@ -25,6 +25,8 @@
 # was filtered out" as "the check passed". Keeping `pull_request:` here means
 # all 19 contexts still report on a pull request exactly as they did before,
 # and the branch-protection payload in docs/ci-verification.md is untouched.
+# [20 since D168 §2 R1, which added `reproducible-build.yml`; the payload is
+# now regenerated from `REQUIRED_CONTEXTS` — docs/ci-verification.md, C2.]
 # `scripts/check-ci-paths.py` R3 fails if either context stops being produced
 # on `pull_request`.
 #

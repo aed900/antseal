@@ -1108,7 +1108,7 @@ lane_scrub_history() {
 #
 # Python-only and no network, so it rides in the `traceability` job beside
 # `ci-shell` and `fuzz-budget` rather than costing a new required-status
-# context (the set stays at 19). The cargo half of that placement argument is
+# context (it adds none to the set). The cargo half of that placement argument is
 # no longer stated here: `scripts/cargo-free.sh` asserts it on every run of
 # that job and states the property once, in its own header (D124/Q182). Its
 # own six planted faults run first, every run.
@@ -1797,7 +1797,7 @@ lane_secret_guard() {
 # on 2026-07-28 and ran five times, unobserved, at a LOWER BOUND of
 # 1 824 min/month — 91 % of the entire 2 000-minute GitHub Free allowance.
 # Exhausting that allowance does not degrade this lane; GitHub blocks EVERY
-# workflow in the repository, including the 19 required contexts. Q17's two
+# workflow in the repository, including every required context. Q17's two
 # incoming targets would have taken it to 137 % with nothing going red.
 #
 # THE KNOB IS `seconds`. Cadence is NOT a knob: it protects the corpus, which

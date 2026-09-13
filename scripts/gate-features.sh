@@ -82,9 +82,14 @@ HEAVY_LANES='antseal-net ant-backend
 antseal-cli ant-backend
 devnet-launcher devnet'
 
-# Tier 2's trigger. Same list as CONTRIBUTING's "Devnet E2E gate", because
-# the two gates guard the same surface: if a change can break the storage
-# path, it must both compile the feature paths and run the devnet E2E.
+# Tier 2's trigger. NOT the same list as CONTRIBUTING's "Devnet E2E gate",
+# and this comment used to say it was: that list lacked backend.rs, Cargo.toml
+# and Cargo.lock while this one carried them. Since D170 §2 R11 CONTRIBUTING
+# carries this list MINUS ONE entry, `crates/antseal-cli/src/commands.rs`. Every
+# path that must run the devnet E2E must also compile the feature paths, since
+# the two gates guard the same storage surface — so CONTRIBUTING's list may
+# never grow past this one. The converse does not hold: commands.rs needs
+# compiling and is deliberately NOT a devnet trigger (see its entry below).
 #
 # `crates/antseal-cli/src/backend.rs` added at Q84 (D90 §3.3). It is the
 # sole home of the tokio runtime and the `SealBackend` seam, and ALL of its
@@ -95,8 +100,18 @@ devnet-launcher devnet'
 # (measured 2026-08-02 with `--needs-heavy`: "no storage-touching path
 # changed"). That is D89 Evidence 3's coverage gap landing in the one file
 # whose feature-gated content D90 now depends on.
+#
+# `crates/antseal-cli/src/commands.rs` added by D170 §2 R11 (2026-09-13). It is
+# the only OTHER CLI source file carrying `cfg(feature = "ant-backend")` —
+# measured that day, the census of that cfg under crates/antseal-cli/src is
+# exactly backend.rs and commands.rs — and before this entry a change touching
+# only it classified light, so its feature-gated code compiled in no tier: the
+# Q112 class, backend.rs's Q84 gap again. It is NOT added to CONTRIBUTING's
+# devnet trigger: the standing test there, "can anything in this diff reach the
+# subject?", already covers it.
 HEAVY_TRIGGER_PATHS='crates/antseal-net/
 crates/antseal-cli/src/backend.rs
+crates/antseal-cli/src/commands.rs
 crates/antseal-cli/src/pipeline/
 crates/antseal-cli/src/vault/wallet.rs
 crates/devnet-launcher/
@@ -294,6 +309,16 @@ self_test() {
     printf '::error:: a change to crates/antseal-cli/src/backend.rs is NOT classified heavy — it carries the runtime-flavour invariants D90 §3.3 depends on, all behind the non-default ant-backend feature, so no tier would compile them. Selected: [%s]\n' "$sel"; fail=1
   else
     printf '  planted change: %-43s -> HEAVY\n' "crates/antseal-cli/src/backend.rs"
+  fi
+
+  #      Pinned by name for the same reason, for the entry D170 §2 R11 added:
+  #      the other CLI file whose feature-gated code no tier compiled when it
+  #      was touched alone. Without this arm, deleting the entry is silent.
+  sel="$(printf '%s\n' crates/antseal-cli/src/commands.rs | heavy_hits)"
+  if [ "$sel" != "crates/antseal-cli/src/commands.rs" ]; then
+    printf '::error:: a change to crates/antseal-cli/src/commands.rs is NOT classified heavy — it carries cfg(feature = "ant-backend") code that no tier would then compile (D170 §2 R11, the Q112 class). Selected: [%s]\n' "$sel"; fail=1
+  else
+    printf '  planted change: %-43s -> HEAVY\n' "crates/antseal-cli/src/commands.rs"
   fi
 
   #      The negative arm is the anti-vacuity direction and is load-bearing:

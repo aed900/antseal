@@ -99,9 +99,9 @@ When the first release ships, the channel will be **GitHub Releases** as the
 single authoritative source — no package managers, no third-party mirrors —
 and every artifact will carry a `SHA256SUMS` entry and a minisign signature
 ([D72](docs/decisions/D72-release-targets-distribution-and-crates-io-scope.md),
-[D71](docs/decisions/D71-binary-signing-mechanism-and-key-custody.md)). That
-channel is inoperative while this repository is private, so no instruction to
-go and fetch something is written here yet.
+[D71](docs/decisions/D71-binary-signing-mechanism-and-key-custody.md)). No
+release has been published on that channel yet, so no instruction to go and
+fetch one is written here.
 
 [Checking a download](docs/signing/verifying-a-release.md) is the page that
 will tell you what to run, how to read its output, and what a good signature

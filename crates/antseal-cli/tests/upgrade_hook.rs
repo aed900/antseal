@@ -759,8 +759,35 @@ impl Drop for TestDir {
 /// boolean mismatch nobody can adjudicate.
 #[test]
 fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
+    use antseal_cli::backend::BackendArm;
+
     let dir = TestDir::new("enumerate");
     let vault = fixture_vault("hook-enumerate");
+
+    // **`restore` is the one row that answers per build (D170 §2 R4/R5,
+    // U90)**, read from `BackendArm::THIS_BUILD` at run time rather than
+    // `#[cfg]`-ed, U73's shape — so both reasons compile into both builds and
+    // a changed arm fails with the sentence that stopped being true.
+    let restore_row: (&str, bool, &str) = match BackendArm::THIS_BUILD {
+        BackendArm::NotCompiled => (
+            "restore",
+            false,
+            "a build with no storage backend refuses `restore` at the seam BEFORE the vault \
+             (U74, D170 §2 R4) — so no passphrase is collected and nothing is unlocked",
+        ),
+        BackendArm::Compiled => (
+            "restore",
+            true,
+            "**D170 moved this row from `false` to `true` in the `ant-backend` build**, and the \
+             old reason is why the row exists: it read *\"U20 reaches the storage-backend seam \
+             before the vault\"*, true only while the handler refused in every build. The wired \
+             handler opens the vault first (U73's precedent) and unlocks through the same \
+             `unlock_for_command` expression as `list` — the one expression that arms (D99 R2) \
+             — and it arms BEFORE resolving the work id, so the minimal argv's unknown id still \
+             leaves the invocation armed. No vault lock is taken (D170 §2 R5), which changes \
+             nothing here: arming is the unlock, not the lock",
+        ),
+    };
 
     // `(command, arms, why)` — indexed by `ALL_COMMAND_NAMES`/`MINIMAL_ARGV`,
     // which the machine registry already asserts are 1:1 and in order.
@@ -794,12 +821,7 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
             "unlocks through `unlock_for_command` — and arms BEFORE resolving the work id, so \
              an unknown id still leaves the invocation armed",
         ),
-        (
-            "restore",
-            false,
-            "U20 reaches the storage-backend seam before the vault, and this build has no \
-             backend — so no passphrase is collected and nothing is unlocked",
-        ),
+        restore_row,
         (
             "reveal",
             true,

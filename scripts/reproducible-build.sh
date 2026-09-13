@@ -29,40 +29,43 @@
 # the moment that guard's two builds differ in environment its own red means
 # either staleness or irreproducibility (D135 §8 R3).
 #
-# ── THE TIER IS DEPLOY-GATED, AND IT IS RAISE-ONLY ─────────────────────────
+# ── THE TIER: A REQUIRED PUSH CONTEXT, AND THE DEPLOY GATE STAYS ───────────
 #
-# `pages.yml` calls `pages-publish.sh --build` BEFORE `actions/configure-pages`,
-# `upload-pages-artifact` and `deploy-pages`, so a red here ends the job with
-# nothing staged and nothing published. *A deploy cannot publish a digest two
-# builds disagree on* is therefore a property of the committed file rather than
-# an aspiration.
+# RAISED 2026-09-13 by D168 §2 R1 from D135 §3 R1's deploy-gated tier.
+# `.github/workflows/reproducible-build.yml` runs `--compare` on every push to
+# `main` and every pull request, with NO path filter, as the required status
+# context `reproducible-build` (`scripts/check-ci-paths.py` REQUIRED_CONTEXTS
+# and MUST_RUN_ON_EVERY_PUSH). No filter can describe this lane's inputs:
+# `wasm-pack-build.sh` stamps `git rev-parse HEAD` into the module, so HEAD
+# itself is an input (D168 §1.2), and a path-filtered required context sits
+# Pending on every push it skips (D168 §1.3). That workflow builds A explicitly
+# first, because `prepare()` below skips build A whenever an artifact already
+# exists and a restored cache can supply one from another commit.
 #
-# Measured price (D135 §3 R2): +1 to +2 BILLED weighted minutes per deploy, and
-# ZERO in a month with no deploy, against a repository that spent 3 154 weighted
-# minutes in the first fortnight of 2026-08 and had 45 jobs refused a runner for
-# it — twice — in that same window.
+# `pages.yml` STILL calls `pages-publish.sh --build` BEFORE
+# `actions/configure-pages`, `upload-pages-artifact` and `deploy-pages`, so a
+# red here also ends a deploy with nothing staged and nothing published: *a
+# deploy cannot publish a digest two builds disagree on* stays a property of
+# the committed files. The push tier checks the TREE; only the deploy gate
+# checks the build that is served (D168 §2 R3).
 #
-# The tier below is RAISE-ONLY BY DECISION, never by an implementer needing a
-# build to go green (the idiom and the rule are `scripts/ci-lanes.sh`'s
-# FUZZ_BUDGET_CEILING_MINUTES). Its precondition is a MEASURED monthly bill
-# under the allowance, taken the way D135 §1.1 takes it — per job, rounded up,
-# platform multipliers applied — and NOT an estimate.
+# The raise holds while ALL THREE of D168 §2 R2's conjuncts hold: the
+# repository is public; every `runs-on` label in `.github/workflows/` is a
+# standard GitHub-hosted label; and the D135 §1.1 proxy bill is recorded with
+# its window and command. A visibility change, a larger or non-standard runner
+# label, or a billing read showing Actions charges returns the tier to a
+# decision. A tier change is still BY DECISION, never by an implementer needing
+# a build to go green (the idiom is `scripts/ci-lanes.sh`'s
+# FUZZ_BUDGET_CEILING_MINUTES).
 #
-# The arm to promote to is already priced, so that decision does not re-derive
-# the arithmetic (D135 §10 R2): a SEPARATE `on: push` workflow with a workflow
-# level `paths:` filter — evaluated by GitHub before a runner is assigned, so a
-# push touching no build input costs zero minutes, unlike a job-level `if:`
-# which still bills its runner. Measured hit rate over 33 pushes: 52 % narrow
-# (`crates/antseal-core/src/**`, `crates/antseal-wasm/**`, `Cargo.toml`,
-# `Cargo.lock`, `.cargo/config.toml`, `rust-toolchain.toml`,
-# `scripts/wasm-pack-build.sh`), 61 % broad. Price: 0.52 x 51.7 x 3 = ~81
-# weighted min/month. Two riders that decision inherits: the filter needs its
-# own self-test (a filter that silently matches nothing is a lane that never
-# runs and always looks green), and it must include `scripts/wasm-pack-build.sh`
-# and the files the tool-pin greps read, because a pin bump moves the bytes
-# without touching a crate. NOT arm (a), a required context on every push:
-# ~155 weighted min/month, refused on the measurement.
-REPRO_TIER="deploy-gated (D135 §3 R1) — RAISE-ONLY BY DECISION"
+# REFUSED by D168 §2 R1, recorded here so nobody rebuilds them: the separate
+# workflow with a `paths:` filter that D135 §10 R2 pre-priced — as D164
+# specified it, it goes red on `check-ci-paths.py`'s R1, R2 and R3, each by its
+# own message; an always-running job that short-circuits to success, a skip
+# that reports success; and this job moved into `ci-always.yml`. The superseded
+# price stands in D135 §1.1 and §3 R2, measured while the repository was
+# private: +1 to +2 billed weighted minutes per deploy.
+REPRO_TIER="required push context reproducible-build (D168 §2 R1); pages.yml deploy gate kept (D168 §2 R3)"
 set -uo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -446,7 +449,7 @@ prepare() { # sets B_PATH/B_HOME/A_SNAP and ENV_*; $1 = commit
   ENV_A_HOME="${CARGO_HOME:-${HOME:-}/.cargo}"
 
   if [ ! -f "${repo}/${OUT_REL}/${MODULE_NAME}" ]; then
-    note "build A's artifact is absent — building it (normally the deploy has already done this)"
+    note "build A's artifact is absent — building it (normally the caller has already done this)"
     ./scripts/wasm-pack-build.sh --build-only || return 1
   fi
   list="$(mktemp)" || die "no temporary file"
@@ -466,8 +469,8 @@ prepare() { # sets B_PATH/B_HOME/A_SNAP and ENV_*; $1 = commit
 # edit would surface HERE first, wearing this guard's token — three properties
 # collapsing into two reds, which D135 §8 R1 exists to prevent.
 #
-# In `pages.yml` it cannot happen: build A runs two steps earlier in the same
-# job. Locally it happens easily, and this project measured it happening twice
+# In `pages.yml` and `reproducible-build.yml` it cannot happen: build A runs
+# earlier in the same job. Locally it happens easily, and this project measured it happening twice
 # in one hour on 2026-08-15 while three lanes shared one working tree. So on a
 # red — and only on a red, where a relink costs nothing anybody is waiting for —
 # build A is rebuilt and re-digested. If A moved, the red was STALENESS and this
@@ -485,7 +488,7 @@ attribute_red() { # $1 = build A's digest as compared
     "${before:0:16}…" "${after:0:16}…" >&2
   printf '  compared over two different SOURCE states, not two environments. That is R83'"'"'s property\n' >&2
   printf '  (`STALE ARTIFACT`), not reproducibility. Re-run: `scripts/wasm-pack-build.sh --check` and then\n' >&2
-  printf '  this comparison. In pages.yml this cannot occur — build A runs two steps earlier in the job.\n' >&2
+  printf '  this comparison. In pages.yml and reproducible-build.yml this cannot occur — build A runs earlier in the same job.\n' >&2
   return 0
 }
 

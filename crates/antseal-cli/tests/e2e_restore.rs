@@ -43,6 +43,20 @@
 //! exactly `[STATE, PLAN, MANIFEST_BLOB]`, and every restored file reports
 //! `from_cache == 0` — the units really came off the wire.
 //!
+//! # D170 — the same capability through the spawned binary
+//!
+//! The S19 rows above drive the library (`RestoreEngine` over
+//! `SealBackend::connect`), which is all any process could reach while
+//! `commands::restore` refused in every build. The `devnet_d170_…` rows below
+//! drive the **release-feature binary** the user runs instead, over the
+//! handlers D170 wired: `restore` byte-identical and then idempotent,
+//! `vault import` then `restore` on a clean home, and `reveal` →
+//! `verify --live --json` reporting the manifest row persisted, beside a
+//! negative control whose only network is a dead loopback port. Sealing still
+//! happens in-process — it is the precondition, not the subject — and every
+//! assertion about restoring, revealing or verifying is read off a process's
+//! exit code and its one `--json` document.
+//!
 //! NON-SECRET: every fixture byte string is documented and run-tagged; `W`
 //! never leaves the vault, and the backup is an encrypted export.
 
@@ -53,7 +67,9 @@ mod common;
 #[path = "common/spawn.rs"]
 mod spawn;
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Instant;
 
 use antseal_cli::backend::{SealBackend, runtime};
@@ -68,7 +84,7 @@ use antseal_cli::vault::session::{create_vault, unlock_vault};
 use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::sig_policy::SigPolicy;
-use antseal_net::NetworkId;
+use antseal_net::{NetworkConfig, NetworkId, WalletKey};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -618,4 +634,587 @@ fn a_clean_machine_without_the_vault_fails_with_a_clear_no_vault_error() {
         "the refusal is a bare ENOENT with no explanation: {message}"
     );
     eprintln!("S19 negative control OK: no vault -> {}", message.trim());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D170 §2 R8 — the wired handlers, through the spawned binary
+// ─────────────────────────────────────────────────────────────────────
+
+/// Create a vault at `layout` and seal [`Originals`] into it on the live
+/// devnet, keeping every D43 cache copy. Returns the work id.
+///
+/// In-process on purpose: sealing is these rows' precondition, not their
+/// subject, and `seal`'s own binary path is `tests/seal_command.rs`'s.
+fn seal_on_devnet(
+    layout: &VaultLayout,
+    config: &NetworkConfig,
+    key: &WalletKey,
+    originals: &Originals,
+    label: &str,
+) -> [u8; 32] {
+    create_vault(layout, &passphrase(), KdfSelection::Argon2id, &mut rng())
+        .expect("create the sealing vault");
+    let unlocked = unlock_vault(layout, &passphrase()).expect("unlock");
+    let mut journal_rng = ChaCha20Rng::from_seed(run_seed(&format!("{label}-journal")));
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+    let sink = CapturedReceipts::new();
+    let gate_double = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+    let files = originals.files();
+    let rt = runtime().expect("runtime");
+    rt.block_on(async {
+        let backend = SealBackend::connect(config, key, sink.clone())
+            .await
+            .expect("connect");
+        let pipeline = Pipeline::new(&backend, &gate_double, &journal, &consent, &NoBarriers);
+        let SealResult::Sealed(outcome) = pipeline
+            .seal(
+                &request(&files),
+                &mut ChaCha20Rng::from_seed(run_seed(&format!("{label}-seal"))),
+            )
+            .await
+            .expect("the three-file work seals")
+        else {
+            panic!("expected Sealed");
+        };
+        outcome.work_id
+    })
+}
+
+/// What a spawned `antseal` answered.
+struct Answer {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Answer {
+    /// The one `--json` document on stdout, or a panic that shows both
+    /// streams.
+    fn document(&self) -> serde_json::Value {
+        serde_json::from_str(self.stdout.trim_end_matches('\n')).unwrap_or_else(|error| {
+            panic!(
+                "stdout is not one JSON document ({error}).\nstdout:\n{}\nstderr:\n{}",
+                self.stdout, self.stderr
+            )
+        })
+    }
+
+    /// Both streams, for an assertion message.
+    fn streams(&self) -> String {
+        format!("stdout:\n{}\nstderr:\n{}", self.stdout, self.stderr)
+    }
+}
+
+/// Where a spawned invocation finds its vault.
+enum VaultAt<'a> {
+    /// `ANTSEAL_DIR` names it.
+    Dir(&'a Path),
+    /// A fresh `HOME` holds it at `~/.antseal`, and `ANTSEAL_DIR` is unset.
+    Home(&'a Path),
+}
+
+/// Spawn the release-feature binary: its vault at `vault`, `cwd` as its
+/// working directory, `devnet_env` as the only devnet definition it can see,
+/// and — when `passphrase_on_stdin` — the fixture passphrase on fd 0.
+fn antseal_on_devnet(
+    vault: VaultAt<'_>,
+    cwd: &Path,
+    args: &[&str],
+    devnet_env: Option<&Path>,
+    passphrase_on_stdin: bool,
+) -> Answer {
+    let mut command = spawn::antseal();
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("RUST_LOG")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match vault {
+        VaultAt::Dir(dir) => {
+            command.env("ANTSEAL_DIR", dir);
+        }
+        VaultAt::Home(home) => {
+            command.env("HOME", home).env_remove("ANTSEAL_DIR");
+        }
+    }
+    match devnet_env {
+        Some(path) => {
+            command.env("ANTSEAL_DEVNET_ENV", path);
+        }
+        None => {
+            command.env_remove("ANTSEAL_DEVNET_ENV");
+        }
+    }
+    command.stdin(if passphrase_on_stdin {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+    let mut child = command.spawn().expect("spawn antseal");
+    if passphrase_on_stdin {
+        // Ignored on purpose: a command that refuses before reading closes
+        // the pipe first, and that is the command doing its job.
+        let _ = child
+            .stdin
+            .as_mut()
+            .expect("stdin is piped")
+            .write_all(common::FIXTURE_PASSPHRASE);
+        drop(child.stdin.take());
+    }
+    let out = child.wait_with_output().expect("wait for antseal");
+    Answer {
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
+}
+
+/// The live devnet's export path — already proven readable by `gate()`.
+fn devnet_export() -> PathBuf {
+    PathBuf::from(std::env::var_os("ANTSEAL_DEVNET_ENV").expect("the gate checked this is set"))
+}
+
+/// A devnet definition that reaches **nothing**: one bootstrap peer on a
+/// loopback UDP port bound and released a moment ago — D170 §2 R7's
+/// negative-control export. Written from scratch rather than copied from the
+/// live export, so no key line is ever duplicated into a scratch file.
+///
+/// NON-SECRET: a walletless export; Anvil's well-known contract addresses.
+fn dead_devnet_export(dir: &Path) -> PathBuf {
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a loopback probe socket");
+    let bootstrap = udp.local_addr().expect("the probe's address");
+    drop(udp);
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback probe listener");
+    let rpc_port = tcp.local_addr().expect("the probe's address").port();
+    drop(tcp);
+    let text = format!(
+        "# antseal devnet environment: a dead one, for a negative control\n\
+         ANTSEAL_DEVNET_RPC_URL='http://127.0.0.1:{rpc_port}/'\n\
+         ANTSEAL_DEVNET_CHAIN_ID='31337'\n\
+         ANTSEAL_DEVNET_TOKEN_ADDRESS='0x5FbDB2315678afecb367f032d93F642f64180aa3'\n\
+         ANTSEAL_DEVNET_PAYMENT_VAULT_ADDRESS='0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'\n\
+         ANTSEAL_DEVNET_BOOTSTRAP='{bootstrap}'\n\
+         ANTSEAL_DEVNET_NODE_COUNT='1'\n\
+         ANTSEAL_DEVNET_BASE_PORT='{port}'\n\
+         ANTSEAL_DEVNET_DATA_DIR='{data}'\n\
+         ANTSEAL_DEVNET_PID='{pid}'\n",
+        port = bootstrap.port(),
+        data = dir.display(),
+        pid = std::process::id(),
+    );
+    let path = dir.join("dead-devnet.env");
+    std::fs::write(&path, text).expect("write the dead devnet export");
+    path
+}
+
+/// Assert every original sits byte-identical under `root`, at its recorded
+/// path.
+fn assert_originals_under(root: &Path, originals: &Originals, venue: &str) {
+    for path in ["notes.txt", "chapters/long.txt", "data/blob.bin"] {
+        let restored = std::fs::read(root.join(path))
+            .unwrap_or_else(|error| panic!("{venue}: {path} was not restored: {error}"));
+        assert_eq!(
+            restored,
+            originals.expected(path),
+            "{venue}: {path} did not restore byte-identically"
+        );
+    }
+}
+
+/// **U90 `Accept` row 1 (D170 §2 R8): a spawned `restore` on a devnet-sealed
+/// work writes byte-identical originals, and a second run reports every file
+/// already restored with exit 0.**
+///
+/// The network is made the **only** source before the binary runs: every
+/// D43 unit copy **and** the vault's plaintext manifest copy are deleted, so
+/// a successful run must have fetched the manifest by its journaled locator
+/// and every unit off the wire, through the wallet-less reader — the
+/// `manifest_source: "network"` member reads that back. The work records
+/// `devnet` while the invocation's default network is `arbitrum-one`, so the
+/// first run is also D170 §2 R3's witness that the work's own network is the
+/// one used; the re-run names `--network devnet` explicitly, the accepted
+/// form of the flag.
+#[test]
+fn devnet_d170_a_spawned_restore_is_byte_identical_and_a_re_run_is_already_restored() {
+    let _guard = serial();
+    let Some((config, _env, key)) = gate() else {
+        return;
+    };
+    let originals = Originals::new();
+    let stage = std::env::temp_dir().join(format!("antseal-d170-td1-{}", run_tag()));
+    std::fs::create_dir_all(&stage).expect("mk stage");
+    let layout = VaultLayout::at(stage.join("vault"));
+    let work_id = antseal_cli::pipeline::hex32(&seal_on_devnet(
+        &layout, &config, &key, &originals, "d170-td1",
+    ));
+
+    // The network, and nothing else.
+    {
+        let unlocked = unlock_vault(&layout, &passphrase()).expect("unlock");
+        let store = WorkStore::new(&unlocked);
+        let works = store.list_works().expect("list");
+        assert_eq!(works.len(), 1, "one work");
+        let mut deleted = 0usize;
+        for entry in store.list_journal_entries(&works[0]).expect("entries") {
+            if entry == PLAN_ENTRY || entry >= UNIT_ENTRY_BASE {
+                store
+                    .delete_journal_entry(&works[0], entry)
+                    .expect("delete");
+                deleted += 1;
+            }
+        }
+        assert!(
+            deleted >= 4,
+            "the plaintext manifest and at least three unit copies were removed: {deleted}"
+        );
+        assert_eq!(
+            store.list_journal_entries(&works[0]).expect("entries"),
+            vec![STATE_ENTRY, MANIFEST_BLOB_ENTRY],
+            "only the state and the encrypted manifest's locator remain"
+        );
+    }
+
+    let out = stage.join("restored");
+    let out_arg = out.to_str().expect("a utf-8 stage path").to_owned();
+    let first = antseal_on_devnet(
+        VaultAt::Dir(layout.root()),
+        &stage,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "restore",
+            &work_id,
+            "-o",
+            &out_arg,
+        ],
+        Some(&devnet_export()),
+        true,
+    );
+    assert_eq!(
+        first.code,
+        Some(0),
+        "the release-feature binary restores a devnet-sealed work.\n{}",
+        first.streams()
+    );
+    let document = first.document();
+    assert_eq!(document["ok"], serde_json::json!(true), "{document}");
+    assert_eq!(
+        document["result"]["manifest_source"],
+        serde_json::json!("network"),
+        "the manifest came off the wire: {document}"
+    );
+    assert_eq!(
+        document["result"]["counts"]["restored"],
+        serde_json::json!(3),
+        "{document}"
+    );
+    assert_originals_under(&out, &originals, "the first run");
+
+    let again = antseal_on_devnet(
+        VaultAt::Dir(layout.root()),
+        &stage,
+        &[
+            "--json",
+            "--network",
+            "devnet",
+            "--passphrase-fd",
+            "0",
+            "restore",
+            &work_id,
+            "-o",
+            &out_arg,
+        ],
+        Some(&devnet_export()),
+        true,
+    );
+    assert_eq!(
+        again.code,
+        Some(0),
+        "D48 §3: a re-run confirms and exits 0.\n{}",
+        again.streams()
+    );
+    let document = again.document();
+    assert_eq!(
+        document["result"]["counts"]["already-restored"],
+        serde_json::json!(3),
+        "every file already restored: {document}"
+    );
+    assert_eq!(
+        document["result"]["counts"]["restored"],
+        serde_json::json!(0),
+        "and nothing rewritten: {document}"
+    );
+    assert_originals_under(&out, &originals, "the re-run");
+
+    let _ = std::fs::remove_dir_all(&stage);
+    eprintln!(
+        "D170 T-D1 OK: work {work_id} restored by the binary from the network, then confirmed"
+    );
+}
+
+/// **U90 `Accept` row 2 (D170 §2 R8): a spawned `vault import`, then a
+/// spawned `restore`, on a clean home, restores byte-identical originals.**
+///
+/// The sealing machine is wiped after its export, so the clean home holds
+/// exactly what a user carries: the backup file. The imported vault holds no
+/// unit copy (S29's lean export, asserted by S19 above), so every unit comes
+/// off the wire; the restore writes to the default output directory under
+/// the working directory, and `ANTSEAL_DIR` is unset so the vault is found
+/// where a user's would be — `~/.antseal`.
+#[test]
+fn devnet_d170_a_spawned_vault_import_then_restore_on_a_clean_home_is_byte_identical() {
+    let _guard = serial();
+    let Some((config, _env, key)) = gate() else {
+        return;
+    };
+    let originals = Originals::new();
+    let stage = std::env::temp_dir().join(format!("antseal-d170-td2-{}", run_tag()));
+    let sealing = stage.join("sealing-machine");
+    std::fs::create_dir_all(&sealing).expect("mk sealing machine");
+    let sealing_layout = VaultLayout::at(sealing.join("vault"));
+    let work = seal_on_devnet(&sealing_layout, &config, &key, &originals, "d170-td2");
+    let work_id = antseal_cli::pipeline::hex32(&work);
+    let backup = stage.join("carried.sealvault");
+    {
+        let unlocked = unlock_vault(&sealing_layout, &passphrase()).expect("unlock");
+        export_vault(&unlocked, &passphrase(), &backup, &mut rng()).expect("vault export");
+    }
+    std::fs::remove_dir_all(&sealing).expect("wipe the sealing machine");
+
+    let home = stage.join("clean-home");
+    let cwd = home.join("empty-tree");
+    std::fs::create_dir_all(&cwd).expect("mk the clean home");
+    let backup_arg = backup.to_str().expect("a utf-8 stage path").to_owned();
+
+    let imported = antseal_on_devnet(
+        VaultAt::Home(&home),
+        &cwd,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "vault",
+            "import",
+            &backup_arg,
+        ],
+        None,
+        true,
+    );
+    assert_eq!(
+        imported.code,
+        Some(0),
+        "the clean home imports the carried backup.\n{}",
+        imported.streams()
+    );
+    assert!(
+        home.join(".antseal").is_dir(),
+        "the import landed at the clean home's default vault path"
+    );
+
+    let restored = antseal_on_devnet(
+        VaultAt::Home(&home),
+        &cwd,
+        &["--json", "--passphrase-fd", "0", "restore", &work_id],
+        Some(&devnet_export()),
+        true,
+    );
+    assert_eq!(
+        restored.code,
+        Some(0),
+        "the clean home restores from the backup and the network.\n{}",
+        restored.streams()
+    );
+    let document = restored.document();
+    assert_eq!(
+        document["result"]["counts"]["restored"],
+        serde_json::json!(3),
+        "{document}"
+    );
+    let default_dir = cwd.join(format!("antseal-restore-{work_id}"));
+    assert_eq!(
+        document["result"]["output_dir"],
+        serde_json::json!(format!("antseal-restore-{work_id}")),
+        "D48 §1's default, work-scoped, under the working directory: {document}"
+    );
+    assert_originals_under(&default_dir, &originals, "the clean home");
+
+    let _ = std::fs::remove_dir_all(&stage);
+    eprintln!("D170 T-D2 OK: work {work_id} imported and restored by the binary on a clean home");
+}
+
+/// **U75's restated `Accept` and R81 `Accept` row 1's binary half (D170
+/// §2 R7): a spawned `reveal`, then `verify --live --json`, reports the
+/// manifest row and every unit persisted — with a dead-bootstrap negative
+/// control yielding an Inconclusive live section at the same exit code.**
+///
+/// The exit code is compared with the same bundle's **offline** `verify`, so
+/// "the live layer reaches no exit code" (D69 §3 R6) is read off three
+/// processes rather than assumed. The divergent manifest row stays proven at
+/// the library route (`tests/verify_live_manifest.rs`): a real network never
+/// serves `Different` through this adapter (R79).
+#[test]
+fn devnet_d170_reveal_then_verify_live_is_persisted_and_a_dead_network_inconclusive() {
+    const MANIFEST_SUBJECT: &str = "encrypted manifest";
+
+    let _guard = serial();
+    let Some((config, _env, key)) = gate() else {
+        return;
+    };
+    let originals = Originals::new();
+    let stage = std::env::temp_dir().join(format!("antseal-d170-td3-{}", run_tag()));
+    std::fs::create_dir_all(&stage).expect("mk stage");
+    let layout = VaultLayout::at(stage.join("vault"));
+    let work_id = antseal_cli::pipeline::hex32(&seal_on_devnet(
+        &layout, &config, &key, &originals, "d170-td3",
+    ));
+
+    let bundle = stage.join("whole-work.sealproof");
+    let bundle_arg = bundle.to_str().expect("a utf-8 stage path").to_owned();
+    let revealed = antseal_on_devnet(
+        VaultAt::Dir(layout.root()),
+        &stage,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "reveal",
+            &work_id,
+            "--all",
+            "--yes",
+            "-o",
+            &bundle_arg,
+        ],
+        Some(&devnet_export()),
+        true,
+    );
+    assert_eq!(
+        revealed.code,
+        Some(0),
+        "the binary reveals the cached work.\n{}",
+        revealed.streams()
+    );
+    assert!(bundle.is_file(), "the bundle was written");
+    let units = &revealed.document()["result"]["units"];
+    assert_eq!(
+        units["from_network"],
+        serde_json::json!(0),
+        "reveal still serves a cached work from its cache (U72; U91 wires the rest): {units}"
+    );
+
+    let offline = antseal_on_devnet(
+        VaultAt::Dir(&stage.join("no-vault-here")),
+        &stage,
+        &["--json", "verify", &bundle_arg],
+        None,
+        false,
+    );
+    let offline_code = offline.code;
+    assert_eq!(
+        offline.document()["ok"],
+        serde_json::json!(true),
+        "the revealed bundle verifies offline.\n{}",
+        offline.streams()
+    );
+
+    let live = antseal_on_devnet(
+        VaultAt::Dir(&stage.join("no-vault-here")),
+        &stage,
+        &[
+            "--json",
+            "--network",
+            "devnet",
+            "verify",
+            &bundle_arg,
+            "--live",
+        ],
+        Some(&devnet_export()),
+        false,
+    );
+    assert_eq!(
+        live.code,
+        offline_code,
+        "the live layer reaches no exit code (D69 §3 R6).\n{}",
+        live.streams()
+    );
+    let document = live.document();
+    let section = &document["result"]["live"];
+    assert_eq!(
+        section["verdict"],
+        serde_json::json!("all-persisted"),
+        "a live devnet holds every blob this work stored: {section}"
+    );
+    let checked = section["counts"]["checked"].as_u64().expect("a count");
+    assert!(
+        checked >= 2,
+        "units and the manifest were asked about: {section}"
+    );
+    assert_eq!(
+        section["counts"]["identical"],
+        serde_json::json!(checked),
+        "{section}"
+    );
+    let rows = section["rows"].as_array().expect("the live rows");
+    let manifest_rows: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter(|row| row["subject"] == MANIFEST_SUBJECT)
+        .collect();
+    assert_eq!(
+        manifest_rows.len(),
+        1,
+        "exactly one manifest row (R81): {section}"
+    );
+    assert_eq!(
+        manifest_rows[0]["outcome"],
+        serde_json::json!("identical"),
+        "R81 row 1 through the binary: the encrypted manifest is persisted: {section}"
+    );
+
+    // ── the negative control: a network nothing answers on ───────────────
+    let dead = dead_devnet_export(&stage);
+    let control = antseal_on_devnet(
+        VaultAt::Dir(&stage.join("no-vault-here")),
+        &stage,
+        &[
+            "--json",
+            "--network",
+            "devnet",
+            "verify",
+            &bundle_arg,
+            "--live",
+        ],
+        Some(&dead),
+        false,
+    );
+    assert_eq!(
+        control.code,
+        offline_code,
+        "an unreachable network moves no exit code either.\n{}",
+        control.streams()
+    );
+    let document = control.document();
+    let section = &document["result"]["live"];
+    assert_eq!(
+        section["verdict"],
+        serde_json::json!("inconclusive"),
+        "a dead bootstrap is Inconclusive: {section}"
+    );
+    assert_eq!(
+        section["counts"]["fetch_failed"], section["counts"]["checked"],
+        "every row is a fetch failure: {section}"
+    );
+    assert_eq!(
+        section["counts"]["not_found"],
+        serde_json::json!(0),
+        "and not one is reported absent — an unreachable network is never absence \
+         (D170 §2 R12): {section}"
+    );
+
+    let _ = std::fs::remove_dir_all(&stage);
+    eprintln!(
+        "D170 T-D3 OK: work {work_id} revealed; verify --live all-persisted ({checked} subjects) \
+         and Inconclusive over a dead bootstrap, both at exit {offline_code:?}"
+    );
 }

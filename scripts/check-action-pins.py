@@ -7,6 +7,18 @@ it; never the reverse. That direction is the whole design: a rule of the form
 "every `uses:` is a 40-hex" has no subject a script can be wrong about, while
 "which actions deserve a pin" is a judgement no script can make (D143 §2 R1).
 
+── SCOPE: WORKFLOW FILES ONLY (D169 §2 R4) ────────────────────────────────────
+
+The rule and this checker cover the `uses:` lines of workflow FILES in
+`.github/workflows/` — what `read_tree()` globs, and nothing else (D143 §2 R1;
+`Q244`'s Accept row 1). GitHub-managed dynamic workflows — CodeQL default setup,
+the dependency graph — are OUT OF SCOPE, and this checker is structurally blind to
+them: they resolve their actions BY TAG at run time (default setup's job log
+resolves `actions/checkout@v6` and `github/codeql-action/*@v4`, D169 §1.7). That
+exposure is D143's adversary A2, and it is ACCEPTED, NOT ABSENT — D169 §2 R4,
+which names the triggers that reopen it. A green run here says nothing about
+those workflows, and must never be quoted as if it did.
+
 ── WHAT A PIN IS, AND WHAT IT IS NOT ──────────────────────────────────────────
 
 Read D143 §1.4 before writing a comment about this. A 40-hex in a `uses:` line
@@ -52,17 +64,27 @@ annotated tags. Never with `git/ref/tags/<tag>`.
   P6   `today > next_review_utc` is RED; inside 14 days is a WARNING that
        still exits 0. The 90-day cadence in the ledger header is the renewal
        mechanism (D143 §2 R7) and this is what makes it a deadline rather than
-       an intention: nothing hosted can run (every hosted job is refused with
-       `steps: 0` since the allowance went), so the only venue that reddens is
-       the local gate.
-  P7   each `residual` line's parent action is still at the version the
-       residual was recorded against. `actions/upload-pages-artifact@v3.0.1`
-       is a COMPOSITE action whose own `action.yml:77` reads
-       `uses: actions/upload-artifact@v4` — a bare moving tag one level below
-       anything this repository can pin, inside the only job with `pages:
-       write` (D143 §1.6). The residual line is committed so the hole is named
-       where a checker can see it stop matching reality; P7 is what stops the
-       parent being upgraded out from under it.
+       an intention. It reddens in two venues: `scripts/local-gate.sh`, and
+       hosted `ci-always.yml`'s `traceability` job, which runs both modes on
+       every pull request and every push to `main` (both steps green in run
+       34720769800, 2026-09-12). [CORRECTED 2026-09-13: this said nothing
+       hosted could run, so the local gate was the only venue. That held while
+       every hosted job was refused with `steps: 0` and is false now.] Neither
+       venue is scheduled, so an overdue review reddens the next push or gate
+       run, not the day it falls due.
+  P7   each `residual` line's parent action still has a ledger row, at the
+       version the residual was recorded against. A residual names a hole one
+       level below anything this repository can pin. The line is committed so
+       the hole is named where a checker can see it stop matching reality, and
+       P7 is what stops the parent being upgraded or removed out from under it.
+       THE LEDGER HOLDS NO RESIDUAL TODAY. The one D143 §1.6 recorded was
+       `actions/upload-pages-artifact@v3.0.1`, a COMPOSITE action whose own
+       `action.yml:77` reads `uses: actions/upload-artifact@v4`, inside the only
+       job with `pages: write`. Q255 retired it on 2026-09-13: the parent moved
+       to v5.0.0, whose one nested `uses:` (`action.yml:84`) was read at the
+       adopted commit and found SHA-pinned. Upstream's fix landed in v4.0.0
+       (`action.yml:80`). With no live subject, P7 is proved by two self-test
+       arms that plant that historical line themselves, one per branch.
 
 ── SHAPE ──────────────────────────────────────────────────────────────────────
 
@@ -73,8 +95,9 @@ and calls it again. **Nothing in the self-test writes to the working tree.**
 
 That is `scripts/check-anchor-net.py`'s shape (`read_tree`/`check`/in-memory
 faults), deliberately and not `scripts/check-ci-paths.py`'s, which mutates and
-reverts four TRACKED files in place — a live race on a tree several lanes write
-at once. A pin checker has no such excuse (D143 §2 R8, §5.3).
+reverts TRACKED files in place (seven distinct files, counted 2026-09-13) — a
+live race on a tree several lanes write at once. A pin checker has no such
+excuse (D143 §2 R8, §5.3).
 
 Every arm matches on the RULE TAG of the returned failure, in-process, per
 `scripts/lib/red-arm.sh`: a crash propagates and fails the harness instead of
@@ -412,7 +435,7 @@ def check(workflows: dict[str, str], ledger: str, today: date) -> Failures:
                 f"touching this line: {residual.reference} is a bare moving tag resolved at "
                 f"run time one level below anything this repository can pin, inside the only "
                 f"job with `pages: write`. GitHub SHA-pinned that reference in its own "
-                f"v5.0.0, so an upgrade may retire the residual — confirm it at the commit "
+                f"v4.0.0, so an upgrade may retire the residual — confirm it at the commit "
                 f"being adopted and delete the line in that same act, never on the strength "
                 f"of a record (D143 §1.6, §2 R6)."
             )
@@ -435,7 +458,8 @@ def read_tree() -> tuple[dict[str, str], str]:
 
 
 def self_test() -> int:
-    """Nine planted faults and one green control, all in memory.
+    """Nine planted faults that must go red, one WARN-tier arm that must print
+    while staying green, and one green control, all in memory.
 
     Every fault is applied to an in-memory copy of the real tree, so this can
     never leave damage behind on a working tree other lanes are writing, and
@@ -490,12 +514,15 @@ def self_test() -> int:
             ok = False
 
     # ── P1: a bare major tag where a 40-hex belongs. The line is
-    # `pages.yml:85`, the deploy step of the only job with write scope.
+    # `pages.yml:91`, the deploy step of the only job with write scope.
+    # COUPLED TO THE PIN: this literal is the live deploy-pages line, so a
+    # renewal that moves that pin must move this plant in the same act, or the
+    # arm prints NOT APPLIED (it did exactly that at the Q255 bump).
     def plant_a_bare_tag(state) -> bool:
         before = state[0]["pages.yml"]
         state[0]["pages.yml"] = before.replace(
-            "uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5",
-            "uses: actions/deploy-pages@v4",
+            "uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1",
+            "uses: actions/deploy-pages@v5",
             1,
         )
         return state[0]["pages.yml"] != before
@@ -541,7 +568,18 @@ def self_test() -> int:
         )
         return state[1] != before
 
-    # ── P5: a step deleted without the ledger count moving. 19 -> 18.
+    # ── P5: a step deleted without the ledger count moving: N -> N - 1, where
+    # N is the ledger's OWN declared count, read at run time. The control run
+    # above is GREEN, so N is already proved equal to the workflows' count.
+    # This arm used to spell "19" and "18", and went NO MATCH the day a new
+    # workflow moved the count to 20 (measured 2026-09-13) — the count is the
+    # one field this rule exists to say moves whenever a step is added.
+    rust_cache_declared = next(
+        (int(row.invocations) for row in parse_ledger(ledger)[0]
+         if row.action == "Swatinem/rust-cache"),
+        0,
+    )
+
     def delete_one_rust_cache_step(state) -> bool:
         before = state[0]["verifier-page.yml"]
         state[0]["verifier-page.yml"] = before.replace(
@@ -551,44 +589,112 @@ def self_test() -> int:
         )
         return state[0]["verifier-page.yml"] != before
 
-    overdue = (today - timedelta(days=1)).isoformat()
-    due_soon = (today + timedelta(days=7)).isoformat()
+    # ── P6 plants are keyed on the ACTION NAME and rewrite the row's LAST field,
+    # whatever it holds. They used to replace the whole row literal — sha,
+    # version, tier, invocation count and both dates — so they went NOT APPLIED
+    # the moment any of those moved: measured 2026-09-13, when a new workflow
+    # moved checkout's count 23 -> 24 and rust-cache's 19 -> 20, and certain at
+    # every renewal, which moves the two dates and nothing else (D143 §2 R7). A
+    # routine renewal must not disarm the rule that enforces it — and this
+    # self-test runs on the `traceability` required context (ci-always.yml).
+    def with_next_review(ledger_text: str, action: str, new_date: str) -> str:
+        return re.sub(
+            rf"^({re.escape(action)}\t(?:[^\t\n]*\t){{{len(LEDGER_COLUMNS) - 2}}})[^\t\n]*$",
+            lambda row: row.group(1) + new_date,
+            ledger_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
 
-    # ── P6 red: the review deadline has passed. The date is CONSTRUCTED from
-    # `today`, never derived from what happens to be in the ledger, so the arm
-    # cannot disarm itself as the real dates drift past.
+    # The planted dates are CONSTRUCTED from `today`, never read from the ledger,
+    # so an arm cannot drift with the real dates — AND never equal to the row's
+    # current value, because a plant that writes the value already there changes
+    # nothing and prints NOT APPLIED. That was live in the whole-literal version
+    # too: on 2026-11-09, `today + 7` IS rust-cache's real 2026-11-16, and the
+    # same day recurs seven days before every future review date.
+    current_review = {row.action: row.next_review_utc for row in parse_ledger(ledger)[0]}
+
+    def unlike(current: str | None, *offsets: int) -> str:
+        return next(
+            candidate
+            for candidate in ((today + timedelta(days=d)).isoformat() for d in offsets)
+            if candidate != current
+        )
+
+    # The guard above bites on one day per review period, so on every other day
+    # nothing would notice it gone. Probe it with a SYNTHETIC collision instead —
+    # a current value equal to the first offset must yield the second — so its
+    # absence reds today rather than on the collision day.
+    collision = (today + timedelta(days=7)).isoformat()
+    stepped = (today + timedelta(days=8)).isoformat()
+    probe = unlike(collision, 7, 8)
+    print(f"  guard: a planted date never equals the row's current value{'':10s} -> "
+          f"{'OK' if probe == stepped else 'BROKEN'} ({collision} -> {probe})")
+    if probe != stepped:
+        print("    ::error:: the planted-date guard returned the row's own current value, so on "
+              "that day the P6 plant changes nothing and the arm prints NOT APPLIED")
+        ok = False
+
+    overdue = unlike(current_review.get("actions/checkout"), -1, -2)
+    due_soon = unlike(current_review.get("Swatinem/rust-cache"), 7, 8)
+
+    # ── P6 red: the review deadline has passed.
     def plant_an_overdue_review(state) -> bool:
         before = state[1]
-        state[1] = before.replace(
-            "actions/checkout\t11d5960a326750d5838078e36cf38b85af677262\tv4.4.0\tgithub-owned\t23\t2026-08-18\t2026-11-16",
-            f"actions/checkout\t11d5960a326750d5838078e36cf38b85af677262\tv4.4.0\tgithub-owned\t23\t2026-08-18\t{overdue}",
-            1,
-        )
+        state[1] = with_next_review(before, "actions/checkout", overdue)
         return state[1] != before
 
     # ── P6 warn: inside the window. This arm is GREEN and must still print —
     # a tier that produces no output is a tier nobody will ever act on.
     def plant_a_review_due_soon(state) -> bool:
         before = state[1]
-        state[1] = before.replace(
-            "Swatinem/rust-cache\t6323deb102c322ba6fcbdcafc7e3dddab59af2b6\tv2.9.2\tthird-party\t19\t2026-08-18\t2026-11-16",
-            f"Swatinem/rust-cache\t6323deb102c322ba6fcbdcafc7e3dddab59af2b6\tv2.9.2\tthird-party\t19\t2026-08-18\t{due_soon}",
-            1,
-        )
+        state[1] = with_next_review(before, "Swatinem/rust-cache", due_soon)
         return state[1] != before
 
-    # ── P7: the residual's parent upgraded out from under the residual line.
-    def bump_the_residual_parent(state) -> bool:
+    # ── P7 has NO LIVE SUBJECT: the ledger holds no residual since Q255
+    # retired the only one (2026-09-13). A literal-only plant that bumps a
+    # ledger row would redden [P3] (the workflow comment disagrees), never
+    # [P7], so both P7 arms plant their OWN residual: the line D143 §1.6
+    # recorded, verbatim, under the `# RESIDUAL` header the P4b arm also uses.
+    historical_residual = (
+        "# residual\tactions/upload-pages-artifact\tv3.0.1\t"
+        "actions/upload-artifact@v4\taction.yml:77"
+    )
+
+    def with_historical_residual(ledger_text: str) -> str:
+        return re.sub(
+            r"^(# RESIDUAL\b[^\n]*)$",
+            lambda header: header.group(1) + "\n" + historical_residual,
+            ledger_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+
+    # ── P7 (version branch): the parent's row moved and the residual line was
+    # left behind. This is the tree Q255 would have committed had it bumped
+    # upload-pages-artifact v3.0.1 -> v5.0.0 without re-taking the residual.
+    def leave_the_residual_behind(state) -> bool:
         before = state[1]
-        state[1] = before.replace(
-            "actions/upload-pages-artifact\t56afc609e74202658d3ffba0e8f6dda462b719fa\tv3.0.1",
-            "actions/upload-pages-artifact\t56afc609e74202658d3ffba0e8f6dda462b719fa\tv5.0.0",
-            1,
-        )
+        state[1] = with_historical_residual(before)
         return state[1] != before
 
-    arm("P1  pages.yml:85 reverted to the bare tag `@v4`", plant_a_bare_tag,
-        "[P1]", ("pages.yml:85", "deploy-pages", "'v4'"))
+    # ── P7 (orphan branch): the parent's ledger row is gone and the residual
+    # that names it stayed. The row is removed by action name, not by its SHA,
+    # so a future renewal of that pin cannot disarm this arm. Deleting the row
+    # also reddens [P4a] for the workflow step still using it; the arm requires
+    # the [P7] message, so that collateral cannot satisfy it. Both parts must
+    # apply on their own: a half-applied plant is a different fault.
+    def orphan_the_residual(state) -> bool:
+        before = state[1]
+        without_row = re.sub(
+            r"^actions/upload-pages-artifact\t[^\n]*\n", "", before, count=1, flags=re.MULTILINE
+        )
+        planted = with_historical_residual(without_row)
+        state[1] = planted
+        return without_row != before and planted != without_row
+
+    arm("P1  pages.yml:91 reverted to the bare tag `@v5`", plant_a_bare_tag,
+        "[P1]", ("pages.yml:91", "deploy-pages", "'v5'"))
     arm("P2  rust-cache pinned to its ANNOTATED TAG OBJECT", plant_the_annotated_tag_object,
         "[P2]", ("49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
                  "6323deb102c322ba6fcbdcafc7e3dddab59af2b6", "ledger"))
@@ -598,17 +704,23 @@ def self_test() -> int:
         "[P4a]", ("foundry-rs/foundry-toolchain",))
     arm("P4b a ledger row no workflow uses", add_an_unused_row,
         "[P4b]", ("actions/stale", "unused"))
-    arm("P5  a step deleted, the count left at 19", delete_one_rust_cache_step,
-        "[P5]", ("Swatinem/rust-cache", "19", "18"))
-    arm("P6  a review deadline one day past", plant_an_overdue_review,
+    arm(f"P5  a step deleted, the count left at {rust_cache_declared}", delete_one_rust_cache_step,
+        "[P5]", ("Swatinem/rust-cache", f"declares {rust_cache_declared} invocation",
+                 f"contain {rust_cache_declared - 1}."))
+    days_past = (today - date.fromisoformat(overdue)).days
+    days_out = (date.fromisoformat(due_soon) - today).days
+    arm(f"P6  a review deadline {days_past} day(s) past", plant_an_overdue_review,
         "[P6]", ("actions/checkout", overdue,
                  "gh api repos/actions/checkout/commits/v4"))
-    arm("P6  a review deadline seven days out (WARN, green)", plant_a_review_due_soon,
+    arm(f"P6  a review deadline {days_out} days out (WARN, green)", plant_a_review_due_soon,
         "[P6]", ("Swatinem/rust-cache", due_soon,
                  "gh api repos/Swatinem/rust-cache/commits/v2"),
         expect_red=False)
-    arm("P7  the residual's parent bumped to v5.0.0", bump_the_residual_parent,
+    arm("P7  a v3.0.1 residual left behind by the v5.0.0 bump", leave_the_residual_behind,
         "[P7]", ("upload-pages-artifact", "v3.0.1", "v5.0.0"))
+    arm("P7  a residual whose parent's ledger row is gone", orphan_the_residual,
+        "[P7]", ("actions/upload-pages-artifact", "which has no ledger row",
+                 "actions/upload-artifact@v4"))
 
     return 0 if ok else 1
 
@@ -632,13 +744,20 @@ def main() -> int:
     total = sum(int(row.invocations) for row in rows)
     third_party = [row.action for row in rows if row.tier == "third-party"]
     due = min(date.fromisoformat(row.next_review_utc) for row in rows)
+    # A rule with no subject cannot fail on the real tree, so say so rather
+    # than print a count of zero as if something had been checked.
+    residual_clause = (
+        f"{len(residuals)} residual transitive reference(s) still at the recorded parent version"
+        if residuals
+        else "no residual transitive reference recorded, so P7 has no live subject here "
+        "(its self-test arms plant one)"
+    )
     print(
         f"check-action-pins: {total} `uses:` invocation(s) across {len(workflows)} workflow(s) "
         f"are each pinned to the 40-hex COMMIT `.github/action-pins.tsv` names, with the exact "
         f"`# vX.Y.Z` it records; {len(rows)} ledger row(s), every one used, "
         f"{len(third_party)} third-party ({', '.join(sorted(third_party))}); "
-        f"{len(residuals)} residual transitive reference(s) still at the recorded parent "
-        f"version; next pin review {due.isoformat()}"
+        f"{residual_clause}; next pin review {due.isoformat()}"
     )
     return 0
 

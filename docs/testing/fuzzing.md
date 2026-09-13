@@ -317,7 +317,8 @@ a *branch-protection context*. **No context is enforced on this repository**
 twice; `docs/ci-verification.md`), so `fuzz-smoke` is required by convention
 and by the local gate, not by any enforcement GitHub is applying. It is in
 the 19-context payload that would be applied *if* protection ever becomes
-available. Stating it as enforced overstates what stops a red lane merging.
+available. **[20 since D168 §2 R1 (2026-09-13); `fuzz-smoke` is still one of
+them.]** Stating it as enforced overstates what stops a red lane merging.
 
 `fuzz-smoke` runs `scripts/fuzz.sh selftest` **before** it fuzzes, every
 run: the tripwire (§6) makes each target crash on its first input, and the

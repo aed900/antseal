@@ -1,12 +1,12 @@
 # R26 — publish the verifier page to the ONE canonical URL, https://antseal.org/
 #
-# TRIGGER IS MANUAL, DELIBERATELY. `workflow_dispatch` and nothing else, for two
-# reasons that are not the same reason:
+# TRIGGER IS MANUAL, DELIBERATELY. `workflow_dispatch` and nothing else. Two
+# reasons were recorded, and only the second one still holds:
 #
-#   1. Actions minutes are metered on this account and this job is the most
-#      expensive one the repository could gain — it provisions wasm-bindgen-cli
-#      and wasm-pack by `cargo install`, which no other job does. A push trigger
-#      would pay that on changes that cannot affect the page.
+#   1. RETIRED 2026-09-12 (Q65, the public flip). It said Actions minutes are
+#      metered and that no other job provisions wasm-bindgen-cli and wasm-pack.
+#      Both are false now: standard hosted runners are free on a public repo,
+#      and `ci.yml` and `verifier-page.yml` run `wasm-tools-provision.sh` too.
 #   2. A deploy is an outward-facing act at a real domain. It should happen when
 #      a maintainer decides it happens, not as a side effect of a merge.
 #
@@ -22,7 +22,7 @@
 # security property lives inside the hashed artifact (D62 §3 R6, D129 §5 R6).
 # A second policy at the host would intersect with the in-artifact one silently.
 #
-# THIS JOB IS ALSO THE REPRODUCIBILITY GATE (R86, tier ruled by D135 §3 R1).
+# THIS JOB IS ALSO A REPRODUCIBILITY GATE — the DEPLOY one (R86; D168 §2 R3).
 # `pages-publish.sh --build` builds this commit's module a THIRD time under a
 # different checkout path and a different $CARGO_HOME and refuses to continue
 # if the two disagree. The STEP ORDER below is what makes that an enforcement
@@ -31,11 +31,11 @@
 # red ends the job with nothing staged and nothing published. Do not reorder it,
 # and do not move the build after `configure-pages` for tidiness.
 #
-# Measured price: +1 to +2 billed weighted minutes per deploy, ≤ 7 per month at
-# the measured cadence, and ZERO in a month with no deploy. The tier is
-# RAISE-ONLY BY DECISION — the pre-priced arm to promote to, and the reason a
-# required context is refused today, are at the top of
-# `scripts/reproducible-build.sh`.
+# Since D168 §2 R1 the same comparison is ALSO a required push context,
+# `reproducible-build.yml`, on every push to `main` and every pull request. That
+# lane checks the TREE; only this step checks the build that is SERVED, which is
+# why it stays (D168 §2 R3). The tier, the conditions it holds under, and the
+# refused arms are at the top of `scripts/reproducible-build.sh`.
 name: pages
 
 on:
@@ -70,6 +70,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Q255: keep this job's pages-write token out of .git/config, where
+          # every later step, third-party code included, could read it. Nothing
+          # after checkout runs networked git. This narrows exposure and does not
+          # close it: `id-token: write` stays in every step's environment.
+          persist-credentials: false
       - name: rustup show (toolchain from rust-toolchain.toml)
         run: |
           rustup show active-toolchain || rustup toolchain install
@@ -77,11 +83,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: build and check the page
         run: ./scripts/pages-publish.sh --build
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: target/verifier-web
       - id: deploy
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
       - name: verify what the host actually serves
         run: ./scripts/pages-publish.sh --verify "${{ steps.deploy.outputs.page_url }}"

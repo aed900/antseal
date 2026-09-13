@@ -32,7 +32,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use antseal_core::crypto::secrets::SecretBuf;
-use antseal_net::ant_backend::AntCoreBackend;
+use antseal_net::ant_backend::{AntCoreBackend, AntCoreReader};
 use antseal_net::wallet::WalletKey;
 use antseal_net::{
     Blob, BlobCost, DevnetEnv, NetworkConfig, PaymentReceipt, StorageBackend, StorageError,
@@ -998,4 +998,322 @@ async fn devnet_s9_size_ladder_addresses_and_byte_identity() {
         finalize_elapsed,
         fetch_elapsed
     );
+}
+
+// ===========================================================================
+// D170 §2 R1 — the wallet-less download-only reader
+// ===========================================================================
+
+/// A loopback port nothing listens on, for the UDP (QUIC) side.
+///
+/// Bound and immediately released, so the port is free and unanswered for
+/// the lifetime of the measurement. Loopback only: nothing leaves the host.
+fn dead_loopback_udp() -> std::net::SocketAddr {
+    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a loopback probe socket");
+    probe.local_addr().expect("the probe socket's address")
+}
+
+/// An HTTP URL on a loopback TCP port nothing listens on — a payment RPC
+/// that refuses every connection.
+fn dead_loopback_rpc_url() -> String {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback probe listener");
+    let port = probe
+        .local_addr()
+        .expect("the probe listener's address")
+        .port();
+    format!("http://127.0.0.1:{port}")
+}
+
+/// The variant, as a stable word for evidence lines and failure messages.
+fn storage_error_class(error: &StorageError) -> &'static str {
+    match error {
+        StorageError::Quote { .. } => "Quote",
+        StorageError::Payment { .. } => "Payment",
+        StorageError::InsufficientAnt { .. } => "InsufficientAnt",
+        StorageError::InsufficientGas { .. } => "InsufficientGas",
+        StorageError::Finalize { .. } => "Finalize",
+        StorageError::StrandedPayment { .. } => "StrandedPayment",
+        StorageError::ProofsExpired => "ProofsExpired",
+        StorageError::NotFound { .. } => "NotFound",
+        StorageError::Network { .. } => "Network",
+    }
+}
+
+/// **D170 §2 R1, on a live devnet.** A reader built with no wallet and no EVM
+/// network fetches, byte-identical, what a payer stored — and refuses every
+/// call that could quote, pay, store or read a wallet, each in the variant
+/// its trait contract names, with the funded wallet's nonce unmoved and the
+/// refused blob still absent.
+///
+/// The reader is handed a configuration whose **payment half is unusable**:
+/// an RPC nothing listens on, and a chain id no RPC here reports. The payer's
+/// connect is shown to fail on that same configuration first, so the reader
+/// connecting and fetching is evidence that it reads nothing from the payment
+/// side — not a consequence of the payment side happening to work.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_d170_reader_fetches_what_a_payer_stored_and_cannot_pay() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let payer = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("the payer connects to the live devnet");
+
+    let batch = test_blobs(&env, "d170-reader", &[272, 4_096]);
+    let quote = payer.quote_batch(&batch).await.expect("quote");
+    let receipt = payer.pay(&quote).await.expect("pay");
+    let addresses = payer
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize");
+
+    let payment_side_unusable = NetworkConfig {
+        rpc_url: dead_loopback_rpc_url(),
+        evm_chain_id: 1,
+        ..config.clone()
+    };
+    // CONTROL: this configuration really is unusable for anything that pays.
+    match AntCoreBackend::connect(&payment_side_unusable, &key).await {
+        Err(StorageError::Network { .. }) => {}
+        Err(other) => panic!(
+            "CONTROL: the payer refused the unusable payment side in the wrong class ({}): {other}",
+            storage_error_class(&other)
+        ),
+        Ok(_) => panic!(
+            "CONTROL: the payer connected over a dead payment RPC with a wrong chain id — the \
+             configuration is not unusable, so the reader connecting over it proves nothing"
+        ),
+    }
+
+    let reader = AntCoreReader::connect(&payment_side_unusable)
+        .await
+        .expect("the reader connects with no wallet and no usable payment RPC");
+    assert_eq!(
+        reader.network_config(),
+        &payment_side_unusable,
+        "the reader is bound to the configuration it was given"
+    );
+    for (blob, address) in batch.iter().zip(&addresses) {
+        let fetched = reader
+            .get_data(*address)
+            .await
+            .expect("the reader fetches a chunk the payer stored");
+        assert_eq!(
+            fetched,
+            blob.as_bytes(),
+            "byte-identical through the reader"
+        );
+    }
+
+    // ── every non-fetching call refuses, and nothing moves ────────────────
+    let nonce_before = wallet_nonce(&payer, &env).await;
+    let fresh = test_blobs(&env, "d170-reader-refused", &[300]);
+
+    let refused = reader
+        .quote_batch(&fresh)
+        .await
+        .expect_err("the download-only reader must refuse to quote");
+    assert!(
+        matches!(refused, StorageError::Quote { .. }),
+        "quote_batch refuses in the Quote class: {refused:?}"
+    );
+    let refused = reader
+        .pay(&quote)
+        .await
+        .expect_err("the download-only reader must refuse to pay");
+    assert!(
+        matches!(refused, StorageError::Payment { .. }),
+        "pay refuses in the Payment class (nothing landed): {refused:?}"
+    );
+    let refused = reader
+        .finalize_batch(&receipt, &fresh)
+        .await
+        .expect_err("the download-only reader must refuse to store");
+    assert!(
+        matches!(refused, StorageError::Finalize { .. }),
+        "finalize_batch refuses in the Finalize class: {refused:?}"
+    );
+    let refused = reader
+        .balances()
+        .await
+        .expect_err("the download-only reader holds no wallet to read");
+    assert!(
+        matches!(refused, StorageError::Network { .. }),
+        "balances refuses in its documented Network class: {refused:?}"
+    );
+    let message = refused.to_string();
+    assert!(
+        message.contains("download-only") && !message.contains("0x"),
+        "the refusal names the reason and carries no hex material: {message}"
+    );
+
+    assert_eq!(
+        wallet_nonce(&payer, &env).await,
+        nonce_before,
+        "no transaction was submitted by any refused call"
+    );
+    let fresh_address = antseal_net::Address::from(
+        antseal_core::storage::compute_storage_address(fresh[0].as_bytes()).expect("under cap"),
+    );
+    assert_eq!(
+        payer.get_data(fresh_address).await,
+        Err(StorageError::NotFound {
+            address: fresh_address
+        }),
+        "the refused blob was not stored by anything"
+    );
+}
+
+/// How long one unreachable-network connect or fetch may take before the
+/// test fails it as a hang rather than waiting on.
+const D170_UNREACHABLE_CAP: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The negative control's verdict on one unreachable client's fetch of a
+/// chunk the devnet holds: the network class, and nothing else.
+fn assert_network_class_never_absence(who: &str, outcome: &Result<Vec<u8>, StorageError>) {
+    match outcome {
+        Err(StorageError::Network { .. }) => {}
+        Err(StorageError::NotFound { address }) => panic!(
+            "{who} reported {address} as NotFound — a chunk this devnet holds. An unreachable \
+             network must be the network class, never absence: NotFound is rendered as a \
+             negative fact about stored evidence (`fetch_failure_class`, the live check's \
+             'no longer on the network')"
+        ),
+        Err(other) => panic!(
+            "{who} failed in the {} class instead of the network class: {other}",
+            storage_error_class(other)
+        ),
+        Ok(bytes) => panic!(
+            "{who} served a chunk the devnet holds ({} bytes): it reached the devnet some other \
+             way, so this configuration is not a negative control at all (D170 §2 R7)",
+            bytes.len()
+        ),
+    }
+}
+
+/// Connect `who` over `connect` and fetch `stored`, timing both and printing
+/// one evidence line; a connect that fails is itself the fetch's outcome.
+async fn unreachable_fetch<B, C>(
+    who: &str,
+    connect: C,
+    stored: antseal_net::Address,
+) -> Result<Vec<u8>, StorageError>
+where
+    B: StorageBackend,
+    C: std::future::Future<Output = Result<B, StorageError>>,
+{
+    let started = std::time::Instant::now();
+    let connected = tokio::time::timeout(D170_UNREACHABLE_CAP, connect)
+        .await
+        .unwrap_or_else(|_elapsed| {
+            panic!("{who}: connect did not return within {D170_UNREACHABLE_CAP:?}")
+        });
+    let connect_elapsed = started.elapsed();
+    let client = match connected {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!(
+                "D170 MEASUREMENT [{who}]: connect -> Err({}) after {connect_elapsed:?}",
+                storage_error_class(&error)
+            );
+            return Err(error);
+        }
+    };
+    let started = std::time::Instant::now();
+    let outcome = tokio::time::timeout(D170_UNREACHABLE_CAP, client.get_data(stored))
+        .await
+        .unwrap_or_else(|_elapsed| {
+            panic!("{who}: get_data did not return within {D170_UNREACHABLE_CAP:?}")
+        });
+    let fetch_elapsed = started.elapsed();
+    let class = match &outcome {
+        Ok(_) => "Ok (served)",
+        Err(error) => storage_error_class(error),
+    };
+    eprintln!(
+        "D170 MEASUREMENT [{who}]: connect -> Ok after {connect_elapsed:?}; get_data of a chunk \
+         the devnet holds -> {class} after {fetch_elapsed:?}"
+    );
+    outcome
+}
+
+/// **The NotFound classification's negative control: an unreachable network is
+/// never reported as absence** — the premise D170 §2 R2's *Inconclusive*
+/// section and D43 §5's fallback both rest on.
+///
+/// Clients that cannot reach the devnet — a dead loopback bootstrap (D170 §2
+/// R7's negative-control export) and an empty one (the shape
+/// `arbitrum_one()`/`arbitrum_sepolia()` carry today, D170 §1.6) — are each
+/// asked for a chunk **this devnet holds**, through the reader and through the
+/// payer (one shared fetch path). The only honest answer is the network class:
+/// `NotFound` would be a false negative fact, and bytes would mean the client
+/// reached the devnet some other way.
+///
+/// **POSITIVE CONTROL, same test:** on the healthy devnet the reader reports a
+/// never-uploaded address as `NotFound`, so the negatives are the
+/// classification working rather than a classifier that no longer says
+/// `NotFound` at all (S6 and S15 hold the same control for the payer).
+///
+/// Connect and fetch latencies are printed as `D170 MEASUREMENT` lines: they
+/// are what replaced D170 §2 R2's connect-budget question.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_d170_an_unreachable_network_is_never_reported_as_absence() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let payer = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("the payer connects to the live devnet");
+    let batch = test_blobs(&env, "d170-unreachable", &[272]);
+    let quote = payer.quote_batch(&batch).await.expect("quote");
+    let receipt = payer.pay(&quote).await.expect("pay");
+    let addresses = payer
+        .finalize_batch(&receipt, &batch)
+        .await
+        .expect("finalize");
+    let stored = addresses[0];
+    assert_eq!(
+        payer
+            .get_data(stored)
+            .await
+            .expect("POSITIVE CONTROL: the devnet serves the chunk"),
+        batch[0].as_bytes()
+    );
+
+    let healthy = AntCoreReader::connect(&config)
+        .await
+        .expect("the reader connects to the live devnet");
+    let never = antseal_net::Address::from_bytes([0xA6; 32]);
+    let started = std::time::Instant::now();
+    assert_eq!(
+        healthy.get_data(never).await,
+        Err(StorageError::NotFound { address: never }),
+        "POSITIVE CONTROL: on a healthy devnet a never-uploaded address is authoritative absence"
+    );
+    eprintln!(
+        "D170 MEASUREMENT [healthy devnet, reader]: never-uploaded address -> NotFound after \
+         {:?}",
+        started.elapsed()
+    );
+
+    for (label, bootstrap) in [("dead", vec![dead_loopback_udp()]), ("empty", Vec::new())] {
+        let unreachable = NetworkConfig {
+            bootstrap,
+            ..config.clone()
+        };
+        let who = format!("the reader with a {label} bootstrap");
+        let outcome = unreachable_fetch(&who, AntCoreReader::connect(&unreachable), stored).await;
+        assert_network_class_never_absence(&who, &outcome);
+
+        let who = format!("the payer with a {label} bootstrap");
+        let outcome =
+            unreachable_fetch(&who, AntCoreBackend::connect(&unreachable, &key), stored).await;
+        assert_network_class_never_absence(&who, &outcome);
+    }
 }

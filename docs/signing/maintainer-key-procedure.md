@@ -237,6 +237,20 @@ All four locations change **in one act** whenever the key changes
   repository is private, and `scripts/pages-publish.sh` contains no occurrence of
   `key`, `signing` or `minisign` — so a key placed in the footer reaches the world
   through a publish that never touches `Q65`'s flip. Owned by `Q262`.
+  **[2026-09-13] Corrected, not deleted: the premises above are historical.** The
+  repository has been public since 2026-09-12, and `Q262`, the row that owns this
+  hazard, closed on 2026-08-22 — A6 now derives its location list from this
+  section, and `scripts/pages-publish.sh --build` reads the built page's
+  `signing-key` anchor back and refuses to publish a key unless the `TXT` pin
+  already resolves (`scripts/pages-publish.sh:150-226`, `:234`). What still holds:
+  the footer at `https://antseal.org/` changes only through a Pages deploy, and the
+  live page predates the key element — it carries no `minisign-public-key` marker
+  at all, measured today — so it cannot show a key until it is redeployed, which
+  `R97` already owes. And with the repository public, a key written into either
+  marker pair is published the moment it is pushed, before any deploy; no
+  push-time check holds that route to the `TXT` pin (measured today, the pin's
+  `antseal-minisign-key=` prefix occurs in no workflow, test or script except
+  `scripts/pages-publish.sh`), so §2 still comes first by discipline.
 
 **What the wording in those places may not say** (D71 §2 R11): not "verified"
 on its own as a verdict about the software; not "revoked", "expired" or "key

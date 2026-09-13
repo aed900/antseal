@@ -1220,6 +1220,11 @@ exists.
 
 ### The payload, generated rather than hand-maintained
 
+**[SUPERSEDED 2026-09-13 — the payload below lists 19 contexts, and the set is
+20 since D168 §2 R1 added `reproducible-build`. Never apply this block: C2
+regenerates the current payload from `scripts/check-ci-paths.py`'s
+`REQUIRED_CONTEXTS`.]**
+
 **19 contexts from 17 jobs** at this commit (`cross-os` is a three-way
 matrix). The payload in runbook step 5 lists **13** and the wave-2 note
 promises 14; both are stale. Regenerate rather than copy — that is Q56:
@@ -1275,12 +1280,34 @@ page.** Two preconditions, both required:
 
 1. **The plan allows it**: GitHub Pro (option 1 above), or the repository goes
    public — which triggers **Q65 first**, never after.
-2. **The evidence exists**: **≥ 20 clean scheduled runs** with **warm runtime
-   ≤ 15 min**, per D52 Adversarial-test 4. The runtime is not a guess to be
-   re-litigated: every run of `scripts/e2e-devnet.sh` prints
-   `e2e-devnet: <verdict> … secs=<n> …` and writes it to
-   `target/e2e-devnet/<run>/evidence.txt`, which the workflow uploads as the
-   `devnet-e2e-evidence` artifact.
+2. **The evidence exists**: **20 consecutive clean scheduled runs**, recorded in
+   the committed ledger [`docs/testing/devnet-e2e-ledger.tsv`](testing/devnet-e2e-ledger.tsv)
+   (RESTATED 2026-09-13 by [D167](decisions/D167-the-devnet-trigger-ledger-and-the-runtime-it-can-have.md)
+   §2 R1-R4 and R8; `Q247`). D52 Adversarial-test 4's count is unchanged; its store and
+   its runtime clause are not.
+   - **Clean** = a runner executed it (`runner_name` non-empty — never read from
+     `steps`, D167 §1.6), the job's conclusion is `success`, verdict `PASS`, `nodes >= 14`,
+     `failed=[]`, `pending=[]`, and **non-compile runtime ≤ 15 min**: the verdict's `secs=`
+     minus the summed cargo `Finished … in` markers inside the `./scripts/e2e-devnet.sh`
+     step, fail-closed — a marker count other than `1 + suites_run` records `unmeasured`,
+     which is never clean. **Scheduled** = `event: schedule`, attempt 1. A refused run
+     neither extends nor breaks the count; any executed non-clean run resets it; a
+     dispatched run or a re-run attempt is recorded and does not count.
+   - **The store, as a calculation.** An artifact from run `T − k·P` is alive at
+     `T` iff `k·P < R`. Weekly, `R` = 30 d (landed, D145 §2 R1) keeps 5 runs and
+     `R` = 90 d (a public repository's ceiling) keeps 13; 20 runs span 133 days.
+     No retention holds the evidence, so the `devnet-e2e-evidence` artifact carries
+     only diagnostics nothing cites, and each run's verbatim `e2e-devnet:` line
+     lives in the ledger.
+   - **The writer is a committed script, not a workflow** (D167 §2 R2):
+     `scripts/check-devnet-ledger.py --append` reads the run list and job logs with
+     read-only GETs at wave close; `--against-api` reds on an unrecorded completed
+     run (`LAG`), on a recorded line the API contradicts (`MISMATCH`), and on a newest
+     scheduled run older than 7 d 12 h (`STALE-SCHEDULE`); its flagless run is a
+     `scripts/local-gate.sh` lane. No workflow holds `contents: write`.
+   - **Where the count stands**: 2 of 20 at 2026-09-13 (`33616516399`,
+     `34338263485`); the earliest a 20th consecutive clean weekly run can exist is
+     **2027-01-13**.
 
    **[MEASURED 2026-08-27, wave 31 — precondition 2 is unreachable three ways,
    and none of the three was recorded here. `Q247`'s `Accept` rows 1-2.]**
@@ -1316,6 +1343,17 @@ page.** Two preconditions, both required:
    waiting on time.** It is waiting on a ruling about cadence, retention and
    what "warm" is measured from. Until that ruling exists, the count cannot
    advance past what the store can hold.
+
+   **[RULED 2026-09-13 by D167 — (a) and (b) are resolved, and (c)'s projection was
+   low by a third.]** (a)/(b): the evidence moved from the artifact store into the
+   committed ledger named in precondition 2, so retention no longer bounds the
+   count. (c): the clause is now **non-compile** runtime, the one runtime this
+   uncached lane can have (D52 E3 is not revisited). The hosted figures replace the
+   local projection: cold `secs=` was **1745 s / 1721 s (~29 min)** on the two
+   scheduled greens, not ~21 min — over 900 s by 845 s / 821 s — while their
+   non-compile runtime was **413.6 s / 440.3 s**, under by 486 s / 460 s (D167
+   §1.3). Both runs predate the public flip, so neither measures the 4-CPU runner
+   class. Precondition 2 no longer waits on a ruling; it waits on time.
 
 Then, and only then, add `{"context":"devnet-e2e-scheduled"}` to the payload
 above — after moving the job onto a `pull_request` trigger, since a lane that
@@ -1484,7 +1522,8 @@ parent spawns three short child processes; on a 2-core host
 run-to-run spread, so the honest statement is "no measurable cost", not a
 delta.
 
-Against the standing budget picture (Q78/Q81 — 19 required contexts,
+Against the standing budget picture (Q78/Q81 — 19 required contexts **[19
+then; 20 since D168 §2 R1, 2026-09-13]**,
 `cross-os-macos` billing 10×, the scheduled fuzz lane at 23 % of the
 allowance after its cadence change), this is not a material addition and
 required no re-derivation of the fuzz budget.
@@ -1588,7 +1627,8 @@ until it lands on `main`. The push activated it. **A CI configuration change
 is not in effect until it is pushed** — the config-side twin of this
 document's rule about lanes.
 
-**Verdict at the head (`9145dc6`): 18 of 19 contexts green.** `fuzz-smoke` is
+**Verdict at the head (`9145dc6`): 18 of 19 contexts green.** **[19 then; 20
+since D168 §2 R1, 2026-09-13.]** `fuzz-smoke` is
 red on A100 and the heavy tier on Q113 — both recorded, neither blessed away.
 Judge by per-job conclusions, never by annotation glyphs: the planted-fault
 self-tests emit failure-styled annotations from **succeeding** steps.
@@ -1643,7 +1683,8 @@ Only the `ci` workflow ran for this sha. It is tempting to record that as
 tier is **not a remote job at all**: `heavy-features` exists only in
 `scripts/local-gate.sh`, which shells out to `scripts/gate-features.sh
 --heavy`, and **no workflow in `.github/workflows/` invokes either script**.
-`ci.yml` defines 17 jobs (19 contexts, `cross-os` being a 3-way matrix) and
+`ci.yml` defines 17 jobs (19 contexts **[19 then; 20 since D168 §2 R1,
+2026-09-13]**, `cross-os` being a 3-way matrix) and
 none of them is it; consistent with wave 5's finding that required CI passes
 no `--features`.
 
@@ -2718,7 +2759,9 @@ deployed from", never "reproducible from HEAD"**, and R25/R26 now say so.
 job with nothing staged and nothing published. Searched at this review,
 `.github/workflows/` contains **no** two-build byte-identity job at all — the
 tier is D135 §3 R1's **deploy-gated**, chosen against the measured bill above,
-and a new job would have been a new metered runner.
+and a new job would have been a new metered runner. **[2026-09-13: D168 §2 R1
+raised the tier to the required push context `reproducible-build`, its own
+workflow; this deploy-gate step stays (D168 §2 R3).]**
 
 **What this run does NOT prove.** Both deploys on record — `31847839638`
 (2026-08-14, `08c074c`) and `31873422229` (2026-08-15, `9317a35`) — **predate
@@ -2856,15 +2899,17 @@ keeps that lane local-only — minted **U73**, fixed, re-measured 23 passed /
 
 - **Nothing here was witnessed remotely.** The gate is a local instrument by
   construction; that is not a defect, but it means a push that breaks a lane
-  outside the 19 required contexts is found by someone running the gate, or not
-  at all.
+  outside the 19 required contexts **[19 then; 20 since D168 §2 R1,
+  2026-09-13]** is found by someone running the gate, or not at all.
 - **It does not discharge Q19.** The page browser arm is green on this host and
   has still never executed on a hosted runner. The two owed dispatches, their
   binding precondition and their ordering are recorded in the chapter above and
   on Q19's row.
 - **It does not discharge Q238.** R86's step remains deploy-gated, and the
   exposure D135 §3 R4.1 names — a reproducibility break sitting between deploys
-  for days to weeks — is unchanged by M3 passing.
+  for days to weeks — is unchanged by M3 passing. **[2026-09-13: D168 §2 R1
+  built the push-tier lane locally; `Q238` stays open until a hosted run
+  reports it.]**
 
 # Q254/Q65 — the publish flip, as an ordered procedure (2026-08-19, M4 wave 27)
 
@@ -3834,6 +3879,40 @@ That is a fact about this repository, not about this month's billing. **Do not
 re-derive this step's branch from CI liveness.** Re-derive it from the three
 commands above.
 
+**[UPDATED 2026-09-13 by D168 §2 R1 — the lane now EXISTS; the branch has not
+moved, and its reason changed again.]** The 2026-09-12 observation above was
+taken before the lane landed and stays as written. D168 ruled arm (iii):
+`.github/workflows/reproducible-build.yml`, an unfiltered workflow on push to
+`main` and on every pull request, whose job id and `name:` are both
+`reproducible-build`. The same act registered that context in
+`REQUIRED_CONTEXTS` and `MUST_RUN_ON_EVERY_PUSH`. The same commands, re-run:
+
+**[OBSERVED 2026-09-13, working tree, before the commit that carries the lane]**
+— `REAL_EXIT=0` for every command:
+
+- `Q238` is **`[ ]`** at `TODO.md:951`, and `Q265` is **`[ ]`** at `:952`.
+- `REQUIRED_CONTEXTS` holds **20** names and **1** line of it matches `repro`.
+  An AST read of the same assignment agrees at 20, with the `repro` subset
+  `['reproducible-build']`. The 2026-09-12 reading above (19 and `0`) is this
+  arm's negative control.
+- `grep -rn 'repro' .github/workflows/` prints **19** lines, and **4 are not
+  comments**: `reproducible-build.yml:41` (the workflow `name:`), `:65` (the job
+  id), `:66` (the job `name:`, which is the context) and `:87` (the `run:` of
+  `reproducible-build.sh --compare`).
+- The `check-runs` read at the head of this step, against `main` at `ef5f6d9`,
+  prints **nothing**. That is a measurement, not a selector that cannot match:
+  the same `--jq` over a synthetic document holding a `reproducible-build` run
+  prints `reproducible-build success`, and over one without it prints nothing.
+
+So this is **still branch 2**, for the one reason left: the context exists and
+has **never reported**. The comparison has never executed on a hosted runner
+(D168 §1.4). A check run NAMED `reproducible-build` can only come from a push
+or a pull request carrying this workflow — a `pages` dispatch executes the same
+comparison but reports it under `publish` — so the first report needs a
+consented push, and `Q238` stays open for exactly that run. Arming stays
+`Q265`'s, after that context is green on `main` (C2), and a payload regenerated
+from `REQUIRED_CONTEXTS` now carries **20** contexts: C2 has it.
+
 **Do not arm on the strength of an expectation.** C2's prohibition stands for
 the case where nothing has reported. What D164 §2 R2 removed is the *reason*
 that prohibition was being read as permanent: the claim that a never-green
@@ -4451,6 +4530,107 @@ awk '/^jobs:/{j=1;next} j && /^  [a-z0-9-]+:$/{gsub(/[ :]/,"");print}' \
 
 **[OBSERVED 2026-08-19]** — `15`, `REAL_EXIT=0`. Every hand-maintained context
 list in this file has gone stale at least once; that is the whole of Q56.
+
+**[UPDATED 2026-09-13 by D168 §2 R1 — the payload is 20 contexts, and it is
+regenerated from `REQUIRED_CONTEXTS`, never from a job count.]** The job-id
+count above counts `ci.yml` alone, and `ci.yml` has not produced the whole set
+since D138: the 20 required contexts come from **four** workflows — `ci.yml`
+(15), `ci-always.yml` (2), `cross-os-extended.yml` (2) and, since D168,
+`reproducible-build.yml` (1). Regenerate from the authority instead, with the
+same `sed` range A9 reads, so no Python is needed:
+
+```bash
+sed -n '/^REQUIRED_CONTEXTS = {/,/^}/p' scripts/check-ci-paths.py |
+  grep -oE '"[a-z0-9-]+"' |
+  jq -s '{required_status_checks: {strict: true, checks: map({context: .})}, enforce_admins: false, required_pull_request_reviews: null, restrictions: null}'
+```
+
+**[OBSERVED 2026-09-13, jq-1.6]** — `REAL_EXIT=0` for all three stages; **20**
+checks, in the set's source order, set-equal to `REQUIRED_CONTEXTS` (asserted
+against the constant, not counted by eye); output `sha256`
+`2e98a94cdbbc463bbccf9d963071be6931975f45905c3f78cd81463ff07a495c`. **This block
+is a dated observation: regenerate at the moment of arming and compare digests —
+never paste it.**
+
+```json
+{
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      {
+        "context": "fmt"
+      },
+      {
+        "context": "clippy"
+      },
+      {
+        "context": "test"
+      },
+      {
+        "context": "wasm32-core"
+      },
+      {
+        "context": "wasm32-core-tests"
+      },
+      {
+        "context": "core-dep-graph"
+      },
+      {
+        "context": "cross-os-linux"
+      },
+      {
+        "context": "cross-os-macos"
+      },
+      {
+        "context": "cross-os-windows"
+      },
+      {
+        "context": "golden-vectors"
+      },
+      {
+        "context": "cross-check"
+      },
+      {
+        "context": "vector-freeze"
+      },
+      {
+        "context": "format-freeze"
+      },
+      {
+        "context": "wasm-bitmatch"
+      },
+      {
+        "context": "tamper-matrix"
+      },
+      {
+        "context": "fuzz-smoke"
+      },
+      {
+        "context": "audit-deny"
+      },
+      {
+        "context": "secret-guard"
+      },
+      {
+        "context": "traceability"
+      },
+      {
+        "context": "reproducible-build"
+      }
+    ]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": null,
+  "restrictions": null
+}
+```
+
+What regenerating does **not** settle: this is the classic branch-protection
+body the 2026-07-28 chapter prescribed, and whether classic protection or a
+ruleset is used is `Q265`'s first clause — a ruleset takes a different body and
+has no implicit admin bypass (D168 §4). The prohibition above is unchanged:
+`reproducible-build` has never reported, so none of this is applied until A9
+reads branch 1.
 
 ### C3 — AFTER. D61 §9's condition (a) now holds in fact
 

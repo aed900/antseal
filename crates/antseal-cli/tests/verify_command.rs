@@ -28,24 +28,35 @@ use std::process::Stdio;
 
 use antseal_anchor::arbitrum::endpoints::expected_chain_id;
 use antseal_anchor::testing::stub::{StubMatch, StubReply, StubScript, StubServer};
+use antseal_cli::backend::degrade;
 use antseal_cli::error::ErrorClass;
 use antseal_cli::machine::ENVELOPE_VERSION;
-use antseal_cli::verify_host::CollectedInputs;
+use antseal_cli::verify_host::{CollectedInputs, run_verify_live};
 use antseal_cli::verify_out::{VerifyRun, run_verify};
 use antseal_core::anchor::model::{OnlineBlockResult, OnlineEvidence, ReceiptConfirmation};
 use antseal_core::anchor::testing::ots_writer::{FETCH_DATE, bitcoin, container, header_with};
 use antseal_core::bundle::schema::{OpaqueBytes, OtsAnchor, OtsUpgrade};
 use antseal_core::bundle::{AnchorStatus, BundleV1, SealProof, encode_bundle};
+use antseal_core::crypto::unit_aead::Nonce24 as AeadNonce;
 use antseal_core::manifest::anchor_digest;
-use antseal_core::test_util::bundle_fixtures::{Selection, Tweak, build, build_tweaked, shapes};
+use antseal_core::test_util::bundle_fixtures::{
+    Selection, StorageAddresses, Tweak, build, build_tweaked, shapes,
+};
 use antseal_core::verify::REPORT_VERSION;
 use antseal_core::verify::orchestration::{
-    FetchFailureClass, LiveBlobOutcome, LiveBlobRow, LiveInputs, OnlineInputs, VerifyModes,
+    FetchFailureClass, LiveBlobOutcome, LiveBlobRow, LiveInputs, LiveLayerVerdict, OnlineInputs,
+    VerifyModes,
 };
 use antseal_core::verify::overlay::{BlockProbe, ProbeEndpoints, ProbeLog, ReceiptProbe};
+use antseal_core::verify::storage_linkage::{
+    ManifestLinkageSubject, recompute_manifest_storage_blob,
+};
 use antseal_core::verify::{VerifyOptions, wording};
-use antseal_net::NetworkId;
-use antseal_net::test_util::{Fault, MockBackend, block_on};
+use antseal_net::test_util::{Fault, Method, MockBackend, block_on};
+use antseal_net::{
+    Address, BalanceReport, Blob, CostQuote, NetworkId, PaymentReceipt, StorageBackend,
+    StorageError,
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // fixtures — real bundles, built the way R21's own suite builds them
@@ -496,6 +507,368 @@ fn a_live_check_with_no_reachable_network_is_inconclusive_and_moves_nothing() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// D170 §2 R6 — `--live` verifies before it collects
+// ─────────────────────────────────────────────────────────────────────
+
+/// R6's three-file work with **real** S4 addresses throughout, so a network
+/// seeded with the bundle's own blobs holds every subject `--live` asks about.
+fn linked_bundle() -> Vec<u8> {
+    build(
+        &shapes::multi_file().with_storage_addresses(StorageAddresses::Real),
+        &Selection::all(3),
+    )
+    .bytes
+}
+
+/// Seed `mock` with every blob `collect_live` will ask for — each embedded
+/// unit ciphertext and the encrypted-manifest blob — and return how many.
+///
+/// The manifest blob is recomputed through R81's public door and asserted to
+/// land at the address the signed storage record claims, so the seeding is
+/// read back rather than trusted.
+fn seed_every_blob(mock: &MockBackend, bundle: &BundleV1<'_>) -> u64 {
+    let mut seeded = 0u64;
+    for ciphertext in bundle
+        .covered_reveals()
+        .iter()
+        .map(|reveal| reveal.ciphertext().as_slice())
+        .chain(
+            bundle
+                .noncovered_reveals()
+                .iter()
+                .map(|reveal| reveal.ciphertext().as_slice()),
+        )
+    {
+        let address = mock.preload_third_party(ciphertext);
+        assert_eq!(
+            mock.stored(address).as_deref(),
+            Some(ciphertext),
+            "the seeded unit is served back"
+        );
+        seeded += 1;
+    }
+    let record = bundle.storage_record();
+    let nonce = AeadNonce::from_bytes(*record.nonce().as_bytes());
+    let blob = recompute_manifest_storage_blob(&ManifestLinkageSubject {
+        manifest_bytes: bundle.manifest_bytes(),
+        nonce: &nonce,
+        k_m: record.k_m(),
+        recorded_address: record.address(),
+    })
+    .expect("a fixture manifest is far below the AEAD's P_MAX");
+    assert_eq!(
+        mock.preload_third_party(&blob),
+        Address::from(*record.address()),
+        "the manifest blob lands at the address the storage record claims"
+    );
+    seeded + 1
+}
+
+/// `MockBackend` behind an `Arc`, so a row can read its call log after the
+/// backend it wraps has been handed to `run_verify_live` and dropped there.
+struct SharedMock(std::sync::Arc<MockBackend>);
+
+impl StorageBackend for SharedMock {
+    async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+        self.0.quote_batch(blobs).await
+    }
+
+    async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+        self.0.pay(quote).await
+    }
+
+    async fn finalize_batch(
+        &self,
+        receipt: &PaymentReceipt,
+        blobs: &[Blob],
+    ) -> Result<Vec<Address>, StorageError> {
+        self.0.finalize_batch(receipt, blobs).await
+    }
+
+    async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+        self.0.get_data(address).await
+    }
+
+    async fn balances(&self) -> Result<BalanceReport, StorageError> {
+        self.0.balances().await
+    }
+}
+
+/// **D170 §2 R6 — the order.** `--live` over a bundle that fails offline
+/// verification exits with that failure's own class (40) and message, and the
+/// network is **never connected to**, let alone fetched from.
+///
+/// The zero is made to mean something twice over: the tampered bundle still
+/// decodes and still embeds ciphertexts, so a composition that connected and
+/// collected first would have reached the network; and the same composition
+/// over its untampered twin is watched connecting and fetching.
+#[test]
+fn live_over_a_tampered_bundle_is_rejected_at_forty_with_zero_fetches() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let bytes = tampered_bundle();
+    let decoded = BundleV1::decode(&bytes).expect("the tampered bundle still decodes");
+    assert!(
+        !decoded.covered_reveals().is_empty(),
+        "and still embeds ciphertexts, so a composition that collected first would reach the \
+         network"
+    );
+
+    let network = std::sync::Arc::new(MockBackend::new());
+    let connected = AtomicBool::new(false);
+    let error = match block_on(run_verify_live(
+        &bytes,
+        &options(),
+        VerifyModes::OFFLINE,
+        CollectedInputs::none(),
+        async {
+            connected.store(true, Ordering::SeqCst);
+            SharedMock(std::sync::Arc::clone(&network))
+        },
+    )) {
+        Ok(_) => panic!("a tampered bundle must not verify under --live"),
+        Err(error) => error,
+    };
+    assert_eq!(error.class(), ErrorClass::VerifyBundleRejected);
+    assert_eq!(error.exit_code(), 40);
+    let offline = match run_verify(
+        &bytes,
+        &options(),
+        VerifyModes::OFFLINE,
+        &CollectedInputs::none(),
+    ) {
+        Ok(_) => panic!("the tampered bundle must not verify offline either"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.to_string(),
+        offline.to_string(),
+        "--live rejects with exactly the offline rejection"
+    );
+    assert_eq!(
+        network.calls(Method::GetData),
+        0,
+        "`--live` fetched {} blob(s) for a bundle that failed verification — collection must \
+         run after offline verification passes, never before (D170 §2 R6)",
+        network.calls(Method::GetData)
+    );
+    assert!(
+        !connected.load(Ordering::SeqCst),
+        "`--live` connected to the network for a bundle that failed verification — the \
+         connection must be made only after offline verification passes (D170 §2 R6)"
+    );
+    assert!(
+        network.call_log().is_empty(),
+        "no seam call of any kind: {:?}",
+        network.call_log()
+    );
+
+    // POSITIVE CONTROL: the composition connects and fetches when the bundle
+    // verifies.
+    let control = std::sync::Arc::new(MockBackend::new());
+    let control_connected = AtomicBool::new(false);
+    let _run = block_on(run_verify_live(
+        &unanchored_bundle(),
+        &options(),
+        VerifyModes::OFFLINE,
+        CollectedInputs::none(),
+        async {
+            control_connected.store(true, Ordering::SeqCst);
+            SharedMock(std::sync::Arc::clone(&control))
+        },
+    ))
+    .expect("the untampered twin verifies under --live");
+    assert!(
+        control_connected.load(Ordering::SeqCst) && control.calls(Method::GetData) > 0,
+        "CONTROL: the same composition over a verifying bundle must connect and fetch, or the \
+         zeros above are a composition that never reaches the network rather than an order"
+    );
+}
+
+/// **D170 §2 R6 — the composition.** Over a network that holds every blob,
+/// the live section is attached and reports every subject persisted, while
+/// the exit code and the report bytes are exactly the offline run's.
+#[test]
+fn live_over_a_network_holding_every_blob_reports_persisted_and_moves_nothing() {
+    let bytes = linked_bundle();
+    let bundle = BundleV1::decode(&bytes).expect("the fixture decodes");
+    let network = std::sync::Arc::new(MockBackend::new());
+    let seeded = seed_every_blob(&network, &bundle);
+    assert!(
+        seeded >= 3,
+        "several subjects, or all-persisted says little: {seeded}"
+    );
+
+    let run = block_on(run_verify_live(
+        &bytes,
+        &options(),
+        VerifyModes::OFFLINE,
+        CollectedInputs::none(),
+        async { SharedMock(std::sync::Arc::clone(&network)) },
+    ))
+    .expect("the linked fixture verifies under --live");
+
+    let section = run
+        .outcome()
+        .live()
+        .expect("--live attaches a live section");
+    assert_eq!(
+        section.verdict,
+        LiveLayerVerdict::AllPersisted,
+        "the collected rows reached the run: {:?}",
+        section.counts
+    );
+    assert_eq!(section.counts.checked, seeded, "{:?}", section.counts);
+    assert_eq!(section.counts.identical, seeded, "{:?}", section.counts);
+    assert!(
+        run.render()
+            .iter()
+            .any(|line| line.contains(&wording::live_all_persisted_line(seeded))),
+        "the rendered storage layer says so: {:#?}",
+        run.render()
+    );
+
+    let offline = verify_offline_run(&bytes);
+    assert_eq!(
+        run.exit_code(),
+        offline.exit_code(),
+        "the live layer moved the exit code"
+    );
+    assert_eq!(
+        run.outcome().report_bytes(),
+        offline.outcome().report_bytes(),
+        "the live layer moved the evidence layer's bytes"
+    );
+    assert_eq!(
+        network.calls(Method::GetData) as u64,
+        seeded,
+        "one fetch per subject"
+    );
+}
+
+/// **D170 §2 R2 with R6 — an unreachable network.** In both shapes it takes
+/// at the seam, `verify --live` renders its offline verdict in full, reports
+/// the live section *Inconclusive* with every row a fetch failure, and exits
+/// with the evidence verdict's code — 43 for this unanchored work, never the
+/// network class's 23:
+///
+/// - **connect-failed** — the connection attempt fails and `degrade` hands
+///   over the unreachable backend, so the (reachable) network below is never
+///   asked;
+/// - **every-fetch-fails** — the connection succeeds and every fetch fails in
+///   the network class, which is what ant-core 0.5.0 does for a dead or empty
+///   bootstrap (measured on a live devnet 2026-09-13; the adapter reports it
+///   in the network class rather than as absence). That arm runs over a
+///   network that **holds** every blob, armed with one fault per subject, so a
+///   fetch that escaped its fault would be served and would move the verdict.
+#[test]
+fn live_over_an_unreachable_network_is_inconclusive_and_exits_with_the_evidence_verdict() {
+    let bytes = linked_bundle();
+    let bundle = BundleV1::decode(&bytes).expect("the fixture decodes");
+    let offline = verify_offline_run(&bytes);
+    let network = std::sync::Arc::new(MockBackend::new());
+    let subjects = seed_every_blob(&network, &bundle);
+
+    for shape in ["connect-failed", "every-fetch-fails"] {
+        let before = network.calls(Method::GetData);
+        let outcome = if shape == "connect-failed" {
+            block_on(run_verify_live(
+                &bytes,
+                &options(),
+                VerifyModes::OFFLINE,
+                CollectedInputs::none(),
+                async {
+                    degrade(
+                        "verify",
+                        Err::<SharedMock, _>(StorageError::Network {
+                            reason: "fixture: no bootstrap peer answered".to_owned(),
+                        }),
+                    )
+                },
+            ))
+        } else {
+            for _ in 0..subjects {
+                network.arm_fault(Fault::NetworkOn(Method::GetData));
+            }
+            block_on(run_verify_live(
+                &bytes,
+                &options(),
+                VerifyModes::OFFLINE,
+                CollectedInputs::none(),
+                async { degrade("verify", Ok(SharedMock(std::sync::Arc::clone(&network)))) },
+            ))
+        };
+        let run = match outcome {
+            Ok(run) => run,
+            Err(error) => panic!(
+                "{shape}: an unreachable network must not end `verify --live` (D170 §2 R2): it \
+                 returned `{}` (exit {}): {error}",
+                error.class().name(),
+                error.exit_code()
+            ),
+        };
+
+        assert_eq!(
+            run.exit_code(),
+            43,
+            "{shape}: the unanchored work's evidence verdict"
+        );
+        assert_ne!(run.exit_code(), 23, "{shape}: never the network class");
+        assert_eq!(run.exit_code(), offline.exit_code(), "{shape}");
+        assert_eq!(
+            run.outcome().report_bytes(),
+            offline.outcome().report_bytes(),
+            "{shape}: the offline report bytes, unchanged"
+        );
+
+        let section = run
+            .outcome()
+            .live()
+            .expect("--live attaches a live section");
+        assert_eq!(
+            section.verdict,
+            LiveLayerVerdict::Inconclusive,
+            "{shape}: {:?}",
+            section.counts
+        );
+        assert_eq!(
+            section.counts.checked, subjects,
+            "{shape}: {:?}",
+            section.counts
+        );
+        assert_eq!(
+            section.counts.fetch_failed, section.counts.checked,
+            "{shape}: every row is a fetch failure, and none is a negative answer: {:?}",
+            section.counts
+        );
+        let reached_network = network.calls(Method::GetData) - before;
+        if shape == "connect-failed" {
+            assert_eq!(
+                reached_network, 0,
+                "{shape}: the degraded backend fails every fetch itself; nothing reaches a network"
+            );
+        } else {
+            assert_eq!(
+                network.armed_faults(),
+                0,
+                "{shape}: every armed fault fired"
+            );
+            assert_eq!(
+                reached_network as u64, subjects,
+                "{shape}: every subject was asked of the network exactly once"
+            );
+        }
+        assert!(
+            run.render()
+                .iter()
+                .any(|line| line.contains(&wording::live_inconclusive_line(subjects))),
+            "{shape}: the rendered storage layer says inconclusive: {:#?}",
+            run.render()
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // D65 — the `--json` document
 // ─────────────────────────────────────────────────────────────────────
 
@@ -847,11 +1220,12 @@ fn verify_runs_on_a_vault_less_machine_without_prompting() {
 /// 2. **`verify`'s own handler body is zero.** Counted over the body
 ///    extracted from `commands.rs` by brace-matching, for every device
 ///    primitive **and** every in-crate seam. This has to be body-level and
-///    not file-level: `commands.rs` calls the passphrase collector eight
-///    times: seven handlers plus the definition. The file `verify` lives in
-///    is one of the most prompt-dense in the crate.
+///    not file-level: `commands.rs` names the passphrase collector nine
+///    times: eight handler bodies plus the definition (`restore`'s
+///    `ant-backend` arm became the eighth with D170). The file `verify`
+///    lives in is one of the most prompt-dense in the crate.
 /// 3. **The handlers that do collect a secret are an enumerated set of
-///    seven, and `verify` is not among them** — with an *accounting*
+///    eight, and `verify` is not among them** — with an *accounting*
 ///    identity (`file total == sum over spans + definition lines`) that
 ///    reddens if the span extractor ever stops seeing a function, rather
 ///    than silently reporting zero for a body it failed to find.
@@ -1018,10 +1392,18 @@ fn verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan() {
 
     /// The `crate::…` modules `verify`'s body names — the closed one-hop
     /// reach. Each is pinned at zero primitives and zero seams below.
+    ///
+    /// **D170 wired `--live` without widening this set.** The feature build's
+    /// network resolution, runtime and wallet-less reader are all reached
+    /// through `backend`, deliberately: `seal`'s network resolver lives in
+    /// `devnet_env`, and naming that here would have put a module on the reach
+    /// list that nothing had ever pinned at zero.
     const REACH_MODULES: [(&str, &str); 4] = [
         (
             "backend",
-            "U36's storage-backend seam; `--live` refuses here",
+            "U36's storage-backend seam: `--live` refuses here in a build with no backend, and \
+             in a build with one resolves its network and connects the wallet-less reader here \
+             (D170)",
         ),
         ("config", "the config file, for `--online` endpoints only"),
         (
@@ -1041,8 +1423,13 @@ fn verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan() {
     /// The handlers in `commands.rs` that **do** reach a prompt. `verify` is
     /// not one, and this is the list that says so by exhaustion rather than
     /// by absence of three English words.
-    const PROMPTING_HANDLERS: [(&str, &str); 7] = [
+    const PROMPTING_HANDLERS: [(&str, &str); 8] = [
         ("list", "opens the vault to resolve work ids"),
+        (
+            "restore",
+            "the `ant-backend` arm (D170): opens the vault for the work's key, paths and \
+             recorded network; the arm with no backend refuses before it and prompts for nothing",
+        ),
         (
             "reveal",
             "opens the vault, then asks U29's consent question",
@@ -1394,6 +1781,14 @@ fn verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan() {
         "both `#[cfg]` arms of `seal_over_backend` must be seen, or the extractor is \
          skipping definitions"
     );
+    // D170: `restore` is the second handler split per build, and the one whose
+    // arms disagree about prompting — so an extractor that saw only one of
+    // them would classify it by whichever it happened to find.
+    assert_eq!(
+        spans_named(&spans, "restore").len(),
+        2,
+        "both `#[cfg]` arms of `restore` must be seen: one prompts and one does not"
+    );
     let control = spans_named(&spans, CONTROL_HANDLER);
     assert_eq!(control.len(), 1, "one `fn {CONTROL_HANDLER}`");
     let (_, control_open, control_close) = control[0];
@@ -1667,6 +2062,10 @@ fn the_two_advisory_modes_are_off_by_default() {
 /// `--live` in a build with no storage backend refuses at the U36 seam, in
 /// the transient network class (23), **before** verification — D69 §3 R6's
 /// one carve-out, and a process outcome rather than a verdict.
+///
+/// Its twins for a build **with** a backend are the two
+/// `live_in_a_build_with_a_backend_…` rows below: that build never produces
+/// this refusal (D170 §2 R2).
 #[cfg(not(feature = "ant-backend"))]
 #[test]
 fn live_without_a_compiled_backend_refuses_at_the_seam() {
@@ -1693,6 +2092,226 @@ fn live_without_a_compiled_backend_refuses_at_the_seam() {
         message.contains("verify"),
         "the refusal names the command: {message}"
     );
+}
+
+/// `connect_read_only`'s one trace, emitted inside its future — so only when
+/// a connection is actually attempted, which is what lets a process-level row
+/// tell *never connected* from *connected and failed*.
+#[cfg(feature = "ant-backend")]
+const READER_CONNECT_TRACE: &str = "connecting the read-only reader";
+
+/// A devnet definition that reaches **nothing**: its one bootstrap peer is a
+/// loopback UDP port bound and released a moment ago, its payment RPC a
+/// loopback TCP port likewise — D170 §2 R7's negative-control shape with no
+/// devnet anywhere. `restore_output.rs` carries the same helper for the same
+/// reason; `common` is not this lane's to widen.
+///
+/// NON-SECRET: no key line (a walletless export), and Anvil's well-known
+/// deterministic contract addresses.
+#[cfg(feature = "ant-backend")]
+fn dead_devnet_export(dir: &TestDir) -> PathBuf {
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a loopback probe socket");
+    let bootstrap = udp.local_addr().expect("the probe's address");
+    drop(udp);
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback probe listener");
+    let rpc_port = tcp.local_addr().expect("the probe's address").port();
+    drop(tcp);
+    let text = format!(
+        "# antseal devnet environment: a dead one, for a negative control\n\
+         ANTSEAL_DEVNET_RPC_URL='http://127.0.0.1:{rpc_port}/'\n\
+         ANTSEAL_DEVNET_CHAIN_ID='31337'\n\
+         ANTSEAL_DEVNET_TOKEN_ADDRESS='0x5FbDB2315678afecb367f032d93F642f64180aa3'\n\
+         ANTSEAL_DEVNET_PAYMENT_VAULT_ADDRESS='0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'\n\
+         ANTSEAL_DEVNET_BOOTSTRAP='{bootstrap}'\n\
+         ANTSEAL_DEVNET_NODE_COUNT='1'\n\
+         ANTSEAL_DEVNET_BASE_PORT='{port}'\n\
+         ANTSEAL_DEVNET_DATA_DIR='{data}'\n\
+         ANTSEAL_DEVNET_PID='{pid}'\n",
+        port = bootstrap.port(),
+        data = dir.path().display(),
+        pid = std::process::id(),
+    );
+    let path = dir.path().join("dead-devnet.env");
+    std::fs::write(&path, text).expect("write the dead devnet export");
+    path
+}
+
+/// [`run_binary`], with the devnet definition this invocation may see
+/// (`None` strips any the developer's shell exported) and the backend's
+/// debug trace switched on.
+#[cfg(feature = "ant-backend")]
+fn run_live_binary(
+    dir: &TestDir,
+    args: &[&str],
+    devnet_env: Option<&Path>,
+) -> std::process::Output {
+    let mut command = spawn::antseal();
+    command
+        .args(args)
+        .env("ANTSEAL_DIR", dir.path().join("no-vault-here"))
+        .env("RUST_LOG", "antseal_cli::backend=debug")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match devnet_env {
+        Some(path) => {
+            command.env("ANTSEAL_DEVNET_ENV", path);
+        }
+        None => {
+            command.env_remove("ANTSEAL_DEVNET_ENV");
+        }
+    }
+    command.output().expect("spawn antseal")
+}
+
+/// **D170 §2 R2/R6 through the binary, in a build with a backend.** Over a
+/// network nothing answers on:
+///
+/// - a **tampered** bundle exits with its own rejection (40) and the network
+///   is **never connected to** — the reader's connect trace is absent, because
+///   the connection is a lazy future awaited only after offline verification
+///   passes;
+/// - an **unanchored** bundle — the positive control, same network, same argv
+///   shape — connects, renders its offline verdict in full with an
+///   *Inconclusive* live section whose every row is a fetch failure, and exits
+///   with the **evidence** verdict's code, 43, never the network class's 23;
+///   and the canonical report bytes reach stdout exactly as an offline run
+///   produces them.
+///
+/// The connect trace is what makes the tampered run's absence mean something:
+/// the control shows the same process emitting it once a bundle verifies.
+#[cfg(feature = "ant-backend")]
+#[test]
+fn live_in_a_build_with_a_backend_verifies_first_and_never_moves_the_exit_code() {
+    let dir = TestDir::new("live-backend-dead-peer");
+    let dead = dead_devnet_export(&dir);
+
+    // ── a tampered bundle: 40, and no connection ────────────────────────
+    let tampered = write_bundle(&dir, "t.sealproof", &tampered_bundle());
+    let out = run_live_binary(
+        &dir,
+        &[
+            "--json",
+            "--network",
+            "devnet",
+            "verify",
+            tampered.to_str().expect("utf-8"),
+            "--live",
+        ],
+        Some(&dead),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(40), "stderr:\n{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!(document["error"]["class"], "verify-bundle-rejected");
+    assert!(
+        !stderr.contains(READER_CONNECT_TRACE),
+        "`--live` connected for a bundle that failed offline verification — the connection \
+         must be awaited only after verification passes (D170 §2 R6). stderr:\n{stderr}"
+    );
+
+    // ── the control: an unanchored bundle connects and moves nothing ─────
+    let bytes = unanchored_bundle();
+    let offline = verify_offline_run(&bytes);
+    let path = write_bundle(&dir, "b.sealproof", &bytes);
+    let out = run_live_binary(
+        &dir,
+        &[
+            "--json",
+            "--network",
+            "devnet",
+            "verify",
+            path.to_str().expect("utf-8"),
+            "--live",
+        ],
+        Some(&dead),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(
+        out.status.code(),
+        Some(i32::from(offline.exit_code())),
+        "the evidence verdict's code, never the network class's. stderr:\n{stderr}"
+    );
+    assert_eq!(out.status.code(), Some(43), "the UNANCHORED rung");
+    assert!(
+        stderr.contains(READER_CONNECT_TRACE),
+        "CONTROL: a bundle that verifies must connect, or the absence above proves nothing. \
+         stderr:\n{stderr}"
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!(
+        document["ok"], true,
+        "a result document, never a refusal: {document}"
+    );
+    assert!(document.get("error").is_none(), "{document}");
+    assert_eq!(document["result"]["verdict"]["exit_code"], 43);
+    let live = &document["result"]["live"];
+    assert_eq!(
+        live["verdict"], "inconclusive",
+        "a network nothing answers on is Inconclusive: {live}"
+    );
+    let checked = live["counts"]["checked"].as_u64().expect("a count");
+    assert!(
+        checked >= 2,
+        "the units and the manifest were all asked about: {live}"
+    );
+    assert_eq!(
+        live["counts"]["fetch_failed"], checked,
+        "every row is a fetch failure — none is a negative answer about the network: {live}"
+    );
+    let canonical = offline.outcome().report_bytes().to_vec();
+    assert!(
+        out.stdout.windows(canonical.len()).any(|w| w == canonical),
+        "the offline report bytes reach stdout unchanged"
+    );
+}
+
+/// **D170 §2 R6's first clause through the binary**: in a build with a
+/// backend, `--live --network devnet` with no devnet definition in sight is a
+/// **usage error (2) before verification** — `--online`'s precedent. The
+/// bundle is a tampered one, so a handler that verified first would have
+/// answered 40; the control without `--live` shows that it does.
+#[cfg(feature = "ant-backend")]
+#[test]
+fn live_in_a_build_with_a_backend_and_no_devnet_definition_is_a_usage_error_first() {
+    let dir = TestDir::new("live-backend-no-devnet");
+    let tampered = write_bundle(&dir, "t.sealproof", &tampered_bundle());
+    let path = tampered.to_str().expect("utf-8");
+
+    let out = run_live_binary(
+        &dir,
+        &["--json", "--network", "devnet", "verify", path, "--live"],
+        None,
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!(document["error"]["class"], "usage");
+    let message = document["error"]["message"].as_str().expect("a message");
+    assert!(
+        message.contains("ANTSEAL_DEVNET_ENV"),
+        "the refusal says what is missing: {message}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains(READER_CONNECT_TRACE),
+        "and nothing was connected"
+    );
+
+    // CONTROL: the same bundle without `--live` is its own rejection, so the
+    // 2 above came first rather than instead.
+    let control = run_live_binary(
+        &dir,
+        &["--json", "--network", "devnet", "verify", path],
+        None,
+    );
+    assert_eq!(control.status.code(), Some(40));
 }
 
 // ─────────────────────────────────────────────────────────────────────

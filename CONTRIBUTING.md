@@ -203,8 +203,8 @@ The heavy paths are **moved, not dropped**:
 | Tier | What | When | Cost |
 | --- | --- | --- | --- |
 | 1 | `--workspace` with every **light** feature (`GATE_LIGHT_FEATURES` in `local-gate.sh`) | always | minutes |
-| 2 | each **heavy** feature path per package: `antseal-net --features ant-backend`, `antseal-cli --features ant-backend`, `devnet-launcher --features devnet` (clippy + tests) | when a storage-touching path changed — the same list as the devnet E2E gate below | tens of minutes |
-| 3 | the devnet E2E gate (`scripts/e2e-devnet.sh`) | same trigger | tens of minutes + a booted devnet |
+| 2 | each **heavy** feature path per package: `antseal-net --features ant-backend`, `antseal-cli --features ant-backend`, `devnet-launcher --features devnet` (clippy + tests) | when a storage-touching path changed, or `crates/antseal-cli/src/commands.rs` did. **[CORRECTED 2026-09-13, D170 §2 R11]** This cell said *the same list as the devnet E2E gate below*; tier 2's trigger is that list plus `commands.rs`, which carries `ant-backend`-gated code and is not a devnet trigger | tens of minutes |
+| 3 | the devnet E2E gate (`scripts/e2e-devnet.sh`) | when a storage-touching path changed — the list under "Devnet E2E gate" below, which is tier 2's trigger minus `commands.rs`. **[CORRECTED 2026-09-13, D170 §2 R11]** This cell said *same trigger* | tens of minutes + a booted devnet |
 
 Tier 2 is decided from the diff against `main`, not from memory:
 `scripts/gate-features.sh --needs-heavy`. Force it with
@@ -279,20 +279,32 @@ The M1 storage E2E does **not** run as a per-PR CI job. Decision
 | Venue | What | Enforcement |
 | --- | --- | --- |
 | `./scripts/e2e-devnet.sh` | **Required local gate** before merging a storage-touching change. Boots the P16 devnet ([docs/devnet/local-devnet.md](docs/devnet/local-devnet.md)), runs the registered suites, captures node + Anvil logs (redacted) and writes a dated evidence line under `target/e2e-devnet/`. | Convention + recorded evidence, on the Q14 format-freeze model |
-| `devnet-e2e-cron` | **Scheduled, non-required** hosted job (weekly + `workflow_dispatch`), **same node count as local (14)** and same script bytes — and, **since Q243 (2026-08-18), the same INVOCATION too**: `--self-test`, then the lane, then `--scan-evidence`, whose result gates the artifact upload. Before that the remote ran the script bare, so the bytes matched and the invocation did not. | Never a PR status context; the required-context set stays at 19 |
+| `devnet-e2e-cron` | **Scheduled, non-required** hosted job (weekly + `workflow_dispatch`), **same node count as local (14)** and same script bytes — and, **since Q243 (2026-08-18), the same INVOCATION too**: `--self-test`, then the lane, then `--scan-evidence`, whose result gates the artifact upload. Before that the remote ran the script bare, so the bytes matched and the invocation did not. | Never a PR status context, and not in the required-context set |
 
 **A change is storage-touching — and the gate is mandatory — when it touches
 any of:**
 
 - `crates/antseal-net/**` (the adapter, EVM half, quote/receipt/live paths);
-- `crates/antseal-cli/src/pipeline/**` (seal, journal, resume, consent) or
+- `crates/antseal-cli/src/backend.rs` (the tokio runtime and the `SealBackend`
+  seam, all behind the non-default `ant-backend` feature),
+  `crates/antseal-cli/src/pipeline/**` (seal, journal, resume, consent) or
   `crates/antseal-cli/src/vault/wallet.rs`;
 - `crates/devnet-launcher/**`, `scripts/devnet/**`, or
   `scripts/e2e-devnet.sh` itself (a change to the gate is a change the gate
   must survive);
-- any pin move in the upstream payment stack — `ant-core`, `ant-protocol`,
-  `alloy`, `evmlib` (dependency-policy §4 already lists "devnet E2E for
-  ant-core" in the bump checklist).
+- any `Cargo.toml` or `Cargo.lock` — every manifest in the tree, not only the
+  root's, because the trigger matches that file name anywhere in a path. This
+  contains, and is wider than, any pin move in the upstream payment stack —
+  `ant-core`, `ant-protocol`, `alloy`, `evmlib` (dependency-policy §4 already
+  lists "devnet E2E for ant-core" in the bump checklist).
+
+This is `scripts/gate-features.sh`'s `HEAVY_TRIGGER_PATHS` minus **one** entry,
+`crates/antseal-cli/src/commands.rs` (D170 §2 R11). Tier 2 compiles on a change
+to it, because it carries `ant-backend`-gated code; it is not on this list,
+because the standing question — can anything in this diff reach the storage
+subject? — already decides whether such a change needs the devnet. This list
+may never grow past that one: a path that must run the devnet E2E must also
+compile the feature paths.
 
 Run it, and record the evidence line it prints in the PR/wave record:
 

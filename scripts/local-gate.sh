@@ -10,7 +10,9 @@
 # THIS script does NOT tell you, as of 2026-08-16 (19 required contexts, from
 # 15 jobs in `.github/workflows/ci.yml`, 2 in `ci-always.yml` and 1 two-arm
 # matrix in `cross-os-extended.yml` — D138/Q239 split them; the CONTEXT SET is
-# unchanged at 19 and no job was added or removed):
+# unchanged at 19 and no job was added or removed; [UPDATED 2026-09-13] 20 since
+# D168 §2 R1 added a fourth producer, `reproducible-build.yml`, whose one job is
+# the `reproducible-build` entry below):
 #
 #   cross-os-macos, cross-os-windows  no such host exists here. The Linux leg
 #                                     is covered in substance by `test`.
@@ -52,6 +54,13 @@
 #                                     ANTSEAL_GATE_BITMATCH (Q128). Its
 #                                     TRIGGER's self-test is unconditional;
 #                                     the lane's own `--self-test` is not.
+#   reproducible-build                [ADDED 2026-09-13, D168 §2 R1] the
+#                                     two-ENVIRONMENT comparison itself —
+#                                     `wasm-pack-build.sh --build-only`, then
+#                                     `reproducible-build.sh --compare`: a
+#                                     second full wasm32 release build, 152 s
+#                                     on this host. This script runs only
+#                                     its `repro-selftest`.
 #   traceability's cargo-free         D124/Q182 asserts that CI's
 #   PROPERTY                          `traceability` job invokes no cargo,
 #                                     rustc or rustup, and the converse for
@@ -77,7 +86,7 @@
 #
 # MOVED TO THE REMOTE AT Q153 (2026-08-10), plus one addition at D124/Q182
 # (2026-08-11) — no new required context; each rides as a step of a job that
-# already exists, so the set stays at 19:
+# already exists, so the set stays at 19 [20 since D168 §2 R1]:
 #
 #   gate-features --self-test        now ALSO a step of CI's `core-dep-graph`
 #   gate-features --check-partition  job, not `traceability` as Q153's row
@@ -192,6 +201,14 @@
 #                                    by hand: `reproducible-build.sh
 #                                    --compare`, and `--plant-commit` for the
 #                                    expensive planted regression.
+#                                    [CORRECTED 2026-09-13: D168 §2 R1 raised
+#                                    the comparison to the required PUSH
+#                                    context `reproducible-build`, in its own
+#                                    workflow, and its `--compare` runs this
+#                                    self-test first. Built locally and NOT
+#                                    YET WITNESSED on a hosted runner; the
+#                                    deploy gate stays (D168 §2 R3). This
+#                                    script still runs only the self-test.]
 #
 #   PROPTEST_CASES                   ci.yml:152 sets 1024 on the `test` job;
 #                                    this script sets nothing, so the `test`
@@ -449,7 +466,7 @@ run ci-lanes   scripts/ci-lanes.sh --self-test
 #
 # In CI it rides as two steps of `ci-always.yml`'s `traceability` job (~19 s
 # today, so this roughly halves again into a job that is already seconds) and
-# adds ZERO required-status contexts — the set stays at 19.
+# adds ZERO required-status contexts — the set stays at 19 [20 since D168 §2 R1].
 run ci-paths-selftest scripts/check-ci-paths.py --self-test
 run ci-paths          scripts/check-ci-paths.py
 
@@ -459,7 +476,7 @@ run ci-paths          scripts/check-ci-paths.py
 # when a pin's 90-day review falls due, and until this pair runs locally it
 # reddens only a hosted run — and no hosted run starts while the Actions
 # allowance is exhausted. Rides ci-always.yml's `traceability` job remotely;
-# adds ZERO required-status contexts, the set stays at 19.
+# adds ZERO required-status contexts, the set stays at 19 [20 since D168 §2 R1].
 run action-pins-selftest scripts/check-action-pins.py --self-test
 run action-pins          scripts/check-action-pins.py
 
@@ -491,9 +508,9 @@ run anchor-net scripts/ci-lanes.sh anchor-net-policy
 # against is a REVIEW-time one: adding a name to scripts/fuzz.sh's TARGETS is
 # a one-line diff that silently multiplies a bill which, when the 2 000-minute
 # GitHub Free allowance runs out, stops EVERY workflow in the repository —
-# including all 19 required contexts. Self-tests first, five arms, one of
-# which asserts the configuration this lane shipped with (4 x 900 s daily,
-# 2 274 min/month) is refused.
+# including all 19 required contexts [20 since D168 §2 R1]. Self-tests first,
+# five arms, one of which asserts the configuration this lane shipped with
+# (4 x 900 s daily, 2 274 min/month) is refused.
 run fuzz-budget scripts/ci-lanes.sh fuzz-budget
 
 # Q66 — the traceability lane, which until 2026-07-31 was the one required
@@ -540,6 +557,32 @@ run package-smoke scripts/ci-lanes.sh package-smoke
 # — owner: a CI lane, timing: with the first green hosted run after
 # Maintainer actions (11).
 run custody-log scripts/ci-lanes.sh custody-log
+
+# D167 §2 R5 (Q247) — the devnet promote trigger's ledger, the second
+# append-only record this gate walks and custody-log's sibling in shape. The
+# evidence for "20 consecutive clean scheduled runs" cannot live in any GitHub
+# store (a public repository retains 90 days; 20 weekly runs span 133), so it
+# lives in docs/testing/devnet-e2e-ledger.tsv, appended at wave close by
+# `check-devnet-ledger.py --append` from read-only GETs — no workflow writes
+# it (D167 §1.5). WHAT THESE TWO LINES ASSERT, with no network: every line a
+# commit ever carried survives unchanged and in order (EDITED), no run attempt
+# is recorded twice (DUPLICATE), every `clean` field matches §2 R4 recomputed
+# (COUNT), every line parses and its runtime arithmetic holds (FORMAT), a
+# commit adds the ledger and the walk pinned at least one comparison (UNBORN;
+# the birth is DERIVED, never pinned — Q261's rewrite lesson), and the clone
+# is not shallow (SHALLOW). The self-test runs first: synthetic repositories in
+# a temporary directory plus recorded API fixtures, every arm red by its own
+# tag. WHAT THEY DO NOT: whether the ledger LAGS the API or the schedule has
+# gone stale — that is `--against-api`, a wave-close ritual step, deliberately
+# never a gate lane (it needs the network and GitHub's answer changes weekly).
+# GREEN ON ARRIVAL means AFTER the commit that adds the ledger: before it the
+# flagless run is red with UNBORN by design (§2 R5: pinned == 0 is a hard
+# error), so the ledger, the script and these two lines land in ONE commit.
+# MEASURED on this 2-core host 2026-09-13 with sibling lanes running, 3 runs:
+# check 0.12/0.09/0.09 s (from a scratch clone carrying the committed ledger),
+# self-test 1.57/1.39/0.91 s. No hosted home: local-only, like custody-log.
+run devnet-ledger-selftest scripts/check-devnet-ledger.py --self-test
+run devnet-ledger          scripts/check-devnet-ledger.py
 
 # Q20 — the positioning-copy lint over product copy (MVP-SPEC.md line 28's
 # rules, the dictated spellings, the one canonical verifier URL, R18's Class V
@@ -792,6 +835,10 @@ browser_lane page-browser --check
 # `scripts/pages-publish.sh --build`, before `configure-pages` (D135 §3 R1).
 # Run it by hand with `scripts/reproducible-build.sh --compare`; the expensive
 # planted regression is `--plant-commit`, local only, zero CI minutes.
+# [CORRECTED 2026-09-13: D168 §2 R1 made the comparison a push-tier check — the
+# required context `reproducible-build`, in `reproducible-build.yml` — built
+# locally and NOT YET WITNESSED on a hosted runner. The deploy gate above stays
+# (D168 §2 R3), and the comparison is still not run here.]
 run repro-selftest scripts/reproducible-build.sh --self-test
 
 exit $fail

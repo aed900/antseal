@@ -1066,7 +1066,14 @@ digests describe bytes a reader on another machine can reproduce. It is a
 anywhere in `.github/workflows/` that performs the two-build byte-identity
 comparison**; the correction is recorded in-tree at
 `docs/instrument-ledger.md:121`. The same is true of the browser assertions
-(`.github/workflows/verifier-page.yml:52`, dispatch-only). What *does* run on
+(`.github/workflows/verifier-page.yml:52`, dispatch-only). **[CORRECTED
+2026-09-13 by D168 §2 R1, for the two-build comparison only — it is raised to a
+required push context. `.github/workflows/reproducible-build.yml` runs
+`--compare` on every push to `main` and every pull request, with no path filter,
+as the status context `reproducible-build`. It is built locally and NOT YET
+WITNESSED on a hosted runner, so until its first hosted run the sentence above
+still describes what has actually executed. The deploy gate stays (D168 §2 R3),
+and the build step it cites is now `pages.yml:85`.]** What *does* run on
 every push and PR is `wasm-bitmatch` (`.github/workflows/ci.yml:590-605`),
 which executes every committed golden vector on native **and** `wasm32` and
 requires the transcripts — report bytes plus recomputed digests — to be

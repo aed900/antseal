@@ -151,7 +151,10 @@ ride there for the same reason. That job's cargo-freeness, which is what makes
 riding there free, is **asserted on every run** by `scripts/cargo-free.sh` and
 stated once in that script's header (D124/Q182); this paragraph cites it
 rather than repeating it. **The required-context set stays at 19 (17 jobs,
-`cross-os` contributing 3).**
+`cross-os` contributing 3).** **[20 since D168 §2 R1 (2026-09-13), which added
+`reproducible-build` in its own workflow; the set now comes from four workflows,
+so regenerate it from `scripts/check-ci-paths.py`'s `REQUIRED_CONTEXTS` rather
+than recounting jobs — `docs/ci-verification.md`, C2.]**
 
 ## 5. Doing a real-endpoint run anyway
 

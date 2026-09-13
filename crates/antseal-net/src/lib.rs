@@ -115,7 +115,7 @@ pub mod test_util;
 
 pub use address::Address;
 #[cfg(feature = "ant-backend")]
-pub use ant_backend::{AntCoreBackend, CaptureHook};
+pub use ant_backend::{AntCoreBackend, AntCoreReader, CaptureHook};
 pub use backend::{
     BalanceReport, PreflightReport, StorageBackend, allowance_to_approve, preflight,
 };
