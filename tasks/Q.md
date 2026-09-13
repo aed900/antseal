@@ -3572,3 +3572,17 @@ Exact line to add to Q65's Accept:
 - Accept:
   - The section exists with each named property stated in user-facing terms and the §2.3 correction dated.
   - The enumeration check reds on the new section's deletion, planted and watched by message.
+
+### Q273 — A test raced the binary's shared vault and turned `main`'s required `ci` red on a documentation-only commit
+- Milestone: M4
+- Size: XS
+- Deps: after Q270 (the precedent: a red `ci` on a public `main` is a row); **before Q265** (arming requires the contexts green on `main`)
+- Spec: Verification / CI (MVP-SPEC.md M4 — hardening); the `common::IsolatedVault` convention in `crates/antseal-cli/tests/common/mod.rs`
+- Discovered by: the hosted `ci` run on the wave-35 witness-record commit, 2026-09-13. Id assigned centrally.
+- Problem: hosted `ci` run `34783405059` on `2194a74` — a commit changing only documentation and the tracker — failed its `test` job (10 steps, runner assigned: a real failure, not a refusal) in `crates/antseal-cli/tests/seal_pipeline.rs::a_kill_after_staging_leaves_a_resumable_work`, panicking with `planned`; the same test passed on `bfdc93e`'s `ci` (15/15) and in the wave's local gate. **Mechanism, measured by reading the fixture**: `with_journal` runs every test in the binary against one process-wide shared vault (`shared_vault()`, a `OnceLock`), and this test finds its killed work by taking the first `Staged` entry of `incomplete_works()` — so on a contended runner a sibling test's seal can be `Staged` at that instant with its plan not yet readable, and the test reads the neighbour's work.
+- Do: give the test a vault of its own (`IsolatedVault`, the fixture the project already documents for tests that cannot share a vault with parallel tests) and assert that the isolated vault holds exactly one incomplete work, so the selection cannot be a neighbour's.
+- Accept:
+  - The test runs in an isolated vault and asserts exactly one incomplete work; a planted neighbour seal into the same vault turns that assertion red **by its own message**.
+  - The binary's suite is green locally.
+  - `ci` is green on `main` again on the commit that carries the fix — a hosted witness, which needs a consented push.
+- Notes: **[2026-09-13 — FIXED LOCALLY, hosted witness OWED.]** Isolated with `IsolatedVault::create("kill-after-staging")` and an `assert_eq!(incomplete.len(), 1, …)`. **Plants**: the first plant — a second seal sharing the test's mock and one-shot kill barrier — went red at the *wrong* assertion (*no backend call before the kill*, left 3), because the barrier fired once and the neighbour reached the backend; it proved nothing about the new assertion and was not banked. The second plant — a neighbour seal with its own mock and its own barrier — went red by the new assertion's message, listing **two** `Staged` works (the original race in miniature): *an isolated vault holds exactly the one killed work, so the resume candidate below cannot be a neighbour's … left: 2, right: 1*, zero compile errors. Restored byte-identical and touched; `seal_pipeline` **15 passed**. **Latent sibling, not changed**: `anchor_gate_prepay.rs` asserts a property over every incomplete work in its binary's shared journal, which holds only while no sibling test in that binary moves a work past `Staged`.

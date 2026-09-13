@@ -544,6 +544,14 @@ fn consent_precedes_the_anchor_gate() {
 
 /// A killed seal leaves the journal exactly where the barrier says, and the
 /// staged bytes are durable — the handover point to S11's resume.
+///
+/// **A vault of its own, because the shared one made this test race its
+/// neighbours** (wave 35: hosted `ci` run `34783405059` failed here with
+/// `planned` on a documentation-only commit). The work under test is found by
+/// enumerating incomplete works and taking the `Staged` one; in the binary's
+/// shared vault a sibling test's seal can be `Staged` at that instant with its
+/// plan not yet readable, so the enumeration could pick the wrong work. In an
+/// isolated vault there is exactly one incomplete work, and the test says so.
 #[test]
 fn a_kill_after_staging_leaves_a_resumable_work() {
     let files = files();
@@ -551,8 +559,9 @@ fn a_kill_after_staging_leaves_a_resumable_work() {
     let gate = RecordingGate::new();
     let consent = ScriptedConsent::always_yes();
     let kill = common::KillAt::new(Barrier::PostStagingJournal);
+    let vault = IsolatedVault::create("kill-after-staging");
 
-    with_journal(|journal| {
+    vault.with_journal(|journal| {
         let pipeline = Pipeline::new(&mock, &gate, journal, &consent, &kill);
         assert!(matches!(
             block_on(pipeline.seal(&request(&files, NetworkId::Devnet), &mut seal_rng(14))),
@@ -561,8 +570,14 @@ fn a_kill_after_staging_leaves_a_resumable_work() {
     });
 
     assert_eq!(mock.call_log().len(), 0, "no backend call before the kill");
-    with_journal(|journal| {
+    vault.with_journal(|journal| {
         let incomplete = journal.incomplete_works().expect("enumerate");
+        assert_eq!(
+            incomplete.len(),
+            1,
+            "an isolated vault holds exactly the one killed work, so the resume \
+             candidate below cannot be a neighbour's: {incomplete:?}"
+        );
         let (seal_id, state) = incomplete
             .iter()
             .copied()
