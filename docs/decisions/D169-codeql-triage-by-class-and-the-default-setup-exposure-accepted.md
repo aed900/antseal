@@ -260,3 +260,7 @@ landed). For the three production cleartext alerts, whose identity is their shar
 sink, each dismissal comment states the source count it covers (3, 11, 3), because a
 dismissal by sink would silently cover a source added later. Until then `Q271` stays
 open on that residue alone.
+
+## Addendum — 2026-09-13, the same day: reopen trigger (1) is ARMED, and the re-decision is held for a planning round
+
+`Q255`'s pins reached `main` in the consented push of `bfdc93e` and its witnessing deploy ran green (`pages.yml` run `34782645736`), so the worse A2 path §2 R4 leaned on is closed and default setup is now the last A2-exposed code on `main` holding cache write. §2 R4's first reopen trigger requires this acceptance to be re-decided in the act that ticks `Q255`. **It was not re-decided in that act, and `Q255` was deliberately not ticked**, because a measurement taken while preparing it removes the mitigation the re-decision would have leaned on: `scripts/reproducible-build.sh` copies the registry `cache` and `index` from build A's `CARGO_HOME` into build B, so the deploy job's two-environment comparison does **not** independently defend against a poisoned crate cache written through the Actions cache API. Two facts are not established and decide the answer: whether cargo re-verifies an already-cached `.crate` against `Cargo.lock`'s checksum, and whether a cache entry written by another workflow can satisfy `pages.yml`'s `rust-cache` restore key. The dismissals §2 R1 names were executed under consent the same day (63, read back; 0 alerts open).

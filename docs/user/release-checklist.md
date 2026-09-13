@@ -103,6 +103,8 @@ rule this row enforces:
 
 A row demanding a match against HEAD would be a row that can never go green.
 
+**[2026-09-13]** The commit the live page is deployed from is now **`bfdc93eba79883c79f79fe663cb4a24d024f0d03`** (`pages.yml` run `34782645736`); the previous deploy commit `9317a35` no longer exists anywhere, so the check this section describes could not be executed for the page served from 2026-08-15 until this redeploy (`R97`).
+
 - [ ] `[UNEXECUTED]` **The deployed commit is recorded** — the 40-character
       `head_sha` of the deploying run, not "the latest commit".
 - [ ] `[UNEXECUTED]` **A local build at that commit reproduces the served
