@@ -2076,6 +2076,29 @@ it defaults to. It is accepted deliberately and it is bounded — one seal, one
 work, before release — and it changes nothing about evidence validity, since
 a bundle's verification never touches Autonomi.
 
+**Stage 0 is inside that one exposure, by the maintainer's ruling of
+2026-10-15.** [D173](decisions/D173-mainnet-peers-are-upstreams-published-bytes-and-no-test-can-dial-them.md) §2 R16 proposed it and left
+this wording to the maintainer: immediately before the smoke seal, the gate
+runs `seal --dry-run --json` on the smoke file on `arbitrum-one`. It is part
+of the one exposure, not a second one, on the conditions the maintainer
+ruled: **the same released binary, the same machine, the same smoke file,
+run immediately before the seal in one sitting, with its output kept as gate
+evidence.** It passes on exit 0 with `"dry_run": true` and at least one
+priced blob; anything else stops the gate, and no seal is attempted in that
+sitting. A dry run writes nothing to the vault, submits no anchor, pays
+nothing and uploads nothing ([D49](decisions/D49-dry-run-network-semantics.md) §1). What it adds is
+contact. It asks the close groups of its own blob addresses for quotes, and
+those addresses are never stored and share nothing with the seal's, because
+the seal encrypts under fresh nonces (D49), so more storage peers see the gate
+machine's network address and the work's bucketed piece sizes, joined to the
+seal only by that address and the timing. Its balance check (D49 §3) asks the
+public Arbitrum RPC about the gate wallet once more, minutes before the seal's
+payment publishes that wallet on chain. It shows that the shipped peers route
+and that the quote protocol answers the pinned client; it shows nothing about
+payment acceptance or storage, which `S41` tests on loopback before this gate.
+Each sitting, like the seal itself, runs only on the maintainer's express
+consent given at the gate.
+
 > **Slot for Q34.** The concrete exposure — **work-id and date** — is
 > recorded here by Q34 after the gate runs, alongside the release notes
 > (Q34's `Do` and its third Accept row). Until then this paragraph records

@@ -1753,7 +1753,10 @@ lane_secret_guard() {
   done
   while read -r f; do
     [ -n "$f" ] || continue
-    printf '%s\n' "${fakes[@]}" | grep -qxF "${f#"$tmp/"}" || unexpected+=" ${f#"$tmp/"}"
+    # A here-string, never `printf … | grep -q`: under pipefail, grep -q exits on
+    # its match while printf may still be writing a multi-line list, and the
+    # SIGPIPE (141) reads as "not a fixture" (measured 2026-10-15; Q111).
+    grep -qxF "${f#"$tmp/"}" <<<"$(printf '%s\n' "${fakes[@]}")" || unexpected+=" ${f#"$tmp/"}"
   done <<<"$out"
   if [ -n "$missing" ] || [ -n "$unexpected" ] || [ "$found" -ne "$planted" ]; then
     printf '::error::secret-guard self-test FAILED: planted %s fakes, detected %s; rule arm(s) with NO detection:%s; file(s) matched that are not fixtures:%s — the detector is broken; fix it before trusting a green scan\n' \

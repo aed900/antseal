@@ -496,3 +496,15 @@ judged by message, `touch` after every restore:
 It authorises no public-network act. Every test it adds runs against loopback or refuses
 before any socket; `Q34`'s stage 0 needs the maintainer's ruling on §2.9 and, like the
 smoke seal, the maintainer's express consent at the gate.
+
+## Addendum — 2026-10-15 (the maintainer's ruling on §2 R16's stage 0)
+
+**Ruled: stage 0 is ALLOWED, inside `docs/threat-model.md` §2.9's accepted exposure.** The maintainer
+accepted the recommendation put to them in the session, in its words: *"same released binary, same
+machine, same smoke file, run immediately before the seal in one sitting, with its output kept as gate
+evidence"*, written into the threat model's accepted-exposure paragraph. §4's first bullet (*"The §2.9
+wording for §2 R16's stage 0 — the maintainer's"*) is discharged by that paragraph. Nothing else in this
+record changes: §2 R16's predicate (exit 0, `"dry_run": true`, at least one priced blob; anything else
+stops the gate), the loopback rehearsal `Q32`'s scripting owes before the stage is ever pointed at
+mainnet, `S41` before `Q34` (§2 R17), and the maintainer's express consent at the gate, which this
+ruling is not.
