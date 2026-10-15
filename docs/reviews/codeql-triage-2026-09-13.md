@@ -174,7 +174,7 @@ Dismissing an alert is an external act on a public repository, and it needs the 
 | L-TEST | #8 to #17 | `used in tests` | 10 |
 | W-PROTOCOL, test | #22 | `used in tests` | 1 |
 | **dismissals** | | | **63** |
-| no dismissal | #24 and #48 (already `fixed`), #6 (fixed in code) | | 3 |
+| no dismissal | #24 and #48 (already `fixed`; **re-dismissed `used in tests` on 2026-10-15**, see the addendum), #6 (fixed in code) | | 3 |
 
 **That is 63, not 64.** The planning lane's plan has 64 calls: the 63 above, plus a `won't fix` for #6 marked *"Use ONLY if the one-line deletion is not taken"*. The deletion is taken, so that call should not run. #6 should close as `fixed` once default setup analyses a commit that carries the fix. That is expected, not established, and by §4 its closing proves nothing either way.
 
@@ -276,7 +276,7 @@ Rules: HC `rust/hard-coded-cryptographic-value` · CL `rust/cleartext-logging` �
 | 21 | WH | open | `crates/antseal-core/src/anchor/ess.rs:281` | W-PROTOCOL | false positive | SHA-1 fixed by RFC 2634 §5.4 for ESSCertID v1 (no algorithm field); input is the public signer certificate |
 | 22 | WH | open | `crates/antseal-core/tests/anchor_real_tokens.rs:708` | W-PROTOCOL | used in tests | integration-test helper recomputing the ESSCertID v1 hash |
 | 23 | HC | open | `crates/antseal-core/src/crypto/hkdf.rs:474` | H-FIXTURE | used in tests | `#[cfg(test)]` (hkdf.rs:306); empty salt of an independent RFC 5869 reference |
-| 24 | HC | fixed | `crates/antseal-core/src/crypto/hkdf.rs:482` | H-FIXTURE | already fixed | `#[cfg(test)]` (hkdf.rs:306); went `fixed` at `ef5f6d9` with no Rust change (§4) |
+| 24 | HC | fixed | `crates/antseal-core/src/crypto/hkdf.rs:482` | H-FIXTURE | already fixed | `#[cfg(test)]` (hkdf.rs:306); went `fixed` at `ef5f6d9` with no Rust change (§4); **re-dismissed `used in tests` 2026-10-15 (addendum)** |
 | 25 | HC | open | `crates/antseal-cli/src/vault/cipher.rs:322` | H-FIXTURE | used in tests | `#[cfg(test)]` (cipher.rs:312); fixture vault key |
 | 26 | HC | open | `crates/antseal-cli/src/vault/keyfile.rs:261` | H-OUTBUF | false positive | HKDF output buffer; `expand` fills all 32 bytes or errors, and the error returns before the buffer is used |
 | 27 | HC | open | `crates/antseal-cli/src/vault/session.rs:160` | H-OUTBUF | false positive | HKDF output buffer (not the `Some(&[])` salt on :159); same fill-or-return as #26 |
@@ -300,7 +300,7 @@ Rules: HC `rust/hard-coded-cryptographic-value` · CL `rust/cleartext-logging` �
 | 45 | HC | open | `crates/antseal-core/src/crypto/commit.rs:358` | H-FIXTURE | used in tests | `#[cfg(test)]` (commit.rs:174); reference-commitment salt |
 | 46 | HC | open | `crates/antseal-core/src/crypto/hkdf.rs:221` | H-OUTBUF | false positive | HKDF output buffer; `hkdf_expand` fills it or panics through `.expect`, never returns zeros |
 | 47 | HC | open | `crates/antseal-core/src/crypto/manifest_aead.rs:479` | H-FIXTURE | used in tests | `#[cfg(test)]` (manifest_aead.rs:399); wrong-key negative case |
-| 48 | HC | fixed | `crates/antseal-core/src/crypto/hkdf.rs:482` | H-FIXTURE | already fixed | `#[cfg(test)]` (hkdf.rs:306); went `fixed` at `ef5f6d9` with no Rust change (§4) |
+| 48 | HC | fixed | `crates/antseal-core/src/crypto/hkdf.rs:482` | H-FIXTURE | already fixed | `#[cfg(test)]` (hkdf.rs:306); went `fixed` at `ef5f6d9` with no Rust change (§4); **re-dismissed `used in tests` 2026-10-15 (addendum)** |
 | 49 | HC | open | `crates/antseal-core/src/verify/storage_linkage.rs:234` | H-FIXTURE | used in tests | `#[cfg(test)]` (storage_linkage.rs:225); fixture manifest key |
 | 50 | HC | open | `crates/antseal-core/src/verify/storage_linkage.rs:376` | H-FIXTURE | used in tests | `#[cfg(test)]` (storage_linkage.rs:225); wrong-key negative case |
 | 51 | HC | open | `crates/antseal-core/tests/crypto_properties.rs:351` | H-FIXTURE | used in tests | integration test; property-test buffer |
@@ -319,3 +319,35 @@ Rules: HC `rust/hard-coded-cryptographic-value` · CL `rust/cleartext-logging` �
 | 64 | HC | open | `crates/antseal-anchor/src/tsa/tests.rs:56` | H-NONCE | used in tests | `#[cfg(test)] #[path]` (tsa.rs:532-534); nonce echoed in a committed real TSA capture |
 | 65 | HC | open | `crates/antseal-core/src/anchor/testing.rs:804` | H-FIXTURE | used in tests | `#[cfg(test)]` (anchor/testing.rs:794); boundary test nonces |
 | 66 | HC | open | `crates/antseal-core/src/anchor/testing.rs:834` | H-FIXTURE | used in tests | `#[cfg(test)]` (anchor/testing.rs:794); boundary test nonces |
+
+## Addendum — 2026-10-15: the 63 were executed, and #24 and #48 came back and were re-dismissed
+
+**§7's dismissals were executed on 2026-09-13**, under the maintainer's express consent, each read back (state, class reason, the comment citing this record); `Q271`'s tick carries that read-back. §7's heading describes this record as written, before that act.
+
+**#24 and #48 did what §4 says a `fixed` alert can do: they came back with nothing changed.** The Rust analyses of `main` report 59 results when the pair is present and 57 when it is not:
+
+| analysis (UTC) | commit | CodeQL CLI | results |
+|---|---|---|---|
+| 2026-09-12T20:43 | `cac8e6d` | 2.27.0 | 59 |
+| 2026-09-12T21:20 | `4a7f524` | 2.27.0 | 59 |
+| 2026-09-12T21:54 | `ef5f6d9` | 2.27.0 | 57 |
+| 2026-09-13T20:50 | `bfdc93e` | 2.27.0 | 57 |
+| 2026-09-13T21:29 | `2194a74` | 2.27.0 | 59 |
+| 2026-09-14T08:31 | `652f260` | 2.27.0 | 59 |
+| 2026-09-14T08:58 | `3473ab2` | 2.27.0 | 57 |
+| 2026-09-15T22:49 | `3473ab2` | 2.27.0 | 57 |
+| 2026-09-22T22:45 | `3473ab2` | 2.27.0 | 59 |
+| 2026-09-29T22:49 | `3473ab2` | 2.27.1 | 59 |
+| 2026-10-06T22:47 | `3473ab2` | 2.27.1 | 59 |
+| 2026-10-13T22:49 | `3473ab2` | 2.27.2 | 57 |
+| 2026-10-15T18:58 | `9c846cb` | 2.27.2 | 59 |
+| 2026-10-15T19:45 | `676ef9f` | 2.27.2 | 59 |
+| 2026-10-15T20:17 | `974d9ad` | 2.27.2 | 59 |
+
+Three closes and three reopens since 2026-09-12, none with a change to `crypto/hkdf.rs`. The sharpest pair: at `3473ab2`, with CLI 2.27.0 both times, the analysis of 2026-09-15 returned 57 and the analysis of 2026-09-22 returned 59 — one input, one tool, two answers. §4's mechanism is still not established; this narrows it from *one CLI across commits* to *one commit*.
+
+**Re-dismissed 2026-10-15 by class**, as D169 §2 R1 rules for an alert that reappears after `fixed`: H-FIXTURE, reason `used in tests`, under the maintainer's express consent — the words *“push 974d9ad, dismiss #24 and #48 as used in tests, and push the record of the dismissal, all on github.com/aed900/antseal as aed900”*. Each was read back from a separate `GET` after the write: `state` `dismissed`, `dismissed_reason` `used in tests`, `dismissed_by` `aed900`, at 2026-10-15T20:05:48Z (#24) and 20:05:49Z (#48), and the comment equal byte for byte to the one sent: *“Q271/D169 class H-FIXTURE: fixed test key, salt or nonce inside #[cfg(test)] or tests/; public, non-secret, never compiled into a release build. Re-dismissed per D169 §2 R1 after reappearing on unchanged code. Record: docs/reviews/codeql-triage-2026-09-13.md”* Totals after the write: **0 open, 65 dismissed, 1 fixed** (#6). The CodeQL analysis of `974d9ad` (run `38799144889`, analysis 2026-10-15T20:17:14Z) reported 59 results, so it detected the pair again, and both still read `dismissed`, last seen at `974d9ad` and unchanged since 20:05Z; `#23` likewise.
+
+**A dismissal holds where `fixed` does not.** #23, the same rule two lines up (`crypto/hkdf.rs:474`), dismissed 2026-09-13, was last re-detected at `974d9ad` on 2026-10-15 and is still `dismissed`, unchanged since its dismissal.
+
+**Visibility, re-measured 2026-10-15**: an anonymous `GET` of the alerts API returns 401 and the anonymous web pages for code scanning return 404, as `Q271`'s note measured in September. These alerts are visible only to accounts with write access.
