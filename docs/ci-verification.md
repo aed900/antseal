@@ -2755,6 +2755,8 @@ restoring `~/.cargo/bin` and skipping both `cargo install`s, 335 s of that run's
 two-environment comparison cannot see (D171 §1.4). The one deploy since, run
 `34782645736`, found no cache and built cold in 4 m 26 s (D171 §1.2).
 
+**[2026-10-15 — `Q274`'s witness: the first deploy whose workflow carries no cache step.]** Run `38790760051` (`workflow_dispatch` at `9c846cb`, under the maintainer's express consent) restored and saved no cache — the runner's setup prints `Cache mode: write`, the ambient grant D171 §2 R1 names — installed `wasm-bindgen-cli 0.2.126` and `wasm-pack 0.15.0` from source at their recorded pins, and built and checked the page in **3 m 02 s**; `served bytes match the built artifact: 6a966089…be97`, confirmed by an independent fetch, and the served module `ced8ef24…7891` is the one the hosted `reproducible-build` run `38788440817` reproduced at the same commit. The deploy history is now four runs: the two above, `34782645736` at `bfdc93e` (cold, 4 m 26 s) and this one.
+
 ## R26's standing debt is discharged, and its reasoning is corrected rather than carried forward
 
 `TODO.md`'s R26 row and `tasks/R.md`'s R26 entry both carried **"STANDING DEBT:
