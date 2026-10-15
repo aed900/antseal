@@ -71,6 +71,16 @@ permissions:
 # the network for NOTHING, so a real anchor probe here would be the defect.
 env:
   ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+  # D173 §2 R9/R11 — the no-real-STORAGE-network gate, the anchor gate's twin,
+  # armed here for the same reason. It makes antseal-net's storage
+  # constructors refuse any bootstrap peer that is not loopback before the
+  # payer's `eth_chainId` call and before `Client::connect`; the loopback
+  # devnet is admitted. `0` is the only off switch; unset, a debug build is
+  # armed and a release build is not, so this line is what reaches any
+  # release-profile step. Required in EVERY workflow by the same lane as the
+  # anchor arming (`scripts/ci-lanes.sh anchor-net-policy`). Policy:
+  # CONTRIBUTING.md, "No real storage network in tests".
+  ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"
   # PINNED BY NAME (D136 §2 R7), and to `chromium-browser` rather than to the
   # script's local default of `chromium`, because the image creates BOTH
   # symlinks to the same binary and upstream's own image tests

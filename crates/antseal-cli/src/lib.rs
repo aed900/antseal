@@ -31,9 +31,11 @@ pub mod config;
 // the decision table compiles and is tested in the default feature set even
 // though its only callers sit behind the feature.
 // Its only PRODUCTION callers (`commands::seal_over_backend`,
-// `backend::payment_rpc`) are behind the feature, so in the default lane the
-// items are reachable only from their own unit tests. The allow is scoped to
-// exactly that build: under `ant-backend` dead code here is still an error.
+// `backend::read_only_network` for `restore` and `verify --live`, and
+// `backend::payment_rpc`'s `devnet` arm) are behind the feature, so in the
+// default lane the items are reachable only from their own unit tests. The
+// allow is scoped to exactly that build: under `ant-backend` dead code here
+// is still an error.
 #[cfg_attr(not(feature = "ant-backend"), allow(dead_code))]
 pub(crate) mod devnet_env;
 pub mod error;

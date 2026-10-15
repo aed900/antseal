@@ -34,9 +34,11 @@
 #     tree, not the candidate);
 #   * fund anything — funding is a MAINTAINER action (P17, D38); the
 #     funding preflight here is read-only and refusal-only;
-#   * wire into any gate or workflow — the hosted-CI billing gate refuses
-#     hosted runs today, and wiring this into local-gate.sh or a workflow
-#     is a later, separate decision. Nothing invokes this script.
+#   * wire into any gate or workflow — a run spends test-ANT from a wallet
+#     only the maintainer can fund (P17, D38) against a Sepolia-mode devnet
+#     only its own host can reach, so wiring this into local-gate.sh or a
+#     workflow is a later, separate decision. No gate or workflow invokes
+#     this script; the disk-loss drill runs its --check-env mode by hand.
 #
 # The ONLY paid stage is `seal` (real test-ANT + Sepolia gas). Everything
 # after it is unpaid: status --upgrade polls calendars, verify --online
@@ -46,6 +48,12 @@
 # Usage:
 #   scripts/e2e-sepolia.sh --plan      registry + env contract; no network,
 #                                      no binary, REAL_EXIT=0
+#   scripts/e2e-sepolia.sh --check-env FILE
+#                                      the Sepolia-mode guard ALONE on FILE
+#                                      (D174 §2 R10): reads that one file,
+#                                      writes nothing, no network, no binary;
+#                                      0 = one ANTSEAL_DEVNET_CHAIN_ID='421614'
+#                                      line, 1 = REFUSED WRONG-DEVNET-MODE
 #   scripts/e2e-sepolia.sh             the run (refuses without the env)
 #
 # Environment contract (all refusals are named; see preflight_refusals):
@@ -63,9 +71,10 @@
 #                                 the repo
 #   ANTSEAL_E2E_WORKDIR           optional scratch dir (default: mktemp)
 #
-# Exit: 0 = PASS (or PLAN under --plan) · 1 = FAIL or REFUSED (reason named on stderr).
+# Exit: 0 = PASS (PLAN under --plan, CHECK-ENV OK under --check-env) · 1 = FAIL or REFUSED (reason named on stderr).
 set -uo pipefail
 
+caller_pwd="$PWD"   # --check-env resolves a relative FILE here, not in the repo
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo" || exit 1
 
@@ -126,7 +135,7 @@ EOF
     'ANTSEAL_E2E_WALLET_ADDRESS   funded wallet 0x address (public)' \
     'ANTSEAL_E2E_WALLET_KEY_FILE  wallet key file, fed via fd, outside the repo' \
     'ANTSEAL_E2E_PASSPHRASE_FILE  vault passphrase file, fed via fd, outside the repo' \
-    'a RUNNING Sepolia-mode devnet (scripts/devnet/sepolia-up) with .devnet/env' \
+    'a RUNNING Sepolia-mode devnet (scripts/devnet/sepolia-up): .devnet/env at chain id 421614' \
     'ANTSEAL_E2E_WORKDIR          optional scratch dir'
 }
 
@@ -154,8 +163,53 @@ preflight_refusals() {
   pid="$(cat "$pidfile" 2>/dev/null || true)"
   { [ -n "$pid" ] && [ -d "/proc/$pid" ]; } \
     || refuse SEPOLIA-DEVNET-NOT-RUNNING "no live launcher pid — the devnet export exists but nothing is running. scripts/devnet/sepolia-up --nodes 14"
-  grep -q "ANTSEAL_DEVNET_NETWORK='arbitrum-sepolia'" "$envfile" \
-    || refuse WRONG-DEVNET-MODE "the running devnet's export is not Sepolia-mode (expected ANTSEAL_DEVNET_NETWORK='arbitrum-sepolia'). A local Anvil devnet would silently drive the wrong chain — run scripts/devnet/local-down, then scripts/devnet/sepolia-up."
+  sepolia_mode_guard "$envfile" ".devnet/env"
+}
+
+# ── The Sepolia-mode guard (D174 §2 R10) ──────────────────────────────────
+#
+# Keyed on ANTSEAL_DEVNET_CHAIN_ID, the key the launcher writes into
+# .devnet/env (crates/devnet-launcher/src/export.rs: 421614 in Sepolia mode,
+# 31337 for a local Anvil devnet). It used to grep for
+# ANTSEAL_DEVNET_NETWORK, a key only sepolia-preflight writes, and only into
+# .devnet/sepolia-env — so it refused every real Sepolia-mode export
+# (docs/devnet/sepolia-devnet.md records a nine-key export without it).
+#
+# Pure: reads the one file it is given, writes nothing, contacts nothing.
+# `--check-env FILE` runs it alone, so a plant can reach it offline.
+
+# Every ANTSEAL_DEVNET_CHAIN_ID value in an export, space-separated, in file
+# order. A value that is not a single-quoted decimal prints as `invalid`, so
+# nothing but digits from the file ever reaches a message.
+chain_ids_in() { # <export-file>
+  local line value out="" re="^'([0-9]{1,20})'$"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ANTSEAL_DEVNET_CHAIN_ID=*) value="${line#ANTSEAL_DEVNET_CHAIN_ID=}" ;;
+      *) continue ;;
+    esac
+    if [[ $value =~ $re ]]; then value="${BASH_REMATCH[1]}"; else value=invalid; fi
+    out="${out:+$out }$value"
+  done < "$1"
+  printf '%s' "$out"
+}
+
+describe_chain_ids() { # <ids as chain_ids_in prints them>
+  case "$1" in
+    '')      printf 'no ANTSEAL_DEVNET_CHAIN_ID line' ;;
+    *' '*)   printf '%s ANTSEAL_DEVNET_CHAIN_ID lines (%s)' "$(printf '%s\n' "$1" | wc -w | tr -d ' ')" "$1" ;;
+    invalid) printf 'an ANTSEAL_DEVNET_CHAIN_ID value that is not a single-quoted decimal' ;;
+    *)       printf 'chain id %s' "$1" ;;
+  esac
+}
+
+sepolia_mode_guard() { # <export-file> <label for messages>
+  local envfile="$1" label="$2" found
+  [ -f "$envfile" ] && [ -r "$envfile" ] \
+    || refuse ENV-FILE-UNREADABLE "$label is not a readable regular file — there is no export to check."
+  found="$(chain_ids_in "$envfile")"
+  [ "$found" = 421614 ] \
+    || refuse WRONG-DEVNET-MODE "$label is not a Sepolia-mode export: expected exactly one line ANTSEAL_DEVNET_CHAIN_ID='421614' (Arbitrum Sepolia), found $(describe_chain_ids "$found"). A local Anvil devnet would silently drive the wrong chain — run scripts/devnet/local-down, then scripts/devnet/sepolia-up."
 }
 
 # ── Stage machinery ───────────────────────────────────────────────────────
@@ -354,14 +408,39 @@ verdict() { # <stages_run> <failed> <secs> <evnote> [plan]
 
 # ── Entry ─────────────────────────────────────────────────────────────────
 plan_only=0
+check_env=0
+check_env_file=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --plan) plan_only=1 ;;
-    -h|--help) sed -n '1,75p' "$repo/scripts/e2e-sepolia.sh"; exit 0 ;;
+    --check-env)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        printf '\033[31m::error::e2e-sepolia: --check-env needs a FILE (see --help)\033[0m\n' >&2
+        exit 1
+      fi
+      check_env=1; check_env_file="$2"; shift ;;
+    -h|--help) sed -n '1,72p' "$repo/scripts/e2e-sepolia.sh"; exit 0 ;;
     *) printf '\033[31m::error::e2e-sepolia: unknown argument: %s (see --help)\033[0m\n' "$1" >&2; exit 1 ;;
   esac
   shift
 done
+
+# The guard alone, before anything else is computed: no registry, no
+# evidence directory, no binary, no network (D174 §2 R10). Its one line of
+# success output says CHECK-ENV, never PASS — a guard is not a run.
+if [ "$check_env" -eq 1 ]; then
+  if [ "$plan_only" -eq 1 ]; then
+    printf '\033[31m::error::e2e-sepolia: --plan and --check-env are separate modes; pass one\033[0m\n' >&2
+    exit 1
+  fi
+  case "$check_env_file" in
+    /*) check_env_path="$check_env_file" ;;
+    *)  check_env_path="$caller_pwd/$check_env_file" ;;
+  esac
+  sepolia_mode_guard "$check_env_path" "$check_env_file"
+  printf 'e2e-sepolia: CHECK-ENV OK chain=421614 file=%s — the Sepolia-mode guard ran alone; nothing executed, nothing paid, nothing witnessed\n' "$check_env_file"
+  exit 0
+fi
 
 n_stages="$(stage_registry | grep -c .)"
 

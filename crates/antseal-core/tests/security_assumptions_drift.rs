@@ -265,12 +265,24 @@ fn the_wasm_zeroize_caveat_is_on_the_module_root_and_in_the_threat_model() {
     );
 }
 
-/// Q12 accept: every M4 threat section named by the task is present as a
-/// stub. The list is the point — a section that is missing cannot be noticed
-/// as missing at M4, whereas a stub marked "not written" is a visible debt.
+/// Every threat section is present as its own numbered heading line. The
+/// list is the point — a section that is missing cannot be noticed as
+/// missing, whereas a stub marked "not written" is a visible debt.
+///
+/// Q12 enumerated §2.1–§2.10 at M0; §2.11 was written with its scope line
+/// by Q272 (D176 §2 R7). The test keeps its name because documents cite it.
+///
+/// **The predicate is a whole heading line, exactly once — never a substring
+/// of the file.** A `contains` check over the whole document is green over a
+/// deleted section the moment any cross-reference spells that section's
+/// heading phrase, and green over a heading demoted to `###`; both were
+/// planted against the old predicate and watched green (D176 §3). That is
+/// also why cross-references cite the bare `§2.N` (D176 §2 R8): the phrase
+/// occurs once, on its heading line, so "exactly one" can hold.
 #[test]
 fn every_m4_threat_section_is_enumerated() {
-    /// The M4 sections Q12 requires, as `(anchor phrase, what it covers)`.
+    /// Every numbered threat section, as `(heading phrase, what it covers)`.
+    /// Each must occur as exactly one line reading `## <heading phrase>`.
     const REQUIRED_SECTIONS: &[(&str, &str)] = &[
         ("2.1 Vault theft", "retroactive decryption, no rotation"),
         ("2.2 Vault loss", "reveal/restore lost forever"),
@@ -300,16 +312,27 @@ fn every_m4_threat_section_is_enumerated() {
             "2.10 WASM zeroization caveat",
             "browser memory cannot be wiped (C21)",
         ),
+        (
+            "2.11 Storage network as adversary",
+            "eclipse, withholding, payment misdirection, non-replication",
+        ),
     ];
 
     let threat_model = read(THREAT_MODEL);
     for (heading, covers) in REQUIRED_SECTIONS {
-        assert!(
-            threat_model.contains(heading),
-            "{THREAT_MODEL}: missing the required M4 section `{heading}` \
-             ({covers}). Q12 enumerates every section so the M0 freeze happens \
-             against a known map; deleting one hides a hole rather than \
-             closing it."
+        let heading_line = format!("## {heading}");
+        let found = threat_model
+            .lines()
+            .filter(|line| line.trim_end() == heading_line)
+            .count();
+        assert_eq!(
+            found, 1,
+            "{THREAT_MODEL}: expected exactly one `{heading_line}` heading line \
+             ({covers}), found {found}. Every threat section is enumerated so a \
+             missing one is noticed as missing: deleting, demoting or \
+             duplicating a section heading hides a hole rather than closing it, \
+             and a cross-reference cites the bare section number, never the \
+             heading phrase."
         );
     }
 }

@@ -124,6 +124,7 @@ default_network = "devnet"
 
 [networks.arbitrum-one]
 rpc_url = "https://my-node.example/rpc"
+bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 
 [anchors]
 tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
@@ -137,6 +138,11 @@ arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
     assert_eq!(
         config.rpc_url_override(NetworkId::ArbitrumOne),
         Some("https://my-node.example/rpc")
+    );
+    // D173 §2 R4: the peer override, carried as parsed socket addresses.
+    assert_eq!(
+        config.arbitrum_one_bootstrap.as_ref().map(Vec::len),
+        Some(2)
     );
     assert_eq!(
         config.tsa_urls.as_deref(),
@@ -424,6 +430,174 @@ fn binary_resolves_network_through_the_config() {
     let out = spawn(&root, &["status", "w1"]);
     assert_eq!(out.status.code(), Some(17));
     assert!(out.stdout.is_empty());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D173 §2 R4 — `[networks.arbitrum-one] bootstrap`, validated at load
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D173 §2 R4.** The override loads under `arbitrum-one` as exactly the
+/// listed peers, in order, and the same key under either other network is a
+/// malformed config naming `ANTSEAL_DEVNET_ENV` — those networks' peers come
+/// from a devnet export and belong to one run of it (docs/config.md,
+/// "Bootstrap peers").
+#[test]
+fn a_bootstrap_override_loads_under_arbitrum_one_and_nowhere_else() {
+    let text = r#"
+default_network = "arbitrum-one"
+
+[networks.arbitrum-one]
+bootstrap = ["192.0.2.10:10000", "198.51.100.20:10001", "[2001:db8::1]:10002"]
+"#;
+    let config = parse(text).expect("a valid override loads");
+    let expected: Vec<std::net::SocketAddr> = [
+        "192.0.2.10:10000",
+        "198.51.100.20:10001",
+        "[2001:db8::1]:10002",
+    ]
+    .iter()
+    .map(|peer| peer.parse().expect("a documentation address"))
+    .collect();
+    assert_eq!(
+        config.arbitrum_one_bootstrap.as_deref(),
+        Some(expected.as_slice()),
+        "the override is carried as the listed peers, in order"
+    );
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    assert_eq!(
+        Config::default().arbitrum_one_bootstrap,
+        None,
+        "no key, no override — the built-in list is the resolver's business"
+    );
+
+    for network in ["arbitrum-sepolia", "devnet"] {
+        let text = format!("[networks.{network}]\nbootstrap = [\"192.0.2.10:10000\"]\n");
+        let err = match parse(&text) {
+            Err(err) => err,
+            Ok(config) => panic!(
+                "`bootstrap` under [networks.{network}] is refused: got {:?}",
+                config.arbitrum_one_bootstrap
+            ),
+        };
+        assert_eq!(err.line, 2, "the key's line is named: {err:?}");
+        assert!(
+            err.detail.contains("ANTSEAL_DEVNET_ENV"),
+            "names the export as that network's only peer source: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains(&format!("[networks.{network}]")),
+            "names the section: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains("arbitrum-one"),
+            "names the one section that takes the key: {}",
+            err.detail
+        );
+    }
+}
+
+/// **D173 §2 R4's validation matrix.** Every rule docs/config.md states,
+/// refused at load with the line named: at least one entry; IP literals only
+/// (a hostname is refused — nothing on the storage path resolves names); no
+/// repeat; no unspecified address; no port 0; no loopback, so neither an
+/// all-loopback nor a mixed list loads — and `[::ffff:127.0.0.1]` is loopback
+/// (the one classifier canonicalizes, D173 §2 R8). An empty list is a
+/// malformed config, not "use the built-in list": this is where `bootstrap`
+/// differs from `tsa_urls`.
+#[test]
+fn a_bootstrap_override_is_validated_at_load() {
+    let cases: [(&str, &str); 10] = [
+        ("[]", "at least one"),
+        ("[\"example.org:10000\"]", "example.org:10000"),
+        ("[\"192.0.2.10\"]", "192.0.2.10"),
+        ("[\"192.0.2.10:10000\", \"192.0.2.10:10000\"]", "repeats"),
+        ("[\"0.0.0.0:10000\"]", "unspecified"),
+        ("[\"192.0.2.10:0\"]", "port 0"),
+        ("[\"127.0.0.1:10000\"]", "loopback"),
+        ("[\"[::ffff:127.0.0.1]:10000\"]", "loopback"),
+        (
+            "[\"127.0.0.1:10000\", \"192.0.2.10:10000\"]",
+            "mixes loopback",
+        ),
+        ("\"192.0.2.10:10000\"", "array"),
+    ];
+    for (value, needle) in cases {
+        let text = format!("[networks.arbitrum-one]\nbootstrap = {value}\n");
+        let err = match parse(&text) {
+            Err(err) => err,
+            Ok(config) => panic!(
+                "`bootstrap = {value}` must be refused: got {:?}",
+                config.arbitrum_one_bootstrap
+            ),
+        };
+        assert!(
+            err.detail.contains(needle),
+            "`bootstrap = {value}`: expected {needle:?} in {:?}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains("bootstrap"),
+            "`bootstrap = {value}`: names the key: {:?}",
+            err.detail
+        );
+        assert_eq!(err.line, 2, "`bootstrap = {value}`: the line is named");
+    }
+    // The hostname refusal must not be a refusal of the whole array shape: the
+    // same shape with an IP literal loads.
+    let config = parse("[networks.arbitrum-one]\nbootstrap = [\"192.0.2.10:10000\"]\n")
+        .expect("one IP literal loads");
+    assert_eq!(
+        config.arbitrum_one_bootstrap.as_ref().map(Vec::len),
+        Some(1)
+    );
+}
+
+/// **D173 §2 R4 — raised before dispatch, so before any passphrase.** Through
+/// the binary: a misplaced or empty `bootstrap` is the malformed-config code
+/// (17) with its envelope, on a command that needs no vault and never prompts
+/// (`verify`'s own code would be 4 — the bundle does not exist — so the 17
+/// is the config loader's, ahead of the handler).
+#[test]
+fn a_bad_bootstrap_override_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("bootstrap-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    for (text, needle) in [
+        (
+            "[networks.devnet]\nbootstrap = [\"127.0.0.1:20001\"]\n",
+            "ANTSEAL_DEVNET_ENV",
+        ),
+        ("[networks.arbitrum-one]\nbootstrap = []\n", "at least one"),
+    ] {
+        std::fs::write(layout.beside_path(BesideFile::Config), text).expect("write config");
+        let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+        assert_eq!(
+            out.status.code(),
+            Some(17),
+            "{text:?}: malformed-config code; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+                .expect("one JSON document");
+        assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+        let message = doc["error"]["message"].as_str().expect("a message");
+        assert!(message.contains(needle), "{text:?}: {message}");
+    }
+    // The control: a valid override on the same vehicle is not a config error.
+    std::fs::write(
+        layout.beside_path(BesideFile::Config),
+        "[networks.arbitrum-one]\nbootstrap = [\"192.0.2.10:10000\"]\n",
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "a valid override loads and the handler's own code follows"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────

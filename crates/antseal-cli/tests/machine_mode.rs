@@ -8,8 +8,8 @@
 #[path = "common/spawn.rs"]
 mod spawn;
 
-// The pipeline harness, for the one row that seals a work: the registered
-// `[reveal]` refusal is checked against the engine's own (D170 §2 R8).
+// The pipeline harness, for the rows that seal a work: `reveal`'s envelope
+// row reads the two `network` members off a work sealed here (D174 §2 R15).
 mod common;
 
 use std::io::Read as _;
@@ -181,7 +181,10 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // genuinely-required fetch. So what it exhibits here — machine mode,
         // no channel, over the fixture vault — is the same gate they stop
         // at. **This row is the process-level witness that the wiring is
-        // real**: it fails on the old handler with 23.
+        // real**: it fails on the old handler with 23. D175 keeps it here in
+        // both builds: the build with a backend holds a reader that connects
+        // only from a needed fetch, so the minimal argv still stops at the
+        // passphrase gate (D175 §2 R10).
         "reveal" => (11, "passphrase-unavailable"),
         // U13's handler validates the plan FIRST, before the seam, the
         // vault and any secret. The minimal argv names `x.txt`, which
@@ -393,26 +396,28 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// off the entry seam, and what it meets under that argv is the passphrase
 /// gate in both builds.
 ///
-/// # Which command carries the feature-ON sentence now (D170 §2 R8)
+/// # No document carries the feature-ON sentence any more (D175 §2 R10)
 ///
-/// Until D170 the per-arm documents were `seal`'s and `restore`'s. Both are
-/// gone, for the reason U19's rule gives — a document of text no build emits
-/// is worse than none. `seal`'s feature build has constructed a backend since
-/// U13, so its `[seal] … [arm: backend-compiled-in-command-unwired]` document
-/// had described a refusal nothing could print; and `restore`'s feature build
-/// is wired by U90, so its document went the same way the moment that landed.
-/// Removing both without a replacement would have left the feature-ON
-/// sentence witnessed by no file CI compares, which is R82's defect again.
+/// Until D170 the per-arm documents were `seal`'s and `restore`'s. Both went,
+/// for the reason U19's rule gives — a document of text no build emits is
+/// worse than none: `seal`'s feature build has constructed a backend since
+/// U13, and `restore`'s since U90. D170 §2 R8 then registered `reveal`'s
+/// cache-miss refusal as the one document carrying the feature-ON sentence,
+/// because `reveal` held `VaultLocalBackend` in every build and a cache miss
+/// in the feature build really was refused with it.
 ///
-/// `reveal` still reaches that sentence: its handler holds
-/// `VaultLocalBackend` in every build (U91 wires the rest), so a cache miss in
-/// the feature build is refused with it. Its registered document is that
-/// refusal **as a user receives it** — wrapped in the reveal engine's unit
-/// sentence, not the bare seam text — built through the real producers: the
-/// storage error's `Display`, `RevealError`'s `Display`, and
-/// `From<RevealError> for CliError`. One step is restated rather than called:
-/// the engine's `storage_detail`, which is `pub(super)` and returns exactly
-/// the error's `Display` for every class except not-found.
+/// **D175 retired that document too, and replaced it with nothing.** The
+/// feature build's `reveal` now fetches through the read-only reader,
+/// connected only from a needed fetch (D175 §2 R1), so no production path in
+/// either build emits `BackendArm::Compiled`'s sentence — its last emitter was
+/// that handler. The two candidate replacements were both unstable text (the
+/// adapter's per-fetch reason, and the resolver's no-definition sentence that
+/// `U92` rewrites), so none was registered, and
+/// `no_registered_document_carries_the_compiled_arm_header` holds that a
+/// document of text no build emits cannot come back. The sentence itself and
+/// its arm name are `U95`'s to retire or reword (D175 §2 R11); until then the
+/// default build still witnesses both arms' texts through
+/// `the_refusal_messages_name_no_task_row` and `unavailable_selects_this_builds_arm`.
 fn render_fixture() -> String {
     use antseal_cli::backend::{BackendArm, unavailable_arm};
     use antseal_cli::error::{CliError, PassphraseFailure};
@@ -495,27 +500,13 @@ fn render_fixture() -> String {
             error_envelope(name, "arbitrum-one", &err)
         ));
     }
-    // R82 arm (b): the **other** feature build's refusal, rendered here — in
-    // the default build as much as the feature one — so the `ant-backend`
-    // machine surface is documented by the file every CI job compares,
-    // instead of by a file only a local `--features ant-backend` run would
-    // ever read (Q153).
+    // R82 arm (b) used to render the **other** feature build's refusal here
+    // — `seal`'s, then `restore`'s, then (D170 §2 R8) `reveal`'s cache-miss
+    // refusal — so the `ant-backend` machine surface was documented by the
+    // file every CI job compares. Since D175 no command reaches that sentence
+    // in either build, so nothing is rendered per arm any more; see this
+    // function's rustdoc, and `no_registered_document_carries_the_compiled_arm_header`.
     //
-    // **D170 §2 R8: `reveal` is now the one command that reaches it.** `seal`
-    // (U13) and `restore` (U90) construct a backend in that build and never
-    // emit this sentence, and `verify --live` connects there too; see this
-    // function's rustdoc for why their documents were removed rather than
-    // kept. The unit id is the fixture's choice; a real refusal names the
-    // first unit the cache could not serve.
-    out.push_str(&format!(
-        "[reveal] error [arm: {}]\n{}\n",
-        BackendArm::Compiled.name(),
-        error_envelope(
-            "reveal",
-            "arbitrum-one",
-            &reveal_cache_miss_refusal(BackendArm::Compiled, 3)
-        )
-    ));
     // Success examples for the commands with real handlers today.
     //
     // `list`'s is rendered by the real U19 renderer over a fixture
@@ -648,28 +639,6 @@ fn render_fixture() -> String {
         )
     ));
     out
-}
-
-/// `reveal`'s refusal for a unit its cache cannot serve, in `arm`'s words —
-/// the registered `[reveal]` Compiled-arm document's producer.
-///
-/// Built through the real producers: the storage error's `Display`,
-/// `RevealError`'s `Display` and `From<RevealError> for CliError`. The one
-/// step restated rather than called is the engine's `pub(super)`
-/// `storage_detail`, which returns the error's `Display` for every class but
-/// not-found; `the_registered_reveal_refusal_is_the_one_the_engine_emits`
-/// holds the restatement to the engine's actual output.
-fn reveal_cache_miss_refusal(
-    arm: antseal_cli::backend::BackendArm,
-    unit_id: u64,
-) -> antseal_cli::error::CliError {
-    antseal_cli::error::CliError::from(antseal_cli::pipeline::reveal::RevealError::Unfetchable {
-        unit_id,
-        detail: antseal_net::StorageError::Network {
-            reason: arm.message("reveal"),
-        }
-        .to_string(),
-    })
 }
 
 /// The tampered bundle `verify`'s registered refusal is produced from —
@@ -1296,6 +1265,11 @@ fn fixture_reveal() -> antseal_cli::reveal_out::RevealReport {
     let work_id = [0xA1; 32];
     antseal_cli::reveal_out::RevealReport {
         work_id,
+        // D174 §2 R12: the work's recorded network. The exemplar work is the
+        // `arbitrum-one` one `show`, `status` and `list`'s first row describe,
+        // so here the member agrees with the envelope's top level; the
+        // `[restore]` document is the committed example of the two differing.
+        network: "arbitrum-one".to_owned(),
         bundle_path: antseal_cli::reveal_out::default_bundle_path(&work_id),
         bytes: 18_342,
         files_touched: 1,
@@ -1319,6 +1293,13 @@ fn fixture_restore() -> antseal_cli::restore_out::RestoreOutput {
     let dir = PathBuf::from(format!("antseal-restore-{}", "a1".repeat(32)));
     RestoreOutput {
         work_id: [0xA1; 32],
+        // D174 §2 R12 / §5: the work's recorded network, and deliberately
+        // NOT the envelope's `arbitrum-one` — the registered document is the
+        // committed example of the two members differing: `restore` reads a
+        // work back from the network it was sealed on (D170 §2 R3), while the
+        // top-level member stays the invocation's (D174 §2 R11). A consumer
+        // asking where the bytes came from reads this one.
+        network: "devnet".to_owned(),
         output_dir: dir.clone(),
         manifest_source: ManifestSource::Network,
         files: vec![
@@ -1473,128 +1454,247 @@ fn the_refusal_messages_name_no_task_row() {
     }
 }
 
-/// **U19's rule for the document D170 §2 R8 added: the registered `[reveal]`
-/// refusal is text a build emits.**
-///
-/// `seal`'s old Compiled-arm document is why this row exists — it described
-/// a refusal nothing could print for as long as it was registered, because it
-/// was rendered from a producer no production path reached. The `[reveal]`
-/// document replacing it is rendered by [`reveal_cache_miss_refusal`], which
-/// restates one private engine step. So this drives the **real** engine over
-/// the backend the handler holds: a work sealed into a fresh vault, one cached
-/// unit evicted, then `RevealEngine::prepare` — where the gathering, and so the
-/// refusal, happens — over `VaultLocalBackend::new("reveal")`, the backend
-/// `commands::reveal` holds in both builds. The refusal, mapped the way
-/// `run_reveal`'s `?` maps it (`From<RevealError> for CliError`), must equal
-/// the helper's rendering member for member, for this build's arm and the
-/// evicted unit.
-///
-/// `prepare` rather than `run_reveal`, deliberately: `run_reveal` takes the
-/// consent gate, and U71's closed list of its callers
-/// (`reveal_consent.rs`) exists to keep permissive closures out of the tree.
-/// This row asks nothing about consent — the refusal lands before the gate
-/// by R16's `prepare → build` split — so it has no business being a caller.
-///
-/// Both builds run it, so both arms' renderings are pinned: the default build
-/// pins `NotCompiled`'s, and the `ant-backend` build pins `Compiled`'s — the
-/// one the snapshot carries.
-#[test]
-fn the_registered_reveal_refusal_is_the_one_the_engine_emits() {
-    use antseal_cli::backend::{BackendArm, VaultLocalBackend, block_on_vault_local};
-    use antseal_cli::error::CliError;
-    use antseal_cli::pipeline::journal::UNIT_ENTRY_BASE;
+/// NON-SECRET: three paragraphs, so `--split blank-lines` caches three
+/// units — a partial cache once one is evicted, a fully cached work
+/// otherwise.
+const FIXTURE_TEXT: &[u8] = b"first paragraph\n\nsecond paragraph\n\nthird paragraph\n";
+
+/// Seal [`FIXTURE_TEXT`] into `unlocked` on `devnet` through the real
+/// pipeline over a `MockBackend`, every D43 cache copy retained, and return
+/// the printed work id. `seed` drives the journal (`seed`) and the pipeline
+/// (`seed + 1`), so two fixtures in one process never share a seal id.
+fn seal_devnet_work(unlocked: &antseal_cli::vault::session::UnlockedVault, seed: u8) -> String {
     use antseal_cli::pipeline::{
-        NoBarriers, Pipeline, RevealEngine, RevealRequest, SealFile, SealRequest, SealResult,
-        UnitSelection, VaultJournal,
+        NoBarriers, Pipeline, SealFile, SealRequest, SealResult, VaultJournal, hex32,
     };
     use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
     use antseal_core::content::{FileFlags, SplitMode};
     use antseal_core::crypto::sig_policy::SigPolicy;
     use antseal_net::test_util::{MockBackend, block_on};
-    use common::{IsolatedVault, RecordingGate, ScriptedConsent};
+    use common::{RecordingGate, ScriptedConsent};
 
-    /// NON-SECRET: three paragraphs, so `--split blank-lines` caches three
-    /// units and evicting one leaves a partial cache rather than an empty one.
-    const TEXT: &[u8] = b"first paragraph\n\nsecond paragraph\n\nthird paragraph\n";
-
-    let vault = IsolatedVault::create("machine-reveal-refusal");
-    let unlocked = vault.unlock();
-    let store = WorkStore::new(&unlocked);
-
+    let files = [SealFile {
+        path_as_given: "notes.txt",
+        path_absolute: "/w/notes.txt",
+        bytes: FIXTURE_TEXT,
+        flags: FileFlags::new().with_split(SplitMode::BlankLines),
+    }];
+    let mock = MockBackend::new();
+    let mut journal_rng = ChaCha20Rng::from_seed([seed; 32]);
+    let journal = VaultJournal::new(WorkStore::new(unlocked), &mut journal_rng);
+    let gate = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+    let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+    let request = SealRequest {
+        files: &files,
+        title: "machine-mode fixture work".to_owned(),
+        claimed_time_unix_secs: 1_800_000_000,
+        app_version: "antseal-test/1".to_owned(),
+        network: antseal_net::NetworkId::Devnet,
+        no_anchor: false,
+        degraded: false,
+        dry_run: false,
+        sig_policy: SigPolicy::hybrid(),
+        shaping: SealShapingFlags::default(),
+    };
+    match block_on(pipeline.seal(
+        &request,
+        &mut ChaCha20Rng::from_seed([seed.wrapping_add(1); 32]),
+    ))
+    .expect("the fixture seals")
     {
-        let files = [SealFile {
-            path_as_given: "notes.txt",
-            path_absolute: "/w/notes.txt",
-            bytes: TEXT,
-            flags: FileFlags::new().with_split(SplitMode::BlankLines),
-        }];
-        let mock = MockBackend::new();
-        let mut journal_rng = ChaCha20Rng::from_seed([0x6D; 32]);
-        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
-        let gate = RecordingGate::new();
-        let consent = ScriptedConsent::always_yes();
-        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
-        let request = SealRequest {
-            files: &files,
-            title: "machine-mode reveal refusal".to_owned(),
-            claimed_time_unix_secs: 1_800_000_000,
-            app_version: "antseal-test/1".to_owned(),
-            network: antseal_net::NetworkId::Devnet,
-            no_anchor: false,
-            degraded: false,
-            dry_run: false,
-            sig_policy: SigPolicy::hybrid(),
-            shaping: SealShapingFlags::default(),
-        };
-        match block_on(pipeline.seal(&request, &mut ChaCha20Rng::from_seed([0x6E; 32])))
-            .expect("the fixture seals")
-        {
-            SealResult::Sealed(_) => {}
-            SealResult::DryRun(_) => panic!("not a dry run"),
-        }
+        SealResult::Sealed(outcome) => hex32(&outcome.work_id),
+        SealResult::DryRun(_) => panic!("not a dry run"),
     }
+}
 
-    let works = store.list_works().expect("list");
-    assert_eq!(works.len(), 1, "one work");
-    let mut units: Vec<u64> = store
-        .list_journal_entries(&works[0])
-        .expect("entries")
-        .into_iter()
-        .filter(|entry| *entry >= UNIT_ENTRY_BASE)
-        .collect();
-    units.sort_unstable();
-    assert!(
-        units.len() >= 2,
-        "a partial cache needs more than one cached unit: {units:?}"
-    );
-    store
-        .delete_journal_entry(&works[0], units[0])
-        .expect("evict one unit");
-    let evicted_unit = units[0] - UNIT_ENTRY_BASE;
+/// **D174 §2 R11/R12, `reveal`'s half, through the spawned binary — in both
+/// builds.** `reveal` is the other command that acts on a work's recorded
+/// network rather than the invocation's, and the one whose `result.network`
+/// cannot be witnessed at the library route: `run_reveal`'s callers are a
+/// closed list (`tests/reveal_consent.rs`), so the value is read off the
+/// process. A fully cached `devnet` work needs no network in either build
+/// (U72; D175 §2 R2), so the three invocations `restore`'s row runs
+/// (`tests/restore_output.rs`, D174 §2 R15) run here with no export at all:
+///
+/// 1. no `--network`, no `config.toml` → top-level `arbitrum-one`, the
+///    built-in default;
+/// 2. `--network devnet`, agreeing with the record → top-level `devnet`;
+/// 3. `config.toml` `default_network = "arbitrum-sepolia"`, no flag →
+///    top-level `arbitrum-sepolia` — the control that tells *the
+///    invocation's network* from a constant `arbitrum-one`.
+///
+/// In all three `result.network` is `devnet`, verbatim from the record, and
+/// every unit came from the cache.
+#[test]
+fn a_reveal_envelope_carries_the_invocations_network_beside_the_works() {
+    use std::io::Write as _;
 
-    let backend = VaultLocalBackend::new("reveal");
-    let request = RevealRequest {
-        selection: UnitSelection::All,
-        include_receipt: false,
+    use antseal_cli::vault::layout::BesideFile;
+    use common::IsolatedVault;
+
+    let dir = TestDir::new("reveal-network");
+    let vault = IsolatedVault::create("machine-reveal-network");
+    let work_id = seal_devnet_work(&vault.unlock(), 0x70);
+    let config_path = vault.layout.beside_path(BesideFile::Config);
+
+    let runs: [(&str, Option<&str>, Option<&str>, &str); 3] = [
+        (
+            "no --network and no config.toml",
+            None,
+            None,
+            "arbitrum-one",
+        ),
+        (
+            "--network devnet, agreeing with the record",
+            Some("devnet"),
+            None,
+            "devnet",
+        ),
+        (
+            "config.toml default_network = arbitrum-sepolia and no flag",
+            None,
+            Some("default_network = \"arbitrum-sepolia\"\n"),
+            "arbitrum-sepolia",
+        ),
+    ];
+    for (index, (label, flag, config, want_top)) in runs.into_iter().enumerate() {
+        match config {
+            Some(text) => std::fs::write(&config_path, text).expect("write config.toml"),
+            None => assert!(!config_path.exists(), "{label}: runs with no config.toml"),
+        }
+        let bundle = dir.0.join(format!("run-{index}.sealproof"));
+        let bundle_arg = bundle.to_str().expect("a utf-8 path").to_owned();
+        let mut args = vec!["--json"];
+        if let Some(network) = flag {
+            args.extend(["--network", network]);
+        }
+        args.extend([
+            "--passphrase-fd",
+            "0",
+            "reveal",
+            &work_id,
+            "--all",
+            "--yes",
+            "-o",
+            &bundle_arg,
+        ]);
+        let mut child = spawn::antseal()
+            .args(&args)
+            .env("ANTSEAL_DIR", vault.layout.root())
+            .env_remove("ANTSEAL_DEVNET_ENV")
+            .env_remove("RUST_LOG")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn antseal");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(common::FIXTURE_PASSPHRASE)
+            .expect("pipe passphrase");
+        let out = child.wait_with_output().expect("wait");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(0), "{label}: stderr:\n{stderr}");
+        let stdout = String::from_utf8(out.stdout).expect("utf-8");
+        let doc: serde_json::Value = serde_json::from_str(stdout.trim_end_matches('\n'))
+            .unwrap_or_else(|e| panic!("{label}: stdout is not one JSON document: {e}\n{stdout}"));
+        assert_eq!(doc["ok"], serde_json::json!(true), "{label}: {doc}");
+        assert_eq!(
+            doc["command"],
+            serde_json::json!("reveal"),
+            "{label}: {doc}"
+        );
+        assert_eq!(
+            doc["network"],
+            serde_json::json!(want_top),
+            "{label}: the top-level `network` is the invocation's effective network — flag, \
+             else config, else the built-in default (D174 §2 R11): {doc}"
+        );
+        assert_eq!(
+            doc["result"]["network"],
+            serde_json::json!("devnet"),
+            "{label}: `result.network` is the work's recorded network, verbatim (D174 §2 R12): \
+             {doc}"
+        );
+        assert_eq!(
+            doc["result"]["work_id"],
+            serde_json::json!(work_id),
+            "{label}: {doc}"
+        );
+        assert_eq!(
+            doc["result"]["units"]["from_network"],
+            serde_json::json!(0),
+            "{label}: a fully cached reveal fetches nothing: {doc}"
+        );
+        assert!(
+            doc["result"]["units"]["from_cache"]
+                .as_u64()
+                .is_some_and(|n| n > 0),
+            "{label}: the units came from the cache: {doc}"
+        );
+        assert!(bundle.is_file(), "{label}: the bundle was written");
+    }
+}
+
+/// **D175 §2 R10 — no registered document carries the `Compiled` arm's
+/// header, in the rendered fixture or in the committed snapshot.**
+///
+/// The `[reveal] error [arm: backend-compiled-in-command-unwired]` document
+/// D170 §2 R8 registered was retired, not replaced, when D175 gave the feature
+/// build's `reveal` a reader: no production path in either build emits that
+/// sentence any more, and a document of text no build emits is the defect
+/// U19's rule names and D170 §1.5 removed for `[seal]`. The snapshot test
+/// alone cannot hold this — re-adding the document to `render_fixture` and
+/// re-blessing would keep it green — so this row scans both sources for the
+/// header the retired document carried, and first proves it would see one.
+#[test]
+fn no_registered_document_carries_the_compiled_arm_header() {
+    use antseal_cli::backend::BackendArm;
+
+    let marker = format!("[arm: {}]", BackendArm::Compiled.name());
+    let carrying = |text: &str| -> Vec<String> {
+        envelope_documents(text)
+            .into_iter()
+            .filter(|(header, _)| header.contains(&marker))
+            .map(|(header, _)| header)
+            .collect()
     };
-    let prepared =
-        block_on_vault_local(RevealEngine::new(&backend, &store).prepare(&works[0], &request))
-            .expect("the vault-local path performs no I/O");
-    let refusal = match prepared {
-        Ok(_) => panic!("a partial cache must refuse the whole reveal (U72)"),
-        Err(error) => CliError::from(error),
-    };
 
-    assert!(
-        backend.refusals() >= 1,
-        "the refusal came from the seam, not from somewhere earlier"
-    );
+    // The scan has to be able to see one, or it proves nothing.
+    let planted = format!("[reveal] error {marker}\n{{\"command\":\"reveal\"}}\n");
     assert_eq!(
-        refusal.error_object(),
-        reveal_cache_miss_refusal(BackendArm::THIS_BUILD, evicted_unit).error_object(),
-        "the registered `[reveal]` refusal must be rendered exactly as the engine emits it — a \
-         fixture of text no build prints is the defect D170 §1.5 removed"
+        carrying(&planted),
+        vec![format!("[reveal] error {marker}")],
+        "the scan must find a planted Compiled-arm header"
     );
+
+    let committed_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/json-envelopes.txt");
+    let committed = std::fs::read_to_string(&committed_path).unwrap_or_else(|e| {
+        panic!(
+            "missing committed fixture {}: {e}",
+            committed_path.display()
+        )
+    });
+    for (source, text) in [("rendered", render_fixture()), ("committed", committed)] {
+        let documents = envelope_documents(&text);
+        assert!(
+            documents.len() > 10,
+            "{source}: the registry holds every command's documents, not a handful"
+        );
+        let found = carrying(&text);
+        assert!(
+            found.is_empty(),
+            "{source}: no registered document may carry the `{}` arm: since D175 no production \
+             path in either build emits that sentence — `reveal`, its last emitter, fetches \
+             through the read-only reader in the build with a backend — and a document of text \
+             no build emits is worse than none (U19's rule; D175 §2 R10). Found: {found:?}",
+            BackendArm::Compiled.name()
+        );
+    }
 }
 
 /// **R82**: `unavailable` really is this build's arm.
@@ -1677,6 +1777,7 @@ fn the_restore_document_is_a_success_envelope_at_its_d48_exit_code() {
     fn output(statuses: &[FileStatus]) -> RestoreOutput {
         RestoreOutput {
             work_id: [0xA1; 32],
+            network: "devnet".to_owned(),
             output_dir: PathBuf::from("out"),
             manifest_source: ManifestSource::Network,
             files: statuses
@@ -1787,6 +1888,125 @@ fn the_restore_document_is_a_success_envelope_at_its_d48_exit_code() {
         fixture_restore().exit_class(),
         Some(ErrorClass::RestoreVerificationFailed),
         "the registered document's own run exits 35 — the pairing that had no build"
+    );
+}
+
+/// The registered documents as `(header, envelope)` pairs — the file's
+/// grammar is a header line followed by one JSON line, repeated.
+fn envelope_documents(text: &str) -> Vec<(String, serde_json::Value)> {
+    let mut out = Vec::new();
+    let mut lines = text.lines();
+    while let Some(header) = lines.next() {
+        let body = lines
+            .next()
+            .unwrap_or_else(|| panic!("{header}: a header with no document under it"));
+        let doc: serde_json::Value =
+            serde_json::from_str(body).unwrap_or_else(|e| panic!("{header}: not JSON: {e}"));
+        out.push((header.to_owned(), doc));
+    }
+    out
+}
+
+/// **D174 §2 R14 — "every such command agrees" is a registry test.** Over
+/// every committed envelope fixture, a `result` that carries a top-level
+/// `work_id` string — the shape of a result describing one sealed work —
+/// also carries a top-level `network` string: the work's recorded network
+/// (§2 R12), beside the envelope's own top-level member, which is the
+/// invocation's (§2 R11).
+///
+/// Two sources, each held to **exactly five** selected documents (`show`,
+/// `status`, `seal`, `restore`, `reveal` — the five D174 §1.5 measured), so a
+/// selector that matched nothing could not pass: the documents the real
+/// producers render now, and the bytes committed under `tests/snapshots/`.
+/// The first is what a producer that dropped the member reddens (the
+/// snapshot would redden too, but only as "drifted"; this names the
+/// document); the second is the registry as a consumer reads it. Before
+/// `restore` and `reveal` gained the member this was red on exactly those
+/// two.
+#[test]
+fn every_single_work_result_carries_the_works_network() {
+    use std::collections::BTreeSet;
+
+    let committed_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/json-envelopes.txt");
+    let committed = std::fs::read_to_string(&committed_path).unwrap_or_else(|e| {
+        panic!(
+            "missing committed fixture {}: {e}",
+            committed_path.display()
+        )
+    });
+
+    for (source, text) in [("rendered", render_fixture()), ("committed", committed)] {
+        let documents = envelope_documents(&text);
+        assert!(
+            documents.len() > 5,
+            "{source}: the registry holds more than the five single-work documents"
+        );
+        let selected: Vec<&(String, serde_json::Value)> = documents
+            .iter()
+            .filter(|(_, doc)| doc["ok"] == serde_json::json!(true))
+            .filter(|(_, doc)| doc["result"]["work_id"].is_string())
+            .collect();
+        let headers: Vec<&str> = selected.iter().map(|(h, _)| h.as_str()).collect();
+        assert_eq!(
+            selected.len(),
+            5,
+            "{source}: exactly five results describe one sealed work (D174 §1.5): {headers:?}"
+        );
+        let commands: BTreeSet<&str> = selected
+            .iter()
+            .map(|(_, doc)| doc["command"].as_str().expect("a command"))
+            .collect();
+        assert_eq!(
+            commands,
+            BTreeSet::from(["restore", "reveal", "seal", "show", "status"]),
+            "{source}: the five are show, status, seal, restore and reveal: {headers:?}"
+        );
+
+        let missing: Vec<&str> = selected
+            .iter()
+            .filter(|(_, doc)| !doc["result"]["network"].is_string())
+            .map(|(h, _)| h.as_str())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{source}: a result describing one sealed work carries `result.network`, the work's \
+             recorded network as a string (D174 §2 R12/R14) — missing or not a string on: \
+             {missing:?}"
+        );
+        // Every selected document also carries the top-level member as a
+        // string — the invocation's network (§2 R11) — so the two can be
+        // read side by side on each of the five.
+        for (header, doc) in &selected {
+            assert!(
+                doc["network"].is_string(),
+                "{source}: {header}: the top-level `network` is a string"
+            );
+        }
+    }
+}
+
+/// The committed `[restore]` example shows the two members **differing** —
+/// the reason D174 §5 has its fixture work recorded as `devnet` inside an
+/// `arbitrum-one` invocation. A re-bless that quietly made them agree would
+/// leave the registry documenting the member without documenting why it
+/// exists, which is the case a consumer has to notice.
+#[test]
+fn the_registered_restore_example_shows_the_two_network_members_differing() {
+    let documents = envelope_documents(&render_fixture());
+    let (header, restore) = documents
+        .iter()
+        .find(|(header, _)| header.starts_with("[restore] result"))
+        .expect("the registered restore result document");
+    let top = restore["network"].as_str().expect("top-level network");
+    let inner = restore["result"]["network"]
+        .as_str()
+        .expect("result.network");
+    assert_eq!(top, "arbitrum-one", "{header}: the invocation's network");
+    assert_eq!(inner, "devnet", "{header}: the work's recorded network");
+    assert_ne!(
+        top, inner,
+        "{header}: the example must show the members differing"
     );
 }
 

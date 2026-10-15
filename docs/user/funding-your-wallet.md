@@ -300,6 +300,22 @@ This is the mistake to expect. Most faucet pages offer both Sepolias one
 dropdown apart, and picking the wrong one gives you ETH that cannot pay for
 anything here. Confirm the network selector says Arbitrum Sepolia.
 
+**A funded wallet is not enough on this network: it also needs a devnet
+export.** There is no public Autonomi storage network on Arbitrum Sepolia. The
+payment contracts are real deployments, but the storage nodes are ones you run
+yourself with `scripts/devnet/sepolia-up`, and antseal finds them only through
+the export file that script writes (`.devnet/env`). Set `ANTSEAL_DEVNET_ENV`
+to that file's path for every command that has to reach the storage network on
+Arbitrum Sepolia; without it such a command stops with exit code **2**, naming
+`scripts/devnet/sepolia-up` and `ANTSEAL_DEVNET_ENV`. antseal accepts the
+export only when it is on chain 421614 and names the same payment token and
+payment vault as antseal's own pinned Arbitrum Sepolia contracts; any other
+export is refused, also with exit code **2**, rather than used. The same export
+under `--network devnet` is refused too, so a test payment on Arbitrum Sepolia
+is always recorded as `arbitrum-sepolia`, never as `devnet`. The export is
+tied to the machine running the devnet: its nodes listen only on that
+machine's loopback address. Details are in `docs/devnet/sepolia-devnet.md`.
+
 The runbook `init` refers to is `docs/devnet/sepolia-devnet.md`; the decision
 behind it is `docs/decisions/D38-sepolia-test-ant-acquisition.md`. The part
 worth knowing before you start: **there is no faucet for test-ANT and there

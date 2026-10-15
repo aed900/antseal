@@ -41,8 +41,11 @@ characters, it is a real object in the real repository, and it is **not the
 commit** — `v2` is an ANNOTATED tag, so the naive call yields the tag object and
 the commit is `6323deb102c322ba6fcbdcafc7e3dddab59af2b6` one dereference away.
 The one action where the obvious resolution method produces a wrong-but-
-well-shaped answer is the genuinely third-party one that runs 19 times,
-including in the only job with write scope.
+well-shaped answer is the genuinely third-party one, invoked more often than
+any action but `actions/checkout`. It also ran in the only job with write
+scope until D171 §2 R3 removed it from there (2026-09-15); that job now
+restores no cache at all, and `scripts/check-write-job-cache.py` holds every
+write-scoped job to the same.
 
 So **P1 alone is a check that cannot fail**: `^[0-9a-f]{40}$` is green on
 `49a0bdc7…`. P2 — the 40-hex must EQUAL the ledger's `sha` — is the rule that
@@ -381,12 +384,17 @@ def check(workflows: dict[str, str], ledger: str, today: date) -> Failures:
             continue
         actual = counted[row.action]
         if declared != actual:
+            # The prose count is MEASURED here, never spelled: this sentence said
+            # "three mentions of Swatinem/rust-cache are prose" and was four when
+            # D171 §2 R3 moved the count (measured 2026-09-15, 23 name mentions
+            # over 19 steps) — a number in a message goes stale like any other.
+            mentions = sum(text.count(row.action) for text in workflows.values())
             failures.error(
                 f"[P5] .github/action-pins.tsv:{row.lineno}: {row.action} declares "
                 f"{declared} invocation(s) but the workflows contain {actual}. Recount and "
                 f"write the measured number — never increment a header count (D143 §2 R4). "
-                f"Note that `grep`ping the action NAME over the workflow files gives a "
-                f"different, larger number: three mentions of Swatinem/rust-cache are prose."
+                f"Note that `grep`ping the action NAME over the workflow files counts "
+                f"{mentions}, not {actual}: {mentions - actual} mention(s) of it are prose."
             )
 
     # P6 — the renewal deadline.
@@ -513,19 +521,47 @@ def self_test() -> int:
                 print(f"      got: {message}")
             ok = False
 
-    # ── P1: a bare major tag where a 40-hex belongs. The line is
-    # `pages.yml:91`, the deploy step of the only job with write scope.
-    # COUPLED TO THE PIN: this literal is the live deploy-pages line, so a
-    # renewal that moves that pin must move this plant in the same act, or the
-    # arm prints NOT APPLIED (it did exactly that at the Q255 bump).
+    # ── P1: a bare major tag where a 40-hex belongs, on `pages.yml`'s deploy
+    # step, in the only job with write scope. COUPLED TO THE PIN: this literal
+    # is the live deploy-pages line, so a renewal that moves that pin must move
+    # this plant in the same act, or the arm prints NOT APPLIED (it did exactly
+    # that at the Q255 bump). The LINE NUMBER is not coupled: it is read from
+    # the tree at run time. The arm used to spell `pages.yml:91` and went NO
+    # MATCH the day D171 §2 R3 removed the cache step above that line
+    # (measured 2026-09-15: the fault fired at `pages.yml:102`).
+    deploy_pages_uses = "uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1"
+    deploy_pages_lineno = next(
+        (n for n, line in enumerate(workflows.get("pages.yml", "").split("\n"), 1)
+         if line.strip().endswith(deploy_pages_uses)),
+        0,
+    )
+
     def plant_a_bare_tag(state) -> bool:
         before = state[0]["pages.yml"]
-        state[0]["pages.yml"] = before.replace(
-            "uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1",
-            "uses: actions/deploy-pages@v5",
-            1,
-        )
+        state[0]["pages.yml"] = before.replace(deploy_pages_uses, "uses: actions/deploy-pages@v5", 1)
         return state[0]["pages.yml"] != before
+
+    # ── P2 and P3 plant on a LIVE `Swatinem/rust-cache` step, found at run
+    # time: the first workflow, by file name, with a `uses:` line pinning it.
+    # Both arms used to plant on `pages.yml`'s step and went NOT APPLIED the
+    # day D171 §2 R3 removed it (measured 2026-09-15). The ACTION is their
+    # subject, not a file, so the file is chosen rather than spelled, and
+    # removing any one step can no longer disarm them. The pin literal below is
+    # coupled exactly as P1's is.
+    rust_cache_step = re.compile(
+        r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2\.9\.2$",
+        re.MULTILINE,
+    )
+    rust_cache_host = next(
+        (name for name in sorted(workflows) if rust_cache_step.search(workflows[name])), "")
+
+    def on_the_rust_cache_step(state, old: str, new: str) -> bool:
+        if not rust_cache_host:
+            return False
+        before = state[0][rust_cache_host]
+        state[0][rust_cache_host] = rust_cache_step.sub(
+            lambda step: step.group(0).replace(old, new, 1), before, count=1)
+        return state[0][rust_cache_host] != before
 
     # ── P2: THE MANDATORY FAULT (D143 §1.7, §2 R8). `49a0bdc7…` is the
     # ANNOTATED TAG OBJECT of Swatinem/rust-cache@v2 — forty lowercase hex
@@ -534,19 +570,15 @@ def self_test() -> int:
     # resolution writes. P1 is GREEN on it. It may not be replaced with a
     # synthetic `deadbeef…`: that would exercise a different, easier fault.
     def plant_the_annotated_tag_object(state) -> bool:
-        before = state[0]["pages.yml"]
-        state[0]["pages.yml"] = before.replace(
+        return on_the_rust_cache_step(
+            state,
             "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
             "Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
-            1,
         )
-        return state[0]["pages.yml"] != before
 
     # ── P3: a trailing comment naming a release the SHA is not.
     def plant_a_stale_version_comment(state) -> bool:
-        before = state[0]["pages.yml"]
-        state[0]["pages.yml"] = before.replace("# v2.9.2", "# v2.9.1", 1)
-        return state[0]["pages.yml"] != before
+        return on_the_rust_cache_step(state, "# v2.9.2", "# v2.9.1")
 
     # ── P4a: an action used with no ledger row. The victim is the
     # third-party one, whose whole reason for being in the ledger is that it
@@ -693,13 +725,15 @@ def self_test() -> int:
         state[1] = planted
         return without_row != before and planted != without_row
 
-    arm("P1  pages.yml:91 reverted to the bare tag `@v5`", plant_a_bare_tag,
-        "[P1]", ("pages.yml:91", "deploy-pages", "'v5'"))
-    arm("P2  rust-cache pinned to its ANNOTATED TAG OBJECT", plant_the_annotated_tag_object,
-        "[P2]", ("49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
+    arm(f"P1  pages.yml:{deploy_pages_lineno} reverted to the bare tag `@v5`", plant_a_bare_tag,
+        "[P1]", (f"pages.yml:{deploy_pages_lineno}:", "deploy-pages", "'v5'"))
+    arm(f"P2  rust-cache pinned to its ANNOTATED TAG OBJECT ({rust_cache_host or 'no host'})",
+        plant_the_annotated_tag_object,
+        "[P2]", (f"{rust_cache_host}:", "49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
                  "6323deb102c322ba6fcbdcafc7e3dddab59af2b6", "ledger"))
-    arm("P3  a trailing comment saying v2.9.1", plant_a_stale_version_comment,
-        "[P3]", ("v2.9.1", "v2.9.2"))
+    arm(f"P3  a trailing comment saying v2.9.1 ({rust_cache_host or 'no host'})",
+        plant_a_stale_version_comment,
+        "[P3]", (f"{rust_cache_host}:", "v2.9.1", "v2.9.2"))
     arm("P4a an action used with no ledger row", delete_the_foundry_row,
         "[P4a]", ("foundry-rs/foundry-toolchain",))
     arm("P4b a ledger row no workflow uses", add_an_unused_row,

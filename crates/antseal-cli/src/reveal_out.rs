@@ -178,6 +178,13 @@ pub fn check_target_absent(path: &Path) -> Result<(), CliError> {
 pub struct RevealReport {
     /// The work revealed from.
     pub work_id: [u8; 32],
+    /// The work's recorded network — the canonical CLI spelling, verbatim
+    /// from the work record (D174 §2 R12): the network a fetched ciphertext
+    /// comes from, and the one `reveal`'s reader resolves lazily when a fetch
+    /// is needed (D175 §2 R3). The envelope's top-level `network` is the
+    /// invocation's effective network instead (D174 §2 R11); see
+    /// `machine.rs`'s envelope section for the two members side by side.
+    pub network: String,
     /// Where the bundle was written (`-o` or the default).
     pub bundle_path: PathBuf,
     /// The bundle's size on disk.
@@ -258,6 +265,10 @@ impl RevealReport {
     pub fn json(&self) -> serde_json::Value {
         serde_json::json!({
             "work_id": hex32(&self.work_id),
+            // D174 §2 R12: the work's recorded network, beside the envelope's
+            // top-level member (the invocation's). A consumer asking where a
+            // fetched unit came from reads this one.
+            "network": self.network,
             "bundle_path": self.bundle_path.display().to_string(),
             "bytes": self.bytes,
             "revealed_unit_ids": self.summary.revealed_unit_ids,
@@ -320,18 +331,24 @@ where
 {
     // ── D68 §3 R8: the path first, and the collision with it ──
     let seal_id = resolve_work_id(store, &args.work_id)?;
-    let work_id = store
-        .load_meta(&seal_id)
-        .map_err(CliError::from)?
-        .work_id
-        // Unreachable through this path: `resolve_work_id` matches on
-        // `record.work_id == Some(..)`, so a work it returned has one. An
-        // `expect` here would be a panic in library code (working principle
-        // 2), and inventing a work id would name the wrong file.
-        .ok_or_else(|| CliError::Internal {
-            detail: "the resolved work records no work id, so no default bundle path exists"
-                .to_owned(),
-        })?;
+    let (work_id, network) = {
+        // Scoped: the record carries `W`, and nothing below needs it. The
+        // network is read here, from the same load, because it is the
+        // record's and only the record's (D174 §2 R12) — the invocation's
+        // network never reaches this function.
+        let record = store.load_meta(&seal_id).map_err(CliError::from)?;
+        let work_id = record
+            .work_id
+            // Unreachable through this path: `resolve_work_id` matches on
+            // `record.work_id == Some(..)`, so a work it returned has one. An
+            // `expect` here would be a panic in library code (working
+            // principle 2), and inventing a work id would name the wrong file.
+            .ok_or_else(|| CliError::Internal {
+                detail: "the resolved work records no work id, so no default bundle path exists"
+                    .to_owned(),
+            })?;
+        (work_id, record.network.clone())
+    };
     let target = resolve_bundle_path(args.output.as_deref(), &work_id);
     check_target_absent(&target)?;
 
@@ -354,6 +371,7 @@ where
 
     Ok(RevealReport {
         work_id,
+        network,
         bundle_path: target,
         bytes: output.sealproof.len() as u64,
         files_touched,
@@ -578,6 +596,7 @@ mod tests {
     fn the_closing_lines_name_the_bundle_and_the_verifier_page() {
         let report = RevealReport {
             work_id: [0xA1; 32],
+            network: "arbitrum-one".to_owned(),
             bundle_path: default_bundle_path(&[0xA1; 32]),
             bytes: 4096,
             files_touched: 2,
@@ -601,12 +620,36 @@ mod tests {
         }
     }
 
+    /// The `--json` document carries the work's recorded network, as the
+    /// record spelled it and under the key every other single-work document
+    /// uses (D174 §2 R12). The registry test in `tests/machine_mode.rs`
+    /// holds the key's presence over the committed fixture; this holds the
+    /// value's path from the report into the document.
+    #[test]
+    fn the_json_document_carries_the_recorded_network_verbatim() {
+        let report = RevealReport {
+            work_id: [0x33; 32],
+            network: "arbitrum-sepolia".to_owned(),
+            bundle_path: PathBuf::from("b.sealproof"),
+            bytes: 10,
+            files_touched: 1,
+            summary: summary(),
+        };
+        let doc = report.json();
+        assert_eq!(doc["network"], serde_json::json!("arbitrum-sepolia"));
+        assert!(
+            doc["network"].is_string(),
+            "a string, like `show`'s and `status`'s: {doc}"
+        );
+    }
+
     /// The receipt line states the exposure when the receipt rides, and
     /// says plainly that it does not otherwise (spec lines 36/110/185).
     #[test]
     fn the_receipt_line_states_the_exposure_only_when_it_rides() {
         let base = RevealReport {
             work_id: [0x22; 32],
+            network: "devnet".to_owned(),
             bundle_path: PathBuf::from("b.sealproof"),
             bytes: 10,
             files_touched: 1,

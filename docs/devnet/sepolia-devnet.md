@@ -94,7 +94,7 @@ outlives any devnet: these values are the same before, during and after a
 run.
 
 ```
-ANTSEAL_DEVNET_NETWORK                  'arbitrum-sepolia'  (extra key; the parser ignores unknown ANTSEAL_DEVNET_* keys by design)
+ANTSEAL_DEVNET_NETWORK                  'arbitrum-sepolia'  (extra key, written to THIS file only, never to .devnet/env; the parser ignores unknown ANTSEAL_DEVNET_* keys by design)
 ANTSEAL_DEVNET_RPC_URL                  https://sepolia-rollup.arbitrum.io/rpc
 ANTSEAL_DEVNET_CHAIN_ID                 421614
 ANTSEAL_DEVNET_TOKEN_ADDRESS            0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C
@@ -126,6 +126,58 @@ string** — the upstream field is not `Option`, and upstream's own
 `start-devnet-sepolia` example writes it empty for exactly this reason. An
 empty string is not a key; treat it as "no wallet here" and read the next
 section.
+
+To tell the two modes apart from `.devnet/env` alone, read
+`ANTSEAL_DEVNET_CHAIN_ID`: `421614` is this mode, `31337` a local Anvil
+devnet. `ANTSEAL_DEVNET_NETWORK` is no help there — it lives only in
+`.devnet/sepolia-env`. `scripts/e2e-sepolia.sh --check-env .devnet/env` runs
+exactly that check and nothing else: it reads the one file, writes nothing and
+contacts nothing.
+
+### How the CLI reads it: `--network arbitrum-sepolia`
+
+`antseal` reads a Sepolia-mode export under **`--network arbitrum-sepolia`**,
+never under `--network devnet`
+([D174](../decisions/D174-a-sepolia-export-is-arbitrum-sepolia-and-result-network-names-the-work.md)).
+The nodes are yours but the payment contracts are the real Arbitrum Sepolia
+deployments, so the work is recorded as `arbitrum-sepolia`: a payment on a
+public chain is never recorded as `devnet`.
+
+```bash
+ANTSEAL_DEVNET_ENV="$PWD/.devnet/env" antseal --network arbitrum-sepolia seal <files> --dry-run
+```
+
+- **It takes the peers from the file, and checks the rest against its pins.**
+  The export is accepted only when `ANTSEAL_DEVNET_CHAIN_ID` is `421614`
+  **and** `ANTSEAL_DEVNET_TOKEN_ADDRESS` and
+  `ANTSEAL_DEVNET_PAYMENT_VAULT_ADDRESS` equal the D38 addresses listed
+  above, byte for byte. The chain id, RPC endpoint and contracts then come from
+  antseal's own pinned Arbitrum Sepolia definition, and only the bootstrap
+  peers come from the export; the export's `ANTSEAL_DEVNET_RPC_URL` is not
+  used.
+- **A refusal is a usage error (exit 2), never a fallback.** An export on
+  another chain is refused, naming the chain it carries and its path — and,
+  for a chain that is not a public one, pointing at `--network devnet`. A
+  contract that differs from the pin is refused, naming the key and the
+  **pinned** address. An unreadable or malformed export is refused as it is
+  under `devnet`.
+- **No export, no peers.** Nothing is built in for Arbitrum Sepolia, because
+  there is no public Autonomi storage network on it to take peers from. With
+  `ANTSEAL_DEVNET_ENV` unset, a command that has to reach the storage network
+  refuses with exit 2, naming `scripts/devnet/sepolia-up`,
+  `ANTSEAL_DEVNET_ENV`, and that no public Autonomi network exists on
+  Arbitrum Sepolia.
+- **`--network devnet` refuses this export**, naming `421614` and
+  `--network arbitrum-sepolia`. `--network arbitrum-one` never reads an export
+  at all.
+- **The export is only good on this host.** The launcher sets no advertise
+  address, so the nodes bind loopback and the export's peers are
+  `127.0.0.1` addresses. On a second machine those addresses are that machine
+  itself; no copy of the file can make these nodes reachable from elsewhere.
+- **The CLI wants no wallet key from the file.** It pays with the wallet in
+  your vault, never with a devnet's, so the missing tenth key is the designed
+  shape here, not a defect. (The recipes below are for *library* consumers,
+  which do have to supply a key to pay.)
 
 ### The wallet key is never written to a file
 
@@ -169,6 +221,14 @@ assert!(env.wallet_private_key().is_none());
 // might already have one.
 let funded: DevnetEnv = env.with_wallet(key_from_your_key_manager());
 ```
+
+**This recipe is chain-blind.** `DevnetEnv` parses whichever chain the file
+names, and `NetworkConfig::devnet` builds a definition whose id is always
+`devnet`: neither classifies the chain nor compares the contracts with the D38
+pins. That suits a library consumer that knows which devnet it booted. It is
+not how `antseal` reads a Sepolia-mode export (see "How the CLI reads it"
+above), and a definition built this way names a different network (`devnet`)
+from the one the CLI records for the same devnet (`arbitrum-sepolia`).
 
 Plain `DevnetEnv::from_env_file` still **requires** all ten and refuses a
 Sepolia export naming `ANTSEAL_DEVNET_WALLET_PRIVATE_KEY` — deliberately,
@@ -389,6 +449,12 @@ emits.
   read `.devnet/env` — expected, and the right error. A Sepolia export has
   nine keys by design; see "The wallet key is never written to a file" for
   the two ways to supply the tenth.
+- **`PREFLIGHT-REFUSED reason=WRONG-DEVNET-MODE`** from
+  `scripts/e2e-sepolia.sh` — `.devnet/env` does not carry exactly one
+  `ANTSEAL_DEVNET_CHAIN_ID='421614'` line, so the devnet that wrote it is not
+  in Sepolia mode (a local devnet exports `31337`); the refusal names what it
+  found. `scripts/e2e-sepolia.sh --check-env .devnet/env` repeats the check
+  alone.
 - **Rate limiting from the public RPC** — the preflight makes four calls;
   if a shared endpoint throttles, `--rpc` takes an alternative (still
   assert the chain id — that is the whole point of the check).

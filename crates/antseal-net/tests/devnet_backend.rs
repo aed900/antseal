@@ -32,7 +32,7 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use antseal_core::crypto::secrets::SecretBuf;
-use antseal_net::ant_backend::{AntCoreBackend, AntCoreReader};
+use antseal_net::ant_backend::{AntCoreBackend, AntCoreReader, AntCoreReceiptReader};
 use antseal_net::wallet::WalletKey;
 use antseal_net::{
     Blob, BlobCost, DevnetEnv, NetworkConfig, PaymentReceipt, StorageBackend, StorageError,
@@ -471,13 +471,20 @@ async fn devnet_s7_completeness_capture_consistency_and_backfill() {
     // ── Enrichment-failure path (S7 accept): strip the block numbers —
     //    the journaled shape after a receipt-await interruption — then
     //    backfill idempotently with NO new payment. ────────────────────
+    //
+    // [D173 §2 R14] Through the receipt reader — no Autonomi client, no
+    // wallet key — which is what `status` builds. The payer's own
+    // backfill runs the same function over its provider.
     let mut stripped = receipt.clone();
     for tx in &mut stripped.txs {
         tx.block_number = None;
         tx.status = antseal_net::TxStatus::Submitted;
     }
     let nonce_before = wallet_nonce(&backend, &env).await;
-    let filled = backend
+    let receipts = AntCoreReceiptReader::connect(&config)
+        .await
+        .expect("the receipt reader passes the chain-id guard on the devnet's payment RPC");
+    let filled = receipts
         .backfill_block_numbers(&mut stripped)
         .await
         .expect("backfill");
@@ -487,7 +494,7 @@ async fn devnet_s7_completeness_capture_consistency_and_backfill() {
         "backfill restored the captured values exactly"
     );
     // Idempotent: a second run fills nothing and changes nothing.
-    let refilled = backend
+    let refilled = receipts
         .backfill_block_numbers(&mut stripped)
         .await
         .expect("backfill again");
@@ -1245,12 +1252,21 @@ where
 /// section and D43 §5's fallback both rest on.
 ///
 /// Clients that cannot reach the devnet — a dead loopback bootstrap (D170 §2
-/// R7's negative-control export) and an empty one (the shape
-/// `arbitrum_one()`/`arbitrum_sepolia()` carry today, D170 §1.6) — are each
-/// asked for a chunk **this devnet holds**, through the reader and through the
-/// payer (one shared fetch path). The only honest answer is the network class:
-/// `NotFound` would be a false negative fact, and bytes would mean the client
-/// reached the devnet some other way.
+/// R7's negative-control export) and an empty one — are each asked for a chunk
+/// **this devnet holds**, through the reader and through the payer (one shared
+/// fetch path). The only honest answer is the network class: `NotFound` would
+/// be a false negative fact, and bytes would mean the client reached the devnet
+/// some other way.
+///
+/// **[D173 §2 R8/R12, 2026-09-15]** The two arms now witness different things.
+/// The empty arm used to mirror the shape the public configurations carried —
+/// no built-in peers — and that shape is gone: `arbitrum-one` carries upstream's
+/// vendored list, and the empty list was the unrecorded control that kept a
+/// public-id connect peerless, retired in the act that vendored it. An empty set
+/// is now refused by the adapter before `Client::connect`, in the network class,
+/// so the empty arm witnesses that refusal. The dead-loopback arm is the
+/// remaining negative control for the silent path: a connect that succeeds and
+/// a fetch that must still not report absence.
 ///
 /// **POSITIVE CONTROL, same test:** on the healthy devnet the reader reports a
 /// never-uploaded address as `NotFound`, so the negatives are the

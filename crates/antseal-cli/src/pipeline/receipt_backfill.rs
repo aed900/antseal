@@ -11,9 +11,10 @@
 //!
 //! [`TxRecord::block_number`](antseal_net::TxRecord) is D33's **enrichment
 //! slot**: filled from the receipt `pay()` awaits, `None` when that read
-//! failed. `antseal-net`'s ant-core adapter carries `backfill_block_numbers`,
-//! which implements the repair and is documented as idempotent — and until
-//! U67 its only callers in the whole tree were two lines in a devnet test.
+//! failed. `antseal-net` carries `backfill_block_numbers` — since D173 §2 R14
+//! on a key-less receipt reader, before that on the ant-core payer — which
+//! implements the repair and is documented as idempotent; and until U67 its
+//! only callers in the whole tree were two lines in a devnet test.
 //! No command re-enters the payment path once a work is `Complete`, and
 //! A15/U24's opportunistic hook walks *anchors*, never receipts. So *"later
 //! invocations"* named nothing.
@@ -81,12 +82,13 @@ use crate::vault::store::WorkStore;
 /// # Why this trait exists rather than a direct call
 ///
 /// The one implementation that reaches a chain is `backfill_block_numbers`
-/// on `antseal-net`'s ant-core adapter, and the only door to that adapter is
-/// its own `connect`, which is `ant-backend`-only. A host written
-/// directly against it would put **all** of U67 — the read, the empty-slot
-/// test, the idempotence, the compare-and-set write, the silence — inside a
-/// feature Q153 keeps out of CI, where one machine would be its only
-/// witness, ever.
+/// on `antseal-net`'s receipt reader — a key-less JSON-RPC provider over the
+/// network's payment RPC, holding no Autonomi client and no wallet (D173 §2
+/// R14) — and the only door to it is its own `connect`, which is
+/// `ant-backend`-only. A host written directly against it would put **all**
+/// of U67 — the read, the empty-slot test, the idempotence, the
+/// compare-and-set write, the silence — inside a feature Q153 keeps out of
+/// CI, where one machine would be its only witness, ever.
 ///
 /// So the seam is this trait, and the split is
 /// [`crate::pipeline::receipt_sink::VaultReceiptSink`]'s verbatim: the
@@ -139,9 +141,10 @@ pub enum BackfillSkip {
     /// idempotence arm**: a second pass over an enriched work stops here,
     /// before any source is constructed, so the repeat costs no RPC at all.
     NothingUnfilled,
-    /// This build compiles no payment RPC, or one could not be opened
-    /// (no wallet key, an unusable network definition, an unreachable
-    /// endpoint). `crate::backend::payment_rpc` traces which.
+    /// This build compiles no payment RPC, or one could not be opened (an
+    /// unusable network definition; an endpoint unreachable, or reporting
+    /// another chain). Never "no wallet key": the read loads none (D173 §2
+    /// R14). `crate::backend::payment_rpc` traces which.
     NoSource,
     /// The RPC refused. Silent by D33 Decision 2 — enrichment never gates.
     SourceFailed,
@@ -259,14 +262,16 @@ pub fn unfilled_block_numbers(receipt: &PaymentReceipt) -> usize {
 ///    before the gather, which is exactly why `--upgrade`'s own persist
 ///    does).
 /// 2. **The hook cannot host it without changing what the hook is.** The
-///    only door to the backfill is the ant-core adapter's `connect`, a
-///    full Autonomi `Client::connect` over the bootstrap set plus an
-///    `eth_chainId` guard. U24's pass is budgeted at 3 s across *every work
-///    in the vault* for cheap calendar GETs, and D90 §3.3 makes
-///    `antseal-anchor` blocking precisely so that pass runs in a build with
-///    **no tokio compiled in**. Hosting a payment-RPC session there would
-///    put an Autonomi connect at the end of every `list`, and U24's first
-///    rule is *never delay the host command*.
+///    only door to the backfill is the receipt reader's `connect`: a chain
+///    round trip over the payment RPC — an `eth_chainId` guard, then one
+///    receipt read per empty slot — on a tokio runtime (no Autonomi session
+///    since D173 §2 R14, but still a network leg with a 10 s deadline). U24's
+///    pass is budgeted at 3 s across *every work in the vault* for cheap
+///    calendar GETs, and D90 §3.3 makes `antseal-anchor` blocking precisely
+///    so that pass runs in a build with **no tokio compiled in**. Hosting a
+///    payment-RPC read there would put a runtime and a chain round trip at
+///    the end of every `list`, and U24's first rule is *never delay the host
+///    command*.
 /// 3. **`status <work-id>` is scoped to a work the user named.**
 ///    `crate::status`'s own module docs already draw this line for
 ///    loudness: the hook is silent about a damaged record because it was
@@ -284,8 +289,12 @@ pub fn unfilled_block_numbers(receipt: &PaymentReceipt) -> usize {
 /// Nothing. The order is: read the record, count empty slots, and **return
 /// before constructing a source** if there are none. A default build adds
 /// one already-cached record read to `status`; an `ant-backend` build adds
-/// a network session only for a work that is actually missing a block
-/// number — which is the work the user is running `status` about.
+/// one payment-RPC read — the chain-id guard and one receipt read per empty
+/// slot, with no Autonomi session and no wallet key (D173 §2 R14) — only
+/// for a work that is actually missing a block number, which is the work the
+/// user is running `status` about. `tests/receipt_backfill.rs` holds the
+/// work's one bootstrap peer as a loopback socket across such a `status` and
+/// counts the datagrams: none.
 ///
 /// # The race, closed by re-reading rather than by hope
 ///
@@ -351,7 +360,8 @@ fn attempt(vault: &UnlockedVault, seal_id: &SealId) -> BackfillPass {
             };
         }
     };
-    let Some(source) = crate::backend::payment_rpc(vault, &network) else {
+    // Not handed the vault: the read loads no key (D173 §2 R14).
+    let Some(source) = crate::backend::payment_rpc(&network) else {
         // `payment_rpc` has already traced which arm it took.
         return BackfillPass {
             unfilled,

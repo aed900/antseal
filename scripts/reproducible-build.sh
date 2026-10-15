@@ -11,6 +11,14 @@
 # different `$CARGO_HOME`s, so the footer digest and SHA256SUMS this deploy
 # publishes describe bytes a reader whose machine is not this one can reproduce.
 #
+# SCOPE (D171 §2 R4): the two environments vary the checkout path and
+# `$CARGO_HOME`, not crate provenance or build tools — build B copies build A's
+# `registry/cache` and `registry/index` (`make_env_b` below) and runs the same
+# `wasm-pack` and `wasm-bindgen` on `$PATH` — so a green means reproducible
+# given the pinned crate set and the pinned tools, and crate provenance on the
+# served path rests on cargo's download-time checksum, which D171 §2 R3
+# guarantees by restoring no Actions cache in `pages.yml`'s `publish` job.
+#
 # ── WHY A THIRD BUILD, when the deploy already builds twice ────────────────
 #
 # It already does, and that pair is worthless as reproducibility evidence.

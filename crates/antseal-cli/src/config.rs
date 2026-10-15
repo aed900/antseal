@@ -30,6 +30,18 @@
 //! [networks.arbitrum-one]
 //! rpc_url = "https://my-own-node.example/rpc"
 //!
+//! # Storage-network bootstrap peers, arbitrum-one ONLY (D173 §2 R4). A
+//! # present list REPLACES the vendored upstream list wholesale and is
+//! # never merged with it (consumer: `crate::devnet_env::resolve_peers`).
+//! # Validated at load through the one peer-set classifier: at least one
+//! # entry, IP literals only, no repeat, no unspecified address, no port
+//! # 0, no loopback — else exit 17 before dispatch, so before any
+//! # passphrase. An EMPTY list is refused, not read as "the defaults".
+//! # Under [networks.arbitrum-sepolia] or [networks.devnet] the key is a
+//! # malformed config naming ANTSEAL_DEVNET_ENV, those networks' only
+//! # peer source. (RFC 5737 documentation addresses, never routed.)
+//! bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
+//!
 //! # RFC 3161 TSA list override (consumer: `seal`'s anchor stage, U26).
 //! # A non-empty list REPLACES the built-in defaults wholesale; an empty
 //! # or absent one uses them. Every entry is parsed by antseal-anchor's
@@ -56,7 +68,10 @@
 //! older one), rendered once on stderr and never fatal. Invalid values
 //! for *recognized* keys — an unknown network name, a non-string, a
 //! non-http(s) URL — are hard errors: a recognized key the loader cannot
-//! honor must be loud (never a silently-dropped override).
+//! honor must be loud (never a silently-dropped override). One recognized
+//! key is a hard error in the wrong *place*: `bootstrap` anywhere but
+//! `[networks.arbitrum-one]` (D173 §2 R4) — the one key whose silent
+//! acceptance would be a stale peer layer waiting to be dialed.
 //!
 //! # The TOML subset, documented (and why it is hand-parsed)
 //!
@@ -81,6 +96,7 @@
 
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
+use std::net::SocketAddr;
 
 use antseal_net::NetworkId;
 
@@ -103,6 +119,15 @@ pub struct Config {
     /// [`Config::rpc_url_override`] as the reader (`NetworkId`
     /// deliberately gains no `Ord` for a map's sake).
     pub rpc_url_overrides: Vec<(NetworkId, String)>,
+    /// `[networks.arbitrum-one] bootstrap` — `arbitrum-one`'s storage
+    /// bootstrap peers, which **replace** the vendored upstream list and
+    /// are never merged with it (D173 §2 R4, R6). `None` is "no key": the
+    /// resolver (`crate::devnet_env::resolve_peers`, the slot's consumer)
+    /// then dials the vendored list. Never `Some(empty)`: an empty list is
+    /// refused at load. Only `arbitrum-one` can carry one — the key is a
+    /// malformed config under either other network — which is why this is
+    /// a single slot named for it and not a per-network list.
+    pub arbitrum_one_bootstrap: Option<Vec<SocketAddr>>,
     /// `[anchors] tsa_urls` — the effective TSA list for `seal`'s anchor
     /// stage (U26). `None` and `Some(empty)` both mean "the built-in
     /// defaults"; the collapse is
@@ -414,6 +439,41 @@ fn http_url_shape(value: &str) -> bool {
         || (value.starts_with("http://") && value.len() > "http://".len())
 }
 
+/// Parse and validate `[networks.arbitrum-one] bootstrap` (D173 §2 R4).
+///
+/// Every entry must be an IP-literal `ip:port` socket address — a hostname
+/// such as `example.org:10000` is refused, because nothing on the pinned
+/// storage client path resolves names — and the entries must form a set
+/// `arbitrum-one` can dial, which is the one classifier's decision (D173 §2
+/// R8, [`antseal_net::peer_locality`]): no repeat, no unspecified address,
+/// no port 0, and no loopback peer, so neither an all-loopback nor a mixed
+/// list loads. The classifier names indices, never addresses; the shape
+/// refusal names the entry, which is the user's own plaintext config.
+fn parse_bootstrap_override(items: &[String]) -> Result<Vec<SocketAddr>, String> {
+    if items.is_empty() {
+        return Err(
+            "`bootstrap` must list at least one \"ip:port\" peer: an empty list is \
+                    refused rather than read as the built-in list — delete the key to use \
+                    the built-in list"
+                .to_owned(),
+        );
+    }
+    let mut peers = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let peer: SocketAddr = item.parse().map_err(|_| {
+            format!(
+                "`bootstrap` entry {index} (`{item}`) is not an IP-literal \"ip:port\" socket \
+                 address; a hostname is refused because nothing on the storage client path \
+                 resolves names, and a port is required"
+            )
+        })?;
+        peers.push(peer);
+    }
+    antseal_net::peer_locality(NetworkId::ArbitrumOne, &peers)
+        .map_err(|refusal| format!("`bootstrap`: {refusal}"))?;
+    Ok(peers)
+}
+
 /// Route one parsed `key = value` into the schema: recognized keys with
 /// invalid values are hard errors; unrecognized keys/sections warn.
 fn apply(
@@ -497,6 +557,44 @@ fn apply(
                 ));
             }
             config.rpc_url_overrides.push((id, url));
+        }
+        // D173 §2 R4: `arbitrum-one`'s storage bootstrap peers, which REPLACE
+        // the vendored list wholesale and are never merged with it (the
+        // resolver in `crate::devnet_env` consumes this slot — a consumer
+        // that exists, unlike `rpc_url`'s, `U94`). Accepted under
+        // `[networks.arbitrum-one]` ONLY: the other two networks' peers come
+        // from the devnet export `ANTSEAL_DEVNET_ENV` names and belong to one
+        // run of a devnet, so a config key for them would be a stale layer
+        // waiting to be dialed. Validated here, at load, through the one
+        // peer-set classifier (D173 §2 R8) — so a bad list is exit 17 before
+        // dispatch and therefore before any passphrase — and, unlike
+        // `tsa_urls`, an EMPTY list is refused rather than read as "the
+        // defaults": a present layer is non-empty where it is parsed, so no
+        // layer is ever silently skipped (D173 §2 R6).
+        (["networks", network_name], "bootstrap") => {
+            let id: NetworkId = network_name.parse().map_err(|_| {
+                err(format!(
+                    "`[networks.{network_name}]` is not a known network (valid: \
+                     arbitrum-one, arbitrum-sepolia, devnet)"
+                ))
+            })?;
+            if id != NetworkId::ArbitrumOne {
+                return Err(err(format!(
+                    "`bootstrap` is accepted under [networks.arbitrum-one] only; \
+                     [networks.{id}] takes no peer override, because that network's peers \
+                     come from the devnet export ANTSEAL_DEVNET_ENV names and belong to one \
+                     run of a devnet"
+                )));
+            }
+            let items = match value {
+                Value::Array(items) => items,
+                Value::Str(_) => {
+                    return Err(err(
+                        "`bootstrap` takes an array of \"ip:port\" strings".to_owned()
+                    ));
+                }
+            };
+            config.arbitrum_one_bootstrap = Some(parse_bootstrap_override(&items).map_err(err)?);
         }
         (["networks", network_name], other) => {
             // The section family is recognized; validate its name even

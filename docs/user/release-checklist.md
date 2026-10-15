@@ -39,7 +39,7 @@ once from each side.
 | the act | making the source repository public | shipping a release to users |
 | owner | Q254, executing Q65's decision | Q31, gating Q34's publication |
 | venue | `docs/ci-verification.md`, chapter *"Q254/Q65 — the publish flip, as an ordered procedure"* | this page |
-| shape | Phase A (before), Phase B (at the flip), Phase C (after) | sections A–I below, all before |
+| shape | Phase A (before), Phase B (at the flip), Phase C (after) | sections A–I below, all before publication; section J after it — a witness, not a gate |
 
 The flip runbook says so itself, in its own *"What this checklist does NOT
 cover"* section:
@@ -64,7 +64,9 @@ recorded.
 - [ ] `[UNEXECUTED]` **The gate evidence bundle is committed** — gate logs, the
       page-verdict capture, the restore byte-compare and the disk-loss drill
       results. This is Q34's first `Accept` row and it is the one that makes
-      every other row here checkable by someone who was not present.
+      every other row here checkable by someone who was not present. Nothing
+      for this version is published — as a full release or as a pre-release —
+      before this commit lands (D172 §2 R1).
 - [ ] `[UNEXECUTED]` **The Sepolia end-to-end run is green**, and it ran
       **before** any mainnet action. Q32's `Accept` row 1 states that ordering;
       it is a deadline on the mainnet act, not a precondition of writing the
@@ -72,7 +74,17 @@ recorded.
 - [ ] `[UNEXECUTED]` **The clean-machine procedure used zero repo-checkout
       resources** — released artifacts and the hosted page only. If the machine
       needed a credential to fetch anything, it was not the clean third-party
-      machine the gate tests.
+      machine the gate tests. At gate time the release is still a draft, and
+      GitHub serves a draft only to accounts with push access, so a credential
+      is never the answer: the draft's assets reached the machine **by
+      courier** — downloaded by the release manager on their own machine and
+      delivered as gate packet Part B — and the machine's own anonymous read of
+      the release tag recorded **`404`** (D172 §2 R3, §2 R4, §2 R10). "Released
+      artifacts" means that candidate asset set, shown identical to the
+      published set by section J. Read both back from the committed evidence
+      file's step 3 and step 4 blocks
+      (`../drills/clean-machine-verify-evidence-template.md`), never from
+      memory.
 - [ ] `[UNEXECUTED]` **The disk-loss drill recovered byte-identical originals**
       from nothing but the encrypted vault backup.
 - [ ] `[UNEXECUTED]` **The traceability matrix is green for every milestone,
@@ -180,12 +192,89 @@ one long-lived Ed25519 keypair held by the maintainer, used with minisign,
 
       The self-test plants every mutation D71 §1.3 measured and requires each to
       be caught by its own distinct failure.
+- [ ] `[UNEXECUTED]` **Immediately before publishing, the draft still holds
+      exactly the set the gate checked.** This is the last row ticked before
+      publication: if anything is attached, removed or re-uploaded afterwards,
+      run it again. On the release manager's own machine, with their own
+      credential, compare the draft's assets — names, count and SHA-256 —
+      against `courier.sha256` from the **committed** gate evidence (D172 §2 R5):
+
+      ```bash
+      TAG='v<major>.<minor>.<patch>'
+      mkdir -p ~/drift/files && cd ~/drift
+      gh api 'repos/aed900/antseal/releases?per_page=100' \
+        --jq "[.[] | select(.draft and .tag_name == \"$TAG\")] | length"
+      gh api 'repos/aed900/antseal/releases?per_page=100' \
+        --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .assets[] | [.id, .name] | @tsv" > assets.tsv
+      while IFS=$'\t' read -r id name; do
+        gh api -H 'Accept: application/octet-stream' "repos/aed900/antseal/releases/assets/$id" > "files/$name" \
+          || echo "DOWNLOAD FAILED: $name"
+      done < assets.tsv
+      (cd files && sha256sum -- *) > draft.sha256
+      LC_ALL=C sort -k2 draft.sha256 > draft.sorted
+      LC_ALL=C sort -k2 <path to the committed courier.sha256> > courier.sorted
+      diff courier.sorted draft.sorted; echo "REAL_EXIT=$?"
+      ```
+
+      *Expected:* `1` (exactly one draft carries this tag); no `DOWNLOAD
+      FAILED`; `diff` prints nothing and `REAL_EXIT=0`. If the draft's asset
+      objects carry a `digest` field (whether drafts have one is not
+      established), record it too; the download is the check. *STOP if*
+      anything else. A difference means **do not publish; re-gate**. And if
+      the draft now holds a file signed under this version with bytes other
+      than the gated ones, that version is used up (D172 §2 R7, section D).
 
 ## D. Versioning
 
 - [ ] `[UNEXECUTED]` **The release tag is `v<major>.<minor>.<patch>`** and its
       SemVer level was chosen against the **CLI surface**, never against the
       format. See `versioning.md` §4.
+- [ ] `[UNEXECUTED]` **There is no release-candidate tag and no pre-release.**
+      A release candidate is a draft carrying the final name. No suffixed tag
+      such as `-rc.1` exists, and no release of any state is marked
+      pre-release (D172 §2 R8):
+
+      ```bash
+      git ls-remote --tags origin 'refs/tags/v*' | awk '{print $2}' \
+        | sed -e 's#^refs/tags/##' -e 's#\^{}$##' | sort -u | grep -cvE '^v[0-9]+\.[0-9]+\.[0-9]+$'
+      gh api 'repos/aed900/antseal/releases?per_page=100' --jq '[.[] | select(.prerelease)] | length'
+      ```
+
+      *Expected:* `0`, then `0`.
+- [ ] `[UNEXECUTED]` **This candidate's tag does not exist on the remote while
+      the release is a draft** (D172 §2 R2). The draft carries the tag name and
+      the 40-hex release commit, and no tag is pushed before publication:
+
+      ```bash
+      TAG='v<major>.<minor>.<patch>'
+      git ls-remote --tags origin "refs/tags/$TAG" | wc -l
+      ```
+
+      *Expected:* `0` while the release is a draft; after publication, the tag
+      resolves to the gated commit (section J). From the second release on,
+      earlier `v*` tags do exist, so the check names this tag, never every
+      `v*` tag. That a draft creates no tag is reported by third parties only;
+      if the dry run shows GitHub creating one at draft time, stop: the rule
+      needs a new ruling before any real candidate.
+- [ ] `[UNEXECUTED]` **This version was never signed over another set.** Once a
+      set signed under a version has left the maintainer's machine — the
+      courier handoff to the clean machine counts — that version is never
+      signed again over different files or a different commit. A candidate that
+      failed the gate after the handoff used up its version, and this release
+      takes the next number (D172 §2 R7). Across every committed clean-machine
+      evidence record, this tag maps to exactly one commit and one signing
+      timestamp:
+
+      ```bash
+      TAG='v<major>.<minor>.<patch>'
+      grep -rhoE "antseal $TAG SHA256SUMS commit:[0-9a-f]{40} [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" \
+        <the committed gate-evidence directory> | sort -u
+      ```
+
+      *Expected:* exactly one line. No line means no evidence record carries
+      the manifest's comment — the gate evidence is missing, which is not a
+      pass. Two or more lines mean this version was signed twice: do not
+      publish it.
 - [ ] `[UNEXECUTED]` **The format version did not move unless a change in
       `format-stability.md` §8's first table forced it.** If it did move, section
       E applies and a `format-v<n>-freeze` tag is cut.
@@ -267,6 +356,30 @@ the flip waits on section F.
       `.github/action-pins.tsv` is the authority for
       `scripts/check-action-pins.py`; a ledger row that moves without its
       residual being re-taken reddens rule P7 by design.
+- [ ] `[UNEXECUTED]` **Immutable releases were decided, and the decision
+      recorded, before the first publication** (D172 §2 R11). The
+      recommendation is to enable them: GitHub's immutable flow is draft,
+      attach, publish — this checklist's own order — and once a release is
+      published it locks its assets and its tag, so for a published version
+      "one version, one signed set" (section D) becomes something GitHub
+      enforces. Before publication — a set handed to the courier — it stays
+      this project's own rule. Read the setting back
+      **on its field**:
+
+      ```bash
+      gh api repos/aed900/antseal/immutable-releases --jq .enabled
+      ```
+
+      *Expected:* the value the recorded decision predicts — `true` if it was
+      enabled. **Never tick this row on the HTTP status.** When read on
+      2026-09-15, this endpoint answered `200` with `{"enabled":false}`, while
+      its documentation says a disabled setting answers `404` (D172 §1.1). A
+      status code cannot fail this check, and the field can. Whether this
+      account may enable the setting is not established; after any attempt,
+      read the field back, because a refused write can still answer with a
+      success status. Changing the setting is an external act that needs the
+      maintainer's express consent, naming the action, the destination and the
+      account; this row is not that consent.
 
 ### The `sha_pinning_required` row, and why it is recorded rather than ticked
 
@@ -373,6 +486,42 @@ public repository, so the public flip of 2026-09-12 retired it. The rule in the
 paragraph above stands: a job with `steps: 0` or an empty `runner_name` was
 refused, not run, and no row is ever ticked on such a run.
 
+## J. After publication — a witness, not a gate
+
+Every section above is checked **before** publication. This one is checked
+after it, and it is a different kind of row: **it detects, and it cannot
+undo.** By the time it runs, the release is public: announced, downloadable,
+and signed with a signature that cannot be revoked (D71 §2 R9). A red row here
+recalls nothing. The remedy is a **new version**, taken through this whole
+checklist again. Replacing a published file in place is never the remedy, and
+is forbidden, because it would void the witness's own premise (D172 §2 R6,
+§2 R7).
+
+It exists because the gate checked bytes the clean machine received by courier
+from the draft, not from the public channel (section A), and no check of a
+publication can run before the publication.
+
+- [ ] `[UNEXECUTED]` **A machine with no credential read the published release
+      from the documented channel**: `200`, `draft: false`,
+      `prerelease: false`, a `tag_name` equal to the gate packet's, and the tag
+      resolving to the gated commit. The machine is the gate VM reverted to its
+      pre-step-1 snapshot and never given a credential, or a fresh VM with the
+      reason recorded. Commands and expected output:
+      `../drills/clean-machine-verify.md`, *After publication: the channel
+      witness*, steps W0–W1.
+- [ ] `[UNEXECUTED]` **The published assets are the gated assets, byte for
+      byte.** Every asset is downloaded from `/releases/download/<tag>/`, and
+      its name set, every `sha256sum` and every GitHub-served `digest` equal
+      `courier.sha256` in the committed gate evidence. Step W2 of the same
+      section.
+- [ ] `[UNEXECUTED]` **The channel names this release as the latest.** Step W3.
+- [ ] `[UNEXECUTED]` **Only then** is the success metric's `release_date` set
+      (`../success-metric.md`), and only then is any sentence saying the gate
+      passed written into the release notes.
+
+The read-back for every row in this section is the witness block of the
+committed evidence file, never a memory of having run it.
+
 ## What this checklist does not cover
 
 - **It does not authorise anything.** Publishing a release is an external action
@@ -386,7 +535,9 @@ refused, not run, and no row is ever ticked on such a run.
   D72's, not this page's.
 - **It has no rollback.** A published release cannot be recalled: a downloaded
   artifact stays downloaded, and a crates.io version can never be deleted. Every
-  row above is a gate precisely because there is nothing after it.
+  row in sections A–I is a gate precisely because there is nothing after it.
+  Section J runs after publication, and it can only detect a published release
+  that is not the gated one; it cannot undo the publication.
 - **It has never been run.** Every row is `[UNEXECUTED]` or `[BLOCKED]`, and a
   pre-state is not a result.
 
@@ -412,4 +563,10 @@ refused, not run, and no row is ever ticked on such a run.
 | the five reserved names and their metadata | D72 §1.5, retrieved 2026-08-16 |
 | `antseal-wasm` was never reserved | `crates/antseal-wasm/Cargo.toml:49` |
 | the flip runbook hands the release process to Q31/Q34 | `docs/ci-verification.md`, the Q254/Q65 chapter's *"does NOT cover"* section |
+| a draft is served only to accounts with push access, so the gate receives its assets by courier | D172 §1.1, §2 R3; GitHub REST API documentation, *List releases* |
+| nothing is published before the gate evidence is committed, and the gate records `404` for the tag | D172 §2 R1, §2 R4 |
+| the draft is compared with `courier.sha256` immediately before publication | D172 §2 R5 |
+| no release-candidate tag or pre-release; the tag is absent while the release is a draft; one version, one signed set | D172 §2 R2, §2 R7, §2 R8 |
+| the immutable-releases read-back is on `.enabled`, never the status | D172 §1.1, §2 R11 |
+| section J detects and cannot undo; the remedy is a new version | D172 §2 R6 |
 | the gate itself | task **Q34**; `docs/testing/verification-matrix.md` |

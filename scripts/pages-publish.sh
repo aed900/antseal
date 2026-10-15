@@ -76,11 +76,15 @@ cmd_build() {
   ./scripts/wasm-pack-build.sh --check || return 1
 
   # AFTER build A and BEFORE packaging (D135 §5 R4): the comparison must not
-  # write into `~/.cargo` or `./target`, or the post-job rust-cache save would
-  # store a tree contaminated by the second environment and the next deploy
-  # would restore it. Build B gets its own checkout path and its own
-  # $CARGO_HOME, which is the axis and also the reason it cannot reach this
-  # job's cache (D135 §5 R1).
+  # write into `~/.cargo` or `./target`. Until D171 §2 R3 the stated reason
+  # was the post-job rust-cache save, which would have stored a tree
+  # contaminated by the second environment for the next deploy to restore;
+  # `publish` restores and saves NO Actions cache any more (D171 §2 R3, held
+  # by `scripts/check-write-job-cache.py`), and the rule stands on its own
+  # ground: build A's tree is what gets packaged, and the digest this deploy
+  # publishes must be build A's, untouched by build B. Build B gets its own
+  # checkout path and its own $CARGO_HOME — the comparison's axis (D135 §5 R1,
+  # whose "build A may use the job's cache" D171 §2 R3 supersedes).
   note "two ENVIRONMENTS, one commit: is the digest this deploy publishes reproducible? (R86)"
   ./scripts/reproducible-build.sh --compare || return 1
 

@@ -734,6 +734,7 @@ fn the_json_document_carries_the_bundle_path_units_and_receipt_flag() {
 
     for key in [
         "work_id",
+        "network",
         "bundle_path",
         "bytes",
         "revealed_unit_ids",
@@ -753,6 +754,9 @@ fn the_json_document_carries_the_bundle_path_units_and_receipt_flag() {
     }
 
     assert_eq!(doc["work_id"], serde_json::json!(work_id));
+    // D174 §2 R12: the work's recorded network, verbatim — the fixture
+    // seals on `devnet`.
+    assert_eq!(doc["network"], serde_json::json!("devnet"));
     assert_eq!(
         doc["bundle_path"],
         serde_json::json!(target.display().to_string())

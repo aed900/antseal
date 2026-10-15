@@ -40,6 +40,21 @@
 //! one file — and it shares the payer's connect configuration and its
 //! `get_data` address re-check rather than copying them.
 //!
+//! # The third type: [`AntCoreReceiptReader`] (D173 §2 R14)
+//!
+//! A receipt read — `status`'s block-number backfill — needs neither a storage
+//! session nor a key. This type builds a key-less provider over the payment RPC,
+//! runs the payer's chain-id guard, and backfills; it holds no `Client`, so it
+//! dials no storage peer and consults no storage gate.
+//!
+//! # The storage gate and the transport mode (D173 §2 R8–R10)
+//!
+//! Both storage constructors — the payer's and the reader's — consult
+//! [`crate::network::storage_gate`] as their first fallible step, then derive
+//! the transport mode from the peers (`client_config`), and only then open a
+//! socket. A shape scan in `tests/storage_gate.rs` holds that order in the
+//! default feature set, where this file is not even compiled.
+//!
 //! # Payment mechanics (D37 Decision 2, D33 Decision 1)
 //!
 //! `pay()` submits ⌈non-zero-transfers/256⌉ **sequential** EVM txs
@@ -64,11 +79,16 @@
 //! re-exported [`Wallet`] (`Wallet::to_provider()`,
 //! `evmlib-0.9.0/src/wallet.rs:213-215`) and type-erased to
 //! [`DynProvider`]; submission, receipt awaits, the chain-id guard, and
-//! the `eth_getTransactionReceipt` backfill all ride it — the same
-//! S5-configured payment RPC endpoint D33 names (D33's letter mentions
-//! the `http_provider` re-export for the backfill; this provider targets
-//! the identical endpoint and already exists, so no second provider is
-//! constructed). Its nonce filler re-reads the pending count per tx
+//! the payer's `eth_getTransactionReceipt` backfill all ride it — the same
+//! S5-configured payment RPC endpoint D33 names.
+//!
+//! **[D173 §2 R14, 2026-09-15]** This paragraph used to say that no second
+//! provider is constructed, because the backfill could ride this one. That
+//! made a receipt read cost a payment session: a signing key and a storage
+//! `Client`. [`AntCoreReceiptReader`] now builds the key-less provider D33's
+//! letter names (`ant_protocol::evm::utils::http_provider`) over the same
+//! endpoint, and the payer's backfill runs the same function over this
+//! provider. Its nonce filler re-reads the pending count per tx
 //! (`SimpleNonceManager`, alloy-provider-1.8.3/src/fillers/nonce.rs:37-45),
 //! which composes safely with the fully-awaited, sequential submissions
 //! here and with the approve tx `Wallet` submits internally.
@@ -96,12 +116,13 @@ use ant_core::data::{
 use ant_protocol::CLOSE_GROUP_MAJORITY;
 use ant_protocol::evm::contract::payment_vault::MAX_TRANSFERS_PER_TRANSACTION;
 use ant_protocol::evm::contract::payment_vault::handler::PaymentVaultHandler;
+use ant_protocol::evm::utils::http_provider;
 use ant_protocol::evm::{Amount, U256};
 use bytes::Bytes;
 
 use crate::backend::{BalanceReport, PreflightReport, allowance_to_approve};
 use crate::evm::to_evm_network;
-use crate::network::{NetworkConfig, NetworkId};
+use crate::network::{NetworkConfig, PeerLocality, storage_gate};
 use crate::quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,
     QuotePreimage, RewardsAddress, TxHash,
@@ -213,27 +234,39 @@ pub struct AntCoreBackend {
 impl AntCoreBackend {
     /// Connect to the configured network and prepare the payment session.
     ///
-    /// - Autonomi side: `Client::connect` over `config.bootstrap`
-    ///   (loopback allowed only for [`NetworkId::Devnet`] — the transport
-    ///   handshake variant is devnet-only,
-    ///   `ant-core-0.5.0/src/data/client/mod.rs:238-247`), then
-    ///   `with_evm_network` (the external-signer driver — deliberately
-    ///   never `with_wallet`, see module docs).
-    /// - EVM side: the payment [`Wallet`] built from the vault-held key
-    ///   handle (custody is U10/U13's; this takes the handle), plus the
-    ///   one signing provider (module docs).
-    /// - Guard: the RPC's `eth_chainId` must equal
-    ///   `config.evm_chain_id` — the wrong-network/wrong-Sepolia guard
-    ///   the `NetworkConfig` field documents.
+    /// The steps, in the order they run — the first two are pure, so **no
+    /// socket is opened until both have passed** (D173 §2 R10):
+    ///
+    /// 1. The **storage gate** ([`crate::network::storage_gate`]): when armed,
+    ///    a bootstrap set holding any non-loopback peer is refused here. It
+    ///    must precede the `eth_chainId` call below, because for a public
+    ///    network id that call reaches evmlib's compiled-in public RPC
+    ///    whatever `config.rpc_url` says (`crate::evm::to_evm_network`).
+    /// 2. The **transport mode** (`client_config`, D173 §2 R8): loopback comes
+    ///    from the resolved peers, and a set no mode can dial — empty, mixed,
+    ///    unspecified, port 0, repeated, or loopback under `arbitrum-one` — is
+    ///    refused here, still before any socket.
+    /// 3. EVM side: the payment [`Wallet`] built from the vault-held key
+    ///    handle (custody is U10/U13's; this takes the handle), plus the one
+    ///    signing provider (module docs).
+    /// 4. Guard: the RPC's `eth_chainId` must equal `config.evm_chain_id` —
+    ///    the wrong-network/wrong-Sepolia guard the `NetworkConfig` field
+    ///    documents, shared with [`AntCoreReceiptReader::connect`].
+    /// 5. Autonomi side: `Client::connect` over `config.bootstrap`, then
+    ///    `with_evm_network` (the external-signer driver — deliberately never
+    ///    `with_wallet`, see module docs).
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] for connect/transport/chain-id failures;
+    /// [`StorageError::Network`] for the storage gate's refusal, a peer set no
+    /// transport mode can dial, and connect/transport/chain-id failures;
     /// [`StorageError::Quote`] never (no quoting here).
     pub async fn connect(
         config: &NetworkConfig,
         wallet_key: &WalletKey,
     ) -> Result<Self, StorageError> {
+        consult_storage_gate(config)?;
+        let client_config = client_config(config)?;
         let evm_network = to_evm_network(config).map_err(|e| StorageError::Network {
             reason: format!("network configuration rejected: {e}"),
         })?;
@@ -246,24 +279,9 @@ impl AntCoreBackend {
 
         // Wrong-network guard before anything can pay: eth_chainId must
         // match the pinned/exported id (42161 / 421614 / devnet's 31337).
-        let chain_id = provider
-            .get_chain_id()
-            .await
-            .map_err(|e| StorageError::Network {
-                reason: format!("payment RPC unreachable (eth_chainId): {e}"),
-            })?;
-        if chain_id != config.evm_chain_id {
-            return Err(StorageError::Network {
-                reason: format!(
-                    "chain-id mismatch: the {network} config pins {expected} but the RPC reports \
-                     {chain_id} — wrong network or wrong RPC endpoint",
-                    network = config.id,
-                    expected = config.evm_chain_id,
-                ),
-            });
-        }
+        chain_id_guard(&provider, config).await?;
 
-        let client = Client::connect(&config.bootstrap, client_config(config))
+        let client = Client::connect(&config.bootstrap, client_config)
             .await
             .map_err(|e| map_ant_error(ErrContext::Connect, &e))?
             .with_evm_network(evm_network);
@@ -305,49 +323,26 @@ impl AntCoreBackend {
         &self.config
     }
 
-    /// Idempotent block-number backfill (D33 Decision 2): for every
-    /// [`TxRecord`] whose `block_number` slot is empty, read
-    /// `eth_getTransactionReceipt(tx_hash)` over the payment RPC and fill
+    /// Idempotent block-number backfill (D33 Decision 2) over this payment
+    /// session's own provider: for every [`TxRecord`] whose `block_number`
+    /// slot is empty, read `eth_getTransactionReceipt(tx_hash)` and fill
     /// `block_number`/`status`. Returns how many records were enriched.
     ///
-    /// **No payment-path side effects** — read-only RPC; safe to call any
-    /// number of times; enrichment never gates finalize. A hash whose
-    /// receipt is not yet visible is left untouched (retry later).
+    /// **[D173 §2 R14, 2026-09-15] A delegation, kept for a caller that already
+    /// holds a payment session.** The body belongs to
+    /// [`AntCoreReceiptReader::backfill_block_numbers`], which reads the same
+    /// receipts with no Autonomi `Client` and no wallet key — the type a
+    /// receipt read that holds no payment session (`status`) should build.
+    /// Both run one function, so they cannot drift.
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] only when the RPC itself is unreachable;
-    /// an individual not-yet-visible receipt is not an error.
+    /// As [`AntCoreReceiptReader::backfill_block_numbers`].
     pub async fn backfill_block_numbers(
         &self,
         receipt: &mut PaymentReceipt,
     ) -> Result<usize, StorageError> {
-        let mut filled = 0usize;
-        for tx in &mut receipt.txs {
-            if tx.block_number.is_some() {
-                continue;
-            }
-            let hash = alloy::primitives::B256::from(*tx.tx_hash.as_bytes());
-            let fetched = self
-                .provider
-                .get_transaction_receipt(hash)
-                .await
-                .map_err(|e| StorageError::Network {
-                    reason: format!("eth_getTransactionReceipt failed: {e}"),
-                })?;
-            if let Some(evm_receipt) = fetched {
-                tx.block_number = evm_receipt.block_number;
-                tx.status = if evm_receipt.status() {
-                    TxStatus::Confirmed
-                } else {
-                    TxStatus::Reverted
-                };
-                if evm_receipt.block_number.is_some() {
-                    filled += 1;
-                }
-            }
-        }
-        Ok(filled)
+        fill_block_numbers(&self.provider, receipt).await
     }
 
     /// Payment preflight (task S8) over this session's live balances.
@@ -1062,11 +1057,12 @@ const READER_REFUSAL: &str = "this is the download-only reader: it was connected
 ///
 /// # Shared, not copied
 ///
-/// `client_config` (the devnet-only loopback rule) and `fetch_chunk` (the
-/// `chunk_get` call, its absence confirmation and its D32 address re-check)
-/// are the same two functions
+/// The storage gate, `client_config` (the transport mode derived from the
+/// peers, D173 §2 R8) and `fetch_chunk` (the `chunk_get` call, its absence
+/// confirmation and its D32 address re-check) are the same functions
 /// [`AntCoreBackend`] uses, so the payer and the reader cannot drift on which
-/// networks may dial loopback or on what bytes count as the chunk asked for.
+/// peers may be dialed, in which mode, or on what bytes count as the chunk
+/// asked for.
 pub struct AntCoreReader {
     client: Client,
     config: NetworkConfig,
@@ -1077,8 +1073,9 @@ impl AntCoreReader {
     ///
     /// Nothing about the payment side of `config` is read: no RPC is dialed
     /// and no chain id is checked, because nothing this type does can reach
-    /// a chain. Loopback handshakes are allowed only for
-    /// [`NetworkId::Devnet`], exactly as for the payer (`client_config`).
+    /// a chain. Before `Client::connect`, and before any socket, the storage
+    /// gate is consulted first (D173 §2 R10) and then the transport mode is
+    /// derived from the peers — exactly as for the payer (`client_config`).
     ///
     /// # A connection that succeeded is not a network that answers
     ///
@@ -1090,16 +1087,21 @@ impl AntCoreReader {
     /// bootstrap connected `Ok` in 6.3 s and an empty one in 45 ms. So an
     /// unreachable network surfaces at the first `get_data`, not here — and
     /// `fetch_chunk` is what keeps that fetch from calling the chunk absent.
-    /// `tests/devnet_backend.rs`'s
+    /// **[D173 §2 R8, 2026-09-15]** An empty set no longer reaches upstream at
+    /// all: `client_config` refuses it in the network class. A dead set still
+    /// connects `Ok`. `tests/devnet_backend.rs`'s
     /// `devnet_d170_an_unreachable_network_is_never_reported_as_absence` holds
     /// both halves.
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] when upstream cannot create or start the
+    /// [`StorageError::Network`] for the storage gate's refusal, a peer set no
+    /// transport mode can dial, and when upstream cannot create or start the
     /// client node.
     pub async fn connect(config: &NetworkConfig) -> Result<Self, StorageError> {
-        let client = Client::connect(&config.bootstrap, client_config(config))
+        consult_storage_gate(config)?;
+        let client_config = client_config(config)?;
+        let client = Client::connect(&config.bootstrap, client_config)
             .await
             .map_err(|e| map_ant_error(ErrContext::Connect, &e))?;
         Ok(Self {
@@ -1150,20 +1152,200 @@ impl StorageBackend for AntCoreReader {
 }
 
 // ---------------------------------------------------------------------------
+// The receipt reader (D173 §2 R14): a chain read with no storage session
+// ---------------------------------------------------------------------------
+
+/// Reads EVM payment receipts over a network's payment RPC — **no Autonomi
+/// `Client`, no wallet, no EVM network object** (D173 §2 R14).
+///
+/// # Why a third type
+///
+/// `status`'s block-number backfill (D33 Decision 2) reads public receipts. It
+/// rode the payer: a full [`AntCoreBackend::connect`], which needs the vault's
+/// signing key and runs `Client::connect` over the bootstrap set, and whose
+/// client the backfill never used. With `arbitrum-one`'s vendored peers that
+/// would have made `status` dial the storage network to read a chain. This type
+/// is D33 Decision 1's letter instead: a key-less provider from
+/// `ant_protocol::evm::utils::http_provider` over the definition's RPC URL.
+///
+/// # What it does not consult
+///
+/// The storage gate ([`crate::network::storage_gate`]) and the bootstrap set:
+/// it opens no storage session, so there is no storage peer to refuse, and
+/// `config.bootstrap` is never read. The payment RPC stays outside both
+/// network gates (D173 §2 R13).
+pub struct AntCoreReceiptReader {
+    provider: DynProvider,
+    config: NetworkConfig,
+}
+
+impl AntCoreReceiptReader {
+    /// Build the key-less provider over `config.rpc_url` and run the payer's
+    /// chain-id guard.
+    ///
+    /// For `arbitrum-one` and `arbitrum-sepolia` the URL is the pinned public
+    /// endpoint, which `crate::evm`'s agreement test holds equal to the
+    /// built-in one the payer's wallet provider uses; for `devnet` it is the
+    /// export's.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Network`] when the RPC URL does not parse (the URL is not
+    /// echoed: a private endpoint can carry a credential in its path), when
+    /// `eth_chainId` fails, or when the RPC reports a chain other than
+    /// `config.evm_chain_id` — the payer's guard, in the payer's words.
+    pub async fn connect(config: &NetworkConfig) -> Result<Self, StorageError> {
+        let rpc_url: url::Url = config.rpc_url.parse().map_err(|_| StorageError::Network {
+            reason: format!("the {} payment RPC URL is not a valid URL", config.id),
+        })?;
+        let provider = http_provider(rpc_url).erased();
+        chain_id_guard(&provider, config).await?;
+        Ok(Self {
+            provider,
+            config: config.clone(),
+        })
+    }
+
+    /// The network this reader is bound to.
+    #[must_use]
+    pub fn network_config(&self) -> &NetworkConfig {
+        &self.config
+    }
+
+    /// Idempotent block-number backfill (D33 Decision 2): for every
+    /// [`TxRecord`] whose `block_number` slot is empty, read
+    /// `eth_getTransactionReceipt(tx_hash)` over the payment RPC and fill
+    /// `block_number`/`status`. Returns how many records were enriched.
+    ///
+    /// **No payment-path side effects** — read-only RPC; safe to call any
+    /// number of times; enrichment never gates finalize. A hash whose receipt
+    /// is not yet visible is left untouched (retry later).
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Network`] only when the RPC itself is unreachable; an
+    /// individual not-yet-visible receipt is not an error.
+    pub async fn backfill_block_numbers(
+        &self,
+        receipt: &mut PaymentReceipt,
+    ) -> Result<usize, StorageError> {
+        fill_block_numbers(&self.provider, receipt).await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Conversion + helper functions
 // ---------------------------------------------------------------------------
 
-/// The upstream client configuration **both** adapters connect with.
+/// The storage gate (D173 §2 R9) as both storage constructors consult it —
+/// **first**, before any other fallible step and any socket (§2 R10).
 ///
-/// Loopback handshakes are a devnet-only transport variant; production peers
-/// reject them (`ClientConfig` docs, `ant-core-0.5.0/src/data/client/mod.rs:
-/// 238-247`). One function, so the payer and the reader cannot disagree about
-/// which network may dial loopback.
-fn client_config(config: &NetworkConfig) -> ClientConfig {
-    ClientConfig {
-        allow_loopback: config.id == NetworkId::Devnet,
+/// Refuses in the network class, so no new [`StorageError`] variant exists for
+/// it (D173 §2 R9), with a reason that begins with
+/// [`storage_gate::REFUSAL`].
+fn consult_storage_gate(config: &NetworkConfig) -> Result<(), StorageError> {
+    storage_gate::check(&config.bootstrap).map_err(|refusal| StorageError::Network {
+        reason: refusal.to_string(),
+    })
+}
+
+/// The upstream client configuration **both** storage adapters connect with —
+/// or the refusal of a peer set no transport mode can dial (D173 §2 R8).
+///
+/// `allow_loopback` comes from the peers, never from the network id:
+/// [`NetworkConfig::peer_locality`] classifies `config.bootstrap` after
+/// IPv4-mapped canonicalization, and only an all-loopback set binds loopback.
+/// Upstream threads the flag to saorsa-core's `local` mode, which binds
+/// loopback only and admits loopback candidates
+/// (`ant-core-0.5.0/src/data/network.rs:48-54`; `saorsa-core-0.26.2/src/
+/// network.rs:178-185,551-552`), while production peers reject the handshake
+/// variant it produces (`ant-core-0.5.0/src/data/client/mod.rs:238-247`) — so a
+/// mixed set has no mode that serves it.
+///
+/// A refusal is the network class, before `Client::connect`, in the payer and
+/// the reader alike: the variant D170's absence tests accept, so an empty set's
+/// refusal reads as an unreachable network and never as absence.
+///
+/// **Recorded behaviour change (D173 §2 R8):** this used to key loopback on the
+/// `devnet` id, so a devnet export with non-loopback peers bound loopback only
+/// (it now binds all interfaces), and an `arbitrum-sepolia` configuration
+/// holding a Sepolia devnet's loopback peers could not dial them (it now binds
+/// loopback, D174 §2 R5).
+fn client_config(config: &NetworkConfig) -> Result<ClientConfig, StorageError> {
+    let locality = config
+        .peer_locality()
+        .map_err(|refusal| StorageError::Network {
+            reason: format!(
+                "refusing to connect over the {} bootstrap set: {refusal}",
+                config.id
+            ),
+        })?;
+    Ok(ClientConfig {
+        allow_loopback: locality == PeerLocality::Loopback,
         ..ClientConfig::default()
+    })
+}
+
+/// The wrong-network guard both payment-RPC constructors run — the payer's and
+/// the receipt reader's: `eth_chainId` must equal `config.evm_chain_id` (42161 /
+/// 421614 / a devnet's run-scoped id). One function, so the check and its words
+/// cannot drift between them.
+async fn chain_id_guard(
+    provider: &DynProvider,
+    config: &NetworkConfig,
+) -> Result<(), StorageError> {
+    let chain_id = provider
+        .get_chain_id()
+        .await
+        .map_err(|e| StorageError::Network {
+            reason: format!("payment RPC unreachable (eth_chainId): {e}"),
+        })?;
+    if chain_id != config.evm_chain_id {
+        return Err(StorageError::Network {
+            reason: format!(
+                "chain-id mismatch: the {network} config pins {expected} but the RPC reports \
+                 {chain_id} — wrong network or wrong RPC endpoint",
+                network = config.id,
+                expected = config.evm_chain_id,
+            ),
+        });
     }
+    Ok(())
+}
+
+/// D33 Decision 2's backfill body, run by
+/// [`AntCoreReceiptReader::backfill_block_numbers`] and, as a delegation, by
+/// [`AntCoreBackend::backfill_block_numbers`] (D173 §2 R14).
+async fn fill_block_numbers(
+    provider: &DynProvider,
+    receipt: &mut PaymentReceipt,
+) -> Result<usize, StorageError> {
+    let mut filled = 0usize;
+    for tx in &mut receipt.txs {
+        if tx.block_number.is_some() {
+            continue;
+        }
+        let hash = alloy::primitives::B256::from(*tx.tx_hash.as_bytes());
+        let fetched =
+            provider
+                .get_transaction_receipt(hash)
+                .await
+                .map_err(|e| StorageError::Network {
+                    reason: format!("eth_getTransactionReceipt failed: {e}"),
+                })?;
+        if let Some(evm_receipt) = fetched {
+            tx.block_number = evm_receipt.block_number;
+            tx.status = if evm_receipt.status() {
+                TxStatus::Confirmed
+            } else {
+                TxStatus::Reverted
+            };
+            if evm_receipt.block_number.is_some() {
+                filled += 1;
+            }
+        }
+    }
+    Ok(filled)
 }
 
 /// `get_data` for **both** adapters: `chunk_get` (D32: blob = one chunk, no
@@ -1862,6 +2044,128 @@ mod tests {
             map_ant_error(ErrContext::Get, &transport)
                 .to_string()
                 .contains("dial failed"),
+        );
+    }
+
+    // ── D173 §2 R8–R10: the gate and the transport mode ───────────────────
+
+    fn with_peers(base: NetworkConfig, peers: &[&str]) -> NetworkConfig {
+        NetworkConfig {
+            bootstrap: peers
+                .iter()
+                .map(|text| {
+                    text.parse()
+                        .unwrap_or_else(|_| panic!("fixture {text:?} is not a socket address"))
+                })
+                .collect(),
+            ..base
+        }
+    }
+
+    /// A `devnet` configuration whose chain half is inert data: nothing here
+    /// dials, so none of it has to answer.
+    fn devnet_base() -> NetworkConfig {
+        NetworkConfig {
+            id: crate::network::NetworkId::Devnet,
+            evm_chain_id: 31_337,
+            rpc_url: "http://127.0.0.1:1/".to_owned(),
+            ..NetworkConfig::arbitrum_sepolia()
+        }
+    }
+
+    /// `allow_loopback` comes from the peers, never the network id (D173 §2
+    /// R8) — including the two cases the id rule got wrong: a Sepolia devnet's
+    /// loopback peers under `arbitrum-sepolia` (D174 §2 R5), and a LAN devnet
+    /// (the recorded behaviour change).
+    #[test]
+    fn client_config_derives_loopback_from_the_peers_never_the_network_id() {
+        let admitted = [
+            (
+                "a Sepolia devnet's loopback peers",
+                with_peers(
+                    NetworkConfig::arbitrum_sepolia(),
+                    &["127.0.0.1:20001", "127.0.0.1:20002"],
+                ),
+                true,
+            ),
+            (
+                "a local devnet's loopback peers",
+                with_peers(devnet_base(), &["127.0.0.1:20001", "[::1]:20002"]),
+                true,
+            ),
+            (
+                "a LAN devnet's non-loopback peers",
+                with_peers(devnet_base(), &["192.168.1.20:20001"]),
+                false,
+            ),
+            (
+                "arbitrum-one's non-loopback peers",
+                with_peers(NetworkConfig::arbitrum_one(), &["192.0.2.1:10000"]),
+                false,
+            ),
+        ];
+        for (label, config, expected) in admitted {
+            let built = client_config(&config).unwrap_or_else(|refusal| {
+                panic!("{label} must get a transport mode, got a refusal: {refusal}")
+            });
+            assert_eq!(
+                built.allow_loopback, expected,
+                "{label} are dialable only with allow_loopback = {expected}"
+            );
+        }
+
+        let refused = [
+            ("an empty set", with_peers(devnet_base(), &[])),
+            (
+                "a mixed set",
+                with_peers(devnet_base(), &["127.0.0.1:20001", "192.0.2.1:10000"]),
+            ),
+            (
+                "a repeated peer",
+                with_peers(devnet_base(), &["127.0.0.1:20001", "127.0.0.1:20001"]),
+            ),
+            (
+                "loopback peers under arbitrum-one",
+                with_peers(NetworkConfig::arbitrum_one(), &["127.0.0.1:20001"]),
+            ),
+        ];
+        for (label, config) in refused {
+            match client_config(&config) {
+                Err(StorageError::Network { reason }) => assert!(
+                    reason.starts_with("refusing to connect over the"),
+                    "{label}: {reason}"
+                ),
+                Err(other) => panic!("{label} was refused in the wrong class: {other:?}"),
+                Ok(built) => panic!(
+                    "{label} must be refused before Client::connect; it got allow_loopback = {}",
+                    built.allow_loopback
+                ),
+            }
+        }
+    }
+
+    /// The adapter reports the storage gate in the network class, with the
+    /// refusal sentence first — armed here by the compiler (`cfg(test)`).
+    #[test]
+    fn the_storage_gate_is_reported_in_the_network_class() {
+        match consult_storage_gate(&with_peers(devnet_base(), &["192.0.2.1:9"])) {
+            Err(StorageError::Network { reason }) => assert!(
+                reason.starts_with(storage_gate::REFUSAL),
+                "the reason must begin with the refusal sentence: {reason}"
+            ),
+            other => {
+                panic!(
+                    "a public peer must be refused by the armed gate in the network class: {other:?}"
+                )
+            }
+        }
+        assert_eq!(
+            consult_storage_gate(&with_peers(devnet_base(), &["127.0.0.1:9"])),
+            Ok(())
+        );
+        assert_eq!(
+            consult_storage_gate(&with_peers(devnet_base(), &[])),
+            Ok(())
         );
     }
 }

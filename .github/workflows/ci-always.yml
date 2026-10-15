@@ -65,6 +65,16 @@ permissions:
 # workflow without it turns that lane red).
 env:
   ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+  # D173 §2 R9/R11 — the no-real-STORAGE-network gate, the anchor gate's twin,
+  # armed here for the same reason. It makes antseal-net's storage
+  # constructors refuse any bootstrap peer that is not loopback before the
+  # payer's `eth_chainId` call and before `Client::connect`; the loopback
+  # devnet is admitted. `0` is the only off switch; unset, a debug build is
+  # armed and a release build is not, so this line is what reaches any
+  # release-profile step. Required in EVERY workflow by the same lane as the
+  # anchor arming (`scripts/ci-lanes.sh anchor-net-policy`). Policy:
+  # CONTRIBUTING.md, "No real storage network in tests".
+  ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"
 
 jobs:
   # Q2: secret-material guard (testdata/README.md, "Secret-material
@@ -240,6 +250,25 @@ jobs:
         run: ./scripts/check-action-pins.py --self-test
       - name: D143 — every `uses:` is the 40-hex commit the ledger names, and the ledger is fresh
         run: ./scripts/check-action-pins.py
+      # D171 §2 R5 (Q274) — a job that publishes or signs bytes restores no
+      # Actions cache. Every job granted `pages`, `contents` or `id-token` write
+      # carries no `Swatinem/rust-cache` or `actions/cache` step, because any
+      # live job on `main` can create cache entries and cargo re-checks nothing
+      # a restored cache hands it (D171 §1). The check prints how many such
+      # jobs it examined, and a count of zero is RED, never a pass.
+      #
+      # It rides HERE, beside the pin ledger, for the reason that check does:
+      # Python stdlib only, no network, no git, no cargo (asserted by this job's
+      # `--arm`/`--verdict` pair, D124/Q182), seconds, and ZERO new
+      # required-status contexts. SELF-TEST FIRST: D171 §3's four planted faults
+      # and ten parser arms, each judged by its rule tag and the names its
+      # message must carry (scripts/lib/red-arm.sh), planted in memory or in a
+      # temporary directory, never in the tree. Measured locally 2026-09-15,
+      # 2-core host, 3 runs each: 0.10 s and 0.05-0.07 s.
+      - name: D171 — self-test the write-job cache check (prove every rule can go red)
+        run: ./scripts/check-write-job-cache.py --self-test
+      - name: D171 — no job granted pages, contents or id-token write restores an Actions cache
+        run: ./scripts/check-write-job-cache.py
       # Q81/D61 — the scheduled fuzz lane's monthly minute bill against its
       # named 700-minute ceiling. It rides HERE, as a step of an existing
       # job, for the reason `ci-shell` does: it needs no network, and the

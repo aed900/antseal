@@ -5,7 +5,8 @@ M0 (Q12) as a frozen assumptions block plus a numbered set of stubs, so that
 the freeze happened against a known map rather than a blank page and nothing
 on the list could be quietly forgotten between M0 and M4. Section 2 is now
 written: §2.10 by C21 at M0, §2.1–§2.9 by Q21 at M4, each to the scope line
-its M0 stub declared. Section 3 maps every row of MVP-SPEC.md's *Risks &
+its M0 stub declared; §2.11 was added by Q272 on 2026-09-15, its scope line
+written with its body. Section 3 maps every row of MVP-SPEC.md's *Risks &
 mitigations* onto a section here or onto the user-facing page that owns it.
 
 Read section 1 as normative and section 2 as analysis. Section 2 is **not**
@@ -34,6 +35,7 @@ claim is qualified, and the qualification is the spec's own (MVP-SPEC.md line
 | Frozen security assumptions (section 1) | **FROZEN** — the five assumption classes the `.sealproof` format permanently rests on, authored by C20 against the implemented `antseal-core::crypto` tree | `aed900` | 2026-07-28 |
 | Threat section §2.10 (WASM zeroization) | **WRITTEN** — C21, against `docs/zeroization-audit.md`; re-checked against the shipped verifier page at M4 (§2.10, closing note) | — | 2026-07-28 |
 | Threat sections §2.1–§2.9 | **WRITTEN** — Q21, each to its M0 scope line; section 2 carries no sign-off and is **not** frozen | — | 2026-08-17 |
+| Threat section §2.11 (the storage network) | **WRITTEN** — Q272, scope line and body together ([D176](decisions/D176-the-storage-network-is-its-own-adversary-and-the-model-says-what-it-can-take.md)), with the dated §2.3 correction; no sign-off, **not** frozen | — | 2026-09-15 |
 
 The frozen block below is reproduced **verbatim** from
 `docs/security-assumptions.md`, which is its source of truth and carries the
@@ -424,16 +426,21 @@ manifest, and a break of ML-DSA-65 alone does not either. Both must fall.
 
 # 2. Threat sections
 
-Numbering is stable: cite these as `threat-model §2.N`. The ten headings are
-enumerated by `every_m4_threat_section_is_enumerated`
-(`crates/antseal-core/tests/security_assumptions_drift.rs:272-315`), so a
-section cannot be deleted quietly.
+Numbering is stable: cite these as `threat-model §2.N`. The eleven headings
+are enumerated by `every_m4_threat_section_is_enumerated` in
+`crates/antseal-core/tests/security_assumptions_drift.rs`, which requires
+each as exactly one whole heading line, so a section cannot be deleted,
+demoted or duplicated quietly. A cross-reference cites the bare `§2.N` and
+never spells a heading's words, which is what keeps "exactly one" true.
 
 **Each section keeps its `*Scope.*` paragraph, which is the M0 contract it
 was written against.** Q12 wrote those lines before the work existed, so that
 a later author would fill a defined hole rather than invent a shape; keeping
 them lets a reader check the delivery against the brief instead of taking the
-delivery's word for it. Where the shipped tree turned out to differ from a
+delivery's word for it. §2.11 is the exception: Q272 added it after Q21 had
+finalized this document, with its scope line and body written together, and
+its scope paragraph says so.
+Where the shipped tree turned out to differ from a
 scope line, the section says so under a heading that begins **"Correction to
 this section's M0 scope line"** rather than departing silently. There are
 three such corrections, in §2.1 (twice) and §2.9 (once).
@@ -912,8 +919,11 @@ Two bounds on the exception, both measured, because "the network knows" is
 too coarse to act on:
 
 - **It is the address, not the work.** A node learns which address paid for
-  the chunk it was offered. It does not learn the work id or the unit
-  structure: a chunk is a padded AEAD blob and what the network sees of it is
+  the chunk it was offered. It does not learn the work id
+  ~~or the unit structure~~ — **struck 2026-09-15 by Q272**
+  ([D176](decisions/D176-the-storage-network-is-its-own-adversary-and-the-model-says-what-it-can-take.md)
+  §2 R6; see the correction at the end of this subsection): a chunk is a
+  padded AEAD blob and what the network sees of it is
   a padded ciphertext length (§2.8), and the manifest's signing keys are
   per-work, so nothing in what a node holds says *"this is the same sealer"*.
 - **The pinned node does not use the hashes.** `ant-node` `=0.15.0`
@@ -933,6 +943,48 @@ single reveal as the moment of exposure — which is what
 same fact. This **widens** the observability the rest of §2.3 establishes; it
 reverses none of it, and it is not a defect in the product: the proof of
 payment is how storage gets paid for, and the hashes ride inside it.
+
+**Correction — a storing node can count the seal's blobs, and an eclipse
+learns more (2026-09-15, Q272).** The first bound above said a node *"does
+not learn the work id or the unit structure"*. The clause *"or the unit
+structure"* was false when it was written, and falsifying it takes no eclipse
+and no collusion: the transaction whose hash a node is handed carries **one
+non-zero transfer per priced blob** in its sub-batch. Re-measured link by link
+at the pins for this correction:
+
+1. upstream's single-node payment sorts a blob's quotes by price, pays the
+   median quote three times its price and sets every other amount to zero
+   (`SingleNodeQuotePayment::from_quotes`,
+   `ant-core-0.5.0/src/data/client/batch.rs`), which upstream's own
+   `single_node_quote_payment_accepts_every_supported_quote_count` asserts
+   for every quote count from 1 to 7;
+2. that median is never zero: a quote's price must equal `calculate_price` of
+   the key count its peer attests (`quote_commitment_binding_is_valid`,
+   `ant-core-0.5.0/src/data/client/quote.rs`), and `calculate_price` adds to
+   a non-zero baseline (`ant-protocol-2.3.0/src/payment/pricing.rs`);
+3. antseal's `pay` puts every non-zero payment line, in blob order, into
+   sub-batches of at most 256 transfers, one `payForQuotes` transaction each
+   (`crates/antseal-net/src/ant_backend.rs`);
+4. upstream's proof builder gives each blob the hash of every transaction
+   carrying one of its non-zero transfers (`build_paid_chunks`, the same
+   `batch.rs`), and that proof rides in every PUT request, as above.
+
+The in-tree witness is a local-devnet test,
+`devnet_s7_multi_sub_batch_sequential_txs_with_capture_hook`
+(`crates/antseal-net/tests/devnet_backend.rs`): five blobs at a cap of two
+transfers per transaction pay as three transactions of 2, 2 and 1 transfers,
+with five quote hashes mapped. So a node offered one chunk can read, on any
+public explorer, how many blobs that payment covered — for a fresh seal whose
+priced blobs fit one transaction, its unit count plus one for the manifest.
+It learns a **count**, not the other blobs' sizes or boundaries: every price
+is computed from a key count, never from a length, so the amounts carry no
+size. **What survives** is the rest of the bound: the work id — SHA-256 of a
+manifest body the network only ever receives encrypted — and the per-work
+signing keys, so the only same-sealer link a single node holds is still the
+paying address. §2.8
+already lists the batch-payment transaction among the routes that group a
+work's chunks; this is that route handed to a storing node together with the
+chunk. What an eclipse adds, at upload and at read time, is §2.11's.
 
 ### Funding hygiene, and the affordance that does not exist
 
@@ -1776,7 +1828,9 @@ transaction**, and **upload-time traffic correlation**. So the residual
 fingerprint is exploitable by an adversary who can both group a work's
 ciphertexts by one of those routes *and* hold a candidate document — a
 narrower adversary than "anyone watching the network", and a wider one than
-"nobody".
+"nobody". A storing node is handed the payment transaction with the chunk
+(§2.3's correction), and an eclipse holds every chunk of a work outright
+(§2.11).
 
 **Nothing blurs upload timing, ordering or batching, and that was measured
 rather than assumed.** Blobs upload in canonical order — units by `unit_id`,
@@ -2010,6 +2064,9 @@ redden only if someone routed an Autonomi-derived time through a new type or
 a new state. The rule holds today because there is nothing to delete that
 would let it in, which is a good position and is not the same as a guard.
 
+What the storage network can still do outside evidence — to the payment,
+to persistence and to privacy — is §2.11's.
+
 ### The accepted one-time mainnet exposure
 
 `MVP-SPEC.md` lines 157 and 180 accept exactly one pre-release exposure to
@@ -2170,6 +2227,309 @@ exactly as unobservable from source as C21 said they were.
 *Status:* written (C21, 2026-07-28); cross-checked against the shipped page
 (Q21, 2026-08-17) with the finding above.
 
+## 2.11 Storage network as adversary
+
+*Scope.* The adversary is **whoever answers the client's storage-network
+requests**: one hostile peer, the few peers an upload is sent to, or an
+**eclipse** — every peer the client can see. It can take money, persistence
+and privacy; it cannot take a verdict. Must cover: that boundary; the
+client's peer sources ranked by trust; withholding, including upstream's
+one-peer abort; payment misdirection; non-replication; what the network
+learns, at upload and at read time; and what survives a run. The spec row is
+`MVP-SPEC.md` line 180 (*Autonomi network youth*). **This scope paragraph and
+the body below were written together, by Q272 on 2026-09-15**
+([D176](decisions/D176-the-storage-network-is-its-own-adversary-and-the-model-says-what-it-can-take.md)),
+so unlike the scope lines of §2.1–§2.10 it is not an M0 contract the body can
+be checked against.
+
+Every upstream fact below is read at the pins — `ant-core` 0.5.0,
+`ant-protocol` 2.3.0, `saorsa-core` 0.26.2, `saorsa-transport` 0.35.1 and the
+dev-pinned `ant-node` 0.15.0 — and a pin bump re-opens each of them.
+Citations into antseal's own code name a function, never a line.
+
+### What it cannot touch
+
+**No verdict.** A bundle verifies offline, and no network answer reaches a
+verdict. §2.9's *Autonomi is never trusted for time, and evidence never
+depends on it* is the proof, and the *Autonomi availability or honesty*
+bullet of the frozen block's *What is deliberately not assumed* list, between
+the `frozen-security-assumptions` markers, is the assumption; this section
+re-argues neither. Everything below concerns the **money** a seal spends,
+whether its ciphertext **persists**, and what the network **learns**.
+`verify --live` and `restore` report on the network, never on the evidence,
+so a network that lies to them misleads a user about storage and about
+nothing else.
+
+### Who the client talks to, ranked by trust
+
+Which peer source a run uses is D173 §2 R6's rule, cited here and not
+restated. What this section adds is what each source costs an attacker:
+
+| peer source | to make it hostile, an attacker must | which buys |
+| --- | --- | --- |
+| a list the user supplies — the `config.toml` override D173 §2 R4 rules, or a Sepolia or devnet export | put a snippet, a tutorial or a file in front of the user | an eclipse from the first packet, for every run that reads it |
+| the vendored list — upstream's published `arbitrum-one` peers, copied byte for byte at the pin (D173 §2 R1) | compromise the build or the release, or upstream's list before it is transcribed | the same, for every user of that binary |
+| peers learned at run time, from the DHT after bootstrap | run nodes where the client's lookups land | influence over those lookups, with no provenance at all; how much is not established |
+
+**Precedence is not trust, and the two point in opposite directions.** A
+user-supplied list outranks the vendored one because the user owns the
+choice, not because it is safer: it is the cheapest eclipse there is. A
+hostile list pasted from a tutorial is a hostile peer set from the first
+packet, with no honest seed beside it, because a resolved set is never merged
+with another source. The vendored list's provenance test proves only that
+its bytes are the ones upstream published at the pin; it makes no seed
+honest, operated by anyone named, or live (D173 §2 R2).
+
+**Run-time peers are permissive by upstream's design.** A peer id is a hash
+of a public key anyone can generate (`BLAKE3(pub_key)`), and upstream's client
+enforces no IP diversity, in its own words: *"Clients never enforce
+IP-diversity limits: they don't host data and their routing table exists only
+to find peers, not to be defended against Sybil clustering"*
+(`ant-core-0.5.0/src/data/network.rs`, `Network::new`). What it costs to
+become the close group of a published address is **not established** — see
+the last subsection.
+
+### Withholding: a false absence needs lying, not silence
+
+What the user sees, by what the network does for one address:
+
+| the network | `verify --live` | `restore` |
+| --- | --- | --- |
+| serves the chunk from any peer | the blob is present | the network copy, re-hashed |
+| is silent, times out, or serves bad bytes | *"live check: inconclusive — N fetch(es) failed and nothing negative was established"* | the vault's verified D43 cache copy if it holds one; otherwise that file fails with the network error |
+| answers not-found from every queried peer, at least four | *"live check: N blob(s) are no longer on the network"* | the cache copy if the vault holds one; otherwise that file fails with *"the network has no data at this address"* |
+
+**Restore never writes different bytes.** Every byte it accepts, from the
+network or from the cache, is re-hashed to the address the manifest names
+and then checked against the commitments (`crates/antseal-cli/src/pipeline/restore.rs`,
+module docs), so withholding can make a restore fail or fall back, never
+deliver content other than what was sealed.
+
+**After a disk loss there is no fallback.** An export never carries the D43
+cache (`crates/antseal-cli/src/vault/export.rs`), so a restore on a new
+machine from an imported export depends entirely on the network that machine
+can see — which is exactly the M4 restore drill's scenario.
+
+**A false *no longer on the network* needs every peer the client's lookup
+returns for that address to lie**, at least four of them, unanimously.
+Silence cannot produce one; silence produces *inconclusive*. Lying of that
+kind is control of the client's whole view of one address — an eclipse, or
+its local equivalent.
+
+**Upstream's one-peer abort, and why it no longer reaches a user.**
+Upstream's `chunk_get` asks the closest peers one at a time, and the first
+peer that serves bytes not hashing to the address ends the sweep with an
+error (`chunk_get_try_closest_peers`, `ant-core-0.5.0/src/data/client/chunk.rs`);
+`chunk_get` swallows that error, waits a second, sweeps again, and reports a
+second failure as `Ok(None)`. At upstream's API, then, one hostile peer
+reached before any honest holder makes a stored chunk read as absent.
+**antseal neutralises that for absence** (`S39`; D170 §2 R12): on `Ok(None)`
+its `confirm_absence` re-asks every close-group peer at once through
+`chunk_get_from_close_group`, takes the chunk from any peer that serves it,
+counts bad bytes as a failure and never as an answer, and declares absence
+only when at least `CLOSE_GROUP_MAJORITY` (four) peers were queried and every
+one said not-found (`classify_sweep`, `is_authoritative_absence`,
+`crates/antseal-net/src/ant_backend.rs`). Two residuals survive, and neither
+is a false *gone*: **time** — two upstream sweeps and a one-second pause
+before the confirming sweep reaches an honest holder — and **a true absence
+read as *inconclusive*** whenever one queried peer is silent or serves bad
+bytes.
+
+### Payment misdirection
+
+**Under an eclipse the vote is the attacker's.** Quoting is witnessed: the
+client takes the close group its own lookup returns, adds each responder's
+view of that group, and needs five of seven — fewer when responder views are
+missing (`witnessed_close_group_quorum_for_missing_views`,
+`ant-core-0.5.0/src/data/client/quote.rs`). A witness defends against a lying
+minority inside an honest view; when every peer the client can see is
+hostile, so is every voter and every witness.
+
+**The price is the attacker's to choose, within a cap.** A quote's price must
+equal `calculate_price` of the key count its peer attests in its own signed
+commitment, and that count is capped at `MAX_COMMITMENT_KEY_COUNT` = 1 000 000
+(`ant-protocol-2.3.0/src/payment/commitment.rs`), so a hostile quoting set can
+price each blob at up to three times `calculate_price(1 000 000)`. The
+absolute ANT figure of that bound is not computed here.
+
+**The payment goes to the attacker.** A blob's one non-zero transfer is paid
+to the median quote's `rewards_address` (`SingleNodeQuotePayment::from_quotes`)
+— a field of a quote the attacker wrote — on a public chain, permanently.
+
+**What bounds the loss is the consent, not a ceiling.** The consent report
+shows the quoted total and the allowance approved is exactly that total
+(§2.3), so no payment can move more than the total its consent showed —
+though the defect below is a way to be asked twice. Nothing bounds what a
+quote may ask: `--yes` consents in advance to whatever total the quote
+reports, and a spend ceiling (`--max-cost`) is a candidate D36 recorded, not a
+flag.
+
+**A known open defect: `S43`.** One hostile quoting peer can push a seal into
+the proofs-expired path inside the 24-hour window, and resume then pays
+again. The client never checks a quote's timestamp, which is the quoting
+peer's own signed field; antseal judges a proof's age by the oldest timestamp
+among a blob's quotes; once that is more than 24 hours old, any payment-class
+PUT rejection — a hostile target's *payment required* included — is
+classified as expired and ends the PUT loop at once, abandoning targets that
+would accept; a fresh seal exits 29 (`payment-proofs-expired`), and resume
+re-quotes, re-consents and pays once more. Honest `ant-node` 0.15.0 does not
+reject a quote on age. Every link was established by reading, not by running,
+and whether one peer is reliably placed to supply both the old timestamp and
+the rejection is not established. This is `S43`'s defect, not accepted
+behaviour, and `S43` replaces this paragraph with the ruled behaviour.
+
+### Non-replication
+
+**An acknowledgement is the peer's word.** `chunk_put_with_proof` returns
+success on the target's own *stored* or *already exists* reply, carrying the
+address the peer names (`ant-core-0.5.0/src/data/client/chunk.rs`); nothing
+checks that bytes were kept. antseal's `put_to_majority` sends to the targets
+in upstream's order, one at a time, and **stops at the fourth
+acknowledgement** (`CLOSE_GROUP_MAJORITY`). So non-replication takes less than
+an eclipse: if every target the loop reaches before its fourth
+acknowledgement is hostile, no honest node is ever sent the chunk. Under an
+eclipse it is certain. (That is reasoning, not measurement: honest
+replication can only copy bytes an honest node holds.)
+
+**Undetectable from the same vantage.** The seal never reads back — `NotFound`
+comes only from `get_data`, which the seal and resume pipelines never call
+(`crates/antseal-cli/src/pipeline/error.rs`) — and a read-back through the
+same view would not help: the attacker received the bytes and can serve them
+to that view indefinitely.
+
+**Detectable from a different one.** `verify --live`, run from a network
+vantage whose view the attacker does not control, fetches every distinct
+address the bundle lists; a blob that never reached an honest node reads *no
+longer on the network* there, or *inconclusive* if that vantage's peers are
+silent. antseal ships no multi-vantage check: the second vantage is the
+user's to arrange.
+
+**A false *already stored* cannot complete a seal, and the catch is
+antseal's.** A blob the quote round reports as already stored is never
+priced, never paid and never given a payment record. At finalize,
+`finalize_batch` probes it with `chunk_exists`, whose served bytes are hashed
+to the address, so a network that never received the bytes cannot pass the
+probe; the missing record then fails the seal — *"no payment record for
+unstored blob at address …"* — in class `network-failure`, exit 23, with that
+blob unpaid and the work not complete. The catch holds only while the
+attacker lacks the bytes: once an earlier PUT reached it, *already stored*
+plus bytes it can serve passes the probe, which is non-replication by another
+route.
+
+### What the network learns
+
+**One storing node, with no eclipse and no collusion,** learns the paying
+address (§2.3); from the transaction whose hash rides in the proof, how many
+blobs that payment covered (§2.3's correction); and, when the client reaches
+it directly rather than through a relay, the network address the upload came
+from — so one node already holds that network address and that paying
+address side by side. It holds one padded chunk (§2.8) and does not learn the
+work id.
+
+**What an eclipse adds**, and so does collusion across the close groups of one
+work's addresses: **every chunk** of the work, and with them the bucketed
+size vector and the manifest's exact unpadded length (§2.8); grouping made
+certain instead of inferred — §2.8's *upload-time traffic correlation* route,
+seen from inside; and therefore the client's network address and paying
+address joined to **the whole work**, not to one chunk.
+
+**Read-time interest, which no section covered before this one.** `restore`
+fetches a work's manifest and its units, `reveal` fetches whatever its vault
+cache does not hold
+([D175](decisions/D175-reveal-fetches-through-a-reader-that-connects-only-when-a-fetch-is-needed.md)),
+and `verify --live` fetches every distinct address a bundle lists
+(`crates/antseal-net/src/live.rs`). Whoever answers one of those requests
+learns that a network address wanted that address at that moment; whoever
+answers all of them — an eclipse, or the close groups of one work colluding —
+learns which work. For a sealer running `restore` or `reveal`, that ties
+their network address to their own work. For a **third party** running
+`verify --live` on a bundle they were sent, it is the CLI's counterpart of
+§2.4's online overlay, where the verifier's IP address becomes linkable to a
+specific anchored work — except that the parties learning it are storage
+peers no document names, not four pinned hosts. `verify --live` runs only
+when asked for and only after offline verification; the verdict never needs
+it.
+
+### Nothing about the network survives a run, except its peer source
+
+- **A fresh identity every run.** `ant-core`'s `Network::new` configures no
+  identity, and `saorsa-core` generates one whenever none is configured
+  (`NodeIdentity::generate`, `saorsa-core-0.26.2/src/network.rs`), so no peer
+  recognises a returning client by its peer id. Its network address is
+  another matter (above).
+- **No peer cache.** Every antseal client is built with `Client::connect`,
+  which sets `peer_cache_path: None`; upstream's persisted cache,
+  `client_peer_cache.json`, is attached only through
+  `Client::from_node_with_peer_cache` and filled only by `save_peer_cache`
+  (`ant-core-0.5.0/src/data/client/mod.rs`).
+- **No close-group cache.** `saorsa-core`'s `close_group_cache_dir` — whose
+  cached peers are *"loaded and contacted first"* at start — defaults to
+  `None`, and `ant-core`'s builder never sets it.
+- **No upstream peer file.** Nothing reads the `bootstrap_peers.toml` that
+  upstream's own CLI installs; `ant_core::config::load_bootstrap_peers` has no
+  caller outside its own test.
+
+**Pinned, not assumed.** `crates/antseal-net/tests/no_upstream_peer_state.rs`
+fails, naming the file, the line and the name, when any code line under
+`crates/*/src` names `from_node_with_peer_cache`, `save_peer_cache`,
+`load_bootstrap_peers`, `close_group_cache_dir`, `client_peer_cache` or the
+literal `bootstrap_peers.toml`; comments may name them (D173 §2 R15, D176
+§2 R5). Its planted cases run inside the test, and it refuses a scan that
+read no file. So an eclipse ends with its run **unless the peer source itself
+is hostile**, which is why the trust ranking above is the part of this
+section that matters most.
+
+**The one upstream file antseal does leave behind.** Every dropped client
+writes `client_adaptive.json` into upstream's data directory — on Linux
+`$XDG_DATA_HOME/ant`, or `~/.local/share/ant` when that is unset, the
+directory upstream's own `ant` CLI uses — creating the directory if it is
+missing, and every connect reads the file back while adaptation is on, which
+is the default antseal keeps. Turning adaptation off stops the read, not the
+write (`build_controller` and `impl Drop for Client`,
+`ant-core-0.5.0/src/data/client/mod.rs`). The file holds three concurrency
+starting values — quote, store, fetch — and **no peers**, so it cannot carry
+an eclipse into the next run. What it can carry is a slowdown: a network that
+forces timeouts depresses those values, and the next antseal run, and the
+user's `ant` CLI reading the same directory, start from them. A third party's
+`verify --live` writes it into their home directory too, and a client started
+with neither `HOME` nor `XDG_DATA_HOME` set panics instead. Both are `S42`'s.
+
+### What antseal does not do
+
+Stated so that none of it is mistaken for a claim: **no cover traffic** and no
+upload jitter (§2.8); **no multi-vantage persistence check**; **no
+peer-diversity rule of its own** — client routing is upstream's, permissive
+by design; **no spend ceiling**; and **no switch for UPnP**: every connect
+starts `saorsa-transport`'s gateway discovery (its default `upnp` feature,
+which `saorsa-core` keeps on), which may ask the local router for a port
+mapping with a one-hour lease, and nothing at the pin turns it off
+(D173 §1.4).
+
+### Not established
+
+Written here so that none of it is read as fact:
+
+- the Sybil cost of becoming the close group of a published address at
+  `saorsa-core` 0.26.2 — how a peer learned from lookups enters a client's
+  routing table — and whether honest nodes shed records to closer newcomers,
+  which would turn placement near a bundle's addresses from withholding into
+  loss;
+- the absolute ANT figure of the price bound above;
+- the `S43` chain end to end;
+- **whether this pinned client can still store and pay against the node
+  release the network runs today** (`S41`). Upstream ships client and node in
+  lockstep and nodes upgrade within a day; `S41` runs the full devnet E2E
+  against the latest `ant-node` release, and its verdict — how many releases
+  behind the network the pinned client is, proven on loopback on a date
+  against a named version — is recorded here when it exists.
+
+**Delegated.** Two things are owed to users, and no user page carries them
+yet: the persistence advice — check a seal from a second network vantage with
+`verify --live`, and expect no cache fallback from a restore after a disk
+loss — and the warning that a peer list is a trust decision. Both are owed to
+a `docs/user/` page once `S40` makes the default network reachable; until
+then this section is their engineering source.
+
 ---
 
 # 3. Risk coverage map — `MVP-SPEC.md` lines 177–189
@@ -2182,7 +2542,7 @@ left without a home, and nothing is answered by two owners.
 | spec line | risk | owner |
 | --- | --- | --- |
 | **179** | ant-core churn (weekly-to-biweekly) → exact pin, `StorageBackend` isolation, mock-first tests | **Delegated** — `docs/dependency-policy.md`, which names this row as its own subject at `:9` (*"Risks — ant-core churn, PQC crate maturity"*). It is a dependency-governance risk, not a threat to a seal: no attacker is involved and no evidence property depends on it. |
-| **180** | Autonomi network youth → evidence validity never depends on Autonomi; one accepted pre-release mainnet exposure | **§2.9** — the offline-verification proof, the structural absence of an Autonomi-derived time, and the accepted one-time exposure with the slot Q34 fills. |
+| **180** | Autonomi network youth → evidence validity never depends on Autonomi; one accepted pre-release mainnet exposure | **§2.9** — the offline-verification proof, the structural absence of an Autonomi-derived time, and the accepted one-time exposure with the slot Q34 fills — and **§2.11** — what the network the client talks to can still take outside evidence: payment, persistence and privacy, with peer sources ranked by trust. |
 | **181** | receipt anchor not independently verifiable in MVP → demoted to supporting evidence | **§2.9** (why it can never be an anchor, structurally) and **§2.3** (what including it costs). |
 | **182** | OTS pending window / calendar death; TSA churn and cert expiry → minimum-anchor policy, opportunistic upgrades, pinned roots, genTime LTV | **§2.9** — all four, including the correction that the *gate* is one verified token while the *default list* is two endpoints. TSA selection and the alternates are **delegated** to `docs/user/timestamp-authorities.md` (Q26). |
 | **183** | PQC crate maturity (`ml-dsa` pre-1.0 and unaudited; `fips204` dormant) → exact pins, RUSTSEC tracking, WASM probe, reserved-slot fallback | **Delegated** — `docs/dependency-policy.md:9` and its `ml-dsa`/`fips204` rows. The *cryptographic* half — what a break of either half of the hybrid would and would not forge — is **§1 class 5**, which is frozen. |
@@ -2218,6 +2578,16 @@ line 143).
 - `docs/testing/fuzzing.md` — the fuzz lanes §2.6 cites, and their venue.
 - `docs/decisions/` — the decision register (D74/D75 GGM cover shape,
   D13/D14/D15 signature pins and signing mode, D16/D17 signature policy).
+- `docs/decisions/D170-read-only-commands-get-a-reader-that-cannot-pay.md` —
+  the wallet-less reader `restore` and `verify --live` fetch through, and
+  absence declared only by the network's own authoritative rule (§2 R12);
+  §2.11's withholding subsection.
+- `docs/decisions/D173-mainnet-peers-are-upstreams-published-bytes-and-no-test-can-dial-them.md`
+  — the peer sources and their precedence (§2 R6) that §2.11 ranks by trust,
+  and the source pin (§2 R15) it cites.
+- `docs/decisions/D176-the-storage-network-is-its-own-adversary-and-the-model-says-what-it-can-take.md`
+  — the ruling §2.11, the §2.3 correction and the anchored section check
+  implement.
 - `docs/format/registry-v1.md` — the wire format these assumptions apply to.
 - `docs/testing/error-code-contract.md` — the permanent error codes the
   tamper matrix binds to.

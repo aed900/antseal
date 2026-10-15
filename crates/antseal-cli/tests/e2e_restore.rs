@@ -52,10 +52,13 @@
 //! handlers D170 wired: `restore` byte-identical and then idempotent,
 //! `vault import` then `restore` on a clean home, and `reveal` →
 //! `verify --live --json` reporting the manifest row persisted, beside a
-//! negative control whose only network is a dead loopback port. Sealing still
-//! happens in-process — it is the precondition, not the subject — and every
-//! assertion about restoring, revealing or verifying is read off a process's
-//! exit code and its one `--json` document.
+//! negative control whose only network is a dead loopback port. The
+//! `devnet_d175_…` row drives the handler D175 wired: `vault import` then a
+//! `reveal` of a strict subset on a clean home, fetched through the read-only
+//! reader connected exactly once, beside the same dead-port control. Sealing
+//! still happens in-process — it is the precondition, not the subject — and
+//! every assertion about restoring, revealing or verifying is read off a
+//! process's exit code and its one `--json` document.
 //!
 //! NON-SECRET: every fixture byte string is documented and run-tagged; `W`
 //! never leaves the vault, and the backup is an encrypted export.
@@ -242,6 +245,9 @@ fn run_clean_machine(
         // arming back explicitly, and `check-anchor-net.py` R4 refuses an
         // `env_clear()` in a test source that does not re-arm.
         .env(spawn::NO_REAL_ANCHOR_NETWORK, "1")
+        // D173 §2 R11: the storage gate's arm is cleared by the same
+        // `env_clear()` and is given back on the same statement.
+        .env(spawn::NO_REAL_STORAGE_NETWORK, "1")
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join("config"))
@@ -716,7 +722,8 @@ enum VaultAt<'a> {
 
 /// Spawn the release-feature binary: its vault at `vault`, `cwd` as its
 /// working directory, `devnet_env` as the only devnet definition it can see,
-/// and — when `passphrase_on_stdin` — the fixture passphrase on fd 0.
+/// and — when `passphrase_on_stdin` — the fixture passphrase on fd 0. No
+/// `RUST_LOG`: the rows read documents and exit codes, not traces.
 fn antseal_on_devnet(
     vault: VaultAt<'_>,
     cwd: &Path,
@@ -724,13 +731,33 @@ fn antseal_on_devnet(
     devnet_env: Option<&Path>,
     passphrase_on_stdin: bool,
 ) -> Answer {
+    antseal_on_devnet_logged(vault, cwd, args, devnet_env, passphrase_on_stdin, None)
+}
+
+/// [`antseal_on_devnet`] with `rust_log` as the child's `RUST_LOG`, for a row
+/// that reads a trace — the D175 row counts the reader's connect trace.
+fn antseal_on_devnet_logged(
+    vault: VaultAt<'_>,
+    cwd: &Path,
+    args: &[&str],
+    devnet_env: Option<&Path>,
+    passphrase_on_stdin: bool,
+    rust_log: Option<&str>,
+) -> Answer {
     let mut command = spawn::antseal();
     command
         .args(args)
         .current_dir(cwd)
-        .env_remove("RUST_LOG")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    match rust_log {
+        Some(filter) => {
+            command.env("RUST_LOG", filter);
+        }
+        None => {
+            command.env_remove("RUST_LOG");
+        }
+    }
     match vault {
         VaultAt::Dir(dir) => {
             command.env("ANTSEAL_DIR", dir);
@@ -1101,7 +1128,8 @@ fn devnet_d170_reveal_then_verify_live_is_persisted_and_a_dead_network_inconclus
     assert_eq!(
         units["from_network"],
         serde_json::json!(0),
-        "reveal still serves a cached work from its cache (U72; U91 wires the rest): {units}"
+        "a cached work is served from its cache in this build too — the reader connects only \
+         from a needed fetch, and nothing was needed (U72; D175 §2 R1): {units}"
     );
 
     let offline = antseal_on_devnet(
@@ -1216,5 +1244,274 @@ fn devnet_d170_reveal_then_verify_live_is_persisted_and_a_dead_network_inconclus
     eprintln!(
         "D170 T-D3 OK: work {work_id} revealed; verify --live all-persisted ({checked} subjects) \
          and Inconclusive over a dead bootstrap, both at exit {offline_code:?}"
+    );
+}
+
+/// `connect_read_only`'s one trace, emitted inside its future — so only when
+/// a connection is actually attempted — and the filter that lets it through.
+const READER_CONNECT_TRACE: &str = "connecting the read-only reader";
+const BACKEND_TRACE_LOG: &str = "antseal_cli::backend=debug";
+
+/// **`U91` `Accept` row 1 (D175 §2 R9): a spawned `vault import`, then a
+/// spawned `reveal` of a strict unit subset on a clean home, produces the
+/// subset bundle fetched from the devnet — through the read-only reader,
+/// connected exactly once — and the bundle verifies without a vault.**
+///
+/// The sealing machine is wiped after its export, so the clean home holds
+/// exactly what a user carries: the backup file. The imported vault holds no
+/// unit copy (S29's lean export), so every unit of the touched file comes off
+/// the wire; the subset is read off `show --json` on the clean home rather
+/// than assumed, and is strictly smaller than the file's selectable units so
+/// that D70's promotion cannot turn it into a full reveal. `vault import` and
+/// `show` run with no export at all: neither reads a network.
+///
+/// On the same clean home a **dead-export control** — the only peer a dead
+/// loopback port — exits 23 per D175 §2 R4, writes no bundle, and says
+/// neither *"does not construct one yet"* nor *"has no data at this
+/// address"*: the reader connected (once) and the fetch failed in the network
+/// class.
+#[test]
+fn devnet_d175_a_clean_home_reveals_a_strict_subset_through_the_reader_connected_once() {
+    let _guard = serial();
+    let Some((config, _env, key)) = gate() else {
+        return;
+    };
+    let originals = Originals::new();
+    let stage = std::env::temp_dir().join(format!("antseal-d175-s19-{}", run_tag()));
+    let sealing = stage.join("sealing-machine");
+    std::fs::create_dir_all(&sealing).expect("mk sealing machine");
+    let sealing_layout = VaultLayout::at(sealing.join("vault"));
+    let work = seal_on_devnet(&sealing_layout, &config, &key, &originals, "d175-s19");
+    let work_id = antseal_cli::pipeline::hex32(&work);
+    let backup = stage.join("carried.sealvault");
+    {
+        let unlocked = unlock_vault(&sealing_layout, &passphrase()).expect("unlock");
+        export_vault(&unlocked, &passphrase(), &backup, &mut rng()).expect("vault export");
+    }
+    std::fs::remove_dir_all(&sealing).expect("wipe the sealing machine");
+
+    let home = stage.join("clean-home");
+    let cwd = home.join("empty-tree");
+    std::fs::create_dir_all(&cwd).expect("mk the clean home");
+    let backup_arg = backup.to_str().expect("a utf-8 stage path").to_owned();
+
+    let imported = antseal_on_devnet(
+        VaultAt::Home(&home),
+        &cwd,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "vault",
+            "import",
+            &backup_arg,
+        ],
+        None,
+        true,
+    );
+    assert_eq!(
+        imported.code,
+        Some(0),
+        "the clean home imports the carried backup.\n{}",
+        imported.streams()
+    );
+
+    // The subset, read off the clean home's own view of the work. `show`
+    // reads no network, so it runs with no export.
+    let shown = antseal_on_devnet(
+        VaultAt::Home(&home),
+        &cwd,
+        &["--json", "--passphrase-fd", "0", "show", &work_id],
+        None,
+        true,
+    );
+    assert_eq!(
+        shown.code,
+        Some(0),
+        "the imported work shows on the clean home.\n{}",
+        shown.streams()
+    );
+    let shown = shown.document();
+    let units = shown["result"]["units"]
+        .as_array()
+        .unwrap_or_else(|| panic!("show carries the unit table: {shown}"));
+    const TOUCHED: &str = "chapters/long.txt";
+    let touched_units: Vec<u64> = units
+        .iter()
+        .filter(|unit| unit["path"] == serde_json::json!(TOUCHED))
+        .map(|unit| unit["unit_id"].as_u64().expect("a unit id"))
+        .collect();
+    let selectable: Vec<u64> = units
+        .iter()
+        .filter(|unit| unit["path"] == serde_json::json!(TOUCHED))
+        .filter(|unit| unit["selectable"] == serde_json::json!(true))
+        .map(|unit| unit["unit_id"].as_u64().expect("a unit id"))
+        .collect();
+    assert!(
+        selectable.len() >= 3,
+        "the multi-unit file carries enough units for a strict subset: {selectable:?}"
+    );
+    let subset: Vec<u64> = selectable[..2].to_vec();
+    assert!(
+        subset.len() < selectable.len(),
+        "a strict subset, so D70 promotes nothing: {subset:?} of {selectable:?}"
+    );
+    let units_arg = subset
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let bundle = cwd.join("subset.sealproof");
+    let bundle_arg = bundle.to_str().expect("a utf-8 stage path").to_owned();
+    let revealed = antseal_on_devnet_logged(
+        VaultAt::Home(&home),
+        &cwd,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "reveal",
+            &work_id,
+            "--units",
+            &units_arg,
+            "--yes",
+            "-o",
+            &bundle_arg,
+        ],
+        Some(&devnet_export()),
+        true,
+        Some(BACKEND_TRACE_LOG),
+    );
+    assert_eq!(
+        revealed.code,
+        Some(0),
+        "the clean home reveals the subset from the backup and the network.\n{}",
+        revealed.streams()
+    );
+    let document = revealed.document();
+    assert_eq!(
+        document["result"]["units"]["from_cache"],
+        serde_json::json!(0),
+        "the imported vault holds no unit copy (S29), so nothing came from the cache: {document}"
+    );
+    assert_eq!(
+        document["result"]["units"]["from_network"],
+        serde_json::json!(touched_units.len()),
+        "every unit of the touched file — the whole file is gathered, the subset disclosed — \
+         came off the wire: {document}"
+    );
+    assert!(
+        !touched_units.is_empty(),
+        "the touched file has units: {shown}"
+    );
+    assert_eq!(
+        document["result"]["revealed_unit_ids"],
+        serde_json::json!(subset),
+        "exactly the requested subset was disclosed: {document}"
+    );
+    assert_eq!(
+        document["result"]["files_fully_revealed"],
+        serde_json::json!([]),
+        "a strict subset promotes no file (D70): {document}"
+    );
+    assert_eq!(
+        document["result"]["files_touched"],
+        serde_json::json!(1),
+        "{document}"
+    );
+    assert_eq!(
+        document["result"]["network"],
+        serde_json::json!("devnet"),
+        "the network the ciphertext was fetched from (D174 §2 R12): {document}"
+    );
+    assert_eq!(
+        revealed.stderr.matches(READER_CONNECT_TRACE).count(),
+        1,
+        "the reader was connected exactly once, from the first fetch (D175 §2 R1).\n{}",
+        revealed.streams()
+    );
+    assert!(bundle.is_file(), "the subset bundle was written");
+
+    let verified = antseal_on_devnet(
+        VaultAt::Dir(&stage.join("no-vault-here")),
+        &cwd,
+        &["--json", "verify", &bundle_arg],
+        None,
+        false,
+    );
+    assert_eq!(
+        verified.document()["ok"],
+        serde_json::json!(true),
+        "the subset bundle verifies through a vault-less verify.\n{}",
+        verified.streams()
+    );
+
+    // ── the negative control: a network nothing answers on, same home ────
+    let dead = dead_devnet_export(&stage);
+    let control_bundle = cwd.join("control.sealproof");
+    let control_arg = control_bundle
+        .to_str()
+        .expect("a utf-8 stage path")
+        .to_owned();
+    let control = antseal_on_devnet_logged(
+        VaultAt::Home(&home),
+        &cwd,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "reveal",
+            &work_id,
+            "--units",
+            &units_arg,
+            "--yes",
+            "-o",
+            &control_arg,
+        ],
+        Some(&dead),
+        true,
+        Some(BACKEND_TRACE_LOG),
+    );
+    assert_eq!(
+        control.code,
+        Some(23),
+        "an unreachable network ends the reveal in the network class (D175 §2 R4).\n{}",
+        control.streams()
+    );
+    let document = control.document();
+    assert_eq!(document["ok"], serde_json::json!(false), "{document}");
+    assert_eq!(
+        document["error"]["class"],
+        serde_json::json!("network-failure"),
+        "{document}"
+    );
+    let message = document["error"]["message"]
+        .as_str()
+        .expect("an error message")
+        .to_owned();
+    assert!(
+        message.contains("could not be fetched from the network"),
+        "the engine's own fetch-failure sentence: {message}"
+    );
+    for forbidden in ["does not construct one yet", "has no data at this address"] {
+        assert!(
+            !message.contains(forbidden),
+            "an unreachable network is neither a missing backend nor absence (`{forbidden}`): \
+             {message}"
+        );
+    }
+    assert!(!control_bundle.exists(), "a failed reveal writes no bundle");
+    assert_eq!(
+        control.stderr.matches(READER_CONNECT_TRACE).count(),
+        1,
+        "the dead network was dialled once, from the first fetch.\n{}",
+        control.streams()
+    );
+
+    let _ = std::fs::remove_dir_all(&stage);
+    eprintln!(
+        "D175 S19 OK: work {work_id} imported on a clean home and units {units_arg} revealed by \
+         the binary from the network through one connection; the dead-export control exited 23"
     );
 }

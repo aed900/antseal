@@ -78,8 +78,10 @@ impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
     /// a journal that deliberately has none.
     ///
     /// A sinkless journal is also simply *correct* for every non-paying
-    /// command — `restore`, `verify --live` and `status --upgrade` construct
-    /// their backend with `ReadOnly` and never reach `pay`.
+    /// command — `restore`, `verify --live` and the `ant-backend` build's
+    /// `reveal` hold the wallet-less read-only reader (D170; D175), `status`
+    /// the key-less receipt reader (D173 §2 R14), and none of them can reach
+    /// `pay`.
     ///
     /// [`SealSession`]: crate::seal_session::SealSession
     #[must_use]

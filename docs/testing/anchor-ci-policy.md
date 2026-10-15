@@ -1,15 +1,21 @@
-# The no-real-anchor-network policy
+# The no-real-anchor-network policy, and its storage twin
 
-> **Owning task: Q16** (`tasks/Q.md`), milestone **M2**.
-> Enforcement: `crates/antseal-anchor/src/http/offline.rs` (runtime) and
-> `scripts/check-anchor-net.py` (static, via `scripts/ci-lanes.sh
-> anchor-net-policy`).
+> **Owning tasks: Q16** (`tasks/Q.md`, milestone **M2**) for the anchor gate;
+> **S40** (`tasks/S.md`, milestone **M4**) and D173 for the storage gate, its
+> twin, covered in §3.3.
+> Enforcement: `crates/antseal-anchor/src/http/offline.rs` and
+> `antseal_net::network::storage_gate` (`crates/antseal-net/src/network.rs`)
+> at runtime, and `scripts/check-anchor-net.py` (static, via
+> `scripts/ci-lanes.sh anchor-net-policy`) for both.
 > The real-endpoint protocol this policy carves out is
-> [`../anchors/real-smoke-runbook.md`](../anchors/real-smoke-runbook.md).
+> [`../anchors/real-smoke-runbook.md`](../anchors/real-smoke-runbook.md); a
+> real storage-network run is a script over the release binary in an unarmed
+> environment (§3.3).
 
-**No automated test in this workspace may contact a real anchor endpoint.**
-Not in CI, not on a contributor's machine, not "just this once to check the
-fixture is still valid".
+**No automated test in this workspace may contact a real anchor endpoint,
+and no automated test or CI job may dial an Autonomi storage peer that is
+not loopback.** Not in CI, not on a contributor's machine, not "just this
+once to check the fixture is still valid".
 
 ## 1. Why this is a control and not a courtesy
 
@@ -54,7 +60,7 @@ So the policy needed a mechanism that makes the call *fail*.
 
 ## 3. The mechanism
 
-### 3.1 The gate (runtime — this is the enforcement)
+### 3.1 The anchor gate (runtime — this is the enforcement)
 
 `antseal_anchor::http::offline` is consulted inside `HttpClient::attempt`,
 the single function in this workspace that hands a URL to `ureq`. When the
@@ -106,17 +112,27 @@ reverse — it is the one call that strips the arming even when CI supplied it.
 
 ### 3.2 The static half
 
-`scripts/check-anchor-net.py` checks the three things the runtime gate cannot
-see about itself:
+`scripts/check-anchor-net.py` checks the things the runtime gates cannot see
+about themselves. R1 and R4 hold **both** variables — the anchor gate's and
+the storage gate's (§3.3) — to the same rules through the same code, so the
+storage arming can never be checked by a weaker copy (D173 §2 R11); R2, R3
+and R5 belong to the anchor gate alone, the only one with an HTTP client,
+URL-valued constants and a test-only bypass feature.
 
-- **R1 — the arming is armed.** Every committed workflow sets
-  `ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"` at *workflow* level (so a job added
-  later inherits it), and `scripts/local-gate.sh` exports it.
-- **R4 — the harness guarantees it too** (D99 R4.3). The third venue above:
-  the only read of `CARGO_BIN_EXE_antseal` in the workspace is inside
-  `crates/antseal-cli/tests/common/spawn.rs`; that helper sets the variable;
-  no test source calls `main_entry` in-process; and no test source calls
-  `env_clear()` without re-arming.
+- **R1 — the arming is armed.** Every committed workflow sets both
+  `ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"` and
+  `ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"` at *workflow* level (so a job added
+  later inherits them), and `scripts/local-gate.sh` exports both.
+- **R4 — the harness guarantees it too** (D99 R4.3; D173 §2 R11). The third
+  venue above: the only read of `CARGO_BIN_EXE_antseal` in the workspace is
+  inside `crates/antseal-cli/tests/common/spawn.rs`; that helper sets both
+  variables; no test source calls `main_entry` in-process; and every
+  `env_clear()` call under `crates/*/tests/` re-sets both variables **on the
+  statement that clears**. That last rule is **call-level**: the check names
+  the file and line of the call that does not, and a re-arm elsewhere in the
+  same file does not count. It was file-level until D173 §2 R11, and a
+  file-level rule passed a second, unarmed `env_clear()` in a file that
+  re-armed once.
 - **R5 — `test-util` rides dev edges only** (D99 R5). `antseal-anchor`'s
   `test-util` carries `upgrade_pending_with` and
   `UpgradeTarget::loopback_for_tests`, which bypass A42's allowlist. No
@@ -134,7 +150,75 @@ see about itself:
   see, so every URL-valued `pub const` in antseal-anchor must be named in the
   gate's test module.
 
-Six planted faults run before every green verdict.
+The checker's own self-test runs before every green verdict: each rule's
+planted faults — for R1 and R4 one per variable, plus a planted shape that
+must stay green — are applied to an in-memory copy of the tree, and each
+must go red by its own rule's message. `scripts/check-anchor-net.py
+--self-test` lists them; the count is its output, not this page's.
+
+### 3.3 The storage gate (D173) — the anchor gate's twin
+
+`antseal_net::network::storage_gate` refuses, when armed, any bootstrap peer
+that is not a loopback IP literal, as the **first fallible step** of both
+storage constructors — the payer and the reader — before the payer's
+`eth_chainId` call and before `Client::connect` (D173 §2 R9, R10). The
+loopback devnet is admitted. An empty set is not this gate's business:
+`resolve_peers` refuses it with usage 2 — for `seal` before any passphrase is
+read, for `restore` after the unlock (§2 R7). A refusal names the variable
+and the number of refused peers, never an address.
+
+Its arms (D173 §2 R9):
+
+| build | `ANTSEAL_NO_REAL_STORAGE_NETWORK` | gate |
+| --- | --- | --- |
+| `cfg(test)` of `antseal-net` | anything | armed — no off switch |
+| any | `0` | disarmed — the only off switch |
+| any | any other value, including empty | armed — fails closed |
+| debug assertions on | unset | **armed** |
+| release | unset | disarmed |
+
+The debug-assertions arm is what reaches the tests no venue can arm — the
+in-process library suites, which no spawn helper constructs and which cannot
+arm themselves — so a bare `cargo test` of any devnet suite is armed. It is a
+profile property, not a feature, so feature unification can neither arm nor
+disarm anything; the reason D99 refused a compile-time arm for the anchor
+gate does not transfer, because no storage test may ever need a public
+network. The release binary is unaffected unless the variable is set, and
+the gate is consulted per connect, never cached.
+
+Its venues are the anchor gate's (D173 §2 R11): every workflow sets it at
+workflow level, `scripts/local-gate.sh` exports it,
+`crates/antseal-cli/tests/common/spawn.rs` sets it on every spawned binary,
+and an `env_clear()` child re-arms it on the statement that clears.
+`check-anchor-net.py` R1 and R4 hold it to the anchor variable's rules
+through the same code (§3.2).
+
+**What the gate does NOT cover** (D173 §2 R13). A green says nothing about:
+
+- **peers learned from the DHT after bootstrap** — the gate classifies the
+  bootstrap set and nothing after it; safe only because an all-loopback set
+  makes the adapter bind loopback (§2 R8), so a peer learned later cannot be
+  reached either;
+- **the payer's EVM RPC** — for `arbitrum-one` and `arbitrum-sepolia` the
+  `eth_chainId` call and the payment leg go to evmlib's compiled-in public
+  RPC (only `devnet` threads its definition's endpoint, the export's; `U94`);
+  the gate runs before that call and stops the storage dial, and the RPC
+  itself is outside both gates;
+- **UPnP gateway discovery** — the pinned transport starts an IGD mapping
+  service on every connect and may ask the router for a port mapping; no
+  `ClientConfig` field or feature switches it off at the pin (D173 §1.4);
+- **upstream's `client_adaptive.json`** — `Client::connect` reads it and
+  every dropped client writes it, under `$XDG_DATA_HOME/ant` or
+  `~/.local/share/ant`, and a client panics with neither `HOME` nor
+  `XDG_DATA_HOME` set (`S42`).
+
+A real storage-network run is a script run with the **release binary in an
+unarmed environment** — never a test, never `#[ignore]`d, and from a debug
+build only with `ANTSEAL_NO_REAL_STORAGE_NETWORK=0` set on purpose.
+`scripts/e2e-sepolia.sh` consumes a prebuilt release-candidate binary and
+never builds one; `Q34`'s one mainnet smoke seal needs the maintainer's
+consent at the gate (D173 §2 R16). `CONTRIBUTING.md`'s "No real storage
+network in tests" section is the contributor-facing statement of this one.
 
 ## 4. What CI actually runs
 

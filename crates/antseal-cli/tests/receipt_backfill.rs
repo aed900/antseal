@@ -24,13 +24,19 @@
 //!
 //! # No test here can reach a real endpoint (Q16)
 //!
-//! Nothing in this file opens a payment RPC. The in-process rows drive a
-//! scripted [`BlockNumberSource`]; the spawned rows reach
-//! `backend::payment_rpc` and are refused by it in **both** builds — the
-//! default one has no backend at all, and the `ant-backend` one cannot
-//! resolve the fixture work's `devnet` endpoints because [`spawn_status`]
-//! removes `ANTSEAL_DEVNET_ENV` (see [`GATED_ARM`]). Every spawn goes through
-//! `spawn::antseal()`, which arms Q16's environment gate (D99 R4.1).
+//! Nothing in this file opens a payment RPC to anything but a loopback stub.
+//! The in-process rows drive a scripted [`BlockNumberSource`]; the spawned
+//! U67 rows reach `backend::payment_rpc` and are refused by it in **both**
+//! builds — the default one has no backend at all, and the `ant-backend` one
+//! cannot resolve the fixture work's `devnet` endpoints because
+//! [`spawn_status`] removes `ANTSEAL_DEVNET_ENV` (see [`GATED_ARM`]). The one
+//! row that lets the constructor succeed is D173 §2 R14's, and it is
+//! loopback-only by construction: the export it hands the binary names a
+//! payment RPC that is a loopback stub and one bootstrap peer that is a
+//! loopback UDP socket the test holds, and it counts what reaches each. Every
+//! spawn goes through `spawn::antseal()`, which arms Q16's environment gate
+//! (D99 R4.1) and the storage gate's (D173 §2 R11) — the latter admits that
+//! loopback peer and would refuse any other.
 //!
 //! NON-SECRET: every byte string, seal id and passphrase here is a documented
 //! fixture (project rule 6).
@@ -385,24 +391,39 @@ fn the_block_number_backfill_has_exactly_one_production_caller() {
     ];
     /// The definition's file, exempt from the production-caller count.
     const DEFINITION: &str = "crates/antseal-cli/src/pipeline/receipt_backfill.rs";
-    /// `(path, occurrences, warrant)` for [`NET`].
-    const NET_SITES: [(&str, usize, &str); 3] = [
+    /// `(path, occurrences, warrant)` for [`NET`] — re-counted to D173 §2
+    /// R14's shape on 2026-10-14, with each change named rather than loosened.
+    const NET_SITES: [(&str, usize, &str); 4] = [
         (
             "crates/antseal-net/src/ant_backend.rs",
-            1,
-            "the definition (`pub async fn`) — D33 Decision 1's locus",
+            2,
+            "the definition on the receipt reader (`pub async fn`, D33 Decision 1's locus \
+             since D173 §2 R14) plus the payer's delegating method of the same name, which \
+             D173 §2 R14 keeps as a delegation to the one shared body. Was 1 while the payer \
+             carried the only definition; nothing in the tree calls the payer's as of this \
+             re-count",
         ),
         (
             "crates/antseal-cli/src/backend.rs",
-            3,
-            "U67's gated bridge: the delegating method on `SealBackend`, its one-line body, \
-             and the call the payment-RPC source makes through it",
+            1,
+            "U67's gated bridge: the one call the payment-RPC source makes, on the receipt \
+             reader. Was 3 — a delegating method on `SealBackend`, its body, and the call \
+             through it — until D173 §2 R14 moved `status` off the payer; the wrapper went \
+             with it, so nothing `status` holds can pay or open a storage session",
         ),
         (
             "crates/antseal-net/tests/devnet_backend.rs",
             2,
             "the devnet rows that proved the function correct while nothing called it — the \
-             two lines U67 measured as its ONLY callers on 2026-08-11",
+             two lines U67 measured as its ONLY callers on 2026-08-11, now on the receipt \
+             reader",
+        ),
+        (
+            "crates/antseal-net/tests/storage_gate.rs",
+            1,
+            "D173 §2 R14's own row: the receipt reader backfills over a loopback JSON-RPC stub \
+             while its bootstrap set holds a peer the armed storage gate would refuse — so the \
+             read provably consults no storage gate",
         ),
     ];
 
@@ -622,6 +643,50 @@ fn the_block_number_backfill_has_exactly_one_production_caller() {
         "no `antseal-cli` production source names `antseal-net`'s backfill. That is exactly \
          the state U67 measured on 2026-08-11: implemented, documented, and reachable only \
          from `crates/antseal-net/tests/devnet_backend.rs`. Found: {net_sites:?}"
+    );
+
+    // 4. The bridge takes a public chain from the pinned constants and never
+    //    routes it through `select_network` (D174 §2 R6). Code lines only,
+    //    production text only: the one caller left in `backend.rs` is the
+    //    read-only commands' resolver, and the chain-half seam is defined
+    //    once and called once, by the bridge.
+    /// The resolver a public id must NOT go through here (assembled).
+    const SELECT: &str = concat!("select_", "network(");
+    /// The bridge's chain-half seam (assembled).
+    const SEAM: &str = concat!("receipt_network", "_with(");
+    let backend = files
+        .iter()
+        .find(|file| {
+            file.strip_prefix(&root).is_ok_and(|rel| {
+                rel.to_string_lossy().replace('\\', "/") == "crates/antseal-cli/src/backend.rs"
+            })
+        })
+        .expect("the walker reached `backend.rs`");
+    let backend_text = std::fs::read_to_string(backend).expect("read backend.rs");
+    let code_line_hits = |form: &str| -> usize {
+        production_text(&backend_text)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .map(|line| line.matches(form).count())
+            .sum()
+    };
+    assert_eq!(
+        code_line_hits(SELECT),
+        1,
+        "`backend.rs` calls the network selector on {} code line(s), not 1. Its one caller is \
+         `read_only_network` (restore / verify --live). `payment_rpc` must not route a public \
+         id through it: for `arbitrum-sepolia` the selector reads `ANTSEAL_DEVNET_ENV`, so a \
+         public receipt's backfill would depend on a developer's export being present and \
+         valid (D174 §2 R6)",
+        code_line_hits(SELECT)
+    );
+    assert_eq!(
+        code_line_hits(SEAM),
+        2,
+        "the chain-half seam must be defined once and called once by `payment_rpc` in \
+         `backend.rs`; found {} code line(s) — a seam nothing calls is a seam whose tests \
+         prove nothing about the bridge",
+        code_line_hits(SEAM)
     );
 }
 
@@ -868,4 +933,371 @@ fn every_skip_arm_has_its_own_name() {
     names.dedup();
     assert_eq!(names.len(), count, "two skip arms share a name: {names:?}");
     assert!(count >= 8, "the arm list shrank to {count}");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D173 §2 R14 / D174 §2 R6 — no Autonomi session and no key in `status`
+// ─────────────────────────────────────────────────────────────────────
+
+/// A loopback JSON-RPC stub standing in for a devnet's payment RPC:
+/// `eth_chainId` answers `0x7a69` (31337), every other method answers `null`
+/// ("not yet visible"), and each method name is recorded in the order asked.
+/// One request per connection (`Connection: close`), so the provider
+/// reconnects for every call and a sequential accept loop serves it.
+#[cfg(feature = "ant-backend")]
+struct ReceiptRpcStub {
+    address: std::net::SocketAddr,
+    methods: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "ant-backend")]
+impl ReceiptRpcStub {
+    /// The devnet chain id the stub reports, as `eth_chainId` renders it.
+    const CHAIN_HEX: &'static str = "0x7a69";
+
+    fn start() -> Self {
+        use std::sync::atomic::Ordering;
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind the loopback RPC stub");
+        let address = listener.local_addr().expect("the stub's address");
+        let methods = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread = {
+            let methods = std::sync::Arc::clone(&methods);
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    if let Ok(mut stream) = stream {
+                        // A malformed exchange fails only the assertion that
+                        // reads the method log.
+                        drop(Self::serve_one(&mut stream, &methods));
+                    }
+                }
+            })
+        };
+        Self {
+            address,
+            methods,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/", self.address)
+    }
+
+    fn methods(&self) -> Vec<String> {
+        match self.methods.lock() {
+            Ok(methods) => methods.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Serve one HTTP/1.1 JSON-RPC request, echoing its id.
+    fn serve_one(
+        stream: &mut std::net::TcpStream,
+        methods: &std::sync::Mutex<Vec<String>>,
+    ) -> std::io::Result<()> {
+        use std::io::Read as _;
+
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut chunk)?;
+            if read == 0 {
+                return Ok(());
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buffer[..header_end]).to_ascii_lowercase();
+        let length = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        while buffer.len() < header_end + length {
+            let read = stream.read(&mut chunk)?;
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+        let body_end = (header_end + length).min(buffer.len());
+        let request: serde_json::Value =
+            serde_json::from_slice(&buffer[header_end..body_end]).unwrap_or_default();
+        let method = request["method"].as_str().unwrap_or_default().to_owned();
+        let result = if method == "eth_chainId" {
+            serde_json::Value::from(Self::CHAIN_HEX)
+        } else {
+            serde_json::Value::Null
+        };
+        match methods.lock() {
+            Ok(mut seen) => seen.push(method),
+            Err(poisoned) => poisoned.into_inner().push(method),
+        }
+        let reply = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request["id"].clone(),
+            "result": result,
+        })
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{reply}",
+            reply.len()
+        )?;
+        stream.flush()
+    }
+}
+
+#[cfg(feature = "ant-backend")]
+impl Drop for ReceiptRpcStub {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        drop(std::net::TcpStream::connect(self.address));
+        if let Some(thread) = self.thread.take() {
+            drop(thread.join());
+        }
+    }
+}
+
+/// A devnet export whose payment RPC is `rpc_url` and whose one bootstrap
+/// peer is `bootstrap` — both loopback, both this test's. NON-SECRET: a
+/// walletless (nine-key) export, the two contract addresses Anvil's
+/// well-known deterministic deployments; nothing here pays.
+#[cfg(feature = "ant-backend")]
+fn loopback_export(dir: &Path, rpc_url: &str, bootstrap: std::net::SocketAddr) -> PathBuf {
+    let text = format!(
+        "# antseal devnet environment: a loopback one, held by a test\n\
+         ANTSEAL_DEVNET_RPC_URL='{rpc_url}'\n\
+         ANTSEAL_DEVNET_CHAIN_ID='31337'\n\
+         ANTSEAL_DEVNET_TOKEN_ADDRESS='0x5FbDB2315678afecb367f032d93F642f64180aa3'\n\
+         ANTSEAL_DEVNET_PAYMENT_VAULT_ADDRESS='0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'\n\
+         ANTSEAL_DEVNET_BOOTSTRAP='{bootstrap}'\n\
+         ANTSEAL_DEVNET_NODE_COUNT='1'\n\
+         ANTSEAL_DEVNET_BASE_PORT='{port}'\n\
+         ANTSEAL_DEVNET_DATA_DIR='{data}'\n\
+         ANTSEAL_DEVNET_PID='{pid}'\n",
+        port = bootstrap.port(),
+        data = dir.display(),
+        pid = std::process::id(),
+    );
+    let path = dir.join("loopback-devnet.env");
+    std::fs::write(&path, text).expect("write the loopback devnet export");
+    path
+}
+
+/// Spawn `antseal <args>` over `vault_root` with `export` as its one devnet
+/// definition, the fixture passphrase on stdin, the backfill and backend
+/// traces on, and upstream's on-disk client state (`client_adaptive.json`,
+/// S42) confined to `data_home` rather than the developer's.
+#[cfg(feature = "ant-backend")]
+fn spawn_with_export(vault_root: &Path, args: &[&str], export: &Path, data_home: &Path) -> Spawned {
+    let mut command = spawn::antseal();
+    command
+        .args(args)
+        .env("ANTSEAL_DIR", vault_root)
+        .env("RUST_LOG", BACKFILL_LOG)
+        .env("ANTSEAL_DEVNET_ENV", export)
+        .env("XDG_DATA_HOME", data_home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().expect("spawn antseal");
+    let _ = child
+        .stdin
+        .as_mut()
+        .expect("stdin piped")
+        .write_all(common::FIXTURE_PASSPHRASE);
+    drop(child.stdin.take());
+    let out = child.wait_with_output().expect("wait for antseal");
+    Spawned {
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
+}
+
+/// Drain and count every datagram waiting on `socket` (its read timeout is
+/// what ends the drain).
+#[cfg(feature = "ant-backend")]
+fn datagrams_received(socket: &std::net::UdpSocket) -> usize {
+    let mut buffer = [0u8; 4096];
+    let mut count = 0;
+    while socket.recv_from(&mut buffer).is_ok() {
+        count += 1;
+    }
+    count
+}
+
+/// `connect_read_only`'s one trace, emitted inside its future — so only when
+/// a storage connection is actually attempted.
+#[cfg(feature = "ant-backend")]
+const READER_CONNECT_TRACE: &str = "connecting the read-only reader";
+
+/// **D173 §2 R14, through the spawned binary: `status` reads its receipt with
+/// no Autonomi session and no key.** A `devnet` work with every block-number
+/// slot emptied, a payment RPC that is a loopback stub, and one bootstrap
+/// peer that is a loopback UDP socket **this test holds** across the run.
+/// `status` exits 0, the pass reports an attempt, the stub saw the chain-id
+/// guard and the receipt read — and **zero** datagrams reached the bootstrap
+/// socket. Until D173 §2 R14 the same `status` opened `SealBackend::connect`
+/// — a full `Client::connect` over that peer, with the vault's wallet key
+/// loaded to read a public receipt — and with `arbitrum-one`'s peers vendored
+/// that would have made `status` dial mainnet to read a chain.
+///
+/// # Preconditions, asserted inside the row
+///
+/// Both are what the old route needed to get as far as the dial, so a zero
+/// that could be explained by the old route skipping early proves nothing:
+///
+/// 1. **A wallet record exists** — the payer's route loaded the vault's key
+///    before connecting and returned `None` without one.
+/// 2. **The RPC stub saw `eth_chainId`** — the payment RPC was reached and
+///    answered the chain the export pins, so the payer's route would have
+///    passed its own guard and gone on to `Client::connect`.
+///
+/// # Control
+///
+/// A `restore` of the same work over the same export dials the same peer
+/// (the read-only reader's `Client::connect`, D170 §2 R1), and the held
+/// socket sees its datagrams — so the socket can witness a dial, and the
+/// zero above is a measurement rather than a deaf instrument.
+#[cfg(feature = "ant-backend")]
+#[test]
+fn status_reads_its_receipt_with_no_autonomi_session_while_restore_dials() {
+    use antseal_cli::vault::wallet::{WalletKeyHandle, load_wallet_key, store_wallet_key};
+
+    // NON-SECRET: the repeated-byte fixture scalar `backend.rs`'s own tests
+    // use — a valid secp256k1 scalar by construction and obviously not a key.
+    const FIXTURE_WALLET_KEY: [u8; 32] = [0x5A; 32];
+
+    let fixture = seal_one("d173-no-session", 0x6B);
+    let printed = antseal_cli::pipeline::hex32(&fixture.work_id);
+    let root = fixture.vault.layout.root().to_path_buf();
+    let scratch = fixture.vault.root.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("the scratch directory");
+
+    // PRECONDITION 1: a wallet record exists.
+    {
+        let vault = fixture.vault.unlock();
+        store_wallet_key(
+            &vault,
+            &WalletKeyHandle::from_bytes(FIXTURE_WALLET_KEY),
+            &mut ChaCha20Rng::from_seed([0x6C; 32]),
+        )
+        .expect("store the fixture wallet record");
+        assert!(
+            load_wallet_key(&vault)
+                .expect("the wallet record reads")
+                .is_some(),
+            "PRECONDITION: the vault holds a wallet record, so a payer built over it would \
+             have had a key to load"
+        );
+        fixture.unenrich(&vault);
+    }
+
+    // The held bootstrap socket and the payment-RPC stub, both loopback.
+    let bootstrap =
+        std::net::UdpSocket::bind("127.0.0.1:0").expect("bind the held bootstrap socket");
+    bootstrap
+        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .expect("a read timeout on the held socket");
+    let peer = bootstrap.local_addr().expect("the held socket's address");
+    assert!(
+        antseal_net::network::storage_gate::check(&[peer]).is_ok(),
+        "PRECONDITION: the storage gate admits a lone loopback peer, so a storage session \
+         opened over this export would dial it rather than be refused"
+    );
+    let rpc = ReceiptRpcStub::start();
+    let export = loopback_export(&scratch, &rpc.url(), peer);
+
+    // The row.
+    let status = spawn_with_export(
+        &root,
+        &["--json", "--passphrase-fd", "0", "status", &printed],
+        &export,
+        &scratch.join("data-home-status"),
+    );
+    assert_eq!(status.code, Some(0), "stderr:\n{}", status.stderr);
+    assert!(
+        status.stderr.contains(BACKFILL_ATTEMPTED_ARM),
+        "the pass did not report an attempt on a work with empty slots.\nstderr:\n{}",
+        status.stderr
+    );
+    // The claim, judged first so a red names it whatever else the run did.
+    let during_status = datagrams_received(&bootstrap);
+    assert_eq!(
+        during_status, 0,
+        "`status` opened an Autonomi session: {during_status} datagram(s) reached the bootstrap \
+         peer its export named. The receipt read is a chain read over the payment RPC and \
+         nothing else — no `Client::connect`, no wallet key (D173 §2 R14)"
+    );
+    // What the zero rests on: a source was constructed and used.
+    assert!(
+        !status.stderr.contains("no payment RPC"),
+        "the source constructor refused, so no session of any kind was opened and the zero \
+         above proves nothing.\nstderr:\n{}",
+        status.stderr
+    );
+    // PRECONDITION 2: the stub saw the chain-id guard.
+    let methods = rpc.methods();
+    assert!(
+        methods.iter().any(|method| method == "eth_chainId"),
+        "PRECONDITION: the RPC stub never saw eth_chainId — the payment RPC was not reached, \
+         so the zero above proves nothing about the session: {methods:?}\nstderr:\n{}",
+        status.stderr
+    );
+    assert!(
+        methods
+            .iter()
+            .any(|method| method == "eth_getTransactionReceipt"),
+        "the receipt was not read over the provider the guard ran on: {methods:?}"
+    );
+
+    // CONTROL: `restore` over the same export dials the same peer.
+    let out_dir = scratch.join("restored");
+    let out_arg = out_dir.to_str().expect("a utf-8 scratch path").to_owned();
+    let restore = spawn_with_export(
+        &root,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "restore",
+            &printed,
+            "-o",
+            &out_arg,
+        ],
+        &export,
+        &scratch.join("data-home-restore"),
+    );
+    assert!(
+        restore.stderr.contains(READER_CONNECT_TRACE),
+        "CONTROL: `restore` attempted no storage connection, so the zero above has no \
+         positive control. exit {:?}\nstderr:\n{}",
+        restore.code,
+        restore.stderr
+    );
+    let during_restore = datagrams_received(&bootstrap);
+    assert!(
+        during_restore >= 1,
+        "CONTROL: a `restore` connected over the same bootstrap peer and the held socket saw \
+         nothing — it cannot witness a dial, so the zero above proves nothing. exit {:?}\n\
+         stderr:\n{}",
+        restore.code,
+        restore.stderr
+    );
 }

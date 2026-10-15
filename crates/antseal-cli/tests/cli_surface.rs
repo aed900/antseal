@@ -116,6 +116,110 @@ fn snapshot_enumerates_every_command_node() {
     );
 }
 
+/// **D174 §2 R9 (U92 Accept row 2) — the help says what the product does,
+/// held by content and not only by the snapshot.** The exact-equality
+/// snapshot above is green on any re-bless, so a reverted sentence that was
+/// re-blessed with it would pass there; this test reads the rendered help of
+/// `--network` and its three values through `Cli::command()` and asserts the
+/// three facts D174 corrected:
+///
+/// - `arbitrum-sepolia` is read from a Sepolia devnet export
+///   (`ANTSEAL_DEVNET_ENV`), and its contracts are the real deployments — not
+///   *"devnet contracts"*;
+/// - `devnet` carries **no node count** (5..=25 is a launcher knob, not a
+///   property of the network id, and a count drifts);
+/// - the global flag states the recorded-network rule **precisely**:
+///   `restore`, and `reveal` when it must fetch, use the network the work
+///   was sealed on (D170 §2 R3; D175 §2 R2/R3), so "flag > config > default"
+///   is the rule for **new** work only — and `status`, `show` and `list`
+///   read no network, so the sentence claims nothing for them.
+#[test]
+fn the_network_help_names_the_export_carries_no_node_count_and_states_the_recorded_rule() {
+    let mut root = Cli::command();
+    root.build();
+    let network = root
+        .get_arguments()
+        .find(|arg| arg.get_id() == "network")
+        .expect("the global --network flag exists");
+    let flag_help = network
+        .get_long_help()
+        .or_else(|| network.get_help())
+        .expect("--network has help text")
+        .to_string();
+    assert!(
+        flag_help.contains("flag > config > default"),
+        "the precedence rule for new work is still stated: {flag_help}"
+    );
+    assert!(
+        flag_help.contains(
+            "restore, and reveal when it must fetch, use the network the work was sealed on"
+        ),
+        "the global flag's help states the recorded-network rule precisely — restore, and \
+         reveal only when it must fetch, use the network the work was sealed on (D174 §2 R9; \
+         D175 §2 R2/R3): {flag_help}"
+    );
+    assert!(
+        flag_help.contains("status, show and list read no network"),
+        "and names the commands the rule does not reach, which act on no network: {flag_help}"
+    );
+    assert!(
+        flag_help.contains("421614"),
+        "the Arbitrum-Sepolia-not-Ethereum-Sepolia warning survives: {flag_help}"
+    );
+
+    let values = network.get_possible_values();
+    assert_eq!(values.len(), 3, "exactly the three networks");
+    let mut seen = 0;
+    for value in &values {
+        let help = value
+            .get_help()
+            .unwrap_or_else(|| panic!("`{}` has value help", value.get_name()))
+            .to_string();
+        match value.get_name() {
+            "arbitrum-sepolia" => {
+                seen += 1;
+                assert!(
+                    help.contains("ANTSEAL_DEVNET_ENV"),
+                    "the arbitrum-sepolia help names the export it is read from: {help}"
+                );
+                assert!(
+                    !help.contains("devnet contracts"),
+                    "the arbitrum-sepolia help does not call the contracts devnet contracts: \
+                     {help}"
+                );
+            }
+            "devnet" => {
+                seen += 1;
+                let has_node_count =
+                    help.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|pair| {
+                            pair[0].chars().all(|c| c.is_ascii_digit())
+                                && !pair[0].is_empty()
+                                && pair[1]
+                                    .trim_matches(|c: char| !c.is_alphabetic())
+                                    .eq_ignore_ascii_case("nodes")
+                        });
+                assert!(
+                    !has_node_count,
+                    "the devnet help carries no `N nodes` — a count is a launcher knob: {help}"
+                );
+                assert!(
+                    help.contains("ANTSEAL_DEVNET_ENV"),
+                    "the devnet help names the export it is read from: {help}"
+                );
+            }
+            "arbitrum-one" => {
+                seen += 1;
+                assert!(help.contains("default"), "the default is named: {help}");
+            }
+            other => panic!("an unexpected network value `{other}`"),
+        }
+    }
+    assert_eq!(seen, 3, "every value's help was read");
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Parse rules (U1 Accept list, one test each)
 // ─────────────────────────────────────────────────────────────────────

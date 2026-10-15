@@ -25,7 +25,7 @@ recorded in full.
 | Operator (role, e.g. "non-author executor") | |
 | Procedure followed (`clean-machine-verify.md` at commit, 40 hex, as shown where it was read) | |
 | Gate packet part A received (UTC, channel described generically) | |
-| Gate packet part B received (UTC, channel described generically — must differ from part A's) | |
+| Gate packet part B received (UTC, channel described generically — must differ from part A's; the bundle and the draft release's assets) | |
 | Terminal recording (`session.log` + `timing.log`: where filed) | |
 | Screen recording (kind + where filed) | |
 | Step 13 screenshots (file names + where filed) | |
@@ -55,7 +55,7 @@ recorded in full.
 | Browser and version (`firefox-esr --version`) | | |
 | VM snapshot taken before step 1 (name) | | |
 
-Step 1 output, verbatim (tool absence, state directory, credentials, repository-marker count):
+Step 1 output, verbatim (tool absence, state directory, credentials, token-variable count — must be `0`, repository-marker count):
 
 ```
 (paste here)
@@ -74,20 +74,37 @@ Step 1 output, verbatim (tool absence, state directory, credentials, repository-
 | `curl --version \| head -1` | | |
 | `dig -v` | | |
 
-## Step 3 — the release is published
+## Step 3 — the release is NOT published yet
+
+At gate time the candidate is an unpublished draft, so the anonymous read of
+its tag must answer `404` (D172 §2 R4). A `200` is a STOP: the release was
+published before its gate.
 
 | Field | Value | Captured (UTC) |
 | --- | --- | --- |
 | API URL fetched | | |
-| HTTP status | | |
-| `tag_name` | | |
-| `draft` (must be `false`) | | |
-| `prerelease` | | |
-| `published_at` | | |
+| HTTP status (must be `404`) | | |
+| Second attempt's status (only after a status that was neither `404` nor `200`; else `n/a`) | | |
 
-## Step 4 — release assets
+Response body, verbatim (`~/gate/evidence/release-tag.json`; `"message"` must be `"Not Found"`):
 
-`sha256sum` output, verbatim (`~/gate/evidence/downloaded.sha256`):
+```
+(paste here)
+```
+
+## Step 4 — release assets, from gate packet Part B (courier)
+
+Nothing is downloaded at this step (D172 §2 R3). The inventory below is what
+the release manager's drift check and the channel witness compare against, so
+paste it whole.
+
+| Field | Value | Captured (UTC) |
+| --- | --- | --- |
+| Non-plain or hidden entries in `~/gate/release/` (must be `0`) | | |
+| Bundles among the assets (must be `0`) | | |
+| `sha256sum` `REAL_EXIT` (must be `0`) | | |
+
+`courier.sha256`, verbatim (`~/gate/evidence/courier.sha256`):
 
 ```
 (paste here)
@@ -106,8 +123,8 @@ Step 1 output, verbatim (tool absence, state directory, credentials, repository-
 | module (`antseal_wasm_bg.wasm` or as named) | | | |
 | module `.minisig` | | | |
 
-- [ ] No `DOWNLOAD FAILED` and no `REFUSED` lines
-- [ ] `tarball_url` / `zipball_url` ("Source code") were **not** downloaded
+- [ ] Every asset came from Part B; nothing was downloaded, renamed or replaced at this step
+- [ ] `tarball_url` / `zipball_url` ("Source code") were **not** used
 
 ## Step 5 — the key
 
@@ -161,7 +178,7 @@ Step 1 output, verbatim (tool absence, state directory, credentials, repository-
 | T2 trusted comment edited (grep count `1` first) | `Comment signature verification failed`, 1; `NO-MATCH <archive> rc=1 got=[]` | | | |
 | T3a genuine signature presented for another artifact | `Signature and comment signature verified` naming `SHA256SUMS`, 0; `NO-MATCH <archive> rc=0 got=[antseal <TAG> SHA256SUMS …]` | | | |
 | T3b genuine signatures held to another release's expectation | one `NO-MATCH <name> rc=0` per artifact, no `MATCH` | | n/a | |
-| T3 replay of the previous release (previous tag: ____) | step 6a on it: verified, comment names the previous version, 0; `NO-MATCH <archive> rc=0 got=[antseal <previous tag> …]` | | | |
+| T3 replay of the previous release (previous tag `PREV`, from `releases/latest`: ____) | `200`; `PREV` not equal to `TAG`; no `DOWNLOAD FAILED`; step 6a on it: verified, comment names the previous version, 0; `NO-MATCH <archive> rc=0 got=[antseal <previous tag> …]` | | | |
 | T4 key that is not antseal's | `Signature key id in … is …` / `but the key id in the public key is E7620F1842B4E81F`, 1 | | | |
 | T5 digest list | `<archive>: FAILED` + `WARNING: 1 computed checksum did NOT match`, 1 | | | |
 
@@ -208,6 +225,8 @@ run.
 | `"network"` (must be `"arbitrum-one"`) | | |
 | `work_id` | | |
 | Equal to `WORK_ID`? | | |
+| `app_version` output, verbatim (must be exactly one line: `"app_version":"antseal/<TAG without its leading v>"`, D172 §2 R9) | | |
+| Equal? | | |
 
 `ip -brief link`, verbatim:
 
@@ -287,8 +306,10 @@ Response headers, verbatim (`grep` of `page.headers`):
 - [ ] Every tamper arm was rejected with its own message; on a first release the replay gap is listed under deviations
 - [ ] The headline kind is `tsa`, and the CLI and page headlines are identical
 - [ ] `work_id` equals the packet's; the bundle digest equals the packet's
+- [ ] Step 3 answered `404`: the release was not published before its gate
 - [ ] The key came from the `TXT` record and matched the release and the page footer
-- [ ] No repository resource was used (no clone, no source archive, no repository file, no credential)
+- [ ] `app_version` read `antseal/<TAG without its leading v>`: the smoke seal was made with the candidate's binary
+- [ ] No repository resource was used (no clone, no source archive, no repository file, no credential, no token variable); the release assets came only from Part B
 - [ ] Terminal recording, screen recording and screenshots filed, and named above
 - [ ] No secret material and no personal identifiers in this record
 - [ ] The machine was destroyed or reverted (step 15)
@@ -309,3 +330,75 @@ in the release that reopens its row).
 | # | Step | What happened (verbatim output where there is some) | Fix owed to |
 | --- | --- | --- | --- |
 | | | | |
+
+## Channel witness — after publication (D172 §2 R6)
+
+Filled later, after the gate evidence was committed and the release was then
+published with consent. **A witness, not a gate:** its result never changes the
+verdict above. A red witness is detection, not rollback — the remedy is a new
+version, never replacing a published file. Findings go in the table above, with
+the step written `W1`–`W3`. Instructions: the procedure's last section.
+
+| Field | Value |
+| --- | --- |
+| Witness start (UTC) | |
+| Witness end (UTC) | |
+| Operator (role) | |
+| Machine (the gate VM reverted to its pre-step-1 snapshot, or a fresh VM with the reason recorded) | |
+| Gate evidence commit that `courier.sha256` was taken from (40 hex) | |
+| Terminal recording (`~/witness/session.log` + `timing.log`: where filed) | |
+| Screen recording (kind + where filed) | |
+
+W0, step 1's credential lines, verbatim (every credential path absent; token-variable count `0`):
+
+```
+(paste here)
+```
+
+### W1 — the published release
+
+| Field | Value | Captured (UTC) |
+| --- | --- | --- |
+| `sha256sum courier.sha256` (equal to the committed file's digest?) | | |
+| By-tag HTTP status (must be `200`) | | |
+| `tag_name` (must be the packet's `TAG`) | | |
+| `draft` (must be `false`) | | |
+| `prerelease` (must be `false`) | | |
+| `published_at` | | |
+| `commits/$TAG` HTTP status (must be `200`) | | |
+| The tag's commit `sha` (must equal `COMMIT`, D172 §2 R2) | | |
+
+### W2 — the assets, from the documented channel
+
+- [ ] No `DOWNLOAD FAILED` and no `REFUSED` lines
+
+`published.sha256`, verbatim:
+
+```
+(paste here)
+```
+
+`diff courier.sorted published.sorted` output, then its `REAL_EXIT` (must be empty, then `0`):
+
+```
+(paste here)
+```
+
+`diff courier-digests.sorted api-digests.sorted` output, then its `REAL_EXIT` (must be empty, then `0`):
+
+```
+(paste here)
+```
+
+### W3 — the latest release
+
+| Field | Value | Captured (UTC) |
+| --- | --- | --- |
+| `releases/latest` HTTP status (must be `200`) | | |
+| `tag_name` (must be the packet's `TAG`) | | |
+
+**STOP reached at witness step:** ____ (or `none`)
+
+**Witness result (GREEN / RED):** ____
+
+**Signed (role, UTC date):** ____

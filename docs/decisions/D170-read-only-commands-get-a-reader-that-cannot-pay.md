@@ -304,3 +304,7 @@ build's `restore` reverted to the refusal (the spawned devnet test goes red with
 
 It authorises no network act beyond the local devnet, which pays nothing and touches
 no external service.
+
+## Addendum — 2026-09-15: the peer half of §1.6 and §2 R10 is superseded by D173, and §2 R9 and §4's `reveal` wiring are discharged by D175
+
+§1.6 recorded that no code supplies peers for the public network ids, and §2 R10 that the M4 gate stays unreachable after this record lands. [D173](D173-mainnet-peers-are-upstreams-published-bytes-and-no-test-can-dial-them.md) rules the peer source: `arbitrum-one` carries upstream's published list at the pin, overridable by config; peers resolve per network in a step only dialing commands call; and a storage gate refuses non-loopback peers in every test venue. Whether the pinned client interoperates with today's node release is `S41`. [D175](D175-reveal-fetches-through-a-reader-that-connects-only-when-a-fetch-is-needed.md) wires `reveal` through this record's reader, connected only from a needed fetch. `devnet_d170_an_unreachable_network_is_never_reported_as_absence`'s empty-bootstrap arm now witnesses D173 §2 R8's pre-connect refusal, which uses the `StorageError::Network` class this record's absence tests accept. This record is not rewritten.

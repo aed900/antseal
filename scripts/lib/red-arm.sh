@@ -112,6 +112,40 @@
 #                                 object 49a0bdc7… — which is why P1's
 #                                 40-hex-shape rule is not sufficient on its
 #                                 own. D143/Q244.
+#   scripts/check-write-job-cache.py
+#                                 in-process, the `check-action-pins.py`
+#                                 shape: `check(workflows)` returns a `Result`
+#                                 whose `errors` each begin with a RULE TAG
+#                                 (`[W1]`..`[W5]`) and whose `examined` list
+#                                 names every write-scoped job it saw. Each
+#                                 of its fourteen arms is judged by `judge()`
+#                                 on its tag AND on the substrings the message
+#                                 must carry — the workflow, the job, the
+#                                 grant and its level, the action — so an
+#                                 unrelated red cannot satisfy it; a mutation
+#                                 that changed nothing is reported NOT
+#                                 APPLIED rather than counted; and its two
+#                                 GREEN arms also require the examined set
+#                                 not to move. Plants go into a copied dict or
+#                                 a temporary directory it refuses to place
+#                                 inside the repository, so it writes no
+#                                 tracked file. The control asserts
+#                                 MEMBERSHIP (`pages.yml` `publish` is
+#                                 examined), never a count, so `Q31`'s release
+#                                 job joins the class without disarming it.
+#                                 D171 §2 R5 / §3, Q274.
+#   scripts/check-anchor-net.py   in-process: `check(...)` returns a failure
+#                                 list. Since D173 §2 R11 every arm names its
+#                                 rule tag (`R1:`..`R5:`) and the names the
+#                                 failure must carry — the file, the variable,
+#                                 and for R4 (d) the `file:line` of the
+#                                 `env_clear()` it planted — a `forbid` tuple
+#                                 catches a rule that over-matches, a mutation
+#                                 that changed nothing is NOT APPLIED, and
+#                                 one planted GREEN proves the call-level rule
+#                                 accepts the re-arm it asks for. Every plant
+#                                 is in memory. Before D173 its arms judged on
+#                                 any failure at all. Q16 / D99, D173.
 #
 # Python instruments cannot source this file. The rule is the same for them
 # and the shape is `check()`-returns-a-list, as `check-ci-shell.py` does it:

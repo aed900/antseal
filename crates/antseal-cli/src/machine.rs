@@ -33,6 +33,52 @@
 //! is knowable. Committed examples: `tests/snapshots/json-envelopes.txt`
 //! (one per command — the schema-registry fixture the harness enforces).
 //!
+//! ## The two `network` members (D174 §2 R11–R13)
+//!
+//! The top-level `network` is the **invocation's effective network**, on
+//! every envelope but the unparseable-argv one: `--network`, else
+//! `config.toml`'s `default_network`, else `arbitrum-one` — and when the
+//! config file fails to load, `--network`, else `arbitrum-one`. It is
+//! resolved once, before dispatch ([`crate::main_entry`]), and never
+//! depends on what the command then did: the same value rides a success
+//! envelope, an error envelope, and a command that touched no network at
+//! all.
+//!
+//! The network a command **acted on** for a recorded work is
+//! `result.network`. Every `result` that describes one sealed work carries
+//! it — `seal`, `show`, `status`, `restore` and `reveal` — as the work's
+//! recorded network string, verbatim from the work record; `list` carries
+//! it per row. The two members differ whenever a work was sealed on one
+//! network and the invocation resolves to another, which `restore` and
+//! `reveal` make routine: both read a work back from the network it was
+//! sealed on (D170 §2 R3; D175 §2 R3) and never consult `config.toml`'s
+//! default for it, so
+//!
+//! ```text
+//! antseal --json restore <work-id>      # a work sealed on devnet; no --network
+//! {"command":"restore","network":"arbitrum-one","ok":true,
+//!  "result":{"network":"devnet", …},"v":1}
+//! ```
+//!
+//! reports `arbitrum-one` at the top level — the invocation's — while every
+//! fetch went to `devnet`. **A consumer that wants to know which network
+//! the data came from reads `result.network`**; the top-level member says
+//! what the invocation resolved to, which is what the M4 gate's
+//! default-network evidence reads off an offline `verify`. `verify --live`
+//! gains no `result.network`: a bundle records no network, so the top-level
+//! member already names the one it acted on. The upgrade hook acts on no
+//! storage or EVM network and emits no document.
+//!
+//! The committed example is `[restore] result` in
+//! `tests/snapshots/json-envelopes.txt`, whose fixture work is recorded as
+//! `devnet` precisely so the two members are seen differing;
+//! `every_single_work_result_carries_the_works_network` in
+//! `tests/machine_mode.rs` holds the rule over every registered fixture, and
+//! `tests/restore_output.rs` holds it through the spawned binary with the
+//! flag and config controls that tell *the invocation's network* from a
+//! constant `arbitrum-one` (D174 §2 R15). Tier B is unchanged: no key was
+//! renamed, removed, retyped or moved, so [`ENVELOPE_VERSION`] stays 1.
+//!
 //! **`ok` means "a `result` document is present", not "the exit code is
 //! 0"** (D69 §3 R1; maintainer-confirmed 2026-08-12). The two were
 //! coincident until M3 and are separated deliberately: `verify` reports a
@@ -306,6 +352,12 @@ pub fn argv_requests_json(args: &[std::ffi::OsString]) -> bool {
 
 /// The success envelope: exactly one of these on stdout per successful
 /// `--json` invocation.
+///
+/// `network` is the invocation's effective network (D174 §2 R11), resolved
+/// once in [`crate::main_entry`] before dispatch — never a value a handler
+/// read back from a work record. A result that describes one sealed work
+/// names that work's network inside itself, as `result.network` (D174 §2
+/// R12); see the module docs.
 #[must_use]
 pub fn success_envelope(
     command: &str,

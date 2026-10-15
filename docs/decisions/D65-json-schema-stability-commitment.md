@@ -1125,3 +1125,7 @@ acceptable is discovering the question at implementation time"* is likewise
 undisturbed: the question was not discovered at implementation time, it was
 answered there, from a record that had already framed it. What the enumeration
 got wrong is only that it wrote a closed list where it had measured a rule.
+
+## Addendum — 2026-09-15: the envelope's top-level `network` is the invocation's; the work's network is `result.network` (D174)
+
+[D174](D174-a-sepolia-export-is-arbitrum-sepolia-and-result-network-names-the-work.md) §2 R11–R13: the tier-B member `network` is the invocation's effective network on every envelope — `--network`, else `config.toml`'s default, else `arbitrum-one` — and never depends on what the command did; a `result` describing one sealed work carries that work's recorded network as `result.network` (`restore` and `reveal` gain it; `seal`, `show`, `status` and `list` rows already carry it). No key is renamed, removed, retyped or moved, so no `ENVELOPE_VERSION` change; the tier table above is unchanged.

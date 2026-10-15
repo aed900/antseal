@@ -61,14 +61,26 @@ pub struct Cli {
 /// Global flags, valid on every subcommand.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Target network (default: arbitrum-one, or config.toml's
-    /// default_network — flag > config > default; "arbitrum-sepolia" is
-    /// Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+    /// Target network for new work (default: arbitrum-one, or config.toml's
+    /// default_network — flag > config > default). restore, and reveal when
+    /// it must fetch, use the network the work was sealed on and refuse a
+    /// --network naming another; status, show and list read no network.
+    /// "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum
+    /// Sepolia
     //
     // Parses as `Option` ON PURPOSE (U4): with a clap-level default an
     // explicit `--network arbitrum-one` would be indistinguishable from
     // absence, and the config file could never sit between flag and
-    // built-in default. Resolution lives in `crate::config`.
+    // built-in default. Resolution lives in `crate::config`. The second
+    // sentence is D174 §2 R9's: "flag > config > default" was false for
+    // `restore`, which reads the work's recorded network (D170 §2 R3), and
+    // the flag renders on every subcommand's help because it is global. It
+    // names its commands precisely: `restore` reads the record eagerly;
+    // `reveal` only when a fetch is needed, so a fully cached reveal ignores
+    // the flag (D175 §2 R2/R3); `status`, `show` and `list` act on no network
+    // at all (the flag still reaches the `--json` envelope's top-level member,
+    // D174 §2 R11). `tests/cli_surface.rs` holds the network sentences by
+    // content, because the snapshot is green on any re-bless.
     #[arg(long, global = true, value_enum, value_name = "NETWORK")]
     pub network: Option<Network>,
 
@@ -89,9 +101,21 @@ pub struct GlobalArgs {
 pub enum Network {
     /// Arbitrum One mainnet (the release default; real, permanent spends)
     ArbitrumOne,
-    /// Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
+    /// Arbitrum Sepolia (chain 421614): the real deployed test contracts,
+    /// with storage nodes you run yourself, read from a Sepolia devnet
+    /// export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+    //
+    // D174 §2 R9: the contracts are the real D38 deployments and only the
+    // nodes are self-hosted — the old sentence, "via the self-hosted devnet
+    // contracts", had it backwards — and the peers come from a Sepolia-mode
+    // export, which this id alone reads (D174 §2 R2).
     ArbitrumSepolia,
-    /// Local devnet (25 nodes + Anvil; development only)
+    /// Local devnet (in-process nodes + Anvil, read from the export
+    /// ANTSEAL_DEVNET_ENV names; development only)
+    //
+    // D174 §2 R9: no node count. The launcher's count is a knob (5..=25,
+    // default 14), not a property of the network id, and the "25" this
+    // used to say had already drifted from it.
     Devnet,
 }
 

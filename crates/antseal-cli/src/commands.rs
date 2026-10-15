@@ -365,26 +365,36 @@ fn seal_over_backend(
     let _lock =
         VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile)).map_err(CliError::from)?;
 
-    // The network definition BEFORE the passphrase: a devnet with no
-    // exported environment cannot be sealed to, and finding that out
-    // after typing a passphrase is the rudeness U20 named.
+    // The network definition AND its peers BEFORE the passphrase: a devnet
+    // with no exported environment cannot be sealed to, a network with no
+    // bootstrap peers cannot be dialed, and finding either out after typing
+    // a passphrase is the rudeness U20 named.
     // Named distinctly from the `config: &crate::config::Config` parameter above.
     // It was `config` and SHADOWED the parameter, which silently pointed U22's
     // `AnchorStageConfig::from_config` at the wrong type — a tier-2-only compile
     // error no default-features gate could see (Q112).
-    // U89: the resolution and its copy live in `crate::devnet_env`. The
-    // "no devnet was pointed at" message is the pre-U89 one verbatim; what
-    // is new is that an export that WAS pointed at and is unreadable or
-    // malformed now says so, instead of being reported as absence by a
-    // discarded error.
-    let selected =
-        crate::devnet_env::select_network(plan.network).map_err(|e| CliError::Usage {
-            message: e.to_string(),
-        })?;
+    // U89: the resolution and its copy live in `crate::devnet_env`, and so do
+    // D174's arms (a Sepolia export is `arbitrum-sepolia`'s, never `devnet`'s)
+    // — an export that WAS pointed at and is unreadable, malformed or another
+    // network's says so, instead of being reported as absence by a discarded
+    // error. Every refusal is the usage class (2).
+    let selected = crate::devnet_env::select_network(plan.network)?;
     if let Some(note) = selected.walletless_devnet {
         tracing::debug!("{note}");
     }
-    let net_config = selected.config;
+    // D173 §2 R7: the peers a seal may dial are resolved HERE — after the
+    // vault lock, before the passphrase, the unlock, the connection and the
+    // journal. `seal`'s network comes from argv and config, so this refusal
+    // costs the user nothing typed. `tests/peer_resolution.rs` holds the
+    // order through the spawned binary: moving this below `collect_passphrase`
+    // turns its expected exit 2 into an 11.
+    let net_config = crate::devnet_env::resolve_peers(selected.config, config)?;
+    // D174 §2 R8: the recorded network is the resolved network. `plan.network`
+    // is what the work record will carry; `net_config` is what pays and
+    // stores. With D174's arms they cannot disagree, so a disagreement is a
+    // bug in the resolver — the internal class, never a usage error and never
+    // a panic.
+    crate::devnet_env::check_resolved_network(plan.network, &net_config)?;
 
     let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
     // S36: the vault is unlocked straight into a `SealSession`, which is
@@ -657,12 +667,17 @@ pub(crate) fn restore(
 ///    names another is a **usage error (2)**, never a silent override; with
 ///    no flag, `config.toml`'s default network is not consulted, because it
 ///    says where new work goes, not where this work went.
-/// 5. **The network definition.** For `restore` **alone** a definition error
-///    — a `devnet` work with no exported environment — therefore lands
-///    **after the passphrase**: the definition depends on the recorded
-///    network, and the record is inside the vault. `seal` checks its
-///    definition before the passphrase because its network comes from argv
-///    and config.
+/// 5. **The network definition and its peers** (`backend::read_only_network`:
+///    U89's `select_network`, then D173 §2 R7's `resolve_peers`). For
+///    `restore` **alone** a definition or peer refusal — a `devnet` work with
+///    no exported environment, an `arbitrum-sepolia` work with no Sepolia
+///    export — therefore lands **after the passphrase and the unlock**: the
+///    definition depends on the recorded network, and the record is inside
+///    the vault. It still lands before any connection and before any output
+///    write. `seal` checks its definition and peers before the passphrase
+///    because its network comes from argv and config. `config.toml` is read
+///    here for one key only, `[networks.arbitrum-one] bootstrap` (D173 §2
+///    R4); its `default_network` is not consulted, per step 4.
 /// 6. **The connection**: the wallet-less reader under its hang-guard bound,
 ///    degraded rather than propagated (`backend::connect_read_only`). An
 ///    unreachable network fails each fetch on its own, so D43 §5's
@@ -738,7 +753,12 @@ pub(crate) fn restore(
             });
         }
     }
-    let network = crate::backend::read_only_network(recorded)?;
+    // D173 §2 R7: the definition and the peers it may dial, resolved after
+    // the unlock (the network is the record's) and before any connection or
+    // output write. `config.toml` contributes exactly one thing here —
+    // `[networks.arbitrum-one] bootstrap` — never `default_network`.
+    let config = crate::config::load()?;
+    let network = crate::backend::read_only_network(recorded, &config)?;
 
     let rt = crate::backend::runtime()?;
     let restored = rt.block_on(async {
@@ -754,9 +774,10 @@ pub(crate) fn restore(
 
 /// `reveal <WORK-ID> (--all | --units …) [-o FILE] [--include-receipt]
 /// [--yes]` (U28's flow in [`crate::reveal_out`], U29's
-/// irreversible-disclosure gate in [`crate::reveal_consent`]).
+/// irreversible-disclosure gate in [`crate::reveal_consent`]; the backend per
+/// build in [`crate::backend::drive_reveal`], D175).
 ///
-/// # U72: the backend seam is **not** reached first any more
+/// # U72: the backend seam is **not** reached first
 ///
 /// This handler used to return `backend::unavailable("reveal")`
 /// unconditionally, at entry — `restore`'s order at the time, which its
@@ -777,14 +798,64 @@ pub(crate) fn restore(
 /// §3 R8 wants it and what D68's own "nobody consents to a disclosure that
 /// cannot be written" implies for one that cannot be gathered.
 ///
-/// The passphrase is therefore collected before the disclosure can be
-/// known to be possible, which is a real cost and the ordering `show`,
-/// `list` and `status` already pay: the vault is the only place the work,
-/// its cache and its keys live, so there is nothing to decide before it is
-/// open. What has *not* changed is that nothing irreversible happens before
-/// the gate: the output path is resolved and a collision refused first (D68
-/// §3 R8), and the gate is asked only when a bundle could actually be
-/// produced.
+/// # D175: the `ant-backend` build fetches, through a reader connected only from a needed fetch
+///
+/// In the build with a backend a genuinely-required fetch no longer meets a
+/// refusal: it meets the wallet-less, download-only reader `restore` and
+/// `verify --live` hold (D170), **connected at most once and only from inside
+/// the first fetch** (D175 §2 R1). The order, for a reveal that must fetch:
+///
+/// 1. **The vault, the passphrase, the unlock** — as for every vault-holding
+///    command, arming D42's hook.
+/// 2. **The path and the collision** (D68 §3 R8), then R16's `prepare`: the
+///    manifest, the selection, the anchors, and every unit of every touched
+///    file, cache-first. Everything that follows happens inside the first
+///    `get_data` the cache cannot answer — so a fully cached reveal reads no
+///    flag, no definition and no export, completes with the default build's
+///    output, and does so whatever `ANTSEAL_DEVNET_ENV` names and whatever
+///    `--network` says (D175 §2 R2).
+/// 3. **The work's recorded network, enforced lazily** (D175 §2 R3; the
+///    classes on `backend::reveal_network`): an unparseable record is
+///    reveal-inputs-unusable (36); an explicit `--network` naming another
+///    network is usage (2), naming both; no usable definition or no peers is
+///    usage (2) with the resolver's text. `config.toml`'s `default_network`
+///    is never consulted. Each surfaces at that first fetch — before the
+///    consent gate, with nothing written — in its own class rather than as a
+///    network failure, because 23 tells a script to retry what only an
+///    environment fix cures.
+/// 4. **The connection**: `backend::connect_read_only`, under its hang-guard
+///    bound and degraded rather than propagated. A failed connect, a timeout
+///    or a failed fetch ends the whole reveal at that unit with
+///    network-failure (23) in the engine's own `Unfetchable` sentence carrying
+///    the reader's reason — never the unwired-backend sentence, and never
+///    absence for an unreachable network (D175 §2 R4).
+/// 5. **The gate, the build, the exclusive write** — unchanged.
+///
+/// `restore` resolves its definition eagerly, after the unlock and before any
+/// output, because it is network-normative and every fetch goes to the
+/// network first (D43 §5). `reveal`'s job is to disclose what the user already
+/// holds, so its definition is read only when something is missing — the two
+/// handlers differ because D43 gave them different jobs.
+///
+/// # No vault lock, no write-back, cannot pay (D175 §2 R7)
+///
+/// `reveal` writes nothing into the vault — fetched units are never written
+/// to the D43 cache — so, like `restore`, it takes no U5 lock. The backend
+/// delegates fetches only and refuses every call that could pay without even
+/// connecting; the reader inside it was connected with no wallet and no EVM
+/// network. So `U36`'s restated `Accept` — *anything that can pay goes through
+/// `SealBackend::connect`* — holds without this handler constructing a receipt
+/// sink at all.
+///
+/// # One handler for both builds (D175 §2 R5/R6)
+///
+/// The two builds differ in the backend and in what drives it — the
+/// vault-local backend under a single poll, or the lazy reader under the
+/// tokio runtime, constructed, used and dropped inside its `block_on` — and
+/// both shapes live in `backend::drive_reveal`, selected by feature there.
+/// This function has no `#[cfg]` arm and makes its one call to `run_reveal`
+/// inside the closure it hands the driver, which is what keeps `U71`'s closed
+/// list exact (below).
 ///
 /// # The consent gate's one production call site (U71)
 ///
@@ -801,6 +872,8 @@ pub(crate) fn reveal(
     args: &crate::cli::RevealArgs,
     slot: &VaultSlot,
 ) -> Result<Outcome, CliError> {
+    use antseal_net::NetworkId;
+
     use crate::reveal_consent::{DisclosureConsent, TtyDisclosurePrompt};
 
     let ui = Ui { json: globals.json };
@@ -820,15 +893,21 @@ pub(crate) fn reveal(
         &mut prompt,
     );
 
-    // U72: a backend that serves nothing and says why, rather than no
-    // reveal at all. Its refusal is what a genuinely-required fetch meets.
-    let backend = crate::backend::VaultLocalBackend::new("reveal");
-    let report = crate::backend::block_on_vault_local(crate::reveal_out::run_reveal(
-        &backend,
-        &store,
-        args,
-        gate.gate(),
-    ))??;
+    // D175 §2 R1–R6: the backend per build, and what drives it, are the
+    // driver's. The flag and the record read are handed over as values the
+    // driver may never consult — the build with no backend does not, and the
+    // build with one reads the record only from inside the first fetch the
+    // cache cannot answer (D175 §2 R2), where it is the network the work was
+    // sealed on and never `config.toml`'s default (D175 §2 R3).
+    let report = crate::backend::drive_reveal(
+        globals.network.map(NetworkId::from),
+        || {
+            let seal_id = crate::pipeline::restore::resolve_work_id(&store, &args.work_id)?;
+            // Scoped: the record carries `W`, and only its network leaves.
+            Ok(store.load_meta(&seal_id)?.network.clone())
+        },
+        async |backend| crate::reveal_out::run_reveal(backend, &store, args, gate.gate()).await,
+    )?;
 
     for line in report.render() {
         ui.line(&line);
@@ -915,9 +994,10 @@ pub(crate) fn verify(
     let mut modes = VerifyModes::OFFLINE;
     let mut host = crate::verify_host::CollectedInputs::none();
     // A build WITH one: the network `--live` reads from, resolved here —
-    // before verification — so a missing devnet definition is a usage error
-    // ahead of any verdict (D170 §2 R6). It is connected to much later, and
-    // only for a bundle that verified.
+    // before verification — so a missing devnet definition, or a network with
+    // no bootstrap peers, is a usage error ahead of any verdict (D170 §2 R6,
+    // D173 §2 R7). It is connected to much later, and only for a bundle that
+    // verified.
     #[cfg(feature = "ant-backend")]
     let mut live_network = None;
     if online || live {
@@ -925,7 +1005,7 @@ pub(crate) fn verify(
         let network = crate::config::effective_network(globals.network, &config);
         #[cfg(feature = "ant-backend")]
         if live {
-            live_network = Some(crate::backend::read_only_network(network)?);
+            live_network = Some(crate::backend::read_only_network(network, &config)?);
         }
         if online {
             modes = modes.with_online();

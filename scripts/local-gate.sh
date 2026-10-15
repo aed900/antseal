@@ -294,6 +294,18 @@ GATE_LIGHT_FEATURES='antseal-anchor/test-util,antseal-core/test-util,antseal-cor
 # Policy and the A25 escape hatch: docs/testing/anchor-ci-policy.md.
 export ANTSEAL_NO_REAL_ANCHOR_NETWORK=1
 
+# D173 §2 R9/R11 — the no-real-STORAGE-network gate's arming, exported beside
+# the anchor gate's for the same reason and checked by the same lane. Armed,
+# antseal-net's storage constructors refuse any bootstrap peer that is not
+# loopback before the payer's `eth_chainId` call and before `Client::connect`;
+# the loopback devnet is admitted, so tier 3's E2E is unaffected. A debug build
+# is armed with the variable unset and a release build is not, so this export
+# is what reaches the release-profile lanes below (package-smoke, the wasm
+# release builds). `0` is the only off switch and no lane here sets it: a
+# real-network run is a script over the release binary in an unarmed shell,
+# never a gate lane (CONTRIBUTING.md, "No real storage network in tests").
+export ANTSEAL_NO_REAL_STORAGE_NETWORK=1
+
 echo "gate: $(git rev-parse --short HEAD) — $(git log -1 --format=%s | cut -c1-60)"
 run fmt    cargo fmt --all -- --check
 run clippy cargo clippy --workspace --all-targets --features "$GATE_LIGHT_FEATURES" --locked -- -D warnings
@@ -480,6 +492,22 @@ run ci-paths          scripts/check-ci-paths.py
 run action-pins-selftest scripts/check-action-pins.py --self-test
 run action-pins          scripts/check-action-pins.py
 
+# D171 §2 R5 (Q274) — a job that publishes or signs bytes restores no Actions
+# cache: every job granted `pages`, `contents` or `id-token` write carries no
+# `Swatinem/rust-cache` or `actions/cache` step. Cargo re-checks nothing a
+# restored cache hands it, and any live job on `main` can create entries, so a
+# cache inside a deploy or release job is a channel into the served bytes
+# (D171 §1). The checker PRINTS how many write-scoped jobs it examined, and
+# zero is RED rather than a pass: one today, `pages.yml` `publish`, and `Q31`'s
+# release job is the next. Its self-test plants D171 §3's four faults plus ten
+# parser arms, in memory or in a temporary directory outside the tree, so it
+# writes no tracked file. Reads committed files only: no cargo, no network, no
+# git. Measured 2026-09-15 on this 2-core host, 3 runs each: self-test
+# 0.10/0.10/0.10 s, check 0.07/0.05/0.05 s. Rides ci-always.yml's
+# `traceability` job remotely; adds ZERO required-status contexts.
+run write-job-cache-selftest scripts/check-write-job-cache.py --self-test
+run write-job-cache          scripts/check-write-job-cache.py
+
 # D124/Q182 — the test-of-the-test for the guard that asserts CI's
 # `traceability` job runs no cargo. The ASSERTION is two steps on that job and
 # has no local equivalent (`$GITHUB_PATH` covers a job's later steps; there are
@@ -492,8 +520,8 @@ run action-pins          scripts/check-action-pins.py
 # it.
 run cargo-free scripts/cargo-free.sh --self-test
 
-# Q16 — the no-real-anchor-network policy's static half (self-tests first,
-# six planted faults). Reads committed files only, so it costs a fraction of
+# Q16/D173 — both no-real-network policies' static half (self-test first, all
+# planted faults red). Reads committed files only, so it costs a fraction of
 # a second. It is here because the arming it guards is a line in a YAML
 # `env:` block and a line in THIS file: both are exactly the kind of thing a
 # reformat drops without any test noticing, and the consequence is a test

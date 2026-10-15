@@ -16,12 +16,12 @@ Commands:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -42,12 +42,12 @@ Usage: antseal init [OPTIONS]
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --wallet <SOURCE>
           Wallet key source: generate a fresh key, or import existing key material via --wallet-key-fd
@@ -99,12 +99,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --title <TITLE>
           Title embedded in the manifest — visible to every bundle recipient (`seal` warns about this)
@@ -146,12 +146,12 @@ Usage: antseal list [OPTIONS]
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -173,12 +173,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -200,12 +200,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --upgrade
           Poll OTS calendars and upgrade pending attestations now
@@ -230,12 +230,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
   -o <DIR>
           Output directory (default per D48's output policy)
@@ -263,12 +263,12 @@ Options:
           Reveal every unit of the work
 
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -302,12 +302,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --online
           Also confirm the Bitcoin header and Arbitrum tx via two pinned, must-agree public endpoints per source
@@ -335,12 +335,12 @@ Commands:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -362,12 +362,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
@@ -389,12 +389,12 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network (default: arbitrum-one, or config.toml's default_network — flag > config > default; "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia)
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
-          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614) via the self-hosted devnet contracts
-          - devnet:           Local devnet (25 nodes + Anvil; development only)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)

@@ -17,7 +17,11 @@ data. `antseal init` writes the initial file; edit it by hand afterwards.
   are worse than a loud stop.
 - **Unknown keys and sections are warnings**, printed to stderr and
   otherwise ignored, so a config written by a newer antseal still loads.
-  Invalid **values** for recognized keys are hard errors.
+  Invalid **values** for recognized keys are hard errors. One recognized
+  key is an error in the wrong table: `bootstrap` under
+  `[networks.arbitrum-sepolia]` or `[networks.devnet]` (see "Bootstrap
+  peers"); outside the `[networks.*]` tables it is an unknown key, warned
+  and ignored like any other.
 
 ## Precedence
 
@@ -25,9 +29,21 @@ data. `antseal init` writes the initial file; edit it by hand afterwards.
 --network flag   >   config.toml default_network   >   arbitrum-one
 ```
 
-The same rule will apply to every future override: an explicit flag
-always wins, the config supplies the ambient preference, and the built-in
-default is the fallback.
+That rule decides the **invocation's** network: the network new work is
+sealed on, the network `verify --online` and `--live` read from, and the
+top-level `network` member of every `--json` envelope (D174 §2 R11). It is
+resolved once, before any command runs. It does **not** decide the network
+a command acting on an already sealed work uses — that work was stored on
+one network and is readable only there. `restore` reads the network
+recorded in the vault, never `default_network`, and refuses a `--network`
+naming a different one as a usage error (exit code 2); `reveal` enforces
+the same rule lazily, at its first needed fetch (D175); `status`'s receipt
+read uses the recorded network and reads no flag. The same shape applies to
+every future override: an explicit flag always wins, the config supplies
+the ambient preference, and the built-in default is the fallback.
+`arbitrum-one`'s bootstrap peers follow it with no flag:
+`[networks.arbitrum-one] bootstrap` when present, otherwise the built-in
+list — for `restore` too, which reads `config.toml` for that one key.
 
 ## Schema (v1)
 
@@ -40,10 +56,19 @@ default_network = "arbitrum-sepolia"
 # addresses, and the default RPC endpoints are compiled-in constants
 # (kept byte-identical to the pinned evmlib) and are deliberately NOT
 # configurable — a hand-edited contract address is an evidence-downgrade
-# hazard, not a preference. Consumed by the payment backend; validated
-# at load either way.
+# hazard, not a preference. Validated at load, and consumed by NOTHING
+# today (U94): for arbitrum-one and arbitrum-sepolia the payment backend
+# uses the compiled-in RPC endpoint, and devnet uses the devnet export's;
+# neither reads this key. Wiring or retiring it is U94's ruling, owed
+# before the config surface freezes.
 [networks.arbitrum-one]
 rpc_url = "https://my-own-node.example/rpc"
+
+# Storage-network bootstrap peers, arbitrum-one ONLY. A present list
+# REPLACES the built-in list wholesale and is never merged with it.
+# Validated at load; see "Bootstrap peers" below. (These two are RFC 5737
+# documentation addresses, never routed: replace them, never copy them.)
+bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 
 # RFC 3161 TSA list override for the seal-time anchor stage. LIVE: `seal`
 # contacts exactly these authorities. A non-empty list REPLACES the
@@ -105,3 +130,41 @@ default authorities, `timestamp.digicert.com`, offers no HTTPS at all. What
 plain HTTP does cost there is privacy: a passive observer learns that this
 machine timestamped a particular 32-byte digest. If that matters to you,
 drop DigiCert from the list; nothing else changes.
+
+## Bootstrap peers
+
+A client joins the Autonomi storage network by dialing a few known peers
+first. For `arbitrum-one`, antseal carries a built-in list: a byte-identical
+copy of `resources/bootstrap_peers.toml` as upstream (`WithAutonomi/ant-client`)
+published it at the pinned `ant-core`'s release tag, `ant-core-v0.5.0`,
+embedded when antseal is built
+([D173](decisions/D173-mainnet-peers-are-upstreams-published-bytes-and-no-test-can-dial-them.md)).
+What is checked about that list is exactly this: a test recomputes its
+recorded sha256 and upstream's git blob id over the embedded bytes and
+compares the parsed addresses with an independent transcription, and the
+list is compared with upstream's on the weekly upstream check. Nothing establishes that any listed peer is
+live, who operates it, or that it is authentic. The claim is only *these are
+the bytes upstream published at the pin*.
+
+`bootstrap` under `[networks.arbitrum-one]` replaces that list:
+
+- **Replace, never merge.** A present list is the whole peer set. It is never
+  combined with the built-in list, with a peer cache, or with anything else,
+  so the set has one source. An override exists to stop dialing seeds you do
+  not want dialed, and a merge would keep dialing them.
+- **Validated when the file is read.** A bad list is a malformed config
+  (exit code 17), raised before any command runs, so before any passphrase is
+  asked for. The list must have at least one entry. Every entry must be an IP
+  address with a port (`"ip:port"`); a hostname such as `example.org:10000` is
+  refused. No entry may repeat, be an unspecified address (`0.0.0.0` or `::`),
+  use port 0, or be a loopback address, so neither an all-loopback list nor
+  one mixing loopback and public addresses loads.
+- **An empty list is refused, not read as "use the defaults".** This is where
+  `bootstrap` differs from `tsa_urls`: `bootstrap = []` is a malformed config.
+  To go back to the built-in list, delete the key.
+- **`arbitrum-one` only.** The same key under `[networks.arbitrum-sepolia]`
+  or `[networks.devnet]` is a malformed config (exit code 17), and the error
+  names `ANTSEAL_DEVNET_ENV`: the devnet export it names is those networks'
+  only peer source, because their peers belong to one run of a devnet.
+- **No flag and no environment variable.** This key is the only way to
+  override peers.

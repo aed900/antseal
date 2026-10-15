@@ -350,6 +350,22 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
   schedule is inert until the push blocker clears; `workflow_dispatch`
   also only appears once the workflow file is on the default branch.
 
+  **[2026-10-15, wave 36 — hosted state, read-only.]** The lane was RED four
+  weekly runs running on `3473ab2` — `35602482579` (2026-09-21), `36433333922`
+  (09-28), `37328024052` (10-05), `38271609924` (10-12), step `cargo deny
+  (advisories, bans, sources, licenses)` → `advisories FAILED, bans ok, licenses
+  ok, sources ok` (RUSTSEC-2026-0285 on rustls 0.23.43; from 10-12 also
+  RUSTSEC-2024-0449, unsafe-libyaml) — while `ci.yml` never ran again, because
+  nothing was pushed after 2026-09-14 (`34822215874`, green at `652f260`): a
+  required context's colour is only as fresh as the last push that ran it.
+  Cleared locally by `Q275` (rustls 0.23.46 and a review-dated `deny.toml`
+  ignore): `advisories ok, bans ok, licenses ok, sources ok`. **Hosted witness
+  owed on the consented push**: `audit-deny` green in `ci`, and the next
+  scheduled run (Mon 2026-10-19 06:17 UTC) green. The same push is the first
+  hosted run of every workflow with `ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"` in
+  its `env:` (D173 §2 R11) and of `ci-always.yml`'s two new `traceability` steps
+  (D171).
+
 ## Authoritative context set (now 14)
 
 > **[wave-4 note]** Superseded: P14 adds a 15th context
@@ -1308,6 +1324,17 @@ page.** Two preconditions, both required:
    - **Where the count stands**: 2 of 20 at 2026-09-13 (`33616516399`,
      `34338263485`); the earliest a 20th consecutive clean weekly run can exist is
      **2027-01-13**.
+   - **[2026-10-15, wave 36 — the ritual, read-only GETs.]** **7 of 20.** Five more
+     scheduled greens, every one at `3473ab2` (nothing was pushed in between), were
+     appended by `scripts/check-devnet-ledger.py --append`: `35084031432` (09-16,
+     `secs=1239`), `35847733089` (09-23, `secs=1245`), `36707905689` (09-30,
+     `secs=994`), `37617722010` (10-07, `secs=1209`), `38550457695` (10-14,
+     `secs=1205`) — each `e2e-devnet: PASS commit=3473ab2 nodes=14 suites_run=4
+     failed=[] pending=[]`, non-compile 441–541 s, `clean=yes`; then
+     `check-devnet-ledger --against-api: ok — 10 run(s) listed by the API (10
+     completed), 10 record(s) in the ledger … streak 7/20`. Weekly cadence keeps
+     the earliest 20th at **2027-01-13**. The lines are pinned by the offline
+     check only once a commit carries them (D167 §2 R2).
 
    **[MEASURED 2026-08-27, wave 31 — precondition 2 is unreachable three ways,
    and none of the three was recorded here. `Q247`'s `Accept` rows 1-2.]**
@@ -1509,9 +1536,14 @@ this sentence — exactly as `ci-shell` and `fuzz-budget` do.
 ## Minute cost
 
 **Effectively zero, and no new job.** The added step is one `python3`
-invocation over committed text: it reads 4 workflow files, 6 manifests,
-`scripts/local-gate.sh` and antseal-anchor's sources, with six in-memory
-planted faults first. Measured locally on this 2-core host over three runs:
+invocation over committed text: it reads 9 workflow files, 8 manifests
+(re-measured 2026-10-15 — `check-anchor-net.py` globs every `.github/workflows/*.yml`
+and the root plus seven `crates/*/Cargo.toml`; this sentence said 4 and 6 from the
+day it was written),
+`scripts/local-gate.sh` and antseal-anchor's sources, with its in-memory
+planted faults first — the self-test's own output names each one, and
+their count has grown since this was written. Measured locally on this
+2-core host over three runs:
 **0.13 s / 0.10 s / 0.10 s** wall, self-test included.
 `traceability` needs no toolchain and no cache, so the step adds no setup — a
 property this document used to state and D124/Q182 now asserts on every run of
@@ -2715,6 +2747,14 @@ behind two claims further down: that R86's reproducibility step has executed
 **zero** times remotely (both runs predate it), and that the cold-versus-warm
 gap on a rarely-run lane is real and is 4.6×.
 
+**[2026-09-15, wave 36 — D171 §2 R3 (`Q274`): that warm deploy cannot recur.]**
+`pages.yml`'s `publish` job restores no Actions cache any more, so every deploy
+installs both wasm tools from source. The 4.6× above was `Swatinem/rust-cache`
+restoring `~/.cargo/bin` and skipping both `cargo install`s, 335 s of that run's
+452 s build (D135 §1.4), and that skip is exactly the restored-tool layer the
+two-environment comparison cannot see (D171 §1.4). The one deploy since, run
+`34782645736`, found no cache and built cold in 4 m 26 s (D171 §1.2).
+
 ## R26's standing debt is discharged, and its reasoning is corrected rather than carried forward
 
 `TODO.md`'s R26 row and `tasks/R.md`'s R26 entry both carried **"STANDING DEBT:
@@ -2764,6 +2804,15 @@ tier is D135 §3 R1's **deploy-gated**, chosen against the measured bill above,
 and a new job would have been a new metered runner. **[2026-09-13: D168 §2 R1
 raised the tier to the required push context `reproducible-build`, its own
 workflow; this deploy-gate step stays (D168 §2 R3).]**
+
+**[2026-09-15, wave 36 — D171 §2 R4: what a green proves, scoped.]** The two
+environments vary the checkout path and `$CARGO_HOME`, not crate provenance or
+build tools — build B copies build A's `registry/cache` and `registry/index` and
+runs the same `wasm-pack` and `wasm-bindgen` on `$PATH` — so a green means
+*reproducible given the pinned crate set and the pinned tools*, and crate
+provenance on the served path rests on cargo's download-time checksum, which
+D171 §2 R3 guarantees by restoring no Actions cache in `pages.yml`'s `publish`
+job.
 
 **What this run does NOT prove.** Both deploys on record — `31847839638`
 (2026-08-14, `08c074c`) and `31873422229` (2026-08-15, `9317a35`) — **predate
@@ -4712,6 +4761,24 @@ done
 **last** refused run, `33400051889` (`advisory-cron`, 2026-08-31T13:59:51Z),
 has exactly one job: `advisory-weekly failure steps=0`, 13:59:51Z → 13:59:54Z,
 **3 seconds**. That is the signature, and it is measured on both sides.
+
+**[OBSERVED 2026-10-14, wave 36 — the same read-only sweep after four idle weeks;
+nothing was pushed, so every run is scheduled or dispatched on `3473ab2` and the
+last push-run is on `652f260`.]** Latest run per workflow: `ci` `34822215874`
+2026-09-14 `success` at `652f260` (15/15 jobs — the last push); `ci-always` on the
+same push, `success`; `advisory-cron` `38271609924` 2026-10-12 `failure` (the fourth
+red in a row, `advisories FAILED, bans ok, licenses ok, sources ok` — `Q275`);
+`devnet-e2e-cron` `38550457695` 2026-10-14 `success` (the fifth scheduled green at
+`3473ab2`, all five now in the ledger, streak 7/20); `cross-os-extended`
+`38134126043` 2026-10-11 `success`; `fuzz-nightly` `38241731858` 2026-10-12
+`success`. Every one executed (steps > 0, a runner assigned) — the refusal signature
+has not recurred since the flip. CodeQL: 0 open / 63 dismissed / 3 fixed, with
+`#24`/`#48` reopened 2026-09-22 and closed as `fixed` on 2026-10-13 over
+byte-identical code (`Q271`). **Witnesses owed on the next consented push**:
+`audit-deny` green on rustls 0.23.46; the first run of every workflow with the
+storage gate in its `env:`; `ci-always.yml`'s two new `traceability` steps; and
+`Q274`'s consented `pages.yml` dispatch. Run ids expire with GitHub's 90-day
+retention — the verdict lines above are the record.
 
 **The streak, bounded at both ends, by the `steps == []` test rather than by
 wall time.** Every `failure` run in the archive under 60 s was classified:

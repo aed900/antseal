@@ -89,16 +89,26 @@
 /// two different strings that both look right.
 pub const NO_REAL_ANCHOR_NETWORK: &str = "ANTSEAL_NO_REAL_ANCHOR_NETWORK";
 
+/// D173 §2 R9's environment arm — the storage twin of the anchor gate's.
+///
+/// Bound to `antseal_net`'s own constant rather than spelled here, so the
+/// helper and `storage_gate::decide` cannot drift into two strings that both
+/// look right. The storage gate has a third arm the anchor gate lacks (unset
+/// arms a build with debug assertions), but this crate's spawned binary is
+/// whatever profile the suite was built under, and only this line arms it in
+/// every profile (D173 §2 R11).
+pub const NO_REAL_STORAGE_NETWORK: &str = antseal_net::network::storage_gate::ENV;
+
 /// The `antseal` binary, with Q16's gate **armed**.
 ///
 /// Every construction site in `crates/antseal-cli/tests/` goes through here.
 /// Nothing else may name `CARGO_BIN_EXE_antseal`; `check-anchor-net.py` R4
 /// enforces that, with planted faults proving it can fail.
 ///
-/// Deliberately minimal: it sets the one variable and nothing else. Suites
-/// clear `RUST_LOG`, `ANTSEAL_DIR` and the rest for their own reasons, and a
-/// helper that also had opinions about those would be a helper suites started
-/// working around.
+/// Deliberately minimal: it sets the two gate variables and nothing else.
+/// Suites clear `RUST_LOG`, `ANTSEAL_DIR` and the rest for their own reasons,
+/// and a helper that also had opinions about those would be a helper suites
+/// started working around.
 #[must_use]
 pub fn antseal() -> std::process::Command {
     let mut command = std::process::Command::new(antseal_exe());
@@ -106,6 +116,13 @@ pub fn antseal() -> std::process::Command {
     // line is measured to let the suite reach live calendars and TSAs — see
     // the module docs for the probe output.
     command.env(NO_REAL_ANCHOR_NETWORK, "1");
+    // D173 §2 R9–R11: the storage gate's environment arm, so no spawned
+    // binary can open a storage session over a non-loopback peer — with
+    // `arbitrum-one`'s peers vendored, a `seal`, `restore` or `verify --live`
+    // spawned unarmed would dial mainnet. `check-anchor-net.py` R4 reads this
+    // line for both variables, and `tests/anchor_stage.rs` asserts the
+    // `Command` really carries each one.
+    command.env(NO_REAL_STORAGE_NETWORK, "1");
     command
 }
 

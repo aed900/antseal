@@ -115,7 +115,7 @@ pub mod test_util;
 
 pub use address::Address;
 #[cfg(feature = "ant-backend")]
-pub use ant_backend::{AntCoreBackend, AntCoreReader, CaptureHook};
+pub use ant_backend::{AntCoreBackend, AntCoreReader, AntCoreReceiptReader, CaptureHook};
 pub use backend::{
     BalanceReport, PreflightReport, StorageBackend, allowance_to_approve, preflight,
 };
@@ -130,8 +130,10 @@ pub use live::{
     check_persistence, fetch_failure_class,
 };
 pub use network::{
-    DevnetEnv, DevnetEnvError, EvmAddress20, EvmAddressParseError, NetworkConfig,
-    NetworkConfigError, NetworkId,
+    DevnetEnv, DevnetEnvError, EvmAddress20, EvmAddressParseError, ExportChain, NetworkConfig,
+    NetworkConfigError, NetworkId, PeerLocality, PeerLocalityError, PeerSetError,
+    SepoliaExportMismatch, VendoredPeersError, arbitrum_one_vendored_peers, check_sepolia_export,
+    classify_export_chain, classify_peers, is_loopback_peer, parse_vendored_peers, peer_locality,
 };
 pub use quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,

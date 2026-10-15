@@ -886,6 +886,49 @@ fn the_spawn_helper_arms_the_no_real_anchor_network_gate() {
     );
 }
 
+/// **D173 §2 R11's storage sibling.** The same `Command`, the storage gate's
+/// variable: set exactly once, to a value that is not the one off switch.
+///
+/// The storage gate (`antseal_net::network::storage_gate`) has one more arm
+/// than the anchor gate — unset arms a build with debug assertions — but the
+/// binary a suite spawns is built under whatever profile the suite was, and
+/// `cargo test --release` would spawn a release binary with nothing armed.
+/// The helper's line is what arms it in every profile; this asserts the line
+/// reaches the `Command` rather than a comment. The key is read off the
+/// network crate's own constant, so a helper that spelled a near-miss string
+/// would arm nothing and fail here.
+#[test]
+fn the_spawn_helper_arms_the_no_real_storage_network_gate() {
+    let command = spawn::antseal();
+    assert_eq!(
+        spawn::NO_REAL_STORAGE_NETWORK,
+        antseal_net::network::storage_gate::ENV,
+        "the helper's storage constant must be the gate's own, not a copy"
+    );
+    let armed: Vec<_> = command
+        .get_envs()
+        .filter(|(key, _)| *key == std::ffi::OsStr::new(spawn::NO_REAL_STORAGE_NETWORK))
+        .collect();
+    assert_eq!(
+        armed.len(),
+        1,
+        "`spawn::antseal()` must set {} exactly once; it set it {} time(s). Every spawned-binary \
+         suite in this crate is armed against a non-loopback storage peer by this one line and \
+         by nothing else (D173 §2 R11)",
+        spawn::NO_REAL_STORAGE_NETWORK,
+        armed.len()
+    );
+    let (_, value) = armed[0];
+    // `storage_gate::decide` fails closed — anything but a literal `0` arms
+    // it — so the assertion is that the value is not the ONE off switch.
+    assert!(
+        value.is_some_and(|v| v != std::ffi::OsStr::new("0")),
+        "{} is set to {value:?}, which is the one sanctioned OFF switch (D173 §2 R9). The \
+         helper must arm the gate, not disarm it",
+        spawn::NO_REAL_STORAGE_NETWORK
+    );
+}
+
 /// **The scan proven red, in both arms.** The row above is worth its verdict
 /// only if the scan can fail, so run it against planted violations in a
 /// directory of its own — with clean neighbours beside them, so it is not

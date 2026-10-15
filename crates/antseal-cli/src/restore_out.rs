@@ -153,6 +153,15 @@ pub struct FileReport {
 pub struct RestoreOutput {
     /// The work restored.
     pub work_id: [u8; 32],
+    /// The work's recorded network — the canonical CLI spelling, verbatim
+    /// from the work record (D174 §2 R12). It is the network every fetch of
+    /// this run went to, because `restore` reads a work back from the
+    /// network it was sealed on (D170 §2 R3). The envelope's top-level
+    /// `network` is a different fact — the invocation's effective network
+    /// (D174 §2 R11) — and the two differ whenever the invocation resolves
+    /// to a network other than the record's (a `devnet` work restored with
+    /// no `--network` flag, say); see `machine.rs`'s envelope section.
+    pub network: String,
     /// The output directory (default or `-o`).
     pub output_dir: PathBuf,
     /// Where the manifest came from — the one line that says whether the
@@ -251,10 +260,19 @@ impl RestoreOutput {
     }
 
     /// The `--json` result document (U3's envelope wraps it).
+    ///
+    /// `network` is the work's **recorded** network (D174 §2 R12) — the one
+    /// the run fetched from. The envelope's own top-level `network` beside
+    /// it is the invocation's effective network (D174 §2 R11), so a consumer
+    /// that wants to know where the data came from reads this member, and
+    /// the two are expected to differ: the committed `[restore]` example in
+    /// `tests/snapshots/json-envelopes.txt` shows `devnet` inside
+    /// `arbitrum-one`.
     #[must_use]
     pub fn json(&self) -> serde_json::Value {
         serde_json::json!({
             "work_id": hex32(&self.work_id),
+            "network": self.network,
             "output_dir": self.output_dir.display().to_string(),
             "manifest_source": self.manifest_source.name(),
             "files": self.files.iter().map(|f| serde_json::json!({
@@ -416,6 +434,9 @@ pub fn write_verified(
 
     Ok(RestoreOutput {
         work_id: report.work_id,
+        // D174 §2 R12: the record's string, copied through from the engine's
+        // report — never resolved again, never the invocation's.
+        network: report.network.clone(),
         output_dir: output_dir.to_path_buf(),
         manifest_source: report.manifest_source,
         files,

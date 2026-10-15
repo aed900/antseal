@@ -54,6 +54,16 @@ permissions:
 # verification are ordinary HTTP to the host, which this variable does not gate.
 env:
   ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+  # D173 §2 R9/R11 — the no-real-STORAGE-network gate, the anchor gate's twin,
+  # armed here for the same reason. It makes antseal-net's storage
+  # constructors refuse any bootstrap peer that is not loopback before the
+  # payer's `eth_chainId` call and before `Client::connect`; the loopback
+  # devnet is admitted. `0` is the only off switch; unset, a debug build is
+  # armed and a release build is not, so this line is what reaches any
+  # release-profile step. Required in EVERY workflow by the same lane as the
+  # anchor arming (`scripts/ci-lanes.sh anchor-net-policy`). Policy:
+  # CONTRIBUTING.md, "No real storage network in tests".
+  ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"
 
 # One deploy at a time; never cancel one in flight, because a half-replaced
 # canonical URL is worse than a late one.
@@ -80,7 +90,21 @@ jobs:
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup show
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # NO Actions cache in this job, deliberately (D171 §2 R3). Its output is
+      # the served page, and any live job on `main` can create cache entries
+      # whatever its `GITHUB_TOKEN` holds. Cargo does not re-check a cached
+      # `.crate`, an extracted source tree or `target/` against `Cargo.lock`,
+      # and the two-environment comparison in the next step cannot see a
+      # poisoned `.crate` or a poisoned tool in `~/.cargo/bin` (D171 §1.1,
+      # §1.4). With nothing restored, every crate is downloaded and checked
+      # against its `Cargo.lock` checksum, and the wasm tools are installed at
+      # their pinned versions. That is the price, and it is not zero: on the one
+      # warm deploy measured, the cache skipped both `cargo install`s, 335 s of
+      # the cold run's 452 s build step (D135 §1.4) — and that skip is exactly
+      # the restored-tool layer the comparison cannot see. D135 §5 R1's "build A
+      # may use the job's cache" is superseded by D171 §2 R3. Every job granted
+      # `pages`, `contents` or `id-token` write is held to this by
+      # `scripts/check-write-job-cache.py` (D171 §2 R5).
       - name: build and check the page
         run: ./scripts/pages-publish.sh --build
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

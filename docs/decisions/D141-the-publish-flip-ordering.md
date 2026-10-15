@@ -765,3 +765,7 @@ ID    = re.compile(r'([A-Z]{1,2})(\d+)(?:\s*[–—-]\s*([A-Z]{0,2})(\d+))?')
 it treats `D<n>` references as non-task and drops them; and it accepts the `M2`
 token at `TODO.md` Q113 as a dangling id rather than rejecting it. Three known
 dangles, all benign, all listed in §1.2.
+
+## Addendum — 2026-09-15: §3 item 6 (draft visibility) is documented, still not live-measured, and no longer needed (D172)
+
+Three GitHub REST endpoints now document that drafts are served only to accounts with **push** access (read 2026-09-15). No draft exists on the repository and creating one is a write, so it remains unmeasured live — and [D172](D172-the-gate-runs-on-the-draft-by-courier-and-publication-follows-the-verdict.md) makes the measurement unnecessary, because its sequence never asks a credential-less reader to see a draft: the gate's assets travel by courier, and only the post-publication witness reads the channel.

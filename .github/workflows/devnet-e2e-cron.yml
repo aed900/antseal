@@ -108,6 +108,16 @@ env:
   # `scripts/ci-lanes.sh anchor-net-policy` — an arming nothing checks is an
   # arming that silently disappears. Policy: docs/testing/anchor-ci-policy.md
   ANTSEAL_NO_REAL_ANCHOR_NETWORK: "1"
+  # D173 §2 R9/R11 — the no-real-STORAGE-network gate, the anchor gate's twin,
+  # armed here for the same reason. It makes antseal-net's storage
+  # constructors refuse any bootstrap peer that is not loopback before the
+  # payer's `eth_chainId` call and before `Client::connect`; the loopback
+  # devnet is admitted. `0` is the only off switch; unset, a debug build is
+  # armed and a release build is not, so this line is what reaches any
+  # release-profile step. Required in EVERY workflow by the same lane as the
+  # anchor arming (`scripts/ci-lanes.sh anchor-net-policy`). Policy:
+  # CONTRIBUTING.md, "No real storage network in tests".
+  ANTSEAL_NO_REAL_STORAGE_NETWORK: "1"
 
 jobs:
   devnet-e2e-scheduled:

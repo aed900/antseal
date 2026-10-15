@@ -797,3 +797,7 @@ workflow) are untouched. One downstream clause becomes weaker and is named at
 its own site rather than here: *"the failed dispatches cost nothing"* in
 `docs/ci-verification.md` rested on the absence of a runner and should now read
 "at most one billed minute per job".
+
+## Addendum — 2026-09-15: §5 R1's cache allowance is superseded for the deploy job, and the comparison's scope is stated (D171)
+
+§5 R1 let build A use the job's cache. [D171](D171-the-deploy-job-restores-no-cache-and-the-default-setup-acceptance-stands.md) §2 R3 supersedes that for `pages.yml`'s `publish` job, which now restores no Actions cache: any job on `main` can create cache entries, cargo trusts a cached crate without re-verifying it, and this record's comparison is blind to a poisoned `.crate` and a poisoned build tool because build B copies build A's registry and shares its tools (the fence in §5 R3). §1.4's measured warm deploy — 1.8 min against 8.4 min cold — is the cost D171 accepts. The comparison's claim is scoped to *reproducible given the pinned crate set and tools* (D171 §2 R4). Found by the lane implementing D171; this record is not rewritten.

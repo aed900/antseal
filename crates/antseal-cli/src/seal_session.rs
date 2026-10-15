@@ -40,11 +40,15 @@
 //!
 //! # What is deliberately *not* forced
 //!
-//! The non-paying commands — `restore`, `verify --live`, `status --upgrade`
-//! — go on constructing their backend with
-//! [`ReadOnly`](crate::backend::ReadOnly) and never need a session at all.
-//! "This path does not pay" stays written down rather than omitted, which is
-//! the same call `backend.rs` made for the sink argument itself.
+//! The non-paying commands never need a session at all, and none of them
+//! holds a sink: `restore`, `verify --live` and the `ant-backend` build's
+//! `reveal` hold `connect_read_only`'s wallet-less reader (D170; D175 —
+//! `reveal`'s connects only from a needed fetch), and `status` reads
+//! receipts through the key-less receipt reader (D173 §2 R14). The
+//! [`ReadOnly`](crate::backend::ReadOnly) sink has no production holder left
+//! and survives for the kill/resume harness. "This path does not pay" stays
+//! written down rather than omitted, which is the same call `backend.rs`
+//! made for the sink argument itself.
 //!
 //! The test suites likewise keep `VaultJournal::new`: the red-direction rows
 //! that prove the sink is doing work (`resume.rs`'s

@@ -1111,7 +1111,7 @@ lane_scrub_history() {
 # context (it adds none to the set). The cargo half of that placement argument is
 # no longer stated here: `scripts/cargo-free.sh` asserts it on every run of
 # that job and states the property once, in its own header (D124/Q182). Its
-# own six planted faults run first, every run.
+# own self-test runs first, every run: every planted fault must go red.
 lane_anchor_net_policy() {
   if ! python3 scripts/check-anchor-net.py --self-test; then
     printf '::error::check-anchor-net self-test FAILED — the policy check stayed green over a planted fault, so a green run below would prove nothing\n'

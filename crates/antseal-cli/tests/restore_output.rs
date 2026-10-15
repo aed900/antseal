@@ -107,8 +107,21 @@ fn files(paths: [&'static str; 3]) -> Vec<SealFile<'static>> {
     ]
 }
 
-/// Seal the fixture work into `mock` and return its printed work id.
+/// Seal the fixture work into `mock` on `devnet` and return its printed work
+/// id.
 fn seal_fixture(mock: &MockBackend, vault: &UnlockedVault, paths: [&'static str; 3]) -> String {
+    seal_fixture_on(mock, vault, paths, NetworkId::Devnet)
+}
+
+/// [`seal_fixture`] with the recorded network chosen by the caller: the
+/// handler rows read the record's network back (D170 §2 R3), so a row about
+/// an `arbitrum-sepolia` work needs a record that says so.
+fn seal_fixture_on(
+    mock: &MockBackend,
+    vault: &UnlockedVault,
+    paths: [&'static str; 3],
+    network: NetworkId,
+) -> String {
     let files = files(paths);
     let mut journal_rng = ChaCha20Rng::from_seed([0x20; 32]);
     let journal = VaultJournal::new(WorkStore::new(vault), &mut journal_rng);
@@ -120,7 +133,7 @@ fn seal_fixture(mock: &MockBackend, vault: &UnlockedVault, paths: [&'static str;
         title: "u20 fixture".to_owned(),
         claimed_time_unix_secs: 1_800_000_000,
         app_version: "antseal-test/1".to_owned(),
-        network: NetworkId::Devnet,
+        network,
         no_anchor: false,
         degraded: false,
         dry_run: false,
@@ -560,6 +573,11 @@ fn the_json_document_carries_per_file_status() {
     let doc = out.json();
 
     assert_eq!(doc["work_id"], serde_json::json!(work_id));
+    assert_eq!(
+        doc["network"],
+        serde_json::json!("devnet"),
+        "D174 §2 R12: the work's recorded network, verbatim from the record the fixture sealed"
+    );
     assert_eq!(doc["manifest_source"], serde_json::json!("vault-copy"));
     let files = doc["files"].as_array().expect("files array");
     assert_eq!(files.len(), 3);
@@ -1151,14 +1169,20 @@ fn dead_devnet_export(dir: &Path) -> PathBuf {
 /// D43 cache copy retained — the shape U74 names: a work that could be
 /// restored without a network, if a build were allowed to.
 fn fully_cached_fixture(tag: &str) -> (IsolatedVault, String) {
+    fully_cached_fixture_on(tag, NetworkId::Devnet)
+}
+
+/// [`fully_cached_fixture`] recorded on `network`.
+fn fully_cached_fixture_on(tag: &str, network: NetworkId) -> (IsolatedVault, String) {
     let mock = MockBackend::new();
     let vault = IsolatedVault::create(tag);
     let work_id = {
         let unlocked = vault.unlock();
-        let work_id = seal_fixture(
+        let work_id = seal_fixture_on(
             &mock,
             &unlocked,
             ["notes.txt", "data/blob.bin", "split.txt"],
+            network,
         );
         let cached = unit_cache_entries(&WorkStore::new(&unlocked));
         assert!(
@@ -1495,16 +1519,22 @@ fn the_works_own_network_is_used_and_both_network_refusals_follow_the_passphrase
         None,
     );
 
-    for (label, run, must_name) in [
+    for (label, run, must_name, must_not_name) in [
         (
             "an explicit --network that is not the work's",
             &mismatched,
             ["sealed on `devnet`", "--network arbitrum-one"],
+            &[][..],
         ),
         (
             "a devnet work with no devnet definition",
             &undefined,
             ["ANTSEAL_DEVNET_ENV", "devnet"],
+            // D174 §2 R7: the no-definition refusal offers no other network
+            // as an export-free alternative. Its copy used to end "or seal
+            // to --network arbitrum-sepolia" — advice that resolved to a
+            // configuration with no peers (U92).
+            &["arbitrum-sepolia"][..],
         ),
     ] {
         assert_eq!(run.code, Some(2), "{label}: stderr:\n{}", run.stderr);
@@ -1524,6 +1554,13 @@ fn the_works_own_network_is_used_and_both_network_refusals_follow_the_passphrase
                 "{label}: the refusal names `{fragment}`: {message}"
             );
         }
+        for fragment in must_not_name {
+            assert!(
+                !message.contains(fragment),
+                "{label}: the devnet refusal no longer offers {fragment} as an export-free \
+                 alternative: {message}"
+            );
+        }
         assert!(
             run.stderr.contains(HOOK_ARMED),
             "{label}: refused AFTER the passphrase — the vault had been unlocked. stderr:\n{}",
@@ -1536,6 +1573,180 @@ fn the_works_own_network_is_used_and_both_network_refusals_follow_the_passphrase
         );
         assert!(!out_dir.exists(), "{label}: nothing was written");
     }
+}
+
+/// **D174 §2 R15 / `U93` — the envelope's two `network` members, through the
+/// spawned binary.** A `devnet`-recorded, fully cached work, restored over a
+/// dead 31337 export, in three invocations:
+///
+/// 1. no `--network`, no `config.toml`: exit 0 with the top-level `network`
+///    `arbitrum-one` — the invocation's effective network, here the built-in
+///    default (§2 R11) — **and** `result.network` `devnet`, the network every
+///    fetch went to (§2 R12);
+/// 2. `--network devnet`, agreeing with the record: top-level `devnet`;
+/// 3. `config.toml` with `default_network = "arbitrum-sepolia"` and no flag:
+///    top-level `arbitrum-sepolia` — without this control the row could not
+///    tell *the invocation's network* from a constant `arbitrum-one`.
+///
+/// In all three `result.network` stays `devnet`, every file is `restored`
+/// (so each run really went through the dead export to the verified cache,
+/// and the connect trace says the network was asked), and the run exits 0:
+/// `restore` reads the recorded network and never the config default (D170
+/// §2 R3), so a config naming another network moves the top-level member and
+/// nothing else.
+#[cfg(feature = "ant-backend")]
+#[test]
+fn the_envelope_reports_the_invocations_network_and_the_result_the_works() {
+    use antseal_cli::vault::layout::BesideFile;
+
+    let scratch = Scratch::new("u93-envelope");
+    let (vault, work_id) = fully_cached_fixture("u93-envelope");
+    let dead = dead_devnet_export(&scratch.0);
+    let config_path = vault.layout.beside_path(BesideFile::Config);
+
+    let runs: [(&str, Option<&str>, Option<&str>, &str); 3] = [
+        (
+            "no --network and no config.toml",
+            None,
+            None,
+            "arbitrum-one",
+        ),
+        (
+            "--network devnet, agreeing with the record",
+            Some("devnet"),
+            None,
+            "devnet",
+        ),
+        (
+            "config.toml default_network = arbitrum-sepolia and no flag",
+            None,
+            Some("default_network = \"arbitrum-sepolia\"\n"),
+            "arbitrum-sepolia",
+        ),
+    ];
+    for (index, (label, flag, config, want_top)) in runs.into_iter().enumerate() {
+        match config {
+            Some(text) => std::fs::write(&config_path, text).expect("write config.toml"),
+            None => assert!(!config_path.exists(), "{label}: runs with no config.toml"),
+        }
+        let out_dir = scratch.join(&format!("restored-{index}"));
+        let out_arg = out_dir.to_str().expect("a utf-8 scratch path").to_owned();
+        let mut args = vec!["--json"];
+        if let Some(network) = flag {
+            args.extend(["--network", network]);
+        }
+        args.extend(["--passphrase-fd", "0", "restore", &work_id, "-o", &out_arg]);
+        let run = spawn_over(vault.layout.root(), &scratch.0, &args, Some(&dead));
+        assert_eq!(run.code, Some(0), "{label}: stderr:\n{}", run.stderr);
+        let document = run.document();
+        assert_eq!(
+            document["ok"],
+            serde_json::json!(true),
+            "{label}: {document}"
+        );
+        assert_eq!(
+            document["network"],
+            serde_json::json!(want_top),
+            "{label}: the top-level `network` is the invocation's effective network — flag, \
+             else config, else the built-in default (D174 §2 R11): {document}"
+        );
+        assert_eq!(
+            document["result"]["network"],
+            serde_json::json!("devnet"),
+            "{label}: `result.network` is the work's recorded network, verbatim — the one every \
+             fetch went to (D174 §2 R12): {document}"
+        );
+        assert_eq!(
+            document["result"]["counts"]["restored"],
+            serde_json::json!(3),
+            "{label}: the run restored every file through the dead export's verified cache: \
+             {document}"
+        );
+        assert!(
+            run.stderr.contains(READER_CONNECT_TRACE),
+            "{label}: the network was asked, so the run acted on the recorded network. \
+             stderr:\n{}",
+            run.stderr
+        );
+    }
+}
+
+/// **The witness RC1a left listed: an `arbitrum-sepolia` work with no export
+/// is refused after the passphrase, in the Sepolia arm's own words (D174 §2
+/// R2/R7 through `restore`).** The handler reads the recorded network (D170
+/// §2 R3); `select_network(arbitrum-sepolia)` with no `ANTSEAL_DEVNET_ENV` is
+/// not a refusal (D173 §2 R7 keeps absence out of it); `resolve_peers` then
+/// refuses with no peers to dial — naming `scripts/devnet/sepolia-up`,
+/// `ANTSEAL_DEVNET_ENV` and the absence of a public network, and offering no
+/// other network as an export-free alternative. It lands after the unlock
+/// (the hook's armed trace), before any connection, with nothing written;
+/// and the envelope's top-level `network` stays the invocation's —
+/// `arbitrum-one` — although the work is a Sepolia one (D174 §2 R11).
+#[cfg(feature = "ant-backend")]
+#[test]
+fn an_arbitrum_sepolia_work_with_no_export_is_refused_after_the_passphrase() {
+    use antseal_cli::upgrade_hook::HOOK_ARMED;
+
+    let scratch = Scratch::new("sepolia-no-export");
+    let (vault, work_id) = fully_cached_fixture_on("sepolia-no-export", NetworkId::ArbitrumSepolia);
+    let out_dir = scratch.join("restored");
+    let out_arg = out_dir.to_str().expect("a utf-8 scratch path").to_owned();
+
+    let run = spawn_over(
+        vault.layout.root(),
+        &scratch.0,
+        &[
+            "--json",
+            "--passphrase-fd",
+            "0",
+            "restore",
+            &work_id,
+            "-o",
+            &out_arg,
+        ],
+        None,
+    );
+    assert_eq!(run.code, Some(2), "stderr:\n{}", run.stderr);
+    let document = run.document();
+    assert_eq!(document["ok"], serde_json::json!(false), "{document}");
+    assert_eq!(
+        document["error"]["class"],
+        serde_json::json!("usage"),
+        "{document}"
+    );
+    assert_eq!(
+        document["network"],
+        serde_json::json!("arbitrum-one"),
+        "the top-level member is the invocation's network, not the work's (D174 §2 R11): \
+         {document}"
+    );
+    let message = document["error"]["message"].as_str().expect("a message");
+    for fragment in [
+        "`arbitrum-sepolia`",
+        "no public Autonomi storage network on Arbitrum Sepolia",
+        "scripts/devnet/sepolia-up",
+        "ANTSEAL_DEVNET_ENV",
+    ] {
+        assert!(
+            message.contains(fragment),
+            "the Sepolia arm's own refusal names `{fragment}`: {message}"
+        );
+    }
+    assert!(
+        !message.contains("--network devnet") && !message.contains("local-up"),
+        "no other network is offered as an export-free alternative (D174 §2 R7): {message}"
+    );
+    assert!(
+        run.stderr.contains(HOOK_ARMED),
+        "refused AFTER the passphrase — the vault had been unlocked. stderr:\n{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains(READER_CONNECT_TRACE),
+        "refused BEFORE any connection. stderr:\n{}",
+        run.stderr
+    );
+    assert!(!out_dir.exists(), "nothing was written");
 }
 
 /// The only work in a fixture vault.

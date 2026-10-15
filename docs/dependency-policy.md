@@ -35,7 +35,7 @@ lands):
 | Argon2/scrypt (vault KDF) — **pinned 2026-08-01 (U6; decision [D40](decisions/D40-vault-kdf-selection.md)): `argon2 = "=0.6.0-rc.8"` (default-features off — no `alloc`, we allocate the arena fallibly ourselves per D40 §2; no `getrandom`/`password-hash` — parameters live in the AAD-bound vault header, never PHC strings; `zeroize` ON), `blake2 = "=0.11.0-rc.6"` (argon2's hash core, declared directly SOLELY to force its `zeroize` feature — argon2's own `zeroize` does not forward it, and blake2's wiping `Drop` on the BLAKE2b chaining state is gated on blake2's own feature: without this line every Argon2id H0 leaves 65 bytes of passphrase-derived state in dropped hashers, measured; the hmac-declaration precedent), `scrypt = "=0.12.0"` (default-features off; resolves onto the exact `sha2 =0.11.0` pin incl. the D88 zeroize drop-glue — no second digest generation; honest limit recorded: scrypt's internal 1 GiB B/V buffers have no wiping story, password-derived only).** Re-verified current at pin time per D40's clause: argon2 0.6.0 final is NOT out, rc.8 is newest — rc discipline as for ml-dsa (exact pin + RUSTSEC/GHSA watch). RUSTSEC check 2026-08-01: no advisories on record for argon2/blake2/scrypt at these versions. Guards: RFC 9106 §5.3 + RFC 7914 §12 known-answer vectors (`crates/antseal-cli/tests/vault_encryption.rs` — KDF output bytes are vault-format bytes) and the D88-style blake2 residue probe + manifest-declaration check (`crates/antseal-cli/tests/kdf_residue.rs`, red-direction proven 2026-08-01). The blake2 `zeroize` feature is **load-bearing** exactly like sha2's (treat removal as a §4 version bump) | vault format + passphrase-residue hygiene | U6 (D40) — landed |
 | `getrandom` — **pinned `=0.4.3` 2026-08-01 (U6)**: the CLI's OS-CSPRNG backend — vault KDF salts and record nonces are drawn from it (antseal-core stays injected-RNG-only by construction, C5; the CLI is the sanctioned production caller). 0.4.3 = the version the locked graph already records (the ed25519-dalek/ml-dsa getrandom-0.4 line — no second generation added to the product graph). RUSTSEC 2026-08-01: no advisories on record for 0.4.x | secret-generation surface (same family as the rand_core row) | U6 — landed |
 | `rpassword` — **pinned `=7.5.4` 2026-08-01 (U7; channel decision [D41](decisions/D41-noninteractive-passphrase-channel.md))**: the no-echo terminal prompt — the rawest secret-path input surface in the product (the passphrase transits its buffers before any type of ours can wrap it), exact-pinned on the `zeroize`-row precedent though it affects no format byte. Mechanism argued at U7: no-echo needs termios, which std does not expose; the alternatives were this small vetted crate (+`rtoolbox`; libc already in the graph via getrandom, rtoolbox's serde/serde_json resolve onto the existing exact pins) or first-party libc `unsafe` under the workspace deny. Reviewed at pin: SafeString line-buffer wiping, termios restored on drop (panic included), prompt writes to `/dev/tty` never stdout; the returned String is moved straight into C5's `SecretBuf`. Machine mode never reaches it (D51). RUSTSEC 2026-08-01: no advisories on record | secret-path input surface | U7 (D41) — landed |
-| `ureq` — **pinned `=3.3.0` 2026-08-02 (P29; decision [D90](decisions/D90-anchor-http-substrate.md))**, `default-features = false`, `features = ["rustls"]`. The anchor HTTP substrate's client (`crates/antseal-anchor/src/http.rs`) — OTS calendars, RFC 3161 TSA POSTs, esplora, Arbitrum RPC. Declared by `antseal-anchor` **alone** and **ungated**: required CI passes no `--features` (`ci.yml:122`, `:148`), so a gated network half would leave every Accept row of A3/A10/A13/A16/A17 — all of them local-stub unit tests — compiled by nothing, which is D89's coverage cliff one milestone later. Exact-pinned on the **`rpassword` row's precedent**, not the format one: no byte it produces is hashed, signed, stored or paid for as an output format (the DER `TimeStampReq` is built in antseal-core, `.ots` and token bytes are opaque payloads), but it is the sole path by which adversary-controlled bytes enter the process before any parser of ours sees them, and **three of its behaviours are load-bearing contracts it does not publish** — `.limit(N)` accepts N−1 bytes, `max_redirects(0)` *returns* the 3xx instead of erroring, and `Config::default()` reads `HTTP_PROXY`/`ALL_PROXY` from the environment. All three are emergent from its implementation, all three are pinned by named tests in `antseal-anchor`, and a minor bump could move any of them silently. **No lockstep with anything.** Bump procedure (§4) additionally **MUST state which `webpki-roots` the bump moves to**: that Mozilla root snapshot is a TLS trust input that arrives *transitively* (never declared by us) and is frozen only by `Cargo.lock` §3, so a `cargo update` can move it with no lane commenting. Measured 2026-08-02: +15 names on the default graph (129 → 144), 25-package closure, four names new to the lock (`ureq`, `ureq-proto`, `utf8-zero`, `webpki-roots`); every other closure member resolves to the version the lock already carried — including the project's own `subtle 2.6.1` and `zeroize 1.9.0` pins — and it brings no `digest`/`sha2`, so no second RustCrypto generation enters (rustls hashes through `ring`). `default-features = false` drops `gzip`, and with it the decompression-bomb path under a streaming byte ceiling. RUSTSEC + GHSA/osv.dev 2026-08-02: zero advisories on record for `ureq`, `ureq-proto`, `utf8-zero`, `webpki-roots`; `rustls 0.23.43`, `ring 0.17.14`, `rustls-webpki 0.103.13` are each past every advisory on record. Licence MIT OR Apache-2.0; `rust-version 1.85` ≤ the 1.92.0 pin | **not** format-affecting — the rawest adversary-facing input surface in the product, plus three undocumented behavioural contracts the substrate is built on | P29 (D90) — landed |
+| `ureq` — **pinned `=3.3.0` 2026-08-02 (P29; decision [D90](decisions/D90-anchor-http-substrate.md))**, `default-features = false`, `features = ["rustls"]`. The anchor HTTP substrate's client (`crates/antseal-anchor/src/http.rs`) — OTS calendars, RFC 3161 TSA POSTs, esplora, Arbitrum RPC. Declared by `antseal-anchor` **alone** and **ungated**: required CI passes no `--features` (`ci.yml:122`, `:148`), so a gated network half would leave every Accept row of A3/A10/A13/A16/A17 — all of them local-stub unit tests — compiled by nothing, which is D89's coverage cliff one milestone later. Exact-pinned on the **`rpassword` row's precedent**, not the format one: no byte it produces is hashed, signed, stored or paid for as an output format (the DER `TimeStampReq` is built in antseal-core, `.ots` and token bytes are opaque payloads), but it is the sole path by which adversary-controlled bytes enter the process before any parser of ours sees them, and **three of its behaviours are load-bearing contracts it does not publish** — `.limit(N)` accepts N−1 bytes, `max_redirects(0)` *returns* the 3xx instead of erroring, and `Config::default()` reads `HTTP_PROXY`/`ALL_PROXY` from the environment. All three are emergent from its implementation, all three are pinned by named tests in `antseal-anchor`, and a minor bump could move any of them silently. **No lockstep with anything.** Bump procedure (§4) additionally **MUST state which `webpki-roots` the bump moves to**: that Mozilla root snapshot is a TLS trust input that arrives *transitively* (never declared by us) and is frozen only by `Cargo.lock` §3, so a `cargo update` can move it with no lane commenting. Measured 2026-08-02: +15 names on the default graph (129 → 144), 25-package closure, four names new to the lock (`ureq`, `ureq-proto`, `utf8-zero`, `webpki-roots`); every other closure member resolves to the version the lock already carried — including the project's own `subtle 2.6.1` and `zeroize 1.9.0` pins — and it brings no `digest`/`sha2`, so no second RustCrypto generation enters (rustls hashes through `ring`). `default-features = false` drops `gzip`, and with it the decompression-bomb path under a streaming byte ceiling. RUSTSEC + GHSA/osv.dev 2026-08-02: zero advisories on record for `ureq`, `ureq-proto`, `utf8-zero`, `webpki-roots`; `rustls 0.23.43`, `ring 0.17.14`, `rustls-webpki 0.103.13` are each past every advisory on record. [2026-10-14, Q275: no longer true as of advisory-db 2026-10-14 — `rustls 0.23.43` carried RUSTSEC-2026-0285/0346/0348/0349; the lock moved `rustls` 0.23.43→0.23.46 and `rustls-webpki` 0.103.13→0.103.15 under the unchanged `=3.3.0` pin (`aws-lc-rs` 1.17.3→1.18.2 and `aws-lc-sys` 0.43.0→0.46.0 rode on rustls' own `^1.18`/`^0.46.0` requirements, in the non-default ant-backend/devnet graphs only); `ring` 0.17.14 and `webpki-roots` 1.0.9 unchanged (`cargo tree -i webpki-roots`, before and after)] Licence MIT OR Apache-2.0; `rust-version 1.85` ≤ the 1.92.0 pin | **not** format-affecting — the rawest adversary-facing input surface in the product, plus three undocumented behavioural contracts the substrate is built on | P29 (D90) — landed |
 | `zeroize` — **pinned `=1.9.0` 2026-07-27 (C5)** (current stable on crates.io; RUSTSEC — no advisories on record). Wiping semantics for `W`, unit/manifest keys, salts, seeds, and passphrase buffers (`MasterSecret`/`SecretBuf`/material newtypes; C5/C21). Features: `alloc` only (Vec-backed `SecretBuf`); the `derive` feature is deliberately NOT enabled — impls are manual, keeping syn/proc-macro out of antseal-core's graph | secret-hygiene behavior | C (C5) |
 | `der` — **pinned `=0.8.1` 2026-08-02 (A5; decision [D60](decisions/D60-der-cms-x509-pins.md))**: the DER reader every RFC 3161 artifact passes through. Strictness is the product requirement, not a preference — A5's Accept demands BER constructs be rejected with a distinct error class, and D60 §7.4 records which rejections this crate gives for free and which antseal adds. Two of its behaviours are load-bearing and unpublished: `ErrorKind` is `#[non_exhaustive]` (so no match over it can be exhaustive — D60 §7.2's claim to the contrary is corrected there), and `resume_nested` does not restore the position, so unread inner bytes are re-offered to the outer decoder and top-level `finish()` still demands exact consumption — a lane's "trailing content is not rejected" finding was falsified by that. **Lockstep: with `x509-cert`/`cms`/`const-oid`/`spki`, which share this generation.** | strict-DER decode is the anchor stage's parse-rejection semantics | A5 (D60) — landed |
 | `const-oid` — **pinned `=0.10.2` 2026-08-02 (A5/A8; decision [D60](decisions/D60-der-cms-x509-pins.md))**, feature `db`. Object-identifier constants for every algorithm, attribute and extension the token verifier names. The `db` feature is **ours, not inherited** — D60 found the nominee list incomplete without it. An OID mismatch is a silent accept-or-reject of the wrong algorithm, which is why the identifiers are pinned rather than typed out locally. **Lockstep with the `der` generation.** | algorithm/attribute identity in a verdict-bearing path | A5/A8 (D60) — landed |
@@ -235,7 +235,16 @@ sync; fix the commit rather than letting resolution float.
 Upstream cadence is weekly-to-biweekly; ours is not. **No drive-by bumps.**
 `cargo update` sweeps, auto-bump bots, and bumping "while in the area" are
 all off-policy (the weekly upstream check, P19, produces a *report*, never a
-bump). A bump is its own PR containing only the bump and its direct
+bump). That report includes the freshness of the vendored `arbitrum-one`
+bootstrap list
+([D173](decisions/D173-mainnet-peers-are-upstreams-published-bytes-and-no-test-can-dial-them.md)
+§2 R18): the git blob id of upstream's `resources/bootstrap_peers.toml`
+(`WithAutonomi/ant-client`) read **at the pin's release tag**, which is
+authoritative, and at upstream's current release, which is informational —
+never at upstream `main`, which upstream rewrites. That read is `P19`'s
+to make and to record in its Notes (registered with D173 §2 R18); until a
+weekly run has recorded one, this sentence states the ruling, not a
+measured run. A bump is its own PR containing only the bump and its direct
 fallout, with this checklist completed in the PR description:
 
 - [ ] Upstream changelog / release notes / commit delta reviewed; behavior
@@ -257,9 +266,50 @@ fallout, with this checklist completed in the PR description:
       set). `dep-graph` rule 5 makes forgetting this a red lane rather
       than a silent fork, which is the point: it fires inside the bump
       review, where the decision belongs
+- [ ] For `ant-core`: **re-transcribe the vendored `arbitrum-one` bootstrap
+      list from upstream at the new pin's release tag** (D173 §2 R18). Read
+      the list's blob id at that tag first — the freshness read the weekly
+      report makes, now against the new pin. Then re-derive all three
+      provenance constants — sha256 (integrity), upstream blob id
+      (selector), tag and commit URL (audit path) — **from upstream, never
+      from the vendored file**, so the provenance test cannot pass by
+      agreeing with itself. The file is re-transcribed, never hand-edited
+- [ ] For `ant-core`: re-read the upstream code antseal's peer rules rest
+      on (D173 §2 R18) — `Client::connect`'s `peer_cache_path` initializer
+      (hard-coded `None` at 0.5.0, which is why no peer cache is read on
+      antseal's path); `build_controller`'s persistence and
+      `impl Drop for Client` (`Client::connect` loads, and every dropped
+      client writes, upstream's `client_adaptive.json`, `S42`);
+      `saorsa-transport`'s `upnp` default feature (gateway discovery on
+      every connect, not switchable at the pin); and upstream's
+      `resolve_bootstrap_peers` (new in
+      `ant-core` 0.8.0), which a bump could make compete with antseal's
+      per-network, replace-never-merge peer resolution (D173 §2 R6)
+- [ ] For `ant-core`, and for any move of the `ant-node` dev pin: **the
+      `S41` interoperability check** (D173 §2 R17) — antseal's pinned
+      client runs the full devnet E2E (quote, pay, store, fetch, restore)
+      against the **latest non-prerelease `ant-node` release** on loopback
+      with Anvil, the only exposure-free test of storing and paying; the
+      verdict line, the `ant-node` version and the date are recorded
+      verbatim. A red makes the bump a prerequisite of `Q34`; a green is
+      recorded on `Q34` and in the threat model's `Q272` section as *the
+      pinned client is N releases behind the network; interoperability
+      proven on loopback at <date> against ant-node <version>*. It is a
+      standing check, not a one-off: re-run at `Q34`'s date, and its first
+      act is measuring whether `devnet-launcher` can host a foreign-version
+      node at all
 - [ ] For toolchain bumps: [toolchain.md](toolchain.md) procedure —
       `rust-toolchain.toml`, `rust-version`, `clippy.toml` move together in
       one commit
+
+**The bootstrap list may move without a pin bump (D173 §2 R18).** A
+*peers-only* re-transcription of the vendored `arbitrum-one` list from a
+newer upstream release tag is allowed as a reviewed data event of its own,
+without moving `ant-core`: the list's bytes are taken from that tag, and the
+provenance constants are re-derived from upstream exactly as in the checklist
+above. One case is not a data event: a re-transcription that
+coincides with an upstream **network reset** is a pin-bump event, and takes
+this whole checklist.
 
 ## 5. Toolchain and dev-tools under the same rules
 

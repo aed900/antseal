@@ -132,6 +132,14 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Deterministic-encoding evidence for the S7 serde tests only (the vault
 # codec itself is U9's choice): the exact-pinned workspace serde_json.
 serde_json.workspace = true
+# The vendored arbitrum-one peer list's provenance test (D173 §2 R2): SHA-256
+# is the INTEGRITY check over the embedded bytes; SHA-1 recomputes upstream's
+# git blob id, a SELECTOR for the freshness comparison and never the trust
+# decision (the workspace `sha1` entry's own rule). DEV edges only, and they
+# add ZERO packages: both are the exact workspace pins `antseal-core` already
+# resolves in the normal graph.
+sha1.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

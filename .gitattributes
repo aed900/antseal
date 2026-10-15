@@ -15,3 +15,13 @@ testdata/** -text
 # `anchor::roots::tests::the_gitattributes_binary_rule_covers_this_directory`,
 # because the cross-os lane can only observe the damage on a Windows runner.
 crates/antseal-core/src/anchor/roots/*.der -text
+
+# arbitrum-one's vendored bootstrap peer list, compiled into antseal-net (D173
+# §2 R1). The same hazard in a third tree, and worse than a failed parse: its
+# provenance test hashes the embedded bytes against upstream's, and the strict
+# parser refuses a carriage return, so a CRLF-mangled checkout builds a binary
+# whose default network has no peers at all. No CI lane builds antseal-net on
+# Windows. Asserted from the crate itself by
+# `network::tests::the_gitattributes_rule_keeps_the_vendored_peer_list_byte_exact`,
+# which also refuses a later line that could undo this one.
+crates/antseal-net/src/arbitrum_one_peers.toml -text

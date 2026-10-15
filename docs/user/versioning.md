@@ -112,6 +112,20 @@ Both were measured with `git tag --list` on 2026-08-22: the tags present are
 `format-v1-freeze` and `pre-trailer-strip-949dd9d`, and no `v*` release tag
 exists.
 
+**There is no release-candidate tag, and one version names one signed set,
+ever.** A release candidate is a *draft* release that already carries the final
+`v<major>.<minor>.<patch>` name. It is not published, and no `v*` tag is pushed
+for it until it passes the gate and is published. Nothing with an `-rc` or any
+other suffix is ever tagged or published. Once a set of files signed under a
+version has left the maintainer's machine, that version is never signed again
+over different files or a different commit. Handing the set to the person who
+runs the clean-machine check counts as leaving. A candidate that fails the gate
+after that handoff uses up its version, and the next candidate takes the next
+number. The reason is the signature itself: the trusted comment below carries
+the version, so two different signed sets under one version would both verify,
+and you could be handed either one (D172 §2 R7, §2 R8). Re-running the gate on
+the same signed set is allowed; it signs nothing new.
+
 **Release tags follow SemVer over the CLI surface**, not over the format. A
 major bump means the command surface broke compatibility — a removed flag, a
 changed exit code, a renamed subcommand. It does **not** mean the format moved,
@@ -184,7 +198,7 @@ bundle stop verifying.** That is obligation 2 of `MVP-SPEC.md` line 123, and
 | number | how to read it |
 | --- | --- |
 | release version of your binary | `antseal --version` (the flag is declared at `crates/antseal-cli/src/cli.rs:46`) |
-| release version recorded in a bundle | the manifest's `app_version`, key 1 of registry §7.2; written at `crates/antseal-cli/src/commands.rs:394` as `antseal/<version>` |
+| release version recorded in a bundle | the manifest's `app_version`, key 1 of registry §7.2; written at `crates/antseal-cli/src/commands.rs:413` as `antseal/<version>` |
 | format version of a bundle | key 0 of the bundle map, registry §7.6 — the first key on the wire, by design |
 | format versions your build accepts | `SUPPORTED_VERSIONS`, `crates/antseal-core/src/format.rs:115` |
 | the page's build identity | the footer at `https://antseal.org/`, and `build_info()` at `crates/antseal-wasm/src/build_info.rs:52-60` |
@@ -220,6 +234,8 @@ bundle stop verifying.** That is obligation 2 of `MVP-SPEC.md` line 123, and
 | a page hash reproduces only at its deployed commit | `docs/ci-verification.md:2633` section, measured at `:2641-2652` |
 | the served bytes are compared against a local build | `scripts/pages-publish.sh:132-145` |
 | the signature carries version, basename and commit | `scripts/sign-release.sh:250`; D71 §2 R4 |
+| a release candidate is an unpublished draft under the final name, with no tag kind of its own | D172 §2 R8 |
+| one version names one signed set, and a candidate that fails after handoff uses up its version | D172 §2 R7; genuine signatures under another version are refused as a whole-release replay by `scripts/verify-release.sh --self-test` |
 | `--version` exists on the CLI | `crates/antseal-cli/src/cli.rs:46` |
-| the recorded version in a seal is `antseal/<version>` | `crates/antseal-cli/src/commands.rs:394` |
+| the recorded version in a seal is `antseal/<version>` | `crates/antseal-cli/src/commands.rs:413` |
 | the format-stability promise itself | `MVP-SPEC.md` line 123; `format-stability.md` §1 |

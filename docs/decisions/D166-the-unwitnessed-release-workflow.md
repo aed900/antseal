@@ -408,3 +408,7 @@ setting, or flipping visibility. **A recorded obligation with a named owner is a
 statement about who must act — never a licence for an agent to act in their
 place**, and the owner named in §2 R6 acts on their own decision, in their own
 session, in their own words.
+
+## Addendum — 2026-09-15: §2 R2's draft is affirmed against the visibility objection (D172)
+
+Wave 35 found that a draft release is invisible to `Q34`'s credential-less clean machine and recorded it as a choice between publishing before the gate and giving that machine a credential. [D172](D172-the-gate-runs-on-the-draft-by-courier-and-publication-follows-the-verdict.md) rules neither: the draft **stands**, the gate receives the draft's assets **by courier**, nothing is published — full or pre-release — before the gate's evidence is committed, and a credential-less channel witness follows the consented publication. The publishing job never sets `prerelease`. §2 R2's billing-witness precondition was met on 2026-09-12; what stands between a lane and `release.yml` is §2 R1(a)/(c), §2 R2(6) and scheduling.

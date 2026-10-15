@@ -210,3 +210,7 @@ existing R1/R2/R3 already refuse its shape).
 It authorises no push, no dispatch and no branch-protection or ruleset write. The
 lane lands locally; its first hosted run is the witness, and that run needs a
 consented push.
+
+## Addendum — 2026-09-15: what the two-environment comparison proves, scoped (D171 §2 R4)
+
+The comparison this record raised to a required context varies the checkout path and `CARGO_HOME`; it does not vary crate provenance or build tools — build B copies build A's registry `cache` and `index` and shares its `$PATH` tools, by D135 §5 R3's no-network fence. It is sound for the property it exists to prove (no builder path reaches the artifact) and an overstatement wherever it is read as a supply-chain defence: [D171](D171-the-deploy-job-restores-no-cache-and-the-default-setup-acceptance-stands.md) measured it green over a poisoned `.crate` and a poisoned build tool. Crate provenance on the served path rests on cargo's download-time checksum, which D171 §2 R3 guarantees by making the deploy job restore no cache. The ruling is unchanged; its claim is read with this scope.

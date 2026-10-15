@@ -788,3 +788,7 @@ answer is "not at M4 and not on Linux", the follow-up should be minted as a
    the name and the content should not survive unrecorded. **Renaming a landed
    required context is forbidden by `ci.yml`'s own header rule**, so this row is
    more constrained than it first looks.
+
+## Addendum — 2026-09-15: §2 R6's credential argument survives the flip, narrowed to a draft, and is answered by courier (D172)
+
+After the public flip the credential argument no longer concerns a private repository; it concerns a **draft** release, which only an account with **push** access can see — a write credential on the machine whose value is holding none. [D172](D172-the-gate-runs-on-the-draft-by-courier-and-publication-follows-the-verdict.md) answers it by courier, not by a pre-release. §2 R5's single documented channel is unaffected: it is exercised after publication by D172 §2 R6's witness, and the courier is gate transport that tells no user where to get a binary.

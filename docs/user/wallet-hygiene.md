@@ -200,7 +200,9 @@ chain followable.
 that store your chunks are handed the payment transaction hashes at upload
 time, as part of the proof of payment
 (`ant-protocol-2.3.0/src/payment/proof.rs:19-22`). A storage node that keeps
-what it was given already knows which address paid for the chunk it holds.
+what it was given already knows which address paid for the chunk it holds,
+and, because that transaction carries one transfer for each blob it paid for,
+how many blobs that payment covered.
 Leaving the receipt out hides your wallet from the people you show bundles
 to; it does not hide it from the network you uploaded to. Nothing you can
 configure changes that, and it is a reason to treat the address as

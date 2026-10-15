@@ -180,7 +180,10 @@ The owning task (remaining: Q7/Q9 — Q4, P13 and Q5 claimed theirs):
 
 1. replaces the placeholder step body of its job in `ci.yml` with the real
    steps (checkout → rustup-from-toolchain-file → `rust-cache` → content,
-   matching the existing lane pattern);
+   matching the existing lane pattern). That pattern is for lanes that only
+   report a verdict: a job granted `pages`, `contents` or `id-token` write
+   carries no `rust-cache` or `actions/cache` step at all (D171 §2 R5, enforced
+   by `scripts/check-write-job-cache.py`);
 2. keeps the job id and `name:` **byte-identical** — the name is a
    required-status context;
 3. moves the lane from "mount-point" to "live" in the tables above and
@@ -270,6 +273,57 @@ Practical consequences:
 
 Policy in full:
 [docs/testing/anchor-ci-policy.md](docs/testing/anchor-ci-policy.md).
+
+### No real storage network in tests (D173)
+
+**No automated test and no CI job may dial an Autonomi peer that is not
+loopback.** The anchor gate's twin is `antseal_net::network::storage_gate`
+(D173 §2 R9): armed, both storage constructors — the payer and the reader —
+refuse a bootstrap set holding any peer that is not a loopback IP literal, as
+their **first fallible step**, before the payer's `eth_chainId` call and
+before `Client::connect` (§2 R10). The loopback devnet is admitted. An empty
+set is not this gate's business: `resolve_peers` refuses it with usage 2 —
+for `seal` before any passphrase is read, for `restore` after the unlock
+(§2 R7).
+
+Its arms (§2 R9) — `cfg(test)` of `antseal-net`: armed, no off switch;
+`ANTSEAL_NO_REAL_STORAGE_NETWORK=0`: disarmed, the only off switch; any other
+value: armed, failing closed; unset: armed exactly when the build has debug
+assertions. So a bare `cargo test` of any devnet suite is armed, and the
+release binary is unaffected unless the variable is set. Its venues are the
+anchor gate's (§2 R11): every workflow sets it at workflow level,
+`scripts/local-gate.sh` exports it, `crates/antseal-cli/tests/common/spawn.rs`
+sets it on every spawned binary, and an `env_clear()` child re-arms it on the
+statement that clears. `scripts/check-anchor-net.py` holds both variables to
+the same rules through the same code (R1, R4 — a file that re-arms one
+`env_clear()` and not a second is red, naming the second call's line), and
+`scripts/ci-lanes.sh anchor-net-policy` is red if any venue stops.
+
+**What the gate does NOT cover** (D173 §2 R13). A green says nothing about:
+
+- **Peers learned from the DHT after bootstrap.** The gate classifies the
+  bootstrap set and nothing after it. That is safe only because an
+  all-loopback set makes the adapter bind loopback (§2 R8), so a peer learned
+  later cannot be reached either.
+- **The payer's EVM RPC.** For `arbitrum-one` and `arbitrum-sepolia` the
+  `eth_chainId` call and the payment leg go to evmlib's compiled-in public RPC
+  (only `devnet` threads the configured `rpc_url`; `U94`). The gate runs
+  before that call and stops the storage dial; the RPC itself is outside both
+  gates.
+- **UPnP gateway discovery.** The pinned transport starts an IGD mapping
+  service on every connect and may ask the router for a port mapping; no
+  `ClientConfig` field or feature switches it off at the pin (§1.4). Recorded,
+  not gated.
+- **Upstream's `client_adaptive.json`.** `Client::connect` reads it and every
+  dropped client writes it, under `$XDG_DATA_HOME/ant` or `~/.local/share/ant`,
+  and a client panics with neither `HOME` nor `XDG_DATA_HOME` set (`S42`).
+
+**Need a real run?** It is a script run with the **release binary in an
+unarmed environment** — never a test, never `#[ignore]`d, and from a debug
+build only with `ANTSEAL_NO_REAL_STORAGE_NETWORK=0` set on purpose.
+`scripts/e2e-sepolia.sh` already consumes a prebuilt release-candidate binary
+and never builds one; `Q34`'s one mainnet smoke seal needs the maintainer's
+consent at the gate (D173 §2 R16).
 
 ### Devnet E2E gate (D52)
 
@@ -387,10 +441,12 @@ materialises, and then only for the scheduled slot.
 - [ ] **Storage-touching change?** (the path list under "Devnet E2E gate")
       Then `./scripts/e2e-devnet.sh` green locally and its evidence line
       recorded. `PENDING` is not a pass
-- [ ] **Anchor-touching change?** `./scripts/ci-lanes.sh anchor-net-policy`
+- [ ] **Anchor- or storage-dialing change?** `./scripts/ci-lanes.sh anchor-net-policy`
       green (seconds, no cargo) — no test reaches a real TSA, calendar,
-      esplora or Arbitrum RPC, and the arming is still in place
-      ([docs/testing/anchor-ci-policy.md](docs/testing/anchor-ci-policy.md))
+      esplora or Arbitrum RPC, none dials a non-loopback Autonomi peer, and
+      both armings are still in place in every venue
+      ([docs/testing/anchor-ci-policy.md](docs/testing/anchor-ci-policy.md);
+      "No real storage network in tests" above)
 - [ ] No version requirement outside `[workspace.dependencies]`;
       `Cargo.lock` updated and committed together with any manifest change
 - [ ] `cargo deny --locked check advisories bans sources` green with the
