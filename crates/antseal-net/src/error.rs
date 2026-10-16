@@ -95,11 +95,20 @@ pub enum StorageError {
         /// Diagnostic detail.
         reason: String,
     },
-    /// A storer rejected the journaled proofs on payment grounds, and
-    /// they are older than antseal's conservative ~24 h proof-age window
-    /// (D37 Decision 6). Completing the seal now requires **re-consented
-    /// re-payment** — surfaced distinctly so it can never happen
-    /// silently (S11 owns the re-consent flow).
+    /// A majority of the storing peers refused the journaled payment proof,
+    /// and the payment is more than 24 hours old by its block time —
+    /// antseal's proof-age window (D37 Decision 6; the rule is
+    /// [`crate::put_policy`], S43/D179). Completing the seal now requires
+    /// **re-consented re-payment** — surfaced distinctly so it can never
+    /// happen silently (S11 owns the re-consent flow). A refusal by fewer
+    /// than a majority, or over a younger payment (or one whose block time
+    /// cannot be read), is [`StorageError::Finalize`] instead: retried with
+    /// no payment.
+    ///
+    /// **[S43, 2026-10-16]** This used to be any one storer's payment-class
+    /// rejection once the blob's **oldest quote timestamp** — a field the
+    /// quoting peer writes — was a day old, which let one hostile peer force
+    /// a second payment.
     ///
     /// **Attribution, corrected by S9 (2026-08-02):** this window is
     /// antseal's own client-side policy, **not** a rule the pinned
@@ -116,9 +125,9 @@ pub enum StorageError {
     /// and being early costs one re-pay of a cheap chunk. Evidence:
     /// `crates/antseal-net/tests/storage_constants.rs` module docs.
     #[error(
-        "payment proofs expired: the node-side proof-validity window (~24 h) has passed and \
-         storers reject the journaled proofs; completing this seal requires a re-consented \
-         re-payment"
+        "payment proofs expired: a majority of the storing peers refused this seal's payment \
+         proof, and the payment is more than 24 hours old by its block time; completing this \
+         seal requires a re-consented re-payment"
     )]
     ProofsExpired,
     /// No chunk exists at this address (distinct from transport failure:

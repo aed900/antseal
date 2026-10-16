@@ -175,9 +175,10 @@ pub fn allowance_to_approve(current_atto: u128, total_atto: u128) -> Option<u128
 /// addresses, resumable, and issues no new payment** — calling it twice
 /// with the same receipt stores nothing twice and returns the same
 /// address vector. Post-pay resume is time-boxed by antseal's own
-/// conservative ~24 h proof-age window ([`StorageError::ProofsExpired`])
-/// — a **client-side** policy, not a pinned-node rule (S9's correction,
-/// 2026-08-02; see that variant's docs).
+/// conservative ~24 h proof-age window ([`StorageError::ProofsExpired`],
+/// ruled on by [`crate::put_policy`]: a majority's refusal over a payment more
+/// than a day old by its block time) — a **client-side** policy, not a
+/// pinned-node rule (S9's correction, 2026-08-02; see that variant's docs).
 ///
 /// Ordering across the four operations is the pipeline's normative order
 /// (S12): `quote_batch` over the **full** blob set → consent → anchor
@@ -249,7 +250,8 @@ pub trait StorageBackend {
     /// # Errors
     ///
     /// [`StorageError::Finalize`] (including map gaps),
-    /// [`StorageError::ProofsExpired`] (the ~24 h window passed),
+    /// [`StorageError::ProofsExpired`] (a majority of the storers refused the
+    /// proof, and the payment is more than ~24 h old by its block time),
     /// [`StorageError::Network`].
     async fn finalize_batch(
         &self,

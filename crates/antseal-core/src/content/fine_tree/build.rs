@@ -37,8 +37,8 @@
 //! Both bounds are *structural*: [`FineTreeStats`] records their high-water
 //! marks, so the property test asserts the shape of the memory rather than
 //! sampling an allocator. G18 turns the same instrumentation into a budget at
-//! CI scale (its constants are open decision D26 and are deliberately **not**
-//! frozen here).
+//! CI scale (its constants were settled by D26, resolved 2026-07-28, and are
+//! deliberately **not** frozen here).
 //!
 //! # Cost
 //!
@@ -734,8 +734,8 @@ mod tests {
     /// (1 leaf + 2 node + 2 GGM) and it approaches from just below, since
     /// there are `n − 1` interior nodes rather than `n`. The assertion is
     /// therefore "at the bottom of the spec's ~5–7 envelope, never above
-    /// it" — the concrete budget constants are G18's, gated on the still
-    /// open decision D26, and are deliberately not frozen here.
+    /// it" — the concrete budget constants are D26 §3.3's (resolved), land
+    /// as named constants with G18, and are deliberately not frozen here.
     #[test]
     fn compressions_per_byte_sit_at_the_bottom_of_the_spec_envelope() {
         let seed = root_seed();

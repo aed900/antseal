@@ -74,8 +74,8 @@ for entry in "${GRAPHS[@]}"; do
   edges="${rest%%|*}"
   what="${rest#*|}"
 
-  if ! cargo metadata --no-deps --format-version 1 --locked 2>/dev/null |
-    grep -q "\"name\":\"${pkg}\""; then
+  if ! grep -q "\"name\":\"${pkg}\"" \
+      <<<"$(cargo metadata --no-deps --format-version 1 --locked 2>/dev/null)"; then
     echo "  SKIP  ${pkg} (-e ${edges}) — package does not exist yet"
     continue
   fi

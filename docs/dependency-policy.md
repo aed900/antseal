@@ -30,7 +30,7 @@ lands):
 | `fips204` — **pinned `=0.4.6` 2026-07-27 ([D14](decisions/D14-mldsa-crate.md))**: fallback impl, dormant since 2024-12 (accepted for a fallback); probe-proven byte-identical keygen + deterministic sign vs `ml-dsa`, so activation needs no re-derivation; normally consumed by no crate | PQC signature fallback | P12 — landed (declaration-only) |
 | `opentimestamps` (spec pin `=0.2.0`) | `.ots` wire format. **Scope: wire-format codec only** — the calendar HTTP client is in-house (antseal-anchor); no networking surface of the crate may be used | P18 (A) |
 | `blake3` — **pinned `=1.8.5` 2026-08-01 (P15; decision [D35](decisions/D35-self-encryption-dependency-mode.md))**: current stable on crates.io, and the same version ant-core 0.5.0's packaged lock records — matching is tidy, **not** load-bearing: BLAKE3 is a fixed function, and the golden vectors, not the crate version, are the determinism authority, so this pin has **no lockstep semantics** with ant-core bumps. `default-features = false` (drops `std`, the only default feature): the normal graph is pure no_std Rust (arrayref/arrayvec/cfg-if/constant_time_eq — no getrandom, no rand, no I/O, no threads); `rayon` (nondeterministic thread pool), `mmap` (I/O) and `wasm32_simd` deliberately OFF. P15 probe 2026-08-01: wasm32-unknown-unknown build passes on the pinned toolchain, and the official BLAKE3-team spec vectors match on both the x86 asm path and `pure`. Declaration-only until S4 consumes it | storage-address recomputation: S4's `compute_storage_address` and the M3 storage-linkage layer recompute ant-protocol's `compute_address` = BLAKE3-256 of the blob bytes (network consensus) | P15 (D35) — landed (declaration-only until S4) |
-| AEAD/HKDF/SHA-2 stack — **HKDF/SHA-2 part nominated 2026-07-27 (C1–C4): `sha2 = "=0.11.0"`, `hkdf = "=0.13.0"`, `hmac = "=0.13.0"`** (current stable verified on crates.io; RUSTSEC clean — sha2's only advisory RUSTSEC-2021-0100 affects 0.9.7 only, hkdf/hmac have none; `hmac` is hkdf's HMAC layer, also the tests' RFC 5869 reference). **XChaCha20-Poly1305 part nominated 2026-07-27 (C9): `chacha20poly1305 = "=0.11.0"`** (current stable, same RustCrypto generation as the sha2 0.11/hkdf 0.13 pins; RUSTSEC — no advisories on record). Every permanent unit/manifest ciphertext byte comes out of it. Features `alloc` + `zeroize` only; **default features OFF so `getrandom` never enters antseal-core** (injected-RNG-only policy, C5/C9; wasm recipe is P14's). Underlying `aead`/`chacha20`/`poly1305`/`cipher` versions frozen by Cargo.lock (§3) | ciphertext format + key derivation | C |
+| AEAD/HKDF/SHA-2 stack — **HKDF/SHA-2 part nominated 2026-07-27 (C1–C4): `sha2 = "=0.11.0"`, `hkdf = "=0.13.0"`, `hmac = "=0.13.0"`** (current stable verified on crates.io; RUSTSEC clean — sha2's only advisory RUSTSEC-2021-0100 affects 0.9.7 only, hkdf/hmac have none; `hmac` is hkdf's HMAC layer, also the tests' RFC 5869 reference). **XChaCha20-Poly1305 part nominated 2026-07-27 (C9): `chacha20poly1305 = "=0.11.0"`** (current stable, same RustCrypto generation as the sha2 0.11/hkdf 0.13 pins; RUSTSEC — no advisories on record). Every permanent unit/manifest ciphertext byte comes out of it. Features `alloc` + `zeroize` only; **default features OFF so `getrandom` never enters antseal-core** (injected-RNG-only policy, C5/C9; wasm recipe is P14's). Underlying `aead`/`chacha20`/`poly1305`/`cipher` versions frozen by Cargo.lock (§3). **[2026-10-16, wave 37 — D184 §2 R1]** `chacha20poly1305`'s locked `chacha20` moved 0.10.1 → 0.10.2 under `Q278`: lock-only, in both `Cargo.lock` and `fuzz/Cargo.lock`, with no manifest change. Upstream yanked 0.10.0 and 0.10.1 on 2026-08-27 for UB in the SSE2 backend: the SSE4.1 intrinsic `_mm_extract_epi32`, used in the 64-bit-counter variants and in `rng_inner` (`rng` feature). antseal's XChaCha core (a 32-bit `Ietf` counter) reaches neither use in the default and wasm32 graphs. Only the `ant-backend` build can reach `rng_inner`, through saorsa-transport's default-on UPnP fallback (`igd-next` → `rand::rng()`), where it is a SIGILL on an x86 CPU with SSE2 but neither AVX2 nor SSE4.1, never a verdict defect. | ciphertext format + key derivation | C |
 | Unicode/NFC data crate — **nominated 2026-07-27 (G1): `unicode-normalization = "=0.1.25"`, shipping Unicode data 17.0.0 behind the frozen descriptor string `unicode-17.0.0`** ([D25](decisions/D25-unicode-normalization.md)); the data version is frozen into manifests, and every shipped table is retained forever | canonicalization output bytes | G |
 | Argon2/scrypt (vault KDF) — **pinned 2026-08-01 (U6; decision [D40](decisions/D40-vault-kdf-selection.md)): `argon2 = "=0.6.0-rc.8"` (default-features off — no `alloc`, we allocate the arena fallibly ourselves per D40 §2; no `getrandom`/`password-hash` — parameters live in the AAD-bound vault header, never PHC strings; `zeroize` ON), `blake2 = "=0.11.0-rc.6"` (argon2's hash core, declared directly SOLELY to force its `zeroize` feature — argon2's own `zeroize` does not forward it, and blake2's wiping `Drop` on the BLAKE2b chaining state is gated on blake2's own feature: without this line every Argon2id H0 leaves 65 bytes of passphrase-derived state in dropped hashers, measured; the hmac-declaration precedent), `scrypt = "=0.12.0"` (default-features off; resolves onto the exact `sha2 =0.11.0` pin incl. the D88 zeroize drop-glue — no second digest generation; honest limit recorded: scrypt's internal 1 GiB B/V buffers have no wiping story, password-derived only).** Re-verified current at pin time per D40's clause: argon2 0.6.0 final is NOT out, rc.8 is newest — rc discipline as for ml-dsa (exact pin + RUSTSEC/GHSA watch). RUSTSEC check 2026-08-01: no advisories on record for argon2/blake2/scrypt at these versions. Guards: RFC 9106 §5.3 + RFC 7914 §12 known-answer vectors (`crates/antseal-cli/tests/vault_encryption.rs` — KDF output bytes are vault-format bytes) and the D88-style blake2 residue probe + manifest-declaration check (`crates/antseal-cli/tests/kdf_residue.rs`, red-direction proven 2026-08-01). The blake2 `zeroize` feature is **load-bearing** exactly like sha2's (treat removal as a §4 version bump) | vault format + passphrase-residue hygiene | U6 (D40) — landed |
 | `getrandom` — **pinned `=0.4.3` 2026-08-01 (U6)**: the CLI's OS-CSPRNG backend — vault KDF salts and record nonces are drawn from it (antseal-core stays injected-RNG-only by construction, C5; the CLI is the sanctioned production caller). 0.4.3 = the version the locked graph already records (the ed25519-dalek/ml-dsa getrandom-0.4 line — no second generation added to the product graph). RUSTSEC 2026-08-01: no advisories on record for 0.4.x | secret-generation surface (same family as the rand_core row) | U6 — landed |
@@ -40,9 +40,9 @@ lands):
 | `der` — **pinned `=0.8.1` 2026-08-02 (A5; decision [D60](decisions/D60-der-cms-x509-pins.md))**: the DER reader every RFC 3161 artifact passes through. Strictness is the product requirement, not a preference — A5's Accept demands BER constructs be rejected with a distinct error class, and D60 §7.4 records which rejections this crate gives for free and which antseal adds. Two of its behaviours are load-bearing and unpublished: `ErrorKind` is `#[non_exhaustive]` (so no match over it can be exhaustive — D60 §7.2's claim to the contrary is corrected there), and `resume_nested` does not restore the position, so unread inner bytes are re-offered to the outer decoder and top-level `finish()` still demands exact consumption — a lane's "trailing content is not rejected" finding was falsified by that. **Lockstep: with `x509-cert`/`cms`/`const-oid`/`spki`, which share this generation.** | strict-DER decode is the anchor stage's parse-rejection semantics | A5 (D60) — landed |
 | `const-oid` — **pinned `=0.10.2` 2026-08-02 (A5/A8; decision [D60](decisions/D60-der-cms-x509-pins.md))**, feature `db`. Object-identifier constants for every algorithm, attribute and extension the token verifier names. The `db` feature is **ours, not inherited** — D60 found the nominee list incomplete without it. An OID mismatch is a silent accept-or-reject of the wrong algorithm, which is why the identifiers are pinned rather than typed out locally. **Lockstep with the `der` generation.** | algorithm/attribute identity in a verdict-bearing path | A5/A8 (D60) — landed |
 | `x509-cert` — **pinned `=0.3.0` 2026-08-02 (A5/A9; decision [D60](decisions/D60-der-cms-x509-pins.md))**: certificate *parsing* only — it has no path validation, which A9 writes by hand against the pinned root store (spec line 108 budgets exactly that). **Lockstep with the `der` generation**; D60 measured that `cms 0.2.3` would fork it, giving **two non-interconvertible `Certificate` types in the crate that decides which certificate signed a timestamp**. | certificate structure in a verdict-bearing path | A5/A9 (D60) — landed |
-| `cms` — **pinned `=0.3.0-pre.2` 2026-08-02 (A8; decision [D60](decisions/D60-der-cms-x509-pins.md))**: RFC 5652 `SignedData` parsing. **PRE-RELEASE, deliberately** — the stable `0.2.3` forks the DER stack (above), which is worse than a pre-release on a crate whose parse output antseal re-checks in full. Every semantic check (signed attributes, `messageImprint`, nonce, ESSCertID, critical EKU, signature verification) is antseal's own; this crate supplies structure only. **P23 owns the stabilisation watch** and must re-verify at each rc. **Lockstep with the `der` generation.** | CMS structure under the anchor verdict | A8 (D60) — landed |
-| `p384` — **pinned `=0.14.0` 2026-08-02 (A8/A9; decision [D60](decisions/D60-der-cms-x509-pins.md))**: ECDSA P-384 verification for TSA signatures. Normative per spec line 108 (FreeTSA's 2026 cert), and **the digest is SHA-512, not the SHA-384 the pairing suggests** — FreeTSA signs `ecdsa-with-SHA512`, measured. **P-256 is out of v1**: of nine live TSAs captured, exactly one uses ECDSA and it is P-384; zero serve P-256. | TSA signature verification — decides whether a timestamp is genuine | A8/A9 (D60) — landed |
-| `rsa` — **pinned `=0.10.0-rc.18` 2026-08-02 (A8/A9; decision [D60](decisions/D60-der-cms-x509-pins.md))**: RSA PKCS#1 v1.5 verification, including the **bare `rsaEncryption`** signature AlgorithmIdentifier that 5 of 9 live TSAs emit, DigiCert included. **PRE-RELEASE by necessity, not preference**: `rsa 0.9.10` is *structurally impossible* here — it pulls `rand`/`rand_chacha` into `antseal-core`'s normal graph via `num-bigint-dig`, which the `dep-graph` lane's own rule fails red on, plus 8 duplicate pairs including a second `signature`, `digest`, `der`. Carries the one mandatory `deny.toml` ignore, **RUSTSEC-2023-0071** (Marvin timing side channel on the **private**-key path): antseal-core holds no RSA private key and performs no RSA private-key operation — the only API it calls is `pkcs1v15::VerifyingKey::verify` over a TSA's public key — so there is no secret in the computation for the channel to leak. The advisory's range is `introduced: 0.0.0-0` with no fixed version, so **no `rsa` release escapes it**; this is not waiting on an upgrade. **P23 owns the stabilisation watch.** | TSA signature verification — decides whether a timestamp is genuine | A8/A9 (D60) — landed |
+| `cms` — **pinned `=0.3.0-pre.2` 2026-08-02 (A8; decision [D60](decisions/D60-der-cms-x509-pins.md))**: RFC 5652 `SignedData` parsing. **PRE-RELEASE, deliberately** — the stable `0.2.3` forks the DER stack (above), which is worse than a pre-release on a crate whose parse output antseal re-checks in full. Every semantic check (signed attributes, `messageImprint`, nonce, ESSCertID, critical EKU, signature verification) is antseal's own; this crate supplies structure only. **P23 owns the stabilisation watch** and must re-verify at each rc. **[2026-10-16, wave 37 — D184 §2 R5]** Re-verified at `cms` 0.3.0-rc.0 (2026-10-13), not moved: the pinned pre.2 is not yanked, and rc.0 changes a parse on the verdict path (`CertificateChoices::Other`'s `[3]` goes from EXPLICIT to IMPLICIT). The trigger is unchanged: the final release, or an advisory or a yank on the pinned rc. **Lockstep with the `der` generation.** | CMS structure under the anchor verdict | A8 (D60) — landed |
+| `p384` — **pinned `=0.14.0` 2026-08-02 (A8/A9; decision [D60](decisions/D60-der-cms-x509-pins.md))**: ECDSA P-384 verification for TSA signatures. Normative per spec line 108 (FreeTSA's 2026 cert), and **the digest is SHA-512, not the SHA-384 the pairing suggests** — FreeTSA signs `ecdsa-with-SHA512`, measured. **P-256 is out of v1**: of nine live TSAs captured, exactly one uses ECDSA and it is P-384; zero serve P-256. **[2026-10-16, wave 37 — D184 §2 R1]** The locked `wnaf` moved 0.14.0 → 0.14.1 under `Q278`: lock-only, in both lockfiles, with no manifest change; its one new edge, to `primefield`, points at a package already locked. 0.14.0, yanked 2026-09-03, reversed every scalar's bytes in `le_repr`, which is wrong for little-endian scalar fields. It sits on this row's verify path (`lincomb_vartime` over `WnafBase`/`WnafScalar`), but P-384's scalar is big-endian, so both versions produce the same bytes: value-identical for P-384. | TSA signature verification — decides whether a timestamp is genuine | A8/A9 (D60) — landed |
+| `rsa` — **pinned `=0.10.0-rc.18` 2026-08-02 (A8/A9; decision [D60](decisions/D60-der-cms-x509-pins.md))**: RSA PKCS#1 v1.5 verification, including the **bare `rsaEncryption`** signature AlgorithmIdentifier that 5 of 9 live TSAs emit, DigiCert included. **PRE-RELEASE by necessity, not preference**: `rsa 0.9.10` is *structurally impossible* here — it pulls `rand`/`rand_chacha` into `antseal-core`'s normal graph via `num-bigint-dig`, which the `dep-graph` lane's own rule fails red on, plus 8 duplicate pairs including a second `signature`, `digest`, `der`. Carries the one mandatory `deny.toml` ignore, **RUSTSEC-2023-0071** (Marvin timing side channel on the **private**-key path): antseal-core holds no RSA private key and performs no RSA private-key operation — the only API it calls is `pkcs1v15::VerifyingKey::verify` over a TSA's public key — so there is no secret in the computation for the channel to leak. The advisory's range is `introduced: 0.0.0-0` with no fixed version, so **no `rsa` release escapes it**; this is not waiting on an upgrade. **P23 owns the stabilisation watch.** **[2026-10-16, wave 37 — D184 §2 R5]** Re-verified at `rsa` 0.10.0-rc.19 (2026-10-06), not moved: the pinned rc.18 is not yanked; rc.19 is a `pkcs1` rc.5 migration with no private-key code change, and it cannot resolve against the `der =0.8.1` pin (it needs `der` 0.8.2); RUSTSEC-2023-0071 is still unpatched, so the ignore stands. The trigger is unchanged: the final release, or an advisory or a yank on the pinned rc. | TSA signature verification — decides whether a timestamp is genuine | A8/A9 (D60) — landed |
 | `sha1` — **pinned `=0.11.0` 2026-08-02 (A8; decision [D60](decisions/D60-der-cms-x509-pins.md))**: **required, and forbidden as a signature digest.** ESSCertID **v1**'s `certHash` is SHA-1 *by definition* (RFC 5035), and FreeTSA emits v1 — verified identical across two independent captures — so binding the signer certificate is impossible without it. It is used **only** for that certificate-identity binding, never to validate a signature: a SHA-1 signature digest is refused with its own code (Apple's real token is refused on exactly this ground). Absent from D60's original nominee list; the gap was found by dissecting a real token, not by reading a spec. | certificate-identity binding only — never signature validation | A8 (D60) — landed |
 | `subtle` — **pinned `=2.6.1` 2026-07-27 (C6)** (current stable; 2.6.0 yanked; RUSTSEC — no advisories on record). Constant-time equality for every verdict-bearing commitment-digest comparison over adversarial bundles (MVP-SPEC.md line 121/168 checks); comparison semantics are consensus-relevant. `default-features = false` (drops `std`/`i128`; wasm-lean) | verdict-bearing comparison semantics | C (C6) |
 | `rand_core` — **pinned `=0.10.1` 2026-07-27 (C5)** (current stable; RUSTSEC-2019-0035 and RUSTSEC-2021-0023 affect only <0.4.2 / 0.6.0–0.6.1). The injected-CSPRNG **trait contract** of every generation/nonce path (`MasterSecret`/`SealId` generation, C9 nonce drawing): trait-surface changes alter the public API and test determinism, hence exact-pinned. 0.10 is a pure trait crate — zero deps, zero features — so it structurally cannot pull `getrandom` into antseal-core (0.10 renamed 0.6's `CryptoRngCore` to `CryptoRng`/`TryCryptoRng`; we bound on `TryCryptoRng` and map failures to `CryptoError::RngFailure`) | injected-RNG API contract | C (C5/C9) |
@@ -244,7 +244,16 @@ authoritative, and at upstream's current release, which is informational —
 never at upstream `main`, which upstream rewrites. That read is `P19`'s
 to make and to record in its Notes (registered with D173 §2 R18); until a
 weekly run has recorded one, this sentence states the ruling, not a
-measured run. A bump is its own PR containing only the bump and its direct
+measured run. **[2026-10-16, wave 37 — D173 §2 R18 addendum]** From
+`ant-core-v0.10.0` upstream's file is
+`ant-core/resources/bootstrap_peers.toml`: the old path returns 404 at
+v0.10.0, v0.11.0 and v0.12.0, so the current-release read takes the new path,
+while at the pin's own tag, `ant-core-v0.5.0`, the old path and its blob are
+unchanged. Its format is now multiaddrs, `quic = [...]` plus a new
+`webrtc = [...]` section, and at v0.12.0 the seven QUIC peers equal the seven
+vendored at the pin. A pin bump past 0.9.x therefore meets a format change
+that `parse_vendored_peers` does not read. A bump is its own PR containing
+only the bump and its direct
 fallout, with this checklist completed in the PR description:
 
 - [ ] Upstream changelog / release notes / commit delta reviewed; behavior
@@ -273,7 +282,11 @@ fallout, with this checklist completed in the PR description:
       provenance constants — sha256 (integrity), upstream blob id
       (selector), tag and commit URL (audit path) — **from upstream, never
       from the vendored file**, so the provenance test cannot pass by
-      agreeing with itself. The file is re-transcribed, never hand-edited
+      agreeing with itself. The file is re-transcribed, never hand-edited.
+      From `ant-core-v0.10.0` upstream's file is
+      `ant-core/resources/bootstrap_peers.toml`, in a multiaddr format
+      `parse_vendored_peers` does not read (D173's 2026-10-16 addendum; the
+      bracket above)
 - [ ] For `ant-core`: re-read the upstream code antseal's peer rules rest
       on (D173 §2 R18) — `Client::connect`'s `peer_cache_path` initializer
       (hard-coded `None` at 0.5.0, which is why no peer cache is read on
@@ -285,19 +298,54 @@ fallout, with this checklist completed in the PR description:
       `resolve_bootstrap_peers` (new in
       `ant-core` 0.8.0), which a bump could make compete with antseal's
       per-network, replace-never-merge peer resolution (D173 §2 R6)
+- [ ] For `ant-core`: **re-verify the `upstream_state` mirror** (`S42`,
+      D178 R2). `upstream_state` in `crates/antseal-net/src/network.rs`
+      transcribes upstream's `config::data_dir()` and `home_dir()`
+      (`ant-core-0.5.0/src/config.rs:11-24,87-92`) and
+      `adaptive::default_persist_path()`. Re-read them at the new pin. The
+      feature-build cross-check
+      `s42_the_mirror_agrees_with_upstreams_default_persist_path_on_every_row`
+      (`tests/storage_constants.rs`) compares the mirror with upstream's own
+      function row by row for the build's OS, so a red there is a changed
+      lookup, never a test to adjust. Also re-check where `Client::connect`
+      resolves the path (before or after dialing), and whether a
+      `ClientConfig` field now reaches it; either changes what `S42` refuses.
+- [ ] For `ant-core`: **re-assess every `deny.toml` ignore whose review is
+      tied to the ant-core pin** (D183/`Q277`: those reasons read *Review by
+      YYYY-MM-DD or at the next ant-core pin move, whichever comes first*).
+      For each: drop its line and confirm cargo-deny reds that id; re-measure
+      where its crate enters the graph at the new pin (default, `ant-backend`,
+      both wasm32 graphs); then re-date it on the new measurement, or remove
+      it. `scripts/check-deny-reviews.py` enforces only the date half —
+      nothing mechanical sees a pin move coming, which is why this line
+      exists.
 - [ ] For `ant-core`, and for any move of the `ant-node` dev pin: **the
-      `S41` interoperability check** (D173 §2 R17) — antseal's pinned
-      client runs the full devnet E2E (quote, pay, store, fetch, restore)
-      against the **latest non-prerelease `ant-node` release** on loopback
-      with Anvil, the only exposure-free test of storing and paying; the
-      verdict line, the `ant-node` version and the date are recorded
-      verbatim. A red makes the bump a prerequisite of `Q34`; a green is
-      recorded on `Q34` and in the threat model's `Q272` section as *the
+      `S41` interoperability check** (D173 §2 R17, D177) — antseal's
+      pinned client runs the four devnet suites (quote, pay, store, fetch,
+      restore) against the **latest non-prerelease `ant-node` release as
+      upstream ships it**: `scripts/s41-interop.sh` verifies the release
+      archive (sha256 = `SHA256SUMS` = the release API's digest; ML-DSA-65
+      signature under `ant-node-release-v1` against the key embedded in
+      `ant-node`'s source at the tag) and runs fourteen nodes and Anvil
+      inside unprivileged namespaces whose only interface is `lo` and that
+      hide the operator's home and runtime sockets
+      ([runbook](devnet/foreign-node-interop.md)). `devnet-launcher`
+      cannot host a foreign node: it links `ant-node` in-process through
+      ant-core's `devnet` feature (D177 §2 R1). The dev pin's own release
+      (v0.15.0) runs first as a **control arm**; a red control is a harness
+      defect and yields no verdict. The verdict line is recorded verbatim,
+      with **N** (non-prerelease `ant-node` releases after the dev pin) and
+      the `ant-core` lag beside it. A red makes the bump a prerequisite of
+      `Q34`, **coupled to the toolchain**: `ant-core` 0.12.0 needs
+      `saorsa-transport` 0.38.0, which needs rustc ≥ 1.95.0, so the
+      [toolchain.md](toolchain.md) procedure runs in the same act, and the
+      AGPL/GPL crates (`saorsa-core` 0.26.2, `evmlib` 0.9.0,
+      `self_encryption` 0.36.0) give way to MIT OR Apache-2.0 releases. A
+      green is recorded on `Q34` and in the threat model's §2.11 as *the
       pinned client is N releases behind the network; interoperability
-      proven on loopback at <date> against ant-node <version>*. It is a
-      standing check, not a one-off: re-run at `Q34`'s date, and its first
-      act is measuring whether `devnet-launcher` can host a foreign-version
-      node at all
+      proven on loopback at <date> against ant-node <version>*. A standing
+      manual check, re-run at `Q34`'s date; not wired into
+      `scripts/local-gate.sh`
 - [ ] For toolchain bumps: [toolchain.md](toolchain.md) procedure —
       `rust-toolchain.toml`, `rust-version`, `clippy.toml` move together in
       one commit
@@ -362,6 +410,21 @@ this whole checklist.
   The M3 reproducible wasm build makes the
   wasm-pack/wasm-bindgen versions format-provenance-relevant, exactly like
   the toolchain itself.
+- **[2026-10-16, D182 (`Q276`)] A wasm-tool pin bump audits the tool, not only
+  its version string.** Before `wasm-pack` or `wasm-bindgen-cli` moves, run an
+  advisory check (cargo-deny's `advisories`, or cargo-audit) over the
+  `Cargo.lock` published inside the tool's own `.crate` at the new version,
+  and record every match in the bump PR with its reachability in our use: the
+  code path that reaches it, or why none does. D182 did this for wasm-pack
+  0.15.0 and wasm-bindgen-cli 0.2.126 — 9 vulnerability matches and 9 warnings
+  across the two locks, one reachable (RUSTSEC-2026-0285, through wasm-pack's
+  crates.io update check, which `scripts/wasm-pack-build.sh` now suppresses)
+  and none with impact. The suppression is a stamp beside the wasm-pack
+  binary, outside the tree: `scripts/wasm-pack-build.sh` writes it before
+  every build, and `scripts/wasm-tools-provision.sh` before its first
+  wasm-pack process, through `wasm-pack-build.sh --suppress-update-check`. A
+  review step, not a lane: a standing advisory lane over tool lockfiles was
+  refused as red from its first run and unfixable by us (D182 R3).
 - **A second, dated toolchain pin exists for fuzzing only**:
   `fuzz/rust-toolchain.toml` (`nightly-2026-01-26` at Q9). cargo-fuzz needs
   nightly for `-Z sanitizer` and libFuzzer instrumentation, and the
@@ -407,6 +470,8 @@ this whole checklist.
   from the workspace lockfile — the fuzz crate carries an empty
   `[workspace]` table, so `libfuzzer-sys`/`arbitrary`/`cc` structurally
   cannot reach the audited graph (`docs/testing/fuzzing.md`).
+  `fuzz/Cargo.lock` moves in lockstep with `Cargo.lock` for every crate the
+  two share, because no lane scans it for advisories (D184 §2 R2).
 - Weekly upstream-bump check: report-only, human-reviewed PR required for
   any pin change (P19).
 - PR process: [../CONTRIBUTING.md](../CONTRIBUTING.md) — its checklist

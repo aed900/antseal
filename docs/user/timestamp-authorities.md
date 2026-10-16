@@ -99,13 +99,13 @@ network path can neither forge a token, replay an old one, nor substitute one
 issued for a different digest. What plain HTTP does cost is **privacy**: a
 passive observer learns that this machine timestamped a particular 32-byte
 digest at a particular moment, and could link it to a bundle you publish later
-(`docs/config.md:101-107`). If that matters to you, drop DigiCert from your
+(`docs/config.md:125-131`). If that matters to you, drop DigiCert from your
 list — nothing else changes, and FreeTSA is HTTPS.
 
 By contrast, the endpoints under `[verify]` in your config **must** be
 `https://`, and antseal refuses the file at load if one is not. Their replies
 carry no signature of their own, so transport is their only integrity control
-(`docs/config.md:94-99`; `crates/antseal-cli/src/config.rs:541-553`).
+(`docs/config.md:84-88, 118-123`; `crates/antseal-cli/src/config.rs:653-678`).
 
 ---
 
@@ -220,8 +220,8 @@ The behaviour, read off the implementation rather than off intent:
   (`crates/antseal-anchor/src/tsa.rs:112-126`).
 - **Every entry is parsed at config load**, through the same endpoint parser
   the HTTP client uses, under a policy that allows plain HTTP because DigiCert
-  requires it (`crates/antseal-cli/src/config.rs:517-528`). A URL with no host
-  (`http:///tsr`), an unusable scheme, or embedded credentials
+  requires it (`crates/antseal-cli/src/config.rs:551-573, 646-652`). A URL with
+  no host (`http:///tsr`), an unusable scheme, or embedded credentials
   (`http://user:pw@host/`) is refused **at load**, naming the key and the line
   — exit code **17**, class `malformed-config` — rather than surfacing as a
   failed anchor midway through a seal
@@ -488,6 +488,6 @@ Nothing above is asserted from memory. The primary sources:
 | Apple's SHA-1 refusal, by name | `crates/antseal-core/tests/anchor_real_tokens.rs:273-310` |
 | the gate, its threshold and its ordering | `crates/antseal-anchor/src/submit.rs:31-48, 252-292` |
 | the degraded rendering, byte for byte | `crates/antseal-cli/tests/snapshots/seal-degraded-report.txt` |
-| the config slot and its validation | `crates/antseal-cli/src/config.rs:106-111, 517-528`; `docs/config.md:48-107` |
+| the config slot and its validation | `crates/antseal-cli/src/config.rs:134-139, 551-573, 646-652`; `docs/config.md:48-107` |
 | root-store update procedure | `docs/anchors/root-store-update.md` |
 | how a real-endpoint run is conducted | `docs/anchors/real-smoke-runbook.md` |

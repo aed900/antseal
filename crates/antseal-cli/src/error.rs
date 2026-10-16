@@ -36,7 +36,7 @@
 //! | 26   | `resume-flag-mismatch` | D45 §2: same inputs, different seal-shaping flags |
 //! | 27   | `invalid-seal-argument` | D46: directory / non-regular file / duplicate path, pre-consent |
 //! | 28   | `payment-stranded` | D147: payment failed mid-sequence with money already moved — never the transient class; re-running `seal` finishes it and re-pays no quote the journaled receipt already maps |
-//! | 29   | `payment-proofs-expired` | D147 / D37 Decision 6: the journaled proofs outlived the ~24 h window, so completing the seal costs a **second**, separately consented payment |
+//! | 29   | `payment-proofs-expired` | D147 / D37 Decision 6 / D179: a majority of the storing peers refused the journaled payment proof and the payment is more than 24 h old by its block time, so completing the seal costs a **second**, separately consented payment |
 //! | 30   | `refused-overwrite` | D48: restore found an existing, differing file (per-file; most-severe-class reporting) |
 //! | 31   | `malformed-restore-record` | D48: a vault record that cannot drive a safe restore |
 //! | 32   | `export-self-verify-failed` | D47: the written export failed its mandatory self-verify |
@@ -707,10 +707,18 @@ pub enum CliError {
     /// **D147**: D37 Decision 6's expired-proof stranded state. Its own text says
     /// "the already-spent ANT is not recoverable"; it exited 2 — clap's parse-error
     /// code — until this class existed.
+    ///
+    /// **[S43/D179 R5, 2026-10-16]** The text used to say the proofs had outlived
+    /// a "~24 h node-side window" so "the storers reject them". No pinned node
+    /// rejects a proof on age (D37's 2026-08-02 correction), and the condition
+    /// is now exactly what it says: a majority of the storing peers refused the
+    /// proof and the payment is more than 24 hours old by its block time
+    /// (`antseal_net::put_policy`). `message` is human copy (D65).
     #[error(
-        "this seal's payment proofs have expired (the ~24 h node-side window has passed), so \
-         the storers reject them: completing it requires a new, separately consented payment — \
-         the already-spent ANT is not recoverable"
+        "this seal's payment proofs have expired: a majority of the storing peers refused this \
+         seal's payment proof, and the payment is more than 24 hours old by its block time, so \
+         completing it requires a new, separately consented payment — the already-spent ANT is \
+         not recoverable"
     )]
     PaymentProofsExpired,
 

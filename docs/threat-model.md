@@ -934,6 +934,18 @@ too coarse to act on:
   consumed**. That bounds what the protocol *needs*; it bounds nothing about
   what a node *receives*, and a node that keeps what it was given keeps them.
 
+**The payment RPC's operator sees the paying address first, and no setting
+moves it (U94, D180).** Every seal's payment traffic — balance and allowance
+reads, `approve`, the payment transaction and its receipt — goes to one
+JSON-RPC endpoint: evmlib's compiled-in public RPC for `arbitrum-one` and
+`arbitrum-sepolia`, the export's `RPC_URL` for `devnet`; `status`'s
+block-number backfill reads receipts from the same endpoint. Its operator
+therefore learns the paying address, the time and the source IP of every seal
+before any storing peer does. `config.toml` offers no override — `rpc_url` is
+refused at load — so the operator is not a user's choice. A private RPC would
+remove this one observer, not the link above, which the storing peers already
+hold.
+
 **What this means for the two subsections above.** Leaving the receipt out
 hides the wallet from the people you show bundles to. It does not hide it
 from the network you uploaded to. The right posture is to treat the paying
@@ -1960,9 +1972,9 @@ store version 1 with build date 2026-08-03 (`:114-117`), and
 `pinned_store_is_exactly_four_roots_at_version_1` (`:360`) pins the version,
 the date, the four labels **in order**, and the total byte count. A fifth
 candidate is quarantined with its reason recorded
-(`crates/antseal-core/src/anchor/roots/PROVENANCE.md:251-258`). Cite the test
-rather than the comment at `roots/mod.rs:259`, which still says *"Three
-roots"* and is stale.
+(`crates/antseal-core/src/anchor/roots/PROVENANCE.md:251-258`). The test,
+not prose, is the authority for the count; the comment at `roots/mod.rs:259`
+now defers to it (A138).
 
 **Chain validity is evaluated at `genTime`, and "expired" is not "invalid".**
 `temporal_grade` (`crates/antseal-core/src/anchor/chain.rs:851-869`) asks
@@ -2083,9 +2095,21 @@ runs `seal --dry-run --json` on the smoke file on `arbitrum-one`. It is part
 of the one exposure, not a second one, on the conditions the maintainer
 ruled: **the same released binary, the same machine, the same smoke file,
 run immediately before the seal in one sitting, with its output kept as gate
-evidence.** It passes on exit 0 with `"dry_run": true` and at least one
-priced blob; anything else stops the gate, and no seal is attempted in that
-sitting. A dry run writes nothing to the vault, submits no anchor, pays
+evidence.** **[2026-10-16, wave 37 — `Q32`, D177 §2 R10]** It passes only on
+exit 0 with exactly one JSON document on standard output, a
+`"command": "seal"` envelope reporting `"v": 1`, `"ok": true` and
+`"network": "arbitrum-one"` and, inside `"result"`, `"dry_run": true`,
+`"resume": false`, no `"quoted": false`, a `"blob_count"` of at least one and
+a `"storage_cost_atto"` that is a decimal string above zero — the one
+predicate in `scripts/stage0.sh`
+([D177](decisions/D177-the-pinned-client-meets-the-signed-node-release-on-loopback-and-stage-0-has-one-strict-predicate.md) §2 R10),
+rehearsed on loopback before it is ever pointed at mainnet and never part of
+`scripts/e2e-sepolia.sh`. The resume fields exclude the one dry run that
+proves nothing: over a work that an interrupted seal left in the vault, paid
+or not, `seal --dry-run` returns before any backend call and still prints
+`"dry_run": true` — with `"resume": true` and `"quoted": false`, exit 0, no
+route, no quote. Anything else stops the gate, and no seal is attempted in
+that sitting. A dry run writes nothing to the vault, submits no anchor, pays
 nothing and uploads nothing ([D49](decisions/D49-dry-run-network-semantics.md) §1). What it adds is
 contact. It asks the close groups of its own blob addresses for quotes, and
 those addresses are never stored and share nothing with the seal's, because
@@ -2094,8 +2118,10 @@ machine's network address and the work's bucketed piece sizes, joined to the
 seal only by that address and the timing. Its balance check (D49 §3) asks the
 public Arbitrum RPC about the gate wallet once more, minutes before the seal's
 payment publishes that wallet on chain. It shows that the shipped peers route
-and that the quote protocol answers the pinned client; it shows nothing about
-payment acceptance or storage, which `S41` tests on loopback before this gate.
+and that the quote protocol answers the pinned client — under this predicate;
+the literal reading of D173 §2 R16 would also pass the resume-plan document,
+which contacted nothing; it shows nothing about payment acceptance or storage,
+which `S41` tests on loopback before this gate.
 Each sitting, like the seal itself, runs only on the maintainer's express
 consent given at the gate.
 
@@ -2107,9 +2133,9 @@ consent given at the gate.
 **Delegated.** TSA selection, the alternates with their recorded caveats
 (`zeitstempel.dfn.de`'s non-commercial terms, Sectigo's ~15 s spacing,
 SwissSign's ~10/day), configuring a custom list, and what `--force-degraded`
-means for a user are `docs/user/timestamp-authorities.md`'s (Q26). Today that
-material lives at `docs/anchors/real-smoke-runbook.md:71-85` and
-`docs/config.md:101-110`, which are operator documents rather than user ones.
+means for a user are `docs/user/timestamp-authorities.md`'s (Q26): its §2–§4
+and §6. Their operator-side sources are
+`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:72-79,125-131`.
 
 ## 2.10 WASM zeroization caveat
 
@@ -2382,24 +2408,39 @@ to the median quote's `rewards_address` (`SingleNodeQuotePayment::from_quotes`)
 **What bounds the loss is the consent, not a ceiling.** The consent report
 shows the quoted total and the allowance approved is exactly that total
 (§2.3), so no payment can move more than the total its consent showed —
-though the defect below is a way to be asked twice. Nothing bounds what a
-quote may ask: `--yes` consents in advance to whatever total the quote
-reports, and a spend ceiling (`--max-cost`) is a candidate D36 recorded, not a
-flag.
+though the proofs-expired state below is a way to be asked twice. Nothing
+bounds what a quote may ask: `--yes` consents in advance to whatever total the
+quote reports, and a spend ceiling (`--max-cost`) is a candidate D36 recorded,
+not a flag.
 
-**A known open defect: `S43`.** One hostile quoting peer can push a seal into
-the proofs-expired path inside the 24-hour window, and resume then pays
-again. The client never checks a quote's timestamp, which is the quoting
-peer's own signed field; antseal judges a proof's age by the oldest timestamp
-among a blob's quotes; once that is more than 24 hours old, any payment-class
-PUT rejection — a hostile target's *payment required* included — is
-classified as expired and ends the PUT loop at once, abandoning targets that
-would accept; a fresh seal exits 29 (`payment-proofs-expired`), and resume
-re-quotes, re-consents and pays once more. Honest `ant-node` 0.15.0 does not
-reject a quote on age. Every link was established by reading, not by running,
-and whether one peer is reliably placed to supply both the old timestamp and
-the rejection is not established. This is `S43`'s defect, not accepted
-behaviour, and `S43` replaces this paragraph with the ruled behaviour.
+**A refused proof is one peer's answer (`S43`, D179).** A storer's
+payment-class reply to a PUT — `PaymentFailed`, or *payment required*, which
+the pinned client surfaces as a payment error — counts as that one target's
+decline: the store round continues to the next target and stops only at four
+stores (`CLOSE_GROUP_MAJORITY`) or when its targets run out, as upstream's own
+close-group PUT does (`ant-core-0.5.0/src/data/client/chunk.rs:36-79`). A seal
+enters the proofs-expired state — exit 29, `payment-proofs-expired`, which
+resume answers with a re-quote, a fresh consent and a second payment — only
+when **both** hold: the declines alone made the majority unreachable (at least
+four of seven targets declined, and fewer than four did anything else),
+**and** the payment is more than 24 hours old by the **block timestamp** of
+the transaction that paid for the blob, found through the journaled receipt's
+quote→tx map and read over the payment RPC
+(`crates/antseal-net/src/put_policy.rs`). A quote's own timestamp — the
+quoting peer's signed field, which the client never checks — is no longer an
+input, and a block time that cannot be read counts as not expired. Every other
+shortfall is a retryable network failure (exit 23) that the next run finalizes
+again without paying. Honest `ant-node` 0.15.0 never rejects a proof on age
+and never answers a proof-carrying PUT with *payment required*, but it can
+decline a proof whose paid quote's issuer has left its K-closest view — churn,
+which grows with time — so the re-payment path stays.
+
+**What a hostile close group can still do.** A hostile close-group
+**majority** can still decline every PUT. Until the payment is a day old by
+the chain's clock that costs the user retries, not money; after it, it puts
+the user in front of one re-payment consent per invocation, and `--yes`
+consents in advance. A minority can do neither: its declines are never
+decisive.
 
 ### Non-replication
 
@@ -2504,18 +2545,29 @@ section that matters most.
 
 **The one upstream file antseal does leave behind.** Every dropped client
 writes `client_adaptive.json` into upstream's data directory — on Linux
-`$XDG_DATA_HOME/ant`, or `~/.local/share/ant` when that is unset, the
-directory upstream's own `ant` CLI uses — creating the directory if it is
-missing, and every connect reads the file back while adaptation is on, which
-is the default antseal keeps. Turning adaptation off stops the read, not the
-write (`build_controller` and `impl Drop for Client`,
+`$XDG_DATA_HOME/ant`, else `$HOME/.local/share/ant` (`USERPROFILE` stands in
+for `HOME`), the directory upstream's own `ant` CLI uses; on macOS
+`$HOME/Library/Application Support/ant`; on Windows `%APPDATA%\ant` — creating
+the directory if it is missing, and every connect reads the file back while
+adaptation is on, which is the default antseal keeps. Turning adaptation off
+stops the read, not the write (`build_controller` and `impl Drop for Client`,
 `ant-core-0.5.0/src/data/client/mod.rs`). The file holds three concurrency
 starting values — quote, store, fetch — and **no peers**, so it cannot carry
 an eclipse into the next run. What it can carry is a slowdown: a network that
 forces timeouts depresses those values, and the next antseal run, and the
 user's `ant` CLI reading the same directory, start from them. A third party's
-`verify --live` writes it into their home directory too, and a client started
-with neither `HOME` nor `XDG_DATA_HOME` set panics instead. Both are `S42`'s.
+`verify --live` writes it into their home directory too. Upstream finds the
+directory through the environment alone — its own `home_dir()` reads `HOME`
+and then `USERPROFILE`, with no passwd fallback — so with no usable
+`XDG_DATA_HOME`, `HOME` or `USERPROFILE` (a value that is not valid Unicode
+counts as unset) it panics, **after** the client node has started and dialed,
+and an empty or relative value makes it write the file under the current
+directory. Both storage constructors refuse those environments before any
+socket, in the network class (exit 23; `upstream_state` in
+`crates/antseal-net/src/network.rs`; `S42`, D178); on macOS a missing home
+means no file and no refusal. In tests, `.cargo/config.toml` points
+`XDG_DATA_HOME` into `target/`, so no test run writes into the developer's
+home.
 
 ### What antseal does not do
 
@@ -2538,13 +2590,36 @@ Written here so that none of it is read as fact:
   which would turn placement near a bundle's addresses from withholding into
   loss;
 - the absolute ANT figure of the price bound above;
-- the `S43` chain end to end;
-- **whether this pinned client can still store and pay against the node
-  release the network runs today** (`S41`). Upstream ships client and node in
-  lockstep and nodes upgrade within a day; `S41` runs the full devnet E2E
-  against the latest `ant-node` release, and its verdict — how many releases
-  behind the network the pinned client is, proven on loopback on a date
-  against a named version — is recorded here when it exists.
+- whether one hostile quote that passes the client's pre-payment checks can
+  still make **every** honest storer refuse the proof — if it can, `S43`'s
+  rule limits the cost to one re-payment consent per day-old payment rather
+  than preventing it — and the Sybil cost of being among a blob's first four
+  PUT targets; no hostile-node devnet run exists (it needs a modified
+  `ant-node`);
+- a **mixed-version fleet** — old and new `ant-node` releases serving
+  together, as mainnet is during a release's 24-hour rollout; `S41` boots one
+  version per arm;
+- why node-to-node replication rejected forwarded proofs of payment at both
+  versions in the `S41` run, and what that costs in replication depth;
+- transport across real NATs: every `S41` arm is loopback-only.
+
+**Interoperability, measured.** On 2026-10-16, `scripts/s41-interop.sh` ran
+antseal's pinned client (ant-core 0.5.0) against upstream's signed `ant-node`
+v0.23.0 release — N = 11 non-prerelease releases after the dev pin v0.15.0,
+with the `ant-core` lag at 10 — as fourteen loopback processes inside an
+isolated namespace, after a green v0.15.0 control arm
+([runbook](devnet/foreign-node-interop.md)):
+`s41-interop: PASS commit=fbcee1e client=ant-core-0.5.0 node=ant-node-v0.23.0 node_commit=2d157cb archive_sha256=5962825adb28604af4cf1a710bcb533dccc616ddf636bff7f182f326eefd39b3 sig=ok nodes=14 suites_run=4 tests=29 skipped=0 failed=[] control=PASS(ant-node-v0.15.0) netns=isolated anvil=1.5.1 secs=1963 date=2026-10-16T04:11:30Z`
+The pinned client is 11 releases behind the network; interoperability is
+proven on loopback at 2026-10-16 against ant-node v0.23.0. Not proven:
+transport behaviour across real NATs (the residual named in advance,
+`saorsa-transport`'s ~4,200 changed lines), what mainnet runs (inferred, never
+dialed), and a **mixed-version fleet**, as mainnet is during a release's
+24-hour rollout. The nodes' own replication logged proof-of-payment rejections
+between nodes at both versions (`WARN` `ant_node::replication`; 77 lines over
+15 records at v0.23.0, 334 over 55 at the v0.15.0 control), carrying two of
+the four signatures pre-registered as reds. None reached the client and every
+suite passed. What they cost in replication depth is not established.
 
 **Delegated.** Two things are owed to users, and no user page carries them
 yet: the persistence advice — check a seal from a second network vantage with
@@ -2611,6 +2686,20 @@ line 143).
 - `docs/decisions/D176-the-storage-network-is-its-own-adversary-and-the-model-says-what-it-can-take.md`
   — the ruling §2.11, the §2.3 correction and the anchored section check
   implement.
+- `docs/decisions/D177-the-pinned-client-meets-the-signed-node-release-on-loopback-and-stage-0-has-one-strict-predicate.md`
+  — stage 0's strict predicate (§2 R10), which §2.9's accepted exposure
+  states, and the `S41` harness (§2 R2–R7), whose verdict §2.11 records.
+- `docs/decisions/D178-upstreams-data-directory-is-resolved-before-any-socket-and-every-in-tree-test-confines-it.md`
+  — upstream's data directory, resolved before any socket (§2 R1) and confined
+  in every in-tree test (§2 R3): the one file §2.11 says a run leaves behind
+  (`S42`).
+- `docs/decisions/D179-a-payment-refusal-is-one-peers-decline-and-expiry-needs-a-declining-majority-and-a-day-old-payment.md`
+  — a payment refusal as one peer's decline (§2 R1), and expiry only for a
+  declining majority over a payment more than a day old by its block time
+  (§2 R2–R3): §2.11's payment-misdirection subsection (`S43`).
+- `docs/decisions/D180-a-configured-rpc-url-is-refused-at-load-and-the-arm-sentence-no-build-prints-is-deleted.md`
+  — `rpc_url` refused at load (§2 R1), and the documents saying what the payer
+  dials (§2 R4): the payment-RPC operator §2.3 names as an observer (`U94`).
 - `docs/format/registry-v1.md` — the wire format these assumptions apply to.
 - `docs/testing/error-code-contract.md` — the permanent error codes the
   tamper matrix binds to.

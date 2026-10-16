@@ -93,8 +93,8 @@ pub const SUPPORTED_VERSIONS: &[u64] = &[1];
 ```
 
 `crates/antseal-core/src/format.rs:115` — and its doc comment at `:112-114`
-records the direction rule: *"v1 is the sole entry and the only version that
-has ever been released. A future release appends; it never edits or removes."*
+records the direction rule: *"v1 is the sole entry; nothing has been released
+yet (D104 §1.5). Once a version ships, a later release appends here and never edits or removes an entry."*
 One build verifying many format versions is what makes the two numbers
 independent in practice, and the list shape is what makes appending the only
 available move.

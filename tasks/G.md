@@ -363,6 +363,18 @@
   - If (a): red-then-green with a partial+mirror bundle and a named code, tamper row included. If (b): the corrected doc cites R53's gate, and a test citing the doc pins the partial+mirror verify-and-contain behaviour.
 - Notes: this is the decision-shaped remainder of review finding 8; R53's structural work made both outcomes cheap.
 
+### G30 — Three shipped rustdoc sites still call D26 an open decision
+- Milestone: M4 *(the row sits in the M0 block because G is homed there, and carries the `**(M4)**` tag F56 uses; the claim is in shipped crate documentation)*
+- Size: XS
+- Deps: after nothing. A fragment of `G18`'s area, **not** a clause of `G18`'s `Accept` — `G18` stays open.
+- Spec: Content model — the fine-tree performance and memory budgets (D26); working principle — shipped documentation states what the code and its decisions actually are
+- Discovered by: wave-37 planning lane P6 (2026-10-16), measuring the stale blocker the wave-37 availability survey (PS) found on `G18`. Id assigned centrally; cited nowhere in code.
+- Problem: three doc comments in `crates/antseal-core/src/content/fine_tree/` still call D26 open — `build.rs:40-41` (*"open decision D26"*), `build.rs:737-738` (*"gated on the still open decision D26"*) and `cost.rs:39-40` (*"gated on the still-open decision D26"*). D26 was resolved 2026-07-28, and its §3.3 fixes the 4 990..7 000 band the tests already use (`build.rs:752`, `cost.rs:243`). A reader of the shipped crate is told a settled budget is undecided.
+- Do: rewrite the three sites to state D26 resolved, pointing at §3.3 or the record, line-count-neutral (locators into both files stay valid); cite no task id in the code.
+- Accept:
+  - `git grep -n -E "open decision D26|still-open decision D26|still open decision D26" -- crates/` returns nothing.
+  - The `content::fine_tree` tests stay green, and every file's line count is unchanged.
+- Notes: **[2026-10-16, wave 37 — TICKED, lane L-HYG.]** Evidence on the `TODO.md` row; the lane's report (in the wave-37 backup) keeps the before/after texts, the plant messages and the test counts.
 ## Open decisions (G)
 - `--force-text` semantics on invalid UTF-8: deterministic lossy U+FFFD replacement (making text-mode canonicalization total — required so R's `canonicalize(raw) == canonical` mirror check can always recompute) vs. recording a forced-mode flag in the descriptor. Blocks G2, G3, G7, G14. Must land by M0 (canonicalization freeze). — **[2026-07-27]** RESOLVED (D20): lossy U+FFFD (Unicode §3.9 maximal subparts), total, **no descriptor flag** — `kind=Text` alone determines recompute semantics; R4's raw-mirror recompute must call `TextMode::Forced`; truncated-BOM → leading-U+FFFD corner KAT-pinned (docs/decisions/D20-force-text.md).
 - Canonicalization micro-semantics: lone CR → LF (in addition to CRLF), strip exactly one leading BOM with interior U+FEFF preserved, and the fixed pipeline order (BOM → EOL → NFC). Blocks G2, G3. M0. — **[2026-07-27]** RESOLVED (D21) with one recorded deviation from this entry's proposal: strip **ALL** leading U+FEFF (contiguous run), not exactly one — strip-exactly-one violates G2's normative idempotence proptest on multi-BOM inputs; interior U+FEFF preserved; one-pass EOL (CR CR LF → LF LF); order decode → BOM → EOL → NFC frozen (docs/decisions/D21-canonicalization-micro-semantics.md). G3 must pin the double-BOM and BOM-only-file fixtures.

@@ -468,6 +468,60 @@ fn declining_the_proofs_expired_consent_leaves_the_work_incomplete() {
     });
 }
 
+/// **S43 Accept 2 (B7, D179 R2).** Since S43 the adapter answers a refused
+/// proof over a payment that is not a day old by its block time — and any
+/// shortfall the declines did not decide — with a retryable `Finalize` error
+/// (exit 23), never `ProofsExpired`. Resume must meet that by finalizing
+/// again: no re-quote, no consent prompt, and no second payment, in the
+/// invocation that failed or in the one that finishes.
+#[test]
+fn a_retryable_finalize_failure_resumes_without_paying_again() {
+    let seal_id = fixture_seal_id(17);
+    stage_work(seal_id, SealState::Paid, false);
+    let mock = MockBackend::new();
+    let backend = FinalizeFailsOnce::new(&mock);
+    let gate = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+
+    let first = with_journal(|journal| {
+        journal
+            .put_receipt(&seal_id, &block_on(seed_receipt(&mock)))
+            .expect("seed receipt");
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        block_on(pipeline.resume(&seal_id))
+    });
+    assert_eq!(
+        mock.payment_tx_count(),
+        1,
+        "resume paid again ({} payment txs) after a retryable finalize (S43 B7)",
+        mock.payment_tx_count()
+    );
+    assert_eq!(consent.calls(), 0, "a retry asks for no consent");
+    match first {
+        Err(SealError::Storage(StorageError::Finalize { .. })) => {}
+        other => panic!("a retryable finalize failure surfaces as itself: {other:?}"),
+    }
+    with_journal(|journal| {
+        assert!(
+            journal.state(&seal_id).expect("state").is_incomplete(),
+            "the work stays incomplete, never abandoned"
+        );
+    });
+
+    let outcome = with_journal(|journal| {
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        block_on(pipeline.resume(&seal_id)).expect("the retry completes the seal")
+    });
+    assert!(!outcome.paid_here, "no money moved in this invocation");
+    assert_eq!(outcome.paid_atto, 0, "nothing paid here");
+    assert_eq!(mock.payment_tx_count(), 1, "exactly one payment, ever");
+    assert_eq!(consent.calls(), 0, "no consent prompt in either invocation");
+    assert!(mock.double_paid().is_empty());
+    with_journal(|journal| {
+        assert_eq!(journal.state(&seal_id).expect("state"), SealState::Complete);
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // The abandon guard (S11 accept row 3)
 // ─────────────────────────────────────────────────────────────────────
@@ -645,10 +699,12 @@ async fn seed_receipt(mock: &MockBackend) -> antseal_net::PaymentReceipt {
     mock.pay(&quote).await.expect("pay")
 }
 
-/// A backend whose **first** `finalize_batch` reports expired proofs (D37's
-/// ~24 h window), and which behaves normally afterwards. The mock cannot
-/// simulate node-side proof age, so the window is modelled at the boundary
-/// where it is actually observed.
+/// A backend whose **first** `finalize_batch` reports expired proofs, and
+/// which behaves normally afterwards. Since S43 the adapter returns
+/// `ProofsExpired` only when a majority of the storing peers refused the proof
+/// and the payment is more than 24 hours old by its block time
+/// (`antseal_net::put_policy`); the mock models neither peers nor blocks, so
+/// the verdict is modelled at the boundary where the pipeline observes it.
 struct ExpiringOnce<'m> {
     inner: &'m MockBackend,
     armed: std::cell::Cell<bool>,
@@ -685,6 +741,63 @@ impl StorageBackend for ExpiringOnce<'_> {
     ) -> Result<Vec<antseal_net::Address>, StorageError> {
         if self.armed.replace(false) {
             return Err(StorageError::ProofsExpired);
+        }
+        self.inner.finalize_batch(receipt, blobs).await
+    }
+
+    async fn get_data(&self, address: antseal_net::Address) -> Result<Vec<u8>, StorageError> {
+        self.inner.get_data(address).await
+    }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+        self.inner.balances().await
+    }
+}
+
+/// A backend whose **first** `finalize_batch` fails with the retryable
+/// `Finalize` error S43's adapter returns for a refusal that is not decisive,
+/// or one over a payment younger than a day — and which behaves normally
+/// afterwards.
+struct FinalizeFailsOnce<'m> {
+    inner: &'m MockBackend,
+    armed: std::cell::Cell<bool>,
+}
+
+impl<'m> FinalizeFailsOnce<'m> {
+    fn new(inner: &'m MockBackend) -> Self {
+        Self {
+            inner,
+            armed: std::cell::Cell::new(true),
+        }
+    }
+}
+
+impl StorageBackend for FinalizeFailsOnce<'_> {
+    async fn quote_batch(
+        &self,
+        blobs: &[antseal_net::Blob],
+    ) -> Result<antseal_net::CostQuote, StorageError> {
+        self.inner.quote_batch(blobs).await
+    }
+
+    async fn pay(
+        &self,
+        quote: &antseal_net::CostQuote,
+    ) -> Result<antseal_net::PaymentReceipt, StorageError> {
+        self.inner.pay(quote).await
+    }
+
+    async fn finalize_batch(
+        &self,
+        receipt: &antseal_net::PaymentReceipt,
+        blobs: &[antseal_net::Blob],
+    ) -> Result<Vec<antseal_net::Address>, StorageError> {
+        if self.armed.replace(false) {
+            return Err(StorageError::Finalize {
+                reason: "7 of 7 storing peers refused the payment proof, but the payment is not \
+                         more than 24 hours old by its block time"
+                    .to_owned(),
+            });
         }
         self.inner.finalize_batch(receipt, blobs).await
     }

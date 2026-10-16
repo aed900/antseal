@@ -34,15 +34,19 @@
 //!   abandonment (D36 rule 3): no state transition is written and the work
 //!   is resumable later at whatever the market then quotes.
 //!
-//! # The ~24 h post-pay window (D37)
+//! # A refused proof over a day-old payment (D37, D179)
 //!
-//! Journaled payment proofs are network-acceptable for about a day. Past
-//! that, storers reject them: the payment is stranded and completing the
-//! seal needs a *second* payment. That is never silent — the pipeline
-//! re-quotes and re-runs the consent gate with
-//! [`ConsentRequest::proofs_expired`] set, so the user is told that the
-//! already-spent ANT is gone and asked to authorize the new spend. One
-//! re-payment attempt per invocation; declining leaves the work incomplete.
+//! Finalize ends in the proofs-expired state only when a majority of the
+//! storing peers refused the journaled payment proof **and** the payment is
+//! more than 24 hours old by its block time (`antseal_net::put_policy`, S43).
+//! No pinned node rejects a proof on age, so the window is antseal's own; any
+//! other finalize failure is retried on the next run with no payment. In that
+//! state the payment is stranded and completing the seal needs a *second*
+//! payment. That is never silent — the pipeline re-quotes and re-runs the
+//! consent gate with [`ConsentRequest::proofs_expired`] set, so the user is
+//! told that the already-spent ANT is gone and asked to authorize the new
+//! spend. One re-payment attempt per invocation; declining leaves the work
+//! incomplete.
 
 use antseal_anchor::AnchorGate;
 use antseal_core::crypto::secrets::SealId;
@@ -273,8 +277,11 @@ where
 
         let addresses = match self.finalize(seal_id, &receipt, &blobs).await {
             Ok(addresses) => addresses,
-            // D37/D36: the ~24 h window passed. Never silent — re-quote,
+            // D37/D36/D179: a majority refused the proof and the payment is
+            // over 24 h old by its block time. Never silent — re-quote,
             // re-consent (with the stranded-payment warning), re-pay once.
+            // Only this arm pays again: a retryable finalize error (exit 23)
+            // returns below and is finalized again next run, paying nothing.
             Err(SealError::Storage(StorageError::ProofsExpired)) => {
                 let quote = self.backend.quote_batch(&blobs).await?;
                 self.barriers.at(Barrier::PostQuote)?;

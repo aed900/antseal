@@ -338,6 +338,12 @@ FOLLOW_EDGES: dict[tuple[str, str], str] = {
         "--build-only early return, so reached from the test job's page build. "
         "(wasm-imports.mjs is already a reader via wasm-bitmatch.sh; its own "
         "outbound edges are already in UNREACHED_EDGES.)",
+    # ── D182 / Q276 (wave 37): provisioning starts wasm-pack too ───────────────
+    ("scripts/wasm-tools-provision.sh", "scripts/wasm-pack-build.sh"):
+        "suppress_update_check runs `wasm-pack-build.sh --suppress-update-check` "
+        "before every wasm-pack process provisioning starts (the stamp's one "
+        "writer, D182/Q276); every workflow that provisions also builds, so this "
+        "edge adds no reader the build step had not already brought in.",
 }
 # Edges that exist in the file but are NOT reachable from the arguments ci.yml
 # actually passes. Each names why. If ci.yml ever gains the subcommand named
@@ -469,9 +475,6 @@ UNREACHED_EDGES: dict[tuple[str, str], str] = {
     # steps (see FOLLOW_EDGES above). These are the `scripts/x` literals in them
     # that the test job does NOT reach — prose, or code behind the --build-only
     # early return.
-    ("scripts/wasm-tools-provision.sh", "scripts/wasm-pack-build.sh"):
-        "header comment (:15) noting wasm-pack-build.sh `die`s when a tool is "
-        "missing; this script only `cargo install`s the tools and invokes nothing.",
     ("scripts/wasm-tools-provision.sh", "scripts/pages-publish.sh"):
         "header comment (:41) recording that this script's version grep was moved "
         "out of pages-publish.sh; a prose mention, not an invocation.",

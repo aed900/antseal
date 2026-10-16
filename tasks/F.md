@@ -749,3 +749,4 @@
   - A sweep for the same claim across `crates/antseal-core/src/` is run and its result recorded — one site or several, the number is measured rather than assumed.
   - No frozen bytes move: this is a doc comment, and the change must not touch anything the format-freeze guard compares.
 - Notes: **The same over-claim family as Q132/Q148/D114, but not the same defect.** Those three were about *miscited authority* — citing line 123's conditional compatibility rule as an unconditional immutability rule. This one is a **positive assertion that the condition is satisfied**, which is a step further and survives inside the very module whose citations were corrected. Both rest on D104 §1.5, which is why the fix is one citation rather than an argument.
+- Notes: **[2026-10-16, wave 37 — TICKED, lane L-HYG.]** Evidence on the `TODO.md` row; the lane's report (in the wave-37 backup) keeps the before/after texts, the plant messages and the test counts.

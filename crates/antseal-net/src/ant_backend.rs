@@ -50,10 +50,12 @@
 //! # The storage gate and the transport mode (D173 §2 R8–R10)
 //!
 //! Both storage constructors — the payer's and the reader's — consult
-//! [`crate::network::storage_gate`] as their first fallible step, then derive
-//! the transport mode from the peers (`client_config`), and only then open a
-//! socket. A shape scan in `tests/storage_gate.rs` holds that order in the
-//! default feature set, where this file is not even compiled.
+//! [`crate::network::storage_gate`] as their first fallible step, then
+//! [`crate::network::upstream_state`] (S42: an environment in which upstream
+//! would panic or write its state file under the current directory is refused),
+//! then derive the transport mode from the peers (`client_config`), and only
+//! then open a socket. A shape scan in `tests/storage_gate.rs` holds that order
+//! in the default feature set, where this file is not even compiled.
 //!
 //! # Payment mechanics (D37 Decision 2, D33 Decision 1)
 //!
@@ -122,7 +124,8 @@ use bytes::Bytes;
 
 use crate::backend::{BalanceReport, PreflightReport, allowance_to_approve};
 use crate::evm::to_evm_network;
-use crate::network::{NetworkConfig, PeerLocality, storage_gate};
+use crate::network::{NetworkConfig, PeerLocality, storage_gate, upstream_state};
+use crate::put_policy::{self, PayingTx, PutReply, PutTally, PutVerdict};
 use crate::quote::{
     BlobCost, BlobQuote, CostQuote, EncodedPeerId, PeerQuote, QuoteHash, QuotePaymentEntry,
     QuotePreimage, RewardsAddress, TxHash,
@@ -157,25 +160,9 @@ const PER_TX_BASE_GAS: u64 = 300_000;
 /// Per non-zero transfer marginal gas (vault record + token transfer).
 const PER_TRANSFER_GAS: u64 = 220_000;
 
-/// antseal's own conservative proof-age window (~24 h, D37 Decision 6).
-/// Used ONLY to classify a storer's payment-class PUT rejection as
-/// [`StorageError::ProofsExpired`] vs a generic finalize failure; never to
-/// gate anything pre-emptively — which is exactly why the S9 correction
-/// below costs nothing.
-///
-/// Value mirrors ant-core's client-side cache policy
-/// (`CACHED_PROOF_MAX_AGE_SECS = 24 * 60 * 60`,
-/// `ant-core-0.5.0/src/data/client/batch.rs:1051-1058`).
-///
-/// **[S9, 2026-08-02]** That upstream constant's doc claims to mirror
-/// `QUOTE_MAX_AGE_SECS` "in `ant-node/src/payment/verifier.rs`". No such
-/// constant exists in the pinned ant-node 0.15.0, and the single-node
-/// payment path applies no timestamp gate — so this is a **self-imposed**
-/// client policy, not a mirror of anything the network enforces. It stays:
-/// classification-only use makes a wrong guess cost one re-pay, and the
-/// mechanism could return upstream at any release. Evidence:
-/// `crates/antseal-net/tests/storage_constants.rs` module docs.
-const PROOF_VALIDITY_WINDOW_SECS: u64 = 24 * 60 * 60;
+// antseal's proof-age window (~24 h, D37 Decision 6) and the rule that reads
+// it moved to `crate::put_policy` with S43 (D179 R4): the verdict is pure and
+// lives in the default graph; this file only feeds it.
 
 /// Per-sub-batch journal capture hook (D37 Decision 2 / S7 timing
 /// contract): invoked with the **cumulative** receipt-so-far after each
@@ -234,38 +221,44 @@ pub struct AntCoreBackend {
 impl AntCoreBackend {
     /// Connect to the configured network and prepare the payment session.
     ///
-    /// The steps, in the order they run — the first two are pure, so **no
-    /// socket is opened until both have passed** (D173 §2 R10):
+    /// The steps, in the order they run — the first three are pure, so **no
+    /// socket is opened until all have passed** (D173 §2 R10):
     ///
     /// 1. The **storage gate** ([`crate::network::storage_gate`]): when armed,
     ///    a bootstrap set holding any non-loopback peer is refused here. It
     ///    must precede the `eth_chainId` call below, because for a public
     ///    network id that call reaches evmlib's compiled-in public RPC
     ///    whatever `config.rpc_url` says (`crate::evm::to_evm_network`).
-    /// 2. The **transport mode** (`client_config`, D173 §2 R8): loopback comes
+    /// 2. **Upstream's state directory** ([`crate::network::upstream_state`],
+    ///    S42, D178 R1): an environment in which the client would panic — after
+    ///    dialing — or write its `client_adaptive.json` under the current
+    ///    directory is refused here.
+    /// 3. The **transport mode** (`client_config`, D173 §2 R8): loopback comes
     ///    from the resolved peers, and a set no mode can dial — empty, mixed,
     ///    unspecified, port 0, repeated, or loopback under `arbitrum-one` — is
     ///    refused here, still before any socket.
-    /// 3. EVM side: the payment [`Wallet`] built from the vault-held key
+    /// 4. EVM side: the payment [`Wallet`] built from the vault-held key
     ///    handle (custody is U10/U13's; this takes the handle), plus the one
     ///    signing provider (module docs).
-    /// 4. Guard: the RPC's `eth_chainId` must equal `config.evm_chain_id` —
+    /// 5. Guard: the RPC's `eth_chainId` must equal `config.evm_chain_id` —
     ///    the wrong-network/wrong-Sepolia guard the `NetworkConfig` field
     ///    documents, shared with [`AntCoreReceiptReader::connect`].
-    /// 5. Autonomi side: `Client::connect` over `config.bootstrap`, then
+    /// 6. Autonomi side: `Client::connect` over `config.bootstrap`, then
     ///    `with_evm_network` (the external-signer driver — deliberately never
     ///    `with_wallet`, see module docs).
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] for the storage gate's refusal, a peer set no
-    /// transport mode can dial, and connect/transport/chain-id failures;
-    /// [`StorageError::Quote`] never (no quoting here).
+    /// [`StorageError::Network`] for the storage gate's refusal, the
+    /// upstream-state refusal, a peer set no transport mode can dial, and
+    /// connect/transport/chain-id failures; [`StorageError::Quote`] never (no
+    /// quoting here).
     pub async fn connect(
         config: &NetworkConfig,
         wallet_key: &WalletKey,
     ) -> Result<Self, StorageError> {
         consult_storage_gate(config)?;
+        consult_upstream_state()?;
         let client_config = client_config(config)?;
         let evm_network = to_evm_network(config).map_err(|e| StorageError::Network {
             reason: format!("network configuration rejected: {e}"),
@@ -493,68 +486,6 @@ impl AntCoreBackend {
             .flatten();
         Ok(receipt.map_or(0, |r| {
             u128::from(r.gas_used).saturating_mul(r.effective_gas_price)
-        }))
-    }
-
-    /// Store one blob's bytes+proof to its ordered PUT targets until
-    /// `CLOSE_GROUP_MAJORITY` peers accepted (the public-surface
-    /// replication of upstream's `pub(crate)` close-group PUT —
-    /// sequential with early exit; simple and deterministic).
-    async fn put_to_majority(
-        &self,
-        address: Address,
-        content: Bytes,
-        proof_bytes: &[u8],
-        targets: &[(
-            ant_protocol::transport::PeerId,
-            Vec<ant_protocol::transport::MultiAddr>,
-        )],
-        oldest_quote_unix_secs: u64,
-    ) -> Result<(), StorageError> {
-        if targets.is_empty() {
-            return Err(StorageError::Finalize {
-                reason: format!("no PUT targets available for blob at address {address}"),
-            });
-        }
-        let mut successes = 0usize;
-        let mut last_error: Option<StorageError> = None;
-        for (peer, addrs) in targets {
-            match self
-                .client
-                .chunk_put_with_proof(content.clone(), proof_bytes.to_vec(), peer, addrs)
-                .await
-            {
-                Ok(stored_at) => {
-                    // Upstream computes the address from the content it
-                    // stored; equality is the D32 rule holding.
-                    if stored_at != *address.as_bytes() {
-                        return Err(StorageError::Finalize {
-                            reason: format!(
-                                "network stored blob under a different address than the S4 \
-                                 recomputation for {address} — address-rule divergence"
-                            ),
-                        });
-                    }
-                    successes += 1;
-                    if successes >= CLOSE_GROUP_MAJORITY {
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    last_error = Some(classify_put_error(&e, address, oldest_quote_unix_secs));
-                    // ProofsExpired is terminal for the whole finalize —
-                    // every remaining PUT would be rejected the same way.
-                    if matches!(last_error, Some(StorageError::ProofsExpired)) {
-                        return Err(StorageError::ProofsExpired);
-                    }
-                }
-            }
-        }
-        Err(last_error.unwrap_or_else(|| StorageError::Finalize {
-            reason: format!(
-                "stored to {successes} of the required {CLOSE_GROUP_MAJORITY} peers for blob at \
-                 address {address}"
-            ),
         }))
     }
 }
@@ -940,13 +871,6 @@ impl StorageBackend for AntCoreBackend {
                 .ok_or_else(|| StorageError::Finalize {
                     reason: format!("no payment record for unstored blob at address {address}"),
                 })?;
-            let oldest_quote = record
-                .peer_quotes
-                .iter()
-                .map(|pq| pq.quote.timestamp_unix_secs)
-                .min()
-                .unwrap_or(0);
-
             // PUT targets: the same-process fast path uses the targets
             // staged by `pay`; a resumed process re-resolves them via an
             // unpaid quote round (D37 Decision 5 — the fresh plan's
@@ -978,12 +902,23 @@ impl StorageBackend for AntCoreBackend {
                 }
             };
 
-            self.put_to_majority(
+            let content = Bytes::copy_from_slice(blob.as_bytes());
+            let provider = &self.provider;
+            put_to_majority(
                 address,
-                Bytes::copy_from_slice(blob.as_bytes()),
-                &record.proof_bytes,
+                receipt,
+                record,
                 &targets,
-                oldest_quote,
+                |(peer, addrs)| {
+                    self.client.chunk_put_with_proof(
+                        content.clone(),
+                        record.proof_bytes.clone(),
+                        peer,
+                        addrs,
+                    )
+                },
+                |paying| paying_block_time(provider, paying),
+                now_unix_secs,
             )
             .await?;
         }
@@ -1074,8 +1009,9 @@ impl AntCoreReader {
     /// Nothing about the payment side of `config` is read: no RPC is dialed
     /// and no chain id is checked, because nothing this type does can reach
     /// a chain. Before `Client::connect`, and before any socket, the storage
-    /// gate is consulted first (D173 §2 R10) and then the transport mode is
-    /// derived from the peers — exactly as for the payer (`client_config`).
+    /// gate is consulted first (D173 §2 R10), then upstream's state directory
+    /// (S42), and then the transport mode is derived from the peers — exactly
+    /// as for the payer (`client_config`).
     ///
     /// # A connection that succeeded is not a network that answers
     ///
@@ -1095,11 +1031,12 @@ impl AntCoreReader {
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] for the storage gate's refusal, a peer set no
-    /// transport mode can dial, and when upstream cannot create or start the
-    /// client node.
+    /// [`StorageError::Network`] for the storage gate's refusal, the
+    /// upstream-state refusal, a peer set no transport mode can dial, and when
+    /// upstream cannot create or start the client node.
     pub async fn connect(config: &NetworkConfig) -> Result<Self, StorageError> {
         consult_storage_gate(config)?;
+        consult_upstream_state()?;
         let client_config = client_config(config)?;
         let client = Client::connect(&config.bootstrap, client_config)
             .await
@@ -1245,6 +1182,22 @@ impl AntCoreReceiptReader {
 /// [`storage_gate::REFUSAL`].
 fn consult_storage_gate(config: &NetworkConfig) -> Result<(), StorageError> {
     storage_gate::check(&config.bootstrap).map_err(|refusal| StorageError::Network {
+        reason: refusal.to_string(),
+    })
+}
+
+/// Upstream's state directory (S42, D178 R1) as both storage constructors
+/// consult it — **second**, right after the storage gate, and still before any
+/// socket.
+///
+/// `Client::connect` reads and, on drop, writes `client_adaptive.json` in a
+/// directory it finds through the environment; where that lookup would panic —
+/// after the client node has started and dialed — or would resolve a
+/// directory that is not absolute, this refuses instead, in the network
+/// class, so no new [`StorageError`] variant exists for it either. The reason
+/// begins with [`upstream_state::REFUSAL`].
+fn consult_upstream_state() -> Result<(), StorageError> {
+    upstream_state::check().map_err(|refusal| StorageError::Network {
         reason: refusal.to_string(),
     })
 }
@@ -1819,43 +1772,197 @@ fn map_ant_error(context: ErrContext, error: &AntError) -> StorageError {
     }
 }
 
-/// Classify a PUT failure during finalize: a **payment-class remote
-/// rejection** of a proof whose oldest quote has outlived the node-side
-/// validity window is the distinct proofs-expired stranded state (D37
-/// Decision 6); every other failure is a retryable finalize/network
-/// error.
-fn classify_put_error(
-    error: &AntError,
+/// Store one blob's bytes and proof to its ordered PUT targets until
+/// `CLOSE_GROUP_MAJORITY` stored — the public-surface replication of
+/// upstream's `pub(crate)` close-group PUT, sequential with early exit.
+///
+/// # A decline is one target's answer (S43, D179)
+///
+/// Each failed PUT becomes a [`PutReply`] ([`put_reply`]) and the round goes
+/// on to the next target — a payment-class decline included — stopping only at
+/// a majority of stores or when the targets run out, as upstream's own
+/// close-group PUT does (`ant-core-0.5.0/src/data/client/chunk.rs:36-79`). A
+/// round that falls short is judged by [`put_policy::verdict`]: the payment's
+/// block time is read through `block_time` only when the declines alone made
+/// the majority unreachable, and only that, with a payment more than 24 hours
+/// old, is [`StorageError::ProofsExpired`]. Every other shortfall is a
+/// [`StorageError::Finalize`], which resume answers by finalizing again and
+/// paying nothing.
+///
+/// This used to classify each payment-class reply on its own, by the age of
+/// the blob's **oldest quote** — a timestamp the quoting peer writes — and end
+/// the round at the first one classified as expired, so one hostile target
+/// first in line could abandon six that would have stored (S43's defect).
+///
+/// # The seam
+///
+/// `put` is one target's `chunk_put_with_proof`, `block_time` the payment RPC
+/// ([`paying_block_time`]) and `now` the clock, so the unit tests drive this
+/// loop with the replies the pinned client really produces.
+async fn put_to_majority<'t, T, P, PF, B, BF>(
     address: Address,
-    oldest_quote_unix_secs: u64,
-) -> StorageError {
-    let payment_class_rejection = matches!(
-        error,
+    receipt: &PaymentReceipt,
+    record: &BlobPaymentRecord,
+    targets: &'t [T],
+    mut put: P,
+    mut block_time: B,
+    now: impl FnOnce() -> u64,
+) -> Result<(), StorageError>
+where
+    P: FnMut(&'t T) -> PF,
+    PF: Future<Output = Result<[u8; 32], AntError>>,
+    B: FnMut(PayingTx) -> BF,
+    BF: Future<Output = Option<u64>>,
+{
+    if targets.is_empty() {
+        return Err(StorageError::Finalize {
+            reason: format!("no PUT targets available for blob at address {address}"),
+        });
+    }
+    let mut tally = PutTally::new(CLOSE_GROUP_MAJORITY);
+    let mut last_failure: Option<String> = None;
+    for target in targets {
+        match put(target).await {
+            Ok(stored_at) => {
+                // Upstream computes the address from the content it
+                // stored; equality is the D32 rule holding.
+                if stored_at != *address.as_bytes() {
+                    return Err(StorageError::Finalize {
+                        reason: format!(
+                            "network stored blob under a different address than the S4 \
+                             recomputation for {address} — address-rule divergence"
+                        ),
+                    });
+                }
+                tally.record(PutReply::Stored);
+                if tally.majority_stored() {
+                    return Ok(());
+                }
+            }
+            Err(error) => {
+                let reply = put_reply(&error);
+                tally.record(reply);
+                // A decline's own text is never kept: upstream payment
+                // errors can embed receipt material (module docs).
+                if reply == PutReply::Failed {
+                    last_failure = Some(failure_detail(&error));
+                }
+            }
+        }
+    }
+
+    // The payment's age is read only on the one path where it can matter.
+    let paid_at = if tally.declines_are_decisive() {
+        let mut block_times = Vec::new();
+        for paying in put_policy::paying_txs(receipt, record) {
+            block_times.push(block_time(paying).await);
+        }
+        put_policy::payment_time(&block_times)
+    } else {
+        None
+    };
+    match put_policy::verdict(&tally, paid_at, now()) {
+        PutVerdict::Stored => Ok(()),
+        PutVerdict::ProofsExpired => Err(StorageError::ProofsExpired),
+        PutVerdict::Retry => Err(StorageError::Finalize {
+            reason: retry_reason(address, &tally, paid_at.is_some(), last_failure.as_deref()),
+        }),
+    }
+}
+
+/// The adapter's half of the PUT verdict (D179 R4): one failed PUT, as the
+/// policy reads it. Payment-class — a structured `PaymentFailed`, or
+/// `PaymentRequired`, which upstream surfaces as `Error::Payment`
+/// (`ant-core-0.5.0/src/data/client/chunk.rs:580-581`) — is a decline; every
+/// other failure is a failure. These are the two arms upstream's own
+/// `classify_put_failure` calls a price-floor decline (`chunk.rs:64-84`).
+fn put_reply(error: &AntError) -> PutReply {
+    match error {
         AntError::RemotePut {
             source: ant_protocol::ProtocolError::PaymentFailed(_),
             ..
         }
-    ) || matches!(error, AntError::Payment(_));
-    if payment_class_rejection && quote_age_exceeds_window(oldest_quote_unix_secs, now_unix_secs())
-    {
-        return StorageError::ProofsExpired;
+        | AntError::Payment(_) => PutReply::Declined,
+        _ => PutReply::Failed,
     }
-    if payment_class_rejection {
-        return StorageError::Finalize {
-            reason: format!(
-                "a storer rejected the payment proof for the blob at {address} (detail \
-                 redacted: upstream payment errors can embed receipt material)"
-            ),
-        };
-    }
-    map_ant_error(ErrContext::Finalize, error)
 }
 
-/// The pure age rule behind the [`StorageError::ProofsExpired`]
-/// classification (unit-tested directly — a devnet cannot practically
-/// age quotes 24 h).
-fn quote_age_exceeds_window(quote_unix_secs: u64, now_unix_secs: u64) -> bool {
-    now_unix_secs.saturating_sub(quote_unix_secs) > PROOF_VALIDITY_WINDOW_SECS
+/// A non-payment PUT failure's text, through [`map_ant_error`]'s hygiene (the
+/// one place upstream error text is let through or redacted), without the
+/// class prefix the finalize error adds again.
+fn failure_detail(error: &AntError) -> String {
+    match map_ant_error(ErrContext::Finalize, error) {
+        StorageError::Network { reason }
+        | StorageError::Finalize { reason }
+        | StorageError::Quote { reason } => reason,
+        other => other.to_string(),
+    }
+}
+
+/// The finalize error of a round that fell short without an expired payment —
+/// counts and the chunk address only, never a receipt field.
+fn retry_reason(
+    address: Address,
+    tally: &PutTally,
+    paid_at_known: bool,
+    last_failure: Option<&str>,
+) -> String {
+    let tried = tally
+        .stored()
+        .saturating_add(tally.declined())
+        .saturating_add(tally.failed());
+    if tally.declines_are_decisive() {
+        let age = if paid_at_known {
+            "the payment is not more than 24 hours old by its block time"
+        } else {
+            "the payment's block time could not be read"
+        };
+        format!(
+            "{declined} of {tried} storing peers refused the payment proof for the blob at \
+             address {address}, but {age}, so it is not treated as expired: finalize again — \
+             no new payment is needed",
+            declined = tally.declined(),
+        )
+    } else {
+        let last =
+            last_failure.map_or_else(String::new, |detail| format!("; last failure: {detail}"));
+        format!(
+            "stored to {stored} of the required {majority} peers for blob at address {address} \
+             ({declined} declined the payment proof, {failed} failed{last}); finalize again — \
+             no new payment is needed",
+            stored = tally.stored(),
+            majority = tally.majority(),
+            declined = tally.declined(),
+            failed = tally.failed(),
+        )
+    }
+}
+
+/// The block timestamp of one transaction that paid for a blob, read over the
+/// payment RPC this session already holds (D179 R3): the journaled block
+/// number when the receipt has one, else the chain's transaction receipt;
+/// then that block's header.
+///
+/// `None` on any failure — an RPC error, a receipt or block the RPC does not
+/// show, a block it cannot parse. The policy reads `None` as **not** expired,
+/// so a failed read costs a retry and never a payment.
+async fn paying_block_time(provider: &DynProvider, paying: PayingTx) -> Option<u64> {
+    let block_number = match paying.block_number {
+        Some(number) => number,
+        None => {
+            let hash = alloy::primitives::B256::from(*paying.tx_hash.as_bytes());
+            provider
+                .get_transaction_receipt(hash)
+                .await
+                .ok()??
+                .block_number?
+        }
+    };
+    let block = provider
+        .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Number(block_number))
+        .await
+        .ok()??;
+    Some(block.header.timestamp)
 }
 
 fn now_unix_secs() -> u64 {
@@ -1881,25 +1988,6 @@ mod tests {
             }
             other => panic!("expected the typed Quote error, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn proof_expiry_classifier_uses_the_24h_window() {
-        let now = 2_000_000_000;
-        // Fresh quote: not expired.
-        assert!(!quote_age_exceeds_window(now - 60, now));
-        // Exactly at the window edge: not expired (strictly-greater rule).
-        assert!(!quote_age_exceeds_window(
-            now - PROOF_VALIDITY_WINDOW_SECS,
-            now
-        ));
-        // One second past: expired.
-        assert!(quote_age_exceeds_window(
-            now - PROOF_VALIDITY_WINDOW_SECS - 1,
-            now
-        ));
-        // Future-dated quote (clock skew): never "expired".
-        assert!(!quote_age_exceeds_window(now + 3_600, now));
     }
 
     #[test]
@@ -2167,5 +2255,593 @@ mod tests {
             consult_storage_gate(&with_peers(devnet_base(), &[])),
             Ok(())
         );
+    }
+
+    /// **S43 (D179), the adapter seam.** [`put_to_majority`] driven with the
+    /// replies the pinned client really produces — `AntError` values built
+    /// from upstream's public enum, in the shapes `chunk_put_with_proof`
+    /// returns them (`ant-core-0.5.0/src/data/client/chunk.rs:580-597`) — and
+    /// the payment RPC and the clock injected.
+    ///
+    /// Every blob here has quotes stamped **72 hours** ago: the quoting
+    /// peers' own field, which S43's defect read as the payment's age. The
+    /// block time the injected RPC reports is what the rows vary.
+    mod s43_seam {
+        use std::collections::BTreeMap;
+
+        use super::super::*;
+        use crate::put_policy::PayingTx;
+        use crate::test_util::block_on;
+
+        const NOW: u64 = 1_900_000_000;
+        const HOUR: u64 = 60 * 60;
+        const ADDRESS: [u8; 32] = [0x5A; 32];
+        const PAYING_TX: [u8; 32] = [0x7E; 32];
+        const PAYING_BLOCK: u64 = 4_242;
+
+        /// One target's answer, as a test spells it.
+        #[derive(Debug, Clone, Copy)]
+        enum Reply {
+            /// `ChunkPutResponse::Success`.
+            Store,
+            /// `ChunkPutResponse::PaymentRequired`, which upstream surfaces as
+            /// `Error::Payment` (`chunk.rs:580-581`).
+            PaymentRequired,
+            /// A structured `PaymentFailed` rejection (`chunk.rs:582-592`).
+            PaymentFailed,
+            /// The peer could not be reached at all.
+            Dial,
+        }
+
+        /// The upstream value a target's reply is, built afresh per call
+        /// (`AntError` is not `Clone`).
+        fn upstream(reply: Reply) -> Result<[u8; 32], AntError> {
+            match reply {
+                Reply::Store => Ok(ADDRESS),
+                Reply::PaymentRequired => Err(AntError::Payment(
+                    "Payment required: the paid quote's issuer is unknown here".into(),
+                )),
+                Reply::PaymentFailed => Err(AntError::RemotePut {
+                    address: "5a".repeat(32),
+                    source: ant_protocol::ProtocolError::PaymentFailed(
+                        "the proof's issuers are not close enough".into(),
+                    ),
+                }),
+                Reply::Dial => Err(AntError::Network(
+                    "Failed to send PUT to peer: no route".into(),
+                )),
+            }
+        }
+
+        /// A journaled receipt for one blob: one non-zero line, paid by one
+        /// transaction at [`PAYING_BLOCK`], and seven quotes stamped 72 h ago.
+        fn paid_blob() -> (PaymentReceipt, BlobPaymentRecord) {
+            let quote_hash = QuoteHash::from_bytes([0xA1; 32]);
+            let quote = |byte: u8| PeerQuote {
+                peer_id: EncodedPeerId::from_bytes([byte; 32]),
+                quote: QuotePreimage {
+                    content: Address::from_bytes(ADDRESS),
+                    timestamp_unix_secs: NOW - 72 * HOUR,
+                    price_atto: 100,
+                    rewards_address: RewardsAddress::from_bytes([byte; 20]),
+                    node_pub_key: vec![byte; 4],
+                    node_signature: vec![byte; 4],
+                    committed_key_count: 0,
+                    commitment_pin: None,
+                },
+            };
+            let record = BlobPaymentRecord {
+                address: Address::from_bytes(ADDRESS),
+                payments: vec![
+                    QuotePaymentEntry {
+                        quote_hash,
+                        rewards_address: RewardsAddress::from_bytes([0x01; 20]),
+                        amount_atto: 300,
+                        price_atto: 100,
+                    },
+                    QuotePaymentEntry {
+                        quote_hash: QuoteHash::from_bytes([0xA2; 32]),
+                        rewards_address: RewardsAddress::from_bytes([0x02; 20]),
+                        amount_atto: 0,
+                        price_atto: 100,
+                    },
+                ],
+                peer_quotes: (1..=7).map(quote).collect(),
+                commitment_sidecars: Vec::new(),
+                proof_bytes: vec![0x01, 0x02],
+            };
+            let receipt = PaymentReceipt {
+                blobs: vec![record.clone()],
+                tx_map: BTreeMap::from([(quote_hash, TxHash::from_bytes(PAYING_TX))]),
+                txs: vec![TxRecord {
+                    tx_hash: TxHash::from_bytes(PAYING_TX),
+                    block_number: Some(PAYING_BLOCK),
+                    status: TxStatus::Confirmed,
+                    quote_hashes: vec![quote_hash],
+                }],
+                storage_cost_atto: 300,
+                gas: GasSummary { gas_cost_wei: 0 },
+            };
+            (receipt, record)
+        }
+
+        /// What one round did: its result, how many targets were sent the
+        /// chunk, and which paying transactions the RPC was asked about.
+        struct Round {
+            outcome: Result<(), StorageError>,
+            puts: usize,
+            asked: Vec<PayingTx>,
+        }
+
+        /// Run [`put_to_majority`] over `targets`, with the RPC answering
+        /// `block_time` for the paying block.
+        fn round(targets: &[Reply], block_time: Option<u64>) -> Round {
+            let (receipt, record) = paid_blob();
+            let mut puts = 0usize;
+            let mut asked = Vec::new();
+            let outcome = block_on(put_to_majority(
+                Address::from_bytes(ADDRESS),
+                &receipt,
+                &record,
+                targets,
+                |reply: &Reply| {
+                    puts += 1;
+                    let answer = upstream(*reply);
+                    async move { answer }
+                },
+                |paying: PayingTx| {
+                    asked.push(paying);
+                    async move { block_time }
+                },
+                || NOW,
+            ));
+            Round {
+                outcome,
+                puts,
+                asked,
+            }
+        }
+
+        fn the_paying_tx() -> PayingTx {
+            PayingTx {
+                tx_hash: TxHash::from_bytes(PAYING_TX),
+                block_number: Some(PAYING_BLOCK),
+            }
+        }
+
+        /// **S43 Accept 1 (B1).** One peer with an old timestamp declines on
+        /// payment grounds, first in line; the six behind it would store. The
+        /// round must store at the fourth store — five PUTs — never yield
+        /// `ProofsExpired`, and never even ask the chain how old the payment
+        /// is. Both decline shapes upstream produces.
+        #[test]
+        fn s43_b1_one_hostile_decline_is_one_targets_answer_not_an_expired_payment() {
+            for decline in [Reply::PaymentRequired, Reply::PaymentFailed] {
+                let mut targets = vec![decline];
+                targets.extend([Reply::Store; 6]);
+                let run = round(&targets, Some(NOW - HOUR));
+                if let Err(error) = &run.outcome {
+                    panic!(
+                        "one hostile decline ({decline:?}) aborted the PUT as {error:?} after {} \
+                         of 7 targets (S43)",
+                        run.puts
+                    );
+                }
+                assert_eq!(
+                    run.puts, 5,
+                    "one decline, then the four stores a majority needs ({decline:?})"
+                );
+                assert!(
+                    run.asked.is_empty(),
+                    "a round that stored never asks the payment's age: {:?}",
+                    run.asked
+                );
+            }
+        }
+
+        /// **S43 B2.** Every target declines, but the payment is an hour old
+        /// by its block time: a retryable finalize, never `ProofsExpired` —
+        /// the quotes' 72-hour-old stamps are not an input.
+        #[test]
+        fn s43_b2_a_declining_majority_over_a_young_payment_is_a_retry() {
+            let targets = [
+                Reply::PaymentRequired,
+                Reply::PaymentFailed,
+                Reply::PaymentRequired,
+                Reply::PaymentFailed,
+                Reply::PaymentRequired,
+                Reply::PaymentFailed,
+                Reply::PaymentRequired,
+            ];
+            let run = round(&targets, Some(NOW - HOUR));
+            match &run.outcome {
+                Err(StorageError::Finalize { reason }) => assert!(
+                    reason.contains("7 of 7")
+                        && reason.contains("not more than 24 hours old")
+                        && !reason.contains("issuer"),
+                    "the retry names the declines and the payment's age, and no decline's own \
+                     text (it can embed receipt material): {reason}"
+                ),
+                other => panic!("a hostile majority expired a payment at 1 h chain age: {other:?}"),
+            }
+            assert_eq!(run.puts, 7, "every target is tried");
+            assert_eq!(
+                run.asked,
+                [the_paying_tx()],
+                "the chain is asked once, about the blob's paying transaction"
+            );
+        }
+
+        /// **S43 B3.** Two declines and five unreachable peers, payment a day
+        /// and an hour old: the declines did not make the majority
+        /// unreachable, so this is a retry — and the payment's age is never
+        /// read.
+        #[test]
+        fn s43_b3_declines_that_are_not_decisive_are_a_retry() {
+            // The last reply is a decline, so a loop that kept "the last error"
+            // would carry a decline's text where the dial failure's belongs.
+            let targets = [
+                Reply::Dial,
+                Reply::PaymentRequired,
+                Reply::Dial,
+                Reply::Dial,
+                Reply::Dial,
+                Reply::Dial,
+                Reply::PaymentFailed,
+            ];
+            let run = round(&targets, Some(NOW - 25 * HOUR));
+            match &run.outcome {
+                Err(StorageError::Finalize { reason }) => assert!(
+                    reason.contains("stored to 0 of the required 4")
+                        && reason.contains("2 declined")
+                        && reason.contains("5 failed")
+                        && reason.contains("Failed to send PUT to peer")
+                        && !reason.contains("issuer"),
+                    "the retry names the tally and the last non-payment failure, never a \
+                     decline's own text: {reason}"
+                ),
+                other => panic!("declines not decisive, yet {other:?}"),
+            }
+            assert_eq!(run.puts, 7);
+            assert!(
+                run.asked.is_empty(),
+                "the age is read only when the declines are decisive: {:?}",
+                run.asked
+            );
+        }
+
+        /// **S43 B4, the positive row.** Four declines and three stores, the
+        /// payment a day and an hour old by its block time: `ProofsExpired`.
+        #[test]
+        fn s43_b4_a_declining_majority_over_an_old_payment_is_proofs_expired() {
+            let targets = [
+                Reply::Store,
+                Reply::PaymentRequired,
+                Reply::Store,
+                Reply::PaymentFailed,
+                Reply::PaymentRequired,
+                Reply::Store,
+                Reply::PaymentFailed,
+            ];
+            let run = round(&targets, Some(NOW - 25 * HOUR));
+            assert_eq!(run.outcome, Err(StorageError::ProofsExpired));
+            assert_eq!(run.puts, 7);
+            assert_eq!(run.asked, [the_paying_tx()]);
+        }
+
+        /// **S43 B5.** Every target declines and the RPC cannot say when the
+        /// payment was made: a retry, never a payment.
+        #[test]
+        fn s43_b5_an_unreadable_block_time_is_a_retry() {
+            let run = round(&[Reply::PaymentRequired; 7], None);
+            match &run.outcome {
+                Err(StorageError::Finalize { reason }) => assert!(
+                    reason.contains("could not be read"),
+                    "the retry says the payment's age is unknown: {reason}"
+                ),
+                other => panic!("unreadable block time re-pays: {other:?}"),
+            }
+            assert_eq!(run.asked, [the_paying_tx()]);
+        }
+
+        /// The address re-check still holds inside the round (D32): a target
+        /// naming another address ends it, whatever came before.
+        #[test]
+        fn s43_a_store_under_another_address_is_still_a_divergence() {
+            let (receipt, record) = paid_blob();
+            let outcome = block_on(put_to_majority(
+                Address::from_bytes(ADDRESS),
+                &receipt,
+                &record,
+                &[0u8],
+                |_| async { Ok::<[u8; 32], AntError>([0x00; 32]) },
+                |_| async { Some(NOW) },
+                || NOW,
+            ));
+            match outcome {
+                Err(StorageError::Finalize { reason }) => {
+                    assert!(reason.contains("address-rule divergence"), "{reason}");
+                }
+                other => panic!("a divergent address must end the round: {other:?}"),
+            }
+        }
+    }
+
+    /// **S43 (D179 R3), the block-time read.** [`paying_block_time`] over the
+    /// same key-less provider type the payer's RPC rides, against a loopback
+    /// JSON-RPC stub that serves an Arbitrum-shaped block (its extra
+    /// `l1BlockNumber`, `sendCount` and `sendRoot` fields included) and an
+    /// Arbitrum-shaped transaction receipt. Nothing here leaves loopback.
+    mod s43_block_time {
+        use std::io::{Read, Write};
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread::JoinHandle;
+        use std::time::Duration;
+
+        use super::super::*;
+        use crate::put_policy::PayingTx;
+
+        const BLOCK: u64 = 0x1092;
+        const BLOCK_TIMESTAMP: u64 = 0x6553_f100;
+        const TX: [u8; 32] = [0x7E; 32];
+
+        fn hex32(byte: u8) -> String {
+            format!("0x{}", format!("{byte:02x}").repeat(32))
+        }
+
+        /// A block as Arbitrum One's RPC shapes it; the values are synthetic.
+        fn arbitrum_block() -> serde_json::Value {
+            serde_json::json!({
+                "baseFeePerGas": "0x989680",
+                "difficulty": "0x1",
+                "extraData": hex32(0x11),
+                "gasLimit": "0x4000000000000",
+                "gasUsed": "0x1a8f4",
+                "hash": hex32(0x22),
+                "l1BlockNumber": "0x1438b2c",
+                "logsBloom": format!("0x{}", "00".repeat(256)),
+                "miner": "0xa4b000000000000000000073657175656e636572",
+                "mixHash": hex32(0x33),
+                "nonce": "0x00000000001d4d4a",
+                "number": format!("{BLOCK:#x}"),
+                "parentHash": hex32(0x44),
+                "receiptsRoot": hex32(0x55),
+                "sendCount": "0x1d4d4a",
+                "sendRoot": hex32(0x66),
+                "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+                "size": "0x30f",
+                "stateRoot": hex32(0x77),
+                "timestamp": format!("{BLOCK_TIMESTAMP:#x}"),
+                "totalDifficulty": "0x1092",
+                "transactions": [hex32(0x7e)],
+                "transactionsRoot": hex32(0x88),
+                "uncles": []
+            })
+        }
+
+        /// A transaction receipt as Arbitrum One's RPC shapes it.
+        fn arbitrum_receipt() -> serde_json::Value {
+            serde_json::json!({
+                "blockHash": hex32(0x22),
+                "blockNumber": format!("{BLOCK:#x}"),
+                "contractAddress": null,
+                "cumulativeGasUsed": "0x1a8f4",
+                "effectiveGasPrice": "0x989680",
+                "from": "0x1111111111111111111111111111111111111111",
+                "gasUsed": "0x1a8f4",
+                "gasUsedForL1": "0x2f1",
+                "l1BlockNumber": "0x1438b2c",
+                "logs": [],
+                "logsBloom": format!("0x{}", "00".repeat(256)),
+                "status": "0x1",
+                "to": "0x9a3ecac693b699fc0b2b6a50b5549e50c2320a26",
+                "transactionHash": hex32(0x7e),
+                "transactionIndex": "0x1",
+                "type": "0x2"
+            })
+        }
+
+        /// What the stub answers.
+        #[derive(Clone, Copy)]
+        enum Serve {
+            /// The block and the receipt above.
+            Arbitrum,
+            /// `null` for everything: the RPC does not show them.
+            Nothing,
+        }
+
+        /// A loopback JSON-RPC stub that records each method it is asked.
+        struct Stub {
+            address: SocketAddr,
+            methods: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
+            stop: Arc<AtomicBool>,
+            thread: Option<JoinHandle<()>>,
+        }
+
+        impl Stub {
+            fn start(serve: Serve) -> Self {
+                let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+                let address = listener.local_addr().expect("the listener's address");
+                let methods = Arc::new(Mutex::new(Vec::new()));
+                let stop = Arc::new(AtomicBool::new(false));
+                let thread = {
+                    let methods = Arc::clone(&methods);
+                    let stop = Arc::clone(&stop);
+                    std::thread::spawn(move || {
+                        for stream in listener.incoming() {
+                            if stop.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            if let Ok(mut stream) = stream {
+                                drop(answer(&mut stream, serve, &methods));
+                            }
+                        }
+                    })
+                };
+                Self {
+                    address,
+                    methods,
+                    stop,
+                    thread: Some(thread),
+                }
+            }
+
+            fn provider(&self) -> DynProvider {
+                let url: url::Url = format!("http://{}/", self.address)
+                    .parse()
+                    .expect("a loopback URL parses");
+                http_provider(url).erased()
+            }
+
+            fn methods(&self) -> Vec<(String, serde_json::Value)> {
+                match self.methods.lock() {
+                    Ok(methods) => methods.clone(),
+                    Err(poisoned) => poisoned.into_inner().clone(),
+                }
+            }
+        }
+
+        impl Drop for Stub {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::SeqCst);
+                drop(TcpStream::connect(self.address));
+                if let Some(thread) = self.thread.take() {
+                    drop(thread.join());
+                }
+            }
+        }
+
+        fn answer(
+            stream: &mut TcpStream,
+            serve: Serve,
+            methods: &Mutex<Vec<(String, serde_json::Value)>>,
+        ) -> std::io::Result<()> {
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let header_end = loop {
+                let read = stream.read(&mut chunk)?;
+                if read == 0 {
+                    return Ok(());
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break at + 4;
+                }
+            };
+            let head = String::from_utf8_lossy(&buffer[..header_end]).to_ascii_lowercase();
+            let length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            while buffer.len() < header_end + length {
+                let read = stream.read(&mut chunk)?;
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            let body_end = (header_end + length).min(buffer.len());
+            let request: serde_json::Value =
+                serde_json::from_slice(&buffer[header_end..body_end]).unwrap_or_default();
+            let method = request["method"].as_str().unwrap_or_default().to_owned();
+            let result = match (serve, method.as_str()) {
+                (Serve::Arbitrum, "eth_getBlockByNumber") => arbitrum_block(),
+                (Serve::Arbitrum, "eth_getTransactionReceipt") => arbitrum_receipt(),
+                _ => serde_json::Value::Null,
+            };
+            match methods.lock() {
+                Ok(mut seen) => seen.push((method, request["params"].clone())),
+                Err(poisoned) => poisoned
+                    .into_inner()
+                    .push((method, request["params"].clone())),
+            }
+            let reply = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": result,
+            })
+            .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{reply}",
+                reply.len()
+            )?;
+            stream.flush()
+        }
+
+        /// The journaled block number is used as it is: one call, the block.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s43_the_paying_block_time_is_the_blocks_own_timestamp() {
+            let stub = Stub::start(Serve::Arbitrum);
+            let time = paying_block_time(
+                &stub.provider(),
+                PayingTx {
+                    tx_hash: TxHash::from_bytes(TX),
+                    block_number: Some(BLOCK),
+                },
+            )
+            .await;
+            assert_eq!(time, Some(BLOCK_TIMESTAMP));
+            let methods = stub.methods();
+            assert_eq!(methods.len(), 1, "{methods:?}");
+            assert_eq!(methods[0].0, "eth_getBlockByNumber");
+            assert_eq!(methods[0].1[0], serde_json::json!(format!("{BLOCK:#x}")));
+        }
+
+        /// A journal-first record with no block number: the chain's receipt
+        /// supplies it, then the block its time.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s43_an_unknown_block_number_is_read_from_the_chains_receipt() {
+            let stub = Stub::start(Serve::Arbitrum);
+            let time = paying_block_time(
+                &stub.provider(),
+                PayingTx {
+                    tx_hash: TxHash::from_bytes(TX),
+                    block_number: None,
+                },
+            )
+            .await;
+            assert_eq!(time, Some(BLOCK_TIMESTAMP));
+            let asked: Vec<String> = stub
+                .methods()
+                .into_iter()
+                .map(|(method, _)| method)
+                .collect();
+            assert_eq!(asked, ["eth_getTransactionReceipt", "eth_getBlockByNumber"]);
+        }
+
+        /// An RPC that shows neither the receipt nor the block, and one that
+        /// is not there at all: no time — which the policy reads as not
+        /// expired.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s43_a_time_the_rpc_cannot_give_is_none() {
+            let stub = Stub::start(Serve::Nothing);
+            for block_number in [Some(BLOCK), None] {
+                let paying = PayingTx {
+                    tx_hash: TxHash::from_bytes(TX),
+                    block_number,
+                };
+                assert_eq!(paying_block_time(&stub.provider(), paying).await, None);
+            }
+            let dead = {
+                let listener =
+                    TcpListener::bind("127.0.0.1:0").expect("bind a loopback probe listener");
+                listener.local_addr().expect("the probe's address")
+            };
+            let url: url::Url = format!("http://{dead}/")
+                .parse()
+                .expect("a loopback URL parses");
+            let provider = http_provider(url).erased();
+            let paying = PayingTx {
+                tx_hash: TxHash::from_bytes(TX),
+                block_number: Some(BLOCK),
+            };
+            assert_eq!(paying_block_time(&provider, paying).await, None);
+        }
     }
 }

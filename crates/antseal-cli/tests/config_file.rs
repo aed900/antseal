@@ -123,7 +123,6 @@ fn full_schema_parses_with_every_slot() {
 default_network = "devnet"
 
 [networks.arbitrum-one]
-rpc_url = "https://my-node.example/rpc"
 bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 
 [anchors]
@@ -135,10 +134,6 @@ arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
 "#;
     let config = parse(text).expect("full schema parses");
     assert_eq!(config.default_network, Some(NetworkId::Devnet));
-    assert_eq!(
-        config.rpc_url_override(NetworkId::ArbitrumOne),
-        Some("https://my-node.example/rpc")
-    );
     // D173 §2 R4: the peer override, carried as parsed socket addresses.
     assert_eq!(
         config.arbitrum_one_bootstrap.as_ref().map(Vec::len),
@@ -266,9 +261,11 @@ fn malformed_configs_fail_with_line_and_problem() {
             "[networks.ropsten]\nrpc_url = \"https://x.example\"\n",
             "not a known network",
         ),
+        // U94 (D180): the key is retired, so a well-formed value is refused
+        // too — by name, never by its value.
         (
-            "[networks.devnet]\nrpc_url = \"ftp://x\"\n",
-            "http:// or https://",
+            "[networks.devnet]\nrpc_url = \"https://x.example\"\n",
+            "`rpc_url`",
         ),
         (
             "[anchors]\ntsa_urls = [\"gopher://x\"]\n",
@@ -597,6 +594,175 @@ fn a_bad_bootstrap_override_is_exit_17_before_any_command_runs() {
         out.status.code(),
         Some(4),
         "a valid override loads and the handler's own code follows"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U94 (D180) — `[networks.<id>] rpc_url`, retired and refused at load
+// ─────────────────────────────────────────────────────────────────────
+
+/// What a refusal must never repeat. A provider's RPC URL carries its API key
+/// in the path, so the canary sits exactly there. NON-SECRET: a marker string,
+/// not a key.
+const RPC_URL_CANARY: &str = "NOT-A-KEY-canary";
+
+/// **U94 (D180 U94 R1, R2).** `rpc_url` under every network's table is a
+/// malformed config that names the key, the table and the line — and never
+/// the value, whatever shape it is written in. The unquoted shape is the one
+/// that pins *where* the refusal is raised: the subset's own *not a quoted
+/// string* error repeats the raw value it rejects, so a refusal raised after
+/// the value is parsed would echo the URL for exactly the typo a user makes
+/// most. The section name is judged first: an unknown network keeps its own
+/// answer.
+#[test]
+fn rpc_url_is_refused_at_load_under_every_network() {
+    let shapes = [
+        (
+            "a basic string",
+            format!("\"https://rpc.example/v2/{RPC_URL_CANARY}\""),
+        ),
+        (
+            "a literal string",
+            format!("'https://rpc.example/v2/{RPC_URL_CANARY}'"),
+        ),
+        (
+            "an unquoted value",
+            format!("https://rpc.example/v2/{RPC_URL_CANARY}"),
+        ),
+        (
+            "an array",
+            format!("[\"https://rpc.example/v2/{RPC_URL_CANARY}\"]"),
+        ),
+        (
+            "a non-http URL",
+            format!("\"ftp://rpc.example/{RPC_URL_CANARY}\""),
+        ),
+    ];
+    for network in ["arbitrum-one", "arbitrum-sepolia", "devnet"] {
+        for (shape, value) in &shapes {
+            let text = format!("[networks.{network}]\nrpc_url = {value}\n");
+            let err = parse(&text).expect_err("`rpc_url` must be refused at load");
+            assert!(
+                !err.detail.contains(RPC_URL_CANARY),
+                "[networks.{network}], {shape}: the refusal must not echo the value: an RPC \
+                 URL often carries an API key: {}",
+                err.detail
+            );
+            assert_eq!(
+                err.line, 2,
+                "[networks.{network}], {shape}: the key's line is named: {err:?}"
+            );
+            assert!(
+                err.detail.contains("`rpc_url`"),
+                "[networks.{network}], {shape}: names the key: {}",
+                err.detail
+            );
+            assert!(
+                err.detail.contains(&format!("[networks.{network}]")),
+                "[networks.{network}], {shape}: names the table: {}",
+                err.detail
+            );
+        }
+    }
+
+    // The line is the KEY's, not the header's plus one: below a comment and a
+    // key that loads, the refusal still lands on the `rpc_url` line.
+    let text = format!(
+        "# operator notes\n[networks.arbitrum-one]\nbootstrap = [\"192.0.2.10:10000\"]\n\
+         rpc_url = \"https://rpc.example/v2/{RPC_URL_CANARY}\"\n"
+    );
+    let err = parse(&text).expect_err("`rpc_url` beside a valid key is still refused");
+    assert_eq!(err.line, 4, "the `rpc_url` line is named: {err:?}");
+
+    // R2: the section name is validated before the key is refused.
+    let text =
+        format!("[networks.ropsten]\nrpc_url = \"https://rpc.example/v2/{RPC_URL_CANARY}\"\n");
+    let err = parse(&text).expect_err("an unknown network is refused");
+    assert!(
+        err.detail.contains("not a known network") && err.detail.contains("ropsten"),
+        "an unknown network keeps its own answer: {}",
+        err.detail
+    );
+    assert!(
+        !err.detail.contains(RPC_URL_CANARY),
+        "…which does not echo the value either: {}",
+        err.detail
+    );
+}
+
+/// **U94 (D180) — raised before dispatch, so before any passphrase.** Through
+/// the binary: an `rpc_url` key is the malformed-config code (17) with its
+/// envelope, on a command that needs no vault and never prompts (`verify`'s
+/// own code would be 4 — the bundle does not exist — so the 17 is the config
+/// loader's). Neither the `--json` document nor plain mode's stderr carries
+/// the value. The control is the same vehicle over a config without the key.
+#[test]
+fn an_rpc_url_key_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("rpc-url-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    std::fs::write(
+        layout.beside_path(BesideFile::Config),
+        format!(
+            "default_network = \"arbitrum-one\"\n\n[networks.arbitrum-one]\n\
+             rpc_url = \"https://rpc.example/v2/{RPC_URL_CANARY}\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(17),
+        "malformed-config code; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+            .expect("one JSON document");
+    assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+    let message = doc["error"]["message"].as_str().expect("a message");
+    assert!(
+        message.contains("`rpc_url`") && message.contains("[networks.arbitrum-one]"),
+        "names the key and the table: {message}"
+    );
+    assert!(
+        message.contains("config.toml:4"),
+        "names the line: {message}"
+    );
+    for (stream, bytes) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(RPC_URL_CANARY),
+            "--json {stream} must not carry the value: {text}"
+        );
+    }
+
+    // Plain mode: the same code, the refusal on stderr, still without the value.
+    let out = spawn(&root, &["verify", "b.sealproof"]);
+    assert_eq!(out.status.code(), Some(17), "plain mode: the same code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("`rpc_url`"),
+        "plain stderr names the key: {stderr}"
+    );
+    assert!(
+        !stderr.contains(RPC_URL_CANARY),
+        "plain stderr must not carry the value: {stderr}"
+    );
+    assert!(out.stdout.is_empty(), "plain mode prints nothing on stdout");
+
+    // The control: the same vehicle over the same file without the key.
+    std::fs::write(
+        layout.beside_path(BesideFile::Config),
+        "default_network = \"arbitrum-one\"\n",
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "without the key the config loads and the handler's own code follows"
     );
 }
 

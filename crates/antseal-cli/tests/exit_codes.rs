@@ -393,7 +393,7 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             CliError::from(antseal_cli::pipeline::reveal::RevealError::Unfetchable {
                 unit_id: 3,
                 detail: antseal_net::StorageError::Network {
-                    reason: antseal_cli::backend::BackendArm::NotCompiled.message("reveal"),
+                    reason: antseal_cli::backend::no_backend_message("reveal"),
                 }
                 .to_string(),
             }),

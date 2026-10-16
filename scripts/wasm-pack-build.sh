@@ -5,26 +5,49 @@
 #   ./scripts/wasm-pack-build.sh --check      same, explicitly
 #   ./scripts/wasm-pack-build.sh --build-only  build, no boundary comparison
 #   ./scripts/wasm-pack-build.sh --self-test  the checks' own planted faults
+#   ./scripts/wasm-pack-build.sh --suppress-update-check
+#                                 write wasm-pack's update stamp and print its
+#                                 path, nothing else (wasm-tools-provision.sh)
 #
-# Exit 0 = the artifact exists, imports nothing outside the allow-list, carries
-# no path from the machine that built it, and produces reports byte-identical
-# to native over R9's corpus.
+# Exit 0 = the artifact exists, wasm-pack made no crates.io call while building
+# it, it imports nothing outside the allow-list, carries no path from the
+# machine that built it, and produces reports byte-identical to native over
+# R9's corpus.
 #
-# ── The build is HERMETIC, and both flags are load-bearing ─────────────────
+# ── What keeps the network out of the build, and what does not ─────────────
 #
-# MEASURED 2026-08-12 (R22's first act, D18 §7 P5 asked for exactly this):
-# with every proxy variable pointed at a dead port, `wasm-pack build --release`
-# still reached the network and downloaded a `wasm-opt` binary — binaryen
-# **version 117, dated 2024-02-28** — into `~/.cache/.wasm-pack/`, then ran it.
-# Nothing in this repository pins binaryen and `which wasm-opt` is empty, so
-# that download is an unpinned, unreviewed program editing the artifact whose
-# SHA-256 the page publishes about itself. It breaches D63 §5 R5's "no network
-# access during the build" fence and docs/dependency-policy.md §5's
-# "exact-pinned wherever installed".
+# [CORRECTED 2026-10-16, D182/Q276.] This heading read "The build is HERMETIC,
+# and both flags are load-bearing". It was not: wasm-pack 0.15.0 itself called
+# crates.io on every invocation (the third item below) — a successful call is
+# on record 40 s after wave 36's commit. What this script ENFORCES now:
 #
-#   --no-opt          does not run wasm-opt at all
-#   --mode no-install does not fetch a wasm-bindgen-cli either; the one on
-#                     PATH is used, and its version is asserted below
+#   --no-opt          wasm-opt never runs, so no binaryen is downloaded
+#   --mode no-install no wasm-bindgen-cli is fetched; the one on PATH is used,
+#                     and its version is asserted below
+#   the update stamp  wasm-pack's crates.io version check never runs, and the
+#                     stamp is read back after the build to prove it
+#                     (`suppress_update_check`, below)
+#
+# What it does NOT enforce: cargo. `--locked` pins every crate to its
+# Cargo.lock checksum, but on a COLD registry cache — a fresh runner, which is
+# what pages.yml's `publish` job always is, since it restores no cache (D171)
+# — cargo downloads those crates from crates.io inside `wasm-pack build`. So
+# D63 §5 R5's "no network access during the build" holds here only with a warm
+# cache. MEASURED 2026-10-16 (D182 R2): with a warm cache, this script's
+# `--build-only` over a `git archive` of fbcee1e completed in 170 s inside a
+# loopback-only network namespace (`unshare -rn`) with CARGO_NET_OFFLINE=true,
+# the stamp unchanged, and the module byte-identical to an in-tree build of
+# the same commit (SHA-256 b9f84e3d…, 1 867 870 B).
+#
+# The first two flags, MEASURED 2026-08-12 (R22's first act, D18 §7 P5 asked
+# for exactly this): with every proxy variable pointed at a dead port,
+# `wasm-pack build --release` still reached the network and downloaded a
+# `wasm-opt` binary — binaryen **version 117, dated 2024-02-28** — into
+# `~/.cache/.wasm-pack/`, then ran it. Nothing in this repository pins binaryen
+# and `which wasm-opt` is empty, so that download is an unpinned, unreviewed
+# program editing the artifact whose SHA-256 the page publishes about itself.
+# It breaches D63 §5 R5's "no network access during the build" fence and
+# docs/dependency-policy.md §5's "exact-pinned wherever installed".
 #
 # Cost of the choice, measured on this 2-core host: 1.84 MB unoptimized
 # against 1.53 MB optimized, and 2.8 s against 3 m 05 s. Re-enabling the
@@ -147,6 +170,64 @@ check_toolchain() {
     "$have_bindgen" "$want_bindgen" "$have_pack" "$want_pack"
 }
 
+# ── wasm-pack's own crates.io call, SUPPRESSED (D182, task Q276) ───────────
+#
+# wasm-pack 0.15.0 asks crates.io for its newest version on EVERY invocation,
+# `--version` included: `run()` starts a detached thread before it parses its
+# arguments (src/main.rs:25-42, :61), which reaches
+# `Crate::return_wasm_pack_latest_version` (src/manifest/mod.rs:149-170) and
+# GETs https://crates.io/api/v1/crates/wasm-pack through ureq 2.12.1 and the
+# tool's own rustls 0.23.40 (:237-250) — the only runtime path by which a page
+# build ever reached either tool's TLS stack (RUSTSEC-2026-0285 matches it).
+# The one thing that skips the call is the stamp wasm-pack keeps BESIDE ITS
+# OWN EXECUTABLE, `current_exe().with_extension("stamp")`:
+#
+#   no stamp                    -> call, then write `created <now>`
+#   `created` under 24 h old    -> no call
+#   `created` older than that   -> call, then rewrite `created <now>`
+#   `created` that cannot parse -> Ok(None): NO call, and no rewrite (:158-166)
+#
+# Every call it makes rewrites the stamp, success or failure (:172-183). So
+# this script writes a stamp whose `created` cannot parse, beside the
+# executable PATH resolves to (through symlinks, as Linux resolves
+# `current_exe` via /proc/self/exe), BEFORE its first wasm-pack invocation, and
+# reads it back after the build: unchanged bytes mean wasm-pack made no call
+# in this run. A stamp it cannot write, or one that moved, fails the build.
+#
+# The stamp lives OUTSIDE the repository — beside the binary, in ~/.cargo/bin
+# for a `cargo install`ed wasm-pack, locally and on a runner alike — and it
+# outlives the run, so no later wasm-pack invocation on that machine checks for
+# updates either. That is the point; it is said here because it is a write
+# outside the tree.
+UPDATE_STAMP_TEXT='created never (the crates.io update check is suppressed by scripts/wasm-pack-build.sh: D182, task Q276; D63 sec. 5 R5)'
+UPDATE_STAMP=""
+
+stamp_for() { # $1 = the resolved executable -> Rust's Path::with_extension("stamp")
+  local dir="${1%/*}" base="${1##*/}"
+  [ "$dir" = "$1" ] && dir="."
+  case "$base" in
+    ?*.*) base="${base%.*}" ;;
+  esac
+  printf '%s/%s.stamp\n' "$dir" "$base"
+}
+
+suppress_update_check() {
+  local exe
+  exe="$(command -v wasm-pack)" || return 0  # absent: check_toolchain names the install line
+  exe="$(readlink -f "$exe")" || die "cannot resolve the wasm-pack on PATH, so its update-check stamp cannot be placed"
+  UPDATE_STAMP="$(stamp_for "$exe")"
+  printf '%s\n' "$UPDATE_STAMP_TEXT" >"$UPDATE_STAMP" 2>/dev/null ||
+    die "cannot write ${UPDATE_STAMP}: without it wasm-pack 0.15.0 calls crates.io on every invocation, which D63 §5 R5 forbids during the build (D182)"
+  assert_stamp_held "as written" || return 1
+}
+
+assert_stamp_held() { # $1 = when
+  [ "$(cat "$UPDATE_STAMP" 2>/dev/null)" = "$UPDATE_STAMP_TEXT" ] && return 0
+  printf "::error::wasm-pack's update-check stamp %s no longer holds the suppression text %s. wasm-pack rewrites it whenever it calls crates.io, so this run made the network call D63 §5 R5 forbids during the build (D182, task Q276). It reads: %s\n" \
+    "$UPDATE_STAMP" "$1" "$(head -c 200 "$UPDATE_STAMP" 2>/dev/null | tr '\n' ' ')" >&2
+  return 1
+}
+
 # ── the path remap (D63 §7 rule 1) ────────────────────────────────────────
 #
 # Both roots are DERIVED from the environment doing the building, never
@@ -214,6 +295,7 @@ lock_digest() { sha256sum Cargo.lock 2>/dev/null | cut -d' ' -f1; }
 build() {
   local commit lock_before lock_after
   remap_flags || return 1
+  suppress_update_check || return 1
   # `git` is this script's, never the crate's. A tree with no git still builds.
   #
   # SUPPLIED, THEN DISCOVERED — in that order (D135 §4 R7). A caller that
@@ -238,7 +320,9 @@ build() {
     return 1
   fi
   [ -f "$MODULE" ] || { printf '::error::wasm-pack reported success but %s does not exist\n' "$MODULE"; return 1; }
+  assert_stamp_held "after the build" || return 1
   printf '  %s — %s bytes, commit %s\n' "$MODULE" "$(wc -c <"$MODULE")" "$commit"
+  printf '  wasm-pack made no crates.io call: %s unchanged across the build\n' "$UPDATE_STAMP"
   printf '  remap: %s\n' "$REMAP"
   printf '  Cargo.lock unchanged across the build (%s)\n' "${lock_before:0:12}"
 }
@@ -284,6 +368,7 @@ cmd_check() {
   local build_only="$1" rc=0
 
   note "toolchain pins (dependency-policy §5)"
+  suppress_update_check || return 1
   check_toolchain || return 1
 
   note "build the shipped module (release, no wasm-opt, no tool download)"
@@ -313,7 +398,7 @@ cmd_check() {
 
 # ── the tests of the tests ─────────────────────────────────────────────────
 #
-# Three planted faults, each proving that the check downstream of it can go red
+# Four planted faults, each proving that the check downstream of it can go red
 # FOR THE RIGHT REASON. A nonzero exit is not the evidence — a crash exits
 # nonzero too — so every arm matches on the message.
 cmd_self_test() {
@@ -375,13 +460,51 @@ cmd_self_test() {
       "$(grep -o 'occurrence(s) of `[^`]*`' <<<"$out" | head -1)"
   fi
 
+  note "planted fault 4: wasm-pack's update-check stamp rewritten, as a crates.io call rewrites it"
+  # A planted stamp in a temporary file, never the real one: the assertion is
+  # a byte comparison, so the fault is exactly what any call leaves behind.
+  local real_stamp="$UPDATE_STAMP" probe pair want
+  UPDATE_STAMP="$(mktemp)"
+  printf 'created 2026-10-16T03:00:00.000000000+01:00\nversion 0.15.0' >"$UPDATE_STAMP"
+  out="$(assert_stamp_held "after the build" 2>&1)"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf '::error:: the stamp assertion stayed GREEN over a stamp a crates.io call had rewritten — it is not reading anything\n'; fail=1
+  elif ! grep -q 'no longer holds the suppression text' <<<"$out"; then
+    printf '::error:: the stamp assertion went red for the WRONG reason:\n%s\n' "$out"; fail=1
+  else
+    printf '  planted fault: update stamp rewritten by a call    -> RED (no longer holds the suppression text)\n'
+  fi
+  printf '%s\n' "$UPDATE_STAMP_TEXT" >"$UPDATE_STAMP"
+  if assert_stamp_held "after the build" 2>/dev/null; then
+    printf '  control:       the suppression stamp, intact        -> GREEN\n'
+  else
+    printf '::error:: the stamp assertion is RED over an intact suppression stamp\n'; fail=1
+  fi
+  rm -f "$UPDATE_STAMP"
+  UPDATE_STAMP="$real_stamp"
+  # Where the stamp goes is Rust's Path::with_extension("stamp"), mirrored.
+  for pair in '/x/bin/wasm-pack|/x/bin/wasm-pack.stamp' '/x/bin/wasm-pack.exe|/x/bin/wasm-pack.stamp' \
+              '/x/bin/.hidden|/x/bin/.hidden.stamp' '/x/bin/a.tar.gz|/x/bin/a.tar.stamp'; do
+    probe="${pair%%|*}"; want="${pair#*|}"
+    if [ "$(stamp_for "$probe")" != "$want" ]; then
+      printf '::error:: stamp_for %s gave %s, not %s\n' "$probe" "$(stamp_for "$probe")" "$want"; fail=1
+    fi
+  done
+  [ "$fail" -eq 0 ] && printf '  stamp placement: Path::with_extension("stamp")      -> 4/4\n'
+
   [ "$fail" -eq 0 ] || return 1
-  note "self-test PASS — all three checks go red for their own reason"
+  note "self-test PASS — all four checks go red for their own reason"
 }
 
 case "${1:---check}" in
   --check | "") cmd_check 0 ;;
   --build-only) cmd_check 1 ;;
   --self-test)  cmd_self_test ;;
-  *) die "usage: scripts/wasm-pack-build.sh [--check | --build-only | --self-test]" ;;
+  # The stamp's one writer, for the one other script that starts wasm-pack
+  # before a build does: wasm-tools-provision.sh's `wasm-pack --version`
+  # (D182, task Q276). Prints the stamp's path, or nothing when no wasm-pack
+  # is on PATH yet.
+  --suppress-update-check) suppress_update_check && printf '%s\n' "$UPDATE_STAMP" ;;
+  *) die "usage: scripts/wasm-pack-build.sh [--check | --build-only | --self-test | --suppress-update-check]" ;;
 esac

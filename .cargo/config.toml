@@ -55,3 +55,23 @@ runner = ["node", "../../scripts/wasm-test-runner.mjs"]
 # When that day comes, `scripts/getrandom-audit.sh` (CI lane
 # `wasm32-core-tests`) fails loudly and names the missing feature knob.
 rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]
+
+# ── Upstream's state file stays inside target/ (S42, D178 R3) ───────────────
+# The pinned ant-core 0.5.0 client reads, and on every drop writes,
+# `client_adaptive.json` under `$XDG_DATA_HOME/ant` — else under
+# `$HOME/.local/share/ant`, the directory upstream's own `ant` CLI uses — so
+# every test that builds a storage client, in process or in a child that
+# inherits the environment, would write into the developer's real home. This
+# table sets the variable for every process cargo runs from inside the tree
+# (test binaries and their children, `cargo run`, build scripts):
+# `relative = true` resolves the value against the workspace root (the
+# directory holding `.cargo/`), and `force = true` overrides whatever the
+# shell exports. `target/` is git-ignored.
+#
+# It does not reach a child that clears its environment (`env_clear()` — such
+# a child must set its own, as `tests/e2e_restore.rs` does), nor a cargo run
+# from outside the tree with `--manifest-path`, which does not read this file
+# (measured, D178). `crates/antseal-cli/tests/upstream_state.rs` asserts it,
+# with a positive control.
+[env]
+XDG_DATA_HOME = { value = "target/upstream-data-home", relative = true, force = true }

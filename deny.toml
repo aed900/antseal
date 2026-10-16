@@ -22,6 +22,11 @@
 # advisories, entering WITH P12's applicability assessment when the ml-dsa
 # pin lands (they are not in today's graph, so they are not pre-ignored
 # here — an ignore for an absent crate would be dead config).
+# ENFORCED since D183/Q277 (2026-10-16) by scripts/check-deny-reviews.py:
+# every entry's reason carries exactly ONE `Review by YYYY-MM-DD`; a date in
+# the past (UTC) is RED, and one within 14 days WARNS. It runs in
+# scripts/local-gate.sh, ci-always.yml's `traceability` job and the weekly
+# advisory-cron.yml, so a date passes red even in a week with no push.
 
 [graph]
 # Scan the full feature surface: antseal-core's `test-util` (optional
@@ -35,27 +40,57 @@ feature-depth = 1
 # advisories — RUSTSEC advisory DB (https://github.com/rustsec/advisory-db)
 # ---------------------------------------------------------------------------
 [advisories]
-# Defaults deliberately kept: vulnerabilities/unmaintained/unsound/yanked
-# all surface. The watchlist the weekly run exists for (tasks/Q.md Q10):
-# ml-dsa, fips204, ed25519-dalek, ant-core, minicbor — plus everything else
-# in the graph.
+# What surfaces, read from cargo-deny 0.19.8's own defaults rather than
+# assumed (src/advisories/cfg.rs:107-110, read 2026-10-16 for D183/Q277):
+# vulnerabilities always; `unmaintained` defaults to every crate; a yanked
+# crate is only a warning, which can never fail the check (`yanked` is set
+# below, D184). `unsound` defaults to "workspace", which matches ONLY
+# this repository's own crates — so until this line an unsound advisory
+# against a dependency never surfaced, the opposite of what this comment
+# and D19 said. Set explicitly; doing so surfaced exactly one advisory,
+# RUSTSEC-2026-0253 (lru), assessed at the foot of the ignore list.
+# The watchlist the weekly run exists for (tasks/Q.md Q10): ml-dsa, fips204,
+# ed25519-dalek, ant-core, minicbor — plus everything else in the graph.
+unsound = "all"
+# D184/Q278 (2026-10-16): a yank of any locked version - a pinned rc
+# included - now reds this check per pull request, on push to main and in
+# the weekly advisory-cron, until a reviewed move (dependency-policy §4) or
+# a review-dated per-crate ignore: { crate = "name@version", reason = "...
+# Review by YYYY-MM-DD." }. Set in the same act as the lock moves that
+# cleared chacha20 0.10.1 and wnaf 0.14.0, never before: on the old lock
+# this key alone reds the lane. Under the default ("warn") both sat in the
+# crypto graph for weeks without ever being able to turn this check red.
+yanked = "deny"
 ignore = [
     # ── The M1 lockfile event's four residents (P16, 2026-08-01) ──────────
     # All four are UNMAINTAINED-class (zero vulnerability-class findings in
     # the 736-package devnet-era graph), all four enter via the exact-pinned
     # upstream stack, none is called by antseal code. Review record:
-    # docs/upstream/P16-lockfile-event.md §4. Per the header discipline each
-    # carries its justification + review date; the review date is the point
-    # at which the next ant-core/ant-node bump review (policy §4 / S20) must
-    # re-assess or these expire.
-    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is unmaintained (archived). Transitive: heapless 0.7 <- postcard <- ant-core/ant-node (upstream's tested set, deliberately matched at P16). The polyfill's target_arch cfg selects real core atomics on every target we build (x86_64, wasm32); antseal never calls it. Fix belongs upstream (heapless 0.8 dropped it) and arrives only with an ant-core bump. Review by 2026-11-01." },
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 unmaintained; its own team declared 1.3.3 complete and final. Transitive under heed(-types)/postcard in the ant-node/ant-core graph. No antseal byte is ever bincode-serialized (D7: minicbor is the sole antseal codec); the devnet node's LMDB values are upstream's own format on a throwaway local store. Re-assess at each ant-core bump. Review by 2026-11-01." },
-    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 unmaintained (archived by author). Proc-macro, compile-time only - contributes zero runtime code to any binary. Transitive under alloy-sol-macro-input in the evmlib/alloy subtree of the pinned upstream stack. Upstream alloy tracks the replacement (pastey); moves with the next evmlib/ant-core bump. Review by 2026-11-01." },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 2.2.0 unmaintained; per the advisory it is a thin wrapper around the SAME parsing code maintained in rustls-pki-types >= 1.9 (which this graph also carries, 1.14.1). Transitive under saorsa-transport 0.35.1 <- saorsa-core 0.26.2 (upstream's tested set). PEM parsing here touches only devnet/transport TLS material, never antseal formats. Review by 2026-11-01." },
+    # docs/upstream/P16-lockfile-event.md §4.
+    # RE-ASSESSED 2026-10-16 (D183/Q277), with RUSTSEC-2024-0449 below. Each is
+    # still detected: dropping its line reds `advisories FAILED` with that id.
+    # None is in the default workspace graph or either wasm32 graph. And none
+    # is waiting on an upgrade this project can take: their old shared reason —
+    # the fix arrives with an ant-core bump — was false. A lockfile resolved
+    # for the newest ant-core, =0.12.0, still locks all four (656 packages,
+    # measured 2026-10-16), and 0.12.0 needs Rust 1.95 against the pinned
+    # 1.92.0, so moving to it is a reviewed pin event (policy §4), never a
+    # drive-by. Re-dated to 2027-01-15 or the next ant-core pin move.
+    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill 1.0.3 is unmaintained (archived). Its only dependent is heapless 0.7.17 <- postcard 1.1.3, in the ant-core/ant-node graph (upstream's tested set, matched at P16), and only for targets without native atomics: it is in no graph we build - absent from the x86_64-unknown-linux-gnu graph even with every feature on, and from both wasm32 graphs (cargo tree -i, 2026-10-16). cargo-deny lists it because it checks every target. antseal never calls it. The fix belongs upstream (heapless 0.8 dropped it), and no ant-core release carries it yet: the newest, =0.12.0, still locks heapless 0.7.17 and atomic-polyfill 1.0.3 (measured 2026-10-16, D183/Q277). Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 unmaintained; its own team declared 1.3.3 complete and final. Its dependents are self_encryption 0.36.0 and heed-types 0.21.0, under ant-core =0.5.0 / ant-node 0.15.0: the ant-backend and devnet graphs only, absent from the default workspace graph and both wasm32 graphs (cargo tree -i, 2026-10-16). No antseal byte is ever bincode-serialized (D7: minicbor is the sole antseal codec); the devnet node's LMDB values are upstream's own format on a throwaway local store. The newest ant-core, =0.12.0, still locks bincode 1.3.3 (via self_encryption 0.36.2; measured 2026-10-16, D183/Q277), so no available bump removes it. Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 unmaintained (archived by author). Proc-macro, compile-time only - contributes zero runtime code to any binary. Its dependents are alloy-primitives 1.6.1 and syn-solidity 1.6.1, in the evmlib/alloy subtree of the pinned upstream stack: the ant-backend and devnet graphs only, absent from the default workspace graph and both wasm32 graphs (cargo tree -i, 2026-10-16). Upstream alloy tracks the replacement (pastey), but no ant-core release carries it yet: the newest, =0.12.0, still locks paste 1.0.15 (via alloy-primitives 1.7.3 and ark-ff; measured 2026-10-16, D183/Q277). Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 2.2.0 unmaintained; per the advisory it is a thin wrapper around the SAME parsing code maintained in rustls-pki-types >= 1.9 (which this graph also carries, 1.15.1). Its only dependent is saorsa-transport 0.35.1 <- saorsa-core 0.26.2 (upstream's tested set): the ant-backend and devnet graphs only, absent from the default workspace graph and both wasm32 graphs (cargo tree -i, 2026-10-16). PEM parsing there touches only transport TLS material, never antseal formats. The newest ant-core, =0.12.0, still locks rustls-pemfile 2.2.0 (via saorsa-transport 0.38.1; measured 2026-10-16, D183/Q277), so no available bump removes it. Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
     # ── D60 (2026-08-02): the one advisory the RFC 3161 pin set carries ──
     { id = "RUSTSEC-2023-0071", reason = "Marvin attack (CVE-2023-49092): a timing side channel in `rsa`'s non-constant-time modular exponentiation that leaks information about the PRIVATE key. antseal-core holds no RSA private key and performs no RSA private-key operation, ever: the only `rsa` API it calls is `pkcs1v15::VerifyingKey::verify`, over a TSA's PUBLIC key read out of a certificate (D60 section 3.3). There is no secret in the computation, so there is nothing for the side channel to leak. The advisory's range is `introduced: 0.0.0-0` with no fixed version, so no `rsa` release escapes it and this is not waiting on an upgrade; upstream tracks the constant-time migration at RustCrypto/RSA#626. Re-assess if antseal ever signs or decrypts with RSA (it has no reason to: authorship signatures are Ed25519 + ML-DSA-65, MVP-SPEC.md line 97). Review by 2027-02-01." },
     # ── Q275 (2026-10-13): the fifth unmaintained-class resident under the pinned upstream stack ──
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml 0.2.11 unmaintained (repository archived 2024-03-25; a c2rust translation of libyaml; RUSTSEC id assigned 2026-10-12). Transitive: serde_yaml 0.9.34 <- saorsa-transport 0.35.1 <- saorsa-core 0.26.2 <- ant-protocol 2.3.0 / ant-node 0.15.0 <- ant-core =0.5.0 (upstream's tested set, P16). Reaches only the non-default ant-backend/devnet graphs: absent from the default workspace graph, from antseal-core and from both wasm32 graphs (cargo tree -i, Q275). saorsa-transport's library never calls serde_yaml - its only two uses are in its own src/bin/ test programs (interop-test.rs:87, test_public_endpoints.rs:419), which cargo does not build for a dependency - so no YAML parser is linked into any antseal binary and no antseal byte is ever YAML-parsed (D7: minicbor is the sole antseal codec). Upstream made serde_yaml optional in saorsa-transport 0.37.0; it leaves this graph only with an ant-core bump (policy §4). Review by 2026-11-01." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml 0.2.11 unmaintained (repository archived 2024-03-25; a c2rust translation of libyaml; RUSTSEC id assigned 2026-10-12). Transitive: serde_yaml 0.9.34 <- saorsa-transport 0.35.1 <- saorsa-core 0.26.2 <- ant-protocol 2.3.0 / ant-node 0.15.0 <- ant-core =0.5.0 (upstream's tested set, P16). Reaches only the non-default ant-backend/devnet graphs: absent from the default workspace graph, from antseal-core and from both wasm32 graphs (cargo tree -i, Q275; re-measured 2026-10-16). saorsa-transport's library never calls serde_yaml - its only two uses are in its own src/bin/ test programs (interop-test.rs:87, test_public_endpoints.rs:419), which cargo does not build for a dependency - so no YAML parser is linked into any antseal binary and no antseal byte is ever YAML-parsed (D7: minicbor is the sole antseal codec). Upstream made serde_yaml optional in saorsa-transport 0.37.0, and the only move that drops it is an ant-core pin move this project has not made: a lockfile resolved for the newest ant-core, =0.12.0, locks no serde_yaml and no unsafe-libyaml since saorsa-transport 0.38.1 (published 2026-10-16T01:50Z; the same resolve hours earlier, at 0.38.0, still locked both), and 0.12.0 needs Rust 1.95 against the pinned 1.92.0 (policy §4; measured 2026-10-16, D183/Q277). Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
+    # ── D183/Q277 (2026-10-16): the unsound advisory `unsound = "all"` surfaced ──
+    { id = "RUSTSEC-2026-0253", reason = "lru 0.16.4: UNSOUND-class (informational; CWE-416/415). LruCache::pop() drops the removed KEY before detaching its node, so a key whose Drop panics leaves a dangling node that a later eviction writes through. Reachable only with unwinding panics, a caught panic, AND a key type whose Drop can panic. No antseal crate depends on lru, and every pop() in the graph is keyed by a type with no Drop at all: alloy-provider 1.8.3 by BlockNumber (u64; blocks.rs:161), ant-core 0.5.0 by XorName ([u8; 32]; data/client/cache.rs:81), ant-node 0.15.0 by PoolHash ([u8; 32]; payment/verifier.rs:509, :4566); saorsa-core 0.26.2 never calls pop(). ant-backend/devnet graphs only: absent from the default workspace graph and both wasm32 graphs (cargo tree -i, 2026-10-16). No compatible fix exists: the patch is only in lru >= 0.18.2, all four dependents require ^0.16 (0.16.4 is the newest 0.16.x), and the newest ant-core, =0.12.0, still locks lru 0.16.4. Review by 2027-01-15 or at the next ant-core pin move, whichever comes first." },
+    # ── D184/Q278/Q280 (2026-10-16): the first yank `yanked = "deny"` caught, hours after it landed ──
+    # A crate-form entry lands in cargo-deny's ignore_yanked list
+    # (src/advisories/cfg.rs:165-200: an entry with no `id` is a package spec), so it
+    # silences the yank only: an advisory against the crate still needs its own id.
+    { crate = "zip@2.4.2", reason = "Yanked 2026-10-16T03:35Z together with every other zip 2.x release and all but one 9.x (9.0.3 stands), with no yank message and no RUSTSEC advisory in the database that day. It enters only through ant-core =0.5.0 and ant-node 0.15.0, which both require zip = \"2\", so no unyanked compatible version exists and no lock-only move can clear it. Upstream calls it only in ant-core's node-binary installer (node/binary.rs, extract_zip) and ant-node's self-upgrade (upgrade/apply.rs); antseal calls neither, and zip is absent from antseal-core's graph and the wasm32 graph (cargo tree -i, 2026-10-16). Owned by Q280. Review by 2026-11-16 or at the next ant-core pin move, whichever comes first." },
 ]
 
 # ---------------------------------------------------------------------------

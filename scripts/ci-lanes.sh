@@ -312,15 +312,15 @@ lane_dep_graph() {
   # still tells the permitted pure-trait crate apart from the banned family.
   # A pattern edit that dropped the whole HTTP alternation would leave the
   # tokio direction green, which is precisely why it is not sufficient.
-  if ! printf 'tokio v1.49.0\n' | grep -qE "$forbidden"; then
+  if ! grep -qE "$forbidden" <<<'tokio v1.49.0'; then
     printf '::error::dep-graph prohibition self-test FAILED: the detector does not match a planted `tokio` tree line — fix it before trusting any green verdict\n'
     return 1
   fi
-  if ! printf 'ureq v3.3.0\n' | grep -qE "$forbidden"; then
+  if ! grep -qE "$forbidden" <<<'ureq v3.3.0'; then
     printf '::error::dep-graph prohibition self-test FAILED: the forbidden-crate pattern does not match a planted `ureq v3.3.0` line in the shape `cargo tree --prefix none` emits — the D90 HTTP/TLS half is gone. Fix it before trusting any green verdict\n'
     return 1
   fi
-  if printf 'rand_core v0.10.1\n' | grep -qE "$forbidden"; then
+  if grep -qE "$forbidden" <<<'rand_core v0.10.1'; then
     printf '::error::dep-graph prohibition self-test FAILED: the detector ALSO matches `rand_core`, which C5/C9 require in the graph. The `^rand ` entry has lost its trailing space, so this rule can never be green for the right reason\n'
     return 1
   fi
@@ -568,11 +568,11 @@ env_logger v0.10.2'
   # detector must match the capability crate it exists to refuse, and must NOT
   # match the boundary crate the decision admits. A pattern that swallowed
   # `wasm-bindgen` could never be green for the right reason.
-  if ! printf 'js-sys v0.3.103\n' | grep -qE "$wasm_forbidden"; then
+  if ! grep -qE "$wasm_forbidden" <<<'js-sys v0.3.103'; then
     printf '::error::D18 R6 prohibition self-test FAILED: the detector does not match a planted `js-sys` tree line — js-sys is the crate through which `fetch` becomes reachable, so a detector that cannot see it makes every green verdict below meaningless\n'
     return 1
   fi
-  if printf 'wasm-bindgen v0.2.126\n' | grep -qE "$wasm_forbidden"; then
+  if grep -qE "$wasm_forbidden" <<<'wasm-bindgen v0.2.126'; then
     printf '::error::D18 R6 prohibition self-test FAILED: the detector ALSO matches `wasm-bindgen`, which D18 §5 R3 ADMITS as the boundary itself. The rule can then never be green for the right reason\n'
     return 1
   fi
@@ -841,7 +841,7 @@ crates/devnet-launcher/src/main.rs'
   # Self-test FIRST: the qualified-entry detector must trip on a planted
   # split, in the exact shape Cargo.lock emits for one.
   local split_detector='^ "alloy [0-9]'
-  if ! printf ' "alloy 1.7.0",\n' | grep -qE "$split_detector"; then
+  if ! grep -qE "$split_detector" <<<' "alloy 1.7.0",'; then
     printf '::error::P20 lockstep self-test FAILED: the split-version detector does not match a planted version-qualified alloy entry — fix it before trusting any green verdict\n'
     return 1
   fi
@@ -902,11 +902,11 @@ crates/devnet-launcher/src/main.rs'
   # detector that matches everything is as useless as one that matches
   # nothing.
   local k256_split_detector='^ "k256 [0-9]'
-  if ! printf ' "k256 0.14.0",\n' | grep -qE "$k256_split_detector"; then
+  if ! grep -qE "$k256_split_detector" <<<' "k256 0.14.0",'; then
     printf '::error::D89 rule-5 self-test FAILED: the split-version detector does not match a planted version-qualified k256 entry — fix it before trusting any green verdict\n'
     return 1
   fi
-  if printf ' "k256",\n' | grep -qE "$k256_split_detector"; then
+  if grep -qE "$k256_split_detector" <<<' "k256",'; then
     printf '::error::D89 rule-5 self-test FAILED: the split-version detector ALSO matches a bare k256 entry, so it can never be green for the right reason — fix it before trusting any verdict\n'
     return 1
   fi
@@ -997,7 +997,9 @@ lane_traceability() {
 }
 
 # Q43's guard over this very refactor: every `run:` block in every workflow
-# must be a committed script call or an allowlisted line. Python-only, so it
+# must be a committed script call or an allowlisted line — and, since D181,
+# rule [Q111]: no shell pipeline feeds an early-exit grep, over every shell file
+# git knows. Python plus one `git ls-files`, no cargo and no network, so it
 # rides in the `traceability` job rather than costing a new required-status
 # context.
 lane_ci_shell() {
@@ -1377,7 +1379,7 @@ gitignore_deny_selftest_body() {
       # wrong-source message below, so a single fixed string let this arm pass
       # while the no-pattern branch was neutered — found by planting exactly
       # that fault. The two failure classes must stay distinguishable.
-      if ! grep -F "FAIL $p: expected IGNORED (" <<<"$out" | grep -qF 'but NO pattern matches it'; then
+      if ! grep -qF 'but NO pattern matches it' <<<"$(grep -F "FAIL $p: expected IGNORED (" <<<"$out")"; then
         printf '::error::gitignore deny-by-default self-test: with family `%s` removed, probe `%s` did NOT report itself by name as undenied — nothing in this check is load-bearing for that name\n' "$name" "$p"
         fail=1
       fi

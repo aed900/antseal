@@ -45,6 +45,31 @@ recorded_pin() {
     sed -nE 's/.*--version ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | sort -u | head -n1
 }
 have() { "$1" --version 2>/dev/null | awk '{print $2}'; }
+
+# ── wasm-pack's crates.io call, suppressed here too (D182, task Q276) ───────
+#
+# wasm-pack 0.15.0 asks crates.io for its newest version on EVERY invocation,
+# `--version` included — and `have` above runs `wasm-pack --version`, on a
+# fresh runner right after `cargo install`, before any build has written the
+# stamp that skips the call. Measured 2026-10-16 with no network: a bare
+# `--version` completed a call attempt before it exited in 1 of 20 runs. So the
+# stamp is written by its one owner, `wasm-pack-build.sh
+# --suppress-update-check`, before every wasm-pack process this script starts,
+# and read back after the last one: unchanged bytes mean provisioning made no
+# call either.
+UPDATE_STAMP=""
+UPDATE_STAMP_HELD=""
+suppress_update_check() {
+  UPDATE_STAMP="$("$repo/scripts/wasm-pack-build.sh" --suppress-update-check)" ||
+    die "could not write wasm-pack's update-check stamp (D182, task Q276)"
+  UPDATE_STAMP_HELD=""
+  [ -z "$UPDATE_STAMP" ] || UPDATE_STAMP_HELD="$(cat "$UPDATE_STAMP")"
+}
+assert_update_stamp_held() {
+  [ -n "$UPDATE_STAMP" ] || return 0
+  [ "$(cat "$UPDATE_STAMP" 2>/dev/null)" = "$UPDATE_STAMP_HELD" ] && return 0
+  die "wasm-pack's update-check stamp ${UPDATE_STAMP} moved while provisioning: a wasm-pack process called crates.io, which D63 §5 R5 forbids (D182, task Q276)"
+}
 shown() { local v; v="$(have "$1")"; printf '%s' "${v:-<absent>}"; }
 
 cmd_provision() { # $1 = 1 to install, 0 to report only
@@ -54,6 +79,7 @@ cmd_provision() { # $1 = 1 to install, 0 to report only
   [ -n "$pack" ]    || die "no wasm-pack version is recorded anywhere (docs/dependency-policy.md §5)"
   [ -n "$bindgen" ] || die "no wasm-bindgen-cli version is recorded anywhere (docs/dependency-policy.md §5)"
 
+  suppress_update_check
   if [ "$(have wasm-bindgen)" != "$bindgen" ]; then
     if [ "$install" -eq 1 ]; then
       note "installing the pinned wasm-bindgen-cli ${bindgen}"
@@ -67,6 +93,7 @@ cmd_provision() { # $1 = 1 to install, 0 to report only
     if [ "$install" -eq 1 ]; then
       note "installing the pinned wasm-pack ${pack}"
       cargo install wasm-pack --locked --version "$pack" || return 1
+      suppress_update_check
     else
       printf '::error::wasm-pack is %s, the recorded pin is %s\n' "$(shown wasm-pack)" "$pack" >&2
       rc=1
@@ -75,6 +102,7 @@ cmd_provision() { # $1 = 1 to install, 0 to report only
   [ "$rc" -eq 0 ] || return 1
   printf '  wasm-bindgen-cli %s · wasm-pack %s (both at their recorded pins)\n' \
     "$(have wasm-bindgen)" "$(have wasm-pack)"
+  assert_update_stamp_held
 }
 
 case "${1:-}" in

@@ -316,7 +316,7 @@
   - Trait signature or mock-test changes in a bump PR require explicit spec-flagged justification
 - Notes: P owns the pin itself and the weekly check cadence (P19/Q36); this task owns the storage-side impact assessment.
 - Notes: **[2026-10-15, wave 36 — the bump checklist per D173 §2 R18 and §2 R17; `docs/dependency-policy.md` §4 carries the `S41` item (lane DOCS).]** For any `ant-core` bump the adapter-side checklist gains: `Client::connect`'s `peer_cache_path` initializer, `build_controller`'s persistence and `impl Drop for Client` (the `client_adaptive.json` write, `S42`), `saorsa-transport`'s `upnp` default feature, and upstream's newer `resolve_bootstrap_peers` (ant-core 0.8.0), which a bump could make compete with D173 §2 R6's resolution; the absence rule copied from a private ant-core function (D170, `S39`); and re-transcription of `crates/antseal-net/src/arbitrum_one_peers.toml` from upstream's `resources/bootstrap_peers.toml` at the new pin's publishing commit, with the three constants re-derived from upstream, never from the vendored file (a peers-only re-transcription from a newer release tag is a reviewed data event without a pin bump — unless it coincides with an upstream network reset, which is a pin-bump event). The `S41` interoperability check (the pinned client's devnet E2E against the latest non-prerelease `ant-node`) is a standing check on every bump and at `Q34`'s date. **Measured drift at 2026-10-13 (P-ADV)**: `ant-core` newest 0.12.0 (2026-10-08; 0.9–0.12 shipped weekly), `saorsa-core` 0.29.0, `saorsa-transport` 0.38.0 (already `rustls ^0.23.45`, `serde_yaml` optional) — the `=0.5.0` pin is seven minors back.
-
+- Notes: **[2026-10-16, wave 37 — pointer.]** The five `deny.toml` ignores dated *"Review by 2026-11-01"* are re-assessed and re-dated under `Q277` (D183), which owns them: this row is continuous and its `Do`/`Accept` do not carry the review (D183 §1.4). The bump checklist (`docs/dependency-policy.md` §4) gained three ant-core items this wave: re-verify the `upstream_state` mirror (D178 §2 R2), re-assess every pin-tied `deny.toml` ignore (D183), and the rewritten `S41` interoperability bullet (D177).
 ### S21 — Point `MockBackend`'s default address function at S4's real BLAKE3-256 rule
 - Milestone: M1
 - Size: S
@@ -580,7 +580,7 @@
   - A full E2E verdict line against a named `ant-node` release is recorded verbatim.
   - Red: a deliberate pin bump is recorded as a Q34 prerequisite. Green: Q34 and the threat model record that the pinned client is N releases behind the network, proven on loopback at a date against a version.
 - Notes: **[2026-10-15, wave 36 — not worked; what moved around it.]** `docs/dependency-policy.md` §4's bump checklist now names this check (D173 §2 R17, lane DOCS); `docs/threat-model.md` §2.11 cites it as the row that establishes the client/node gap. Upstream at 2026-10-13: `ant-core` 0.12.0 (2026-10-08) against the pin's 0.5.0 — the gap this row measures widens weekly, and the first act is still measuring whether `devnet-launcher` can host a foreign-version node.
-
+- Notes: **[2026-10-16, wave 37 — TICKED GREEN (D177, lane L-S41; phase B under the orchestrator's go).]** The ruled subject moved mid-wave: v0.23.0 shipped about an hour before the run, the lane's stop clause fired, and the orchestrator applied D177's rule (*the latest non-prerelease*) — pinned digest, a boot-only first (no harness change needed), then the run. Notes line, with the scratch evidence path elided: `s41-interop: notes N=11 ant_core_lag=10 control_tests=29 masking=ok(l1,l2) pidns=yes stage0(control)=PASS(exit=0) stage0(subject)=PASS(exit=0) evidence=<the wave-37 scratch run directory, kept in the backup>`. Wall time 32 m 43 s (pre-build 2 m 50 s, control 13 m 57 s, subject 15 m 50 s). The pre-registered red phrases appear in no suite log; two appear as `WARN ant_node::replication` lines in the node logs of BOTH arms (334 lines over 55 records at v0.15.0, 77 over 15 at v0.23.0) — not a v0.23.0 regression; their cost in replication depth is not established. `commit=fbcee1e` names HEAD; the tested tree was HEAD plus this wave's uncommitted changes, fingerprinted in the lane's report (in the backup). The row's text figures (`ant-core` 0.8.1 / `ant-node` v0.18.1) were stale at minting; the verdict above supersedes them.
 ### S42 — Every storage connect reads, and every dropped client writes, upstream's adaptive snapshot in upstream's data directory, and a client panics with no `HOME`
 - Milestone: M4
 - Size: S
@@ -593,7 +593,7 @@
   - No test run writes into the developer's real `~/.local/share/ant`, asserted against a temporary home.
   - A spawned feature-build command with neither `HOME` nor `XDG_DATA_HOME` exits with a typed class, never 101, planted red by message.
   - The threat model and a user document say the file is written and what it holds.
-
+- Notes: **[2026-10-16, wave 37 — TICKED (D178, lane L-NET).]** The panic's predicate was both wider and narrower than recorded: ant-core 0.5.0 reads only `XDG_DATA_HOME`, `HOME` and `USERPROFILE`, with no passwd fallback, so `USERPROFILE` alone prevents it, a non-UTF-8 `HOME` panics, an empty or relative value writes under the CWD, and the panic follows dialing. Captures on the `TODO.md` row; D178 §6 records where the build says more than the ruling (absoluteness per OS by a text rule; read-only commands carry the refusal inside the degrade wrapper's prefix — `U96`).
 ### S43 — One hostile quoting peer can push a seal into the proofs-expired path within the 24-hour window, and resume pays again
 - Milestone: M4
 - Size: S
@@ -606,7 +606,7 @@
   - A test with one peer supplying an old timestamp and a payment-class rejection does not yield `ProofsExpired` inside the window — red before the fix by message, green after.
   - Resume does not pay again for that case.
   - The threat model's §2.11 states the ruled behaviour.
-
+- Notes: **[2026-10-16, wave 37 — TICKED (D179, lane L-NET).]** Captures on the `TODO.md` row; D179 §6 records the two-conjunct predicate, the latest-paying-block rule and the copy sites beyond the five ruled. The residual — a hostile close-group majority can put the user in front of one re-payment consent per invocation once a payment is a day old by the chain's clock — is threat-model §2.11's.
 ### S44 — `EvmAddress20::parse` panics on multibyte input instead of returning its parse error
 - Milestone: M4
 - Size: XS
@@ -618,6 +618,7 @@
 - Accept:
   - A regression test with the adversarial input, plus multibyte and non-hex variants, goes red on the unfixed code by the panic message and green after the fix.
   - A revert of the fix turns the test red by message.
+- Notes: **[2026-10-16, wave 37 — TICKED.]** The fix (validate before slicing) and its nine-row test landed with wave 36's lane RN under D173 and were not ticked then. The orchestrator re-planted it in a clone at `fbcee1e`: baseline green; the validate-before-slice block deleted → exit 101 by the panic message (*"byte index 2 is not a char boundary; it is inside '€' (bytes 1..4)"*); restored byte-exact and touched → green. Captures on the `TODO.md` row.
 
 ## Open decisions (S)
 - Blob↔address model: whether a Blob maps to one top-level address with an internal chunk set (data-map style) or requires explicit per-chunk address handling in `antseal-net`, per ant-core 0.5.0's actual storage model — blocks S2, S4, S6 — must land by M1 start (informed by S1). — **[2026-07-27]** inputs captured (S1 memo): recommended Blob = one chunk, single 32-B BLAKE3 address, offline-recomputable with blake3 alone; `data_download` takes a `DataMap` not an address, so `get_data(Address)` maps to `chunk_get`; 4 MiB chunk cap. Decision itself stays due M1. — **[2026-08-01]** RESOLVED (**D32**): chunk-level, no data-map path in v1; hard 4 MiB cap enforced at seal plan validation before consent/anchor/quote (docs/decisions/D32-blob-address-model.md).

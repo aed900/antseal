@@ -31,6 +31,16 @@
 //! beside it, so a needle split across three lines is still found and the
 //! failure message still names the line it starts on.
 //!
+//! # R92 widened the sweep to one more stale class
+//!
+//! R89 moved `FetchFailureClass` into this crate and deleted the method that
+//! used to spell its label, and four doc sentences in three files went on
+//! attributing the class to `antseal-net`. R92 corrected them and registered
+//! both halves here — the stale sentences in [`FALSIFIED`], the corrections in
+//! [`CORRECTED`] — rather than in a second sweep. The deleted method's needle
+//! is built with `concat!`, so R92's own acceptance grep for the method over
+//! `crates/` stays empty instead of finding this file.
+//!
 //! # What is deliberately still open
 //!
 //! [`OPEN_SITES`] carries the one over-claiming doc R87 did **not** repair:
@@ -56,8 +66,8 @@ const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 /// cannot silently un-guard it — it makes the count wrong instead.
 const SCAN_SITE: &str = "r87_doc_currency.rs";
 
-/// Sentences the tree said and no longer may. Each is the doc R87 replaced,
-/// with the reason it was false.
+/// Sentences the tree said and no longer may. Each is a doc R87 or R92
+/// replaced, with the reason it was false.
 const FALSIFIED: &[(&str, &str)] = &[
     (
         "C14 supplies the datum at integration",
@@ -84,6 +94,34 @@ const FALSIFIED: &[(&str, &str)] = &[
         "D137 §3 R1: absence from *every* chain is not what two endpoints on \
          one chain establish — the sentence must not make the universal claim",
     ),
+    (
+        concat!("FetchFailureClass::", "label"),
+        "R89 deleted the method: the class carries no label of its own, and \
+         core's `live_fetch_failure_class_label` spells it",
+    ),
+    (
+        "`antseal-net`'s `FetchFailureClass`",
+        "R89: the class is `antseal-core`'s; `antseal-net` re-exports it and \
+         classifies into it",
+    ),
+    (
+        "`antseal_net::FetchFailureClass`'s",
+        "R89: the fetch-failure detail is the closed class itself, spelled by \
+         core's frozen wording table",
+    ),
+    (
+        "spells its own labels",
+        "R89: `antseal-net` spells no labels — the display word is core's",
+    ),
+    (
+        "nothing forces the live class into core",
+        "R89 moved the live class into core because the projection carries it \
+         and core may never depend on `antseal-net`",
+    ),
+    (
+        "whose label is a `&'static str`",
+        "the class carries no label; core's wording table spells it",
+    ),
 ];
 
 /// Doc sites that still carry a [`FALSIFIED`] sentence, each with the reason
@@ -96,6 +134,13 @@ const OPEN_SITES: &[(&str, &str, &str)] = &[(
      scope of the lane that repaired the other three; the corrected wording \
      is `ReceiptConfirmation::NotOnChain`'s, which this crate does carry",
 )];
+
+/// R92's replacement clause — the R89 lane's own wording — asserted present
+/// at all three files that carried the stale attribution.
+const R92_CLAUSE: &str = concat!(
+    "the class is `antseal-core`'s since R89; ",
+    "`antseal-net` classifies into it via `fetch_failure_class`",
+);
 
 /// The corrections, asserted **present** at the file that must carry them.
 const CORRECTED: &[(&str, &str, &str)] = &[
@@ -129,6 +174,29 @@ const CORRECTED: &[(&str, &str, &str)] = &[
         "no receipt for this transaction hash",
         "`ReceiptConfirmation::NotOnChain`, re-spelled on D137 §3 R8's \
          corrected wording",
+    ),
+    (
+        "crates/antseal-core/src/verify/overlay.rs",
+        R92_CLAUSE,
+        "R92 site 1: `ProbeFailureClass`'s doc, which named the wrong owner \
+         for the storage half",
+    ),
+    (
+        "crates/antseal-core/src/verify/overlay.rs",
+        "No difference survives R89",
+        "R92 site 2: the paragraph that argued the position R89 reversed, \
+         rewritten rather than patched",
+    ),
+    (
+        "crates/antseal-cli/src/verify_out.rs",
+        R92_CLAUSE,
+        "R92 site 3: the live rows' no-escape ruling, which names the detail's \
+         vocabulary",
+    ),
+    (
+        "crates/antseal-cli/src/verify_host.rs",
+        R92_CLAUSE,
+        "R92 site 4: the courier note, which also cited the deleted method",
     ),
 ];
 
@@ -253,7 +321,7 @@ fn r87_the_open_sites_and_the_corrections_are_both_asserted_present() {
         let (flat, _) = flatten(&read(&Path::new(WORKSPACE_ROOT).join(site)));
         if !flat.contains(needle) {
             missing.push(format!(
-                "{site}: the R87 correction is gone — expected \"{needle}\" ({reason})"
+                "{site}: the correction is gone — expected \"{needle}\" ({reason})"
             ));
         }
     }

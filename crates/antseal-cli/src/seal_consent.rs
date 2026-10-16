@@ -170,12 +170,15 @@ impl ConsentReport {
             ));
         }
 
+        // S43/D179 R5: this used to say the network "will no longer accept"
+        // the proofs, a node-side rule no pinned node has. The condition is
+        // the one `antseal_net::put_policy` rules on.
         if self.proofs_expired {
             out.push(
-                "  WARNING: this seal was already paid for, but its payment proofs have \
-                 expired and the network will no longer accept them. That payment is \
-                 stranded and cannot be recovered. Consenting here authorizes a SECOND, \
-                 ADDITIONAL payment."
+                "  WARNING: this seal was already paid for, but a majority of the storing \
+                 peers refused this seal's payment proof, and the payment is more than 24 \
+                 hours old by its block time. That payment is stranded and cannot be \
+                 recovered. Consenting here authorizes a SECOND, ADDITIONAL payment."
                     .to_owned(),
             );
         }

@@ -699,8 +699,8 @@ pub struct AnchorResult {
     ///   not close, so the rendering discipline is inherited, not invented.
     /// - **OTS** — the `.ots` attestations, which name their calendars.
     ///
-    /// M0/M1 leave it `None` throughout: the pipeline parses no artifact byte
-    /// and deliberately copies no bundle-recorded anchor metadata.
+    /// M0/M1 left it `None`. Today `to_anchor_result` folds `Verified`/`Claimed`
+    /// into this string, so report bytes alone cannot honour the MUST (R74).
     pub source: Option<String>,
     /// The capture instant the **sealer** recorded for this artifact —
     /// registry §7.9 key 3 (TSA, `req`) and §7.8 key 4 (OTS, inside the D79

@@ -446,7 +446,9 @@ run format-freeze scripts/format-freeze.sh
 # faults); `ci-lanes --self-test` reproduces the Q8 flag-order defect and
 # requires the tamper-matrix lane to go red locally. Both are seconds once the
 # workspace is built, which is the point: a lane that has never run on the
-# remote is not evidence, and neither is one that never runs locally.
+# remote is not evidence, and neither is one that never runs locally. Since
+# D181 `ci-shell` also enforces rule [Q111] — no shell pipeline feeds an
+# early-exit grep — over every shell file git knows, tracked or not yet added.
 run ci-shell   scripts/ci-lanes.sh ci-shell
 run ci-lanes   scripts/ci-lanes.sh --self-test
 
@@ -507,6 +509,18 @@ run action-pins          scripts/check-action-pins.py
 # `traceability` job remotely; adds ZERO required-status contexts.
 run write-job-cache-selftest scripts/check-write-job-cache.py --self-test
 run write-job-cache          scripts/check-write-job-cache.py
+
+# D183/Q277 — every deny.toml `[advisories].ignore` entry carries exactly one
+# `Review by YYYY-MM-DD`, and none has passed (UTC); a date within 14 days
+# warns and stays green. D19 made the date a rule in 2026-07 and nothing read
+# it: five ignores fell due on 2026-11-01 with no row owning them, and
+# cargo-deny keeps honouring an ignore whose date has passed. Its self-test
+# plants every rule in memory, date injection included (it replays 2026-11-02
+# over the five), so it writes no file. Standard-library Python (`tomllib`): no
+# cargo, no network, no git. Rides ci-always.yml's `traceability` job and the
+# weekly advisory-cron.yml remotely; adds ZERO required-status contexts.
+run deny-reviews-selftest scripts/check-deny-reviews.py --self-test
+run deny-reviews          scripts/check-deny-reviews.py
 
 # D124/Q182 — the test-of-the-test for the guard that asserts CI's
 # `traceability` job runs no cargo. The ASSERTION is two steps on that job and

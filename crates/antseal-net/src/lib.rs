@@ -98,6 +98,10 @@ pub mod evm;
 // so it is in the DEFAULT feature set and tests on `MockBackend`.
 pub mod live;
 pub mod network;
+// The verdict on a failed store round (S43, D179): which PUT failures end in
+// a re-payment consent and which in a retry. Pure, in the DEFAULT feature set,
+// so the required lanes test it; the adapter only feeds it (D179 R4).
+pub mod put_policy;
 pub mod quote;
 pub mod receipt;
 // The wallet LIGHT half (D89): secp256k1 keygen, D44 import validation,

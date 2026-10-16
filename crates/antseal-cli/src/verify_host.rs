@@ -601,10 +601,10 @@ where
     // **bundle** — the reveal ciphertexts and the signed manifest's
     // addresses, a vocabulary `antseal-net` must never grow.
     //
-    // R79 note, for a reader who arrives at the fetch-failure row: the string
-    // that lands in `LiveBlobOutcome::FetchFailed` is now
-    // `FetchFailureClass::label`'s `&'static str`, drawn from a closed class
-    // mapped wildcard-free over `StorageError` at the network boundary. This
-    // file is a courier and authors none of it.
+    // R79/R89 note, for a reader who arrives at the fetch-failure row:
+    // `LiveBlobOutcome::FetchFailed` carries a closed `FetchFailureClass`,
+    // never a string — the class is `antseal-core`'s since R89; `antseal-net`
+    // classifies into it via `fetch_failure_class`, wildcard-free over
+    // `StorageError`. This file is a courier and authors none of it.
     Ok(live_inputs(&report))
 }

@@ -109,9 +109,9 @@ use crate::codec::CanonicalDecoder;
 
 /// Every format version this build can decode, ascending.
 ///
-/// v1 is the sole entry and the only version that has ever been released.
-/// A future release appends; it never edits or removes — obligation 2 of the
-/// line-123 contract.
+/// v1 is the sole entry; nothing has been released yet (D104 §1.5). Once a
+/// version ships, a later release appends here and never edits or removes
+/// an entry — obligation 2 of the line-123 contract.
 pub const SUPPORTED_VERSIONS: &[u64] = &[1];
 
 /// The map key carrying the format discriminant, in **both** versioned
@@ -210,7 +210,7 @@ pub(crate) type V1Decoder<'b, T, E> = fn(V1<'b>) -> Result<T, E>;
 /// this table is *structurally* incapable of holding a v2 decoder — see the
 /// module docs for why that is the point rather than a limitation.
 pub(crate) struct VersionDispatch<'b, T, E> {
-    /// The one released version and the entry point that decodes it.
+    /// The sole supported version and the entry point that decodes it.
     v1: (u64, V1Decoder<'b, T, E>),
 }
 

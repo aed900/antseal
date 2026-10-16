@@ -21,7 +21,8 @@ data. `antseal init` writes the initial file; edit it by hand afterwards.
   key is an error in the wrong table: `bootstrap` under
   `[networks.arbitrum-sepolia]` or `[networks.devnet]` (see "Bootstrap
   peers"); outside the `[networks.*]` tables it is an unknown key, warned
-  and ignored like any other.
+  and ignored like any other. One retired key is an error in every
+  `[networks.*]` table: `rpc_url` (see "The payment RPC").
 
 ## Precedence
 
@@ -52,18 +53,16 @@ list — for `restore` too, which reads `config.toml` for that one key.
 # One of: arbitrum-one, arbitrum-sepolia, devnet.
 default_network = "arbitrum-sepolia"
 
-# Per-network payment-RPC endpoint override. Chain ids, contract
-# addresses, and the default RPC endpoints are compiled-in constants
-# (kept byte-identical to the pinned evmlib) and are deliberately NOT
-# configurable — a hand-edited contract address is an evidence-downgrade
-# hazard, not a preference. Validated at load, and consumed by NOTHING
-# today (U94): for arbitrum-one and arbitrum-sepolia the payment backend
-# uses the compiled-in RPC endpoint, and devnet uses the devnet export's;
-# neither reads this key. Wiring or retiring it is U94's ruling, owed
-# before the config surface freezes.
+# Per-network table. Chain ids, contract addresses, and the payment RPC
+# endpoints are compiled-in constants (kept byte-identical to the pinned
+# evmlib) and are deliberately NOT configurable — a hand-edited contract
+# address is an evidence-downgrade hazard, not a preference. There is no
+# RPC override: `rpc_url` under any [networks.<id>] is REFUSED when the
+# file is read (exit 17, malformed config; U94), naming the key, the table
+# and the line but never the value. The payer dials the compiled-in public
+# endpoint for arbitrum-one and arbitrum-sepolia, and the RPC_URL of the
+# export ANTSEAL_DEVNET_ENV names for devnet.
 [networks.arbitrum-one]
-rpc_url = "https://my-own-node.example/rpc"
-
 # Storage-network bootstrap peers, arbitrum-one ONLY. A present list
 # REPLACES the built-in list wholesale and is never merged with it.
 # Validated at load; see "Bootstrap peers" below. (These two are RFC 5737
@@ -107,8 +106,8 @@ per-line error, never a misparse:
 | `key = ["a", "b"]` (one line) | array-of-tables `[[…]]` |
 | | duplicate keys or sections |
 
-URLs in `rpc_url`, `tsa_urls`, `bitcoin_endpoints`, and
-`arbitrum_endpoints` must start with `http://` or `https://`.
+URLs in `tsa_urls`, `bitcoin_endpoints`, and `arbitrum_endpoints` must start
+with `http://` or `https://`.
 
 `tsa_urls`, `bitcoin_endpoints` and `arbitrum_endpoints` are additionally
 parsed as real endpoints when the file is read, so a URL with no host
@@ -168,3 +167,45 @@ the bytes upstream published at the pin*.
   only peer source, because their peers belong to one run of a devnet.
 - **No flag and no environment variable.** This key is the only way to
   override peers.
+
+## The payment RPC
+
+antseal has no payment-RPC override. Every payment call — the balance and
+allowance reads, the token approval, the payment transaction and its receipt —
+goes to the compiled-in public RPC endpoint for `arbitrum-one` and
+`arbitrum-sepolia`, and to the `RPC_URL` of the devnet export
+`ANTSEAL_DEVNET_ENV` names for `devnet`. `status`'s block-number backfill
+reads receipts from the same endpoint.
+
+Earlier builds parsed `rpc_url` under `[networks.<id>]` and never read it, so
+a configured endpoint was silently not used. The key is now refused when the
+file is read — a malformed config (exit code 17), raised before any command
+runs, naming the key, the table and the line. The error never repeats the
+value: an RPC URL usually carries an API key, and error messages end up in
+terminals, logs and `--json` output. Delete the line.
+
+## Files outside the vault
+
+antseal keeps what it writes under the vault directory (`ANTSEAL_DIR`, default
+`~/.antseal`) with one exception it does not control: the pinned Autonomi
+client library (`ant-core` 0.5.0) keeps a small state file of its own.
+
+| | |
+|---|---|
+| File | `client_adaptive.json` |
+| Directory | Linux and other Unix: `$XDG_DATA_HOME/ant`, else `$HOME/.local/share/ant` (`$USERPROFILE` when `HOME` is unset). macOS: `$HOME/Library/Application Support/ant`. Windows: `%APPDATA%\ant`, else `%HOME%\AppData\Roaming\ant` (`%USERPROFILE%` when `HOME` is unset) |
+| Written | by every command that connects to the storage network — `seal`, `restore`, `reveal` when it must fetch, `verify --live` — when the connection closes |
+| Read | by the same commands when they connect |
+| Contents | a schema number and three concurrency starting values (quote, store, fetch). No peers, keys or addresses, and nothing about your works |
+
+It is the directory upstream's own `ant` command-line tool uses, so the two
+share the file. Deleting it is harmless: it is recreated with default values.
+
+To move it, set `XDG_DATA_HOME` (Linux and other Unix) or `APPDATA` (Windows)
+to an absolute directory. antseal refuses to connect — a network-failure
+error, exit 23, naming the variables — where the library would otherwise crash
+or write the file into the current directory: when none of `XDG_DATA_HOME`
+(`APPDATA` on Windows), `HOME` and `USERPROFILE` holds a usable value (one
+that is not valid Unicode does not count), or when the one it would use is
+empty or a relative path. On macOS, with no home set, the library writes no
+file and antseal does not refuse.

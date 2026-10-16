@@ -220,3 +220,19 @@ plant shape applied to §2.10.
 ## Closing — this record is not consent
 
 It changes documents and tests only.
+
+## Addendum — 2026-10-16 (wave 37): §4's `S42` and `S43` are decided and built
+
+§4's second bullet left two fixes open: the one for `S43`, and confining
+`client_adaptive.json` (`S42`). Both are now ruled and built, by records of their own:
+
+- **`S42`, D178**: a storage client is refused, before any socket and with exit 23, in an
+  environment where upstream's data-directory lookup would panic or would write into the
+  working directory. Every in-tree test confines the file with one cargo `[env]` entry.
+- **`S43`, D179**: a payment refusal is one peer's decline. A seal is expired only when the
+  declines alone make the majority unreachable **and** the payment is more than 24 hours old
+  by its block time.
+
+Threat-model §2.11 now states both, with the residual §2 R6 left: a hostile close-group
+majority can still make the user face one re-payment consent per invocation, once a
+payment is a day old by the chain's clock. Nothing else in this record changes.

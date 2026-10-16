@@ -313,3 +313,212 @@ fn the_payment_sub_batch_cap_is_linked_to_upstream() {
 fn evmlib_max_transfers() -> usize {
     ant_protocol::evm::contract::payment_vault::MAX_TRANSFERS_PER_TRANSACTION
 }
+
+// ===========================================================================
+// S42 — the upstream-state mirror, against upstream's own lookup (D178 R2)
+// ===========================================================================
+
+/// **S42 (D178 R2).** `antseal_net::network::upstream_state` is a transcription
+/// of `ant-core` 0.5.0's data-directory lookup (`src/config.rs:11-24,87-92`),
+/// so it is compared here with the function upstream actually compiles —
+/// `ant_core::data::client::adaptive::default_persist_path()` — row by row.
+///
+/// Upstream reads the process environment, and a test cannot set its own
+/// (`set_var` is `unsafe`; `unsafe_code` is denied), so each row runs in a
+/// **child**: this test binary again, its environment cleared to exactly the
+/// row's variables, running the ignored `s42_child_prints_upstreams_persist_path`.
+/// The child prints what upstream returns; a panic row must panic with
+/// `HomeDirNotFound`, which is what upstream does where the mirror says
+/// [`Resolution::Panic`](antseal_net::network::upstream_state::Resolution::Panic).
+///
+/// Only the arm of the OS this build targets can be compared — upstream picks
+/// its arm with `cfg!` — so on Linux these are the Linux rows; the macOS and
+/// Windows arms are pinned by the default-build unit rows in `network.rs`.
+#[cfg(feature = "ant-backend")]
+mod s42_upstream_state {
+    use std::ffi::OsString;
+    use std::process::Command;
+
+    use antseal_net::network::upstream_state::{self, Os, Resolution};
+
+    /// Marks the child and carries nothing else; a run of the child without
+    /// it fails rather than asserting nothing.
+    const CHILD_ENV: &str = "ANTSEAL_S42_PERSIST_PATH_CHILD";
+    /// The line the child prints its answer on.
+    const ANSWER: &str = "S42-UPSTREAM-PERSIST-PATH=";
+
+    /// One row: a label and the only variables set.
+    type Row = (&'static str, Vec<(&'static str, OsString)>);
+
+    fn rows() -> Vec<Row> {
+        let set = |pairs: &[(&'static str, &str)]| -> Vec<(&'static str, OsString)> {
+            pairs
+                .iter()
+                .map(|(key, value)| (*key, OsString::from(*value)))
+                .collect()
+        };
+        #[allow(unused_mut)]
+        let mut rows: Vec<Row> = vec![
+            ("nothing set", set(&[])),
+            ("HOME", set(&[("HOME", "/tmp/s42-h2")])),
+            ("XDG_DATA_HOME", set(&[("XDG_DATA_HOME", "/tmp/s42-x3")])),
+            ("USERPROFILE alone", set(&[("USERPROFILE", "/tmp/s42-u4")])),
+            ("empty XDG_DATA_HOME", set(&[("XDG_DATA_HOME", "")])),
+            ("empty HOME", set(&[("HOME", "")])),
+            (
+                "relative XDG_DATA_HOME",
+                set(&[("XDG_DATA_HOME", "rel/dir")]),
+            ),
+            (
+                "USER and LOGNAME only",
+                set(&[("USER", "someone"), ("LOGNAME", "someone")]),
+            ),
+            (
+                "XDG_DATA_HOME over a relative HOME",
+                set(&[("XDG_DATA_HOME", "/tmp/s42-x12"), ("HOME", "rel")]),
+            ),
+            (
+                "HOME over USERPROFILE",
+                set(&[("HOME", "/tmp/s42-h13"), ("USERPROFILE", "/tmp/s42-u13")]),
+            ),
+        ];
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let not_unicode = |prefix: &str| {
+                let mut bytes = prefix.as_bytes().to_vec();
+                bytes.push(0xFF);
+                OsString::from_vec(bytes)
+            };
+            rows.push(("HOME not Unicode", vec![("HOME", not_unicode("/tmp/"))]));
+            rows.push((
+                "HOME not Unicode, USERPROFILE set",
+                vec![
+                    ("HOME", not_unicode("/tmp/")),
+                    ("USERPROFILE", OsString::from("/tmp/s42-u9")),
+                ],
+            ));
+            rows.push((
+                "XDG_DATA_HOME not Unicode, HOME set",
+                vec![
+                    ("XDG_DATA_HOME", not_unicode("/tmp/x")),
+                    ("HOME", OsString::from("/tmp/s42-h10")),
+                ],
+            ));
+        }
+        rows
+    }
+
+    /// Run the child for one row: the exit code and everything it printed.
+    /// Its environment is exactly the row's variables, the child marker, and
+    /// the two network gates' arming.
+    fn upstream_answer(env: &[(&'static str, OsString)]) -> (Option<i32>, String) {
+        let exe = std::env::current_exe().expect("the test binary's own path");
+        let mut command = Command::new(exe);
+        command
+            .args([
+                "--exact",
+                "s42_upstream_state::s42_child_prints_upstreams_persist_path",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            // Both network gates re-armed on the clearing statement
+            // (`check-anchor-net.py` R4). Upstream's lookup reads neither.
+            .env("ANTSEAL_NO_REAL_ANCHOR_NETWORK", "1")
+            .env(antseal_net::network::storage_gate::ENV, "1")
+            .env(CHILD_ENV, "1");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let output = command.output().expect("spawn the child test process");
+        (
+            output.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        )
+    }
+
+    /// **S42 (D178 R2), the cross-check.** For every row, the mirror's
+    /// [`Resolution`] is upstream's answer: the same file path where upstream
+    /// returns one, and a `HomeDirNotFound` panic where the mirror says it
+    /// panics. A row the child cannot answer fails, naming the row.
+    #[test]
+    fn s42_the_mirror_agrees_with_upstreams_default_persist_path_on_every_row() {
+        let rows = rows();
+        assert!(
+            rows.len() >= 10,
+            "the table is not being read: {} rows",
+            rows.len()
+        );
+        let mut panics = 0usize;
+        for (label, env) in &rows {
+            let mirror = upstream_state::resolve(Os::current(), |name| {
+                env.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.clone())
+            });
+            let (code, printed) = upstream_answer(env);
+            match mirror {
+                Resolution::Panic => {
+                    panics += 1;
+                    assert_eq!(
+                        code,
+                        Some(101),
+                        "row `{label}`: the mirror says upstream panics, but the child exited \
+                         {code:?}:\n{printed}"
+                    );
+                    assert!(
+                        printed.contains("HomeDirNotFound"),
+                        "row `{label}`: the child failed, but not with upstream's \
+                         HomeDirNotFound panic:\n{printed}"
+                    );
+                }
+                Resolution::Dir { .. } | Resolution::NoFile => {
+                    assert_eq!(
+                        code,
+                        Some(0),
+                        "row `{label}`: the mirror says upstream answers, but the child exited \
+                         {code:?}:\n{printed}"
+                    );
+                    let answer = printed
+                        .lines()
+                        // libtest prints `test <name> ... ` and the child's own
+                        // output on one line under --nocapture.
+                        .find_map(|line| line.split_once(ANSWER).map(|(_, answer)| answer))
+                        .unwrap_or_else(|| {
+                            panic!("row `{label}`: the child printed no answer:\n{printed}")
+                        });
+                    assert_eq!(
+                        answer,
+                        format!("{:?}", mirror.file()),
+                        "row `{label}`: mirror {:?}, upstream {answer}",
+                        mirror.file()
+                    );
+                }
+            }
+        }
+        assert!(
+            panics >= 2,
+            "the table must exercise upstream's panic, not only its answers: {panics} panic rows"
+        );
+    }
+
+    /// The child half: upstream's own answer in this process's environment.
+    /// Ignored, so it never runs in the ordinary pass; run without its
+    /// parent's marker it fails instead of asserting nothing.
+    #[test]
+    #[ignore = "driven as a subprocess by s42_the_mirror_agrees_with_upstreams_default_persist_path_on_every_row"]
+    fn s42_child_prints_upstreams_persist_path() {
+        assert!(
+            std::env::var_os(CHILD_ENV).is_some(),
+            "{CHILD_ENV}: this test is only meaningful as its parent's child"
+        );
+        let path = ant_core::data::client::adaptive::default_persist_path();
+        println!("{ANSWER}{path:?}");
+    }
+}

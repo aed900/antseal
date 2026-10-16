@@ -306,17 +306,25 @@ the same rules through the same code (R1, R4 — a file that re-arms one
   all-loopback set makes the adapter bind loopback (§2 R8), so a peer learned
   later cannot be reached either.
 - **The payer's EVM RPC.** For `arbitrum-one` and `arbitrum-sepolia` the
-  `eth_chainId` call and the payment leg go to evmlib's compiled-in public RPC
-  (only `devnet` threads the configured `rpc_url`; `U94`). The gate runs
-  before that call and stops the storage dial; the RPC itself is outside both
-  gates.
+  `eth_chainId` call and the payment leg go to evmlib's compiled-in public RPC,
+  and for `devnet` to the export's `RPC_URL`; `config.toml` takes no override
+  (`rpc_url` is refused at load, `U94`). The gate runs before that call and
+  stops the storage dial; the RPC itself is outside both gates.
 - **UPnP gateway discovery.** The pinned transport starts an IGD mapping
   service on every connect and may ask the router for a port mapping; no
   `ClientConfig` field or feature switches it off at the pin (§1.4). Recorded,
   not gated.
 - **Upstream's `client_adaptive.json`.** `Client::connect` reads it and every
-  dropped client writes it, under `$XDG_DATA_HOME/ant` or `~/.local/share/ant`,
-  and a client panics with neither `HOME` nor `XDG_DATA_HOME` set (`S42`).
+  dropped client writes it, under `$XDG_DATA_HOME/ant`, else
+  `$HOME/.local/share/ant` — a file write, not a dial, so the gate does not
+  cover it. `.cargo/config.toml`'s `[env]` table does: it points every test
+  process's `XDG_DATA_HOME` at `target/upstream-data-home` (`S42`, D178 R3),
+  so no in-tree `cargo test` writes into your home. A spawned child inherits
+  it; a child that calls `env_clear()` does not, and must set `HOME` and
+  `XDG_DATA_HOME` itself (`tests/e2e_restore.rs` does). Cargo run from outside
+  the tree with `--manifest-path` does not read the file at all. The product
+  refuses, before any socket, an environment in which upstream would panic or
+  write into the current directory (`antseal_net::network::upstream_state`).
 
 **Need a real run?** It is a script run with the **release binary in an
 unarmed environment** — never a test, never `#[ignore]`d, and from a debug

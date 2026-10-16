@@ -455,3 +455,23 @@ sub-batch, and with the same kill against a non-durable sink it re-pays
    `ReadOnly` remains correct for `restore`/`verify --live`/`status
    --upgrade`: those paths do not pay, and a receipt arriving there is a bug
    that should be loud.
+
+## Addendum — 2026-10-16 (wave 37, D179): Decision 6's window now judges only a refused proof, by the payment's block time
+
+The 2026-08-02 correction stands: the ~24 h proof-validity window is antseal's own policy,
+and no pinned node enforces it. Since D179, the window is applied differently:
+
+- **When it is consulted.** Only after the declines **alone** have made the storing
+  majority unreachable: at least four of seven targets answered with a payment-class
+  decline, and fewer than four did anything else. A single payment refusal is one target's
+  decline, and the store round goes on to the next target.
+- **What it measures.** The age of the payment by the **block timestamp** of the
+  transaction that paid for the blob, never a quote's own timestamp (a field the quoting
+  peer writes and the client never checks). A block time that cannot be read counts as
+  not expired.
+
+Every other shortfall is a typed finalize failure (exit 23), which resume answers by
+finalizing again and paying nothing. Decision 6's distinct, consented re-payment path —
+exit 29, `payment-proofs-expired` — is unchanged, and is now reached only on that rule.
+The window constant moved to `crates/antseal-net/src/put_policy.rs`
+(`PROOF_VALIDITY_WINDOW_SECS`). This record is not rewritten.

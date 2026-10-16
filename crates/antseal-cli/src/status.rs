@@ -1121,7 +1121,7 @@ const fn kind_name(kind: AnchorKind) -> &'static str {
 /// this table rather than rendering as something plausible. The exact copy
 /// is U31/Q20's; this owns the count.
 /// `pub` rather than `pub(crate)` since U70, for the reason
-/// [`crate::backend::unavailable`] is: the property the row is about — that
+/// [`crate::backend::no_backend_refusal`] is: the property the row is about — that
 /// there is exactly **one** of these — is asserted by an integration test,
 /// and `tests/` is an external crate. The crate root's stability note
 /// sanctions exactly this widening (*"it exists for the binary and the

@@ -357,46 +357,61 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// `ANTSEAL_BLESS=1` and justify the diff — envelope drift is a
 /// machine-interface event.
 ///
-/// # One file, two feature builds — R82's ruling, arm (b)
+/// # One file, two feature builds — R82's ruling, arm (b), as U95 left it
 ///
-/// `backend::unavailable` has two `#[cfg]` arms with different text, and
-/// this is a **single** committed file compared byte-for-byte. So until R82
-/// the document rendered differently under `--features ant-backend`, that
-/// build's `envelope_fixtures_match_the_committed_snapshot` failed, and
+/// `backend::unavailable` once had two `#[cfg]` arms with different text,
+/// and this is a **single** committed file compared byte-for-byte. So until
+/// R82 the document rendered differently under `--features ant-backend`,
+/// that build's `envelope_fixtures_match_the_committed_snapshot` failed, and
 /// whichever build the file documented, the other build's machine surface
 /// was pinned by nothing at all. `heavy-features` is local-only by Q153's
 /// ruling and runs in no CI job, so the red could — and did — sit through
 /// any number of green waves.
 ///
-/// **The arm taken is (b): the fixture is feature-parameterised.**
-/// [`antseal_cli::backend::BackendArm`] makes both sentences exist in both
-/// builds, and the feature-varying documents below are rendered **per arm**
-/// through [`antseal_cli::backend::unavailable_arm`] — the real producer
-/// `backend::unavailable` itself delegates to (U3's rule; no arm of this row
-/// may be satisfied by hand-copying the second build's text into a file).
-/// Three consequences, and the third is the one that closes the row:
+/// **R82 took arm (b): the fixture is feature-parameterised.** Both
+/// sentences were compiled into both builds and the feature-varying
+/// documents were rendered per arm through the real producer (U3's rule; no
+/// arm of this row may be satisfied by hand-copying the second build's text
+/// into a file), with three recorded consequences: (1) one committed file
+/// carries both texts; (2) the two builds render **byte-identical**
+/// documents, so the snapshot test is green in both rather than in whichever
+/// one was blessed last; (3) the **default** build — the only one any CI job
+/// runs — witnesses the feature-ON sentence. Arm (a), a second
+/// `#[cfg]`-selected snapshot, was rejected because it answers R82's own
+/// question badly: given Q153, nobody but a local developer would ever
+/// compare the second file, so it would rot exactly as the unwitnessed text
+/// did. Arm (c), one feature-invariant sentence, was rejected as a
+/// **retraction of a recorded design choice** — *"a message blaming the
+/// missing feature would be a lie in a build that has it"* — which R82 says
+/// may not be slipped in as a snapshot repair.
 ///
-/// 1. one committed file carries both texts;
-/// 2. the two builds render **byte-identical** documents, so the snapshot
-///    test is green in both rather than in whichever one was blessed last;
-/// 3. the **default** build — the only one any CI job runs — is what
-///    witnesses the feature-ON sentence. R82's title says that surface is
-///    "witnessed by nothing"; after this it is witnessed by every run.
-///
-/// Arm (a) (a second `#[cfg]`-selected snapshot) was rejected because it
-/// answers R82's own question badly: given Q153, nobody but a local
-/// developer would ever compare the second file, so it would rot exactly as
-/// the unwitnessed text did. Arm (c) (one feature-invariant sentence) is a
-/// **retraction of a recorded design choice** — `unavailable`'s rustdoc
-/// argues both arms in the strongest form (*"a message blaming the missing
-/// feature would be a lie in a build that has it"*) — and R82 says it may
-/// not be slipped in as a snapshot repair.
+/// **U95 retired the feature-ON sentence, and this is where R82 asks for the
+/// argument (D180 U95 R1–R6).** That sentence said the command did not yet
+/// construct the backend its build had. Its emitters left one at a time —
+/// `seal` at U13, `restore` and `verify --live` under D170, `reveal` under
+/// D175 — until no production path in either build printed it, and a
+/// sentence no build emits is what U19's rule calls worse than none. It was
+/// deleted, not reworded: a reworded sentence would still have no emitter.
+/// That is **not** arm (c). Nothing became feature-invariant: the no-backend
+/// sentence is shown only by the build it is true of, and the build with a
+/// backend compiles no `unavailable` at all, so the claim arm (c) was
+/// refused on is kept, and is now enforced by the compiler rather than by a
+/// comment. **Retracted**, said plainly: consequences (1) and (3), which
+/// described a second sentence that no longer exists. **Kept**: consequence
+/// (2) — `seal`'s and `restore`'s documents below are rendered through
+/// [`antseal_cli::backend::no_backend_refusal`], which is compiled into both
+/// builds, so the file is byte-identical in both, and U95 did **not**
+/// re-bless it. The builds' divergence is witnessed as behaviour instead:
+/// each build's class and exit code per command (`expected_class` above,
+/// and the per-arm rows in `seal_command.rs`, `restore_output.rs` and
+/// `upgrade_hook.rs`). The same argument is recorded on
+/// [`antseal_cli::backend::BackendArm`], the design choice's other venue.
 ///
 /// `reveal`'s **minimal-argv** exemplar is not feature-varying: U72 moved it
 /// off the entry seam, and what it meets under that argv is the passphrase
 /// gate in both builds.
 ///
-/// # No document carries the feature-ON sentence any more (D175 §2 R10)
+/// # No document carries a `Compiled`-arm header (D175 §2 R10)
 ///
 /// Until D170 the per-arm documents were `seal`'s and `restore`'s. Both went,
 /// for the reason U19's rule gives — a document of text no build emits is
@@ -407,19 +422,17 @@ fn help_is_exempt_from_the_envelope_contract() {
 /// in the feature build really was refused with it.
 ///
 /// **D175 retired that document too, and replaced it with nothing.** The
-/// feature build's `reveal` now fetches through the read-only reader,
-/// connected only from a needed fetch (D175 §2 R1), so no production path in
-/// either build emits `BackendArm::Compiled`'s sentence — its last emitter was
-/// that handler. The two candidate replacements were both unstable text (the
-/// adapter's per-fetch reason, and the resolver's no-definition sentence that
-/// `U92` rewrites), so none was registered, and
-/// `no_registered_document_carries_the_compiled_arm_header` holds that a
-/// document of text no build emits cannot come back. The sentence itself and
-/// its arm name are `U95`'s to retire or reword (D175 §2 R11); until then the
-/// default build still witnesses both arms' texts through
-/// `the_refusal_messages_name_no_task_row` and `unavailable_selects_this_builds_arm`.
+/// feature build's `reveal` fetches through the read-only reader, connected
+/// only from a needed fetch (D175 §2 R1). The two candidate replacements were
+/// both unstable text (the adapter's per-fetch reason, and the resolver's
+/// no-definition sentence that `U92` rewrote), so none was registered, and
+/// `no_registered_document_carries_the_compiled_arm_header` holds — under
+/// the arm's current name and its retired one — that such a document cannot
+/// come back. The no-backend sentence is witnessed in both builds by the
+/// documents below, by `the_refusal_messages_name_no_task_row`, and by
+/// `unavailable_selects_this_builds_arm`.
 fn render_fixture() -> String {
-    use antseal_cli::backend::{BackendArm, unavailable_arm};
+    use antseal_cli::backend::no_backend_refusal;
     use antseal_cli::error::{CliError, PassphraseFailure};
     use antseal_cli::machine::{error_envelope, success_envelope, success_envelope_raw};
 
@@ -438,15 +451,17 @@ fn render_fixture() -> String {
                 reason: PassphraseFailure::NoChannel,
             },
             // U20's handler is complete; the storage-backend construction
-            // seam it reaches is U36's, shared with `seal`. Rendered by
-            // the real producer — a hand-copied string here went stale the
-            // first time the message changed, and a fixture that documents
-            // text no build emits is worse than none (U19's rule).
+            // seam it reaches in a build with no backend is U36's, shared
+            // with `seal`. Rendered by the real producer — a hand-copied
+            // string here went stale the first time the message changed, and
+            // a fixture that documents text no build emits is worse than none
+            // (U19's rule).
             //
-            // R82: the arm is **named** rather than inherited from the
-            // build, so these bytes are the same in both. The other arm is
-            // registered below.
-            "restore" => unavailable_arm("restore", BackendArm::NotCompiled),
+            // R82, as U95 left it: the no-backend refusal is compiled into
+            // both builds, so these bytes are the same in both. Nothing is
+            // registered for the other arm: a build with a backend has no
+            // seam refusal to document (D180 U95 R3).
+            "restore" => no_backend_refusal("restore"),
             // U11's handler is complete. Its registered error exemplar is
             // the D39 absolute refusal — the one a user actually hits —
             // rendered by the real producer rather than hand-copied
@@ -457,9 +472,10 @@ fn render_fixture() -> String {
             // plain `antseal seal notes.txt` meets in a default-feature
             // build is the same storage-backend seam `restore` reaches
             // (U36's, shared) — rendered by the real producer rather than
-            // hand-copied, per U19's rule. R82: the arm is named, and the
-            // other one is registered below.
-            "seal" => unavailable_arm("seal", BackendArm::NotCompiled),
+            // hand-copied, per U19's rule. R82, as U95 left it: compiled into
+            // both builds, so these bytes are the same in both, and nothing
+            // is registered for the other arm, which has no seam refusal.
+            "seal" => no_backend_refusal("seal"),
             // **U72**: `reveal` left the backend seam. Its gathering is
             // cache-first by D43, so a work whose cache is intact needs no
             // network at all and the handler now unlocks the vault instead
@@ -503,9 +519,10 @@ fn render_fixture() -> String {
     // R82 arm (b) used to render the **other** feature build's refusal here
     // — `seal`'s, then `restore`'s, then (D170 §2 R8) `reveal`'s cache-miss
     // refusal — so the `ant-backend` machine surface was documented by the
-    // file every CI job compares. Since D175 no command reaches that sentence
-    // in either build, so nothing is rendered per arm any more; see this
-    // function's rustdoc, and `no_registered_document_carries_the_compiled_arm_header`.
+    // file every CI job compares. D175 took that sentence's last emitter and
+    // U95 retired it (D180), so nothing is rendered per arm any more; see
+    // this function's rustdoc, and
+    // `no_registered_document_carries_the_compiled_arm_header`.
     //
     // Success examples for the commands with real handlers today.
     //
@@ -1388,12 +1405,14 @@ fn envelope_fixtures_match_the_committed_snapshot() {
 /// identifier only this repository can resolve, whatever its state. So no
 /// row-shaped token may appear at all.
 ///
-/// Scanned over **both** arms, so the default build is what witnesses the
-/// feature-ON text (R82's whole point — `heavy-features` is local-only by
-/// Q153 and runs in no CI job).
+/// Scanned over the no-backend sentence for every command that can reach a
+/// seam refusal, in **both** builds: the sentence is compiled into both
+/// (D180 U95 R3), so the default build — the one every CI job runs — holds
+/// the rule for it. The feature-ON sentence this scan also covered until U95
+/// was retired, because no build emitted it (D180 U95 R1).
 #[test]
 fn the_refusal_messages_name_no_task_row() {
-    use antseal_cli::backend::BackendArm;
+    use antseal_cli::backend::{BackendArm, no_backend_message};
 
     /// The identifier prefixes this repository's rows and decisions use.
     const PREFIXES: [char; 7] = ['U', 'R', 'Q', 'D', 'A', 'S', 'P'];
@@ -1437,20 +1456,17 @@ fn the_refusal_messages_name_no_task_row() {
          lowercase"
     );
 
-    for arm in BackendArm::ALL {
-        for command in ["seal", "restore", "reveal", "verify"] {
-            let message = arm.message(command);
-            let tokens = row_tokens(&message);
-            assert!(
-                tokens.is_empty(),
-                "the `{}` refusal for `{command}` names {tokens:?}. A refusal a user reads \
-                 cannot cite a task identifier: they cannot look it up, and it points at closed \
-                 work the moment the row ships — which is exactly what `U13` did here, reported \
-                 by three separate lanes (R82). Name the pending work in prose.\n  message: \
-                 {message}",
-                arm.name()
-            );
-        }
+    for command in ["seal", "restore", "reveal", "verify"] {
+        let message = no_backend_message(command);
+        let tokens = row_tokens(&message);
+        assert!(
+            tokens.is_empty(),
+            "the `{}` refusal for `{command}` names {tokens:?}. A refusal a user reads cannot \
+             cite a task identifier: they cannot look it up, and it points at closed work the \
+             moment the row ships — which is exactly what `U13` did here, reported by three \
+             separate lanes (R82). Name the pending work in prose.\n  message: {message}",
+            BackendArm::NotCompiled.name()
+        );
     }
 }
 
@@ -1639,37 +1655,49 @@ fn a_reveal_envelope_carries_the_invocations_network_beside_the_works() {
     }
 }
 
-/// **D175 §2 R10 — no registered document carries the `Compiled` arm's
-/// header, in the rendered fixture or in the committed snapshot.**
+/// **D175 §2 R10, under both of the arm's names (U95) — no registered
+/// document carries a `Compiled`-arm header, in the rendered fixture or in
+/// the committed snapshot.**
 ///
-/// The `[reveal] error [arm: backend-compiled-in-command-unwired]` document
-/// D170 §2 R8 registered was retired, not replaced, when D175 gave the feature
-/// build's `reveal` a reader: no production path in either build emits that
-/// sentence any more, and a document of text no build emits is the defect
-/// U19's rule names and D170 §1.5 removed for `[seal]`. The snapshot test
-/// alone cannot hold this — re-adding the document to `render_fixture` and
-/// re-blessing would keep it green — so this row scans both sources for the
-/// header the retired document carried, and first proves it would see one.
+/// The `reveal` cache-miss document D170 §2 R8 registered under that header
+/// was retired, not replaced, when D175 gave the feature build's `reveal` a
+/// reader; U95 then retired the sentence it carried (D180 U95 R1), so the
+/// build with a backend has no seam refusal to document at all, and a
+/// document of text no build emits is the defect U19's rule names and D170
+/// §1.5 removed for `[seal]`. The snapshot test alone cannot hold this —
+/// re-adding a document to `render_fixture` and re-blessing would keep it
+/// green — so this row scans both sources for two headers: the arm's current
+/// name, and the name the retired document carried until U95 renamed the arm
+/// (D180 U95 R2). It first proves it would see each.
 #[test]
 fn no_registered_document_carries_the_compiled_arm_header() {
     use antseal_cli::backend::BackendArm;
 
-    let marker = format!("[arm: {}]", BackendArm::Compiled.name());
+    /// The `Compiled` arm's name until U95 — kept here, and nowhere else in
+    /// the tree, so a document cannot come back under the old name either.
+    const RETIRED_ARM_NAME: &str = "backend-compiled-in-command-unwired";
+
+    let markers = [
+        format!("[arm: {}]", BackendArm::Compiled.name()),
+        format!("[arm: {RETIRED_ARM_NAME}]"),
+    ];
     let carrying = |text: &str| -> Vec<String> {
         envelope_documents(text)
             .into_iter()
-            .filter(|(header, _)| header.contains(&marker))
+            .filter(|(header, _)| markers.iter().any(|marker| header.contains(marker)))
             .map(|(header, _)| header)
             .collect()
     };
 
-    // The scan has to be able to see one, or it proves nothing.
-    let planted = format!("[reveal] error {marker}\n{{\"command\":\"reveal\"}}\n");
-    assert_eq!(
-        carrying(&planted),
-        vec![format!("[reveal] error {marker}")],
-        "the scan must find a planted Compiled-arm header"
-    );
+    // The scan has to be able to see each, or it proves nothing.
+    for marker in &markers {
+        let planted = format!("[reveal] error {marker}\n{{\"command\":\"reveal\"}}\n");
+        assert_eq!(
+            carrying(&planted),
+            vec![format!("[reveal] error {marker}")],
+            "the scan must find a planted `{marker}` header"
+        );
+    }
 
     let committed_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/json-envelopes.txt");
@@ -1688,34 +1716,39 @@ fn no_registered_document_carries_the_compiled_arm_header() {
         let found = carrying(&text);
         assert!(
             found.is_empty(),
-            "{source}: no registered document may carry the `{}` arm: since D175 no production \
-             path in either build emits that sentence — `reveal`, its last emitter, fetches \
-             through the read-only reader in the build with a backend — and a document of text \
-             no build emits is worse than none (U19's rule; D175 §2 R10). Found: {found:?}",
+            "{source}: no registered document may carry the `{}` arm: a build with a backend \
+             compiled in has no seam refusal to document — D175 took the last emitter of the \
+             sentence that arm carried, and U95 retired it (D180) — and a document of text no \
+             build emits is worse than none (U19's rule; D175 §2 R10). Found: {found:?}",
             BackendArm::Compiled.name()
         );
     }
 }
 
-/// **R82**: `unavailable` really is this build's arm.
+/// **R82, as U95 left it (D180 U95 R3)**: `unavailable` is the no-backend
+/// refusal, and only the build with no backend has one.
 ///
-/// The per-arm fixture above is feature-invariant by construction, which is
-/// its purpose and also its one blind spot: it would stay green if
-/// `unavailable` selected the *wrong* arm, because the fixture never asks it
-/// which one this build is. This does, and it is the one assertion in the
-/// file whose expected value differs between the two builds.
+/// The fixture above renders `no_backend_refusal` directly, which keeps it
+/// feature-invariant by construction — its purpose, and also its one blind
+/// spot: it would stay green if `unavailable`, the production door, returned
+/// something else, because the fixture never calls it. This does, in the
+/// build that has it. In the build with a backend the function does not
+/// exist, and the row asserts the discriminator says so — the one assertion
+/// in this file whose expected value differs between the two builds.
 #[test]
 fn unavailable_selects_this_builds_arm() {
-    use antseal_cli::backend::{BackendArm, unavailable, unavailable_arm};
+    use antseal_cli::backend::{BackendArm, no_backend_message, no_backend_refusal};
 
-    assert_eq!(
-        unavailable("seal").to_string(),
-        unavailable_arm("seal", BackendArm::THIS_BUILD).to_string(),
-        "`unavailable` must be `unavailable_arm(.., THIS_BUILD)`"
-    );
     #[cfg(not(feature = "ant-backend"))]
     {
+        use antseal_cli::backend::unavailable;
+
         assert_eq!(BackendArm::THIS_BUILD, BackendArm::NotCompiled);
+        assert_eq!(
+            unavailable("seal").to_string(),
+            no_backend_refusal("seal").to_string(),
+            "`unavailable` is the no-backend refusal for its own command"
+        );
         assert!(
             unavailable("seal")
                 .to_string()
@@ -1726,21 +1759,22 @@ fn unavailable_selects_this_builds_arm() {
     }
     #[cfg(feature = "ant-backend")]
     {
+        // No `unavailable` is compiled here: a build with a backend cannot
+        // call the function that says it has none (D180 U95 R3).
         assert_eq!(BackendArm::THIS_BUILD, BackendArm::Compiled);
-        assert!(
-            unavailable("seal")
-                .to_string()
-                .contains("has a storage backend compiled in"),
-            "the feature build says it has one: {}",
-            unavailable("seal")
+        assert_eq!(
+            BackendArm::THIS_BUILD.name(),
+            "backend-compiled-in",
+            "the arm's name since U95 (D180 U95 R2)"
         );
     }
-    // Two arms that said the same thing would make the whole per-arm
-    // apparatus pointless.
-    assert_ne!(
-        BackendArm::NotCompiled.message("seal"),
-        BackendArm::Compiled.message("seal"),
-        "the divergence is deliberate and load-bearing (R82 Notes)"
+    // In both builds the refusal is the network class carrying the whole
+    // sentence — the registered documents are rendered from exactly this.
+    let refusal = no_backend_refusal("seal");
+    assert_eq!(refusal.exit_code(), 23, "the network class: {refusal}");
+    assert!(
+        refusal.to_string().contains(&no_backend_message("seal")),
+        "the refusal carries the sentence whole: {refusal}"
     );
 }
 

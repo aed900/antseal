@@ -100,21 +100,21 @@ use super::wording;
 /// verdict.
 ///
 /// **R79 ruled the closed class governs both** (its arm (a)), and
-/// `antseal-net`'s `FetchFailureClass` is the storage half: a closed class,
-/// mapped wildcard-free over `StorageError` while the variant is still in
-/// hand, whose label is a `&'static str`. The complete argument — including
-/// the measurement that reverses the intuition about which side is the more
-/// exposed one — is recorded once, on that type, and is **not** restated
-/// here: a second copy of a threat model is a second thing to keep true.
-/// Read the two docs together; each names the other so neither can be found
-/// alone.
+/// `FetchFailureClass` is the storage half: the class is `antseal-core`'s
+/// since R89; `antseal-net` classifies into it via `fetch_failure_class`,
+/// wildcard-free over `StorageError` while the variant is still in hand, and
+/// [`wording::live_fetch_failure_class_label`] spells it. The complete
+/// argument — including the measurement that reverses the intuition about
+/// which side is the more exposed one — is recorded once, on the classifier,
+/// and is **not** restated here: a second copy of a threat model is a second
+/// thing to keep true. Read the docs together; each names the other.
 ///
-/// One deliberate difference survives, and it is the reason `antseal-net`
-/// spells its own labels: this class is `pub` in a **WASM-safe** crate
-/// because the verifier page authors probe failures, whereas the page runs no
-/// live check at all (`LiveSection` is CLI-only), so nothing forces the live
-/// class into core. What is still owed there is type precision, not an open
-/// channel — see [`LiveBlobOutcome::FetchFailed`].
+/// No difference survives R89: both classes are `pub` in this **WASM-safe**
+/// crate — this one because the verifier page authors probe failures, the
+/// live one because [`LiveBlobOutcome::FetchFailed`] carries it and core may
+/// never depend on `antseal-net`, though the page runs no live check at all
+/// (`LiveSection` is CLI-only). The type-precision debt that once sat there
+/// is closed: the variant holds the class, never a `String`.
 ///
 /// [`LiveSection`]: super::orchestration::LiveSection
 /// [`LiveBlobOutcome::FetchFailed`]:

@@ -366,6 +366,19 @@ Environment: as in the P8 record above (linux x86_64, toolchain 1.92.0 from
   its `env:` (D173 §2 R11) and of `ci-always.yml`'s two new `traceability` steps
   (D171).
 
+  **[2026-10-16, D183 (`Q277`) — local, no hosted run yet.]** The weekly job
+  gains two steps after the sweep, `scripts/check-deny-reviews.py --self-test`
+  and the check, under `always()` so an expired ignore and a new advisory are
+  each reported when the other is red; `ci-always.yml`'s `traceability` job
+  runs the same pair on every push. The check reds any `deny.toml` ignore past
+  its `Review by YYYY-MM-DD` (UTC) and warns 14 days ahead: five ignores were
+  due 2026-11-01 and are re-dated 2027-01-15 on re-measured reasons, and
+  `deny.toml` now sets `unsound = "all"` (cargo-deny 0.19.8's default scope is
+  the workspace only), which surfaced RUSTSEC-2026-0253 (`lru` 0.16.4), ignored
+  with its assessment. Local verdict at the working tree: `advisories ok, bans
+  ok, licenses ok, sources ok`. **Hosted witness owed** on the next consented
+  push and on the next scheduled run.
+
 ## Authoritative context set (now 14)
 
 > **[wave-4 note]** Superseded: P14 adds a 15th context
@@ -1162,6 +1175,16 @@ Both self-tests run in `scripts/local-gate.sh` (`ci-shell`, `ci-lanes`) and in
 CI — `ci-shell` inside the `traceability` job and the Q8 reproduction inside
 `tamper-matrix`, deliberately as steps of existing jobs so the **18-context
 set above is unchanged**.
+
+**[2026-10-16, D181 (`Q111`)]** `check-ci-shell.py` now also enforces rule
+`[Q111]` — no shell pipeline feeds an early-exit `grep` (`-q`, `-m`, `-l`, `-L`
+and their long spellings) — over every shell file git knows, tracked or not
+yet added. The 16 sites it found at `fbcee1e` were converted in the same act.
+Its `--self-test` adds 42 arms planted in memory and judged by message (24 red,
+15 green, 3 lexer refusals), 7 scope arms and a tree control that must find
+nothing; the mechanism, the payload blindness and the two refused rules are in
+the script's docstring. The lane now reads `git ls-files`, so `ci-shell` is no
+longer git-free; it is still cargo-free and offline.
 
 ### One thing this tightened rather than relaxed
 

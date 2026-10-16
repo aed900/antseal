@@ -1267,9 +1267,11 @@ const BACKEND_TRACE_LOG: &str = "antseal_cli::backend=debug";
 ///
 /// On the same clean home a **dead-export control** — the only peer a dead
 /// loopback port — exits 23 per D175 §2 R4, writes no bundle, and says
-/// neither *"does not construct one yet"* nor *"has no data at this
-/// address"*: the reader connected (once) and the fetch failed in the network
-/// class.
+/// neither *"no storage backend compiled in"* (the no-backend sentence, the
+/// one seam sentence left since U95 and compiled into this build too, so a
+/// fault that routed it here would be seen — D180 U95 R5) nor *"has no data
+/// at this address"*: the reader connected (once) and the fetch failed in
+/// the network class.
 #[test]
 fn devnet_d175_a_clean_home_reveals_a_strict_subset_through_the_reader_connected_once() {
     let _guard = serial();
@@ -1494,7 +1496,10 @@ fn devnet_d175_a_clean_home_reveals_a_strict_subset_through_the_reader_connected
         message.contains("could not be fetched from the network"),
         "the engine's own fetch-failure sentence: {message}"
     );
-    for forbidden in ["does not construct one yet", "has no data at this address"] {
+    for forbidden in [
+        "no storage backend compiled in",
+        "has no data at this address",
+    ] {
         assert!(
             !message.contains(forbidden),
             "an unreachable network is neither a missing backend nor absence (`{forbidden}`): \

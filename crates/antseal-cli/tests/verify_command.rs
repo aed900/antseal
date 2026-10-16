@@ -2088,9 +2088,12 @@ fn live_without_a_compiled_backend_refuses_at_the_seam() {
         .as_str()
         .expect("a message")
         .to_owned();
+    // The whole real sentence for this command (U3's rule), not one word of
+    // it: the `contains("verify")` this replaced was satisfied by any text
+    // that named the command (U95, D180).
     assert!(
-        message.contains("verify"),
-        "the refusal names the command: {message}"
+        message.contains(&antseal_cli::backend::no_backend_message("verify")),
+        "the refusal is the no-backend sentence for `verify`: {message}"
     );
 }
 

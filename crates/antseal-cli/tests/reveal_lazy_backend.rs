@@ -26,7 +26,7 @@
 //!   definition (2) — all before the consent gate, with nothing written and
 //!   no connection — or, with a usable definition, an unreachable network in
 //!   the network class (23), in the engine's `Unfetchable` sentence, never the
-//!   unwired-backend sentence and never absence.
+//!   no-backend sentence and never absence.
 //!
 //! None of this calls `run_reveal`: `U71`'s closed list of its callers is
 //! not edited for a test (D175 §2 R6). The library rows drive
@@ -83,10 +83,14 @@ const HANDLER_LOG: &str = "antseal_cli::upgrade_hook=debug,antseal_cli::backend=
 /// a connection is actually attempted.
 const READER_CONNECT_TRACE: &str = "connecting the read-only reader";
 
-/// The sentence a build with a backend may never print for a fetch (D170 §2
-/// R2; D175 §2 R4): `BackendArm::Compiled`'s, whose last production emitter
-/// was this very handler before D175.
-const UNWIRED_SENTENCE: &str = "does not construct one yet";
+/// What a build with a backend compiled in may never print for a fetch (D170
+/// §2 R2; D175 §2 R4): the no-backend sentence's own claim. Since U95 that is
+/// the only seam sentence left, and it is compiled into the feature build too
+/// (`no_backend_message`, D180 U95 R3), so a fault that routes it into that
+/// build's `reveal` is one these checks can see — the `Compiled` arm's
+/// sentence they used to forbid existed in no build's output after D175, and
+/// a check forbidding text nothing can print cannot fail (D180 U95 R5).
+const NO_BACKEND_FRAGMENT: &str = "no storage backend compiled in";
 
 /// The engine's rendering of `NotFound` — what an unreachable network must
 /// never be reported as (D170 §2 R12; D175 §2 R4).
@@ -449,13 +453,9 @@ fn assert_vault_local_refusal(label: &str, run: &Spawned, bundle: &Path) {
     );
     let message = run.message();
     assert!(
-        message.contains("no storage backend compiled in") && message.contains("unit "),
+        message.contains(NO_BACKEND_FRAGMENT) && message.contains("unit "),
         "{label}: the refusal names the build's own reason and the unit it could not obtain: \
          {message}"
-    );
-    assert!(
-        !message.contains(UNWIRED_SENTENCE),
-        "{label}: a build with no backend never prints the other arm's sentence: {message}"
     );
     assert_eq!(
         run.connect_traces(),
@@ -514,9 +514,9 @@ fn assert_lazy_refusal(
         );
     }
     assert!(
-        !message.contains(UNWIRED_SENTENCE),
-        "{label}: a build with a backend compiled in never prints the unwired sentence (D170 §2 \
-         R2): {message}"
+        !message.contains(NO_BACKEND_FRAGMENT),
+        "{label}: a build with a backend compiled in never prints the no-backend sentence: \
+         {message}"
     );
     assert_eq!(
         run.connect_traces(),
@@ -726,7 +726,7 @@ fn an_unparseable_recorded_network_is_reveal_inputs_unusable_at_the_first_fetch(
 /// dead loopback port. The build with a backend connects — once, from the
 /// first fetch — and the fetch fails: the whole reveal ends at that unit in
 /// the **network class (23)**, in the engine's `Unfetchable` sentence,
-/// never the unwired-backend sentence and never absence; nothing is written.
+/// never the no-backend sentence and never absence; nothing is written.
 /// The build with none refuses at the seam without dialling.
 ///
 /// Costs the feature build a dead-bootstrap connect (about six seconds on
@@ -763,7 +763,7 @@ fn a_partial_cache_over_an_unreachable_network_fails_in_the_network_class_per_bu
                     && message.contains(&format!("unit {evicted} ")),
                 "the engine's own sentence, naming the unit it could not obtain: {message}"
             );
-            for forbidden in [UNWIRED_SENTENCE, ABSENCE_SENTENCE, "compiled in"] {
+            for forbidden in [NO_BACKEND_FRAGMENT, ABSENCE_SENTENCE, "compiled in"] {
                 assert!(
                     !message.contains(forbidden),
                     "an unreachable network is reported in the network class — never as a \
@@ -799,8 +799,8 @@ mod feature_build {
     use antseal_net::{DevnetEnv, NetworkConfig};
 
     use super::{
-        ABSENCE_SENTENCE, Scratch, UNFETCHABLE_SENTENCE, UNWIRED_SENTENCE, dead_devnet_export_text,
-        evict_one_unit, fully_cached_fixture, only_work,
+        ABSENCE_SENTENCE, NO_BACKEND_FRAGMENT, Scratch, UNFETCHABLE_SENTENCE,
+        dead_devnet_export_text, evict_one_unit, fully_cached_fixture, only_work,
     };
 
     /// A definition that could only dial a dead loopback port — what the
@@ -970,7 +970,7 @@ mod feature_build {
     /// **D175 §2 R1/R4 at the library route**: with a usable definition that
     /// reaches nothing, the reader is connected exactly once, from the first
     /// fetch, and the whole reveal ends at that unit in the network class —
-    /// in the engine's sentence, never the unwired sentence, never absence —
+    /// in the engine's sentence, never the no-backend sentence, never absence —
     /// and `settle` leaves a genuine network failure exactly as it is.
     ///
     /// Costs one dead-bootstrap connect, like the spawned row.
@@ -1012,7 +1012,7 @@ mod feature_build {
             text.contains(UNFETCHABLE_SENTENCE) && text.contains(&format!("unit {evicted} ")),
             "the engine's own sentence, naming the unit: {text}"
         );
-        for forbidden in [UNWIRED_SENTENCE, ABSENCE_SENTENCE, "compiled in"] {
+        for forbidden in [NO_BACKEND_FRAGMENT, ABSENCE_SENTENCE, "compiled in"] {
             assert!(
                 !text.contains(forbidden),
                 "never `{forbidden}` for an unreachable network: {text}"

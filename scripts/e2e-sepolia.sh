@@ -147,7 +147,7 @@ preflight_refusals() {
     || refuse RC-BINARY-ABSENT "ANTSEAL_RC_BIN=${ANTSEAL_RC_BIN} is not an executable file."
   [ -n "${ANTSEAL_E2E_WALLET_ADDRESS:-}" ] \
     || refuse WALLET-ADDRESS-ABSENT "ANTSEAL_E2E_WALLET_ADDRESS is not set — the funding preflight needs the funded wallet's public 0x address (funding itself is the maintainer's P17 act)."
-  printf '%s' "${ANTSEAL_E2E_WALLET_ADDRESS}" | grep -qE '^0x[0-9a-fA-F]{40}$' \
+  grep -qE '^0x[0-9a-fA-F]{40}$' <<<"${ANTSEAL_E2E_WALLET_ADDRESS}" \
     || refuse WALLET-ADDRESS-ABSENT "ANTSEAL_E2E_WALLET_ADDRESS is not a 0x + 40-hex address."
   [ -n "${ANTSEAL_E2E_WALLET_KEY_FILE:-}" ] && [ -s "${ANTSEAL_E2E_WALLET_KEY_FILE:-/nonexistent}" ] \
     || refuse WALLET-KEY-ABSENT "ANTSEAL_E2E_WALLET_KEY_FILE does not name a non-empty readable file. The key is fed to init over an fd and never transits argv, the environment, or a log."
@@ -221,7 +221,7 @@ workdir=""
 current_work_id() {
   local wid
   wid="$(cat "$evdir/work-id.txt" 2>/dev/null || true)"
-  printf '%s' "$wid" | grep -qE '^[0-9a-f]{64}$' || {
+  grep -qE '^[0-9a-f]{64}$' <<<"$wid" || {
     printf '::error::e2e-sepolia: no recorded work id (did S3 run?)\n' >&2
     return 1
   }
@@ -323,7 +323,7 @@ if not ids:
 print(ids[0] if ids else "")
 PY
 )"
-  if ! printf '%s' "$work_id" | grep -qE '^[0-9a-f]{64}$'; then
+  if ! grep -qE '^[0-9a-f]{64}$' <<<"$work_id"; then
     printf '::error::e2e-sepolia: WORK-ID-UNPARSED — seal succeeded but no work id could be read from the JSON envelope (see seal.json in the evidence dir). Fix the extraction, then re-run.\n' >&2
     return 1
   fi

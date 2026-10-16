@@ -208,9 +208,17 @@ through the same code (§3.2).
   service on every connect and may ask the router for a port mapping; no
   `ClientConfig` field or feature switches it off at the pin (D173 §1.4);
 - **upstream's `client_adaptive.json`** — `Client::connect` reads it and
-  every dropped client writes it, under `$XDG_DATA_HOME/ant` or
-  `~/.local/share/ant`, and a client panics with neither `HOME` nor
-  `XDG_DATA_HOME` set (`S42`).
+  every dropped client writes it, under `$XDG_DATA_HOME/ant`, else
+  `$HOME/.local/share/ant` (`USERPROFILE` stands in for `HOME`; on macOS
+  `~/Library/Application Support/ant`, on Windows `%APPDATA%\ant`). That is
+  a file write, not a dial, so the gate does not cover it. Two other mechanisms
+  do (`S42`, D178): `.cargo/config.toml`'s `[env]` table points every test
+  process's `XDG_DATA_HOME` at `target/upstream-data-home`, so no test writes
+  into the developer's home; and both storage constructors refuse, before any
+  socket, an environment in which upstream would panic — no usable `HOME`,
+  `XDG_DATA_HOME` or `USERPROFILE`, a `HOME` that is not valid Unicode
+  included — or write the file under the current directory (an empty or
+  relative value).
 
 A real storage-network run is a script run with the **release binary in an
 unarmed environment** — never a test, never `#[ignore]`d, and from a debug
@@ -231,7 +239,8 @@ change for coverage that already existed.
 
 What Q16 added to CI is a **step** on the existing `traceability` job —
 Python only, no network, seconds — beside `ci-shell` and `fuzz-budget`, which
-ride there for the same reason. That job's cargo-freeness, which is what makes
+ride there for the same reason (`ci-shell` also reads `git ls-files` since
+D181). That job's cargo-freeness, which is what makes
 riding there free, is **asserted on every run** by `scripts/cargo-free.sh` and
 stated once in that script's header (D124/Q182); this paragraph cites it
 rather than repeating it. **The required-context set stays at 19 (17 jobs,

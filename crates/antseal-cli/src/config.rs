@@ -21,14 +21,15 @@
 //! # built-in default: arbitrum-one).
 //! default_network = "arbitrum-sepolia"
 //!
-//! # Per-network payment-RPC override SLOT. Chain ids, contract
-//! # addresses, and default RPC endpoints are antseal-net's pinned
-//! # constants and are deliberately NOT configurable here — duplicating
-//! # contract addresses in a hand-edited file is exactly the drift the
-//! # S5 byte-equality test exists to prevent. Consumed by the backend
-//! # adapter at integration (S6); validated now.
+//! # Per-network table. Chain ids, contract addresses, and payment RPC
+//! # endpoints are antseal-net's pinned constants and are deliberately NOT
+//! # configurable here — duplicating contract addresses in a hand-edited
+//! # file is exactly the drift the S5 byte-equality test exists to
+//! # prevent. `rpc_url` under any [networks.<id>] is REFUSED at load
+//! # (exit 17; U94, D180): the payer dials the pinned public endpoint for
+//! # arbitrum-one and arbitrum-sepolia, and the RPC_URL of the export
+//! # ANTSEAL_DEVNET_ENV names for devnet — nothing reads an override.
 //! [networks.arbitrum-one]
-//! rpc_url = "https://my-own-node.example/rpc"
 //!
 //! # Storage-network bootstrap peers, arbitrum-one ONLY (D173 §2 R4). A
 //! # present list REPLACES the vendored upstream list wholesale and is
@@ -71,7 +72,14 @@
 //! honor must be loud (never a silently-dropped override). One recognized
 //! key is a hard error in the wrong *place*: `bootstrap` anywhere but
 //! `[networks.arbitrum-one]` (D173 §2 R4) — the one key whose silent
-//! acceptance would be a stale peer layer waiting to be dialed.
+//! acceptance would be a stale peer layer waiting to be dialed. And one is
+//! a hard error in **every** place: `rpc_url` under any `[networks.<id>]`
+//! (U94, D180), a retired slot that no build ever read — accepting it would
+//! tell a user the payer dials their endpoint when it dials the pinned one.
+//! The refusal names the key, the table and the line and never repeats the
+//! value, which in its common real form carries an API key; it is raised on
+//! the key, before the value is parsed, so a malformed value cannot echo it
+//! through the subset's own errors either.
 //!
 //! # The TOML subset, documented (and why it is hand-parsed)
 //!
@@ -114,11 +122,6 @@ pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
 pub struct Config {
     /// `default_network` — the middle layer of the precedence rule.
     pub default_network: Option<NetworkId>,
-    /// `[networks.<id>] rpc_url` override slots (consumer: S6). A
-    /// short pair list — three possible networks — with
-    /// [`Config::rpc_url_override`] as the reader (`NetworkId`
-    /// deliberately gains no `Ord` for a map's sake).
-    pub rpc_url_overrides: Vec<(NetworkId, String)>,
     /// `[networks.arbitrum-one] bootstrap` — `arbitrum-one`'s storage
     /// bootstrap peers, which **replace** the vendored upstream list and
     /// are never merged with it (D173 §2 R4, R6). `None` is "no key": the
@@ -141,17 +144,6 @@ pub struct Config {
     /// Unknown-key/section warnings (forward compat) — rendered once on
     /// stderr by the entry point, never fatal, never on stdout.
     pub warnings: Vec<String>,
-}
-
-impl Config {
-    /// The configured RPC override for one network, if any.
-    #[must_use]
-    pub fn rpc_url_override(&self, id: NetworkId) -> Option<&str> {
-        self.rpc_url_overrides
-            .iter()
-            .find(|(network, _)| *network == id)
-            .map(|(_, url)| url.as_str())
-    }
 }
 
 /// The effective network: flag > config > built-in `arbitrum-one`
@@ -324,6 +316,15 @@ pub fn parse(text: &str) -> Result<Config, ConfigParseError> {
         if let Some(first) = seen_keys.insert(full_key.clone(), line_no) {
             return Err(err(format!("key `{full_key}` already set on line {first}")));
         }
+        // U94 (D180): refused on the KEY, before the value is parsed, so no
+        // shape of value — the subset's own errors echo a value they reject
+        // — can carry an RPC URL into the error (see `rpc_url_refusal`).
+        if let [family, network_name] = section.as_slice()
+            && family == "networks"
+            && key == "rpc_url"
+        {
+            return Err(err(rpc_url_refusal(network_name)));
+        }
         let value = parse_value(value_raw.trim()).map_err(err)?;
 
         apply(&mut config, &section, key, &full_key, value, line_no)?;
@@ -474,6 +475,46 @@ fn parse_bootstrap_override(items: &[String]) -> Result<Vec<SocketAddr>, String>
     Ok(peers)
 }
 
+/// The refusal for `rpc_url` under `[networks.<network_name>]` — **U94's
+/// ruling (D180 U94 R1–R3): the key is retired, and refused at load.**
+///
+/// U4 reserved it as a payment-RPC override slot for S6, and no build ever
+/// read it: the payer dials the pinned public endpoint for `arbitrum-one` and
+/// `arbitrum-sepolia`, and the export's `RPC_URL` for `devnet`, whatever this
+/// file says. Accepting the key told a user their endpoint was used when it
+/// was not, so it is a malformed config (17) rather than a warning — a warning
+/// would print while `seal` paid through the very endpoint the user had
+/// configured away from, and a silently dropped override is worse than a loud
+/// stop (`CliError::MalformedConfig`'s own rule).
+///
+/// Wiring it was measured **buildable** at the pin and refused, not ruled out
+/// (D180): a refusal is reversible — a later wiring is additive, and an older
+/// binary that cannot honour the key keeps failing closed — while wiring now
+/// would commit the file to an input that usually carries an API key, on error
+/// paths that print the URL a transport failed on, for a privacy gain the
+/// storing peers already void (they see the paying transactions either way).
+///
+/// The section name is validated **first** (R2), so `[networks.ropsten]`
+/// keeps its *not a known network* answer. The text names the key and the
+/// table — the line rides on [`ConfigParseError::line`] — and never the value;
+/// the caller raises it before the value is parsed, because the subset's own
+/// *not a quoted string* error repeats the raw value it rejects.
+fn rpc_url_refusal(network_name: &str) -> String {
+    match network_name.parse::<NetworkId>() {
+        Err(_) => format!(
+            "`[networks.{network_name}]` is not a known network (valid: \
+             arbitrum-one, arbitrum-sepolia, devnet)"
+        ),
+        Ok(id) => format!(
+            "`rpc_url` under [networks.{id}] is refused: antseal reads no payment-RPC \
+             override — arbitrum-one and arbitrum-sepolia pay through their pinned public \
+             RPC endpoints, and devnet through the RPC_URL of the export ANTSEAL_DEVNET_ENV \
+             names. Delete the line; its value is not repeated here, because an RPC URL \
+             often carries an API key"
+        ),
+    }
+}
+
 /// Route one parsed `key = value` into the schema: recognized keys with
 /// invalid values are hard errors; unrecognized keys/sections warn.
 fn apply(
@@ -543,25 +584,9 @@ fn apply(
             })?;
             config.default_network = Some(id);
         }
-        (["networks", network_name], "rpc_url") => {
-            let id: NetworkId = network_name.parse().map_err(|_| {
-                err(format!(
-                    "`[networks.{network_name}]` is not a known network (valid: \
-                     arbitrum-one, arbitrum-sepolia, devnet)"
-                ))
-            })?;
-            let url = expect_str(value, "rpc_url")?;
-            if !http_url_shape(&url) {
-                return Err(err(
-                    "`rpc_url` must be an http:// or https:// URL".to_owned()
-                ));
-            }
-            config.rpc_url_overrides.push((id, url));
-        }
         // D173 §2 R4: `arbitrum-one`'s storage bootstrap peers, which REPLACE
         // the vendored list wholesale and are never merged with it (the
-        // resolver in `crate::devnet_env` consumes this slot — a consumer
-        // that exists, unlike `rpc_url`'s, `U94`). Accepted under
+        // resolver in `crate::devnet_env` consumes this slot). Accepted under
         // `[networks.arbitrum-one]` ONLY: the other two networks' peers come
         // from the devnet export `ANTSEAL_DEVNET_ENV` names and belong to one
         // run of a devnet, so a config key for them would be a stale layer
@@ -599,6 +624,7 @@ fn apply(
         (["networks", network_name], other) => {
             // The section family is recognized; validate its name even
             // for unknown keys, then warn on the key (forward compat).
+            // `rpc_url` never arrives here: `parse` refuses it on its key.
             let _: NetworkId = network_name.parse().map_err(|_| {
                 err(format!(
                     "`[networks.{network_name}]` is not a known network (valid: \

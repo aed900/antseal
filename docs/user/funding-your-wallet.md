@@ -252,10 +252,10 @@ payment stranded mid-sequence: <N> sub-batch transaction(s) landed before the fa
 **Payment proofs expired** — class `payment-proofs-expired`, exit code **29**:
 
 ```
-this seal's payment proofs have expired (the ~24 h node-side window has passed), so the storers reject them: completing it requires a new, separately consented payment — the already-spent ANT is not recoverable
+this seal's payment proofs have expired: a majority of the storing peers refused this seal's payment proof, and the payment is more than 24 hours old by its block time, so completing it requires a new, separately consented payment — the already-spent ANT is not recoverable
 ```
 
-(`crates/antseal-cli/src/error.rs:681-697` and `:699-707`; the exact rendering
+(`crates/antseal-cli/src/error.rs:689-705` and `:707-723`; the exact rendering
 is frozen in `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:89-90`
 and `:91-92`.)
 
@@ -269,10 +269,14 @@ What each one asks of you:
   `antseal list` prints the exact command that finishes it. What you must not
   do is retry it as you would a network timeout, with a changed path list or
   changed shaping flags: that starts a new seal and pays a second quote.
-- **29 costs a second payment, and the first one is gone.** The payment proofs
-  have a node-side window of roughly 24 hours; once it passes the storers
-  reject them, and no re-run recovers the ANT already spent. Finishing the work
-  means a new payment, separately quoted and separately consented.
+- **29 costs a second payment, and the first one is gone.** antseal ends a
+  seal here only when a majority of the storing peers refused its payment proof
+  **and** the payment is more than 24 hours old by its block time; the 24 hours
+  are antseal's own rule, not the network's. A refusal by fewer peers, or over
+  a younger payment, is a network failure (23) instead, and re-running finishes
+  it with no new payment. Once in 29, no re-run recovers the ANT already spent:
+  finishing the work means a new payment, separately quoted and separately
+  consented.
 - **Branch on the code, never on "something failed".** A caller that treats
   every non-zero exit as retryable is the failure these two classes exist to
   prevent. Use the exit code, or `error.class` under `--json`.

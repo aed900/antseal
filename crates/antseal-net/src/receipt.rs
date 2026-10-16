@@ -43,11 +43,15 @@
 //!
 //! # Time-boxed usability (D37 Decision 6)
 //!
-//! A journaled receipt is treated as PUT-usable only within antseal's
-//! conservative ~24 h proof-age window. When a storer rejects proofs on
-//! payment grounds past it, that is the distinct
+//! A journaled receipt stays PUT-usable until a majority of the storing peers
+//! refuses its proof **and** the payment is more than ~24 h old by the block
+//! timestamp of the transaction that paid for it (S43, D179 —
+//! [`crate::put_policy`], which finds that transaction through
+//! [`PaymentReceipt::tx_map`] and [`TxRecord::block_number`], so the journal
+//! format needed no new field). That is the distinct
 //! [`StorageError::ProofsExpired`] state, and completing the seal then
-//! requires re-consented re-payment, never a silent one.
+//! requires re-consented re-payment, never a silent one. Any other refusal is
+//! retried with this receipt, paying nothing.
 //!
 //! **Attribution, corrected by S9 (2026-08-02):** the window is antseal's
 //! own client-side policy, not a pinned-node rule. `QUOTE_MAX_AGE_SECS`

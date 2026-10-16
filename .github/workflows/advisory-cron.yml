@@ -79,3 +79,18 @@ jobs:
         run: cargo install cargo-deny --version 0.19.8 --locked
       - name: cargo deny (advisories, bans, sources, licenses)
         run: ./scripts/ci-lanes.sh audit-deny
+      # D183/Q277 — no deny.toml ignore is past its review date. cargo-deny
+      # cannot see this: it honours an expired ignore as happily as a fresh one.
+      # This is the one SCHEDULED venue, so a date that passes in a week with no
+      # push still goes red here (ci-always.yml's `traceability` job runs the
+      # same pair on every push). `always()`, after the sweep, so a new advisory
+      # and an expired ignore are each reported even when the other is red; the
+      # check itself runs only when its self-test passed (the
+      # devnet-e2e-cron.yml idiom). Standard-library Python, no cargo.
+      - name: D183 — self-test the deny.toml review-date check
+        id: deny-reviews-selftest
+        if: always()
+        run: ./scripts/check-deny-reviews.py --self-test
+      - name: D183 — no deny.toml advisory ignore is past its review date
+        if: always() && steps.deny-reviews-selftest.outcome == 'success'
+        run: ./scripts/check-deny-reviews.py

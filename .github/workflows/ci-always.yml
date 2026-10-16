@@ -163,6 +163,10 @@ jobs:
         run: ./scripts/cargo-free.sh --arm traceability
       - name: Self-test (prove both checks can fail), then check
         run: ./scripts/ci-lanes.sh traceability
+      # D181 (Q111) — the same step also enforces rule [Q111]: no shell pipeline
+      # feeds an early-exit grep (`| grep -q`, `-m`, `-l`, `-L`), over every shell
+      # file git knows. That half reads `git ls-files`, so `ci-shell` is no longer
+      # git-free; it is still Python stdlib only, no network and no cargo.
       - name: Q43 — every workflow `run:` block is a committed script or an allowlisted line
         run: ./scripts/ci-lanes.sh ci-shell
       # D138/Q239 — the guard over the path filter this split introduced, and
@@ -178,8 +182,9 @@ jobs:
       # Placed on `ci.yml` instead, the guard would be skipped by exactly the
       # pushes it is meant to police — a check that cannot run on its own
       # subject. It also rides here for the reasons `ci-shell`, `fuzz-budget`
-      # and `anchor-net-policy` do: Python stdlib only, no network, no git, and
-      # cargo-free by this job's `--arm`/`--verdict` pair (D124/Q182). ZERO new
+      # and `anchor-net-policy` do: Python stdlib only, no network, and
+      # cargo-free by this job's `--arm`/`--verdict` pair (D124/Q182); and no git,
+      # which since D181 is no longer true of `ci-shell` (`git ls-files`). ZERO new
       # required-status contexts — this step adds none to the set.
       #
       # SELF-TEST FIRST, as everywhere here. Eighteen planted faults, each
@@ -222,7 +227,8 @@ jobs:
       #
       # It rides HERE, as two steps of an existing job, for exactly the reason
       # `ci-shell`, `fuzz-budget`, `anchor-net-policy`, the bitmatch trigger
-      # and the copy-style lint do: Python stdlib only, no network, no git, no
+      # and the copy-style lint do: Python stdlib only, no network, no git (not
+      # `ci-shell` since D181, which reads `git ls-files`), no
       # cargo (asserted by this job's `--arm`/`--verdict` pair, D124/Q182). So
       # it costs SECONDS and ZERO new required-status contexts — it adds none to
       # the set, and Q56's generated context list is untouched. That is not
@@ -250,6 +256,27 @@ jobs:
         run: ./scripts/check-action-pins.py --self-test
       - name: D143 — every `uses:` is the 40-hex commit the ledger names, and the ledger is fresh
         run: ./scripts/check-action-pins.py
+      # D183/Q277 — every deny.toml `[advisories].ignore` entry carries exactly
+      # one `Review by YYYY-MM-DD`, and none has passed (UTC); inside 14 days it
+      # warns and stays green, the P6 shape above. D19 made the review date a
+      # rule in 2026-07 and nothing read it: five ignores fell due on 2026-11-01
+      # with no row owning them, and cargo-deny honours an expired ignore as
+      # happily as a fresh one, so the `audit-deny` context cannot see this.
+      #
+      # It rides HERE for the reason the pin ledger does: standard-library
+      # Python (`tomllib`), no network, no git, no cargo (asserted by this job's
+      # `--arm`/`--verdict` pair, D124/Q182), and ZERO new required-status
+      # contexts. This job runs on every push, docs-only ones included; the
+      # weekly advisory-cron.yml runs the same pair for the weeks with no push.
+      # SELF-TEST FIRST: fourteen arms planted in memory, each judged by its
+      # rule tag and the names its message must carry, including date-injection
+      # arms that replay 2026-11-02 rather than wait for it. Measured locally
+      # 2026-10-16, 2-core host under load, 3 runs each: self-test 0.05-0.09 s,
+      # check 0.04-0.05 s.
+      - name: D183 — self-test the deny.toml review-date check (prove every rule can go red)
+        run: ./scripts/check-deny-reviews.py --self-test
+      - name: D183 — no deny.toml advisory ignore is past its review date
+        run: ./scripts/check-deny-reviews.py
       # D171 §2 R5 (Q274) — a job that publishes or signs bytes restores no
       # Actions cache. Every job granted `pages`, `contents` or `id-token` write
       # carries no `Swatinem/rust-cache` or `actions/cache` step, because any

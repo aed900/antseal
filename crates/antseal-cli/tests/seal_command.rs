@@ -20,7 +20,7 @@ mod spawn;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use antseal_cli::backend::BackendArm;
+use antseal_cli::backend::{BackendArm, no_backend_message};
 use antseal_cli::cli::{Cli, Command};
 use antseal_cli::error::ErrorClass;
 use antseal_cli::listing::WorkListing;
@@ -1578,9 +1578,12 @@ fn antseal_bin() -> std::process::Command {
 /// on `commands::seal`. The short form: U72 had just ruled the same
 /// ordering for `reveal` and paid its cost out loud; `seal`'s own recorded
 /// rule is *"the cheapest thing that can say no goes first"* and
-/// `open_layout` is one `stat`; and `BackendArm::Compiled`'s sentence is
+/// `open_layout` is one `stat`; and `BackendArm::Compiled`'s sentence was
 /// false for a `seal` U13 already wired, so there was no true seam refusal
-/// for this build to give.
+/// for this build to give. U95 retired that sentence (D180), and the build
+/// with a backend now compiles no seam refusal at all — so the property
+/// this function once asserted of it (that it named no feature flag) has no
+/// subject left; the third witness is the compiler's now.
 ///
 /// # Why a `match`, not a `#[cfg]`
 ///
@@ -1590,22 +1593,12 @@ fn antseal_bin() -> std::process::Command {
 /// type-checks and carries the feature build's answer instead of
 /// `#[cfg]`-ing it out of existence. Only the *selection* is per-build.
 fn next_stage_for_a_valid_seal_plan() -> (i32, String) {
-    // Load-bearing for U73's third witness, and fallible: if the
-    // compiled-in arm's sentence ever names the feature flag, the reason
-    // `contains("ant-backend")` was a default-only assertion stops holding
-    // and the ruling has to be re-read.
-    assert!(
-        !BackendArm::Compiled.message("seal").contains("ant-backend"),
-        "U73 rests on the compiled-in arm naming no feature flag — the feature is ON in that \
-         build, so naming it would be the wrong advice: {}",
-        BackendArm::Compiled.message("seal")
-    );
     match BackendArm::THIS_BUILD {
         // No adapter exists, so the seam refuses. The needle is the whole
         // real message rather than one word of it: U3's rule, and it is
         // what makes this stronger than the `contains("ant-backend")` it
         // replaces.
-        BackendArm::NotCompiled => (23, BackendArm::NotCompiled.message("seal")),
+        BackendArm::NotCompiled => (23, no_backend_message("seal")),
         // The adapter exists and `seal` constructs one, so the honest next
         // answer is the vault this HOME does not have (`open_layout`).
         BackendArm::Compiled => (2, "no vault exists".to_owned()),

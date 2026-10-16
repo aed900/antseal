@@ -1377,6 +1377,7 @@
   - A consumer-level test proves the ruled behaviour: the backend receives the override, or loading the key is refused or warned by name.
   - `docs/config.md` states what the product does with the key.
 - Notes: **[2026-10-15, wave 36 — still unconsumed; the documentation now says so.]** `config.rs` parses and validates `[networks.<id>] rpc_url` into `rpc_url_overrides`, and `rpc_url_override()` has no caller outside `config.rs` (grep over `crates/antseal-cli/src/`: only the definition and a `devnet_env.rs` test asserting the export's URL is NOT used). The receipt reader (D173 §2 R14, lane RC1b) takes `rpc_url` from the network **definition** — the pinned constant for public ids, the export's `RPC_URL` for `devnet` — never from `config.toml`, so the key was not consumed by that path either. `docs/config.md`'s schema comment now reads *Validated at load, and consumed by NOTHING today (U94) … Wiring or retiring it is U94's ruling, owed before the config surface freezes* (lane DOCS). `CONTRIBUTING.md`'s storage-gate section lists the payer's EVM RPC among what the gate does not cover and names this row.
+- Notes: **[2026-10-16, wave 37 — TICKED (D180 U94 R1–R5, lane L-CLI).]** Refused at load, never wired: wiring was buildable and is refused on reversibility and credential exposure. Captures on the `TODO.md` row; D180 §2 R1 amended in place for the key-before-value order.
 ### U95 — After `U91`, the `Compiled` backend-arm refusal sentence and its arm name have no production emitter in either build
 - Milestone: M4
 - Size: XS
@@ -1389,3 +1390,15 @@
   - No committed document or test asserts text no build emits.
   - The per-arm machine surface asserts what each build prints.
 - Notes: **[2026-10-15, wave 36 — LIVE: the sentence has zero production emitters in either build.]** D175 landed (`U91`): the feature build's `reveal` holds the lazy reader and the default build's `VaultLocalBackend` renders `THIS_BUILD`'s arm, so `BackendArm::Compiled.message` (*a backend is compiled in, but this command does not construct one yet*) is emitted by no production path in either build (lane RC2b). `Accept` row 1 is half done by D175 §2 R10: `json-envelopes.txt` carries no Compiled-arm document and `machine_mode.rs::no_registered_document_carries_the_compiled_arm_header` keeps it so (a planted-header self-check and a `> 10` document floor). Still asserting the sentence as a property: `tests/reveal_vault_local.rs:337`'s `text.contains("no storage backend compiled in") || text.contains("compiled in")`, which cannot tell the two arms apart (both contain *compiled in*), and `machine_mode.rs::unavailable_selects_this_builds_arm`'s feature arm; `the_refusal_messages_name_no_task_row` still witnesses both arms. D175 §2 R11 keeps the sentence and the arm name until this row rules (retire or reword with R82's argued retraction; keep `BackendArm` as the build discriminator).
+- Notes: **[2026-10-16, wave 37 — TICKED (D180 U95 R1–R6, lane L-CLI).]** Captures on the `TODO.md` row; R82 and D175 take dated addenda; D180 §6 records the venue rename, P6's extra assertions and P8r.
+### U96 — The read-only commands report a refusal to start a storage client as "the Autonomi network could not be reached"
+- Milestone: M4
+- Size: XS
+- Deps: after S42 (whose refusal it misdescribes); D170 §2 R2 (the degrade it words)
+- Spec: Working principles — errors say what happened; D65 (`message` is human copy, rewordable at any tier)
+- Discovered by: wave-37 lane L-NET, 2026-10-16, while asserting `S42`'s refusal through a spawned `reveal` (D178 §6). Id assigned centrally.
+- Problem: `backend::degrade` (`crates/antseal-cli/src/backend.rs:732-759`) turns a failed read-only connection into an `UnreachableBackend` whose every fetch fails with *"the Autonomi network could not be reached: {detail}"*. Two of the errors it carries are refusals, not unreachability: the storage gate (D173) and `S42`'s environment refusal (D178). Measured: *"network failure: unit 0 could not be fetched from the network (network error: the Autonomi network could not be reached: refusing to start a storage client: …"*. The refusal text is correct and the exit class (23) is right; the prefix tells the user the network failed when antseal declined to start.
+- Do: word the prefix by the error's kind (a refusal names itself; an unreachable network or the connect bound keeps today's words), keeping D170 §2 R2's degrade and the network class.
+- Accept:
+  - A spawned `reveal` refused by `S42`'s environment check prints no *"could not be reached"*, and a dead-loopback `reveal` still does — both asserted by message.
+  - A plant restoring the single prefix reddens the refusal row by message.

@@ -339,9 +339,9 @@ fn overlay_lines(overlay: &OnlineOverlay) -> Vec<String> {
 /// of a live row's authored parts are closed sets, so there is nothing left
 /// to escape**, and that is the ruling rather than an omission:
 ///
-/// - the fetch-failure detail is `antseal_net::FetchFailureClass`'s
-///   `&'static str` label, from a closed class mapped wildcard-free over
-///   `StorageError` (R79 arm (a)); and
+/// - the fetch-failure detail is a closed `FetchFailureClass` — the class is
+///   `antseal-core`'s since R89; `antseal-net` classifies into it via
+///   `fetch_failure_class` (R79 arm (a)) — spelled by core's frozen table; and
 /// - `row.subject` is `antseal_net::subject_label`'s output, whose whole
 ///   grammar is `unit <digits>`, `unit <digits> (raw mirror)` and
 ///   `encrypted manifest` — a `u64`'s decimal rendering inside static text.

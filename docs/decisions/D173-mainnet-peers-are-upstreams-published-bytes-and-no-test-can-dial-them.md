@@ -508,3 +508,47 @@ record changes: §2 R16's predicate (exit 0, `"dry_run": true`, at least one pri
 stops the gate), the loopback rehearsal `Q32`'s scripting owes before the stage is ever pointed at
 mainnet, `S41` before `Q34` (§2 R17), and the maintainer's express consent at the gate, which this
 ruling is not.
+
+## Addendum — 2026-10-16 (wave 37): §1.2's panic predicate, stage 0's strict predicate, and the moved bootstrap list
+
+**§1.2 — the panic's real predicate (D178 §1.1).** `ant-core` 0.5.0 finds its data
+directory through the environment alone. It reads `XDG_DATA_HOME`, then `HOME`, then
+`USERPROFILE`, with no passwd fallback. So:
+
+- `USERPROFILE` alone also prevents the panic;
+- a `HOME` that is not valid Unicode panics;
+- an empty or relative value makes the client write `ant/client_adaptive.json` under the
+  working directory;
+- the panic comes **after** the client node has started and dialed.
+
+Both storage constructors now refuse those environments before any socket (`S42`, D178).
+The file's mtime on the maintainer's host is 2026-10-15 15:10:51, inside wave 36's devnet
+window, not wave 35's devnet day, in a directory that predates antseal.
+
+**§2 R16 and the 2026-10-15 ruling — stage 0's predicate is made strict (D177 §2 R10).**
+The predicate this record states (exit 0, `"dry_run": true`, at least one priced blob)
+also accepted the resume-plan document. Stage 0 now passes only on all of:
+
+- exit 0, with stdout exactly one JSON document, `v` = 1 and `command` = `seal`;
+- top-level `ok`;
+- the expected top-level `network`;
+- inside `result`: `dry_run`, `resume` = false, `quoted` ≠ false, `blob_count` ≥ 1 and
+  `storage_cost_atto` > 0 (a decimal string).
+
+It is scripted in `scripts/stage0.sh` (`Q32`) and is never part of
+`scripts/e2e-sepolia.sh`. This narrows the ruled predicate and does not reopen the
+maintainer's ruling: stage 0 stays ALLOWED inside §2.9's accepted exposure, with the
+maintainer's express consent at the gate.
+
+**§2 R18 — upstream moved and reformatted the bootstrap list (wave-37 survey).**
+
+- From `ant-core-v0.10.0`, `resources/bootstrap_peers.toml` returns 404 (checked at
+  v0.10.0, v0.11.0 and v0.12.0). The file is now `ant-core/resources/bootstrap_peers.toml`.
+- Its format is multiaddrs, `quic = ["/ip4/…/udp/…/quic", …]`, plus a new `webrtc = [...]`
+  section (upstream ADR-0005).
+- At v0.12.0 the seven QUIC peers equal the seven vendored at the pin, so no peers-only
+  re-transcription is indicated.
+
+The weekly freshness read (`P19`) must read the new path for tags from `ant-core-v0.10.0`.
+A pin bump past 0.9.x meets a format that `parse_vendored_peers` does not read. The pin's
+own tag is unchanged: blob `ce77014e…` at `ant-core-v0.5.0`.

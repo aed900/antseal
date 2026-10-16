@@ -89,4 +89,4 @@
 [payment-stranded] class=payment-stranded code=28
   payment stranded mid-sequence: 2 sub-batch transaction(s) landed before the failure and the journaled partial receipt is authoritative — this is not a transient network failure and money has already moved: re-run `antseal seal` with the same files and the same seal-shaping flags to finish it, which re-pays no quote the receipt already maps; `antseal list` prints the exact command (a payment sub-batch transaction reverted on-chain)
 [payment-proofs-expired] class=payment-proofs-expired code=29
-  this seal's payment proofs have expired (the ~24 h node-side window has passed), so the storers reject them: completing it requires a new, separately consented payment — the already-spent ANT is not recoverable
+  this seal's payment proofs have expired: a majority of the storing peers refused this seal's payment proof, and the payment is more than 24 hours old by its block time, so completing it requires a new, separately consented payment — the already-spent ANT is not recoverable

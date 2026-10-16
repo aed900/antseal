@@ -258,7 +258,7 @@ appears in `ROOTS_V1`.
 - QUARANTINED: swisssign-signature-services-root-2020-2
 
 The cost of a quarantine is stated rather than implied: MVP-SPEC.md line 108
-documents both TSAs as configurable alternates, and U26 lets a user select
+documents each quarantined TSA as a configurable alternate, and U26 lets a user select
 them. Because A20's gate is "proceed iff ≥1 TSA token passed **full core**
 verification", a user who configures only quarantined TSAs gets a **hard
 pre-payment seal abort**, not a weaker bundle. That is loud and recoverable;

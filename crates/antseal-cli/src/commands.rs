@@ -253,9 +253,9 @@ pub(crate) fn init(
 ///    it is the order `list`, `show`, `status` and (since U72) `reveal`
 ///    already keep.
 /// 3. **This build has no true seam sentence for `seal`.**
-///    [`BackendArm::Compiled`]'s message says the command *"does not
-///    construct one yet"* — false here since U13 wired it — so satisfying
-///    the old assertion would have meant printing a falsehood.
+///    [`BackendArm::Compiled`]'s sentence said the command did not yet
+///    construct a backend — false since U13 wired it; U95 retired it (D180)
+///    — so satisfying the old assertion would have meant printing a falsehood.
 /// 4. **D89**, which settles the general form: *"a default build of
 ///    antseal is an inspect-and-verify build"* is *"already true and
 ///    already shipped"*. The two builds are capability-divergent **by
@@ -459,11 +459,11 @@ fn seal_over_backend(
 /// `list` (U19).
 ///
 /// Read-only, and deliberately **not** under the U5 single-writer lock:
-/// that lock exists to serialize writers, and making `list` wait on a
-/// running seal would turn the one command you reach for when something
-/// looks wrong into the one command that hangs. The cost is that a listing
-/// taken during a seal may show that work mid-transition — which is
-/// exactly what it is.
+/// that lock serializes writers and is a try-lock, so a `list` that took it
+/// during a running seal would not wait — it would fail with `VaultLockHeld`
+/// (exit 15), the one command you reach for when something looks wrong
+/// refusing to run. The cost is that a listing taken during a seal may show
+/// that work mid-transition — which is exactly what it is.
 pub(crate) fn list(globals: &GlobalArgs, slot: &VaultSlot) -> Result<Outcome, CliError> {
     let ui = Ui { json: globals.json };
     let layout = open_layout()?;
@@ -482,7 +482,7 @@ pub(crate) fn list(globals: &GlobalArgs, slot: &VaultSlot) -> Result<Outcome, Cl
 ///
 /// Read-only, and — like `list` and `status` — deliberately **not** under
 /// the U5 single-writer lock: the command a user reaches for to decide what
-/// to reveal must not be the command that hangs behind a running seal. It
+/// to reveal must not refuse (`VaultLockHeld`, exit 15) during a seal. It
 /// touches no backend at all (D67 §1 j): every snippet comes from the D43
 /// cache or from the user's own current file, and neither can reach the
 /// network.
@@ -511,13 +511,13 @@ pub(crate) fn show(
 ///
 /// Read-only by default and — like `list` — deliberately **not** under the
 /// U5 single-writer lock: the command you reach for when something looks
-/// wrong must not be the command that hangs behind a running seal.
+/// wrong must not refuse with `VaultLockHeld` (exit 15) during a seal.
 ///
 /// `--upgrade` writes, and its lock discipline is D99 R3's: poll unlocked
-/// (the lock exists to serialize writers, and holding it for a calendar
-/// round-trip would block every concurrent `seal` for up to two minutes),
-/// then take it only when there is something to persist. The window that
-/// opens is closed by `apply_upgrade`'s compare-and-set, not by hope.
+/// (the lock serializes writers, and holding it for a calendar round-trip
+/// would make every concurrent `seal` fail with `VaultLockHeld` for up to two
+/// minutes), then take it only when there is something to persist. The window
+/// that opens is closed by `apply_upgrade`'s compare-and-set, not by hope.
 ///
 /// The clock is read **once** and used for both jobs (D98 rider 2c): the
 /// verification time every anchor is evaluated at, and — through the engine's

@@ -256,10 +256,10 @@ const fn nibble(c: u8) -> u8 {
 
 /// Store version 1.
 ///
-/// Three roots, admitted under D57 §6's channel rule. See `PROVENANCE.md` in
-/// this directory for the per-root, per-channel record, **including the two
-/// D57 §5 candidates that are quarantined** and the exact channel each is
-/// waiting on.
+/// The roots below, admitted under D57 §6's channel rule; their count and
+/// order are the array's own, pinned label by label by the store-identity
+/// test below. See `PROVENANCE.md` for the per-root, per-channel record,
+/// **including every D57 §5 candidate still quarantined** and what it awaits.
 static ROOTS_V1: &[PinnedRoot] = &[
     // Free TSA — MVP-SPEC.md line 108 default. C1 vendor + two Wayback
     // snapshots ten and seven years old + the root embedded in the live

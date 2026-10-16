@@ -107,3 +107,20 @@ inherits libtest-style loud failure from the tool's exit code).
   advisory delta rather than running its own advisory scan.
 - Any future desire for cargo-audit-specific features (e.g. `cargo audit
   bin`) reopens this record as a dated addendum, not a silent tool swap.
+
+## Addendum — 2026-10-16 (wave 37, D183 / `Q277`): `unsound` leaves the defaults
+
+*"Defaults kept: vulnerability / unmaintained / unsound / yanked all surface"* was false for
+`unsound`. cargo-deny 0.19.8 defaults it to `workspace` (`src/advisories/cfg.rs:107-110`), which
+covers only this repository's own crates, so no unsound advisory against a dependency ever surfaced.
+`deny.toml` now sets `unsound = "all"`. That surfaced RUSTSEC-2026-0253 (`lru` 0.16.4, `ant-backend`
+graph), which is ignored with its reachability assessment (D183 §6). The ignore discipline's second
+half — *an entry past its review date is expired* — is now enforced by
+`scripts/check-deny-reviews.py` in the local gate, `ci-always`'s `traceability` job and the weekly
+`advisory-cron`. This record is not rewritten.
+
+## Addendum — 2026-10-16: `yanked` leaves the defaults — a yanked crate now fails the lane (D184)
+
+The `[advisories]` bullet above keeps cargo-deny's defaults so that *"vulnerability / unmaintained / unsound / yanked all surface"*. For `yanked`, *surface* meant a warning and nothing more: cargo-deny 0.19.8's default `yanked = "warn"` prints `warning[yanked]` and does not fail the check. Measured on this repository's own lock: `chacha20 0.10.1` (yanked 2026-08-27) and `wnaf 0.14.0` (yanked 2026-09-03) sat in antseal-core's crypto graph without ever being able to red the lane — wave 36's hosted `ci` run `38788439680` ended `advisories ok, bans ok, licenses ok, sources ok` beside two `warning[yanked]`. [D184](D184-the-yanked-chacha20-and-wnaf-move-now-and-a-yank-reds-the-advisory-lane.md) §2 R3 sets `yanked = "deny"` in `deny.toml`, in the same act as the lock moves that clear both crates, so from that act a yank of any locked version — a pinned rc included — reds `audit-deny` and the weekly cron until a reviewed move (dependency-policy §4) or a per-crate ignore, `{ crate = "name@version", reason = "<justification>. Review by YYYY-MM-DD." }`, which this record's ignore discipline binds like every other entry. D184 changes the `yanked` key alone. This record is not rewritten.
+
+*[Registrar, the same day: the first yank the new key caught came within hours. `zip` 2.x was yanked wholesale at 2026-10-16T03:35Z, under the pinned upstream stack, which requires `zip = "2"`. It is carried by a review-dated per-crate ignore owned by `Q280` — the discipline this addendum names.]*

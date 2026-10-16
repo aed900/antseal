@@ -1120,3 +1120,7 @@ orchestrator amends them at source; they are not edits made here.
 8. **`docs/testing/error-code-contract.md` §2** — the prefix table has no
    `anchor-` row, so A has no registered namespace. → Q72.
 9. `docs/decisions/README.md` — this decision's index row. **Applied 2026-08-11**, executing [D119](D119-decision-index-identity-and-the-index-row-sections.md) §5 step 4; the former `## Index row` section is demoted to this line under D119 RULING 4, and RULING 6 puts the row in the act that commits the record.
+
+## Addendum — 2026-10-16: §8.1's "`yanked` check is on" could not fail until D184
+
+§8.1 gives the yank risk of the two pre-release pins to `P23` because *"`cargo deny`'s `yanked` check is on"*. Under cargo-deny 0.19.8's default `yanked = "warn"` the check was on and could not fail: a yank printed `warning[yanked]` and `audit-deny`'s verdict did not change. It was measured on a crate this record's pin set brought into the graph — `wnaf 0.14.0` (§1.6's added list; on the P-384 verify path through `primeorder`), yanked 2026-09-03 — beside the AEAD stack's `chacha20 0.10.1`, yanked 2026-08-27; neither could ever turn the lane red. [D184](D184-the-yanked-chacha20-and-wnaf-move-now-and-a-yank-reds-the-advisory-lane.md) §2 R1 moves both (`wnaf 0.14.1` is value-identical for P-384's big-endian scalar) and §2 R3 sets `yanked = "deny"`, so from that act the clause holds as written: a yank of `cms =0.3.0-pre.2` or `rsa =0.10.0-rc.18` reds `audit-deny`. §1.6's package list stays as captured on 2026-08-02. This record is not rewritten.

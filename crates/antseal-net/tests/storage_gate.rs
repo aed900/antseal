@@ -13,8 +13,11 @@
 //!   under `crates/` does;
 //! - each of those constructors consults the storage gate as its **first
 //!   fallible step**, before its first `.await`;
-//! - the receipt reader's constructor opens no storage session and builds the
-//!   key-less provider (D173 §2 R14).
+//! - each then refuses an environment in which upstream would panic or write
+//!   its state file under the current directory (`consult_upstream_state`,
+//!   S42, D178 R1) — after the gate, and still before its first `.await`;
+//! - the receipt reader's constructor opens no storage session, builds the
+//!   key-less provider (D173 §2 R14), and consults neither check.
 //!
 //! It is a shape proof only: a gate call that did nothing would pass it. The
 //! behaviour proof is the second half.
@@ -53,6 +56,8 @@ use std::path::{Path, PathBuf};
 const CONNECT: &str = concat!("Client", "::connect(");
 /// The adapter's gate call, as each storage constructor must spell it.
 const GATE: &str = concat!("consult_storage", "_gate(config)?");
+/// The S42 refusal (D178 R1), as each storage constructor must spell it.
+const STATE: &str = concat!("consult_upstream", "_state()?");
 /// The first suspension point a constructor may reach only after the gate.
 const AWAIT: &str = concat!(".", "await");
 
@@ -173,6 +178,24 @@ fn the_storage_gate_is_the_first_step_of_both_storage_constructors() {
             "`{type_name}::connect` has a fallible step before the storage gate — the gate must be \
              its FIRST fallible step (D173 §2 R10)"
         );
+        // S42 (D178 R1): the upstream-state refusal, once, after the gate and
+        // before every socket.
+        assert_eq!(
+            code.matches(STATE).count(),
+            1,
+            "`{type_name}::connect` must consult upstream's state directory exactly once — no \
+             `{STATE}` on a code line of its body, or more than one (S42, D178 R1)"
+        );
+        let state = code.find(STATE).unwrap_or_default();
+        assert!(
+            gate < state,
+            "`{type_name}::connect` refuses an unresolvable upstream dir before it consults the \
+             storage gate — the gate must stay its first fallible step (D178 R1)"
+        );
+        assert!(
+            state < first_await,
+            "`{type_name}::connect` awaits before refusing an unresolvable upstream dir (S42)"
+        );
     }
 
     // 3. The receipt reader: a chain read, no storage session (D173 §2 R14).
@@ -190,6 +213,11 @@ fn the_storage_gate_is_the_first_step_of_both_storage_constructors() {
         !receipts.contains(concat!("consult_storage", "_gate")),
         "the receipt reader consults the storage gate, which guards storage sessions it never \
          opens (D173 §2 R14)"
+    );
+    assert!(
+        !receipts.contains(concat!("consult_upstream", "_state")),
+        "the receipt reader consults upstream's state directory, which only a storage client \
+         touches — and it builds none (S42, D173 §2 R14)"
     );
 
     // 4. Nowhere else under crates/.

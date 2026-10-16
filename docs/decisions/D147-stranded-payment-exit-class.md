@@ -849,3 +849,21 @@ substance and the snapshot diff stays reviewable.
   the command, and rules nothing.
 - **It does not amend `TODO.md`, `tasks/U.md` or `docs/decisions/README.md`.**
   R13 supplies the verbatim text; the wave registrar applies it.
+
+## Addendum — 2026-10-16 (wave 37, D179 §2 R5): the exit-29 sentence no longer claims a node-side window
+
+§2 R3 moved `SealError::ProofsExpired`'s sentence into `CliError::PaymentProofsExpired`
+**unchanged**, and that sentence said *"(the ~24 h node-side window has passed), so the
+storers reject them"*. D37's 2026-08-02 correction had already found that no pinned node
+enforces such a window, and `S43` found that one hostile storer could produce the error.
+D179 §2 R5 corrects the copy. Exit 29's message now reads:
+
+> this seal's payment proofs have expired: a majority of the storing peers refused this
+> seal's payment proof, and the payment is more than 24 hours old by its block time, so
+> completing it requires a new, separately consented payment — the already-spent ANT is not
+> recoverable
+
+The class `payment-proofs-expired`, the code 29 and the remedy do not move.
+`tests/snapshots/cli-errors.display.txt` changes at line 92 only. Under D65, `message` is
+human copy. The quotations of the old sentence above (§1 and §2 R3) are history and stay as
+written.

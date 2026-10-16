@@ -975,6 +975,725 @@ pub mod storage_gate {
 }
 
 // ---------------------------------------------------------------------------
+// Upstream's state file outside the vault (S42, D178)
+// ---------------------------------------------------------------------------
+
+pub mod upstream_state {
+    //! The one file the pinned client keeps outside the vault, and the refusal
+    //! of an environment in which upstream would panic or write that file into
+    //! the current directory (S42, D178 R1).
+    //!
+    //! # What upstream does
+    //!
+    //! Every `Client::connect` of `ant-core` 0.5.0 computes
+    //! `adaptive::default_persist_path()` — `<data dir>/client_adaptive.json`
+    //! ([`FILE_NAME`]) — and reads the file while adaptation is on, which is
+    //! the default antseal keeps; `impl Drop for Client` writes it on every
+    //! drop, creating the directory if it is missing
+    //! (`ant-core-0.5.0/src/data/client/mod.rs:323-338,587-595`,
+    //! `adaptive.rs:1491-1594`). The file holds three concurrency starting
+    //! values and no peers. The data directory is `config::data_dir()`
+    //! (`ant-core-0.5.0/src/config.rs:11-24`):
+    //!
+    //! | [`Os`] | data directory | with nothing set |
+    //! | --- | --- | --- |
+    //! | [`Os::Other`] (Linux, and every target that is neither macOS nor Windows) | `$XDG_DATA_HOME/ant`, else `<home>/.local/share/ant` | **panics**: `home_dir().unwrap()` on `HomeDirNotFound` |
+    //! | [`Os::MacOs`] | `<home>/Library/Application Support/ant` | no file: `data_dir()` is `Err`, so the path is `None` |
+    //! | [`Os::Windows`] | `%APPDATA%\ant`, else `<home>\AppData\Roaming\ant` | **panics**, as on Linux |
+    //!
+    //! `<home>` is `HOME`, else `USERPROFILE` — upstream's own `home_dir()`
+    //! (`config.rs:87-92`), which reads those two variables and nothing else:
+    //! **no passwd fallback**, unlike the standard library's `home_dir`, which
+    //! antseal's own vault lookup uses. So a process with no `HOME` finds its
+    //! vault and then panics inside upstream. Every variable is read with
+    //! `std::env::var`, so a value that is not valid Unicode counts as unset,
+    //! and a `HOME` that is not valid Unicode panics although it is set. A set
+    //! but empty or relative value is used as it is, which puts the file under
+    //! the process's **current directory**.
+    //!
+    //! The panic comes **after** the client node has started and dialed:
+    //! `Client::connect` runs `Network::new` before `build_controller`
+    //! (`mod.rs:420-421`).
+    //!
+    //! # What antseal does
+    //!
+    //! [`check`] mirrors that lookup ([`resolve`]) and refuses
+    //! ([`UpstreamStateRefusal`]) when upstream would panic or resolve a
+    //! directory that is not absolute. Both storage constructors consult it
+    //! right after the storage gate — before the payer's `eth_chainId` and
+    //! before `Client::connect`, so before any socket — and report it in the
+    //! network class, as they report the gate. Its text begins with
+    //! [`REFUSAL`], names the variables, and never echoes a value.
+    //!
+    //! An absolute directory is left alone: upstream's write is kept, and
+    //! documented (D178 R6). macOS without a home is left alone too: upstream
+    //! writes nothing there.
+    //!
+    //! # A copy of upstream's logic, pinned twice
+    //!
+    //! This module is a transcription, so it is held to its original (D178
+    //! R2): unit rows over an injected environment cover every [`Os`] arm in
+    //! the default build, and in the feature build `tests/storage_constants.rs`
+    //! compares [`resolve`] with upstream's own `default_persist_path()` in a
+    //! child process per row, the panic rows included. An `ant-core` bump
+    //! re-verifies both (`docs/dependency-policy.md` §4).
+    //!
+    //! # Tests
+    //!
+    //! `.cargo/config.toml` sets `XDG_DATA_HOME` to `<workspace>/target/
+    //! upstream-data-home` for every process cargo runs from inside the tree
+    //! (D178 R3), so no test client writes into the developer's own
+    //! `~/.local/share/ant`. `crates/antseal-cli/tests/upstream_state.rs`
+    //! asserts it, with a positive control.
+
+    use core::fmt;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    /// The file upstream keeps in its data directory
+    /// (`ant-core-0.5.0/src/data/client/adaptive.rs:1491`).
+    pub const FILE_NAME: &str = "client_adaptive.json";
+
+    /// The sentence every refusal's text begins with. It names the variables
+    /// upstream reads; the rest of the text says which case this environment
+    /// is, and never what a variable holds.
+    pub const REFUSAL: &str = "refusing to start a storage client: the pinned Autonomi client keeps \
+                               a state file, client_adaptive.json, in a data directory it finds \
+                               through XDG_DATA_HOME, else HOME, else USERPROFILE (APPDATA first \
+                               on Windows; only HOME or USERPROFILE on macOS), and in this \
+                               environment it would panic or write that file into the current \
+                               directory";
+
+    /// The operating-system families upstream's lookup tells apart — its own
+    /// `cfg!(target_os = ...)` arms.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Os {
+        /// `target_os = "macos"`.
+        MacOs,
+        /// `target_os = "windows"`.
+        Windows,
+        /// Every other target, Linux included.
+        Other,
+    }
+
+    impl Os {
+        /// The family this build targets: the arm upstream's `cfg!` takes in
+        /// the same build.
+        #[must_use]
+        pub const fn current() -> Self {
+            if cfg!(target_os = "macos") {
+                Self::MacOs
+            } else if cfg!(target_os = "windows") {
+                Self::Windows
+            } else {
+                Self::Other
+            }
+        }
+    }
+
+    /// What upstream would do with [`FILE_NAME`] in one environment.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Resolution {
+        /// Read and write the file in `dir`, which upstream builds from the
+        /// value of `from`.
+        Dir {
+            /// The data directory, joined as this build's path rules join it —
+            /// so, for the arm of the OS this build targets, exactly upstream's.
+            dir: PathBuf,
+            /// The variable whose value the directory is built on.
+            from: &'static str,
+            /// How that value reads under the [`Os`]'s own rules
+            /// ([`is_absolute_on`]). Unless it is absolute, the file lands
+            /// under the current directory.
+            base: Base,
+        },
+        /// No file at all: macOS with no home, where `data_dir()` is `Err` and
+        /// `default_persist_path()` is `None`.
+        NoFile,
+        /// `home_dir().unwrap()` panics with `HomeDirNotFound`.
+        Panic,
+    }
+
+    /// How the value a data directory is built on reads.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Base {
+        /// An absolute path.
+        Absolute,
+        /// A non-empty path that is not absolute.
+        Relative,
+        /// The empty string.
+        Empty,
+    }
+
+    impl Resolution {
+        /// The file's path, as upstream's `default_persist_path()` returns it:
+        /// `None` for [`Resolution::NoFile`], and for [`Resolution::Panic`],
+        /// where upstream returns nothing at all.
+        #[must_use]
+        pub fn file(&self) -> Option<PathBuf> {
+            match self {
+                Self::Dir { dir, .. } => Some(dir.join(FILE_NAME)),
+                Self::NoFile | Self::Panic => None,
+            }
+        }
+    }
+
+    /// Upstream's lookup, for `os`, over `var` — one environment variable's
+    /// value, `None` when it is unset (`std::env::var_os`'s contract).
+    ///
+    /// A transcription of `ant-core-0.5.0/src/config.rs:11-24,87-92`; module
+    /// docs.
+    #[must_use]
+    pub fn resolve(os: Os, var: impl Fn(&str) -> Option<OsString>) -> Resolution {
+        // `std::env::var`: unset and not valid Unicode are both `Err`.
+        let text = |name: &'static str| {
+            var(name)
+                .and_then(|value| value.into_string().ok())
+                .map(|value| (name, value))
+        };
+        let home = || text("HOME").or_else(|| text("USERPROFILE"));
+        let dir = |(from, value): (&'static str, String), tail: &[&str]| {
+            let base = if value.is_empty() {
+                Base::Empty
+            } else if is_absolute_on(os, &value) {
+                Base::Absolute
+            } else {
+                Base::Relative
+            };
+            let mut dir = PathBuf::from(value);
+            for part in tail {
+                dir.push(part);
+            }
+            Resolution::Dir { dir, from, base }
+        };
+        match os {
+            Os::MacOs => home().map_or(Resolution::NoFile, |home| {
+                dir(home, &["Library", "Application Support", "ant"])
+            }),
+            Os::Windows => match text("APPDATA") {
+                Some(appdata) => dir(appdata, &["ant"]),
+                None => home().map_or(Resolution::Panic, |home| {
+                    dir(home, &["AppData", "Roaming", "ant"])
+                }),
+            },
+            Os::Other => match text("XDG_DATA_HOME") {
+                Some(xdg) => dir(xdg, &["ant"]),
+                None => home().map_or(Resolution::Panic, |home| {
+                    dir(home, &[".local", "share", "ant"])
+                }),
+            },
+        }
+    }
+
+    /// Whether `value` is an absolute path under `os`'s rules — judged by
+    /// text, so every arm is testable on any host.
+    ///
+    /// Unix-likes: a leading `/`. Windows: a drive letter, a colon and a
+    /// separator (`C:\`, `C:/`), or two leading separators (UNC, `\\?\`,
+    /// `\\.\`). `\x` and `C:x` are relative on Windows: the first to the
+    /// current drive, the second to that drive's current directory.
+    #[must_use]
+    pub fn is_absolute_on(os: Os, value: &str) -> bool {
+        match os {
+            Os::MacOs | Os::Other => value.starts_with('/'),
+            Os::Windows => {
+                let is_separator = |byte: u8| byte == b'\\' || byte == b'/';
+                match value.as_bytes() {
+                    [first, second, ..] if is_separator(*first) && is_separator(*second) => true,
+                    [drive, b':', separator, ..] => {
+                        drive.is_ascii_alphabetic() && is_separator(*separator)
+                    }
+                    _ => false,
+                }
+            }
+        }
+    }
+
+    /// Why this environment cannot hold upstream's state file. Carries
+    /// variable names and never a value.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum UpstreamStateRefusal {
+        /// No variable gives upstream a directory: it would panic with
+        /// `HomeDirNotFound`, after dialing.
+        Unresolvable {
+            /// The family whose lookup found nothing.
+            os: Os,
+        },
+        /// `variable` is set, and valid Unicode, but empty or relative:
+        /// upstream would write the file under the current directory.
+        NotAbsolute {
+            /// The variable upstream would build the directory on.
+            variable: &'static str,
+            /// Whether it is empty, rather than a relative path.
+            empty: bool,
+        },
+    }
+
+    impl fmt::Display for UpstreamStateRefusal {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Unresolvable { os } => {
+                    let variables = match os {
+                        Os::Windows => "APPDATA, HOME and USERPROFILE",
+                        Os::MacOs => "HOME and USERPROFILE",
+                        Os::Other => "XDG_DATA_HOME, HOME and USERPROFILE",
+                    };
+                    write!(
+                        f,
+                        "{REFUSAL}: {variables} are all unset or not valid Unicode, so upstream \
+                         would panic after dialing. Set HOME to an absolute directory (S42)"
+                    )
+                }
+                Self::NotAbsolute { variable, empty } => {
+                    let what = if *empty {
+                        "set but empty"
+                    } else {
+                        "set to a relative path"
+                    };
+                    write!(
+                        f,
+                        "{REFUSAL}: {variable} is {what}, so upstream would write the file under \
+                         the current directory. Set {variable} to an absolute directory, or \
+                         unset it (S42)"
+                    )
+                }
+            }
+        }
+    }
+
+    impl std::error::Error for UpstreamStateRefusal {}
+
+    /// The verdict on one environment (D178 R1): refuse when upstream would
+    /// panic or resolve a directory that is not absolute.
+    ///
+    /// # Errors
+    ///
+    /// [`UpstreamStateRefusal`] in exactly those two cases.
+    pub fn verdict(
+        os: Os,
+        var: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<(), UpstreamStateRefusal> {
+        match resolve(os, var) {
+            Resolution::Panic => Err(UpstreamStateRefusal::Unresolvable { os }),
+            Resolution::Dir {
+                base: base @ (Base::Relative | Base::Empty),
+                from,
+                ..
+            } => Err(UpstreamStateRefusal::NotAbsolute {
+                variable: from,
+                empty: base == Base::Empty,
+            }),
+            Resolution::Dir {
+                base: Base::Absolute,
+                ..
+            }
+            | Resolution::NoFile => Ok(()),
+        }
+    }
+
+    /// [`verdict`] over this process's environment, for the [`Os`] this
+    /// build targets, read afresh on every call — what both storage
+    /// constructors consult right after the storage gate.
+    ///
+    /// # Errors
+    ///
+    /// As [`verdict`].
+    pub fn check() -> Result<(), UpstreamStateRefusal> {
+        verdict(Os::current(), |name| std::env::var_os(name))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::ffi::OsString;
+        use std::path::PathBuf;
+
+        use super::*;
+
+        /// An injected environment: the only variables set, in order.
+        type Env = Vec<(&'static str, OsString)>;
+
+        fn lookup(env: &Env) -> impl Fn(&str) -> Option<OsString> + '_ {
+            move |name| {
+                env.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.clone())
+            }
+        }
+
+        fn set(pairs: &[(&'static str, &str)]) -> Env {
+            pairs
+                .iter()
+                .map(|(key, value)| (*key, OsString::from(*value)))
+                .collect()
+        }
+
+        /// A value that is not valid Unicode, for the rows that need one.
+        #[cfg(unix)]
+        fn not_unicode(prefix: &str) -> OsString {
+            use std::os::unix::ffi::OsStringExt;
+            let mut bytes = prefix.as_bytes().to_vec();
+            bytes.push(0xFF);
+            OsString::from_vec(bytes)
+        }
+
+        fn dir(path: &str, from: &'static str, base: Base) -> Resolution {
+            Resolution::Dir {
+                dir: PathBuf::from(path),
+                from,
+                base,
+            }
+        }
+
+        /// **D178 R1/R2, the Linux arm** — the rows P2 measured against a
+        /// byte-identical transcription of upstream (`env -i`), and the
+        /// verdict on each.
+        #[test]
+        fn s42_the_linux_arm_follows_upstreams_lookup_row_by_row() {
+            use Base::{Absolute, Empty, Relative};
+            let rows: Vec<(&str, Env, Resolution)> = vec![
+                ("nothing set", set(&[]), Resolution::Panic),
+                (
+                    "HOME",
+                    set(&[("HOME", "/tmp/h2")]),
+                    dir("/tmp/h2/.local/share/ant", "HOME", Absolute),
+                ),
+                (
+                    "XDG_DATA_HOME",
+                    set(&[("XDG_DATA_HOME", "/tmp/x3")]),
+                    dir("/tmp/x3/ant", "XDG_DATA_HOME", Absolute),
+                ),
+                (
+                    "USERPROFILE alone prevents the panic",
+                    set(&[("USERPROFILE", "/tmp/u4")]),
+                    dir("/tmp/u4/.local/share/ant", "USERPROFILE", Absolute),
+                ),
+                (
+                    "empty XDG_DATA_HOME",
+                    set(&[("XDG_DATA_HOME", ""), ("HOME", "/tmp/h5")]),
+                    dir("ant", "XDG_DATA_HOME", Empty),
+                ),
+                (
+                    "empty HOME",
+                    set(&[("HOME", "")]),
+                    dir(".local/share/ant", "HOME", Empty),
+                ),
+                (
+                    "relative XDG_DATA_HOME",
+                    set(&[("XDG_DATA_HOME", "rel/dir"), ("HOME", "/tmp/h7")]),
+                    dir("rel/dir/ant", "XDG_DATA_HOME", Relative),
+                ),
+                (
+                    "USER and LOGNAME are never read (no passwd fallback)",
+                    set(&[("USER", "someone"), ("LOGNAME", "someone")]),
+                    Resolution::Panic,
+                ),
+                (
+                    "XDG_DATA_HOME wins over a relative HOME",
+                    set(&[("XDG_DATA_HOME", "/tmp/x12"), ("HOME", "rel")]),
+                    dir("/tmp/x12/ant", "XDG_DATA_HOME", Absolute),
+                ),
+                (
+                    "HOME wins over USERPROFILE",
+                    set(&[("HOME", "/tmp/h13"), ("USERPROFILE", "/tmp/u13")]),
+                    dir("/tmp/h13/.local/share/ant", "HOME", Absolute),
+                ),
+            ];
+            for (label, env, expected) in rows {
+                assert_eq!(resolve(Os::Other, lookup(&env)), expected, "{label}");
+            }
+        }
+
+        /// The verdicts over the same arm: refuse exactly the panics and the
+        /// directories that are not absolute.
+        #[test]
+        fn s42_the_linux_verdict_refuses_panics_and_non_absolute_directories() {
+            let verdict_of =
+                |pairs: &[(&'static str, &str)]| verdict(Os::Other, lookup(&set(pairs)));
+            assert_eq!(
+                verdict_of(&[]),
+                Err(UpstreamStateRefusal::Unresolvable { os: Os::Other })
+            );
+            assert_eq!(verdict_of(&[("HOME", "/tmp/h")]), Ok(()));
+            assert_eq!(verdict_of(&[("XDG_DATA_HOME", "/tmp/x")]), Ok(()));
+            assert_eq!(verdict_of(&[("USERPROFILE", "/tmp/u")]), Ok(()));
+            assert_eq!(
+                verdict_of(&[("XDG_DATA_HOME", ""), ("HOME", "/tmp/h")]),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "XDG_DATA_HOME",
+                    empty: true
+                })
+            );
+            assert_eq!(
+                verdict_of(&[("HOME", "")]),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "HOME",
+                    empty: true
+                })
+            );
+            assert_eq!(
+                verdict_of(&[("XDG_DATA_HOME", "rel/dir")]),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "XDG_DATA_HOME",
+                    empty: false
+                })
+            );
+            assert_eq!(
+                verdict_of(&[("HOME", "relative-home")]),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "HOME",
+                    empty: false
+                })
+            );
+        }
+
+        /// The non-Unicode rows: `std::env::var` reads such a value as unset,
+        /// so a set `HOME` still panics, `USERPROFILE` rescues it, and a
+        /// non-Unicode `XDG_DATA_HOME` falls through to `HOME`.
+        #[cfg(unix)]
+        #[test]
+        fn s42_a_value_that_is_not_unicode_counts_as_unset() {
+            let home = vec![("HOME", not_unicode("/tmp/"))];
+            assert_eq!(resolve(Os::Other, lookup(&home)), Resolution::Panic);
+            assert_eq!(
+                verdict(Os::Other, lookup(&home)),
+                Err(UpstreamStateRefusal::Unresolvable { os: Os::Other })
+            );
+
+            let rescued = vec![
+                ("HOME", not_unicode("/tmp/")),
+                ("USERPROFILE", OsString::from("/tmp/u9")),
+            ];
+            assert_eq!(
+                resolve(Os::Other, lookup(&rescued)),
+                dir("/tmp/u9/.local/share/ant", "USERPROFILE", Base::Absolute)
+            );
+
+            let fallthrough = vec![
+                ("XDG_DATA_HOME", not_unicode("/tmp/x")),
+                ("HOME", OsString::from("/tmp/h10")),
+            ];
+            assert_eq!(
+                resolve(Os::Other, lookup(&fallthrough)),
+                dir("/tmp/h10/.local/share/ant", "HOME", Base::Absolute)
+            );
+
+            // macOS: a non-Unicode HOME is no home — no file, no refusal.
+            assert_eq!(resolve(Os::MacOs, lookup(&home)), Resolution::NoFile);
+            assert_eq!(verdict(Os::MacOs, lookup(&home)), Ok(()));
+        }
+
+        /// **The macOS arm**: no home means no file and no refusal;
+        /// `XDG_DATA_HOME` is never read; an empty or relative home still
+        /// writes under the current directory and is refused.
+        #[test]
+        fn s42_the_macos_arm_writes_nothing_without_a_home_and_ignores_xdg() {
+            for env in [set(&[]), set(&[("XDG_DATA_HOME", "/tmp/x")])] {
+                assert_eq!(resolve(Os::MacOs, lookup(&env)), Resolution::NoFile);
+                assert_eq!(resolve(Os::MacOs, lookup(&env)).file(), None);
+                assert_eq!(verdict(Os::MacOs, lookup(&env)), Ok(()));
+            }
+            assert_eq!(
+                resolve(Os::MacOs, lookup(&set(&[("HOME", "/Users/user")]))),
+                dir(
+                    "/Users/user/Library/Application Support/ant",
+                    "HOME",
+                    Base::Absolute
+                )
+            );
+            assert_eq!(
+                resolve(Os::MacOs, lookup(&set(&[("USERPROFILE", "/Users/x")]))),
+                dir(
+                    "/Users/x/Library/Application Support/ant",
+                    "USERPROFILE",
+                    Base::Absolute
+                )
+            );
+            assert_eq!(
+                verdict(Os::MacOs, lookup(&set(&[("HOME", "")]))),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "HOME",
+                    empty: true
+                })
+            );
+            assert_eq!(
+                verdict(Os::MacOs, lookup(&set(&[("HOME", "Users/x")]))),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "HOME",
+                    empty: false
+                })
+            );
+        }
+
+        /// **The Windows arm**: `APPDATA`, else the home's
+        /// `AppData\Roaming`; `XDG_DATA_HOME` is never read; nothing set
+        /// panics. Directories are joined by this host's rules, so only the
+        /// source variable and its reading are compared here.
+        #[test]
+        fn s42_the_windows_arm_reads_appdata_then_the_home_and_never_xdg() {
+            let source = |env: Env| match resolve(Os::Windows, lookup(&env)) {
+                Resolution::Dir { from, base, .. } => Some((from, base)),
+                Resolution::NoFile | Resolution::Panic => None,
+            };
+            assert_eq!(resolve(Os::Windows, lookup(&set(&[]))), Resolution::Panic);
+            assert_eq!(
+                resolve(Os::Windows, lookup(&set(&[("XDG_DATA_HOME", "C:\\x")]))),
+                Resolution::Panic,
+                "XDG_DATA_HOME is never read on Windows"
+            );
+            assert_eq!(
+                verdict(Os::Windows, lookup(&set(&[]))),
+                Err(UpstreamStateRefusal::Unresolvable { os: Os::Windows })
+            );
+            assert_eq!(
+                source(set(&[
+                    ("APPDATA", "C:\\Users\\user\\AppData\\Roaming"),
+                    ("HOME", "C:\\Users\\x")
+                ])),
+                Some(("APPDATA", Base::Absolute))
+            );
+            assert_eq!(
+                source(set(&[("USERPROFILE", "C:\\Users\\user")])),
+                Some(("USERPROFILE", Base::Absolute))
+            );
+            assert_eq!(
+                source(set(&[
+                    ("HOME", "C:/Users/x"),
+                    ("USERPROFILE", "C:\\Users\\user")
+                ])),
+                Some(("HOME", Base::Absolute))
+            );
+            assert_eq!(
+                source(set(&[("APPDATA", "")])),
+                Some(("APPDATA", Base::Empty))
+            );
+            assert_eq!(
+                source(set(&[("APPDATA", "AppData")])),
+                Some(("APPDATA", Base::Relative))
+            );
+            assert_eq!(
+                verdict(Os::Windows, lookup(&set(&[("APPDATA", "")]))),
+                Err(UpstreamStateRefusal::NotAbsolute {
+                    variable: "APPDATA",
+                    empty: true
+                })
+            );
+        }
+
+        /// The Windows absoluteness rule by text, and the Unix one.
+        #[test]
+        fn s42_absoluteness_is_judged_by_each_systems_own_rule() {
+            for (value, absolute) in [
+                ("C:\\Users\\user", true),
+                ("C:/Users/u", true),
+                ("c:\\", true),
+                ("\\\\server\\share\\a", true),
+                ("\\\\?\\C:\\a", true),
+                ("//server/share", true),
+                ("C:a", false),
+                ("C:", false),
+                ("\\Users\\x", false),
+                ("/Users/user", false),
+                ("a\\b", false),
+                ("", false),
+                ("1:\\a", false),
+            ] {
+                assert_eq!(
+                    is_absolute_on(Os::Windows, value),
+                    absolute,
+                    "windows {value:?}"
+                );
+            }
+            for (value, absolute) in [
+                ("/", true),
+                ("/tmp/x", true),
+                ("", false),
+                ("rel", false),
+                ("./x", false),
+                ("~/x", false),
+                ("C:\\x", false),
+            ] {
+                assert_eq!(is_absolute_on(Os::Other, value), absolute, "unix {value:?}");
+                assert_eq!(
+                    is_absolute_on(Os::MacOs, value),
+                    absolute,
+                    "macos {value:?}"
+                );
+            }
+        }
+
+        /// The text rule agrees with this host's own `Path::is_absolute` for
+        /// the arm this host runs.
+        #[test]
+        fn s42_the_text_rule_agrees_with_this_hosts_path_rules() {
+            let samples = [
+                "/",
+                "/tmp/x",
+                "",
+                "rel",
+                "./x",
+                "C:\\x",
+                "C:/x",
+                "C:x",
+                "\\x",
+                "\\\\s\\h\\x",
+            ];
+            for value in samples {
+                assert_eq!(
+                    is_absolute_on(Os::current(), value),
+                    std::path::Path::new(value).is_absolute(),
+                    "{value:?} on {:?}",
+                    Os::current()
+                );
+            }
+        }
+
+        /// The refusal's text: the constant first, the variables named, the
+        /// values never.
+        #[test]
+        fn s42_the_refusal_names_variables_and_never_values() {
+            let value = "hostile-relative-dir-value";
+            let refusal = verdict(Os::Other, lookup(&set(&[("XDG_DATA_HOME", value)])))
+                .expect_err("a relative XDG_DATA_HOME is refused");
+            let text = refusal.to_string();
+            assert!(text.starts_with(REFUSAL), "{text}");
+            assert!(
+                text.contains("XDG_DATA_HOME is set to a relative path"),
+                "{text}"
+            );
+            assert!(!text.contains(value), "the value leaked: {text}");
+
+            let text = verdict(Os::Other, lookup(&set(&[])))
+                .expect_err("nothing set is refused")
+                .to_string();
+            assert!(text.starts_with(REFUSAL), "{text}");
+            assert!(
+                text.contains("XDG_DATA_HOME, HOME and USERPROFILE are all unset"),
+                "{text}"
+            );
+            assert!(
+                REFUSAL.contains("XDG_DATA_HOME")
+                    && REFUSAL.contains("HOME")
+                    && REFUSAL.contains("USERPROFILE")
+                    && REFUSAL.contains("APPDATA"),
+                "the constant names every variable upstream reads"
+            );
+        }
+
+        /// The path `resolve` reports is the file upstream would touch.
+        #[test]
+        fn s42_the_file_is_the_data_directory_plus_the_snapshot_name() {
+            let resolution = resolve(Os::Other, lookup(&set(&[("XDG_DATA_HOME", "/tmp/x")])));
+            assert_eq!(
+                resolution.file(),
+                Some(PathBuf::from("/tmp/x/ant/client_adaptive.json"))
+            );
+            assert_eq!(Resolution::Panic.file(), None);
+            assert_eq!(FILE_NAME, "client_adaptive.json");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DevnetEnv — the run-scoped `.devnet/` export (P16)
 // ---------------------------------------------------------------------------
 

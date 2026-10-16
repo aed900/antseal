@@ -221,3 +221,11 @@ the retired `[reveal]` document restored (the no-`Compiled`-header assertion). G
 ## Closing — this record is not consent
 
 It authorises no network act beyond the local devnet.
+
+## Addendum — 2026-10-16 (wave 37, D180): §2 R11's routed sentence is retired
+
+§2 R11 kept the `Compiled` sentence and the arm name `backend-compiled-in-command-unwired` until
+`U95` ruled. D180 (`U95` R1–R6) deleted the sentence: a reworded one would still have had no emitter.
+It also renamed the arm `backend-compiled-in` and kept `BackendArm` as the build discriminator only.
+`no_registered_document_carries_the_compiled_arm_header` scans both names, and the retired name
+survives in the tree only as that guard's marker. Nothing else in this record changes.

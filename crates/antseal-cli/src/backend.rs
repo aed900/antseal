@@ -76,8 +76,11 @@
 //! the reveal in the network class in the engine's own words (§2 R4); and the
 //! two builds share one handler because [`drive_reveal`] is what differs per
 //! build (§2 R5/R6) — `U71`'s closed list of `run_reveal` callers stays
-//! exact. `BackendArm::Compiled`'s sentence therefore has no production
-//! emitter in either build any more; retiring or rewording it is `U95`'s.
+//! exact. That left `BackendArm::Compiled`'s sentence with no production
+//! emitter in either build, and `U95` retired it (D180): [`BackendArm`] is
+//! the build discriminator and nothing more, and the one refusal sentence
+//! left is [`no_backend_message`]'s, which only the build with no backend
+//! prints.
 //!
 //! What was never blocked on any of it: `restore`'s whole policy half
 //! runs over any [`StorageBackend`](antseal_net::StorageBackend) —
@@ -155,7 +158,8 @@ pub use ant::{
 };
 
 /// The refusal a command gets when it needs the network and this build
-/// cannot reach it.
+/// cannot reach it — **compiled only into the build that has no storage
+/// backend**.
 ///
 /// Deliberately **not** the not-implemented class: the command itself is
 /// implemented, and saying otherwise would send a user looking for a
@@ -164,63 +168,127 @@ pub use ant::{
 /// what it is — no bytes can be fetched — and the message names the
 /// actual cause instead of implying an outage.
 ///
-/// The two arms say different true things, which is the point: a message
-/// blaming the missing feature would be a lie in a build that has it. They
-/// are [`BackendArm`]'s, and R82 moved them there **without** deleting the
-/// divergence — that would have been a retraction of this paragraph, which
-/// R82 requires to be argued rather than slipped in as a snapshot repair.
-/// This function is the arm selector and nothing else.
+/// **Why a build with a backend has no `unavailable` (U95; D180 U95 R3).**
+/// Its sentence says the build has no storage backend, and the design choice
+/// this function's documentation used to argue — *a message blaming the
+/// missing feature would be a lie in a build that has it* — is kept and
+/// enforced where it cannot be forgotten: the build that has a backend
+/// compiles no function that says it has none. Its three callers
+/// (`seal_over_backend`, `restore` and `verify --live`, in `commands.rs`)
+/// were already `#[cfg(not(feature = "ant-backend"))]`, so the gate changed
+/// no handler. What retired the second sentence, and why that is not R82's
+/// arm (c), is argued on [`BackendArm`].
 ///
-/// Public so U3's registered `--json` fixture can render the **real**
-/// refusal instead of a hand-copied one. It had a copy, and the copy went
-/// stale the moment this message changed — a snapshot documenting text no
-/// build produces is worse than no snapshot (U19 made the same call for
-/// `list`: the fixture is rendered by the real renderer).
+/// Public so an integration suite can assert that it **is** the no-backend
+/// refusal (`machine_mode.rs::unavailable_selects_this_builds_arm`). The
+/// registered `--json` fixture renders [`no_backend_refusal`], the real
+/// producer this delegates to, in both builds: it had a hand-copied string
+/// once, and the copy went stale the moment this message changed — a
+/// snapshot documenting text no build produces is worse than no snapshot
+/// (U19 made the same call for `list`: the fixture is rendered by the real
+/// renderer).
+#[cfg(not(feature = "ant-backend"))]
 #[must_use]
 pub fn unavailable(command: &str) -> CliError {
-    unavailable_arm(command, BackendArm::THIS_BUILD)
+    no_backend_refusal(command)
 }
 
-/// Which storage-backend arm a build is — **R82's ruling, arm (b)**.
+/// The no-backend sentence for `command`: what a build with no storage
+/// backend says when a command needs the network.
 ///
-/// # Why this enum exists at all
+/// **Compiled into both builds, emitted by one** (U95; D180 U95 R3). The
+/// production paths that print it are the default build's — `unavailable`
+/// and the [`VaultLocalBackend`] that build's `reveal` holds — but the
+/// registered `--json` fixture renders it in both builds through this real
+/// producer, so `tests/snapshots/json-envelopes.txt` is byte-identical in
+/// both (R82's consequence 2, kept). And the feature build's absence checks
+/// can forbid a fragment of it that exists in that build, so a fault planted
+/// there can redden them.
 ///
-/// [`unavailable`] used to select its sentence with `#[cfg]` *inside* the
-/// function, so only one of the two texts existed in any given compilation.
-/// That made the committed `--json` fixture unable to document both builds:
-/// `tests/snapshots/json-envelopes.txt` is one file compared byte-for-byte,
-/// and under `--features ant-backend` the registered documents that route
-/// through this function rendered different bytes, so the snapshot test
-/// failed in that build and *whichever* build it documented, the other
-/// build's machine surface was pinned by nothing (R82).
+/// **Names no task row, by rule.** The feature-ON sentence once ended
+/// *"connecting it to this command's argument handling lands with U13"* —
+/// and U13 shipped, so the message sent a user to closed work. Three
+/// independent lanes reported it before it was fixed, which is what makes
+/// it a standing defect rather than a stale comment. A refusal a user
+/// reads cannot cite an identifier only this repository can resolve, and a
+/// citation that is true today rots the moment the row closes; so
+/// `the_refusal_messages_name_no_task_row` holds the rule over this sentence
+/// for every command that can reach it, in both builds.
+#[must_use]
+pub fn no_backend_message(command: &str) -> String {
+    format!(
+        "`{command}` needs a live Autonomi connection, and this build has no storage \
+         backend compiled in (the `ant-backend` feature is off by default). The command \
+         itself is complete — rebuild with `--features ant-backend` to reach the network"
+    )
+}
+
+/// [`no_backend_message`] as the refusal a command returns, in the transient
+/// network class (23) — exactly what `unavailable` returns in the build that
+/// has one. `pub`, and compiled into both builds, so the registered `--json`
+/// fixture and the per-build integration rows render the **real** refusal in
+/// either build rather than a hand-copied one (U3's rule; R82).
+#[must_use]
+pub fn no_backend_refusal(command: &str) -> CliError {
+    CliError::NetworkFailure {
+        detail: no_backend_message(command),
+    }
+}
+
+/// Which storage-backend arm a build is — the **build discriminator** the
+/// suites select their per-build expectations by, and nothing else.
 ///
-/// R82 offered three arms: a second committed snapshot, a
-/// **feature-parameterised** fixture, or one feature-invariant sentence.
-/// Arm (b) is taken. The two sentences say different true things and
-/// deleting that is a retraction of a recorded design choice, so (c) is
-/// out; and a second committed file (a) answers R82's own question badly —
-/// Q153 keeps `heavy-features` local-only, so a snapshot only the
-/// feature-ON build compares is a file no CI job ever reads.
+/// The selection is a runtime `match` on [`BackendArm::THIS_BUILD`] rather
+/// than a `#[cfg]` (U73's shape): both expectations compile into both builds,
+/// so the default build — the one every CI job runs, since Q153 keeps
+/// `heavy-features` local — still type-checks the feature build's answer.
 ///
-/// Arm (b) turns that around. Both messages are compiled into **both**
-/// builds and the fixture renders both arms explicitly, so:
+/// # What it no longer carries, and why (U95; R82's argued retraction)
 ///
-/// 1. one committed file carries both texts,
-/// 2. the two builds render byte-identical fixture documents, so
-///    `envelope_fixtures_match_the_committed_snapshot` is green in both,
-///    and
-/// 3. the **default** build — the one every CI job runs — is what witnesses
-///    the feature-ON sentence, which is the property R82 says nothing had.
+/// Until U95 each arm also carried a refusal sentence. That was R82's ruling,
+/// **arm (b)**: `unavailable` used to pick its sentence with `#[cfg]` inside
+/// the function, so the one committed `--json` fixture could document only
+/// one build, and arm (b) compiled both sentences into both builds and had
+/// the fixture render both per arm. It recorded three consequences: (1) one
+/// committed file carries both texts; (2) the two builds render
+/// byte-identical documents, so the snapshot test is green in both; (3) the
+/// default build witnesses the feature-ON sentence. Arm (c) — one
+/// feature-invariant sentence — was refused as a retraction of the design
+/// choice that the two builds *say different true things*, because *a
+/// message blaming the missing feature would be a lie in a build that has
+/// it*.
 ///
-/// [`unavailable`] is still the only production entry, and it is exactly
-/// `unavailable_arm(command, THIS_BUILD)`, so the fixture renders through
-/// the real producer (U3's rule) rather than a hand-copied string.
+/// The feature-ON sentence said that the command did not yet construct the
+/// backend its build had. Its emitters left one at a time — `seal` when U13
+/// wired it, `restore` and `verify --live` under D170, `reveal` under D175 —
+/// until no production path in **either** build printed it, and the arm
+/// name it travelled under described no command at all. A sentence no build
+/// emits is what U19's rule calls worse than none, so U95 deleted it rather
+/// than rewording it (D180 U95 R1: a reworded sentence would still have no
+/// emitter), and `Compiled` is now named `backend-compiled-in`.
+///
+/// **That is not arm (c).** Arm (c) makes one sentence true of both builds
+/// and shows it in both. Nothing here is made feature-invariant: the
+/// no-backend sentence is shown only by the build it is true of, and the
+/// build with a backend shows no seam refusal at all, because it compiles no
+/// `unavailable` (D180 U95 R3). The core claim arm (c) was refused on is
+/// kept, and is enforced by the compiler instead of by a comment. What
+/// **is** retracted, said plainly: consequences (1) and (3), which described
+/// a second sentence that no longer exists. Consequence (2) stands — the
+/// remaining sentence is [`no_backend_message`]'s, compiled into both
+/// builds, so the fixture renders it byte-identically in both, and the
+/// committed snapshots are byte-unchanged by U95 (R82 forbids passing a
+/// retraction off as a snapshot repair, so none was re-blessed). The builds
+/// still diverge — as **behaviour**: each build's exit code and class per
+/// command are asserted per arm (`machine_mode.rs::expected_class`,
+/// `seal_command.rs`, `restore_output.rs`, `upgrade_hook.rs`). The same
+/// argument is recorded at R82's own venue, the fixture registry
+/// (`machine_mode.rs::render_fixture`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArm {
     /// No storage backend is compiled in (the default feature set).
     NotCompiled,
-    /// A storage backend is compiled in, but the command has no wiring
-    /// that constructs one.
+    /// A storage backend is compiled in (`--features ant-backend`).
     Compiled,
 }
 
@@ -242,58 +310,8 @@ impl BackendArm {
     pub const fn name(self) -> &'static str {
         match self {
             Self::NotCompiled => "no-backend-compiled-in",
-            Self::Compiled => "backend-compiled-in-command-unwired",
+            Self::Compiled => "backend-compiled-in",
         }
-    }
-
-    /// This arm's refusal sentence for `command`.
-    ///
-    /// **Names no task row, by rule.** The feature-ON sentence used to end
-    /// *"connecting it to this command's argument handling lands with U13"*
-    /// — and U13 shipped, so the message sent a user to closed work. Three
-    /// independent lanes reported it before it was fixed, which is what
-    /// makes it a standing defect rather than a stale comment. A refusal a
-    /// user reads cannot cite an identifier only this repository can
-    /// resolve, and a citation that is true today rots the moment the row
-    /// closes; so the pending work is named in prose and
-    /// `the_refusal_messages_name_no_task_row` holds the rule in **both**
-    /// builds.
-    #[must_use]
-    pub fn message(self, command: &str) -> String {
-        match self {
-            Self::NotCompiled => format!(
-                "`{command}` needs a live Autonomi connection, and this build has no storage \
-                 backend compiled in (the `ant-backend` feature is off by default). The command \
-                 itself is complete — rebuild with `--features ant-backend` to reach the network"
-            ),
-            // S17 update: the seam is no longer merely built —
-            // `tests/e2e_devnet.rs` drives it against a live devnet, so
-            // "resolving the endpoint lands with the devnet harness" stopped
-            // being true the moment that suite went green. What is actually
-            // missing for a *command* is its own wiring, and that is what
-            // the refusal names — in prose, because pointing a user at a
-            // task identifier sends them looking for something they cannot
-            // look up, and at a task that has already shipped if it closes.
-            Self::Compiled => format!(
-                "`{command}` has a storage backend compiled in, but this command does not \
-                 construct one yet: the construction seam exists and the devnet harness drives \
-                 it end to end — connecting this command to it is still to come. Nothing is \
-                 wrong with the network"
-            ),
-        }
-    }
-}
-
-/// [`unavailable`]'s refusal for a **named** arm rather than for this build.
-///
-/// The production path never calls this directly — it calls [`unavailable`],
-/// which is `unavailable_arm(command, BackendArm::THIS_BUILD)`. It is `pub`
-/// so the registered `--json` fixture can render **both** arms through the
-/// real producer in either build (R82 arm (b); U3's rule).
-#[must_use]
-pub fn unavailable_arm(command: &str, arm: BackendArm) -> CliError {
-    CliError::NetworkFailure {
-        detail: arm.message(command),
     }
 }
 
@@ -355,10 +373,19 @@ pub fn unavailable_arm(command: &str, arm: BackendArm) -> CliError {
 /// (D69 §5 group 2, exit 23), and from the caller's side that is precisely
 /// what this is — bytes that cannot be obtained. Minting a second class for
 /// it would split one user-visible situation across two codes. The
-/// *message* does change, and it is [`BackendArm::message`]'s — the same
-/// two sentences [`unavailable`] uses, so a build that has a backend and a
-/// build that has none say different true things here too, and the reveal
-/// engine's own wrapper names the unit that could not be served.
+/// *message* does change: it is [`no_backend_message`]'s — the sentence
+/// `unavailable` uses — and the reveal engine's own wrapper names the unit
+/// that could not be served.
+///
+/// **One sentence, named rather than selected by build (U95; D180 U95 R4).**
+/// This type used to render the arm its build was, so a build with a backend
+/// said it had one. Since D175 only the build with **no** backend holds it in
+/// production — the other build's `reveal` holds the lazily connecting reader
+/// — so it now renders the no-backend sentence explicitly. It stays compiled
+/// into both builds because U72's in-process suite
+/// (`tests/reveal_vault_local.rs`) drives it in both: a test that builds one
+/// in the feature build is exercising the default build's backend, and gets
+/// that backend's sentence.
 ///
 /// # The instrument (U72's Accept)
 ///
@@ -398,7 +425,7 @@ impl VaultLocalBackend {
         self.refusals
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         antseal_net::StorageError::Network {
-            reason: BackendArm::THIS_BUILD.message(self.command),
+            reason: no_backend_message(self.command),
         }
     }
 }

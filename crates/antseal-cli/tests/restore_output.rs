@@ -1213,7 +1213,7 @@ fn fully_cached_fixture_on(tag: &str, network: NetworkId) -> (IsolatedVault, Str
 /// (U73's shape), so both expectations compile into both builds.
 #[test]
 fn a_fully_cached_restore_answers_per_build() {
-    use antseal_cli::backend::{BackendArm, unavailable_arm};
+    use antseal_cli::backend::{BackendArm, no_backend_refusal};
     use antseal_cli::upgrade_hook::{HOOK_ARMED, HOOK_NOT_ARMED};
 
     let scratch = Scratch::new("u74-per-build");
@@ -1250,7 +1250,7 @@ fn a_fully_cached_restore_answers_per_build() {
             assert_eq!(document["ok"], serde_json::json!(false), "{document}");
             assert_eq!(
                 document["error"],
-                unavailable_arm("restore", BackendArm::NotCompiled).error_object(),
+                no_backend_refusal("restore").error_object(),
                 "the refusal is the no-backend seam's, unchanged"
             );
             assert!(
@@ -1319,7 +1319,7 @@ fn a_fully_cached_restore_answers_per_build() {
 /// Neither build creates `~/.antseal`.
 #[test]
 fn restore_into_a_vault_less_home_answers_per_build() {
-    use antseal_cli::backend::{BackendArm, unavailable_arm};
+    use antseal_cli::backend::{BackendArm, no_backend_refusal};
 
     let home = Scratch::new("vault-less-home");
     let out = spawn::antseal()
@@ -1349,7 +1349,7 @@ fn restore_into_a_vault_less_home_answers_per_build() {
             assert_eq!(out.status.code(), Some(23), "{document}");
             assert_eq!(
                 document["error"],
-                unavailable_arm("restore", BackendArm::NotCompiled).error_object()
+                no_backend_refusal("restore").error_object()
             );
         }
         BackendArm::Compiled => {

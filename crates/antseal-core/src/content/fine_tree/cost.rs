@@ -36,8 +36,8 @@
 //! per-byte ratio (which drifts with `n` because there are `n − 1` interior
 //! nodes, not `n`), not to the count.
 //!
-//! Wall-clock and memory *budgets* are **not** here: those are G18's, gated
-//! on the still-open decision D26.
+//! Wall-clock and memory *budgets* are **not** here: those are G18's, under
+//! D26 (resolved 2026-07-28 — `docs/decisions/D26-perf-memory-budgets.md`).
 
 use crate::content::ggm::depth_for_leaf_count;
 

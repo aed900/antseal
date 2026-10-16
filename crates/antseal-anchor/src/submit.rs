@@ -283,12 +283,12 @@ pub fn evaluate_seal_gate(
 
 /// The minimum-anchor threshold (MVP-SPEC.md lines 19, 34, 137).
 ///
-/// **One**, and A31 does not change it: two endpoints collapsing to one TSA
-/// still clears a threshold of one. The constant is named so that a future
-/// ≥2 policy is a one-line change *and* so that a reader can see the gate is
-/// counting [`AnchorSubmission::verified_tsa_count`] rather than
-/// `attempts.len()` — registry §8's obligation (A40) applied at the only
-/// place it can currently bite.
+/// **One**, and A31 does not change it. The gate compares it against
+/// [`AnchorSubmission::verified_tsa_count`] — captures, not `attempts.len()`,
+/// registry §8 (A40) — and is left counting captures (A74) because at one they
+/// cannot disagree with identities. Raising it is therefore **not** a one-line
+/// change: at two, one TSA's two tokens would pass as two anchors, §8's named
+/// defect, so a ≥2 policy must first re-point it at a TSA identity count (A72, A89).
 pub const MIN_VERIFIED_TSA_TOKENS: usize = 1;
 
 /// Run both halves of the anchor stage: OTS calendar submits first, then TSA

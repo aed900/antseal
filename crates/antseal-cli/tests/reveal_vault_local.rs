@@ -24,7 +24,8 @@
 //!   rows both, since D68 §3 R8's order is the thing being re-asserted around
 //!   the moved refusal;
 //! - **(iv)** the class stays `network-failure` (23) and the message is the
-//!   build-arm sentence, named here so a reader can see what a user reads.
+//!   no-backend sentence, whole and for `reveal` (U95; D180 U95 R4), named
+//!   here so a reader can see what a user reads.
 //!
 //! The backend under test is the **production** one, not a mock: what a
 //! default-feature `antseal reveal` holds is exactly
@@ -44,7 +45,7 @@ mod common;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-use antseal_cli::backend::{VaultLocalBackend, block_on_vault_local};
+use antseal_cli::backend::{VaultLocalBackend, block_on_vault_local, no_backend_message};
 use antseal_cli::cli::RevealArgs;
 use antseal_cli::error::{CliError, ErrorClass};
 use antseal_cli::pipeline::journal::UNIT_ENTRY_BASE;
@@ -333,9 +334,13 @@ fn a_partial_cache_refuses_the_whole_reveal_at_the_first_fetch() {
     );
     assert_eq!(error.exit_code(), 23, "U2's number for that class");
     let text = error.to_string();
+    // The whole sentence, for this command: the `|| contains("compiled in")`
+    // this replaced matched both of the arms' old sentences, so it could not
+    // tell which one a user read — nor, since U95 left one sentence, which
+    // command it named (D180 U95 R4).
     assert!(
-        text.contains("no storage backend compiled in") || text.contains("compiled in"),
-        "the refusal names the build's own reason, not a phantom outage: {text}"
+        text.contains(&no_backend_message("reveal")),
+        "VaultLocalBackend names the whole no-backend sentence for `reveal`: {text}"
     );
     assert!(
         text.contains("unit "),
