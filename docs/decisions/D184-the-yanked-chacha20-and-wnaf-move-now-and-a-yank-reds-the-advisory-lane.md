@@ -475,3 +475,16 @@ It moves two lockfiles and one `deny.toml` key inside the wave's own commits. It
 dispatches nothing and redeploys nothing. The push that carries it to `main` — and with it the
 first hosted `audit-deny` under `yanked = "deny"` — needs the maintainer's express consent naming
 the action, the destination and the account, like every push. §2 R4 owes no Pages dispatch.
+
+## Addendum — 2026-10-16 (wave 37 close): G5–G7 and P3, measured
+
+§6 left G5–G7 and P3 to the closing gate and the rebuild after the commit. They are recorded on `Q278`, which ticked on them:
+
+- **G5:** the gate at `477e0a6` with the heavy tier and the devnet E2E forced exited 0. All 46 lanes passed, `wasm32-tests` and `wasm-bitmatch` among them (neither `n/a`), and `e2e-devnet: PASS commit=477e0a6 nodes=14 suites_run=4 failed=[] pending=[] secs=963 anvil=1.5.1-stable`.
+  - The gate keeps no output for a passing lane, so G5's *"the heavy tier's log shows `Compiling chacha20 v0.10.2`"* has no log to read. Cargo's dep-info files written inside the gate window stand in: 8 `chacha20-0.10.2` units and 6 `wnaf-0.14.1` units, and none of the old versions.
+  - The host is a Pentium G4400 (SSE4.1, no AVX2).
+- **G6:** 92 golden-vector tests matched, including both AEAD vectors and the anchor-vector regeneration whose first vector is `tsa-freetsa-p384`, `proven`. The tamper matrix passed 38 tests. The two-environment comparison was reproducible: `dd00e186…f2f6` (1 879 147 B), in 114 s.
+- **G7:** the rebuilt module counts `chacha20-0.10.2` ×1, `chacha20-0.10.1` ×0, `wnaf-0.14.1` ×2, `wnaf-0.14.0` ×0, and the control `chacha20-0.19.7` ×0.
+- **P3:** the gate's `bitmatch-inject` lane (`wasm-bitmatch.sh --self-test`) passed before `wasm-bitmatch --check`.
+
+Nothing else in this record changes.
