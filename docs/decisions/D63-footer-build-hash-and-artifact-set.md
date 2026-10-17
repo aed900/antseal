@@ -572,6 +572,11 @@ the lock file deleted, `wasm-pack build … -- --locked` exits **0** and
 build and that call re-resolves; the flag then binds a build against a lock it
 has just regenerated. See "Correction — §5 R5 (i)'s `--locked`, and §7 rule 1's
 forward-cited path counts, 2026-08-15" below.
+— **ADDENDUM, 2026-10-17, owed by [D182](D182-wasm-packs-update-check-is-suppressed-because-a-hermetic-page-build-may-not-reach-the-network.md) §5**: wasm-pack 0.15.0's
+crates.io update check is a second network path during the build, suppressed
+by D182 §2 R2; cargo's crate download on a cold runner is the one that
+remains, and `Q279` rules it. See "Addendum — §5 R5 and wasm-pack's update
+check, 2026-10-17" below.
 
 **R6 — The advice line: spec-owned, page-resident, drift-tested — and not
 added to R18's frozen table.** The exact sentence, from `MVP-SPEC.md`
@@ -1255,3 +1260,13 @@ unchanged in substance and is now met. §7 rule 2's remaining environment axes
 (locale, `TZ`, `HOME`, user, host) are **not** proven independent by the three
 builds above, which shared all of them, and this correction claims nothing
 about them.
+
+## Addendum — §5 R5 and wasm-pack's update check, 2026-10-17
+
+[D182](D182-wasm-packs-update-check-is-suppressed-because-a-hermetic-page-build-may-not-reach-the-network.md) §5 ordered this addendum on 2026-10-16. It was missed when wave 37 was registered and lands here.
+
+**A second network path during the build.** Unless a stamp under 24 h old sits beside its executable, wasm-pack 0.15.0 asks crates.io for its own latest version on every invocation, and a bare `--version` process reaches the network too. D182 §2 R2 suppresses the check. `scripts/wasm-pack-build.sh` writes a stamp whose `created` value cannot parse before its first wasm-pack process, and `scripts/wasm-tools-provision.sh` writes the same stamp through `--suppress-update-check`. After every build the script reads the stamp back and refuses one that changed. The first hosted witness is `reproducible-build` run `38984904496` at `5050f5b`: `wasm-pack made no crates.io call: /home/runner/.cargo/bin/wasm-pack.stamp unchanged across the build` (`Q276`, ticked 2026-10-17).
+
+**The path that remains.** On a cold runner cargo downloads the locked crates from crates.io during the build. Measured 2026-10-17 on a scratch copy at `5050f5b`, every such download happens inside wasm-pack's own `cargo metadata` call, which discards cargo's stderr, so no `Downloaded` line reaches the log. `pages.yml` restores no cache (D171), so this happens on every deploy. It is still network access during the build, and `Q279` rules it: either a fetch step followed by an offline build, or a dated rider that permits checksummed, locked crates.
+
+§5 R5's closed operation list and its prohibition are unchanged.
