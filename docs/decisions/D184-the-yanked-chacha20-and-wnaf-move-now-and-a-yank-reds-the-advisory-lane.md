@@ -488,3 +488,11 @@ the action, the destination and the account, like every push. §2 R4 owes no Pag
 - **P3:** the gate's `bitmatch-inject` lane (`wasm-bitmatch.sh --self-test`) passed before `wasm-bitmatch --check`.
 
 Nothing else in this record changes.
+
+## Addendum — 2026-10-17: the advisories behind the `zip` yank, and a hosted yank check that reads a stale index
+
+The first hosted run after the consented push of `fbcee1e..5050f5b` (`ci` run `38984904528` at `5050f5b`) reddened `audit-deny` on three advisories against `zip 2.4.2`: RUSTSEC-2026-0367, -0368 and -0369. Each is patched only at `>= 9.0.0`, and all three were added to the database after §6's act. §6's crate-form ignore silences the yank only, as its own comment says, so each advisory needs its own id. Three review-dated id ignores landed locally. `Q280` owns them, and a plant proves each one load-bearing. Nothing in the graph calls the affected extraction APIs. The measurements are on `Q280`.
+
+The same run printed `warning[yanked-not-detected]` for the `zip@2.4.2` entry. cargo-deny takes yank state from cargo's local index cache, and both hosted venues restore an older one. §2 R3's *"an upstream yank of any locked version … reds the required `audit-deny` context (per pull request and on push to `main`) and the weekly `advisory-cron`"* therefore holds only where that cache is fresh. This is ledgered under rule 8 (`docs/instrument-ledger.md`, 2026-10-17). The fix changes two workflows and goes to the next planning round.
+
+Nothing else in this record changes.
