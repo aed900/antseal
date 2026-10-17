@@ -1006,3 +1006,9 @@ instruction that a doubt is written down rather than silently resolved.
    **eight** are carried here as §3 items 1–8, with item 8 (*it is not consent*)
    additionally restated in the closing block. **Nothing was omitted and nothing
    was added.**
+
+## Addendum — 2026-10-17: `Q265` ruled and armed
+
+The decision §2 R3 called *"a decision the register has never taken"* — classic protection with `enforce_admins: false`, or a ruleset — was ruled by the maintainer on 2026-10-17: *"ruleset with bypass"* (D168, addendum). The same day it was armed and read back (runbook C2, ARMED bracket), and `Q265` is ticked on that read-back. The *"must still not be armed"* this record and C2 carried is therefore historical. So is §2 R3's *"co-owned with `Q258`"*, already corrected on 2026-09-13: `Q258` never held a branch-protection `Accept`.
+
+Nothing else in this record changes.

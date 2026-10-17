@@ -81,9 +81,14 @@ section cannot drift from the lint it describes (Q257).
 ## CI lanes
 
 `.github/workflows/ci.yml` runs on every PR and on push to `main`. Every
-job `name:` is a (future) **required status context** — the branch-protection
-runbook in [docs/ci-verification.md](docs/ci-verification.md) lists the
-exact context set — so lanes are **never renamed** once landed. Extend CI by
+job `name:` is a **required status context**: since 2026-10-17 a repository
+ruleset on `main` requires all 20 contexts before a pull request can merge.
+The maintainer's own pushes bypass it, and GitHub records each bypass;
+anyone can read the ruleset's rules, but not its bypass list, which is why
+it is said here. The runbook in [docs/ci-verification.md](docs/ci-verification.md)
+(C2) lists the exact context set and how it was armed. So lanes are **never
+renamed** once landed: a renamed required job leaves every pull request
+waiting for a context that no longer reports. Extend CI by
 **adding** small named jobs, never by folding steps into an existing lane
 (convention in the workflow header).
 

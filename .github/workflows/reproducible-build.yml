@@ -38,6 +38,9 @@
 # run is the witness `Q238` stays open for, and that run needs a consented
 # push. Until a run has reported this context green on `main`, it must not be
 # armed in branch protection (docs/ci-verification.md, C2; `Q265`).
+# [WITNESSED AND ARMED, 2026-10-17.] It has reported green on `main` on every
+# push since its first (D168), and the repository ruleset now requires it
+# with the other 19 contexts (`Q265`, runbook C2).
 name: reproducible-build
 
 on:

@@ -92,9 +92,11 @@ on:
   # status context whose workflow is skipped by path filtering never reports at
   # all — GitHub leaves the check pending rather than treating a workflow that
   # never started as a pass — so a filtered `pull_request:` here would hang
-  # every protected pull request for ever. Branch protection is not enabled
-  # today and every run of this workflow so far has been `event: push`, but the
-  # trap must not be BUILT IN against the day it is. Filtering `push` alone has
+  # every protected pull request for ever. Since 2026-10-17 a repository
+  # ruleset requires these contexts (`Q265`; the admin's own pushes bypass it,
+  # and each bypass is recorded), and every run of this workflow so far has
+  # been `event: push`, so the trap must not wait for the first pull request
+  # to be found. Filtering `push` alone has
   # no such failure mode: a push has nothing to gate.
   #
   # `scripts/check-ci-paths.py` R2 fails if a `paths`/`paths-ignore` key ever

@@ -4593,6 +4593,27 @@ names the action, `github.com/aed900/antseal` and `aed900`:
 Never use bypass mode `exempt`, which records no bypass, or `pull_request`,
 which refuses direct pushes.
 
+**[ARMED 2026-10-17, under the maintainer's express consent (*"consent to 2,
+1 and 3 in that order"*), by exactly the four steps above.]** The body was
+regenerated, and its digest equalled the recorded `48b04c50…3ffe`. It was
+created as ruleset **`25288349`**, `disabled`. A separate `GET` read
+`enforcement` `disabled`, `current_user_can_bypass` `always`, bypass
+`RepositoryRole:5:always`, target `refs/heads/main` and strict `true`, with
+20 checks set-equal to `REQUIRED_CONTEXTS`, no duplicates, all `@15368`;
+`rules/branches/main` still read `[]`. One `PUT` made it `active`. The
+read-back then gave `active` and `always`, and `rules/branches/main` listed
+one `required_status_checks` rule (ruleset `25288349`) with the 20 contexts.
+Classic protection still answers 404. The witness is the next push
+(`0012af7..055e09e`), which printed:
+
+```
+remote: Bypassed rule violations for refs/heads/main:
+remote: - 20 of 20 required status checks are expected.
+```
+
+`rule-suites` then listed it as suite `4572876540`: actor `aed900`,
+`0012af7`→`055e09e`, result `bypass`.
+
 The wave-7 block lifts here: *"Branch protection is BLOCKED BY PLAN"* earlier in
 this file lists three options, and B1 is option 2. **[OBSERVED 2026-08-19 —
 pre-state]**, and note both of these have already moved since that chapter was
@@ -5110,8 +5131,8 @@ OUT="${TMPDIR:-/tmp}/flip-readback-$(date -u +%Y%m%dT%H%M%SZ).txt"
   gh api repos/aed900/antseal/vulnerability-alerts
   gh api repos/aed900/antseal/automated-security-fixes
   gh api repos/aed900/antseal/code-scanning/default-setup
-  gh api repos/aed900/antseal/branches/main/protection   # C2/Q1: expect 404
-  gh api repos/aed900/antseal/rulesets                   # C2/Q1: expect []
+  gh api repos/aed900/antseal/branches/main/protection   # C2/Q1: expect 404 (the mechanism is a ruleset, Q265)
+  gh api repos/aed900/antseal/rulesets                   # C2/Q1: expect [] until 2026-10-17; since then one active ruleset, 25288349 (C2)
   gh api repos/aed900/antseal/actions/artifacts --paginate \
     --jq '.artifacts[] | [.name,.id,.size_in_bytes,.expired,.expires_at] | @tsv'
   gh api repos/aed900/antseal/actions/runs --jq '.total_count'

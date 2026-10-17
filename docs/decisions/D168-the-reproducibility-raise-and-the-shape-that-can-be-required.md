@@ -220,3 +220,9 @@ The comparison this record raised to a required context varies the checkout path
 §4 left *what "required" binds* for a one-admin, zero-pull-request repository to the maintainer, at `Q265`. On 2026-10-17 the maintainer ruled, in the words *"ruleset with bypass"*: a repository ruleset whose bypass list gives the admin role mode `always`. The 20 required contexts therefore bind pull requests, and each admin push lands and is recorded as a bypass instead of being refused. Arming takes two consented writes, create (disabled, then read back) and activate, following runbook C2 in `docs/ci-verification.md`. The recommendation the maintainer ruled on is recorded on `Q265`.
 
 Nothing else in this record changes.
+
+## Addendum — 2026-10-17, later: armed
+
+The ruling above was carried out the same day under the maintainer's express consent. Ruleset `25288349` was created disabled, read back, and activated with one `PUT`. `rules/branches/main` now lists the 20 required contexts, each pinned to the GitHub Actions app, and the next push was recorded as an admin bypass (rule suite `4572876540`). The evidence is in runbook C2's ARMED bracket and on `Q265`, which is ticked.
+
+Nothing else in this record changes.
