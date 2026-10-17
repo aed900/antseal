@@ -4547,6 +4547,52 @@ tempted to "push everything while we're here".
 
 ### C2 — AFTER. Branch protection is now available, and must still not be armed
 
+**[RULED 2026-10-17 by the maintainer, in the words *"ruleset with bypass"*
+(`Q265`).]** The mechanism is a repository **ruleset** whose bypass list gives
+the admin role mode `always`. Everything below about the classic
+`PUT …/branches/main/protection` payload is **SUPERSEDED for the arming
+write**. It stays as the record of what was measured. Each admin push still
+lands, and GitHub records it as a bypass; a pull request cannot merge until
+all 20 contexts pass. Arming takes two writes, each under express consent that
+names the action, `github.com/aed900/antseal` and `aed900`:
+
+1. **Generate** the body from the authority; never paste it:
+
+   ```bash
+   sed -n '/^REQUIRED_CONTEXTS = {/,/^}/p' scripts/check-ci-paths.py |
+     grep -oE '"[a-z0-9-]+"' |
+     jq -s '{name: "main: required contexts (Q265)", target: "branch", enforcement: "disabled",
+             bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}],
+             conditions: {ref_name: {include: ["refs/heads/main"], exclude: []}},
+             rules: [{type: "required_status_checks", parameters: {
+               strict_required_status_checks_policy: true,
+               required_status_checks: map({context: ., integration_id: 15368})}}]}' > ruleset.json
+   ```
+
+   **[OBSERVED 2026-10-17, jq-1.6]**: 20 checks, set-equal to
+   `REQUIRED_CONTEXTS`, no duplicates, each pinned to `integration_id` 15368,
+   the GitHub Actions app that produced every check run on `5050f5b`. Output
+   `sha256` `48b04c5054cc9fe1db43a4142a32b180baa3ef4f323581f05f5eda9efbdd3ffe`.
+   Regenerate at the moment of arming and compare digests.
+2. **Create it disabled, and read it back** before anything binds:
+   `gh api -X POST repos/aed900/antseal/rulesets --input ruleset.json --jq .id`,
+   then `gh api repos/aed900/antseal/rulesets/$ID` must read `enforcement`
+   `disabled`, `current_user_can_bypass` `always`, the one bypass actor
+   `RepositoryRole` 5 in mode `always`, and 20 `context@15368` entries equal to
+   `REQUIRED_CONTEXTS`. `gh api repos/aed900/antseal/rules/branches/main` must
+   still return `[]`. On any difference, stop and report. The admin role's id 5
+   comes from a script in the `github/docs` repository, not from the reference
+   docs; this read-back is what proves it.
+3. **Activate**: `jq '.enforcement = "active"' ruleset.json | gh api -X PUT
+   repos/aed900/antseal/rulesets/$ID --input -`. Then `rules/branches/main`
+   must list the `required_status_checks` rule with all 20 contexts: that
+   endpoint shows the rules in force.
+4. **Witness**: the next consented push prints GitHub's bypass notice and
+   appears in `gh api "repos/aed900/antseal/rulesets/rule-suites?ref=refs/heads/main&rule_suite_result=bypass"`.
+
+Never use bypass mode `exempt`, which records no bypass, or `pull_request`,
+which refuses direct pushes.
+
 The wave-7 block lifts here: *"Branch protection is BLOCKED BY PLAN"* earlier in
 this file lists three options, and B1 is option 2. **[OBSERVED 2026-08-19 —
 pre-state]**, and note both of these have already moved since that chapter was

@@ -214,3 +214,9 @@ consented push.
 ## Addendum — 2026-09-15: what the two-environment comparison proves, scoped (D171 §2 R4)
 
 The comparison this record raised to a required context varies the checkout path and `CARGO_HOME`; it does not vary crate provenance or build tools — build B copies build A's registry `cache` and `index` and shares its `$PATH` tools, by D135 §5 R3's no-network fence. It is sound for the property it exists to prove (no builder path reaches the artifact) and an overstatement wherever it is read as a supply-chain defence: [D171](D171-the-deploy-job-restores-no-cache-and-the-default-setup-acceptance-stands.md) measured it green over a poisoned `.crate` and a poisoned build tool. Crate provenance on the served path rests on cargo's download-time checksum, which D171 §2 R3 guarantees by making the deploy job restore no cache. The ruling is unchanged; its claim is read with this scope.
+
+## Addendum — 2026-10-17: what "required" binds, ruled
+
+§4 left *what "required" binds* for a one-admin, zero-pull-request repository to the maintainer, at `Q265`. On 2026-10-17 the maintainer ruled, in the words *"ruleset with bypass"*: a repository ruleset whose bypass list gives the admin role mode `always`. The 20 required contexts therefore bind pull requests, and each admin push lands and is recorded as a bypass instead of being refused. Arming takes two consented writes, create (disabled, then read back) and activate, following runbook C2 in `docs/ci-verification.md`. The recommendation the maintainer ruled on is recorded on `Q265`.
+
+Nothing else in this record changes.
