@@ -21,11 +21,17 @@ the name is a byte-level input to the SHA-256 the page footer publishes.
 Output lands in `target/wasm-pack/antseal-wasm/` — never in this directory, so
 the artifact set R25 computes sums over is exactly what `wasm-pack` wrote.
 
-The build is **hermetic**: `--mode no-install --no-opt`. Both flags are
-load-bearing, and the reason is measured rather than assumed — see
-`docs/ci-verification.md`, "R22/D18". Short version: with egress blocked,
+wasm-pack installs nothing during the build: `--mode no-install --no-opt`.
+Both flags are load-bearing, and the reason is measured rather than assumed —
+see `docs/ci-verification.md`, "R22/D18". Short version: with egress blocked,
 `wasm-pack build --release` still downloaded an unpinned `wasm-opt` (binaryen
 117, dated 2024-02-28) and ran it over the artifact.
+
+Two more network paths are closed elsewhere. wasm-pack's own update check is
+suppressed by a stamp (D182). And in CI the locked crates are fetched in a
+step before the build, which then runs with cargo offline (`Q279`, the D63
+§5 R5 rider). That still does not make the build hermetic: a dependency's
+build script or proc macro is not fenced.
 
 ## The closed export list
 

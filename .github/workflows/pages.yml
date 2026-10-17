@@ -105,7 +105,20 @@ jobs:
       # may use the job's cache" is superseded by D171 §2 R3. Every job granted
       # `pages`, `contents` or `id-token` write is held to this by
       # `scripts/check-write-job-cache.py` (D171 §2 R5).
+      # Q279, ruled 2026-10-17 and recorded as a dated D63 §5 R5 rider: the
+      # network is used in THIS step and never by the build. It installs the
+      # pinned wasm tools and runs `cargo fetch --locked`, which checks every
+      # crate against its Cargo.lock checksum. The build step after it runs
+      # with CARGO_NET_OFFLINE=true, so no cargo process in it (wasm-pack's own
+      # `cargo metadata` included) can reach the network, and a crate this step
+      # missed fails the build with cargo's message instead of being fetched
+      # mid-build. This fences cargo only; build scripts and proc macros are
+      # not fenced (the rider says so). Still no cache in this job (D171).
+      - name: install the pinned wasm tools and fetch the locked crates (Q279)
+        run: ./scripts/wasm-tools-provision.sh
       - name: build and check the page
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/pages-publish.sh --build
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

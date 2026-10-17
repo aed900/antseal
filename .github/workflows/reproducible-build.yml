@@ -91,7 +91,15 @@ jobs:
       # output directory before it builds, so this step makes that hazard moot
       # — the same answer `verifier-page.yml` records. Remove this step and the
       # comparison can compare a stale module with a fresh one.
+      # Q279 (D63 §5 R5 rider): the provisioning step above fetched every
+      # locked crate, and both builds run with cargo offline. Build B builds
+      # from a COPY of this registry in its own CARGO_HOME, so an incomplete
+      # fetch reds it by cargo's message rather than being repaired mid-build.
       - name: build A — the module from this tree
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/wasm-pack-build.sh --build-only
       - name: build B in a second environment, then compare the two (R86)
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/reproducible-build.sh --compare

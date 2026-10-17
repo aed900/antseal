@@ -269,3 +269,9 @@ first plant and restore it exactly after the last.
 
 It changes a build script and a policy document. Its hosted witness needs the maintainer's express
 consent naming the act: either a push, or a dispatch of `pages.yml`, which redeploys the live page.
+
+## Addendum — 2026-10-17: the residue §6 named is ruled
+
+§6 named cargo's crate download on a cold runner as the network access left once the update check was suppressed, and minted `Q279` for it. On 2026-10-17 the maintainer ruled option 1: a fetch step, then an offline build. It is recorded as a dated rider on D63 §5 R5, and `scripts/wasm-tools-provision.sh` and the four page-building workflows carry it. The D63 addendum that §5 ordered from this record landed the same day, a day late (`docs/instrument-ledger.md`, 2026-10-17). Two texts still called the build *"hermetic"*, and both now carry dated corrections: `crates/antseal-wasm/README.md` and `docs/ci-verification.md`.
+
+Nothing else in this record changes.

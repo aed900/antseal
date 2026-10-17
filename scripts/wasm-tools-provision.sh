@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Q19/D136 §2 R5 — install the two pinned wasm tools this repository's page
-# build needs, at the versions their DECLARATION SITES record.
+# build needs, at the versions their DECLARATION SITES record; then (Q279)
+# fetch every crate Cargo.lock names, so the build after it runs with cargo
+# offline.
 #
-#   ./scripts/wasm-tools-provision.sh           install whichever is missing
-#   ./scripts/wasm-tools-provision.sh --check   report only; exit 1 if either is absent or wrong
+#   ./scripts/wasm-tools-provision.sh           install whichever is missing, then fetch the locked crates
+#   ./scripts/wasm-tools-provision.sh --check   report only, no fetch; exit 1 if either tool is absent or wrong
 #   ./scripts/wasm-tools-provision.sh --help
 #
 # ── Why this is a script that two jobs CALL, and not two lines they each carry ─
@@ -72,6 +74,36 @@ assert_update_stamp_held() {
 }
 shown() { local v; v="$(have "$1")"; printf '%s' "${v:-<absent>}"; }
 
+# ── The locked crates, fetched HERE so the build runs offline (Q279) ────────
+#
+# Ruled by the maintainer 2026-10-17 (option 1) and recorded as a dated rider
+# on D63 §5 R5. That rule forbids "any network access during the build", and
+# on a cold registry cache cargo used to download every crate from crates.io
+# INSIDE the build, in wasm-pack's own `cargo metadata` call, which discards
+# cargo's stderr, so the downloads never reached the log. Now the network is
+# used here, in the provisioning step, and every workflow step that builds the
+# page runs with CARGO_NET_OFFLINE=true. A crate this fetch missed fails the
+# build with cargo's own message instead of being fetched mid-build.
+#
+# The fetch is BARE on purpose. MEASURED 2026-10-17: a fetch narrowed with
+# `--target wasm32-unknown-unknown --target x86_64-unknown-linux-gnu` broke
+# the offline build ("failed to download `fiat-crypto v0.3.0`"), because
+# wasm-pack's `cargo metadata` resolves for every platform. `--locked` checks
+# each crate against its Cargo.lock checksum, exactly as a mid-build download
+# would. A warm cache makes this a no-op that needs no network, so callers
+# that already run offline (`pages-publish.sh --build`) pass straight through.
+# CARGO_NET_OFFLINE fences cargo only: build scripts, proc macros and other
+# tools are not fenced by it (the D63 rider says so).
+fetch_locked_crates() {
+  local n
+  n="$(grep -c '^source = "registry+' Cargo.lock)"
+  note "fetching the ${n} registry crates Cargo.lock names (cargo fetch --locked); the page build after this runs with cargo offline (D63 §5 R5 rider, task Q279)"
+  cargo fetch --locked ||
+    die "cargo fetch --locked failed, so the page build, which runs with CARGO_NET_OFFLINE=true, would fail on the first crate this left out (D63 §5 R5 rider, task Q279)"
+  printf '  cargo fetch --locked: every crate Cargo.lock names is in the local registry (%s registry packages; CARGO_NET_OFFLINE=%s)\n' \
+    "$n" "${CARGO_NET_OFFLINE:-unset}"
+}
+
 cmd_provision() { # $1 = 1 to install, 0 to report only
   local install="$1" pack bindgen rc=0
   pack="$(recorded_pin wasm-pack)"
@@ -102,12 +134,14 @@ cmd_provision() { # $1 = 1 to install, 0 to report only
   [ "$rc" -eq 0 ] || return 1
   printf '  wasm-bindgen-cli %s · wasm-pack %s (both at their recorded pins)\n' \
     "$(have wasm-bindgen)" "$(have wasm-pack)"
-  assert_update_stamp_held
+  assert_update_stamp_held || return 1
+  [ "$install" -eq 1 ] || return 0
+  fetch_locked_crates
 }
 
 case "${1:-}" in
   "" )        cmd_provision 1 ;;
   --check)    cmd_provision 0 ;;
-  --help|-h)  sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  --help|-h)  sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "usage: scripts/wasm-tools-provision.sh [--check | --help]" ;;
 esac

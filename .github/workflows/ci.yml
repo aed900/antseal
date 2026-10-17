@@ -219,9 +219,13 @@ jobs:
       # stale_guard invokes `wasm-pack-build.sh --build-only` (whose `rm -rf` also
       # moots the rust-cache STALE-ARTIFACT hazard, exactly as the browser job's
       # comment records) and it then packages target/verifier-web/index.html.
+      # Q279 (D63 §5 R5 rider): the provisioning step also fetches every locked
+      # crate, so the page build after it runs with cargo offline.
       - name: install the pinned wasm tools this image does not ship
         run: ./scripts/wasm-tools-provision.sh
       - name: build the verifier page the workspace suite asserts against (R96, ledger 256)
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/verifier-page-build.sh --build-only
       - run: cargo test --workspace --locked
 

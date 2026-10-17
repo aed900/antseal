@@ -28,12 +28,21 @@
 #                     stamp is read back after the build to prove it
 #                     (`suppress_update_check`, below)
 #
-# What it does NOT enforce: cargo. `--locked` pins every crate to its
-# Cargo.lock checksum, but on a COLD registry cache — a fresh runner, which is
-# what pages.yml's `publish` job always is, since it restores no cache (D171)
-# — cargo downloads those crates from crates.io inside `wasm-pack build`. So
-# D63 §5 R5's "no network access during the build" holds here only with a warm
-# cache. MEASURED 2026-10-16 (D182 R2): with a warm cache, this script's
+# What it does NOT enforce by itself: cargo. `--locked` pins every crate to
+# its Cargo.lock checksum, but on a COLD registry cache — a fresh runner, which
+# is what pages.yml's `publish` job always is, since it restores no cache
+# (D171) — cargo downloads those crates from crates.io inside `wasm-pack
+# build`, in wasm-pack's own `cargo metadata` call, whose stderr wasm-pack
+# discards, so the downloads never reach the log.
+# [EXTENDED 2026-10-17, Q279 — the D63 §5 R5 rider.] So the hosted jobs fetch
+# first and build offline: `wasm-tools-provision.sh` ends with a bare `cargo
+# fetch --locked`, and every workflow step that builds the page sets
+# CARGO_NET_OFFLINE=true, which keeps every cargo process in that step off the
+# network (not a build script or proc macro: it does not fence those). This
+# script does not set the variable; run locally it uses the caller's cache and
+# environment. To reproduce the hosted fence, run the provisioning script,
+# then this one with CARGO_NET_OFFLINE=true. MEASURED 2026-10-16 (D182 R2):
+# with a warm cache, this script's
 # `--build-only` over a `git archive` of fbcee1e completed in 170 s inside a
 # loopback-only network namespace (`unshare -rn`) with CARGO_NET_OFFLINE=true,
 # the stamp unchanged, and the module byte-identical to an in-tree build of

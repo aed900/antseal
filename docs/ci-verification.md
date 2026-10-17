@@ -2640,6 +2640,14 @@ crate declares no profile stanza).
 
 ## The build is hermetic, and it is hermetic only because two flags say so
 
+**[CORRECTED 2026-10-17, `Q279`.] "Hermetic" in this heading means only that
+wasm-pack installs no tool during the build, which is all the two flags below
+guarantee. It never covered cargo, which downloaded the locked crates inside
+the build on a cold cache, nor wasm-pack's own update check, which called
+crates.io until D182. Since the D63 §5 R5 rider of 2026-10-17 the hosted jobs
+fetch the crates in a step before the build and build with cargo offline.
+Build scripts and proc macros remain unfenced.**
+
 D18 §7 P5 flagged two build-time hazards as *"R22's first act to measure, not
 to assume"*. Measured, with every proxy variable pointed at a dead port:
 

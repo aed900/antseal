@@ -576,7 +576,11 @@ forward-cited path counts, 2026-08-15" below.
 crates.io update check is a second network path during the build, suppressed
 by D182 §2 R2; cargo's crate download on a cold runner is the one that
 remains, and `Q279` rules it. See "Addendum — §5 R5 and wasm-pack's update
-check, 2026-10-17" below.
+check, 2026-10-17" below. — **RIDER, 2026-10-17, ruled by the maintainer
+(`Q279`, option 1)**: the locked crates are fetched in a networked
+provisioning step BEFORE the build, and every step that builds the page runs
+with cargo offline. See "Rider — §5 R5 and the locked crates, 2026-10-17"
+below.
 
 **R6 — The advice line: spec-owned, page-resident, drift-tested — and not
 added to R18's frozen table.** The exact sentence, from `MVP-SPEC.md`
@@ -1270,3 +1274,15 @@ about them.
 **The path that remains.** On a cold runner cargo downloads the locked crates from crates.io during the build. Measured 2026-10-17 on a scratch copy at `5050f5b`, every such download happens inside wasm-pack's own `cargo metadata` call, which discards cargo's stderr, so no `Downloaded` line reaches the log. `pages.yml` restores no cache (D171), so this happens on every deploy. It is still network access during the build, and `Q279` rules it: either a fetch step followed by an offline build, or a dated rider that permits checksummed, locked crates.
 
 §5 R5's closed operation list and its prohibition are unchanged.
+
+## Rider — §5 R5 and the locked crates, 2026-10-17
+
+**Ruled by the maintainer** on 2026-10-17, in the words *"option 1 for Q279"*. `Q279` put two options: (a) a `cargo fetch --locked` step before the build and `CARGO_NET_OFFLINE=true` during it, or (b) a dated rider recording that fetching checksummed, locked crates before compilation is permitted. Option (a) was recommended with the measurements recorded on `Q279`.
+
+**What it adds to §5 R5.** Fetching the crates `Cargo.lock` names is not a build operation; it happens before the build, in a provisioning step of its own. `scripts/wasm-tools-provision.sh` installs the pinned wasm tools and then runs a bare `cargo fetch --locked`, which checks each crate against its `Cargo.lock` checksum. Every workflow step that builds the page then runs with `CARGO_NET_OFFLINE=true`: `pages.yml` `publish`, `ci.yml` `test`, `reproducible-build.yml` (builds A and B) and `verifier-page.yml` (`browser`). No cargo process in those steps can reach the network, wasm-pack's own `cargo metadata` included. A crate the fetch missed fails the build with cargo's message instead of being fetched mid-build. So §5 R5's *"any network access during the build"* is enforced for cargo in every hosted job that builds the page.
+
+**What it does not fence.** `CARGO_NET_OFFLINE` stops cargo only. A dependency's build script or proc macro can still open a connection, as can any other tool a build step runs: measured 2026-10-17, a probe crate's build script and proc macro each connected to crates.io with the variable set. wasm-pack's own update check is fenced separately, by D182's stamp. A network namespace around the build would fence every process, but it needs `sudo` on hosted runners and is not ruled here. The build scripts do not set the variable themselves, so a local build uses the caller's cache and environment. To reproduce the hosted fence locally, run `./scripts/wasm-tools-provision.sh`, then build with `CARGO_NET_OFFLINE=true`.
+
+**Its cost.** Every deploy now needs every registry crate in the lock to be downloadable (765 at `0012af7`), not only the 206 a cold page build downloaded. A missing crate stops the deploy at the fetch step, visibly.
+
+The rest of §5 R5's closed operation list is unchanged.

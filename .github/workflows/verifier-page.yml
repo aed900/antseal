@@ -114,11 +114,17 @@ jobs:
       # this tree's module. If this step is ever removed the hazard returns, and
       # the ruled cure is then `cache-targets: false` on the action above —
       # never a quieter guard (D136 §3).
+      # Q279 (D63 §5 R5 rider): the provisioning step above fetched every
+      # locked crate, so both steps below run with cargo offline — the second
+      # one's `cargo test` and `cargo build` included.
       - name: build the module from this tree (a cold checkout has none)
+        env:
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/wasm-pack-build.sh --build-only
       - name: build the page and run its browser assertions
         env:
           ANTSEAL_PAGE_SEED_FAILURE: ${{ inputs.seed_failure }}
+          CARGO_NET_OFFLINE: "true"
         run: ./scripts/verifier-page-browser.sh --check
       # THE DIAGNOSIS, not the page (D136 §2 R14). `target/verifier-web/` held
       # the 2.5 MB `index.html` and its one-line SHA256SUMS — byte-reproducible
