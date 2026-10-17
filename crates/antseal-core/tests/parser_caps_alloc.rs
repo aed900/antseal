@@ -39,6 +39,18 @@
 //! flaky. One test per binary makes the measurement exact: between arming and
 //! disarming the counter, the only code running is the decoder under test.
 //!
+//! **[CORRECTED 2026-10-17.]** That premise failed twice over: the binary
+//! holds four tests, and libtest's own threads allocate as well. The flakiness
+//! predicted above happened, as a red `test` job on `main`. Measured that day,
+//! 104 of 500 runs at `--test-threads=4` failed with another thread's
+//! allocation inside the armed window (peaks of 9 680 B and 65 549 B), against
+//! 0 of 500 at one thread. A lock serializing the four tests still failed 2 of
+//! 1 500 runs at 8 threads, with the same 9 680 B, from a thread that runs no
+//! test. So the counter is now **per thread**: [`measure`] arms the thread it
+//! runs on, and the allocator counts only allocations made by an armed thread.
+//! Every other thread, another test's or the harness's, is invisible to it,
+//! however many there are.
+//!
 //! Secret-material convention (project rule 6): the inputs are length heads
 //! and a published filler byte; no key, salt, or plaintext material.
 //!
@@ -64,8 +76,10 @@
 //!    frees are exactly the ones `System` produced — so the safety contract
 //!    (`dealloc` receives a pointer from the *same* allocator with the *same*
 //!    layout) is discharged by delegation.
-//! 2. **The added code is allocation-free and lock-free**: three atomics with
-//!    `Relaxed` ordering. Nothing in it can allocate, so it cannot re-enter
+//! 2. **The added code is allocation-free and lock-free**: three
+//!    thread-local `Cell`s, each `const`-initialized with no destructor and
+//!    read through `try_with`, so touching them neither allocates nor
+//!    registers anything. Nothing in it can allocate, so it cannot re-enter
 //!    the allocator; nothing in it can block, so it cannot deadlock inside a
 //!    global allocator.
 //! 3. **The counters are observation-only**: no control-flow decision inside
@@ -74,7 +88,7 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use antseal_core::bundle::BundleV1;
 use antseal_core::codec::caps;
@@ -84,27 +98,40 @@ use antseal_core::manifest::{Manifest, ManifestBodyV1};
 // A counting global allocator, armed only around the call under test.
 // ─────────────────────────────────────────────────────────────────────
 
-static ARMED: AtomicBool = AtomicBool::new(false);
-/// The largest single allocation observed while armed.
-static PEAK_SINGLE: AtomicUsize = AtomicUsize::new(0);
-/// Total bytes requested while armed (allocations are never freed back out of
-/// this counter — a decoder that allocated and dropped in a loop would still
-/// be caught).
-static TOTAL: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// Whether the call under test is running on THIS thread. Only [`measure`]
+    /// sets it, so every other thread reads `false` and is never counted.
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+    /// The largest single allocation this thread made while armed.
+    static PEAK_SINGLE: Cell<usize> = const { Cell::new(0) };
+    /// Total bytes this thread requested while armed (allocations are never
+    /// freed back out of this counter — a decoder that allocated and dropped in
+    /// a loop would still be caught).
+    static TOTAL: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Count one request of `size` bytes if this thread is armed. For these
+/// `const`-initialized, destructor-free cells `try_with` cannot fail; it is
+/// used so the allocator can never panic, whatever state the thread is in.
+fn record(size: usize) {
+    if ARMED.try_with(Cell::get).unwrap_or(false) {
+        let _ = PEAK_SINGLE.try_with(|p| p.set(p.get().max(size)));
+        let _ = TOTAL.try_with(|t| t.set(t.get().saturating_add(size)));
+    }
+}
 
 struct Counting;
 
 // SAFETY: every method forwards unchanged to `System`, so the pointers handed
 // out and the pointers freed are always the same allocator's with the same
-// layout. The only added behaviour is three `Relaxed` atomics, which allocate
-// nothing (no re-entrancy) and block on nothing (no deadlock) and feed no
-// control-flow decision. Full justification in the module docs.
+// layout. The only added behaviour is `record`: three `const`-initialized,
+// destructor-free thread-local cells reached through `try_with`, which
+// allocate nothing (no re-entrancy), block on nothing (no deadlock) and feed no
+// decision about which pointer is returned. Full justification in the module
+// docs.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            PEAK_SINGLE.fetch_max(layout.size(), Ordering::Relaxed);
-            TOTAL.fetch_add(layout.size(), Ordering::Relaxed);
-        }
+        record(layout.size());
         unsafe { System.alloc(layout) }
     }
 
@@ -113,10 +140,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            PEAK_SINGLE.fetch_max(new_size, Ordering::Relaxed);
-            TOTAL.fetch_add(new_size, Ordering::Relaxed);
-        }
+        record(new_size);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -126,15 +150,12 @@ static ALLOC: Counting = Counting;
 
 /// Run `f` with the counter armed; return `(peak_single, total)` bytes.
 fn measure(f: impl FnOnce()) -> (usize, usize) {
-    PEAK_SINGLE.store(0, Ordering::Relaxed);
-    TOTAL.store(0, Ordering::Relaxed);
-    ARMED.store(true, Ordering::Relaxed);
+    PEAK_SINGLE.with(|p| p.set(0));
+    TOTAL.with(|t| t.set(0));
+    ARMED.with(|a| a.set(true));
     f();
-    ARMED.store(false, Ordering::Relaxed);
-    (
-        PEAK_SINGLE.load(Ordering::Relaxed),
-        TOTAL.load(Ordering::Relaxed),
-    )
+    ARMED.with(|a| a.set(false));
+    (PEAK_SINGLE.with(Cell::get), TOTAL.with(Cell::get))
 }
 
 // ─────────────────────────────────────────────────────────────────────
