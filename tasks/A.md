@@ -120,7 +120,7 @@
 - Size: M
 - Deps: A3, A4, A8, A9; U: TSA-list config + vault persistence (U26/U9); A-OD7
 - Spec: Anchoring (line 109), Core user flows (line 34), Risks (line 189)
-- Do: In `antseal-anchor`, implement per-TSA capture: generate a random nonce (OS CSPRNG), build the request (A4), POST `application/timestamp-query` to each configured TSA (defaults `https://freetsa.org/tsr` and `http://timestamp.digicert.com`), parse the response, and immediately verify the token in `antseal-core` against the pinned roots, the expected nonce, and `anchor_digest` — only a fully verifying token counts as a success toward the seal gate. Emit per-TSA outcomes (token + fetch date + nonce, or a typed failure) for A20's policy and U's vault records; honor optional per-TSA minimum-interval config (Sectigo ~15 s, SwissSign ~10/day caveats).
+- Do: In `antseal-anchor`, implement per-TSA capture: generate a random nonce (OS CSPRNG), build the request (A4), POST `application/timestamp-query` to each configured TSA (defaults `https://freetsa.org/tsr` and `http://timestamp.digicert.com`), parse the response, and immediately verify the token in `antseal-core` against the pinned roots, the expected nonce, and `anchor_digest` — only a fully verifying token counts as a success toward the seal gate. Emit per-TSA outcomes (token + fetch date + nonce, or a typed failure) for A20's policy and U's vault records; ~~honor optional per-TSA minimum-interval config (Sectigo ~15 s, SwissSign ~10/day caveats).~~ **[STRUCK 2026-10-17 by D193 §2 R1 (`A137`) — withdrawn, not built: the spec asks only that the caveats be recorded and that failures downgrade loudly (`MVP-SPEC.md:109`, `:189`), and both are met; both caveats are published and were never measured (`D60-CAPTURE.log:46-49`); the default list carries neither; SwissSign counts zero while its root is quarantined; and pacing across runs would need a new vault-global record (a vault-format event) plus a config key `Q31` would freeze. What exists instead: one request per URL per seal, no re-send after a `429` (`A140`), and a `503` re-sent at most twice; spacing across seals is the operator's (`docs/user/timestamp-authorities.md` §4).]**
 - Accept:
   - Against A24's mock TSA: success path produces a complete capture record; a granted-but-unverifiable token counts as a failure; HTTP failure, timeout, and non-granted PKIStatus each produce distinct outcomes.
   - One TSA's failure never aborts or delays the others (independent attempts).
@@ -441,6 +441,7 @@
   - The alternates table carries the caveat with its measurement date.
   - No change to A20's gate threshold (asserted: the decision table's outcomes are unchanged by this task).
 - Notes: the discovery generalises — TSA resale and white-labelling are ordinary in this market, so the check is worth having independently of this one instance. It deliberately keys on the signer certificate rather than on the CA, so two genuinely different TSAs under one root still count as two.
+- Notes: **[2026-10-17, wave 38 — the PARTIAL marker is RETRACTED (D193 §2 R4).]** Both residues are discharged: the pacing half by `A137` (A10's interval clause withdrawn, D193 §2 R1) and the unexecuted half by `A139`, which ran the four tests by exact name; the result lines are on the `TODO.md` row.
 
 ### A32 — A token's `genTime` is never invalid because a local clock says so
 - Milestone: M2
@@ -1128,6 +1129,7 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: `AnchorSubmission::is_degraded()` is true whenever `ots.outcome() != Complete`. A deliberate TSA-only configuration (zero calendars) therefore marks **every** seal degraded, with no way to express "no OTS wanted". Degradation is meant to be loud precisely so it is meaningful; a permanently-on warning trains the reader to ignore it. Decide whether zero configured calendars is a degradation or a configuration, and implement the answer.
 - Accept: a TSA-only configuration produces an undegraded seal, or the report says explicitly that OTS was not requested; the D54 default path is unchanged and asserted.
+- Notes: **[2026-10-17, D188 §2 R9 — not decided by D188, and narrowed by it.]** `[anchors] ots_calendars` replaces the defaults wholesale and `[]` means *the defaults*, not *no calendars*, so "no OTS wanted" is expressible only by a future, separate key — additive, and governed by `Q31`'s freeze.
 
 ### A95 — The gate duplicates the pipeline's `--no-anchor` skip, hiding the pipeline's own layer
 - Milestone: M2
@@ -1153,6 +1155,7 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: `AnchorGateError::MinimumAnchor` says *"Re-run when an endpoint recovers, or pass `--force-degraded`"* and never says the work is left `Staged` and that a re-run **auto-resumes** it rather than starting a second seal. A user who does not know that has no way to tell whether re-running is safe.
 - Accept: the message names the resume behaviour; the claim is asserted against D45's actual resume path, not just spell-checked. Cross-domain — A owns the words, U owns resume.
+- Notes: **[2026-10-18, wave 38 — TICKED (D194 §2 R2, lane L-ERR2).]** Captures on the `TODO.md` row; D194 §6 records what was built and every deviation.
 
 ### A100 — The `.ots` allocation guard and the `.ots` parser assert two different rules
 - Milestone: M2
@@ -1598,6 +1601,7 @@
   - ~~`roots/mod.rs:259-261`'s count and quarantine claims are corrected against the array and the quarantine list~~ — **struck 2026-08-17, wave 23: moved to A138** for the reason in `Do`. This row must not be blocked on, or credited with, a doc fix it does not perform.
   - The Apple refusal and the unpinned-but-verifying pair (GlobalSign, Certum) are stated wherever alternates are listed, so *"it returns 200 and granted"* is never mistaken for *"it counts"*.
 - Notes: **A135 is a deliberate hole from wave 15 and is not reused; this is A136.** The two lanes that reported the *"Three roots"* rustdoc disagreed on its line (Q26 said `:257`, Q21 said `:259`); re-measured centrally at registration, **`:259` is correct** and `:257` is `/// Store version 1.` — one lane's account of another lane's measurement is re-measured, never arbitrated. A neighbouring instrument finding is deliberately **not** in this row and stays in the ledger: six sites in the roots module cite *"MVP-SPEC.md line 108"* for TSA defaults and alternates when 108 is the OTS bullet and 109 is the TSA bullet (`roots/mod.rs:264`, `:274`, `:285`, `:295`; `roots/PROVENANCE.md:95`, `:260`) — measured at registration, and the count is six rather than the five the ledger's own entry records.
+- Notes: **[2026-10-17, wave 38 — TICKED (D192, lanes L-ANCHOR and L-CFG).]** Captures on the `TODO.md` row; D192 §6 records what was built and every deviation.
 
 ### A137 — No per-TSA minimum-interval config exists, though A10's `Do` promised one and A10 closed
 
@@ -1614,6 +1618,7 @@
   - The caveats stay labelled **published, not measured** — `D60-CAPTURE.log:47-49` records that neither limit was ever approached at capture, and a config default derived from a published figure must not be presented as an observed one.
   - If pacing is implemented, a paced seal says so; a silent wait inside a command a user is watching is worse than the rate limit.
 - Notes: **The row exists because a closed row's `Do` outlived its `Accept`.** None of A10's three `Accept` rows covers the interval clause, so A10 could close honestly with the promise unbuilt — which is the general shape worth naming: a `Do` bullet with no matching `Accept` row is a promise with no gate. **Correction to the brief:** `seal_resume.rs` is at `crates/antseal-cli/src/seal_resume.rs`, not under `src/pipeline/`, and its auto-resume statement is at `:44-47`.
+- Notes: **[2026-10-17, wave 38 — TICKED (D193, lane L-ANCHOR).]** Captures on the `TODO.md` row; D193 §6 records what was built and every deviation.
 
 ### A138 — The pinned root store's own rustdoc makes two false claims about the array directly beneath it
 
@@ -1646,4 +1651,28 @@
   - A31's `🟡` is retracted in the same commit that records the run, or the row states which test still fails and why the glyph stands.
   - The evidence lives in A31's row, not only in a lane report — a measurement that lives only in a transcript is not evidence.
 - Notes: This row exists because of a rule, not because of a suspected defect: nothing indicates the four tests fail. Its value is that it converts a standing instruction into a live owner, which is the only thing D156 §2 R1(a) accepts. **`Q260` seeds its checker with `A31`**, so if this row is closed without retracting the glyph, that checker reds — which is the intended interlock rather than a conflict.
+- Notes: **[2026-10-17, wave 38 — TICKED (D193 §2 R4, lane L-ANCHOR).]** Captures on the `TODO.md` row; D193 §6 records what was built and every deviation.
 
+### A140 — A TSA or calendar that answers HTTP 429 is sent the same POST twice more within 0.8 s
+- Milestone: M4
+- Size: XS
+- Deps: with A137 (D193); D90 §6.3 (the retry table it amends)
+- Spec: D90 §6.3 (the retry classifier); `MVP-SPEC.md:109` (TSA caveats are recorded, failures downgrade loudly)
+- Discovered by: wave-38 planning lane P4, 2026-10-17, while measuring A137. Id assigned centrally.
+- Problem: D90 §6.3 classes *"status `429`, `503` | no (server declined) | retry | retry"* and `crates/antseal-anchor/src/http/retry.rs:129-133` implements it for `AtMostOnceAfterSend` POSTs too: `HTTP_MAX_ATTEMPTS = 3` at `HTTP_BACKOFF = [200 ms, 600 ms]` (`http.rs:120,125`), with no `Retry-After` handling. A server that said *too many requests* gets two more requests within a second — against a published ~15 s spacing (Sectigo) or a ~10/day quota (SwissSign).
+- Do: D193 R5 — a 429 under `AtMostOnceAfterSend` stops; 503 and `SafeToRepeat` are unchanged; a dated D90 addendum.
+- Accept:
+  - `the_classifier_reproduces_d90_table_6_3` carries `(status(429), Retry, Stop)` and was watched red against the old classifier.
+  - A loopback TSA stub answering 429 receives exactly one request.
+- Notes: **[2026-10-17, wave 38 — TICKED (D193 §2 R5, lane L-ANCHOR).]** Captures on the `TODO.md` row; D193 §6 records what was built and every deviation.
+
+### A141 — The opportunistic upgrade pass's header confirmation is not budget-gated, so a command can exit about 12 s late, not the documented ~6 s
+- Milestone: M4
+- Size: S
+- Deps: after A15, U24 (the engine and the hook); relates to U59 and U60
+- Spec: D99 R8 (the hook's exit-lateness bound)
+- Discovered by: wave-38 planning lane P2, 2026-10-17, by reading code (derived, not measured). Id assigned centrally.
+- Problem: after a poll returns `Upgraded`, `confirm_header` runs with no budget check (`crates/antseal-anchor/src/ots/engine.rs:525-545`): two sequential esplora GETs per endpoint at the opportunistic 3 s budget, the endpoints concurrent (`esplora.rs:133-149`, `agree.rs:311-321`). Exit lateness can therefore reach ≈ 12 s (3 s budget + a 3 s in-flight poll + 6 s confirmation) against the documented `budget.total` plus one in-flight call (`engine.rs:39-47`, `crates/antseal-cli/src/upgrade_hook.rs:55-57`, D99 R8).
+- Do: check the remaining budget before `confirm_header` and drop the merge when it is spent (the transition is already atomic and the route is re-polled next pass), or restate the bound everywhere it is printed.
+- Accept:
+  - An engine test with a late-answering upgraded stub and slow esplora stubs shows the chosen bound (wall-clock asserted loosely, the shape exactly).

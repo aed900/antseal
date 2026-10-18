@@ -11,15 +11,27 @@
 //! {"fetch-failed":{"reason":"transport failure"}}
 //! ```
 //!
-//! and now serializes as
+//! and R89 made it
 //!
 //! ```json
 //! {"fetch-failed":{"class":"Transport"}}
 //! ```
 //!
-//! The move was legitimate under D65 §3 — the `live` sibling is **tier C**,
-//! *"deterministic by construction … reviewed, not promised until U32"* — but
-//! it was also **unwitnessed**, and that is the reason this file exists rather
+//! — one value in two casings, a kebab-case outcome around a PascalCase class.
+//! **D190 R1 (R91) respelled the class kebab-case**, the casing of the outcome
+//! that encloses it and of its online sibling `ProbeFailureClass`, so the
+//! member now serializes as
+//!
+//! ```json
+//! {"fetch-failed":{"class":"transport"}}
+//! ```
+//!
+//! Both moves were legitimate under D65 §3 — the `live` sibling is **tier C**,
+//! *"deterministic by construction … reviewed, not promised until U32"* — and
+//! D190 landed the second before U32 on purpose: after the freeze, narrowing
+//! an enum-valued key's spelling set is D65 §6-breaking. `ENVELOPE_VERSION`
+//! stays 1 and `REPORT_VERSION` is unmoved (D190 R6). R89's move was also
+//! **unwitnessed**, and that is the reason this file exists rather
 //! than a comment. Before R89 nothing in the workspace asserted the shape of
 //! the `fetch-failed` member: `verify_live_manifest.rs` pins `"identical"`,
 //! `"different"` and `"not-found"`, all unit variants with no payload, and no
@@ -29,10 +41,15 @@
 //! assertion.
 //!
 //! What this pins is the shape, not a promise: the D65 tier is unchanged and
-//! U32 remains where the commitment would be made. Moving a byte here after
-//! R89 must be a deliberate act with this file edited in the same change.
+//! U32 remains where the commitment would be made. Moving a byte here must be
+//! a deliberate act with this file edited in the same change, as D190 did.
+//! The casing has a second producer — the online boundary's
+//! `ProbeFailureClass` — and
+//! `the_storage_and_online_failure_classes_share_one_wire_spelling` pins both
+//! (D190 R4).
 
 use antseal_core::verify::orchestration::{FetchFailureClass, LiveBlobOutcome};
+use antseal_core::verify::overlay::ProbeFailureClass;
 
 /// One JSON rendering per outcome, spelled out. The fetch-failure arm is
 /// swept over [`FetchFailureClass::ALL`] rather than written once, so a third
@@ -66,8 +83,8 @@ fn every_live_outcome_serializes_to_its_pinned_shape() {
     assert_eq!(
         fetch_failed,
         vec![
-            r#"{"fetch-failed":{"class":"Transport"}}"#.to_owned(),
-            r#"{"fetch-failed":{"class":"BackendRefused"}}"#.to_owned(),
+            r#"{"fetch-failed":{"class":"transport"}}"#.to_owned(),
+            r#"{"fetch-failed":{"class":"backend-refused"}}"#.to_owned(),
         ],
         "the fetch-failure member's machine shape moved"
     );
@@ -90,10 +107,17 @@ fn the_machine_member_carries_no_display_word() {
             "{class:?}'s display word `{label}` reached the machine member: {json}"
         );
         // The positive half: the member is not merely free of the sentence,
-        // it carries the thing a consumer is meant to read.
+        // it carries the thing a consumer is meant to read — the class's
+        // kebab-case wire token (D190 R1). Spelled by a wildcard-free match,
+        // so a third class is a compile error here rather than a quiet pass.
+        let token = match class {
+            FetchFailureClass::Transport => "transport",
+            FetchFailureClass::BackendRefused => "backend-refused",
+        };
         assert!(
-            json.contains(&format!("{class:?}")),
-            "{class:?} is not identifiable in its own machine member: {json}"
+            json.contains(&format!(r#""class":"{token}""#)),
+            "{class:?} is not identifiable by its wire token `{token}` in its own machine member: \
+             {json}"
         );
     }
 }
@@ -117,4 +141,71 @@ fn the_outcome_token_is_unchanged_by_the_payload() {
         "fetch-failed",
         "the token names the outcome, so both classes share it"
     );
+}
+
+/// **D190 R4 — the storage and the online failure classes share one wire
+/// spelling.** [`FetchFailureClass`] (the storage boundary, this file's
+/// subject) and [`ProbeFailureClass`] (the online boundary) are one
+/// discipline, and each class's doc names the other. Until D190 they
+/// disagreed on casing, so a `--json` consumer met `"Transport"` from a
+/// failed live fetch and `"transport"` from a failed online probe.
+///
+/// Each class's `Transport` is pinned to the literal, not to the other
+/// class, so a casing change on **either** producer alone reddens this test
+/// (R91's Accept); and every spelling of both classes is checked kebab-case,
+/// so a per-variant rename cannot bring a second casing back.
+#[test]
+fn the_storage_and_online_failure_classes_share_one_wire_spelling() {
+    assert_eq!(
+        serde_json::to_string(&FetchFailureClass::Transport).expect("the class serializes"),
+        r#""transport""#,
+        "the storage boundary's Transport moved its wire spelling"
+    );
+    assert_eq!(
+        serde_json::to_string(&ProbeFailureClass::Transport).expect("the class serializes"),
+        r#""transport""#,
+        "the online boundary's Transport moved its wire spelling"
+    );
+
+    // A sweep is vacuous over an empty operand, so both operands are
+    // asserted before they are swept.
+    assert_eq!(
+        FetchFailureClass::ALL.len(),
+        2,
+        "grow or shrink this sweep deliberately"
+    );
+    assert_eq!(
+        ProbeFailureClass::ALL.len(),
+        3,
+        "grow or shrink this sweep deliberately"
+    );
+    let spellings: Vec<String> = FetchFailureClass::ALL
+        .iter()
+        .map(|class| serde_json::to_string(class).expect("the class serializes"))
+        .chain(
+            ProbeFailureClass::ALL
+                .iter()
+                .map(|class| serde_json::to_string(class).expect("the class serializes")),
+        )
+        .collect();
+    assert_eq!(
+        spellings.len(),
+        5,
+        "every variant of both classes was spelled"
+    );
+    for spelling in &spellings {
+        let token = spelling
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .unwrap_or_else(|| panic!("a unit variant serializes as a bare string: {spelling}"));
+        let kebab = !token.is_empty()
+            && !token.starts_with('-')
+            && !token.ends_with('-')
+            && !token.contains("--")
+            && token.bytes().all(|b| b.is_ascii_lowercase() || b == b'-');
+        assert!(
+            kebab,
+            "{spelling} is not a kebab-case token; both failure classes spell kebab-case (D190 R1)"
+        );
+    }
 }

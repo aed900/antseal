@@ -92,7 +92,7 @@ fn the_upgraded_ots_shape_round_trips_with_both_fetch_dates_intact() {
 
 /// **R8: v1 bytes under the v2 parser.**
 ///
-/// [`open_envelope`] throws the version away (`journal.rs:965`), so a record
+/// [`open_envelope`] throws the version away (`journal.rs:1085`), so a record
 /// written before D97 arrives at the v2 decoder with nothing to branch on.
 /// That is safe here *only* because keys 4/5/6 are optional and
 /// absent-means-`None` — which is exactly the right reading of a

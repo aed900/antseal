@@ -452,7 +452,24 @@ where
         ResumeDecision::Resume(candidate) => {
             // S11: resume re-uploads the byte-identical staged
             // ciphertexts. No source file is opened, here or below.
-            let outcome = pipeline.resume(&candidate.seal_id).await?;
+            let outcome = match pipeline.resume(&candidate.seal_id).await {
+                Ok(outcome) => outcome,
+                // D185 R6 (T3): a seal interrupted before its staging
+                // finished has no plan to resume, and its exact re-run used
+                // to end here on every run with a usage error naming no exit.
+                // Mapped only when the journal measures that shape — the
+                // error has other producers, whose works may be further
+                // along — so the sentence naming `antseal abandon` is a fact
+                // about the work it names.
+                Err(crate::pipeline::SealError::NothingStaged)
+                    if crate::seal_resume::staging_never_finished(&store, &candidate.seal_id) =>
+                {
+                    return Err(crate::seal_resume::interrupted_before_staging(
+                        &candidate.seal_id,
+                    ));
+                }
+                Err(other) => return Err(other.into()),
+            };
             (SealResult::Sealed(outcome), true)
         }
         ResumeDecision::Fresh { .. } => {
@@ -625,9 +642,16 @@ pub struct AnchorStageConfig {
 }
 
 impl AnchorStageConfig {
-    /// The production stage: U26's effective TSA list (config override, or
-    /// the built-in defaults when the key is absent **or empty**), the
-    /// built-in calendar list, and the pinned root store.
+    /// The production stage: U26's effective TSA list and U44's effective
+    /// calendar list (each the config override, or the built-in defaults when
+    /// the key is absent **or empty**), and the pinned root store.
+    ///
+    /// The calendar list is read here and by
+    /// [`UpgradeConfig::from_config`](crate::status::UpgradeConfig::from_config)
+    /// from one key through one function (U52, U64; D188 R3): `seal` submits
+    /// to it, and `status --upgrade` and the opportunistic pass widen their
+    /// allowlist with it, so one file cannot name a calendar for one role and
+    /// a different one for the other.
     #[must_use]
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
@@ -635,7 +659,10 @@ impl AnchorStageConfig {
             // deduplication and the empty-means-defaults decision included.
             // A second answer here is how the config's semantics and the
             // stage's would drift.
-            endpoints: AnchorEndpoints::from_config(config.tsa_urls.as_deref(), None),
+            endpoints: AnchorEndpoints::from_config(
+                config.tsa_urls.as_deref(),
+                config.ots_calendars.as_deref(),
+            ),
             roots: *TsaRootStore::pinned(),
             fetch_date: None,
         }

@@ -27,7 +27,9 @@ use antseal_cli::listing::WorkListing;
 use antseal_cli::pipeline::{DryRunReport, SealJournal, VaultJournal};
 use antseal_cli::seal_consent::{ConsentPrompt, PERMANENCE_WARNING, SealConsent};
 use antseal_cli::seal_plan::{SealPlan, build_plan};
-use antseal_cli::seal_resume::{ResumeDecision, abandon_pre_pay, detect};
+use antseal_cli::seal_resume::{
+    AbandonConfirm, ResumeDecision, abandon_pre_pay, detect, resolve_abandon_id, run_abandon,
+};
 use antseal_cli::seal_run::{SealCommandResult, SealContext, dry_run_outcome, run_seal};
 use antseal_cli::seal_session::SealSession;
 use antseal_cli::seal_warnings::FINE_TREE_ESTIMATE_THRESHOLD_BYTES;
@@ -1403,40 +1405,586 @@ fn a_complete_work_is_refused_because_abandoning_it_would_only_lose_the_keys() {
     );
 }
 
-/// U17's loud safety aborts: one exit code, two messages that cannot be
-/// mistaken for each other, each stating the rule it is enforcing.
-///
-/// The `SourceChanged` arm is deliberately asserted at the *type* level
-/// rather than by driving a scenario: S11 made it unreachable by
-/// construction (resume never opens a source file), which is a stronger
-/// guarantee than the abort U17 asked for — see the variant's own docs
-/// and U42.
+// ─────────────────────────────────────────────────────────────────────
+// U41 (D185): `antseal abandon`, the surface over U17's engine
+// ─────────────────────────────────────────────────────────────────────
+
+/// The 32-hex seal-id every resume message prints — the form
+/// `antseal abandon` takes.
+fn seal_hex(seal_id: &SealId) -> String {
+    seal_id
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `--yes` as a script passes it: machine mode, confirmed in advance.
+const SCRIPTED: AbandonConfirm = AbandonConfirm {
+    yes: true,
+    machine_mode: true,
+};
+
+/// An abandon confirmation that must never be asked.
+fn never_asked(question: &str) -> Result<bool, antseal_cli::error::CliError> {
+    panic!("the abandon confirmation was asked where it must not be: {question}");
+}
+
+/// **U41 Accept 1, end to end (D185 §3 test 1).** The flag-mismatch trap
+/// names the command that exits it, and running that command lets the
+/// refused invocation proceed: `run_seal` refuses with 26 naming
+/// `antseal abandon <seal-id>`; the abandon command's library half runs with
+/// `--yes`; the refused invocation then runs `Fresh` and seals.
 #[test]
-fn the_two_resume_safety_aborts_are_distinct_and_say_what_they_protect() {
+fn the_flag_mismatch_trap_names_abandon_and_the_refused_invocation_then_seals() {
+    let (vault, work, seal_id) = vault_with_a_declined_work("u41-trap");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let store = WorkStore::new(session.vault());
+    let backend = MockBackend::new().with_balances(funded());
+    let refused = work
+        .plan(&["a.txt", "--no-anchor", "--split", "blank-lines", "--yes"])
+        .expect("plan validates");
+
+    // T1, through the real command path.
+    let err = block_on(run_seal(
+        &backend,
+        &session,
+        &refused,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x41; 32]),
+        &mut ChaCha20Rng::from_seed([0x42; 32]),
+    ))
+    .expect_err("D45 refuses the same paths with different flags");
+    assert_eq!(err.class(), ErrorClass::ResumeFlagMismatch);
+    assert_eq!(err.exit_code(), 26);
+    let command = format!("antseal abandon {}", seal_hex(&seal_id));
+    let text = err.to_string();
+    assert!(
+        text.contains(&command),
+        "the trap must name `{command}`:\n{text}"
+    );
+    assert_eq!(backend.calls(Method::Pay), 0, "the trap pays nothing");
+
+    // The command it names, as `antseal abandon <seal-id> --yes` runs it.
+    let mut shown = Vec::new();
+    let report = {
+        let mut rng = ChaCha20Rng::from_seed([0x43; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        run_abandon(
+            &store,
+            &journal,
+            &seal_hex(&seal_id),
+            SCRIPTED,
+            |line| shown.push(line.to_owned()),
+            never_asked,
+        )
+        .expect("an unpaid work is abandoned")
+    };
+    assert!(!report.already);
+    assert_eq!(report.seal_id, seal_id);
+    // D51 invariant 1: what will be discarded printed although nothing was
+    // asked.
+    assert_eq!(shown.len(), 6, "{shown:?}");
+    assert_eq!(shown[0], format!("Interrupted seal {}", seal_hex(&seal_id)));
+    assert_eq!(shown[4], "  progress: staged; not paid", "{shown:?}");
+    assert_eq!(shown[5], "  anchors:  none recorded", "{shown:?}");
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::Abandoned
+    );
+    assert_eq!(report.json()["seal_id"], seal_hex(&seal_id));
+    assert_eq!(report.json()["already"], false);
+    assert_eq!(report.json()["previous_state"], "staged");
+
+    // The refused invocation again: nothing matches it now, so it runs
+    // fresh and seals — a new seal_id, not a resume.
+    let decision = detect(
+        &store,
+        antseal_net::NetworkId::Devnet,
+        &refused.absolute_paths(),
+        &refused.shaping,
+    )
+    .expect("no D45 refusal any more");
+    assert_eq!(
+        decision,
+        ResumeDecision::Fresh {
+            incomplete_works: 0
+        }
+    );
+    let result = block_on(run_seal(
+        &backend,
+        &session,
+        &refused,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x44; 32]),
+        &mut ChaCha20Rng::from_seed([0x45; 32]),
+    ))
+    .expect("the once-refused invocation seals");
+    let SealCommandResult::Sealed(sealed) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(!sealed.resumed, "a fresh seal, not a resume");
+    assert!(sealed.paid_here);
+    assert_ne!(sealed.seal_id, seal_id);
+    assert_eq!(
+        store.load_meta(&sealed.seal_id).expect("meta").state,
+        WorkState::Complete
+    );
+
+    // Re-running the same abandon is an outcome rather than a failure, and
+    // it asks nothing — even in machine mode without `--yes` — because
+    // nothing is discarded.
+    let mut rng = ChaCha20Rng::from_seed([0x46; 32]);
+    let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+    let again = run_abandon(
+        &store,
+        &journal,
+        &seal_hex(&seal_id),
+        AbandonConfirm {
+            yes: false,
+            machine_mode: true,
+        },
+        |line| panic!("an abandoned work has nothing to preview: {line}"),
+        never_asked,
+    )
+    .expect("already abandoned is an outcome");
+    assert!(again.already);
+}
+
+/// **T3 (D185 R6; §3 test 2) — watched red first.** A seal interrupted
+/// between `begin` and the plan write: its exact re-run used to fail with a
+/// usage error that named no exit, on every run. It now names
+/// `antseal abandon <seal-id>`, and running that lets the same command seal.
+///
+/// One unit blob is staged before the "kill", the reachable shape:
+/// `pipeline/seal.rs` journals each unit as it is encrypted, before the plan
+/// is written. That is why the message says "before its staging finished"
+/// and not "nothing was staged" — the vault can hold staged blobs of the
+/// work, as it does here.
+#[test]
+fn a_seal_interrupted_before_its_staging_finished_names_abandon_and_then_seals() {
+    use antseal_cli::pipeline::journal::{recorded_plan, recorded_state};
+    use antseal_cli::pipeline::{BlobSlot, SealState, StagedBlob, UNIT_ENTRY_BASE, WorkIdentity};
+    use antseal_core::crypto::secrets::MasterSecret;
+
+    let work = Work::new("u41-t3");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("u41-t3");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let store = WorkStore::new(session.vault());
+    let seal_id = SealId::from_bytes([0xD3; 16]);
+    {
+        let mut rng = ChaCha20Rng::from_seed([0x47; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        let w = MasterSecret::from_bytes([0xD3; 32]);
+        journal
+            .begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id,
+                network: plan.network.as_str().to_owned(),
+                unanchored: plan.shaping.no_anchor,
+                degraded: false,
+                input_paths_as_given: plan.as_given_paths(),
+                input_paths_absolute: plan.absolute_paths(),
+                shaping: plan.shaping.clone(),
+            })
+            .expect("begin");
+        let ciphertext = vec![0x5A_u8; 48];
+        journal
+            .put_staged(
+                &seal_id,
+                &StagedBlob {
+                    slot: BlobSlot::Unit { unit_id: 0 },
+                    nonce: [0x5B; 24],
+                    address: antseal_core::storage::compute_storage_address(&ciphertext)
+                        .expect("under the chunk cap"),
+                    ciphertext,
+                },
+            )
+            .expect("stage one unit");
+    }
+    // Positive controls on the planted shape: tagged `Staged`, no plan, and
+    // a staged unit blob in the vault.
+    assert_eq!(
+        recorded_state(&store, &seal_id).expect("tag"),
+        Some(SealState::Staged)
+    );
+    assert!(
+        recorded_plan(&store, &seal_id)
+            .expect("plan read")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_journal_entry(&seal_id, UNIT_ENTRY_BASE)
+            .expect("read")
+            .is_some(),
+        "a staged unit blob is in the vault"
+    );
+
+    let backend = MockBackend::new().with_balances(funded());
+    let err = block_on(run_seal(
+        &backend,
+        &session,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x48; 32]),
+        &mut ChaCha20Rng::from_seed([0x49; 32]),
+    ))
+    .expect_err("there is no plan to resume from");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    assert_eq!(err.exit_code(), 2);
+    let id = seal_hex(&seal_id);
+    let text = err.to_string();
+    for needle in [
+        format!("seal {id} was interrupted before its staging finished"),
+        "nothing was anchored or paid for it".to_owned(),
+        format!("discard it with `antseal abandon {id}` and re-run this command"),
+    ] {
+        assert!(text.contains(&needle), "missing `{needle}`:\n{text}");
+    }
+    assert!(
+        !text.contains("nothing was staged"),
+        "a staged blob is in the vault, so the message must not say so:\n{text}"
+    );
+    assert_eq!(backend.calls(Method::Pay), 0);
+
+    // The exit it names, then this command again: fresh, and sealed.
+    let mut shown = Vec::new();
+    let report = {
+        let mut rng = ChaCha20Rng::from_seed([0x4A; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        run_abandon(
+            &store,
+            &journal,
+            &id,
+            SCRIPTED,
+            |line| shown.push(line.to_owned()),
+            never_asked,
+        )
+        .expect("an interrupted, unpaid work is abandoned")
+    };
+    assert_eq!(report.previous_state, Some(SealState::Staged));
+    assert!(
+        shown.contains(
+            &"  progress: staging was interrupted before it finished; not paid".to_owned()
+        ),
+        "{shown:?}"
+    );
+    let result = block_on(run_seal(
+        &backend,
+        &session,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x4B; 32]),
+        &mut ChaCha20Rng::from_seed([0x4C; 32]),
+    ))
+    .expect("the same command now seals");
+    let SealCommandResult::Sealed(sealed) = result else {
+        panic!("expected a completed seal");
+    };
+    assert!(!sealed.resumed, "a fresh seal, not a resume");
+    assert_ne!(sealed.seal_id, seal_id);
+}
+
+/// **U41 Accept 2 (D185 §3 test 3).** A paid work is refused **through the
+/// surface**, not only through the engine: `usage` (2), the engine's own
+/// sentence, nothing previewed or asked, and the vault byte-identical.
+#[test]
+fn a_paid_work_is_refused_through_the_abandon_surface_and_nothing_changes() {
+    let (vault, _work, seal_id) = vault_with_a_declined_work("u41-paid");
+    {
+        let unlocked = vault.unlock();
+        let mut rng = ChaCha20Rng::from_seed([0x4D; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        journal
+            .put_receipt(&seal_id, &fixture_receipt())
+            .expect("journal a receipt");
+    }
+    let before = vault.fingerprint();
+    assert!(before.len() > 3, "the fingerprint sees the vault's files");
+    {
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        let mut rng = ChaCha20Rng::from_seed([0x4E; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        let err = run_abandon(
+            &store,
+            &journal,
+            &seal_hex(&seal_id),
+            SCRIPTED,
+            |line| panic!("a paid work has nothing to preview: {line}"),
+            never_asked,
+        )
+        .expect_err("a paid work is never abandoned on request");
+        assert_eq!(err.class(), ErrorClass::Usage);
+        assert_eq!(err.exit_code(), 2);
+        let text = err.to_string();
+        assert!(text.contains("already been paid for"), "{text}");
+        assert!(
+            text.contains("antseal seal a.txt"),
+            "the refusal names the command that finishes it: {text}"
+        );
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").state,
+            WorkState::IncompletePrePay
+        );
+    }
+    assert_eq!(vault.fingerprint(), before, "nothing was written");
+}
+
+/// **D185 R4 (§3 test 4).** Without `--yes`, machine mode never prompts: the
+/// D51 consent class (10), the preview still printed, and the vault
+/// byte-identical. An interactive "no" is the same class with its own
+/// message, after R4's question, verbatim.
+#[test]
+fn abandon_without_yes_in_machine_mode_is_consent_not_obtained_and_writes_nothing() {
+    let (vault, _work, seal_id) = vault_with_a_declined_work("u41-noyes");
+    let before = vault.fingerprint();
+    assert!(before.len() > 3, "the fingerprint sees the vault's files");
+    {
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        let mut rng = ChaCha20Rng::from_seed([0x4F; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+
+        let mut shown = Vec::new();
+        let err = run_abandon(
+            &store,
+            &journal,
+            &seal_hex(&seal_id),
+            AbandonConfirm {
+                yes: false,
+                machine_mode: true,
+            },
+            |line| shown.push(line.to_owned()),
+            never_asked,
+        )
+        .expect_err("machine mode never prompts");
+        assert_eq!(err.class(), ErrorClass::ConsentNotObtained);
+        assert_eq!(err.exit_code(), 10);
+        assert_eq!(
+            err.to_string(),
+            "abandoning requires confirmation: machine mode (--json, non-TTY stdin, or \
+             --passphrase-fd 0) never prompts — pass --yes to confirm in advance; nothing was \
+             changed"
+        );
+        assert_eq!(shown.len(), 6, "the preview printed: {shown:?}");
+
+        let mut asked = Vec::new();
+        let err = run_abandon(
+            &store,
+            &journal,
+            &seal_hex(&seal_id),
+            AbandonConfirm {
+                yes: false,
+                machine_mode: false,
+            },
+            |_| {},
+            |question: &str| {
+                asked.push(question.to_owned());
+                Ok(false)
+            },
+        )
+        .expect_err("declined");
+        assert_eq!(err.class(), ErrorClass::ConsentNotObtained);
+        assert_eq!(
+            err.to_string(),
+            "abandon declined: nothing was changed, and the interrupted seal is still in the vault"
+        );
+        assert_eq!(
+            asked,
+            vec![format!(
+                "Abandon interrupted seal {}? Nothing was paid for it; the staged work can no \
+                 longer be used. [y/N] ",
+                seal_hex(&seal_id)
+            )]
+        );
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").state,
+            WorkState::IncompletePrePay
+        );
+    }
+    assert_eq!(vault.fingerprint(), before, "nothing was written");
+}
+
+/// **D185 R4's anchors clause, measured from the slots (§3 test 4b).** The
+/// question names the anchors only when the vault holds some: the pipeline
+/// writes the `Anchored` tag after the anchor step even when `--no-anchor`
+/// skipped it, so an `Anchored` work with no slots gets no anchors clause,
+/// and one with a recorded slot does.
+#[test]
+fn the_anchors_clause_follows_the_recorded_anchors_not_the_tag() {
+    use antseal_cli::pipeline::SealState;
+    use antseal_cli::seal_resume::AbandonPreview;
+
+    let (vault, _work, seal_id) = vault_with_a_declined_work("u41-anchors");
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+    let mut rng = ChaCha20Rng::from_seed([0x50; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    journal
+        .set_state(&seal_id, SealState::Anchored)
+        .expect("Staged → Anchored");
+
+    // `--no-anchor`'s shape: the tag says Anchored, no slot exists.
+    let preview = AbandonPreview::read(&store, &journal, &seal_id)
+        .expect("read")
+        .expect("an unpaid work has a preview");
+    assert!(!preview.anchored());
+    assert_eq!(
+        preview.question(),
+        format!(
+            "Abandon interrupted seal {}? Nothing was paid for it; the staged work can no longer \
+             be used. [y/N] ",
+            seal_hex(&seal_id)
+        )
+    );
+    let lines = preview.render();
+    assert_eq!(
+        lines[4],
+        "  progress: staged and past its anchor step; not paid"
+    );
+    assert_eq!(lines[5], "  anchors:  none recorded");
+
+    // One recorded anchor: now the clause, and the count.
+    let mut slot_rng = ChaCha20Rng::from_seed([0x51; 32]);
+    store
+        .put_anchor(&seal_id, "tsa-0", b"opaque fixture token", &mut slot_rng)
+        .expect("record one anchor slot");
+    let preview = AbandonPreview::read(&store, &journal, &seal_id)
+        .expect("read")
+        .expect("an unpaid work has a preview");
+    assert!(preview.anchored());
+    assert_eq!(
+        preview.question(),
+        format!(
+            "Abandon interrupted seal {}? Nothing was paid for it; the staged work, and the \
+             anchors already obtained for it, can no longer be used. [y/N] ",
+            seal_hex(&seal_id)
+        )
+    );
+    assert_eq!(
+        preview.render()[5],
+        "  anchors:  1 recorded, and they cannot be carried over to a new seal"
+    );
+}
+
+/// **D185 R2 (§3 test 5).** Both id forms resolve to the same work — the
+/// seal-id (32 hex, upper case accepted) and the work-id (64 hex) — and
+/// anything else is `usage` (2) naming the two forms: a 40-hex string, a
+/// prefix, and a well-formed id no work carries. A complete work resolves,
+/// and is then refused in the engine's own words, through the surface.
+#[test]
+fn both_id_forms_resolve_and_anything_else_is_usage_naming_both() {
+    let work = Work::new("u41-ids");
+    work.file("a.txt", b"content");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let vault = IsolatedVault::create("u41-ids");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let result = block_on(run_seal(
+        &backend,
+        &session,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x52; 32]),
+        &mut ChaCha20Rng::from_seed([0x53; 32]),
+    ))
+    .expect("the seal completes");
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("expected a completed seal");
+    };
+    let store = WorkStore::new(session.vault());
+    let seal = seal_hex(&report.seal_id);
+    let work_hex: String = report.work_id.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!((seal.len(), work_hex.len()), (32, 64));
+
+    for given in [seal.clone(), seal.to_uppercase(), work_hex.clone()] {
+        assert_eq!(
+            resolve_abandon_id(&store, &given).expect("resolves"),
+            report.seal_id,
+            "{given}"
+        );
+    }
+
+    let unknown_seal = "0".repeat(32);
+    for (given, needle) in [
+        ("ab".repeat(20), "is neither a seal id nor a work id"),
+        (seal[..31].to_owned(), "is neither a seal id nor a work id"),
+        (
+            work_hex[..63].to_owned(),
+            "is neither a seal id nor a work id",
+        ),
+        (unknown_seal, "no work in this vault has the seal id"),
+        ("w1".to_owned(), "is neither a seal id nor a work id"),
+    ] {
+        let err = resolve_abandon_id(&store, &given).expect_err("refused");
+        assert_eq!(err.class(), ErrorClass::Usage, "{given}");
+        let text = err.to_string();
+        assert!(text.contains(needle), "{given}: {text}");
+        assert!(
+            text.contains("(32 hexadecimal characters)")
+                && text.contains("(64 hexadecimal characters)"),
+            "{given}: the refusal names both forms: {text}"
+        );
+    }
+
+    // A complete work: resolved, then refused by the engine, nothing asked.
+    let mut rng = ChaCha20Rng::from_seed([0x54; 32]);
+    let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+    let err = run_abandon(
+        &store,
+        &journal,
+        &work_hex,
+        SCRIPTED,
+        |line| panic!("a complete work has nothing to preview: {line}"),
+        never_asked,
+    )
+    .expect_err("complete is terminal");
+    assert_eq!(err.class(), ErrorClass::Usage);
+    assert!(err.to_string().contains("is complete"), "{err}");
+    assert_eq!(
+        store.load_meta(&report.seal_id).expect("meta").state,
+        WorkState::Complete
+    );
+}
+
+/// U17's loud safety abort: one exit code, and a message stating the rule
+/// it is enforcing.
+///
+/// There is one reason, not two: U42 (D187 R3) removed `SourceChanged`. A
+/// changed source is not an abort — resume never opens a source file, so it
+/// resumes from the staged bytes (S18 case (3), D45 §4) — and the removed
+/// reason's frozen text said the opposite. The reason enum stays an enum,
+/// so a future reason is additive.
+#[test]
+fn the_resume_safety_abort_says_what_it_protects() {
     use antseal_cli::error::{CliError, ResumeSafetyReason};
 
-    let changed = CliError::ResumeSafetyAbort {
-        reason: ResumeSafetyReason::SourceChanged,
-    };
     let missing = CliError::ResumeSafetyAbort {
         reason: ResumeSafetyReason::StagedBytesMissing,
     };
 
-    // One class, one exit code (U2's table), two messages.
-    assert_eq!(changed.class(), ErrorClass::ResumeSafetyAbort);
+    // One class, one exit code (U2's table).
     assert_eq!(missing.class(), ErrorClass::ResumeSafetyAbort);
-    assert_eq!(changed.exit_code(), 24);
     assert_eq!(missing.exit_code(), 24);
-    assert_ne!(changed.to_string(), missing.to_string());
 
-    // Changed source: names the forbidden operation and why.
-    let text = changed.to_string();
-    assert!(text.contains("never re-encrypts"), "{text}");
-    assert!(text.contains("journaled nonce"), "{text}");
-
-    // Missing staged bytes: forfeiture stated as a deliberate choice, and
-    // the fresh seal's new seal_id + fresh nonces named (U17's copy).
+    // Missing staged bytes: names the forbidden operation, states the
+    // forfeiture as a deliberate choice, and names the fresh seal's new
+    // seal_id + fresh nonces (U17's copy).
     let text = missing.to_string();
+    assert!(text.contains("never re-encrypts"), "{text}");
     assert!(text.contains("abandoned"), "{text}");
     assert!(text.contains("forfeited"), "{text}");
     assert!(text.contains("safety-over-cost"), "{text}");

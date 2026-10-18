@@ -211,7 +211,7 @@ impl VerifyRun {
     /// and typed anyway because library code never unwraps.
     pub fn json(&self) -> Result<String, CliError> {
         // Member order is alphabetical — what `serde_json::Map`'s `BTreeMap`
-        // produces for the other nine commands — so this document reads like
+        // produces for the other ten commands — so this document reads like
         // every other one even though it never becomes a `Map`. Key order is
         // promised nowhere outside `report` (D65 §7); this is consistency,
         // not a commitment.
@@ -434,9 +434,9 @@ impl From<VerifyRunError> for CliError {
 /// `verify` command's own closing advice.
 ///
 /// Lives here rather than in `cli.rs` because the `--json` flag is **global**
-/// (it renders identically in all ten commands' help), and only `verify`
+/// (it renders identically in all eleven commands' help), and only `verify`
 /// emits a `result.report`: putting this sentence in the flag's help would
-/// promise nine other commands a tier-A member they do not have. The M3
+/// promise ten other commands a tier-A member they do not have. The M3
 /// documentation home is `machine.rs`'s module doc (D65 §8.1); this is the
 /// line a user meets without reading it.
 pub const JSON_STABILITY_NOTE: &str = "--json: gate scripts on the exit code, on `ok`, on `v`, and on `result.report` — those are \

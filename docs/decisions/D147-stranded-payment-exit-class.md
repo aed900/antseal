@@ -867,3 +867,35 @@ The class `payment-proofs-expired`, the code 29 and the remedy do not move.
 `tests/snapshots/cli-errors.display.txt` changes at line 92 only. Under D65, `message` is
 human copy. The quotations of the old sentence above (§1 and §2 R3) are history and stay as
 written.
+
+## Addendum — 2026-10-17 (wave 38, D186 §2 R4–R7): the money-moved pair becomes a trio
+
+D186 (`S37`) adds a third money-moved class, `payment-unrecorded`, **exit 37**:
+a payment the vault could not record. It fires when the most recent
+per-sub-batch receipt capture did not become durable **and** either `pay`
+returned `StrandedPayment` or the post-pay `put_receipt` failed. Without the
+receipt, a re-run quotes and charges again for everything the vault does not
+show as paid, so 28's promise is false for that case.
+
+- **28's contract narrows** to the recorded case: *"when the receipt was
+  recorded; 37 when it was not"*. 28's frozen Display
+  (`cli-errors.display.txt:89-90`) does not move: it is true for its narrowed
+  domain. 29 is untouched.
+- **Placement.** This record's rule is that a class takes *"the first free
+  code **in the band of the outcome it names**"* (Status, `:18-19`). The
+  seal/payment/resume band 20–29 has had no free code since this record took
+  28 and 29, so D186 applies the precedent this record cites beside it —
+  reveal's 36, *"the first free code after restore's band"* (D69 §5) — and
+  places the class at 37, beside the vault-file classes 32–34, because the
+  failure is a vault record that could not be written. D134 §2 R3(1) holds:
+  nothing is renumbered and 44–49 stay reserved.
+- **Why a code and not a sentence on 28.** The reason this record split 28 from
+  23 — a caller branches on the code, and one that retries 28 like a timeout
+  spends against a wallet that has already paid — is the reason D186 gives the
+  unrecorded case its own code: a sentence cannot reach a script's branch.
+- **What moves with it.** `error.rs`'s section *"28 and 29 are the
+  money-moved pair (D147)"* becomes a trio, its table gains row 37, and
+  `docs/user/funding-your-wallet.md` gains the third code with 28's bullet
+  qualified.
+
+The text above, including every *"pair"*, is history and stays as written.

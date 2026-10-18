@@ -147,7 +147,13 @@ fn expected_class(name: &str) -> (i32, &'static str) {
         // — it reads the vault and, by construction, nothing else (it
         // holds no backend at all, D67 §1 j), so machine mode with no
         // passphrase channel stops it at the same gate.
-        "vault export" | "list" | "status" | "show" => (11, "passphrase-unavailable"),
+        //
+        // **D185's `abandon` stops here too**: it unlocks like `show` and
+        // reaches no backend, and its own confirmation comes after the
+        // unlock, so with no passphrase channel the passphrase gate answers
+        // first. (Its machine-mode confirm refusal, 10, is the registered
+        // `[abandon] error` document, and the fd-channel rows below hold it.)
+        "vault export" | "list" | "status" | "show" | "abandon" => (11, "passphrase-unavailable"),
         "vault import" => (10, "consent-not-obtained"),
         // U11's handler refuses over the fixture vault, absolutely and
         // before it would ask for anything (D39 Decision 4) — so the
@@ -311,6 +317,121 @@ fn success_envelope_carries_the_registered_result_shape() {
     assert_eq!(doc["result"]["self_verified"], serde_json::json!(true));
     assert!(doc["result"]["works"].is_u64());
     assert!(!out.stderr.is_empty(), "human summary on stderr");
+}
+
+/// **D185 through the real binary.** `abandon` over a vault holding one
+/// interrupted, unpaid work, in machine mode three ways: with no passphrase
+/// channel it stops at the passphrase gate (11) without hanging; with the
+/// fd channel and no `--yes` it is the D51 destructive-confirm refusal (10)
+/// and the work is untouched; with `--yes` it abandons, and the one stdout
+/// document is the registered `[abandon] result` shape.
+#[test]
+fn abandon_through_the_binary_refuses_without_yes_and_abandons_with_it() {
+    use std::io::Write as _;
+
+    use antseal_cli::pipeline::{SealJournal as _, VaultJournal, WorkIdentity};
+    use antseal_cli::vault::session::unlock_vault;
+    use antseal_cli::vault::store::{SealShapingFlags, WorkState, WorkStore};
+    use antseal_core::crypto::secrets::{MasterSecret, SealId};
+
+    const PASSPHRASE: &[u8] = b"correct horse battery staple fixture";
+    let dir = TestDir::new("abandon");
+    let vault_root = fixture_vault(&dir);
+    let layout = VaultLayout::at(vault_root.clone());
+    let seal_id = SealId::from_bytes([0xD4; 16]);
+    {
+        let unlocked = unlock_vault(&layout, &SecretBuf::new(PASSPHRASE.to_vec())).expect("unlock");
+        let mut rng = ChaCha20Rng::from_seed([0xD4; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+        let w = MasterSecret::from_bytes([0xD4; 32]);
+        journal
+            .begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id,
+                network: "arbitrum-one".to_owned(),
+                unanchored: false,
+                degraded: false,
+                input_paths_as_given: vec!["notes.txt".to_owned()],
+                input_paths_absolute: vec!["/home/user/notes.txt".to_owned()],
+                shaping: SealShapingFlags::default(),
+            })
+            .expect("begin an interrupted work");
+    }
+    let id: String = seal_id
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let state = || {
+        let unlocked = unlock_vault(&layout, &SecretBuf::new(PASSPHRASE.to_vec())).expect("unlock");
+        WorkStore::new(&unlocked)
+            .load_meta(&seal_id)
+            .expect("meta")
+            .state
+    };
+    let over_fd = |extra: &[&str]| {
+        let mut args = vec!["--json", "abandon", id.as_str(), "--passphrase-fd", "0"];
+        args.extend_from_slice(extra);
+        let mut child = spawn::antseal()
+            .args(&args)
+            .env("ANTSEAL_DIR", &vault_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn antseal");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(PASSPHRASE)
+            .expect("pipe passphrase");
+        let out = child.wait_with_output().expect("wait");
+        let stdout = String::from_utf8(out.stdout).expect("utf-8");
+        let doc: serde_json::Value = serde_json::from_str(stdout.trim_end_matches('\n'))
+            .unwrap_or_else(|e| panic!("{args:?}: stdout is not one JSON document: {e}"));
+        (
+            out.status.code(),
+            doc,
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+
+    // No channel at all: the passphrase gate, under the watchdog.
+    let gated = spawn_watched(&vault_root, &["abandon", id.as_str()]);
+    assert_eq!(gated.code, Some(11), "{}", gated.stderr);
+    assert_eq!(state(), WorkState::IncompletePrePay);
+
+    // The fd channel without `--yes`: D51's destructive-confirm refusal.
+    let (code, doc, stderr) = over_fd(&[]);
+    assert_eq!(code, Some(10), "{stderr}");
+    assert_eq!(doc["command"], "abandon");
+    assert_eq!(doc["ok"], false);
+    assert_eq!(doc["error"]["class"], "consent-not-obtained");
+    assert_eq!(doc["error"]["exit_code"], 10);
+    assert_eq!(
+        doc["error"]["message"],
+        abandon_refusal().to_string().as_str()
+    );
+    assert!(
+        stderr.contains(&format!("Interrupted seal {id}")),
+        "the preview printed on stderr under --json: {stderr}"
+    );
+    assert_eq!(state(), WorkState::IncompletePrePay, "nothing was changed");
+
+    // With `--yes`: abandoned, and the result document's registered shape.
+    let (code, doc, stderr) = over_fd(&["--yes"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(doc["command"], "abandon");
+    assert_eq!(doc["ok"], true);
+    assert_eq!(doc["result"]["seal_id"], id.as_str());
+    assert_eq!(doc["result"]["already"], false);
+    assert_eq!(doc["result"]["previous_state"], "staged");
+    assert!(
+        stderr.contains("Abandoned the interrupted seal"),
+        "{stderr}"
+    );
+    assert_eq!(state(), WorkState::Abandoned);
 }
 
 /// Unparseable argv with a literal `--json` token still yields one JSON
@@ -499,6 +620,7 @@ fn render_fixture() -> String {
             "show" => CliError::PassphraseUnavailable {
                 reason: PassphraseFailure::NoChannel,
             },
+            "abandon" => abandon_refusal(),
             // U30's handler is complete, and it was the LAST stub of the
             // frozen surface — so the not-implemented envelope this row
             // carried for five milestones is gone, and no build can emit
@@ -655,7 +777,35 @@ fn render_fixture() -> String {
             })
         )
     ));
+    // D185 R7, rendered by `AbandonReport::json` — the real producer. The
+    // exemplar is a first abandon (`already: false`) of a staged work: the
+    // fields a script branches on are the seal-id it named and whether this
+    // run discarded anything. It carries no `work_id` on purpose (a work
+    // killed mid-staging has none; `list --json` carries both ids), so it is
+    // not one of D174's single-work documents.
+    out.push_str(&format!(
+        "[abandon] result\n{}\n",
+        success_envelope(
+            "abandon",
+            "arbitrum-one",
+            antseal_cli::seal_resume::AbandonReport {
+                seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xE4; 16]),
+                previous_state: Some(antseal_cli::pipeline::SealState::Staged),
+                already: false,
+            }
+            .json()
+        )
+    ));
     out
+}
+
+/// `abandon`'s registered error: machine mode without `--yes` — the D51
+/// destructive-confirm refusal (10) a script meets when it forgets the
+/// channel, which is the shape it has to branch on.
+fn abandon_refusal() -> antseal_cli::error::CliError {
+    antseal_cli::error::CliError::AbandonNotConfirmed {
+        reason: antseal_cli::error::ConsentOutcome::MachineModeWithoutYes,
+    }
 }
 
 /// The tampered bundle `verify`'s registered refusal is produced from —
@@ -757,11 +907,16 @@ fn fixture_seal_report() -> antseal_cli::seal_run::SealReport {
             verified_tsa_tokens: 1,
             distinct_calendar_routes: 2,
             degraded: true,
+            // Hand-written copies of A20's lines (`degradation_report`), so
+            // this exemplar documents the shape and witnesses nothing: Q89's
+            // OTS label ("calendar route(s)", the summary's own word — D92
+            // §11) is asserted from the real producer in antseal-anchor's
+            // submit tests, and this copy follows it.
             degradation: vec![
                 "tsa http://tsa-two.example [http] http://tsa-two.example: HTTP 503 \
                  (26 bytes of body) (12 ms)"
                     .to_owned(),
-                "tsa: 1 verified token(s) from 1 distinct TSA(s); ots: 2 distinct calendar(s)"
+                "tsa: 1 verified token(s) from 1 distinct TSA(s); ots: 2 calendar route(s)"
                     .to_owned(),
             ],
         }),
@@ -2082,7 +2237,7 @@ fn every_command_has_a_registered_fixture_with_the_v1_shape() {
     }
 }
 
-/// D65 §5's carriage route cannot drift from the one nine commands use:
+/// D65 §5's carriage route cannot drift from the one ten commands use:
 /// over **every registered success document**, the hand-assembled
 /// `success_envelope_raw` and the `serde_json::json!`-built
 /// `success_envelope` produce byte-identical envelopes.

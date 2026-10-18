@@ -161,6 +161,28 @@
 //! decision. Consumers must not depend on it; a JSON parser does not
 //! preserve it anyway.
 //!
+//! ## Two tier-C members with a stated shape (D190 R5, D65 §9.2)
+//!
+//! Tier C promises nothing until U32, but two of its members carry a
+//! statement here that U32 inherits rather than re-decides:
+//!
+//! - **`verify --live`'s `result.live.rows` are in work-global manifest
+//!   order** (D190 R5, R90): the unit rows by ascending `unit_id` — a
+//!   unit's `unit_id` is its manifest-order ordinal, a decode invariant —
+//!   then the encrypted-manifest row **last**. This document states no
+//!   other array's element order, and this one is stated here only: each
+//!   builder is asserted against this sentence rather than against the
+//!   other — `verify_host::collect_live`, which sorts, by
+//!   `tests/verify_live_manifest.rs`, and `antseal_net::records_from_manifest`
+//!   by its own R11 tests. Like the rest of tier C it is reviewed, not
+//!   promised, until U32; before D190 the CLI emitted the bundle's reveal
+//!   order instead.
+//! - **`seal --json`'s `anchors` member** (D65 §9.2, U50): every
+//!   `endpoints[]` row's `failure_class` is **always present, `null`
+//!   exactly when that row is `ok`, and a kebab-case string otherwise**
+//!   (D65 §6 rider 1). The member is tier C; this null-versus-string
+//!   distinction is not — rider 1 promises it at every tier.
+//!
 //! # Machine mode (D51, the single detection point)
 //!
 //! machine ⇔ `--json` ∨ stdin is not a TTY ∨ stdin consumed by
@@ -202,9 +224,10 @@ use crate::error::CliError;
 /// state, so code that computes one from the other is wrong.
 pub const ENVELOPE_VERSION: u32 = 1;
 
-/// The canonical command names, exactly the ten of the frozen surface —
-/// the harness's enumeration axis and the fixture registry's key set.
-pub const ALL_COMMAND_NAMES: [&str; 10] = [
+/// The canonical command names — the ten of the frozen surface, then
+/// D185's `abandon` (appended, as its `Command` variant is) — the harness's
+/// enumeration axis and the fixture registry's key set.
+pub const ALL_COMMAND_NAMES: [&str; 11] = [
     "init",
     "seal",
     "list",
@@ -215,6 +238,7 @@ pub const ALL_COMMAND_NAMES: [&str; 10] = [
     "verify",
     "vault export",
     "vault import",
+    "abandon",
 ];
 
 /// A command's registered interactivity profile.
@@ -248,9 +272,13 @@ pub enum PromptClass {
     /// `init`-wizard configuration questions (D39 flags; machine mode
     /// with a required input missing → usage).
     Configuration,
-    /// A destructive overwrite confirm. `vault import`'s is registered
-    /// with NO channel: v1 disposition is refuse-always (D51 — the
-    /// manual move/remove of the existing vault is the consent).
+    /// A destructive confirm. Two are registered: `vault import`'s
+    /// overwrite, with NO channel — its v1 disposition is refuse-always
+    /// (D51: the manual move/remove of the existing vault is the consent) —
+    /// and `abandon`'s discard of an interrupted seal, with `--yes` as its
+    /// channel (D185 R4: abandoning is how a script gets unstuck, so a
+    /// refuse-always confirm would be wrong there). Machine mode without
+    /// the channel → consent-not-obtained.
     DestructiveConfirm,
 }
 
@@ -269,6 +297,11 @@ const INIT_CONFIG: PromptDeclaration = PromptDeclaration {
 const IMPORT_OVERWRITE: PromptDeclaration = PromptDeclaration {
     class: PromptClass::DestructiveConfirm,
     channel: None,
+};
+/// D185 R4: the second destructive confirm, and the first with a channel.
+const ABANDON_CONFIRM: PromptDeclaration = PromptDeclaration {
+    class: PromptClass::DestructiveConfirm,
+    channel: Some("--yes"),
 };
 
 /// The registry (one row per command; the exhaustive `match` is the
@@ -322,6 +355,12 @@ pub fn spec(command: &Command) -> CommandSpec {
                 name: "vault import",
                 prompts: &[AUTH, IMPORT_OVERWRITE],
             },
+        },
+        // D185: unlocks like `show` (AUTH), then confirms the discard — a
+        // destructive confirm whose channel is `--yes`.
+        Command::Abandon { .. } => CommandSpec {
+            name: "abandon",
+            prompts: &[AUTH, ABANDON_CONFIRM],
         },
     }
 }
@@ -455,7 +494,7 @@ pub fn all_specs() -> Vec<CommandSpec> {
 }
 
 /// One minimal valid argv per command (the harness drives these).
-pub const MINIMAL_ARGV: [&[&str]; 10] = [
+pub const MINIMAL_ARGV: [&[&str]; 11] = [
     &["antseal", "init"],
     &["antseal", "seal", "x.txt"],
     &["antseal", "list"],
@@ -466,6 +505,7 @@ pub const MINIMAL_ARGV: [&[&str]; 10] = [
     &["antseal", "verify", "b.sealproof"],
     &["antseal", "vault", "export"],
     &["antseal", "vault", "import", "backup.sealvault"],
+    &["antseal", "abandon", "00112233445566778899aabbccddeeff"],
 ];
 
 #[cfg(test)]
@@ -483,23 +523,49 @@ mod tests {
         }
     }
 
-    /// Every consent-class declaration's channel is `--yes`, and the
-    /// command's surface really accepts it (the declared channel must
-    /// exist, or the declaration is a lie).
+    /// Every consent-class declaration's channel is `--yes`, and every
+    /// declared `--yes` channel — consent or destructive confirm — is one the
+    /// command's surface really accepts (the declared channel must exist,
+    /// or the declaration is a lie).
     #[test]
     fn declared_consent_channels_parse() {
+        let mut checked = 0usize;
         for (argv, spec) in MINIMAL_ARGV.iter().zip(all_specs()) {
             for prompt in spec.prompts {
                 if prompt.class == PromptClass::Consent {
                     assert_eq!(prompt.channel, Some("--yes"), "{}", spec.name);
+                }
+                if prompt.channel == Some("--yes") {
                     let mut with_yes: Vec<&str> = argv.to_vec();
                     with_yes.push("--yes");
                     Cli::parse_checked(with_yes.iter().copied()).unwrap_or_else(|e| {
                         panic!("{} declares --yes but rejects it: {e}", spec.name)
                     });
+                    checked += 1;
                 }
             }
         }
+        // `seal` and `reveal` at least: a loop that checked nothing passes.
+        assert!(checked >= 2, "only {checked} --yes channels were checked");
+    }
+
+    /// D185 R4: `abandon`'s discard is a destructive confirm whose channel
+    /// is `--yes`, and the surface accepts `--yes` on it. Held by name as
+    /// well as through [`all_specs`], so the declaration is pinned whatever
+    /// the enumeration axis holds.
+    #[test]
+    fn the_abandon_confirm_is_a_destructive_confirm_whose_channel_is_yes() {
+        let argv = [
+            "antseal",
+            "abandon",
+            "00112233445566778899aabbccddeeff",
+            "--yes",
+        ];
+        let cli = Cli::parse_checked(argv).expect("abandon accepts --yes");
+        assert_eq!(command_name(&cli.command), "abandon");
+        assert_eq!(spec(&cli.command).prompts, &[AUTH, ABANDON_CONFIRM]);
+        assert_eq!(ABANDON_CONFIRM.class, PromptClass::DestructiveConfirm);
+        assert_eq!(ABANDON_CONFIRM.channel, Some("--yes"));
     }
 
     /// The one deliberate channel-less prompt is vault import's

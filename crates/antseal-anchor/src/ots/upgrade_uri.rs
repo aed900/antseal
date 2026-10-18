@@ -99,8 +99,9 @@ pub enum UpgradeUriRefusal {
 
 /// Whether `uri` may be contacted for an upgrade — D54 §6.2's ruled signature.
 ///
-/// `configured` is the user's calendar list (U4's `[anchors] ots_calendars`);
-/// each entry widens the allowlist to **that host and its subdomains only**.
+/// `configured` is the user's calendar list (`[anchors] ots_calendars`, U44 —
+/// the same list the seal stage submits to, U64); each entry widens the
+/// allowlist to **that host and its subdomains only**.
 #[must_use]
 pub fn upgrade_uri_allowed(uri: &str, configured: &[String]) -> bool {
     classify_upgrade_uri(uri, configured).is_ok()

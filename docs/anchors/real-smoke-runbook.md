@@ -72,7 +72,7 @@ measured them and must not present them as if it had.
 | --- | --- | --- | --- |
 | FreeTSA | `https://freetsa.org/tsr` | default TSA (MVP-SPEC.md line 109); ECDSA P-384 | measured |
 | DigiCert | `http://timestamp.digicert.com` | default TSA; **port 443 refuses connections** — plain HTTP is required, not a shortcut | measured (D90 §6.6) |
-| SwissSign | alternate | **~10 requests/day** | published |
+| SwissSign | alternate — root **quarantined**, counts zero | **~10 requests/day** | published |
 | Sectigo | alternate | **~15 s minimum spacing** | published |
 | DFN | `zeitstempel.dfn.de` | **non-commercial use only** | published (terms) |
 | OTS calendars | `DEFAULT_OTS_CALENDARS` | free shared public infrastructure | — |
@@ -84,13 +84,21 @@ Public Time Stamping CA R41`, serial `0xE74EF255B0504FFADBA6DFF7FC8BA315`
 constraint therefore applies across **both** names, and stamping both is not
 two independent anchors.
 
+Answering is not counting: Apple (`http://timestamp.apple.com/ts01`) is refused
+outright for its SHA-1 signer, and GlobalSign and Certum return tokens that
+verify against roots antseal does not pin, so — like quarantined SwissSign —
+they count zero toward the anchor gate (`docs/user/timestamp-authorities.md`
+§3).
+
 Run the whole protocol **once** per capture campaign. If a step fails,
 diagnose from the log before re-firing; a retry loop against a TSA is the
 thing this document exists to prevent. `scripts/anchor-smoke` enforces both
 mechanically — ≥ 3 s between consecutive non-loopback requests, one pass, no
 campaign-level retries. (Within one request the substrate applies D90's
-bounded, idempotency-aware attempt policy, under which a TSA or calendar
-POST that may already have been delivered is never re-sent.)
+bounded, idempotency-aware attempt policy: a TSA or calendar POST that may
+already have been delivered is never re-sent, nor is one answered `429`
+(A140); one answered `503` is re-sent at most twice, 0.2 s and then 0.6 s
+later.)
 
 ## 3. The protocol
 
@@ -141,7 +149,7 @@ which prints those constants.
    is now reproducible with no network at all. Its CLI half is still
    missing, and this step is that fact's home now that the old §0 status
    section is deleted: **`antseal verify --online` is an M3 stub** — the
-   flag is declared (`crates/antseal-cli/src/cli.rs:164-178`), but
+   flag is declared (`crates/antseal-cli/src/cli.rs:192-206`), but
    `crates/antseal-cli/src/run.rs:50` maps `Command::Verify` to
    `Milestone::M3` and `run.rs:60` returns `CliError::NotImplemented`, so
    the promotion to `proven` has no command to run from the shipped CLI.

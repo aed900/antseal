@@ -50,8 +50,13 @@
 //! # Panics
 //!
 //! It must not, ever. `capture` runs between two transactions on the far
-//! side of money having moved, so every failure is recorded in the fault
-//! slot ([`VaultReceiptSink::fault`]) and logged, never propagated.
+//! side of money having moved, so every failure is recorded and logged,
+//! never propagated — in two slots that answer different questions.
+//! [`VaultReceiptSink::fault`] keeps the *first* failure, for diagnosis.
+//! [`VaultReceiptSink::unrecorded`] says whether the *most recent* capture
+//! of the current payment became durable, and that is what the pipeline
+//! reads to tell a stranded payment it can finish (exit 28) from one whose
+//! receipt the vault could not record (exit 37, S37/D186).
 
 use std::sync::{Arc, Mutex};
 
@@ -217,6 +222,21 @@ struct SinkState {
     prior: Option<PaymentReceipt>,
     writes: usize,
     fault: Option<ReceiptSinkFault>,
+    /// **S37 (D186 R1)**: why the most recent capture of the current
+    /// payment did not become durable — `None` when it did, or when this
+    /// payment has made no capture yet.
+    ///
+    /// Not `fault`, which is first-fault-wins and so answers a different
+    /// question. Captures are cumulative (each writes the whole
+    /// receipt-so-far), so a failed capture is *healed* by any later
+    /// durable one, and only the latest says whether the vault holds what
+    /// was bought. Reading `fault` instead would call a healed payment
+    /// unrecorded.
+    unrecorded: Option<ReceiptSinkFault>,
+    /// The test seam (D186): fail this many upcoming writes, so a
+    /// fail-then-heal sequence can be scripted without a broken disk.
+    #[cfg(test)]
+    fail_next_writes: usize,
     rng: OsEntropy,
 }
 
@@ -228,6 +248,23 @@ impl SinkState {
         if self.fault.is_none() {
             self.fault = Some(fault);
         }
+    }
+
+    /// A capture that did not become durable. It sets the S37 predicate as
+    /// well as the diagnostic slot. Only the three capture outcomes come
+    /// here (`NotArmed`, `Encode`, `Write`) and never `Rearmed`, which
+    /// re-targets and still writes (D186 R1).
+    fn not_durable(&mut self, fault: ReceiptSinkFault) {
+        self.unrecorded = Some(fault.clone());
+        self.note(fault);
+    }
+
+    /// A capture that reached the disk. It clears the S37 predicate: the
+    /// receipt it wrote is cumulative, so it covers whatever an earlier
+    /// failed capture of this payment had dropped.
+    fn durable(&mut self) {
+        self.writes += 1;
+        self.unrecorded = None;
     }
 }
 
@@ -276,6 +313,9 @@ impl VaultReceiptSink {
                 prior: None,
                 writes: 0,
                 fault: None,
+                unrecorded: None,
+                #[cfg(test)]
+                fail_next_writes: 0,
                 rng: OsEntropy,
             }),
         })
@@ -296,6 +336,13 @@ impl VaultReceiptSink {
     /// proofs-expired retry). Re-arming a *different* work records
     /// [`ReceiptSinkFault::Rearmed`] and re-targets — losing the write in
     /// flight would be strictly worse than recording the wiring bug.
+    ///
+    /// Arming also resets [`Self::unrecorded`], because it marks the start
+    /// of a payment that has made no capture yet. One invocation can pay
+    /// twice — a fresh or remainder `pay`, then the proofs-expired
+    /// re-payment (`resume.rs`) — and the first payment's last capture says
+    /// nothing about the second: its receipt was made durable afterwards by
+    /// the pipeline's own `put_receipt`, which this sink never sees.
     pub fn arm(&self, seal_id: &SealId, prior: Option<&PaymentReceipt>) {
         let mut state = self.lock();
         if state.target.is_some_and(|current| current != *seal_id) {
@@ -303,6 +350,7 @@ impl VaultReceiptSink {
         }
         state.target = Some(*seal_id);
         state.prior = prior.cloned();
+        state.unrecorded = None;
     }
 
     /// How many receipts reached the disk. One per landed sub-batch on a
@@ -319,6 +367,27 @@ impl VaultReceiptSink {
         self.lock().fault.clone()
     }
 
+    /// **S37's predicate (D186 R1)**: why the most recent capture of the
+    /// current payment did not become durable, or `None` when it did — or
+    /// when this payment has made no capture yet.
+    ///
+    /// This, not [`Self::fault`], is what the pipeline reads when a payment
+    /// fails mid-sequence or its final receipt write fails. `Some` means the
+    /// vault may not hold a record of what was bought, so a re-run would buy
+    /// it again (exit 37); `None` means the receipt-so-far is on disk and a
+    /// stranded payment is finishable (exit 28).
+    #[must_use]
+    pub fn unrecorded(&self) -> Option<ReceiptSinkFault> {
+        self.lock().unrecorded.clone()
+    }
+
+    /// The test seam (D186): make the next `n` writes fail, recorded
+    /// exactly as a failed store write is.
+    #[cfg(test)]
+    pub(crate) fn fail_next_writes(&self, n: usize) {
+        self.lock().fail_next_writes = n;
+    }
+
     /// Journal the receipt-so-far, synchronously.
     ///
     /// This is the whole point: when it returns, the record is on disk
@@ -331,7 +400,7 @@ impl VaultReceiptSink {
     pub fn capture(&self, receipt: &PaymentReceipt) {
         let mut state = self.lock();
         let Some(seal_id) = state.target else {
-            state.note(ReceiptSinkFault::NotArmed);
+            state.not_durable(ReceiptSinkFault::NotArmed);
             return;
         };
         // Never write less than what is already durable: on a remainder
@@ -344,14 +413,24 @@ impl VaultReceiptSink {
         let bytes = match encode_receipt(&record) {
             Ok(bytes) => bytes,
             Err(_) => {
-                state.note(ReceiptSinkFault::Encode);
+                state.not_durable(ReceiptSinkFault::Encode);
                 return;
             }
         };
+        #[cfg(test)]
+        {
+            if state.fail_next_writes > 0 {
+                state.fail_next_writes -= 1;
+                state.not_durable(ReceiptSinkFault::Write {
+                    detail: "injected write failure (test seam)".to_owned(),
+                });
+                return;
+            }
+        }
         let store = WorkStore::new(self.vault.as_ref());
         match store.put_receipt(&seal_id, &bytes, &mut state.rng) {
-            Ok(()) => state.writes += 1,
-            Err(err) => state.note(ReceiptSinkFault::Write {
+            Ok(()) => state.durable(),
+            Err(err) => state.not_durable(ReceiptSinkFault::Write {
                 detail: err.to_string(),
             }),
         }
@@ -496,6 +575,11 @@ mod tests {
         assert_eq!(read_back.storage_cost_atto, 4_242);
         assert_eq!(sink.writes(), 1);
         assert_eq!(sink.fault(), None);
+        assert_eq!(
+            sink.unrecorded(),
+            None,
+            "a durable capture leaves nothing unrecorded"
+        );
     }
 
     /// D37's hook delivers the cumulative receipt-so-far once per
@@ -594,6 +678,11 @@ mod tests {
 
         assert_eq!(sink.writes(), 0);
         assert_eq!(sink.fault(), Some(ReceiptSinkFault::NotArmed));
+        assert_eq!(
+            sink.unrecorded(),
+            Some(ReceiptSinkFault::NotArmed),
+            "a dropped receipt is an unrecorded one (D186 R1)"
+        );
         let mut rng = crate::rng::OsEntropy;
         let reader = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng);
         assert!(reader.receipt(&fx.seal_id).expect("read").is_none());
@@ -612,6 +701,11 @@ mod tests {
         let other = SealId::generate(&mut crate::rng::OsEntropy).expect("seal id");
         sink.arm(&other, None);
         assert_eq!(sink.fault(), Some(ReceiptSinkFault::Rearmed));
+        assert_eq!(
+            sink.unrecorded(),
+            None,
+            "a re-arm still writes, so it alone never makes a receipt unrecorded (D186 R1)"
+        );
     }
 
     /// A write failure must be recorded rather than panicking: `capture`
@@ -635,6 +729,97 @@ mod tests {
             }
             other => panic!("expected a Write fault, got {other:?}"),
         }
+        // The real store failure — not only the test seam — sets S37's
+        // predicate, and to the same fault.
+        assert_eq!(sink.unrecorded(), sink.fault());
+    }
+
+    /// **S37's predicate (D186 R1)** follows the *latest* capture, while
+    /// `fault()` keeps the *first*. Captures are cumulative, so a later
+    /// durable capture heals an earlier failed one, and only the latest
+    /// says whether the vault holds what was bought.
+    #[test]
+    fn the_predicate_follows_the_latest_capture_and_the_fault_keeps_the_first() {
+        let fx = Fixture::new("latest");
+        let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+        sink.arm(&fx.seal_id, None);
+        let mut rng = crate::rng::OsEntropy;
+        let reader = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng);
+        let durable_cost = || {
+            reader
+                .receipt(&fx.seal_id)
+                .expect("read")
+                .map(|receipt| receipt.storage_cost_atto)
+        };
+
+        sink.fail_next_writes(1);
+        sink.capture(&receipt(10));
+        let first = sink.unrecorded().expect("the failed capture is unrecorded");
+        assert!(matches!(first, ReceiptSinkFault::Write { .. }), "{first:?}");
+        assert_eq!(
+            durable_cost(),
+            None,
+            "positive control: nothing reached the disk"
+        );
+
+        sink.capture(&receipt(20));
+        assert_eq!(
+            sink.unrecorded(),
+            None,
+            "a later durable capture heals the failed one"
+        );
+        assert_eq!(
+            sink.fault(),
+            Some(first.clone()),
+            "the first fault is kept for diagnosis"
+        );
+        assert_eq!(durable_cost(), Some(20));
+
+        sink.fail_next_writes(1);
+        sink.capture(&receipt(30));
+        assert_eq!(
+            sink.unrecorded(),
+            Some(first),
+            "the latest capture failed again"
+        );
+        assert_eq!(
+            durable_cost(),
+            Some(20),
+            "positive control: the disk still holds the healed receipt, not the latest"
+        );
+        assert_eq!(
+            sink.writes(),
+            1,
+            "exactly one capture of three became durable"
+        );
+    }
+
+    /// Arming starts a payment that has made no capture yet, so it clears
+    /// the predicate. One invocation can pay twice (a fresh or remainder
+    /// `pay`, then the proofs-expired re-payment), and the first payment's
+    /// last capture says nothing about the second.
+    #[test]
+    fn arming_starts_a_payment_with_no_unrecorded_capture() {
+        let fx = Fixture::new("rearm-clears");
+        let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+        sink.arm(&fx.seal_id, None);
+        sink.fail_next_writes(1);
+        sink.capture(&receipt(5));
+        assert!(
+            sink.unrecorded().is_some(),
+            "positive control: the capture failed"
+        );
+
+        sink.arm(&fx.seal_id, None);
+        assert_eq!(
+            sink.unrecorded(),
+            None,
+            "a new payment starts with nothing unrecorded"
+        );
+        assert!(
+            sink.fault().is_some(),
+            "the diagnostic slot still keeps the failure"
+        );
     }
 
     /// The vault key's lifetime is unchanged by the `Arc`: once the sink

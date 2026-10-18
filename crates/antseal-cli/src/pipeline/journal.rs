@@ -433,7 +433,7 @@ impl StagedBlob {
                     address = Some(ContentAddress::from_bytes(arr));
                 }
                 4 => ciphertext = Some(d.bytes().map_err(codec)?.to_vec()),
-                _ => return Err(corrupt("unknown staged-blob key (strict v1 schema)")),
+                _ => return Err(corrupt("unknown staged-blob key (strict schema)")),
             }
         }
         d.finish().map_err(codec)?;
@@ -850,6 +850,24 @@ pub trait SealJournal {
     /// that has no sink attached — test doubles, and a `VaultJournal`
     /// built without one.
     fn arm_receipts(&self, _seal_id: &SealId, _prior: Option<&PaymentReceipt>) {}
+
+    /// **S37's predicate (D186 R2)**: why the most recent receipt capture of
+    /// the current payment did not become durable, or `None` when it did.
+    ///
+    /// The pipeline consults it at exactly two points, both after money has
+    /// moved: when `pay` fails mid-sequence, and when the post-`pay`
+    /// [`put_receipt`](SealJournal::put_receipt) fails. `Some` at either
+    /// point means the vault may not hold a record of what was bought, and
+    /// a re-run would buy it again — so the failure is its own class
+    /// (`payment-unrecorded`, exit 37) rather than the finishable
+    /// `payment-stranded` (28) or a bare I/O error (4).
+    ///
+    /// The default is `None`, which is right for every journal with no
+    /// durable sink attached: it captured nothing, so no capture of its
+    /// failed.
+    fn receipts_unrecorded(&self) -> Option<super::receipt_sink::ReceiptSinkFault> {
+        None
+    }
 
     /// Record the D36 consent record at every affirmative consent —
     /// display-only baseline for the next resume render, never a payment
@@ -1413,5 +1431,50 @@ mod tests {
                 BlobSlot::EncryptedManifest,
             ]
         );
+    }
+
+    /// **Q116 (D97 R9).** A staged-blob record carrying a key this build
+    /// does not know is refused by name — the strict rule, not a
+    /// forward-compatible skip — and the refusal names no schema version.
+    /// It used to name schema v1 while `SEAL_JOURNAL_VERSION` was
+    /// already 2 and `open_envelope` admitted v2 records into this decoder:
+    /// a version token in the message is a claim the next bump falsifies.
+    ///
+    /// Built from a real record, so the extra key is the only fault: the
+    /// same body without it decodes (anti-vacuity).
+    #[test]
+    fn an_unknown_staged_blob_key_is_refused_by_name_without_a_version() {
+        let blob = sample(BlobSlot::Unit { unit_id: 1 }, vec![0x5A; 40]);
+        let (kind, id) = blob.slot.wire();
+        let body = |extra_key: bool| {
+            encode_item(|e| {
+                e.map(|m| {
+                    m.entry(0, |e| e.u64(kind))?;
+                    m.entry(1, |e| e.u64(id))?;
+                    m.entry(2, |e| e.bytes(&blob.nonce))?;
+                    m.entry(3, |e| e.bytes(blob.address.as_bytes()))?;
+                    m.entry(4, |e| e.bytes(&blob.ciphertext))?;
+                    if extra_key {
+                        m.entry(5, |e| e.u64(0))?;
+                    }
+                    Ok(())
+                })
+            })
+            .expect("encodes")
+        };
+
+        let clean = envelope(&body(false)).expect("envelope");
+        assert_eq!(
+            StagedBlob::decode(&clean).expect("the body without the extra key decodes"),
+            blob
+        );
+
+        let record = envelope(&body(true)).expect("envelope");
+        match StagedBlob::decode(&record) {
+            Err(JournalError::Corrupt { detail }) => {
+                assert_eq!(detail, "unknown staged-blob key (strict schema)");
+            }
+            other => panic!("expected the strict-schema refusal, got {other:?}"),
+        }
     }
 }

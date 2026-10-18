@@ -164,3 +164,25 @@ key; >1 matches is a defensive internal-error class, not a user prompt.
   keys by design (network is in the identity); the notice row keeps the
   user informed. Deliberate: a devnet rehearsal must never capture a
   mainnet re-run.
+
+## Addendum — 2026-10-17 (wave 38, D185): the flag-mismatch trap has its exit, and the residual risk is discharged
+
+The residual-risk bullet *"The flag-mismatch trap needs an exit (discovered
+work)"* asked for a user-initiated abandon, *"a surface addition to be decided
+deliberately, not smuggled in here"*. D185 decides it:
+- a top-level `antseal abandon <ID> [--yes]`, where `ID` is the 32-hex seal-id
+  that §2's errors print or the 64-hex work-id that `list` prints, matched
+  exactly;
+- it reaches `seal_resume::abandon_pre_pay` unchanged, so a complete work and a
+  paid work (decided by the journaled receipt) are refused through the surface
+  as `usage` (2);
+- it confirms as D51's second destructive-confirm, with `--yes` as its
+  machine-mode channel (exit 10 when consent is not obtained);
+- §2's two refusals — overlap (25) and flag mismatch (26) — get back their
+  *"or abandon it"* way forward, for pre-pay works only, naming
+  `antseal abandon <seal-id>`.
+
+D185 also measured the trap census as four, not one: besides 25 and 26, the
+D152 blocked work (27) and a seal killed between `begin` and `put_plan`, whose
+exact re-run fails with `usage` forever (its deeper fix is `S45`). The bullet
+above stays as written; the risk it records is discharged by D185.

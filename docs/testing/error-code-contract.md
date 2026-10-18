@@ -347,14 +347,16 @@ Three grounds, in the order that decides it.
    envelope (`crates/antseal-cli/src/error.rs` module docs;
    `crates/antseal-cli/tests/exit_codes.rs`). `network-failure` (23),
    `insufficient-ant-token` (20), `insufficient-eth-gas` (21),
-   `payment-stranded` (28) and `payment-proofs-expired` (29) are S
-   outcomes wearing U's identity — the last two added at **U81/D147**
-   (2026-08-18), which split the two money-moved storage outcomes out of
-   `network-failure` and, by this section's own rule, minted them **only**
-   on U's side: an `S` code prefix *"would be a namespace with no possible
-   member"*, and a reservation protecting nothing is not created here
-   either. Giving S a second identity would mean two stable names for one
-   failure, and §3 makes both permanent.
+   `payment-stranded` (28), `payment-proofs-expired` (29) and
+   `payment-unrecorded` (37) are S outcomes wearing U's identity. 28 and 29
+   were added at **U81/D147** (2026-08-18), which split the two money-moved
+   storage outcomes out of `network-failure`; 37 at **S37/D186**
+   (2026-10-18), which split a payment the vault could not record out of 28
+   and out of the I/O class. By this section's own rule each was minted
+   **only** on U's side: an `S` code prefix *"would be a namespace with no
+   possible member"*, and a reservation protecting nothing is not created
+   here either. Giving S a second identity would mean two stable names for
+   one failure, and §3 makes both permanent.
 3. **The two namespaces answer different questions and must not merge.** An
    exit-code class is a *process outcome* — what the CLI did. A code is a
    *rejection class* — what was wrong with the bytes. Merging them would put

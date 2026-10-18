@@ -115,8 +115,8 @@ fresh and its funding being unlinked, which are things you control.
           Include the Arbitrum payment receipt in the bundle (off by default — it exposes the paying wallet)
 ```
 
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286`; the flag
-is defined at `crates/antseal-cli/src/cli.rs:387-390`.)
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287`; the flag
+is defined at `crates/antseal-cli/src/cli.rs:436-439`.)
 
 **The default is off and there is no configuration that changes it.** It is a
 plain boolean with no default value written anywhere and no config key behind
@@ -140,7 +140,7 @@ warns about an exposure that is not happening.
 What ships is the **whole journaled receipt**, not a summary. On the wire it
 is the transaction hashes, the block number, and an opaque payload
 (`crates/antseal-core/src/bundle/schema.rs:738-741`) that carries the entire
-recorded receipt (`crates/antseal-cli/src/pipeline/receipt_sink.rs:79-82`).
+recorded receipt (`crates/antseal-cli/src/pipeline/receipt_sink.rs:84-87`).
 So, concretely, opting in discloses:
 
 - **The transaction hashes.** This is the link that matters. No field of the
@@ -221,12 +221,12 @@ going to imply otherwise.** Measured on the frozen CLI surface:
   one address, for every work it will ever hold.
 - The **only** wallet flags in the whole CLI belong to `antseal init`:
   `--wallet generate|import` and `--wallet-key-fd`
-  (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`).
+  (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`).
   `seal` has no wallet or address flag at all.
-- There is **no rotate command and no new-address command**. The nine
+- There is **no rotate command and no new-address command**. The ten
   subcommands are `init`, `seal`, `list`, `show`, `status`, `restore`,
-  `reveal`, `verify` and `vault`
-  (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`).
+  `reveal`, `verify`, `vault` and `abandon`
+  (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`).
 - The config file holds operator preferences only — *"never secrets, never
   per-work"* (`crates/antseal-cli/src/config.rs:8`) — so no address can be
   named there either.
@@ -270,7 +270,9 @@ Everything below is a cost you pay per vault, not per work.
   Every antseal command opportunistically completes pending OpenTimestamps
   attestations, but only for the vault that invocation unlocked — an
   invocation holding no unlocked vault does nothing
-  (`crates/antseal-cli/src/upgrade_hook.rs:87-92`). A vault you have not
+  (`crates/antseal-cli/src/upgrade_hook.rs:90-95`) — and not at all for a
+  vault whose `config.toml` sets `[anchors] opportunistic_upgrades = false`
+  (`docs/config.md`). A vault you have not
   touched in a month has not upgraded anything in a month. Run
   `ANTSEAL_DIR=… antseal status <work-id> --upgrade` on each one, or accept
   that its bundles reveal with a `pending` anchor.
@@ -371,10 +373,10 @@ Nothing above is asserted from memory. The primary sources:
 
 | claim | source |
 | --- | --- |
-| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:387-390`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286` |
+| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:436-439`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` |
 | the include branch and the missing-receipt refusal | `crates/antseal-cli/src/pipeline/reveal.rs:653-657`, `:948-950` |
 | presence in the bundle is the opt-in | `crates/antseal-core/src/bundle/schema.rs:727-741` |
-| the whole journaled receipt is what ships | `crates/antseal-cli/src/pipeline/receipt_sink.rs:79-82` |
+| the whole journaled receipt is what ships | `crates/antseal-cli/src/pipeline/receipt_sink.rs:84-87` |
 | receipts are wallet-linkable, so they never reach a log | `crates/antseal-net/src/receipt.rs:155-158` |
 | the consent-screen warning, as rendered | `crates/antseal-cli/src/reveal_consent.rs:131-134`; `crates/antseal-cli/tests/snapshots/reveal-consent.txt:50` |
 | the default is proven against produced bundle bytes | `crates/antseal-cli/tests/reveal_flow.rs:585-628`; `crates/antseal-cli/tests/reveal_output.rs:438-479` |
@@ -385,11 +387,11 @@ Nothing above is asserted from memory. The primary sources:
 | a quote hash needs more than the blob address | `evmlib-0.9.0/src/data_payments.rs:130-134`, `:146-170` |
 | storage nodes receive the payment transaction hashes | `ant-protocol-2.3.0/src/payment/proof.rs:19-22` |
 | one vault has exactly one wallet record | `crates/antseal-cli/src/vault/cipher.rs:100-118` |
-| the only wallet flags, and the nine subcommands | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`, `:52-65` |
+| the only wallet flags, and the ten subcommands | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`, `:53-66` |
 | config holds no wallet and no per-work data | `crates/antseal-cli/src/config.rs:8` |
 | `init` refuses an existing vault, with no override | `crates/antseal-cli/src/init.rs:601-612`; `crates/antseal-cli/src/vault/session.rs:225-232` |
 | `ANTSEAL_DIR` is a path, never a secret | `crates/antseal-cli/src/vault/layout.rs:16`, `:75-86` |
-| the upgrade hook runs only for the unlocked vault | `crates/antseal-cli/src/upgrade_hook.rs:87-92` |
+| the upgrade hook runs only for the unlocked vault | `crates/antseal-cli/src/upgrade_hook.rs:90-95` |
 | the receipt's class, and that it carries no time | `crates/antseal-core/src/verify/wording.rs:392`; `crates/antseal-core/src/verify/report.rs:743-757` |
 | the project may never request a receipt-bearing bundle | `docs/decisions/D73-external-completions-without-telemetry.md:664-672` |
 

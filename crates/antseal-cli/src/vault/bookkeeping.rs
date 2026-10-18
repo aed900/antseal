@@ -172,7 +172,7 @@ impl Bookkeeping {
                 // Strict: an unknown key means a schema this build does
                 // not understand, and silently dropping it would let a
                 // round trip lose data (the export's own rule).
-                _ => return Err(bad("unknown key (strict v1 schema)")),
+                _ => return Err(bad("unknown key (strict schema)")),
             }
         }
         d.finish().map_err(|_| bad("trailing bytes"))?;

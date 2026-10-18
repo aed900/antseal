@@ -255,11 +255,24 @@ impl OnlineInputs {
 /// and note that for a live row the two mean the same thing: no usable answer
 /// arrived.
 ///
-/// Serialized with its variant names unrenamed (`"Transport"`,
-/// `"BackendRefused"`), which is the form `antseal-net`'s
-/// `PersistenceOutcome` already emitted for it before the move — the machine
-/// token, when one is wanted in prose or a key, is [`Self::token`].
+/// **Serialized kebab-case — `"transport"`, `"backend-refused"` — by D190 R1
+/// (R91).** Until D190 the variant names went out unrenamed (`"Transport"`,
+/// `"BackendRefused"`), the form `antseal-net`'s `PersistenceOutcome` emitted
+/// before R89 moved the class here, so one `--json` value mixed two casings —
+/// `{"fetch-failed":{"class":"Transport"}}` inside the kebab-case
+/// [`LiveBlobOutcome`] — and this was the one `Serialize` enum in this module
+/// and in `overlay` that was not kebab-case. Nothing consumed the PascalCase
+/// form. D190 R2 deleted the hand-written, test-only token method in the same
+/// act, so the type now has
+/// [`ProbeFailureClass`](super::overlay::ProbeFailureClass)'s shape — serde is
+/// the one machine spelling and the wording table owns the display word — and
+/// differs from it only in also deriving `Deserialize`, which `antseal-net`'s
+/// `PersistenceOutcome` needs to round-trip it.
+/// Landed before U32 on purpose — after the freeze, narrowing an enum-valued
+/// key's spelling set is D65 §6-breaking; `ENVELOPE_VERSION` stays 1 and
+/// `REPORT_VERSION` is unmoved (D190 R6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FetchFailureClass {
     /// No usable answer arrived from the network: transport failure, timeout,
     /// unreachable peers, or an answer the client refused
@@ -280,15 +293,6 @@ impl FetchFailureClass {
     /// ([`ProbeFailureClass::ALL`](super::overlay::ProbeFailureClass::ALL)'s
     /// pattern.)
     pub const ALL: [Self; 2] = [Self::Transport, Self::BackendRefused];
-
-    /// This class's stable machine token — wildcard-free (the L2 discipline).
-    #[must_use]
-    pub const fn token(self) -> &'static str {
-        match self {
-            Self::Transport => "transport",
-            Self::BackendRefused => "backend-refused",
-        }
-    }
 }
 
 /// What the network said about one stored blob — the WASM-safe projection of

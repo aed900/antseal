@@ -310,3 +310,162 @@ fn a_planted_divergence_between_the_plan_and_the_wire_would_be_caught() {
         "and it would pass for one that asked the same height twice"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U44 (D188 R6): the config's per-network Arbitrum pair
+// ─────────────────────────────────────────────────────────────────────
+
+/// The URLs of a resolved pair, in order.
+fn urls(pair: &EndpointPair) -> Vec<String> {
+    vec![
+        pair.first().url().to_owned(),
+        pair.second().url().to_owned(),
+    ]
+}
+
+/// **D188 R6, at resolution.** `endpoints_from_config` reads only the run's
+/// own network's pair: a sepolia-only override leaves an arbitrum-one run on
+/// the pinned pair and undisclosed as overridden, gives a sepolia run the
+/// override and the disclosure, and devnet no pair at all.
+///
+/// Nothing here is probed. In-process `antseal-cli` tests are not covered by
+/// Q16's `cfg(test)` arm (that arm is compiled into `antseal-anchor`'s own
+/// unit tests only), so probing the pinned pair would dial the real Arbitrum
+/// endpoints; the assertion is on what was RESOLVED.
+#[test]
+fn endpoints_from_config_reads_only_the_effective_networks_pair() {
+    let config = crate::config::parse(
+        "[verify.arbitrum-sepolia]\n\
+         rpc_endpoints = [\"https://sep-a.example\", \"https://sep-b.example\"]\n",
+    )
+    .expect("a sepolia-only override loads");
+    let configured = vec![
+        "https://sep-a.example".to_owned(),
+        "https://sep-b.example".to_owned(),
+    ];
+
+    let one = super::endpoints_from_config(&config, NetworkId::ArbitrumOne)
+        .expect("resolves")
+        .expect("arbitrum-one has a Bitcoin pair");
+    let pinned_one: Vec<String> =
+        antseal_anchor::arbitrum::endpoints::verify_rpcs(NetworkId::ArbitrumOne)
+            .expect("arbitrum-one has a pinned pair")
+            .iter()
+            .map(|url| (*url).to_owned())
+            .collect();
+    assert_eq!(
+        urls(
+            one.arbitrum
+                .as_ref()
+                .expect("arbitrum-one has an Arbitrum pair")
+        ),
+        pinned_one,
+        "the other network's override leaked into an arbitrum-one run"
+    );
+    assert!(
+        !one.overridden(),
+        "an arbitrum-one run consulted no configured endpoint, so it is not overridden"
+    );
+
+    let sepolia = super::endpoints_from_config(&config, NetworkId::ArbitrumSepolia)
+        .expect("resolves")
+        .expect("arbitrum-sepolia has a Bitcoin pair");
+    assert_eq!(
+        urls(
+            sepolia
+                .arbitrum
+                .as_ref()
+                .expect("arbitrum-sepolia has an Arbitrum pair")
+        ),
+        configured,
+        "the sepolia run did not get its configured pair"
+    );
+    assert!(sepolia.overridden(), "and it is disclosed as overridden");
+
+    let devnet = super::endpoints_from_config(&config, NetworkId::Devnet)
+        .expect("resolves")
+        .expect("devnet has a Bitcoin pair");
+    assert!(devnet.arbitrum.is_none(), "devnet has no Arbitrum pair");
+    assert!(!devnet.overridden());
+
+    // With no file at all, every network is on its pinned pair and nothing is
+    // disclosed as overridden.
+    let defaults = crate::config::Config::default();
+    for network in [NetworkId::ArbitrumOne, NetworkId::ArbitrumSepolia] {
+        let resolved = super::endpoints_from_config(&defaults, network)
+            .expect("resolves")
+            .expect("a Bitcoin pair");
+        assert!(!resolved.overridden(), "{network}: nothing configured");
+    }
+}
+
+/// **D188 R6, on the wire** (U52's defect class one surface over: a key that
+/// parses and is ignored). A configured `[verify.arbitrum-one]` pair of
+/// loopback stubs is what the receipt probe contacts: both stubs see the
+/// chain-id guard and the receipt request.
+///
+/// The pre-flight runs BEFORE any request: every endpoint the run would
+/// consult must be one of this test's stubs, so a broken resolution (one that
+/// fell back to a pinned pair) fails here rather than dialing a real endpoint
+/// — Q16's `cfg(test)` arm does not cover this crate's in-process tests.
+#[test]
+fn a_configured_pair_is_what_the_receipt_probe_contacts() {
+    let btc_first = stub();
+    let btc_second = stub();
+    let rpc_first = stub();
+    let rpc_second = stub();
+    let config = crate::config::parse(&format!(
+        "[verify]\nbitcoin_endpoints = [\"{}\", \"{}\"]\n\
+         [verify.arbitrum-one]\nrpc_endpoints = [\"{}\", \"{}\"]\n",
+        btc_first.base_url(),
+        btc_second.base_url(),
+        rpc_first.base_url(),
+        rpc_second.base_url(),
+    ))
+    .expect("loopback stubs are admissible endpoints");
+
+    let endpoints = super::endpoints_from_config(&config, NetworkId::ArbitrumOne)
+        .expect("resolves")
+        .expect("arbitrum-one has a Bitcoin pair");
+    let stubs = [
+        btc_first.base_url(),
+        btc_second.base_url(),
+        rpc_first.base_url(),
+        rpc_second.base_url(),
+    ];
+    let consulted = endpoints.identities();
+    assert_eq!(
+        consulted.len(),
+        4,
+        "two Bitcoin and two Arbitrum endpoints: {consulted:?}"
+    );
+    assert_eq!(
+        consulted,
+        stubs.to_vec(),
+        "the run would consult an endpoint that is not one of this test's stubs — refusing \
+         to probe"
+    );
+    assert!(endpoints.overridden());
+
+    let bytes = build(&shapes::multi_file_every_anchor_kind(), &Selection::all(3)).bytes;
+    let bundle = BundleV1::decode(&bytes).expect("the fixture decodes");
+    assert!(
+        ProbePlan::from_bundle(&bundle).receipt.is_some(),
+        "the F13 shape carries a receipt, so a receipt probe is planned"
+    );
+    let client = HttpClient::new(HttpPolicy::verify());
+    let _ = probe_online(&client, &bundle, &endpoints, NetworkId::ArbitrumOne);
+
+    for (label, server) in [("first", &rpc_first), ("second", &rpc_second)] {
+        let seen = requests(server);
+        assert!(
+            seen.iter().any(|text| text.contains("eth_chainId")),
+            "the {label} configured RPC endpoint was not asked for its chain id: {seen:#?}"
+        );
+        assert!(
+            seen.iter()
+                .any(|text| text.contains("eth_getTransactionReceipt")),
+            "the {label} configured RPC endpoint was not asked for the receipt: {seen:#?}"
+        );
+    }
+}

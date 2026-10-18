@@ -106,9 +106,9 @@ antseal vault import <FILE>
 ```
 
 That is the whole surface. Neither takes an option beyond the three global ones
-every command has (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:354-406`).
+every command has (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:355-407`).
 The design note in the source is the product decision in one line:
-*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:462`).
+*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:511`).
 
 What `export` writes:
 
@@ -131,7 +131,7 @@ What `export` writes:
   into place (`crates/antseal-cli/src/vault/export.rs:104-118`). An export that
   would not have imported is never left on disk looking like a backup. If that
   check fails you get class `export-self-verify-failed`, exit code **32**
-  (`crates/antseal-cli/src/error.rs:391`).
+  (`crates/antseal-cli/src/error.rs:453`).
 
 It prints what it did, and then it says the thing this page is about
 (`crates/antseal-cli/src/commands.rs:819-822`):
@@ -168,8 +168,8 @@ losing the vault** — the two failures are one failure.
 
 Nothing in antseal can help here: there is no recovery question, no escrow, no
 key-splitting scheme in v1, and no `change-passphrase` command to give you a
-second chance (the frozen surface has nine commands and that is not one of
-them, `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`).
+second chance (the frozen surface has ten commands and that is not one of
+them, `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`).
 
 `init` enforces a floor of **12 bytes** at creation and nothing more
 (`crates/antseal-cli/src/passphrase.rs:87`) — a floor is not advice. Choose
@@ -241,12 +241,12 @@ backup.
 6. **Then try a `restore`.** `antseal restore <WORK-ID>` fetches the
    ciphertexts, decrypts them, verifies them against the manifest commitments
    and writes your original files back
-   (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:223`). That is the
+   (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:224`). That is the
    step that proves the backup carries what you actually care about, and it
    needs network access where the earlier steps do not.
 
 **`import` will not overwrite an existing vault**, and there is no flag to make
-it (`crates/antseal-cli/src/error.rs:577-585`):
+it (`crates/antseal-cli/src/error.rs:612-620`):
 
 ```
 refusing to import over the existing vault at <dir>: overwriting a vault irreversibly destroys the reveal/restore keys of every work in it. Move that directory aside yourself first — moving it keeps everything, and no antseal command has to run first; delete it only when you are certain nothing in it matters. Scripted overwrite-import is deliberately unsupported (D51)
@@ -318,18 +318,18 @@ to make new ones.
 
 | Claim on this page | Where it is enforced |
 | --- | --- |
-| the loss warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:68-70` |
-| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:353-357`; `crates/antseal-cli/src/vault/bookkeeping.rs:263` |
+| the loss warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:73-75` |
+| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:369-375`; `crates/antseal-cli/src/vault/bookkeeping.rs:300` |
 | the nag stops only after a written and self-verified export | `crates/antseal-cli/src/commands.rs:805-810` |
-| two commands, no flags | `crates/antseal-cli/src/cli.rs:462-480`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:354-406` |
+| two commands, no flags | `crates/antseal-cli/src/cli.rs:511-529`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:355-407` |
 | the export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:61-95`, stated at `:99-100` |
 | fresh salt, one AEAD over the whole file | `crates/antseal-cli/src/vault/export.rs:20-28` |
 | default timestamped filename | `crates/antseal-cli/src/commands.rs:889-896` |
-| mandatory self-verify before the rename | `crates/antseal-cli/src/vault/export.rs:104-118`; exit **32** at `crates/antseal-cli/src/error.rs:391` |
+| mandatory self-verify before the rename | `crates/antseal-cli/src/vault/export.rs:104-118`; exit **32** at `crates/antseal-cli/src/error.rs:453` |
 | import validates fully, installs atomically, verifies after | `crates/antseal-cli/src/vault/export.rs:120-133`, `:1226-1250` |
-| import refuses an existing vault, with no bypass | `crates/antseal-cli/src/error.rs:535-542` |
+| import refuses an existing vault, with no bypass | `crates/antseal-cli/src/error.rs:612-620` |
 | a keyfile-wrapped vault is refused by export and import | `crates/antseal-cli/src/vault/export.rs:745-756`, `:520-535` |
 | 12-byte creation floor, and no floor at unlock | `crates/antseal-cli/src/passphrase.rs:87`, `:238` |
-| no `change-passphrase`: nine commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15` |
+| no `change-passphrase`: ten commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16` |
 | the engineering account of this failure mode | `docs/threat-model.md` §2.2 |
 | the end-to-end restore drill is a gate item | task **Q34** (M4) |

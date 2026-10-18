@@ -149,6 +149,106 @@ fn unhelpful_tsa() -> StubServer {
     )))
 }
 
+/// What one run's `seal --json` `anchors` member must hold (U50).
+enum AnchorsShape {
+    /// No stage ran: the key is present AND `null`.
+    Null,
+    /// A stage ran, with exactly this many succeeded and failed endpoints.
+    Rows { ok: usize, failed: usize },
+}
+
+/// **U50 (D65 §8.2, §9.2): the presence rule of `seal --json`'s `anchors`
+/// member, asserted over the REAL producer** — `SealReport::json`, fed by
+/// `AnchorSummary::from_submission` — never over a hand-built fixture, which
+/// could break the coupling below and still match its own snapshot.
+///
+/// Presence-only by design: `anchors` is tier C, stable-additive rather than
+/// exact (D134 §2 R3 (2)), so every documented key must be present and an
+/// added key passes. The null rule is asserted both ways — `ok` ⇔
+/// `failure_class == null` ⇔ `detail == null` (D65 §9.2: promised at every
+/// tier) — and a failed row's class must be kebab-case. The row counts are
+/// asserted before the per-row loop, so an empty `endpoints` array cannot
+/// pass it vacuously.
+fn assert_anchor_presence(doc: &serde_json::Value, expect: AnchorsShape) {
+    let anchors = doc
+        .get("anchors")
+        .unwrap_or_else(|| panic!("anchors key missing: {doc}"));
+    let (want_ok, want_failed) = match expect {
+        AnchorsShape::Null => {
+            assert!(
+                anchors.is_null(),
+                "no stage ran, so `anchors` must be present AND null: {anchors}"
+            );
+            return;
+        }
+        AnchorsShape::Rows { ok, failed } => (ok, failed),
+    };
+    for key in [
+        "endpoints",
+        "verified_tsa_tokens",
+        "distinct_calendar_routes",
+        "degradation",
+    ] {
+        assert!(
+            anchors.get(key).is_some(),
+            "anchors missing {key}: {anchors}"
+        );
+    }
+    let rows = anchors["endpoints"]
+        .as_array()
+        .unwrap_or_else(|| panic!("`endpoints` is not an array: {anchors}"));
+    let with_ok = |want: bool| {
+        rows.iter()
+            .filter(|row| row.get("ok") == Some(&serde_json::Value::Bool(want)))
+            .count()
+    };
+    assert_eq!(
+        (with_ok(true), with_ok(false), rows.len()),
+        (want_ok, want_failed, want_ok + want_failed),
+        "endpoint rows by outcome, counted before any row is checked: {anchors}"
+    );
+    for row in rows {
+        for key in ["stage", "endpoint", "ok", "failure_class", "detail"] {
+            assert!(row.get(key).is_some(), "row missing {key}: {row}");
+        }
+        let ok = row["ok"] == serde_json::Value::Bool(true);
+        assert_eq!(
+            row["failure_class"].is_null(),
+            ok,
+            "`failure_class` must be null exactly when the endpoint succeeded: {row}"
+        );
+        assert_eq!(
+            row["detail"].is_null(),
+            ok,
+            "`detail` must be null exactly when the endpoint succeeded: {row}"
+        );
+        if !ok {
+            let class = row["failure_class"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a failed row's `failure_class` is a string: {row}"));
+            assert!(
+                is_kebab(class),
+                "`failure_class` {class:?} is not kebab-case: {row}"
+            );
+            assert!(
+                row["detail"].is_string(),
+                "a failed row's `detail` is a string: {row}"
+            );
+        }
+    }
+}
+
+/// Lowercase ASCII words joined by single hyphens — `untrusted-chain`, `http`.
+fn is_kebab(class: &str) -> bool {
+    !class.is_empty()
+        && class.split('-').all(|word| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // U22 Accept row 1: all TSAs fail ⇒ abort BEFORE payment
 // ─────────────────────────────────────────────────────────────────────
@@ -281,6 +381,10 @@ fn one_verified_tsa_lets_the_seal_proceed_and_journals_its_artifacts() {
     assert!(mock.stored_count() > 0);
     assert_eq!(tsa.requests().len(), 1, "the same gate ran");
 
+    // ── U50: the machine document's presence rule, over this real run ──
+    // ots ok, ots failed (the dead calendar), tsa ok.
+    assert_anchor_presence(&report.json(), AnchorsShape::Rows { ok: 2, failed: 1 });
+
     // ── Accept: the summary NAMES each anchor's outcome ──
     let anchors = report.anchors.as_ref().expect("a stage ran");
     assert_eq!(anchors.verified_tsa_tokens, 1);
@@ -405,6 +509,9 @@ fn force_degraded_with_zero_tokens_proceeds_with_the_snapshotted_warning() {
     let anchors = report.anchors.as_ref().expect("a stage ran");
     assert_eq!(anchors.verified_tsa_tokens, 0, "nothing was verified");
     assert!(report.degraded);
+    // U50: every row failed (one TSA, no calendar configured) — the arm where
+    // a non-null `failure_class` and `detail` are the whole content.
+    assert_anchor_presence(&report.json(), AnchorsShape::Rows { ok: 0, failed: 1 });
 
     // The stage's own lines, and only those: the ephemeral port and the
     // measured elapsed time are normalized (neither is copy), and U18's
@@ -529,6 +636,9 @@ fn no_anchor_reaches_the_real_gate_and_still_submits_nothing() {
         report.anchors.is_none(),
         "no stage ran, so there is no summary"
     );
+    // U50: …and the machine document says so with a PRESENT `null`, which is
+    // what distinguishes "no stage ran" from a stage that produced nothing.
+    assert_anchor_presence(&report.json(), AnchorsShape::Null);
     assert_eq!(
         tsa.requests().len(),
         0,
@@ -648,6 +758,158 @@ fn a_configured_tsa_list_is_what_the_stage_contacts() {
     assert_eq!(contacted, vec![first.base_url(), second.base_url()]);
 }
 
+/// **U52 Accept (D188 R3).** A config naming two calendars makes the stage
+/// submit to **exactly those two** — asserted on the stubs' own request
+/// counters and on the stage's endpoint list, the way U26's TSA row is.
+///
+/// The TSA list is configured too, onto an answering-but-unhelpful stub, so
+/// no default endpoint of either family is in reach; `--force-degraded`
+/// carries the seal past the zero-token gate so the run reaches its summary.
+#[test]
+fn a_configured_calendar_list_is_what_the_stage_contacts() {
+    let work = Work::new("u52-custom");
+    let plan = work.plan(&["--force-degraded"]);
+    let mock = MockBackend::new().with_balances(funded());
+    let backend = RecordingBackend::new(&mock);
+    let vault = IsolatedVault::create("u52-custom");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+
+    let tsa = unhelpful_tsa();
+    let first = StubServer::spawn(calendar(&CalendarBehaviour::PendingSubmit(
+        anchor_fixtures::CALENDAR_ALICE_A.to_vec(),
+    )));
+    let second = StubServer::spawn(calendar(&CalendarBehaviour::PendingSubmit(
+        anchor_fixtures::CALENDAR_BOB_A.to_vec(),
+    )));
+    // The production path from the FILE: `config.toml` text → the loader's
+    // `[anchors] ots_calendars` arm → effective lists → the stage. Parsed
+    // rather than built as a struct, so a key the loader drops (warned on,
+    // or never routed) fails here too.
+    let config = antseal_cli::config::parse(&format!(
+        "[anchors]\ntsa_urls = [\"{}\"]\nots_calendars = [\"{}\", \"{}\"]\n",
+        tsa.base_url(),
+        first.base_url(),
+        second.base_url()
+    ))
+    .expect("loopback stubs are admissible endpoints");
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    let mut anchors = AnchorStageConfig::from_config(&config);
+    anchors.fetch_date = Some(FETCH_DATE);
+
+    // **Checked before the seal runs, on purpose** (U26's discipline): if the
+    // config→stage wiring breaks, the resolved list falls back to D54's four
+    // public aggregators, and a test that discovered that by running the seal
+    // would discover it by POSTing to them. In-process suites are not covered
+    // by Q16's `cfg(test)` arm, so this line is what keeps a broken product
+    // from turning the suite into a network client.
+    assert_eq!(
+        anchors.endpoints.ots_calendars,
+        vec![first.base_url(), second.base_url()],
+        "the configured calendar list did not reach the stage — refusing to run a seal that \
+         would fall back to the built-in calendars"
+    );
+    assert_eq!(
+        anchors.endpoints.tsa_urls,
+        vec![tsa.base_url()],
+        "the configured TSA list did not reach the stage — refusing to run"
+    );
+
+    let result = block_on(run_seal(
+        &backend,
+        &session,
+        &plan,
+        &mut NeverAsked,
+        &ctx(anchors),
+        &mut ChaCha20Rng::from_seed([0x61; 32]),
+        &mut ChaCha20Rng::from_seed([0x62; 32]),
+    ))
+    .expect("--force-degraded proceeds");
+
+    let SealCommandResult::Sealed(report) = result else {
+        panic!("a non-dry-run seal returns Sealed");
+    };
+    assert!(
+        !first.requests().is_empty(),
+        "the first configured calendar was never contacted"
+    );
+    assert!(
+        !second.requests().is_empty(),
+        "the second configured calendar was never contacted"
+    );
+
+    // "Exactly those", in configured order: the stage's own OTS rows.
+    let calendars: Vec<String> = report
+        .anchors
+        .as_ref()
+        .expect("a stage ran")
+        .endpoints
+        .iter()
+        .filter(|e| e.stage == antseal_anchor::gate::AnchorStage::Ots)
+        .map(|e| e.endpoint.clone())
+        .collect();
+    assert_eq!(calendars, vec![first.base_url(), second.base_url()]);
+}
+
+/// **U64 Accept (D188 R3).** The seal stage and the upgrade path read ONE
+/// calendar list: over {absent, empty, custom} the two production
+/// constructors resolve equal lists — and through the production resolver
+/// itself (`UpgradeTarget::from_pending_uri`, what `upgrade_pending` calls),
+/// a configured calendar's host is admitted for upgrade exactly when it is
+/// configured. Values only: nothing here dials anything.
+#[test]
+fn the_seal_and_upgrade_paths_read_one_calendar_list() {
+    use antseal_anchor::ots::{UpgradeTarget, UpgradeUriRefusal};
+    use antseal_cli::config::Config;
+    use antseal_cli::status::UpgradeConfig;
+
+    let custom = Config {
+        ots_calendars: Some(vec![
+            "https://cal.example.com".to_owned(),
+            "https://cal-two.example.org".to_owned(),
+        ]),
+        ..Config::default()
+    };
+    let cases = [
+        ("absent", Config::default()),
+        (
+            "empty",
+            Config {
+                ots_calendars: Some(Vec::new()),
+                ..Config::default()
+            },
+        ),
+        ("custom", custom.clone()),
+    ];
+    assert_eq!(cases.len(), 3);
+    for (label, config) in &cases {
+        let seal_side = AnchorStageConfig::from_config(config)
+            .endpoints
+            .ots_calendars;
+        let upgrade_side = UpgradeConfig::from_config(config).calendars;
+        assert!(
+            !seal_side.is_empty(),
+            "{label}: a stage always has calendars"
+        );
+        assert_eq!(
+            upgrade_side, seal_side,
+            "{label}: the upgrade path widens its allowlist with a different list than the \
+             seal stage submits to"
+        );
+    }
+
+    let configured = UpgradeConfig::from_config(&custom).calendars;
+    assert!(
+        UpgradeTarget::from_pending_uri("https://cal.example.com", &configured).is_ok(),
+        "a configured calendar's own attestations must be upgradable"
+    );
+    let defaulted = UpgradeConfig::from_config(&Config::default()).calendars;
+    assert_eq!(
+        UpgradeTarget::from_pending_uri("https://cal.example.com", &defaulted).err(),
+        Some(UpgradeUriRefusal::HostNotAllowed),
+        "an unconfigured host stays outside the allowlist"
+    );
+}
+
 /// **U26 Accept row 2.** No config ⇒ the built-in defaults, and an empty
 /// list means the same thing as an absent one.
 ///
@@ -677,7 +939,32 @@ fn an_absent_or_empty_config_yields_the_built_in_defaults() {
         ..antseal_cli::config::Config::default()
     });
     assert_eq!(custom.endpoints.tsa_urls, vec!["http://127.0.0.1:1/tsr"]);
-    assert!(!defaults.endpoints.ots_calendars.is_empty());
+
+    // U52 (D188 R1/R3): the calendar family, by the same rule — absent and
+    // empty are D54's four, an override replaces them wholesale.
+    use antseal_anchor::ots::DEFAULT_OTS_CALENDARS;
+    assert_eq!(
+        defaults.endpoints.ots_calendars,
+        DEFAULT_OTS_CALENDARS.to_vec()
+    );
+    let empty = AnchorStageConfig::from_config(&antseal_cli::config::Config {
+        ots_calendars: Some(Vec::new()),
+        ..antseal_cli::config::Config::default()
+    });
+    assert_eq!(
+        empty.endpoints.ots_calendars,
+        DEFAULT_OTS_CALENDARS.to_vec(),
+        "an empty calendar list must fall back, not disable OTS silently"
+    );
+    let custom = AnchorStageConfig::from_config(&antseal_cli::config::Config {
+        ots_calendars: Some(vec!["http://127.0.0.1:1".to_owned()]),
+        ..antseal_cli::config::Config::default()
+    });
+    assert_eq!(
+        custom.endpoints.ots_calendars,
+        vec!["http://127.0.0.1:1"],
+        "an override replaces the calendars wholesale — no union"
+    );
 }
 
 /// **U26 Accept row 3 / A50.** A malformed TSA URL is a clean config error

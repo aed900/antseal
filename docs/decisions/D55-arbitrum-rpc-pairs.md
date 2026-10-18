@@ -565,3 +565,37 @@ in the F4 row.)*
 - A17 ever needing a method beyond `eth_getTransactionReceipt` and
   `eth_chainId` → re-probe every endpoint with it before shipping (§2's
   whole lesson).
+
+## Addendum — 2026-10-17 (wave 38, D188 §2 R4–R6, R11): §6's slot was consumed before it was reshaped, and the retired key is refused, not warned
+
+Three premises of §6 changed before `U44` executed it. D188 records each:
+
+1. **"Nothing consumes it" (`:419-420`) fell when `U30` wired the flat key**
+   (ticked 2026-08-12). `endpoints_from_config` reads
+   `config.verify_arbitrum_endpoints` and applies the one list to whichever
+   network the run resolved (`verify_host.rs:279-306` at `23f3093`).
+2. **The harm §6 names (`:414-417`) is superseded** by §3's chain-id guard as
+   built. A Sepolia endpoint asked about a mainnet transaction no longer reads
+   as `Lagging`: each endpoint is asked `eth_chainId` first, and a mismatch is
+   `EndpointFailure::WrongChain` (`arbitrum/confirm.rs:241-262`) — a loud,
+   advisory failure. The reshape is still needed, because one list cannot hold
+   A17's two pairs.
+3. **"Degrades to a warning, not an exit-17 hard error … why the removal is
+   safe" (`:443-447`) is reversed.** D188 §2 R5 refuses the flat
+   `[verify] arbitrum_endpoints` at load (exit 17), on the key before its value
+   is parsed, naming the key, the table, the line and the replacement tables,
+   never the value. The reason is D180's: a warned override makes
+   `verify --online` probe the pinned public pair the user configured away
+   from, while only a stderr line says so, and no release exists that a refusal
+   could break. `U44` Accept 4 is restated by the orchestrator.
+
+The reshape itself stands as §6 drew it — `[verify.arbitrum-one]` and
+`[verify.arbitrum-sepolia]` `rpc_endpoints`, `bitcoin_endpoints` flat — with
+these refinements from D188: each entry is validated by
+`expect_endpoint_array` under `TlsPolicy::RequiredExceptLoopback` (not
+`expect_url_array`); *exactly two* and *distinct origins* are checked at load
+through `EndpointPair::new`; a refusal names the entry's index and never the
+URL, because a receipt RPC commonly carries a key (`:126`'s publicnode
+*"Archive requests require a personal token"*); and `[verify.devnet]` is
+refused with §5's reason, *"a devnet chain is a fresh Anvil instance per
+run"*. The text above stays as written.

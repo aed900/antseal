@@ -416,7 +416,7 @@ fn decode_payload(bytes: &[u8]) -> Result<ExportPayload, CliError> {
                 }
                 bookkeeping = Some(raw.to_vec());
             }
-            _ => return Err(bad("unknown payload key (strict v1 schema)")),
+            _ => return Err(bad("unknown payload key (strict schema)")),
         }
     }
     d.finish().map_err(codec)?;
@@ -498,7 +498,7 @@ fn decode_work(d: &mut CanonicalDecoder<'_>) -> Result<WorkPayload, CliError> {
                     return Err(bad("anchors key present but empty (writer omits it)"));
                 }
             }
-            _ => return Err(bad("unknown work key (strict v1 schema)")),
+            _ => return Err(bad("unknown work key (strict schema)")),
         }
     }
 

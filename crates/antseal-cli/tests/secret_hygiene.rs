@@ -541,7 +541,7 @@ impl HeldChild {
 /// the difference. An eleventh command
 /// now cannot reach the surface without either appearing here or
 /// reddening that test.
-const COMMANDS: [&[&str]; 10] = [
+const COMMANDS: [&[&str]; 11] = [
     // First, so the array opens on the name `ALL_COMMAND_NAMES` opens on
     // — and so a leak planted in `init`'s output reddens the harness in
     // seconds rather than after fifty-odd other cells.
@@ -569,6 +569,9 @@ const COMMANDS: [&[&str]; 10] = [
     &["verify", "nonexistent.sealproof"],
     &["vault", "export"],
     &["vault", "import", "nonexistent.sealvault"],
+    // D185: unlocks like `show`, then refuses the unknown id after the
+    // unlock — the passphrase has crossed the fd channel by then.
+    &["abandon", "a7a7a7a7", "--yes"],
     &[
         "seal",
         "notes.txt",

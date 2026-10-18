@@ -76,7 +76,7 @@ use antseal_core::verify::storage_linkage::{
 };
 use antseal_core::verify::{VerifyOptions, wording};
 use antseal_net::test_util::{MockBackend, block_on};
-use antseal_net::{Address, LiveSubject, subject_label};
+use antseal_net::{Address, LiveSubject, UnitKindTag, subject_label};
 
 // ─────────────────────────────────────────────────────────────────────
 // the harness — verify_command.rs's, narrowed to what a live run needs
@@ -292,6 +292,142 @@ fn the_manifest_subject_label_comes_from_the_closed_grammar() {
             kind: antseal_net::UnitKindTag::Normal,
         }),
         MANIFEST_SUBJECT
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D190 R5 (R90) — the order of the live rows
+// ─────────────────────────────────────────────────────────────────────
+
+/// The unit id a unit row's subject names, read back through the closed
+/// grammar: the parse is accepted only if `subject_label` renders the same
+/// subject for that id, so this is a pin on the grammar rather than a second
+/// spelling of it.
+fn unit_id_of(subject: &str) -> u64 {
+    let digits: String = subject
+        .strip_prefix("unit ")
+        .unwrap_or_else(|| panic!("not a unit row: {subject:?}"))
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let unit_id: u64 = digits
+        .parse()
+        .unwrap_or_else(|_| panic!("no unit id in {subject:?}"));
+    let rendered = [UnitKindTag::Normal, UnitKindTag::RawMirror]
+        .map(|kind| subject_label(LiveSubject::Unit { unit_id, kind }));
+    assert!(
+        rendered.iter().any(|label| label == subject),
+        "{subject:?} is not a subject the closed grammar renders for unit {unit_id}: {rendered:?}"
+    );
+    unit_id
+}
+
+/// **D190 R5 (R90) — `collect_live` emits work-global manifest order**: the
+/// unit rows by strictly ascending `unit_id` (a unit's id is its
+/// manifest-order ordinal, a decode invariant), then the encrypted-manifest
+/// row last. That is the order `machine.rs`'s module doc states for
+/// `verify --live`'s `live.rows`. The other builder,
+/// `antseal_net::records_from_manifest`, is held to the same predicate by its
+/// own R11 tests; each is asserted against the statement, not against the
+/// other.
+///
+/// The fixture is the one R90 measured the old order on: before D190 the
+/// collector emitted the bundle's order — covered reveals ascending, then
+/// non-covered ascending — which put `unit 1 (raw mirror)` after `unit 4`
+/// here. That the two orders differ on this fixture is asserted first, so the
+/// test cannot pass because they happen to coincide.
+#[test]
+fn collect_live_emits_the_unit_rows_in_manifest_order_and_the_manifest_row_last() {
+    let bytes = linked_bundle(StorageAddresses::Real);
+    let bundle = BundleV1::decode(&bytes).expect("the fixture decodes");
+
+    let bundle_order: Vec<u64> = bundle
+        .covered_reveals()
+        .iter()
+        .map(|reveal| reveal.unit_id())
+        .chain(
+            bundle
+                .noncovered_reveals()
+                .iter()
+                .map(|reveal| reveal.unit_id()),
+        )
+        .collect();
+    assert!(
+        bundle_order.windows(2).any(|pair| pair[0] > pair[1]),
+        "the fixture's bundle order is already ascending ({bundle_order:?}), so it cannot tell \
+         manifest order from bundle order"
+    );
+
+    let mock = MockBackend::new();
+    let units = preload_units(&mock, &bundle);
+    assert_eq!(
+        mock.preload_third_party(&manifest_blob(&bundle)),
+        Address::from(*bundle.storage_record().address()),
+        "the manifest blob lands at its recorded address (StorageAddresses::Real)"
+    );
+
+    let run = live_run(&bytes, &bundle, &mock);
+    let section = run
+        .outcome()
+        .live()
+        .expect("--live renders a section")
+        .clone();
+
+    // The count first: an empty or truncated row list would make every order
+    // assertion below vacuous.
+    assert_eq!(
+        section.rows.len() as u64,
+        units + 1,
+        "one row per embedded unit plus the manifest row: {:#?}",
+        section.rows
+    );
+    let subjects: Vec<&str> = section
+        .rows
+        .iter()
+        .map(|row| row.subject.as_str())
+        .collect();
+    let (last, unit_subjects) = subjects.split_last().expect("the count above is nonzero");
+    assert_eq!(
+        *last, MANIFEST_SUBJECT,
+        "the encrypted-manifest row is last: {subjects:?}"
+    );
+    let ids: Vec<u64> = unit_subjects
+        .iter()
+        .map(|subject| unit_id_of(subject))
+        .collect();
+    assert_eq!(
+        ids.len() as u64,
+        units,
+        "every row before the last is a unit row: {subjects:?}"
+    );
+    for pair in ids.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "the unit rows are not in strictly ascending manifest order: unit {} precedes unit {} \
+             in {subjects:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+
+    // The same order reaches `--json`'s `live.rows`, which is what a consumer
+    // iterates.
+    let document = run.json().expect("the result document renders");
+    let value: serde_json::Value =
+        serde_json::from_str(&document).expect("the document is one JSON object");
+    let json_subjects: Vec<&str> = value["live"]["rows"]
+        .as_array()
+        .expect("the live member carries rows")
+        .iter()
+        .map(|row| {
+            row["subject"]
+                .as_str()
+                .expect("a row's subject is a string")
+        })
+        .collect();
+    assert_eq!(
+        json_subjects, subjects,
+        "--json's live.rows carry the section's order"
     );
 }
 

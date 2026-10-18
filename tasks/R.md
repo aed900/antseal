@@ -694,6 +694,7 @@
 - Accept:
   - The arm is documented unreachable-by-construction (or restructured with the code still emitted); universe gate green.
   - The documentation cross-references R54's precedent so the two arms read as one policy.
+- Notes: **[2026-10-17, wave 38 — TICKED (D187 §2 R2, lane L-VOCAB).]** Captures on the `TODO.md` row; D187 §6 records what was built and every deviation.
 
 ### R58 — Decide a findings bound for `verify_bundle_collecting` on hostile many-failure bundles
 - Milestone: decide by M3 (the collecting mode's consumers are the page and `--json` rendering)
@@ -1142,6 +1143,7 @@
   - `--json`'s live array order is dispositioned against D65 — tier-committed with a test, or documented as unordered with the reason — and `ENVELOPE_VERSION` stays 1 either way.
   - No frozen wording moves: this row changes sequence, never a sentence.
 - Notes: **XS and low-stakes on its own, which is why it is registered rather than left in a lane's report** — an unruled order is exactly the thing a later parity or snapshot gate accidentally pins, and then it is expensive. **Take it with R89 or with whatever next touches the live section**; both are small, both live in the same three files, and neither justifies a wave of its own. *(Registrar, 2026-08-17: **R89 closed without taking it**, so the pairing partner is now **R91** — the same shape one layer down, two producers of one vocabulary with nothing asserting either. R90 is ordering, R91 is spelling, and a lane opening `verify_host.rs` and `orchestration.rs` should close both.)*
+- Notes: **[2026-10-17, wave 38 — TICKED (D190 §2 R5, lane L-VOCAB).]** Captures on the `TODO.md` row; D190 §6 records what was built and every deviation.
 
 ### R91 — One `--json` document spells the failure vocabulary three ways, and the spelling nothing reads is the one that was designed to be read
 - Milestone: M3
@@ -1158,6 +1160,7 @@
   - Any wire change is dispositioned against D65 (tier C) with `ENVELOPE_VERSION` and `REPORT_VERSION` explicitly stated as moved or unmoved, and the R18 frozen wording set is untouched unless a reword is the chosen arm — in which case it is a wording-snapshot event under D137 §3 R9, not a tidy-up.
   - A planted fault on **each** producer is watched red, by message.
 - Notes: **Not a defect in R89, and R89 was right not to take it** — R89's scope was the type's home and the free-form field; this is what became visible once both spellings sat in one file. **Take with R90**: same section, same three files, and R90 is the ordering half of the same "two producers, one promise" shape. **The cheapest arm may be (c) alone** — one assertion between two label functions — and it is worth landing even if (a) and (b) are deferred with a recorded reason, because it is the only one of the three whose absence is currently *invisible to the guard designed to see it*.
+- Notes: **[2026-10-17, wave 38 — TICKED (D190 §2 R1–R4, lane L-VOCAB).]** Captures on the `TODO.md` row; D190 §6 records what was built and every deviation.
 
 ### R92 — Four doc sentences in three files still say the fetch-failure class is `antseal-net`'s, and one cites a method R89 deleted
 - Milestone: M3
@@ -1251,3 +1254,26 @@
   - `docs/ci-verification.md`'s deploy chapter, `docs/user/release-checklist.md` §B and `R26`'s Notes name the new deploy commit by dated addendum; the `9317a35` claim is corrected, not removed.
 - Notes: **no agent takes the dispatch** without the maintainer's express in-the-moment consent naming the action, the destination and the account. The deploy commit is an input to every future history rewrite in the same way a SHA pin in `scripts/` is (instrument ledger, wave 33): a rewrite that destroys it silently breaks this row's property again, and the ledger entry recording this finding says so.
 - Notes: **[2026-09-13, wave 35 — TICKED.]** Redeployed under the maintainer's express consent given 2026-09-13 in direct reply to a request naming each action, the destination `github.com/aed900/antseal` and the account `aed900` by `workflow_dispatch` run `34782645736` on `main` at `bfdc93eba79883c79f79fe663cb4a24d024f0d03` (job `publish` `success`, 12 steps, runner assigned), after every hosted run on that commit was green (`ci` 15/15 jobs, `ci-always`, `reproducible-build`, CodeQL). **`Accept` row 1 — MET**: the served page's decoded module (1 867 870 B, sha256 `edd62f059c25c48674f47274fb8cb713fb4a2f83e3bf3d3fcbd54241040da2f3`) contains `bfdc93e…` **once**, `9317a35…` **zero** times and a same-alphabet fabricated control **zero** times, and `bfdc93e` resolves on `main`. **Row 2 — MET**: the verify step printed `served bytes match the built artifact: b441bae727015ef2fb217fb071f7c6ae3fb31cde92f0af0900d146e472e00b1d`, and an independent fetch (`last-modified: Sun, 13 Sep 2026 21:08:21 GMT`, 2 542 496 B) returned exactly that sha256. **Row 3 — MET**: dated addenda in `docs/ci-verification.md`'s deploy chapter, `docs/user/release-checklist.md` §B and `R26`'s Notes name the new deploy commit; the `9317a35` claims are corrected, not removed. **Cross-validation no record predicted**: the deployed module's digest is byte-identical to the digest the first hosted `reproducible-build` run reproduced in two environments at the same commit (run `34781450856`). The footer now reads `module build` with a digest equal to the module's, and carries one signing-key element (`R96`), which the old page lacked.
+### R98 — `verify --live` reports a storage client antseal refused to start as a "transport failure" and never names the refusal
+- Milestone: M4
+- Size: S
+- Deps: after R91 (the same type and files); with U96; before U32 (it may add a class value to a tier-C member)
+- Spec: R79 (antseal-authored text only in verdict wording); D65 §6 rider 2 (an added class value is additive)
+- Discovered by: wave-38 planning lane P3, 2026-10-17, while measuring U96. Id assigned centrally.
+- Problem: the storage gate's, the D178 environment's and the peer-locality refusals arrive as `StorageError::Network` and are classified `FetchFailureClass::Transport` at the net boundary (`crates/antseal-net/src/live.rs:168`), so every live row reads *"unit N: fetch failed (transport failure) — nothing established either way"* plus an Inconclusive line; the handler never reads `ReadOnlyBackend::degraded()` (`crates/antseal-cli/src/commands.rs:1040-1053`). D191's prefix edit cannot reach it.
+- Do: rule between a third closed class (e.g. `not-connected`, additive, one R18 wording row) and a section-level "no connection was made" line, given the kind is not a type at the net boundary.
+- Accept:
+  - A `verify --live` run whose client is refused names the refusal in human output and in `--json`, asserted by message; a plant restoring today's classification reddens it.
+- Notes: **[2026-10-18, wave 38 — two restatements for this row's scope.]** Lane L-NET found two sentences that still describe a failed connection as an unreachable network: `verify_host.rs:449` (*"A backend that cannot reach the network — `UnreachableBackend`, which a failed connection degrades to"*) and `antseal-net/src/error.rs:140-142` (`StorageError::Network`, *"timeouts, unreachable peers, RPC transport errors"*, silent on the refusals that travel in it by design). U96 changed `degrade`'s words (D191), not these.
+
+### R99 — Four more `pub const fn token()`s in the verify core have no production caller
+- Milestone: M4
+- Size: XS
+- Deps: after R91 (which deletes the fifth)
+- Spec: R91 Accept clause 2's rule, applied to the whole family
+- Discovered by: wave-38 planning lane P3, 2026-10-17. Id assigned centrally.
+- Problem: `LiveBlobOutcome::token()` (`crates/antseal-core/src/verify/orchestration.rs:346`), `HeadlineImpact::token()` (`overlay.rs:384`), `OverlayOutcomeClass::token()` (`:466`) and `AggregateDelta::token()` (`:579`) are called only by tests; D190 deleted `FetchFailureClass::token()` under R91's Accept, so the family now has two patterns.
+- Do: rule the house pattern once — keep each as public API with a `serde == token` assertion, or delete all four — and apply it.
+- Accept:
+  - Every class enum on verify's JSON path follows the one ruled pattern, asserted per type or by absence.
+- Notes: **[2026-10-17, wave 38 — one more member for the ruling.]** Lane L-VOCAB measured that antseal-net's own report types (`PersistenceOutcome`, `LiveCheckReport`, `PersistenceReport`) serialize with serde's defaults, PascalCase and externally tagged, around a class that D190 made kebab: `{"FetchError":{"class":"transport"}}`. Nothing serializes them on a production path today; rule their casing with the house pattern, before any of them gains a machine consumer.

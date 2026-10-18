@@ -53,7 +53,9 @@ pub enum Idempotency {
     SafeToRepeat,
     /// Repeating the request after it may have been delivered would create a
     /// second server-side effect. A13's calendar submit and A10's TSA POST:
-    /// pre-send failures are still retried, ambiguous ones are not.
+    /// pre-send failures are still retried, ambiguous ones are not, and
+    /// neither is an HTTP `429` (A140) — a server that said "too many
+    /// requests" is not asked again 200 ms later.
     AtMostOnceAfterSend,
 }
 
@@ -126,10 +128,24 @@ pub fn classify(error: &AnchorHttpError, idempotency: Idempotency) -> RetryVerdi
         AnchorHttpError::ReceiveTimeout { .. } | AnchorHttpError::Transport { .. } => ambiguous,
 
         // A complete response arrived, so the request certainly *was*
-        // delivered — but a 429/503 is the server saying it declined to act
-        // on it, which is as good as never having received it.
+        // delivered — but a 503 is the server saying it declined to act on
+        // it, which is as good as never having received it: retried under
+        // both classes.
+        //
+        // A 429 is a decline too, but one made *because of the request
+        // rate* (A140, D193 R5; D90 §6.3's 429 row is amended to match).
+        // For an at-most-once POST — a TSA token request or a calendar
+        // submit — a re-send 200 ms later cannot satisfy a published spacing
+        // rule (Sectigo ~15 s) and may spend a daily quota (SwissSign
+        // ~10/day), so it stops and the refusal is reported once. A
+        // `SafeToRepeat` read keeps D90's retry. `Retry-After` is not
+        // parsed: whether to honour it is not decided.
         AnchorHttpError::Status { status, .. } => match *status {
-            429 | 503 => RetryVerdict::Retry,
+            429 => match idempotency {
+                Idempotency::SafeToRepeat => RetryVerdict::Retry,
+                Idempotency::AtMostOnceAfterSend => RetryVerdict::Stop,
+            },
+            503 => RetryVerdict::Retry,
             500..=599 => ambiguous,
             _ => RetryVerdict::Stop,
         },
@@ -150,7 +166,8 @@ mod tests {
     }
 
     /// Every arm of the error enum, under both idempotency classes, against
-    /// D90 §6.3's table read directly. This is the half of the table that a
+    /// D90 §6.3's table read directly — with A140's amendment: a `429`
+    /// stops under `AtMostOnceAfterSend`. This is the half of the table that a
     /// stub server cannot exercise cheaply — a real `HostNotFound` needs DNS,
     /// a real 503 needs a server — so it is asserted here as a pure function
     /// and the loop tests below prove the loop *uses* it.
@@ -264,7 +281,11 @@ mod tests {
                 Stop,
             ),
             // ── status-coded ──────────────────────────────────────────────
-            (status(429), Retry, Retry),
+            // A140 (D193 R5): a `429` is a decline made *because of the
+            // request rate*, so an at-most-once POST — a TSA token request
+            // or a calendar submit — is not re-sent 200 ms later. A read
+            // keeps D90's retry, and `503` (an outage) keeps it under both.
+            (status(429), Retry, Stop),
             (status(503), Retry, Retry),
             (status(500), Retry, Stop),
             (status(502), Retry, Stop),

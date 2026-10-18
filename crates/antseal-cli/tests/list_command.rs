@@ -1343,23 +1343,40 @@ fn a_blocked_work_names_the_refusal_and_a_workaround_that_runs() {
     );
 
     let text = rendered(&listing);
+    // D185 R6: the pre-pay way out names `antseal abandon` with the id this
+    // row's header prints (the work-id: a blocked work has its manifest).
+    let id: String = row
+        .work_id
+        .expect("a blocked work has its manifest")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     for needle in [
         "  CANNOT BE FINISHED: chapter one.txt was selected for splitting by --split blank-lines \
          and is also matched by --no-fine-tree '*.txt', and antseal refuses that pair (D24). D45 \
-         makes the recorded flags this work's identity, so no re-run can change them.",
-        "  nothing was paid, so only the local staged copy is lost. To seal this material, move \
-         or copy the file(s) to a different path and seal them there with either --split or \
-         --no-fine-tree dropped: re-running the recorded command is refused, and re-running the \
-         same paths with different flags is refused too. This build has no command that discards \
-         a staged work.",
+         makes the recorded flags this work's identity, so no re-run can change them."
+            .to_owned(),
+        format!(
+            "  nothing was paid, so only the local staged copy is lost. To seal this material, \
+             discard this work with `antseal abandon {id}` and seal the same files again with \
+             either --split or --no-fine-tree dropped, or move or copy the file(s) to a different \
+             path and seal them there with either flag dropped: re-running the recorded command \
+             is refused, and so is re-running the same paths with different flags while this \
+             work is kept."
+        ),
         "  recorded invocation, refused — do not re-run: antseal seal 'chapter one.txt' --title \
-         'legacy work' --split blank-lines --no-fine-tree '*.txt' --network devnet",
+         'legacy work' --split blank-lines --no-fine-tree '*.txt' --network devnet"
+            .to_owned(),
     ] {
         assert!(
-            text.contains(needle),
+            text.contains(&needle),
             "the blocked row must carry, verbatim:\n{needle}\n--- rendered ---\n{text}"
         );
     }
+    assert!(
+        text.starts_with(&format!("{id}  ")),
+        "the id the copy names is the one the row's header prints:\n{text}"
+    );
 
     // The two things it must NOT say: the hint as an instruction, and the
     // clock note that tells a paid user to hurry up and do the impossible.
@@ -1437,6 +1454,105 @@ fn a_blocked_post_pay_work_says_the_payment_cannot_be_recovered() {
         !text.contains("RESUME PROMPTLY"),
         "a work that cannot be finished must not be told to hurry:\n{text}"
     );
+    // D185 R6: the paid branch names `antseal abandon` only to say it
+    // refuses this work — never as a way out.
+    assert!(
+        text.contains("and `antseal abandon` refuses a paid work."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("discard this work with `antseal abandon"),
+        "a paid work is never offered the abandon exit:\n{text}"
+    );
+}
+
+/// **D185 R6 (T2's way forward), measured.** The pre-pay blocked copy says
+/// to discard the work with `antseal abandon <id>` and seal the same files
+/// again with either flag dropped. Kept, the work traps those invocations
+/// (26 — D152 §1.3); abandoned, they run `Fresh`, and `list` stops rendering
+/// the blocked lines.
+#[test]
+fn abandoning_a_blocked_unpaid_work_frees_its_paths_for_either_single_flag() {
+    use antseal_cli::seal_resume::{AbandonConfirm, ResumeDecision, detect, run_abandon};
+
+    let vault = staged_vault(
+        "u41-blocked",
+        "*.txt",
+        &[Shaped {
+            name: "chapter one.txt",
+            bytes: PROSE,
+            matched: true,
+            force_text: false,
+        }],
+    );
+    let id: String = {
+        let listing = listing(&vault);
+        only_row(&listing)
+            .work_id
+            .expect("a blocked work has its manifest")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+    let paths = vec!["/w/chapter one.txt".to_owned()];
+    let recorded = SealShapingFlags {
+        title: Some("legacy work".to_owned()),
+        split_blank_lines: true,
+        force_text: false,
+        no_fine_tree: vec!["*.txt".to_owned()],
+        no_anchor: false,
+        force_degraded: false,
+    };
+    let split_only = SealShapingFlags {
+        no_fine_tree: Vec::new(),
+        ..recorded.clone()
+    };
+    let opt_out_only = SealShapingFlags {
+        split_blank_lines: false,
+        ..recorded
+    };
+    for shaping in [&split_only, &opt_out_only] {
+        let err = detect(&store, NetworkId::Devnet, &paths, shaping)
+            .expect_err("kept, the work traps the same paths");
+        assert_eq!(
+            err.class(),
+            antseal_cli::error::ErrorClass::ResumeFlagMismatch
+        );
+    }
+
+    let mut rng = ChaCha20Rng::from_seed([0x89; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+    let report = run_abandon(
+        &store,
+        &journal,
+        &id,
+        AbandonConfirm {
+            yes: true,
+            machine_mode: true,
+        },
+        |_| {},
+        |question: &str| panic!("asked under --yes: {question}"),
+    )
+    .expect("an unpaid blocked work is abandoned");
+    assert!(!report.already);
+
+    for shaping in [&split_only, &opt_out_only] {
+        let decision = detect(&store, NetworkId::Devnet, &paths, shaping)
+            .expect("discarded, it traps nothing");
+        assert_eq!(
+            decision,
+            ResumeDecision::Fresh {
+                incomplete_works: 0
+            }
+        );
+    }
+    let text = WorkListing::gather(&store)
+        .expect("listing")
+        .render()
+        .join("\n");
+    assert!(!text.contains("CANNOT BE FINISHED"), "{text}");
 }
 
 // ── T2: the false-positive control ───────────────────────────────────

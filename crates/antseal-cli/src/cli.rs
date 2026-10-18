@@ -2,13 +2,17 @@
 //!
 //! This module is the one place the CLI surface is defined. The command
 //! tree below enumerates **exactly** the canonical surface of MVP-SPEC.md
-//! line 149 plus the two recorded 2026-08-01 surface amendments:
+//! line 149 plus the recorded surface amendments:
 //!
 //! - the global `--passphrase-fd <n>` (D41 — the non-interactive
 //!   passphrase channel; secrets never transit argv or the environment);
 //! - the D39 `init` flag set (`--wallet`, `--wallet-key-fd`, `--kdf`,
 //!   `--wrap`) — the spec's canonical list names no `init` flags, and the
-//!   additions are justified in docs/decisions/D39-init-interaction-model.md.
+//!   additions are justified in docs/decisions/D39-init-interaction-model.md;
+//! - the top-level `abandon <ID> [--yes]` (D185, 2026-10-17 — U41): the one
+//!   way to discard an interrupted seal nothing has been paid for, which
+//!   D45 deferred to a deliberate surface decision. It is the last variant
+//!   of [`Command`], so the spec's own commands keep their line-149 order.
 //!
 //! Nothing else joins the surface. Later-milestone commands parse today and
 //! return a typed "not implemented until M<x>" error (`crate::error`), so
@@ -205,6 +209,27 @@ pub enum Command {
     Vault {
         #[command(subcommand)]
         command: VaultCommand,
+    },
+
+    /// Discard an interrupted seal that nothing has been paid for, so its
+    /// files can be sealed afresh (asks for confirmation)
+    //
+    // D185: a top-level verb amending U1's surface by record (the D39 §3 /
+    // D41 precedent), appended after `vault` so the line-149 commands keep
+    // their order. It reaches `seal_resume::abandon_pre_pay` unchanged,
+    // which refuses a complete or a paid work in its own words; `--yes` is
+    // its D51 destructive-confirm channel (`machine::spec`).
+    Abandon {
+        /// The interrupted seal: its seal id (32 hex digits, as the
+        /// interrupted seal's messages print it) or its work id (64 hex
+        /// digits, as `list` prints it)
+        #[arg(value_name = "ID")]
+        id: String,
+
+        /// Confirm in advance (for scripts; what will be discarded still
+        /// prints)
+        #[arg(long)]
+        yes: bool,
     },
 }
 

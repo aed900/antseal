@@ -105,9 +105,10 @@ impl Endpoint {
     /// Parse and validate `url` against `tls`.
     ///
     /// This is A49's config-load entry point: U4's `[verify]
-    /// bitcoin_endpoints` / `arbitrum_endpoints` overrides are validated
-    /// here, so a plain-`http://` override is refused when the config is
-    /// read rather than when the first `verify --online` runs.
+    /// bitcoin_endpoints` and U44's per-network `[verify.<network>]
+    /// rpc_endpoints` overrides are validated here, so a plain-`http://`
+    /// override is refused when the config is read rather than when the
+    /// first `verify --online` runs.
     ///
     /// # Errors
     ///

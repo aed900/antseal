@@ -164,9 +164,9 @@ one-directional and this section is the checklist.
 >       since the last release — which root was appended and which
 >       organisation that admits.
 > - [ ] **Quarantine disclosure.** Any documented TSA alternate whose root is
->       quarantined is named in the release notes together with the
->       consequence: configuring it produces a pre-payment seal abort, not a
->       weaker bundle.
+>       quarantined is named in the release notes with both consequences: with
+>       no pinned authority beside it, the seal aborts before payment (not a
+>       weaker bundle); beside one it counts zero, and every seal is degraded.
 
 ## 7. Revisit triggers
 

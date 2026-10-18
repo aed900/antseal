@@ -861,3 +861,27 @@ step 2 follows).
 **(l)** No new checker, no new required context, and no `check-traceability.py`
 change: R2–R7 are product behaviour and are policed by R9's tests and by the
 existing `COPY_SCAN` reach into `crates/antseal-cli/tests/snapshots/`.
+
+## Addendum — 2026-10-17 (wave 38, D185 §2 R6, R9): §4(3)'s blocked-work copy gets its way forward
+
+§4(3) recorded that R5's last sentence — *"This build has no command that
+discards a staged work"* — becomes false the day `U41` lands, and §5(c)
+prescribed a pointer on `U41`'s row. That registrar edit was never executed:
+at `23f3093`, `U41`'s register row (`TODO.md:571`) and its entry
+(`tasks/U.md:654-666`) carry no `D152`, and *"second trap this row exits"*
+occurs nowhere in `TODO.md`, `tasks/` or the instrument ledger.
+
+D185 lands `U41` as a top-level `antseal abandon <ID> [--yes]` and rules this
+record's copy (`listing.rs:1477-1480`; golden `list-blocked-work.txt:6`, `:13`;
+asserted verbatim at `tests/list_command.rs:1353`):
+- the **pre-pay** branch names `antseal abandon <id>` as the way to discard the
+  unpaid work;
+- the **post-pay** branch keeps its payment sentence and adds that
+  `antseal abandon` refuses a paid work, because the engine never abandons a
+  paid work on request. For a paid, blocked work the only exit stays the one
+  this record found: seal the material again from a copy at a different path.
+
+The orchestrator executes §5(c)'s edit onto `U41`'s row in the act that ticks
+it. This record's finding that a blocked work had no exit at all (§5(a):
+*"There is no `abandon` subcommand"*) was true when written and stays as
+written.

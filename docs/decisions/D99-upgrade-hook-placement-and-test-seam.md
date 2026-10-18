@@ -841,3 +841,31 @@ Q116) so the two lanes do not collide.
 - Do: correct the sentence to name the real cost.
 - Accept: the doc names `VaultLockHeld`/exit 15; the decision to stay lock-free
   is unchanged.
+
+## Addendum — 2026-10-17 (wave 38, D189 §2 R5): the exit-lateness bound, the `U58` id, and the D41 citation
+
+D189 (`U60`) gives the hook its off switch, `[anchors] opportunistic_upgrades =
+true|false` (default on), which needed bare booleans in the config subset. In
+doing so it measured three things in this record:
+
+1. **R8's and §8's ≈6 s omits a step.** R8 (`:588-596`) and §8 (`:748-752`)
+   state the exit lateness as `budget.total + one in-flight call`, ≈ 6 s. After
+   a poll returns an upgrade, `confirm_header` runs with no budget check
+   (`ots/engine.rs:525-545` at `23f3093`): two endpoints concurrently, each
+   making two sequential requests at the 3 s opportunistic timeout. The derived
+   ceiling is ≈ 3 + 3 + 6 = **12 s**. It is derived from code, not measured:
+   with Q16's gate armed no offline run can reach it. `A141` owns the bound,
+   and D189 prints no figure in `docs/config.md` or `upgrade_hook.rs`.
+2. **§9's `U58` is `U60`.** The entry at `:800-814` was registered as `U60`;
+   the id `U58` now names a different row (`tasks/U.md:836`). The off switch §8
+   asked for is D189's key.
+3. **§9's *"Not an env var: D41's channel discipline puts operator preferences
+   in config"* (`:810-811`) is a mis-citation.** D41 rejects an
+   environment-variable **passphrase** because `/proc/PID/environ` keeps a
+   secret for the process lifetime; it says nothing about non-secret
+   preferences. D189's grounds for a key over a variable are validation at
+   load, discoverability, and travelling with `vault export`; the variable's
+   one advantage, per-invocation scope, is recorded as a residual.
+
+R8's placement ruling, its machine-mode reasoning and §8's trigger stand. The
+text above stays as written.

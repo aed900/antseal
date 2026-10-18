@@ -63,7 +63,7 @@
   1. **No contract/RPC-default duplication into config** — the entry's "per-network contracts/RPC endpoints (schema from S)" is implemented as: config consumes S5's pure `NetworkId`/`NetworkConfig` (antseal-net default features; containment asserted — no alloy/ant-core in cli's normal tree), chain ids/contracts/default-RPCs stay net's pinned constants, and config carries only a per-network `rpc_url` override SLOT (`[networks.<id>]`; consumer S6). Deviation per the updated lane direction: a hand-edited contract address is the drift hazard S5's evmlib byte-equality test exists to prevent.
   2. **Precedence made mechanically possible**: `--network` now parses as `Option` (a clap-level default would make an explicit `--network arbitrum-one` indistinguishable from absence) — a deliberate parse-semantics amendment to the frozen surface, help snapshot re-blessed (the visible change: the default note moves into the flag's help text). `effective_network` = flag > config > built-in arbitrum-one; the table test includes the explicit-flag-equals-default row only Option makes expressible; the U3 envelope's `network` field now reports the config-resolved value (proven end-to-end by spawned-binary tests).
   3. **Hand-parsed strict TOML subset** (no new deps, per the lane brief): sections, string keys, single-line string arrays, both quote forms, no escapes/ints/multiline/inline-tables — everything outside the subset is a per-line typed error, never a misparse; grammar documented in-module and in docs/config.md. **New U2 class `malformed-config` = exit 17** (the Accept's "distinct exit code"; table/ALL/snapshot updated in the same commit): missing file = defaults, malformed = hard error for EVERY command (silently dropped overrides are the config-tamper failure mode D42 names). Unknown top-level keys/sections WARN on stderr (forward compat); invalid values for recognized keys (unknown network id, non-http(s) URL, wrong type, duplicates) are hard errors.
-  4. Reserved slots landed with validated shapes: `[anchors] tsa_urls` (U26/M2 — the URL-shape check the U26 Accept wants exists now), `[verify] bitcoin_endpoints`/`arbitrum_endpoints` (U30/M3). `initial_config_text` ships for U11's init writer. The D42/D47 cross-test: an exported config survives import byte-identically AND still loads + resolves.
+  4. Reserved slots landed with validated shapes: `[anchors] tsa_urls` (U26/M2 — the URL-shape check the U26 Accept wants exists now), `[verify] bitcoin_endpoints`/`arbitrum_endpoints` (U30/M3). `initial_config_text` ships for U11's init writer. **[AMENDED 2026-10-17 by D188 (`U44`) — the flat `arbitrum_endpoints` shape was wrong for its only named consumer, A17's per-network pairs: it is replaced by `[verify.<network>] rpc_endpoints`, and the flat key is now refused at load (exit 17).]** The D42/D47 cross-test: an exported config survives import byte-identically AND still loads + resolves.
 - Notes: **[2026-10-15, wave 36 — `config::load()` runs more than once per invocation; a product shape, not a defect row.]** `main_entry` loads `config.toml` once before dispatch to resolve the envelope's network, and `seal`, `verify` and now `restore` (lane RC1a, for the `[networks.arbitrum-one] bootstrap` override) each call `config::load()` again in their handlers; `docs/config.md`'s *resolved once, before any command runs* is true of the envelope member only. Threading the loaded `Config` through `run::run` would make *once* literal and remove the three re-reads (RC1a §9, RC2a §8, DOCS §8). The malformed-config class (17) fires on the first load, so no behaviour differs.
 
 ### U5 — Design vault store layout, versioned header, and crash-safe file discipline
@@ -324,7 +324,7 @@
   - resume-pre-pay path re-prompts consent unconditionally through the ONE merged plan+consent render (snapshot); resume-post-receipt path skips consent and calls only `finalize_batch` (mock-asserted)
   - D45 matching table exercised: exact-match auto-resume; overlap-not-exact and flag-mismatch each produce their distinct error naming the mismatch; disjoint runs fresh with the notice
   - declining the merged re-consent leaves the work incomplete and resumable; the explicit abandonment action marks it abandoned (two different outcomes, both tested)
-  - changed-source and missing-staged-bytes scenarios produce the two distinct messages/exit codes; neither ever re-encrypts (asserted via C/S mock)
+  - changed-source and missing-staged-bytes scenarios produce the two distinct messages/exit codes; neither ever re-encrypts (asserted via C/S mock) **[2026-10-17, D187 §2 R4 — the changed-source half is SUPERSEDED by S11 and D45's stronger property: a resume re-uploads the journaled staged bytes and never reads a source file, so a changed source is not an abort, and `ResumeSafetyReason::SourceChanged`, which nothing constructed, is deleted. The missing-staged-bytes half stands.]**
   - abandoned work is marked in the record store and shown by `list` as incomplete/abandoned
 - Notes: Consent-on-resume decided per **D36** (unconditional pre-pay re-consent) and **D45** (detection/plan) — no longer a U inference; recorded in help/docs (`seal` help documents implicit resume and the exact-match rule).
 - **[2026-08-02 EXECUTED (M1 lane m1-ux)]** The resume half landed with U13 (D45 detection, the plan render, the merged consent pass). This closed the **abandonment** half and the aborts. Execution notes:
@@ -664,6 +664,7 @@
   - `cli-surface.help.txt` re-blessed deliberately, with the diff justified
 - Notes: The engine, its three safety rules and its tests already exist and are green; this is the surface event D45 asked to be taken on its own.
 - Notes: **[2026-10-15, wave 36 — ordering note; the row's text is unchanged.]** The `TODO.md` row's `after U17,U32` fails rule 7's edge test (D154 §2 R10): no clause of this row's `Accept` can be named that cannot be written until `U32`'s `Do` has landed, and this entry's own Deps line says the true relation — *U32 freezes whatever this adds* — which is `before U32`, a deadline. Recorded here rather than rewritten, with the planning lane's finding (wave 36, P7).
+- Notes: **[2026-10-17, wave 38 — TICKED (D185, lane L-ERR1).]** Captures on the `TODO.md` row; D185 §6 records what was built and every deviation.
 
 ### U42 — Decide `ResumeSafetyReason::SourceChanged`'s disposition (keep-and-document vs remove)
 *(discovered 2026-08-02 by U17)*
@@ -673,6 +674,7 @@
 - Spec: line 145
 - Do: The variant is constructed by nothing, and that is the *stronger* outcome rather than a gap: S11 made resume never open a source file, so a changed source is a non-event and S18 case (3) proves a resume with edited sources restores the original bytes. It is currently kept, documented on the variant, and exemplified in the frozen `cli-errors.display.txt` as the class any future path that reads plaintext against a journaled nonce would need. Decide whether a frozen, exemplified, never-constructed class earns its surface — the same question R57 asks — and apply the same answer to both.
 - Accept: a recorded decision; if removed, the class table, `ALL`, the exemplar and the snapshot move together in one change.
+- Notes: **[2026-10-17, wave 38 — TICKED (D187 §2 R3, lane L-ERR1).]** Captures on the `TODO.md` row; D187 §6 records what was built and every deviation.
 
 ### U43 — Amend D50's dependency assertion to something true
 *(discovered 2026-08-02 by U8)*
@@ -720,9 +722,10 @@
   - `[anchors] ots_calendars` with two entries reaches A13's mock as exactly those; absent config uses `DEFAULT_OTS_CALENDARS`; a malformed URL is the existing `malformed-config` exit 17 before any pipeline work.
   - `[verify.arbitrum-one] rpc_endpoints` and `[verify.arbitrum-sepolia] rpc_endpoints` resolve to distinct pairs; `[verify.devnet]` is a hard error naming the reason; an unknown network name reuses the existing `[networks.<id>]` error wording.
   - A one-entry or three-entry verify-RPC override is a config error at load, not a silent overlay.
-  - The **removed** flat `[verify] arbitrum_endpoints` key produces the existing unknown-key **warning**, not exit 17 — so an early adopter's config degrades rather than breaking. Asserted by test, because this property is the whole reason the removal is safe.
-  - `initial_config_text` (U11's init writer) and the D42/D47 export-round-trip test both cover the new shape.
+  - ~~The **removed** flat `[verify] arbitrum_endpoints` key produces the existing unknown-key **warning**, not exit 17 — so an early adopter's config degrades rather than breaking. Asserted by test, because this property is the whole reason the removal is safe.~~ **[RESTATED 2026-10-17 by D188 §2 R5 — the warning is reversed: D55 §6's premise *"nothing consumes it"* fell when `U30` wired the key, and a warned override would probe the very endpoints the user configured away from (D180's reasoning).]** The removed flat `[verify] arbitrum_endpoints` key is **refused at load** (exit 17), raised on the key before its value is parsed, naming the key, the table, the line and the replacement tables, never the value. Asserted by test.
+  - ~~`initial_config_text` (U11's init writer) and the D42/D47 export-round-trip test both cover the new shape.~~ **[RESTATED 2026-10-17 by D188 §2 R7 — `init` writes no slot.]** The D42/D47 export round trip carries the new keys and they load; `initial_config_text` still parses with zero warnings.
 - Notes: The U4 execution note (2026-08-01, item 4) records `[verify] arbitrum_endpoints` as landed "with a validated shape"; the shape is wrong for its only named consumer. Amend that note rather than leaving it to contradict this task. Discovered by D54/D55.
+- Notes: **[2026-10-17, wave 38 — TICKED (D188, lane L-CFG).]** Captures on the `TODO.md` row; D188 §6 records what was built and every deviation.
 
 ### U46 — Persist the TSA request nonce in the anchor capture record, and mark it public-by-construction
 - Milestone: M2
@@ -774,6 +777,7 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: the `anchors` object is documented by exactly one committed example. A consumer branching on `failure_class: null` versus a string has nothing to rely on. Give it a shape assertion or a documented schema, and decide whether it falls under D65's stability commitment. **[D65, 2026-08-12]** Scope answered: `seal --json`'s `anchors` object is **tier C** — reviewed by the committed fixture, not promised until U32. The null question is answered *now* and at every tier: `failure_class` is **always present**, `null` when the endpoint succeeded and a kebab-case string otherwise; absence is never a missing key (D65 §6 rider 1, §7). This row's remaining deliverable is the **presence-only key assertion** over the `anchors` object and its `endpoints[]` rows.
 - Accept: every field's presence rule is asserted by a fixture, including the null/absent distinction; the D65 scope decision is recorded (tier C, D65 §9.2); the presence rule is asserted by a fixture including the `null`/string distinction on `failure_class`.
+- Notes: **[2026-10-17, wave 38 — TICKED (D65 §8.2/§9.2, lanes L-CFG, L-ANCHOR and L-VOCAB).]** Captures on the `TODO.md` row; no record, because an existing one rules it (wave-38 rulings).
 
 ### U51 — The seal summary prints the seal-side TSA count A72 says over-counts
 - Milestone: M2
@@ -790,6 +794,7 @@
 - Discovered by: **the U22 lane** (2026-08-06).
 - Do: `AnchorStageConfig::from_config` passes `None` for calendars. When U44 lands the `[anchors] ots_calendars` key, a user setting it will be silently ignored unless that second argument is wired in the same change. A config key that parses and does nothing is worse than one that does not exist.
 - Accept: a configured calendar list reaches the stage, asserted on the stub's request counters the way U26's TSA list is; the empty/absent case still yields D54's defaults.
+- Notes: **[2026-10-17, wave 38 — TICKED (D188 §2 R3, lane L-CFG).]** Captures on the `TODO.md` row; D188 §6 records what was built and every deviation.
 
 ### U53 — The `--upgrade` write path's kill-and-resume matrix
 - Milestone: M2
@@ -859,6 +864,7 @@
 - Do: the hook adds up to `budget.total` plus one in-flight call to every vault-holding invocation's **exit**, in every mode. The post-output placement is what makes that invisible to a human, and it buys a program nothing: a script's `$(antseal list --json)` waits for process exit regardless. U1's canonical CLI surface is frozen, so no flag is available. Add an `[anchors] opportunistic_upgrades = false` key through U4's override-slot mechanism, validated at load the way `tsa_urls` is, defaulting to on. **A config key, not an env var** — D41's channel discipline puts operator preferences in config.
 - Accept: the key parses, defaults to on, is honoured by the hook, and appears in the config documentation; the hook's debug trace names the key when it is what suppressed the pass.
 - Notes: measured rather than feared, and the measurement cuts both ways. On a four-work vault the U24 lane measured median exit latency at **1378 ms with the hook against 1377 ms without** (nine runs each) — a delta inside noise, because the ~1.35 s Argon2id unlock dominates. The ~6 s figure is the **budget ceiling**, which an invocation reaches only when polls actually go out; that is the case a scripted consumer hits and cannot opt out of. **The measurement's conditions matter and are now recorded** (they were left unstated when this entry was first written): those nine runs exercised the **A42-refused path** — the stored artifact's upgrade URI was refused by the allowlist, so no request was issued and no socket opened. The 1 ms delta is therefore the cost of *deciding not to poll*, not the cost of polling, and it is the right figure for the common case of a vault whose works are already attested. It is **not** evidence about the ceiling, and no offline measurement can be: with the Q16 gate armed a poll is refused before DNS, so a test suite can never observe the case this task exists to let a user switch off. D99 §9 files this as **U58**; reconciled to U60 at bookkeeping.
+- Notes: **[2026-10-17, wave 38 — TICKED (D189, lane L-CFG).]** Captures on the `TODO.md` row; D189 §6 records what was built and every deviation.
 
 ### U61 — `WorkStore::list_anchors` sorts lexically, and only one of its two consumers repairs it
 - Milestone: M2
@@ -892,6 +898,7 @@
 - Discovered by: **the U23 lane** (2026-08-07).
 - Do: `UpgradeConfig::from_config` hardcodes `DEFAULT_OTS_CALENDARS` for the allowlist-widening parameter, while `AnchorStageConfig::from_config` passes `None` for the same list. Two constructors reading the same config and answering the same question differently is how the `[anchors] ots_calendars` key U44 will land comes to mean one thing at seal time and another at upgrade time. Give both sites one expression of the policy, and land it **with** U44/U52 rather than separately — a third spelling arriving in the same window is the failure mode this entry is trying to prevent.
 - Accept: a configured calendar list reaches both the anchor stage and the upgrade path, asserted at each; absent config yields D54's defaults at both.
+- Notes: **[2026-10-17, wave 38 — TICKED (D188 §2 R3, lane L-CFG).]** Captures on the `TODO.md` row; D188 §6 records what was built and every deviation.
 
 ### U65 — One undecodable anchor record makes the whole vault unlistable, with a message that accuses the passphrase
 - Milestone: M2
@@ -1400,5 +1407,87 @@
 - Problem: `backend::degrade` (`crates/antseal-cli/src/backend.rs:732-759`) turns a failed read-only connection into an `UnreachableBackend` whose every fetch fails with *"the Autonomi network could not be reached: {detail}"*. Two of the errors it carries are refusals, not unreachability: the storage gate (D173) and `S42`'s environment refusal (D178). Measured: *"network failure: unit 0 could not be fetched from the network (network error: the Autonomi network could not be reached: refusing to start a storage client: …"*. The refusal text is correct and the exit class (23) is right; the prefix tells the user the network failed when antseal declined to start.
 - Do: word the prefix by the error's kind (a refusal names itself; an unreachable network or the connect bound keeps today's words), keeping D170 §2 R2's degrade and the network class.
 - Accept:
-  - A spawned `reveal` refused by `S42`'s environment check prints no *"could not be reached"*, and a dead-loopback `reveal` still does — both asserted by message.
+  - ~~A spawned `reveal` refused by `S42`'s environment check prints no *"could not be reached"*, and a dead-loopback `reveal` still does — both asserted by message.~~ **[RESTATED 2026-10-17 by D191 §2 R2 — the dead-loopback control is struck as unsatisfiable: D170 §2 R2 measured that a dead or empty bootstrap connects `Ok` and never reaches `degrade`.]** A spawned `reveal` refused by `S42`'s environment check prints the neutral prefix and no *"could not be reached"*; the connect bound's degrade names the bound (asserted in-process).
   - A plant restoring the single prefix reddens the refusal row by message.
+- Notes: **[2026-10-17, wave 38 — TICKED (D191, lane L-NET).]** Captures on the `TODO.md` row; D191 §6 records what was built and every deviation.
+### U97 — The `seal` gate abort throws away the per-endpoint failures, so a user whose TSAs answered with tokens that can never count is told to wait for a TSA to be reachable
+- Milestone: M4
+- Size: S
+- Deps: with A97 (the same message, the same snapshot line); before U32 (the error-display snapshot freezes)
+- Spec: U22's `Do` — *"Anchor failures always downgrade the seal report explicitly, never silently"*; A20 (the gate); D65 (`message` is human copy at every tier)
+- Discovered by: wave-38 planning lane P4, 2026-10-17, while measuring A136 and A97 (PS reached the same conversion independently). Id assigned centrally.
+- Problem: `crates/antseal-cli/src/pipeline/error.rs:273` maps `SealError::AnchorGate(_) => CliError::AnchorGateAbort`, a unit variant, so `AnchorGateError::MinimumAnchor { failures }` is discarded and exit 22 prints only the fixed sentence at `crates/antseal-cli/src/error.rs:678-683` (frozen as `cli-errors.display.txt:53-54`): *"… re-run when a TSA is reachable, or pass --force-degraded …"*. A user whose only TSAs return tokens that verify but never count (SwissSign, GlobalSign, Certum) is told advice that can never succeed; `docs/user/timestamp-authorities.md:296-306` and `docs/threat-model.md:1960-1962` describe a message the CLI never prints; and the `untrusted-chain` detail renders a Rust `Debug` name, `(InternallyConsistentOnly)` (`crates/antseal-anchor/src/tsa.rs:194`), where the frozen vocabulary is `internally-consistent-only`.
+- Do: D194 R1 — carry the failures into the CLI error (one line per endpoint, its class named, the trust state by its frozen name, an `untrusted-chain` line saying such a token never counts), keep the `--json` envelope's shape (the lines ride in `message`), re-bless the snapshot, correct the two documents.
+- Accept:
+  - An all-fail seal over a stub TSA serving a real unpinned token prints that endpoint with `[untrusted-chain]` and `internally-consistent-only`, asserted by message.
+  - A plant restoring the unit mapping reddens that test by message.
+  - `docs/user/timestamp-authorities.md` §5 and `docs/threat-model.md` quote what the CLI prints.
+- Notes: **[2026-10-18, wave 38 — TICKED (D194 §2 R1, lane L-ERR2).]** Captures on the `TODO.md` row; D194 §6 records what was built and every deviation.
+
+### U98 — `verify --online` discloses every configured endpoint's full URL, so an RPC URL carrying an API key reaches the overlay, `--json` and the load-time refusals
+- Milestone: M4
+- Size: S
+- Deps: after U30 (which wired `verify --online`); before Q31 (the first release)
+- Spec: D180 §2 R1 ground 2 (an input that in its common real form carries a credential, printed verbatim by error paths); D55 §2 (keyed Arbitrum RPCs)
+- Discovered by: wave-38 planning lane P2, 2026-10-17, while planning U44. Id assigned centrally.
+- Problem: `OnlineEndpoints::identities()` returns each endpoint's `url()` (`crates/antseal-cli/src/verify_host.rs:241-251`) into core's `ProbeEndpoints` (*"Every endpoint the run consulted, in disclosure order"*, `crates/antseal-core/src/verify/overlay.rs:205-206`), so a keyed URL appears in the human overlay and in `--json`; `[verify]` load-time refusals echo the URL (`EndpointError`'s Display, `crates/antseal-anchor/src/http/endpoint.rs:246,254`). D188 R5 removes the echo for `rpc_endpoints` refusals only.
+- Do: rule — disclose the origin only (`scheme://host[:port]`) and refuse without echo at load, or document "never put a credential in a `[verify]` URL" — and make every surface agree.
+- Accept:
+  - A configured endpoint whose URL carries a query-string key is consulted and never printed with that key in human output, `--json` or a load-time refusal (canary asserted absent), or the ruled documentation sentence exists where the keys are configured.
+
+### U99 — A URL refused for carrying credentials is printed with them
+- Milestone: M4
+- Size: XS
+- Deps: with U98 (the same disclosure family); before Q31 (the first release)
+- Spec: D180 §2 R1 ground 2 (an input that in its common real form carries a credential, printed verbatim by error paths); D188 §2 R5 (refusals that name the entry, never the value)
+- Discovered by: wave-38 lane L-CFG, 2026-10-17, while making the URL shape refusal name its entry (D188). Id assigned centrally.
+- Problem: `EndpointError::Invalid`'s Display is `"{endpoint}: not a usable endpoint URL ({reason})"`, with the endpoint as supplied (`crates/antseal-anchor/src/http/endpoint.rs:246`). The config loader's endpoint keys `tsa_urls`, `ots_calendars` and `bitcoin_endpoints` refuse an authority carrying userinfo (`endpoint.rs:148`, *"userinfo is not permitted in an endpoint URL"*), so the refusal prints the `user:password@` it was refused for, on stderr and in the `--json` envelope's `message`. `rpc_endpoints`' refusals already name the entry and never the value (D188 §2 R5).
+- Do: redact the userinfo wherever a refusal can carry it, at the layer that formats it, so that no caller can echo it; or name the entry, as `rpc_endpoints` does.
+- Accept:
+  - A config whose `tsa_urls`, `ots_calendars` or `bitcoin_endpoints` entry carries `user:<canary>@` is refused (exit 17), and the canary is absent from stdout, stderr and the `--json` envelope, asserted through the binary.
+  - A plant restoring the echo reddens that test by message.
+
+### U100 — A misplaced `rpc_endpoints` only warns, so `verify --online` probes the pinned pair the user meant to replace
+- Milestone: M4
+- Size: S
+- Deps: after U44 (which made `rpc_endpoints` per network); before Q31 (the first release)
+- Spec: D188 §2 R5 (the retired flat key refused at load, for the reason quoted below); D180's reasoning
+- Discovered by: wave-38 lane L-CFG, 2026-10-17. Id assigned centrally.
+- Problem: `rpc_endpoints` written flat under `[verify]`, or under `[networks.<id>]`, is an unknown key. The loader warns *"unknown key … — ignored (newer antseal?)"*, and `verify --online` probes the pinned Arbitrum pair. D188 §2 R5 refused the retired flat `arbitrum_endpoints` at load for exactly this harm: *"a warned override probes the very endpoints the user configured away from"*. The same harm sits one key over.
+- Do: decide whether a misplaced `rpc_endpoints` is refused by name at load (exit 17, naming the replacement tables and never repeating the value) or documented, and implement the answer.
+- Accept:
+  - Either a misplaced `rpc_endpoints` under `[verify]` or `[networks.<id>]` is exit 17 naming the key, the table, the line and the replacement tables, with a canary value absent (asserted through the binary); or `docs/config.md` states the warning-only behaviour where the key is documented.
+
+### U101 — `[verify] bitcoin_endpoints` is checked when used, not when the file is read
+- Milestone: M4
+- Size: S
+- Deps: after U44 (D188 put `rpc_endpoints`' check at load); before Q31 (the first release)
+- Spec: D188 §1.6 and §4 (the inconsistency recorded, not fixed)
+- Discovered by: wave-38 planning lane P2, 2026-10-17, recorded in D188 §4 with no owner; proposed as a row by lane L-CFG. Id assigned centrally.
+- Problem: a one- or three-entry `bitcoin_endpoints` list loads. The opportunistic pass then skips with only a debug trace, and `verify --online` and `status --upgrade` with pending work exit 2. A malformed `rpc_endpoints` is a malformed config at load (exit 17, D188), so two endpoint keys under `[verify]` follow two policies.
+- Do: move the count and origin check to load, as for `rpc_endpoints`, or record why `bitcoin_endpoints` differs. `a_hook_that_cannot_start_leaves_the_command_untouched` (`crates/antseal-cli/tests/upgrade_hook.rs`) uses a one-entry list as its vehicle and would need another.
+- Accept:
+  - A one- or three-entry `bitcoin_endpoints` list is exit 17 at load naming the key, the line and the count; or `docs/config.md` states the reason for the difference.
+  - The hook test's property is still asserted, through another vehicle.
+
+### U102 — The global `--network` help enumerates the commands that read no network, and `abandon` is not among them
+- Milestone: M4
+- Size: XS
+- Deps: before U32 (the help snapshot freezes)
+- Spec: U32 (the frozen CLI surface); D185 (the `abandon` verb)
+- Discovered by: wave-38 lane L-ERR1, 2026-10-17, while landing `antseal abandon`. Id assigned centrally.
+- Problem: the global `--network` doc (`crates/antseal-cli/src/cli.rs:71`) ends *"status, show and list read no network"*, and clap renders it in all 13 help blocks of `tests/snapshots/cli-surface.help.txt`. `antseal abandon` reads no network either and is not named; the lane kept the help diff to the ruled +1 line and the new block, so the sentence is now incomplete. Each future command that takes an id meets the same 13-place re-bless.
+- Do: name `abandon`, or rephrase the sentence so that it does not enumerate commands.
+- Accept:
+  - The rendered `--network` paragraph is true of every command that reads no network, read back from the re-blessed snapshot; if it still enumerates, a test asserts its list against the commands that ignore `--network`.
+
+### U103 — The gate's `Entropy` refusal wears the anchor-gate class with a remedy that cannot apply
+- Milestone: M4
+- Size: XS
+- Deps: before U32 (the exit-code table and the error snapshot freeze)
+- Spec: D194 (the gate abort's message); `crates/antseal-anchor/src/gate.rs`'s own reason for the `Entropy` arm
+- Discovered by: wave-38 lane L-ERR2, 2026-10-18, while landing D194. Id assigned centrally.
+- Problem: `AnchorGateError::Entropy` (`crates/antseal-anchor/src/gate.rs:224`) is its own arm on purpose, so that *"this machine cannot produce randomness"* is never triaged as *"the TSAs are down"*. It still maps to `anchor-gate-abort` (22), and since D194 the CLI renders it as the one *"What failed"* entry, followed by the resume sentence: *"…once a timestamp authority returns a token that counts"*. No authority can cure a missing CSPRNG. Before D194 the class was the same and the remedy (*"re-run when a TSA is reachable"*) was equally wrong, so this is not a regression. It is reachable only if the OS randomness source fails.
+- Do: decide whether `Entropy` gets its own class (`internal`, 1, or `io-error`, 4) or keeps 22 with its own way-forward clause, and implement it at the seam, `pipeline/error.rs`'s `gate_refusal_lines` and the `From` arm.
+- Accept:
+  - An `Entropy` refusal's message names no remedy that a timestamp authority could satisfy, asserted by message; if the class moves, `exit_codes.rs`'s table and the snapshot move with it.

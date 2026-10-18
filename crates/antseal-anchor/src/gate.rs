@@ -181,11 +181,23 @@ pub enum AnchorGateError {
     /// core, and `--force-degraded` was not given. Every per-endpoint failure
     /// is carried verbatim, because the operator's next action is to look at
     /// *those URLs*.
+    ///
+    /// **D194 R2:** the text states the resume rules, in words that name no
+    /// command. The work is left staged. The same invocation resumes it, and
+    /// `--force-degraded` cannot be added to that invocation (D45 §1 makes it
+    /// part of the recorded identity). A degraded seal needs the staged work
+    /// discarded first. The CLI's `anchor-gate-abort` message carries the
+    /// same facts with the command names filled in.
     #[error(
         "the minimum-anchor policy was not met: 0 of {attempted} TSA endpoint(s) \
-         produced a verified token, so nothing was paid for.\n{}\n\
-         Re-run when an endpoint recovers, or pass --force-degraded to seal with a \
-         loudly recorded degraded anchor set.",
+         produced a verified token, so the seal stopped before payment: nothing was paid \
+         for or uploaded.\n{}\n\
+         The work is left staged. Running the same invocation again resumes it, quoting \
+         and asking for consent again, once an endpoint produces a verified token. \
+         --force-degraded cannot be added to that invocation, because the seal-shaping \
+         flags are part of the work's recorded identity; to seal with a loudly recorded \
+         degraded anchor set instead, discard the staged work and seal again with \
+         --force-degraded.",
         failures.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")
     )]
     MinimumAnchor {

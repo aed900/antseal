@@ -13,6 +13,7 @@ Commands:
   reveal   Build a self-contained proof bundle disclosing the whole work or chosen units (irreversible disclosure; asks for confirmation)
   verify   Verify a proof bundle offline (third-party; needs no vault and never prompts)
   vault    Encrypted vault backup: export to / import from a single file
+  abandon  Discard an interrupted seal that nothing has been paid for, so its files can be sealed afresh (asks for confirmation)
 
 Options:
       --network <NETWORK>
@@ -395,6 +396,36 @@ Options:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
           - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
           - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
+
+      --json
+          Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)
+
+      --passphrase-fd <FD>
+          Read the vault passphrase from file descriptor <FD> (D41; stdin is `--passphrase-fd 0`). Secrets never transit argv or the environment
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+════ antseal abandon ════
+Discard an interrupted seal that nothing has been paid for, so its files can be sealed afresh (asks for confirmation)
+
+Usage: antseal abandon [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+          The interrupted seal: its seal id (32 hex digits, as the interrupted seal's messages print it) or its work id (64 hex digits, as `list` prints it)
+
+Options:
+      --network <NETWORK>
+          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+
+          Possible values:
+          - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
+          - arbitrum-sepolia: Arbitrum Sepolia (chain 421614): the real deployed test contracts, with storage nodes you run yourself, read from a Sepolia devnet export (ANTSEAL_DEVNET_ENV); no public Autonomi network exists there
+          - devnet:           Local devnet (in-process nodes + Anvil, read from the export ANTSEAL_DEVNET_ENV names; development only)
+
+      --yes
+          Confirm in advance (for scripts; what will be discarded still prints)
 
       --json
           Machine output: exactly one JSON document on stdout; all human copy on stderr; never prompts (machine mode, D51)

@@ -344,3 +344,66 @@ fn calendars_are_submitted_concurrently_not_sequentially() {
         submission.attempts[1].elapsed
     );
 }
+
+// ── U50 (u4): the two OTS `failure_class` spellings no other test pins ──
+//
+// `failure_class` is `seal --json`'s per-endpoint key — always present,
+// `null` on success and a kebab-case string on failure (D65 §9.2) — and after
+// U32 a respelling is a breaking change (D65 §6). `http` and `unparseable`
+// are asserted above; these two were asserted nowhere. Each is minted by the
+// real `submit_to_calendars` path from a calendar body crafted to reach it,
+// and pinned on the typed failure and on the rendered report line.
+
+/// Submit `body` as one calendar's whole response; return that attempt's
+/// failure and its degradation-report line.
+fn one_failing_calendar(body: &[u8]) -> (CalendarFailure, String) {
+    let calendar = stub(&pending(body));
+    let submission = submit_to_calendars(&client(), &fixtures::DIGEST_A, &[calendar.base_url()]);
+    assert_eq!(calendar.requests().len(), 1, "the stub was not contacted");
+    assert_eq!(submission.attempts.len(), 1);
+    let failure = submission.attempts[0]
+        .outcome
+        .clone()
+        .expect_err("this calendar must fail");
+    let report = submission.degradation_report();
+    assert_eq!(report.len(), 1, "{report:?}");
+    (failure, report[0].clone())
+}
+
+/// A well-formed timestamp whose only attestation is a Bitcoin one (height 1):
+/// nothing to poll later, so `no-pending-attestation`.
+#[test]
+fn a_timestamp_with_no_pending_attestation_is_class_no_pending_attestation() {
+    // `0x00 ‖ Bitcoin tag ‖ varbytes(varuint 1)`; the tag is the OTS
+    // format's, as core's parser matches it.
+    let mut body = vec![0x00];
+    body.extend_from_slice(&[0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01]);
+    body.extend_from_slice(&[0x01, 0x01]);
+
+    let (failure, line) = one_failing_calendar(&body);
+    assert!(
+        matches!(failure, CalendarFailure::NoPending { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(failure.class(), "no-pending-attestation");
+    assert!(line.contains("[no-pending-attestation]"), "{line}");
+}
+
+/// A pending attestation behind `0x02` (SHA-1 — registered, not implemented,
+/// D58 §11) has no derivable commitment, so it could never be upgraded:
+/// `indeterminate-commitment`.
+#[test]
+fn a_pending_attestation_behind_an_unimplemented_op_is_class_indeterminate_commitment() {
+    let mut body = vec![0x02];
+    body.extend_from_slice(&crate::ots::container::pending_attestation_bytes(
+        "https://indeterminate.example",
+    ));
+
+    let (failure, line) = one_failing_calendar(&body);
+    assert!(
+        matches!(failure, CalendarFailure::IndeterminateCommitment { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(failure.class(), "indeterminate-commitment");
+    assert!(line.contains("[indeterminate-commitment]"), "{line}");
+}

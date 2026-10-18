@@ -191,9 +191,11 @@ pub enum SealError {
     ConsentDeclined(ConsentOutcome),
 
     /// The pre-pay anchor gate refused the seal — aborted with **zero
-    /// money spent** (S12's ordering guarantee).
+    /// money spent** (S12's ordering guarantee). It carries the refused
+    /// work's seal-id beside the gate's own error (D194), because the CLI
+    /// message names the command that discards that work.
     #[error(transparent)]
-    AnchorGate(#[from] AnchorGateError),
+    AnchorGate(GateRefusal),
 
     // `ProofsExpired` lived here from S11 until **D147/U81**. Nothing ever
     // constructed it — the reachable expiry is
@@ -235,6 +237,34 @@ pub enum SealError {
     #[error(transparent)]
     Storage(#[from] StorageError),
 
+    /// **S37 (D186)**: money moved and the vault could not record what it
+    /// bought. The most recent receipt capture of this payment did not
+    /// become durable, and then either `pay` failed mid-sequence or the
+    /// post-`pay` receipt write failed too. A re-run would buy again
+    /// whatever the vault does not show as paid, which is why this is never
+    /// `payment-stranded` (28), whose re-run is safe.
+    ///
+    /// Built only by `consent_anchor_pay`, from
+    /// [`SealJournal::receipts_unrecorded`](super::journal::SealJournal::receipts_unrecorded).
+    #[error(
+        "{}",
+        CliError::PaymentUnrecorded {
+            landed_tx_count: *.landed_tx_count,
+            fault: ToString::to_string(.fault),
+            detail: Clone::clone(.detail),
+        }
+    )]
+    PaymentUnrecorded {
+        /// Sub-batch transactions this payment landed.
+        landed_tx_count: usize,
+        /// Why the most recent capture did not become durable (paths and
+        /// I/O classes only, never receipt content).
+        fault: super::receipt_sink::ReceiptSinkFault,
+        /// What failed after it: the storage layer's stranded-payment
+        /// reason, or the post-`pay` receipt write's own error.
+        detail: String,
+    },
+
     /// The journal failed.
     #[error(transparent)]
     Journal(#[from] JournalError),
@@ -251,6 +281,22 @@ pub enum SealError {
     /// from a decline.
     #[error(transparent)]
     Consent(Box<CliError>),
+}
+
+/// A refusal of the pre-pay anchor gate, with the work it refused (D194).
+///
+/// The gate knows nothing of works, so its error ([`AnchorGateError`]) cannot
+/// name one. The pipeline does, and pairs the two where it calls the gate
+/// (`resume.rs`'s `run_anchor_gate`). The seal-id is what the CLI's abort
+/// message hands to `antseal abandon` (D185): an identifier every resume
+/// message already prints, not a secret.
+#[derive(Debug, thiserror::Error)]
+#[error("{error}")]
+pub struct GateRefusal {
+    /// The refused work, which is left staged.
+    pub seal_id: antseal_core::crypto::secrets::SealId,
+    /// The gate's own refusal, unchanged.
+    pub error: AnchorGateError,
 }
 
 impl From<StagedBytesUnavailable> for SealError {
@@ -270,7 +316,10 @@ impl From<SealError> for CliError {
                 problems: vec![err.to_string()],
             },
             SealError::ConsentDeclined(reason) => CliError::ConsentNotObtained { reason },
-            SealError::AnchorGate(_) => CliError::AnchorGateAbort,
+            SealError::AnchorGate(refusal) => CliError::AnchorGateAbort {
+                failures: gate_refusal_lines(&refusal.error),
+                seal_id: crate::status::hex_seal(&refusal.seal_id),
+            },
             // Both are "resume cannot safely proceed" — one exit code,
             // distinguishing messages (the U2 table's own pattern).
             SealError::StagedBytes(_) => CliError::ResumeSafetyAbort {
@@ -283,6 +332,15 @@ impl From<SealError> for CliError {
                 detail: err.to_string(),
             },
             SealError::Storage(inner) => storage_to_cli(inner),
+            SealError::PaymentUnrecorded {
+                landed_tx_count,
+                fault,
+                detail,
+            } => CliError::PaymentUnrecorded {
+                landed_tx_count,
+                fault: fault.to_string(),
+                detail,
+            },
             SealError::Journal(inner) => inner.into(),
             SealError::Crypto(inner) => CliError::Internal {
                 detail: inner.to_string(),
@@ -292,6 +350,49 @@ impl From<SealError> for CliError {
             },
             SealError::Consent(inner) => *inner,
         }
+    }
+}
+
+/// `TsaFailure::Untrusted`'s class (`antseal-anchor`'s `tsa.rs`), compared by
+/// value because the anchor crate exports no constant for it;
+/// `the_untrusted_chain_class_is_the_tsa_failures_own` pins the two equal.
+const UNTRUSTED_CHAIN: &str = "untrusted-chain";
+
+/// What an `untrusted-chain` entry adds (D194 R1): that endpoint answered,
+/// so "wait for it" is advice that would never work.
+const NEVER_COUNTS: &str = "a token that does not chain to a root antseal pins never counts \
+                            toward the gate (docs/user/timestamp-authorities.md §1)";
+
+/// **U97 (D194 R1)**: what the abort message says failed. There is one entry
+/// per failed endpoint, each in the gate's own verbatim form
+/// (`{stage} {endpoint} [{class}] {detail} ({ms} ms)`, `gate.rs`), so its
+/// class is named and a TSA trust state appears by its frozen name.
+///
+/// The gate's other arms carry no endpoint list, so their own sentence is
+/// the one entry.
+fn gate_refusal_lines(error: &AnchorGateError) -> Vec<String> {
+    match error {
+        AnchorGateError::MinimumAnchor {
+            attempted,
+            failures,
+        } => {
+            if failures.is_empty() {
+                return vec![format!(
+                    "0 of {attempted} TSA endpoint(s) produced a verified token"
+                )];
+            }
+            failures
+                .iter()
+                .map(|failure| {
+                    if failure.class == UNTRUSTED_CHAIN {
+                        format!("{failure} — {NEVER_COUNTS}")
+                    } else {
+                        failure.to_string()
+                    }
+                })
+                .collect()
+        }
+        other => vec![other.to_string()],
     }
 }
 
@@ -306,6 +407,12 @@ impl From<SealError> for CliError {
 /// and `payment-proofs-expired` (29). Everything else here is the transient
 /// class (23), which is the one a caller is right to retry — and that is
 /// exactly why 28 and 29 must never wear it.
+///
+/// The third money-moved class, `payment-unrecorded` (37, D186), is not
+/// minted here: whether the receipt is durable is the journal's knowledge,
+/// not the storage error's, so `consent_anchor_pay` decides it and builds
+/// [`SealError::PaymentUnrecorded`] before a stranded payment reaches this
+/// map.
 fn storage_to_cli(err: StorageError) -> CliError {
     // D147: wildcard-free, the discipline `antseal_net::live::fetch_failure_class`
     // already applies to this enum. `StorageError` is not `#[non_exhaustive]`, so a
@@ -409,8 +516,9 @@ mod tests {
         );
     }
 
-    /// The pipeline mints **no new exit class**: every `SealError` lands on
-    /// a class that already existed in U2's frozen table.
+    /// The conversion mints **no exit class of its own**: every `SealError`
+    /// lands on a class of U2's table, which grows only by a decision
+    /// (D147's 28 and 29, D186's 37).
     #[test]
     fn every_seal_error_maps_onto_an_existing_exit_class() {
         let samples = [
@@ -422,8 +530,11 @@ mod tests {
             },
             SealError::EmptyWork,
             SealError::ConsentDeclined(ConsentOutcome::Declined),
-            SealError::AnchorGate(AnchorGateError::PolicyNotMet {
-                detail: "0 TSA tokens".to_owned(),
+            SealError::AnchorGate(GateRefusal {
+                seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0x5E; 16]),
+                error: AnchorGateError::PolicyNotMet {
+                    detail: "0 TSA tokens".to_owned(),
+                },
             }),
             SealError::StagedBytes(StagedBytesUnavailable::Missing),
             SealError::NotResumable { state: "complete" },
@@ -449,6 +560,12 @@ mod tests {
                 reason: "a payment sub-batch transaction reverted on-chain".to_owned(),
             }),
             SealError::Storage(StorageError::ProofsExpired),
+            // D186's third money-moved class.
+            SealError::PaymentUnrecorded {
+                landed_tx_count: 1,
+                fault: crate::pipeline::receipt_sink::ReceiptSinkFault::Encode,
+                detail: "a payment sub-batch transaction reverted on-chain".to_owned(),
+            },
         ];
         for err in samples {
             let rendered = err.to_string();
@@ -585,5 +702,127 @@ mod tests {
         // 2 is clap's own parse-error code, which is where `ProofsExpired`
         // used to land: a wrapper cannot tell that from a typo.
         assert_ne!(expired.exit_code(), ErrorClass::Usage.exit_code());
+    }
+
+    /// **D186**: a payment the vault could not record is the third
+    /// money-moved class, and it is none of the codes a wrapper might act on
+    /// blindly — not 28 (whose re-run is safe), not 23 (retry), not 4 (an
+    /// I/O error that never mentions money). Its message carries both facts
+    /// the class exists for: the count that landed, and why the record
+    /// failed.
+    #[test]
+    fn an_unrecorded_payment_is_its_own_money_moved_class() {
+        let fault = crate::pipeline::receipt_sink::ReceiptSinkFault::Write {
+            detail: "work store I/O failure at /v/store/works/w/receipt: disk full".to_owned(),
+        };
+        let cli: CliError = SealError::PaymentUnrecorded {
+            landed_tx_count: 3,
+            fault: fault.clone(),
+            detail: "a payment sub-batch transaction reverted on-chain".to_owned(),
+        }
+        .into();
+
+        assert_eq!(cli.class(), ErrorClass::PaymentUnrecorded);
+        assert_eq!(cli.exit_code(), 37);
+        for blind in [
+            ErrorClass::PaymentStranded,
+            ErrorClass::NetworkFailure,
+            ErrorClass::IoError,
+        ] {
+            assert_ne!(cli.exit_code(), blind.exit_code(), "{}", blind.name());
+        }
+        let message = cli.to_string();
+        assert!(
+            message.contains(" 3 sub-batch transaction(s) landed"),
+            "{message}"
+        );
+        assert!(message.contains(&format!("({fault})")), "{message}");
+        assert!(message.contains("instead of passing --yes"), "{message}");
+    }
+
+    /// The CLI recognises an `untrusted-chain` entry by the class string the
+    /// anchor crate's own `TsaFailure::class` returns. This pins the two
+    /// equal, so a respelled class cannot silently drop the "never counts"
+    /// note.
+    #[test]
+    fn the_untrusted_chain_class_is_the_tsa_failures_own() {
+        let failure = antseal_anchor::tsa::TsaFailure::Untrusted {
+            endpoint: "http://127.0.0.1:1/".to_owned(),
+            state: antseal_core::verify::report::AnchorState::InternallyConsistentOnly,
+            fault: None,
+        };
+        assert_eq!(failure.class(), UNTRUSTED_CHAIN);
+    }
+
+    /// **U97 (D194 R1)** at the conversion: every failed endpoint is named
+    /// with its class, the trust state appears by its frozen name, only the
+    /// `untrusted-chain` entry carries the "never counts" note, and the way
+    /// forward names this work's seal-id. Built from the anchor crate's real
+    /// failure values, as `submit.rs` builds them.
+    #[test]
+    fn a_gate_refusal_names_each_failed_endpoint_and_the_staged_work() {
+        use antseal_anchor::gate::{AnchorEndpointFailure, AnchorStage};
+        use antseal_anchor::tsa::TsaFailure;
+
+        let entry = |endpoint: &str, failure: TsaFailure| AnchorEndpointFailure {
+            stage: AnchorStage::Tsa,
+            endpoint: endpoint.to_owned(),
+            class: failure.class(),
+            detail: failure.to_string(),
+            elapsed_millis: 7,
+        };
+        let down = "http://127.0.0.1:1/";
+        let unpinned = "http://127.0.0.1:2/";
+        let failures = vec![
+            entry(
+                down,
+                TsaFailure::Http(antseal_anchor::AnchorHttpError::Status {
+                    endpoint: down.to_owned(),
+                    status: 503,
+                    body: b"offline".to_vec(),
+                }),
+            ),
+            entry(
+                unpinned,
+                TsaFailure::Untrusted {
+                    endpoint: unpinned.to_owned(),
+                    state: antseal_core::verify::report::AnchorState::InternallyConsistentOnly,
+                    fault: None,
+                },
+            ),
+        ];
+        assert_eq!(failures.len(), 2, "anti-vacuity: two endpoints failed");
+        let cli: CliError = SealError::AnchorGate(GateRefusal {
+            seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xB7; 16]),
+            error: AnchorGateError::MinimumAnchor {
+                attempted: 2,
+                failures,
+            },
+        })
+        .into();
+
+        assert_eq!(cli.class(), ErrorClass::AnchorGateAbort);
+        assert_eq!(cli.exit_code(), 22);
+        let message = cli.to_string();
+        assert!(!message.contains('\n'), "single-line: {message}");
+        assert!(message.contains(&format!("tsa {down} [http]")), "{message}");
+        assert!(
+            message.contains(&format!("tsa {unpinned} [untrusted-chain]")),
+            "{message}"
+        );
+        assert!(
+            message.contains("(internally-consistent-only)"),
+            "{message}"
+        );
+        assert!(!message.contains("InternallyConsistentOnly"), "{message}");
+        assert_eq!(
+            message.matches(NEVER_COUNTS).count(),
+            1,
+            "only the untrusted-chain entry says it never counts: {message}"
+        );
+        assert!(
+            message.contains(&format!("`antseal abandon {}`", "b7".repeat(16))),
+            "{message}"
+        );
     }
 }

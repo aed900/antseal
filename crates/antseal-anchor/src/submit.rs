@@ -190,7 +190,7 @@ impl AnchorSubmission {
             let distinct = self.distinct_tsas();
             lines.push(format!(
                 "tsa: {verified} verified token(s) from {distinct} distinct TSA(s); \
-                 ots: {} distinct calendar(s)",
+                 ots: {} calendar route(s)",
                 self.ots.distinct_calendars()
             ));
         }

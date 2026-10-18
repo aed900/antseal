@@ -142,6 +142,15 @@ pub struct BundleView<'a> {
     /// `unit_id`s referenced by GGM covers and boundary paths. These must
     /// name **revealed** units: a proof may only speak about disclosed
     /// bytes.
+    ///
+    /// In v1 the pipeline fills this from the covered reveals, a subset of
+    /// [`revealed_unit_ids`](Self::revealed_unit_ids), because a proof is
+    /// nested inside the reveal it belongs to — so the check it feeds cannot
+    /// fail through `verify_bundle` (D187 R2, R57; argued on
+    /// [`check_reveal_refs`]). It stays a field rather than a derivation so a
+    /// caller driving the stage with a hand-built view, and v1.1's bundle key
+    /// 10 (`range_reveals`), whose proofs may name units from a separate
+    /// section, can still supply a reference outside the revealed set.
     pub proof_unit_refs: &'a [u64],
     /// Every disclosed fixed-length byte string in the bundle
     /// (salts, seeds, node hashes), collected by R5.
@@ -209,7 +218,9 @@ pub fn check_disclosed_lengths(fields: &[DisclosedField]) -> Result<(), VerifyEr
 /// enumerates the same table, so every unit's `file_id` is a file-table
 /// index by construction. (The same tautology-by-construction holds for
 /// `proof_unit_refs` in [`check_reveal_refs`], whose pipeline population is
-/// a subset of the revealed ids by construction — recorded as U17.) The
+/// a subset of the revealed ids by construction — recorded as U17, and kept
+/// on this same policy by D187 R2 (R57), with a ruled future consumer of its
+/// own: registry §7.11's bundle key 10.) The
 /// check is kept because this is a pub stage function a caller can drive
 /// with hand-built views — the same reason row 6 of R4's table and the
 /// `path_salt` re-check below exist — and `unknown-file-ref` also has two
@@ -242,6 +253,23 @@ pub fn check_manifest_refs(manifest: &ManifestView<'_>) -> Result<(), VerifyErro
 /// unit — a proof that reaches outside the revealed set is rejected with
 /// [`VerifyError::UnknownUnitRef`], since no such unit is available for it
 /// to speak about.
+///
+/// # The proof-reference arm: unreachable from `verify_bundle` in v1, kept (R57)
+///
+/// The third loop's [`VerifyError::UnknownUnitRef`] cannot fire through the
+/// pipeline: R5 fills [`BundleView::proof_unit_refs`] from the covered
+/// reveals, a subset of [`BundleView::revealed_unit_ids`], so `seen` already
+/// holds every reference when the loop runs. It is kept on the policy D187 R1
+/// rules for this arm and for R54's [`check_manifest_refs`] alike: it is
+/// reachable through this public stage function with a hand-built view
+/// (`proof_referencing_an_unrevealed_unit_is_rejected` drives it), it owns no
+/// frozen user-facing surface, and a ruled future consumer needs it —
+/// `docs/format/registry-v1.md` §7.11 records the check as idling only until
+/// bundle key 10 (`range_reveals`, v1.1) lets a proof name units from a
+/// separate section, "recorded so the check is not deleted as dead code".
+/// `unknown-unit-ref` itself stays pipeline-reachable at the first loop's
+/// existence check (tamper row `verify-unknown-unit-ref`), so the code's
+/// reachability does not rest on this arm.
 ///
 /// # Errors
 ///
@@ -279,6 +307,16 @@ pub fn check_reveal_refs(
     // `seen` is the revealed set: the loop above either visited every
     // revealed id or returned, so membership here means exactly what the
     // pre-R54 `revealed_unit_ids.contains` meant.
+    //
+    // Unreachable from `verify_bundle` in v1, by construction: R5 populates
+    // `proof_unit_refs` from `covered_reveals`, a subset of
+    // `revealed_unit_ids`, so `seen` already holds every reference. Kept as
+    // the public stage function's backstop (R54's policy on
+    // `check_manifest_refs`, above, which D187 R1 rules for both arms) and
+    // because registry §7.11 records it as idling only until bundle key 10
+    // (`range_reveals`, v1.1) gives proofs a separate section;
+    // `unknown-unit-ref` stays pipeline-reachable at the existence check
+    // above (tamper row `verify-unknown-unit-ref`).
     for unit_id in bundle.proof_unit_refs {
         if !seen.contains(unit_id) {
             return Err(VerifyError::UnknownUnitRef { unit_id: *unit_id });

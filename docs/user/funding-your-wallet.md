@@ -49,7 +49,7 @@ uploaded, or written to the vault. Its help text:
 Run every free step and print the plan + quote (true pricing mechanism, indicative figure); nothing is paid, anchored, or uploaded (D49)
 ```
 
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:130-131`)
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:131-132`)
 
 The report shows the quote and both balances together, and marks any shortfall:
 
@@ -102,9 +102,9 @@ Unpacked:
 
 - **The key is made inside the vault, and antseal has no command that shows
   it.** `--wallet` defaults to `generate`
-  (`crates/antseal-cli/src/cli.rs:193`), and a generated key goes straight into
+  (`crates/antseal-cli/src/cli.rs:242`), and a generated key goes straight into
   the vault's wallet record: `init` keeps the checksummed address and drops the
-  key (`crates/antseal-cli/src/init.rs:539-541`). None of the nine subcommands
+  key (`crates/antseal-cli/src/init.rs:539-541`). None of the ten subcommands
   prints, exports or rotates it.
 - **You can keep spending it; you cannot move it.** A vault backup carries the
   key, and `vault import` reinstalls it
@@ -211,7 +211,7 @@ insufficient ANT for this seal: the quote needs <required> atto-ANT but the wall
 insufficient ETH for gas: the payment transaction needs about <required> wei but the wallet holds <available>; fund the wallet with ETH for gas and re-run (nothing was paid or uploaded)
 ```
 
-(`crates/antseal-cli/src/error.rs:646-666`; the exact rendering is frozen in
+(`crates/antseal-cli/src/error.rs:697-717`; the exact rendering is frozen in
 `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:45-48`. Under
 `--json` the same text arrives as the `message` field beside `class` and
 `exit_code`.)
@@ -235,11 +235,11 @@ backend; a build from source needs `--features ant-backend`
 (`crates/antseal-cli/Cargo.toml:49`,
 `docs/decisions/D72-release-targets-distribution-and-crates-io-scope.md:493`).
 
-## The two failures where money *was* spent
+## The three failures where money *was* spent
 
 "Nothing was spent" above is true of exit codes **20** and **21**, because both
 are checked before any transaction is signed. **Do not generalise it to every
-payment error.** Two codes mean the opposite, and they are separate classes
+payment error.** Three codes mean the opposite, and they are separate classes
 precisely so that a script cannot mistake them for a transient failure worth
 retrying blindly.
 
@@ -255,14 +255,22 @@ payment stranded mid-sequence: <N> sub-batch transaction(s) landed before the fa
 this seal's payment proofs have expired: a majority of the storing peers refused this seal's payment proof, and the payment is more than 24 hours old by its block time, so completing it requires a new, separately consented payment — the already-spent ANT is not recoverable
 ```
 
-(`crates/antseal-cli/src/error.rs:689-705` and `:707-723`; the exact rendering
-is frozen in `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:89-90`
-and `:91-92`.)
+**Payment not recorded** — class `payment-unrecorded`, exit code **37**:
+
+```
+payment not recorded: <N> sub-batch transaction(s) landed but the vault could not record all of them (<fault>) — money has moved and antseal does not know all of what it bought, so re-running `antseal seal` will quote, and charge again for, everything the vault does not show as paid; the ANT already spent on the unrecorded part cannot be recovered. If the vault's storage caused this (free space, permissions, the disk), fix it first; then review the re-run's quote instead of passing --yes (<detail>)
+```
+
+(`crates/antseal-cli/src/error.rs:770-792`, `:794-810` and `:812-847`; the
+exact rendering is frozen in
+`crates/antseal-cli/tests/snapshots/cli-errors.display.txt:87-88`, `:89-90` and
+`:97-98`.)
 
 What each one asks of you:
 
-- **28 is finishable, and re-running is how you finish it.** The sub-batch
-  transactions that landed are journaled and the partial receipt is
+- **28 is finishable, and re-running is how you finish it.** 28 means the
+  sub-batch transactions that landed are journaled (when the vault could not
+  journal them, the code is 37 instead), and the partial receipt is
   authoritative, so completing the seal re-pays no quote that receipt already
   maps. **There is no `antseal resume` command** — re-running `antseal seal`
   with the same files and the same seal-shaping flags *is* the resume, and
@@ -277,9 +285,20 @@ What each one asks of you:
   it with no new payment. Once in 29, no re-run recovers the ANT already spent:
   finishing the work means a new payment, separately quoted and separately
   consented.
+- **37 means the vault could not record what was bought: fix the vault
+  first, then read the next quote.** antseal decides what is already paid
+  for from the receipt in your vault alone, and has no other way to learn
+  what a payment bought (`crates/antseal-cli/src/pipeline/resume.rs:180-184`,
+  `:218-222`). When the vault could not write that receipt — for example a
+  full disk, a permissions change or a failing drive — re-running
+  `antseal seal` quotes, and charges again for, everything the vault does not
+  show as paid, and the ANT spent on the unrecorded part is gone. Re-running
+  is still how you finish the seal: do it once the storage is fixed, and
+  without `--yes`, so that you see that quote before you consent to it.
 - **Branch on the code, never on "something failed".** A caller that treats
-  every non-zero exit as retryable is the failure these two classes exist to
-  prevent. Use the exit code, or `error.class` under `--json`.
+  every non-zero exit as retryable is the failure these three classes exist
+  to prevent, and a caller that re-runs 28 unattended must stop at 37. Use
+  the exit code, or `error.class` under `--json`.
 
 ## Development networks
 

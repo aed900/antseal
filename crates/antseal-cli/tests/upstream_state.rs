@@ -23,7 +23,14 @@
 //!   `<temporary home>/.local/share/ant/client_adaptive.json` holding exactly
 //!   `schema` and `channels{quote,store,fetch}` — which is what makes "left
 //!   it empty" mean something: the command does build a client, and upstream
-//!   does write (D178 R4).
+//!   does write (D178 R4);
+//! - **the words (feature build, U96 / D191 R1)**: a reveal whose reader made
+//!   no connection — refused by S42 above, or by the storage gate over an
+//!   RFC 5737 documentation peer — says *"no connection to the Autonomi
+//!   network was made"* before the refusal, in its message and in its one
+//!   warning, and never that the network *"could not be reached"*; the
+//!   control, whose dead loopback set connects `Ok`, never meets those words
+//!   at all (D170 §2 R2 — the reason U96's dead-loopback control was struck).
 //!
 //! The command is `reveal` over a work whose unit ciphertexts are evicted from
 //! the vault cache, with a devnet definition whose one bootstrap peer is a
@@ -88,7 +95,7 @@ mod feature_build {
     use antseal_core::content::FileFlags;
     use antseal_core::crypto::sig_policy::SigPolicy;
     use antseal_net::NetworkId;
-    use antseal_net::network::upstream_state;
+    use antseal_net::network::{storage_gate, upstream_state};
     use antseal_net::test_util::{MockBackend, block_on};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -100,6 +107,14 @@ mod feature_build {
     const READER_CONNECT_TRACE: &str = "connecting the read-only reader";
     /// The reveal engine's sentence for a unit it could not obtain.
     const UNFETCHABLE_SENTENCE: &str = "could not be fetched from the network";
+    /// D191 R1's kind-neutral words: what a fetch from a reader that made no
+    /// connection says before the attempt's own reason (`backend::degrade`).
+    const NO_CONNECTION: &str = "no connection to the Autonomi network was made";
+    /// How the degrade's one warning opens on stderr (`LOG` enables it).
+    const NO_CONNECTION_TRACE: &str =
+        "no connection to the Autonomi network was made; every fetch will fail on its own";
+    /// What the degrade said before D191 — of a refusal, wrongly (U96).
+    const OLD_WORDS: &str = "could not be reached";
     /// What the rows read from stderr.
     const LOG: &str = "antseal_cli::backend=debug";
     /// A hang guard, not a speed claim: a refused run takes about a second, a
@@ -205,6 +220,11 @@ mod feature_build {
         let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a loopback probe socket");
         let bootstrap = udp.local_addr().expect("the probe's address");
         drop(udp);
+        devnet_export(dir, bootstrap)
+    }
+
+    /// [`dead_devnet_export`]'s definition with `bootstrap` as its one peer.
+    fn devnet_export(dir: &Path, bootstrap: std::net::SocketAddr) -> PathBuf {
         let tcp =
             std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback probe listener");
         let rpc_port = tcp.local_addr().expect("the probe's address").port();
@@ -401,6 +421,38 @@ mod feature_build {
             message.contains(upstream_state::REFUSAL) && message.contains(case),
             "{label}: the S42 refusal, naming the case `{case}`: {message}"
         );
+        assert_no_connection_was_made(label, run, upstream_state::REFUSAL);
+    }
+
+    /// **U96 (D191 R1).** What a reveal whose reader made no connection says:
+    /// the message carries the degrade's kind-neutral words immediately
+    /// followed by `refusal`, whole, and nowhere *"could not be reached"* —
+    /// which reported antseal's own refusal as an unreachable network — and
+    /// the degrade's one warning (stderr, under `LOG`) says the same.
+    fn assert_no_connection_was_made(label: &str, run: &Spawned, refusal: &str) {
+        let message = run.message();
+        assert!(
+            !message.contains(OLD_WORDS),
+            "{label}: U96 — antseal declined to start a storage client, and the message says \
+             the network could not be reached: {message}"
+        );
+        let expected = format!("network error: {NO_CONNECTION}: {refusal}");
+        assert!(
+            message.contains(&expected),
+            "{label}: D191's words, then the refusal whole — `{expected}` is not in: {message}"
+        );
+        assert!(
+            !run.stderr.contains(OLD_WORDS),
+            "{label}: U96 — the degrade's warning still says the network could not be \
+             reached. stderr:\n{}",
+            run.stderr
+        );
+        assert_eq!(
+            run.stderr.matches(NO_CONNECTION_TRACE).count(),
+            1,
+            "{label}: the degrade warned once, in D191's words. stderr:\n{}",
+            run.stderr
+        );
     }
 
     /// **S42 Accept 2 (A1).** No `HOME`, no `XDG_DATA_HOME`, no
@@ -458,6 +510,76 @@ mod feature_build {
         let _ = std::fs::remove_dir_all(&vault.root);
     }
 
+    /// **U96 (D191 R1) through the storage gate.** The same `reveal` over a
+    /// devnet definition whose one bootstrap peer is an RFC 5737
+    /// documentation address — never routed — under the gate every spawned
+    /// binary runs armed (`spawn::antseal`, D173 §2 R9): the gate refuses
+    /// before any socket, and the reveal ends in the network class saying no
+    /// connection was made, then the gate's refusal — never that the network
+    /// could not be reached. `HOME` is a fresh directory and `XDG_DATA_HOME`
+    /// is removed, so S42 admits the environment and a client that was built
+    /// would leave upstream's file there (the control below shows it does):
+    /// an empty `HOME` is a client never built. Until this row the binary's
+    /// storage-gate refusal was asserted only through `seal`
+    /// (`tests/peer_resolution.rs`), whose payer does not degrade.
+    #[test]
+    fn u96_a_reveal_the_storage_gate_refuses_says_no_connection_was_made() {
+        let scratch = Scratch::new("gate");
+        let (vault, work_id) = fixture_needing_a_fetch("u96-gate", 0x45);
+        let export = devnet_export(
+            &scratch.dir("export"),
+            std::net::SocketAddr::from(([192, 0, 2, 10], 10_000)),
+        );
+        let cwd = scratch.dir("cwd");
+        let home = scratch.dir("home");
+        let bundle = scratch.0.join("gate.sealproof");
+        let run = spawn_reveal(
+            &vault,
+            &work_id,
+            &bundle,
+            &export,
+            &cwd,
+            &UpstreamEnv::HomeOnly(&home),
+        );
+        assert_eq!(
+            run.code,
+            Some(23),
+            "the gate's refusal ends the reveal in the network class. stderr:\n{}",
+            run.stderr
+        );
+        let document = run.document();
+        assert_eq!(
+            document["error"]["class"],
+            serde_json::json!("network-failure"),
+            "{document}"
+        );
+        let message = run.message();
+        assert!(
+            message.contains(storage_gate::REFUSAL)
+                && message.contains("1 of 1 bootstrap peer(s) are not loopback"),
+            "the storage gate refused the one documentation peer: {message}"
+        );
+        assert!(
+            !message.contains(upstream_state::REFUSAL),
+            "the gate is consulted first, and S42 admits a set HOME: {message}"
+        );
+        assert_no_connection_was_made("storage gate", &run, storage_gate::REFUSAL);
+        assert_eq!(
+            run.connect_traces(),
+            1,
+            "the reader's connect was attempted once. stderr:\n{}",
+            run.stderr
+        );
+        let home_files = files_under(&home);
+        assert!(
+            home_files.is_empty(),
+            "a refused connect builds no client, so upstream writes nothing: {home_files:?}"
+        );
+        assert!(files_under(&cwd).is_empty(), "nothing lands in the cwd");
+        assert!(!bundle.exists(), "a refused reveal writes no bundle");
+        let _ = std::fs::remove_dir_all(&vault.root);
+    }
+
     /// **S42 Accept 1 (A6) with its positive control (A3).**
     ///
     /// Control first: `HOME` at a fresh temporary directory and
@@ -504,6 +626,22 @@ mod feature_build {
             control.connect_traces(),
             1,
             "CONTROL: the reader was connected once. stderr:\n{}",
+            control.stderr
+        );
+        // D191 R2's premise, measured (D170 §2 R2): a dead bootstrap set
+        // connects `Ok` and fails per fetch in the fetch's own words, so it
+        // never reaches the degrade — which is why U96's control ("a
+        // dead-loopback reveal still says could not be reached") was struck
+        // rather than built: nothing dead meets the degrade's words at all.
+        assert!(
+            !message.contains(OLD_WORDS),
+            "CONTROL: a dead-loopback reveal says the network could not be reached: {message}"
+        );
+        assert!(
+            !message.contains(NO_CONNECTION) && !control.stderr.contains(NO_CONNECTION),
+            "CONTROL: the dead loopback bootstrap reached the degrade — either D170 §2 R2's \
+             measurement (a dead set connects Ok) no longer holds on this stack, or the connect \
+             outran READ_ONLY_CONNECT_TIMEOUT. message: {message}\nstderr:\n{}",
             control.stderr
         );
         let snapshot = control_home

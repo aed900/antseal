@@ -67,21 +67,40 @@ pub const OTS_SUBMIT_DEADLINE_SECS: u64 = 30;
 
 /// The effective calendar list: a config override replaces the defaults
 /// **wholesale** (matching U26's `tsa_urls` semantics), an absent or empty
-/// override falls back to [`DEFAULT_OTS_CALENDARS`].
+/// override falls back to [`DEFAULT_OTS_CALENDARS`], and the result is
+/// **deduplicated**, first occurrence kept (U44, D188 R2).
 ///
 /// An empty override falling back rather than disabling OTS is deliberate:
 /// `ots_calendars = []` in a config file is far more likely to be a mistake
 /// than a considered decision to stamp nowhere, and the way to stamp nowhere
 /// is `--no-anchor`, which is loud and refused on mainnet.
+///
+/// The deduplication is [`crate::tsa::effective_tsa_urls`]' rule, for the
+/// calendar family's own reason: a calendar listed twice would be POSTed to
+/// twice and then counted once, because D54 §3 counts distinct pending URIs —
+/// so a user who wrote two lines would get the one-calendar degradation they
+/// did not ask for, from a list that looks like two. The comparison is
+/// exact-string, as there.
+///
+/// This is the one list both calendar roles read (U52, U64): the submit
+/// targets of the seal-time stage, and the hosts an upgrade may contact
+/// beyond [`super::OTS_UPGRADE_HOST_SUFFIXES`].
 #[must_use]
 pub fn effective_calendars(config: Option<&[String]>) -> Vec<String> {
-    match config {
+    let source: Vec<String> = match config {
         Some(list) if !list.is_empty() => list.to_vec(),
         _ => DEFAULT_OTS_CALENDARS
             .iter()
             .map(|url| (*url).to_owned())
             .collect(),
+    };
+    let mut out: Vec<String> = Vec::with_capacity(source.len());
+    for url in source {
+        if !out.contains(&url) {
+            out.push(url);
+        }
     }
+    out
 }
 
 /// `base` + `/` + `path`, with exactly one separator however the base was
@@ -146,6 +165,38 @@ mod tests {
             effective_calendars(Some(&[])).len(),
             DEFAULT_OTS_CALENDARS.len()
         );
+    }
+
+    /// D188 R2: a repeated entry is one calendar, kept where it first
+    /// appeared — and nothing else in the list moves. Two distinct entries
+    /// around the repeat, so a "dedup" that sorted, or kept the LAST
+    /// occurrence, would fail on order rather than pass on length.
+    #[test]
+    fn an_override_is_deduplicated_keeping_first_occurrence_order() {
+        let configured = vec![
+            "https://cal-b.example.com".to_owned(),
+            "https://cal-a.example.com".to_owned(),
+            "https://cal-b.example.com".to_owned(),
+            "https://cal-c.example.com".to_owned(),
+        ];
+        assert_eq!(configured.len(), 4, "the fixture carries one repeat");
+        assert_eq!(
+            effective_calendars(Some(&configured)),
+            vec![
+                "https://cal-b.example.com".to_owned(),
+                "https://cal-a.example.com".to_owned(),
+                "https://cal-c.example.com".to_owned(),
+            ],
+            "a calendar listed twice must be one calendar, kept where it first appeared"
+        );
+        // Exact-string: two spellings of one host are two entries here.
+        let spellings = vec![
+            "https://cal.example.com".to_owned(),
+            "https://cal.example.com/".to_owned(),
+        ];
+        assert_eq!(effective_calendars(Some(&spellings)), spellings);
+        // The defaults carry no repeat, so the fallback is unchanged by it.
+        assert_eq!(effective_calendars(None), DEFAULT_OTS_CALENDARS.to_vec());
     }
 
     #[test]

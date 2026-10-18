@@ -127,10 +127,17 @@ bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 
 [anchors]
 tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
+ots_calendars = ["https://cal-a.example.org", "https://cal-b.example.org"]
+opportunistic_upgrades = false
 
 [verify]
 bitcoin_endpoints = ["https://btc-a.example", "https://btc-b.example"]
-arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
+
+[verify.arbitrum-one]
+rpc_endpoints = ['https://arb-a.example', 'https://arb-b.example']
+
+[verify.arbitrum-sepolia]
+rpc_endpoints = ["https://sep-a.example", "https://sep-b.example"]
 "#;
     let config = parse(text).expect("full schema parses");
     assert_eq!(config.default_network, Some(NetworkId::Devnet));
@@ -148,15 +155,26 @@ arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
             ][..]
         )
     );
+    assert_eq!(config.ots_calendars.as_ref().map(Vec::len), Some(2));
+    assert_eq!(config.opportunistic_upgrades, Some(false));
     assert_eq!(
         config.verify_bitcoin_endpoints.as_ref().map(Vec::len),
         Some(2)
     );
+    // U44 (D188 R4): one pair per network, read back through the accessor.
     assert_eq!(
-        config.verify_arbitrum_endpoints.as_ref().map(Vec::len),
+        config
+            .verify_rpc_endpoints(NetworkId::ArbitrumOne)
+            .map(<[String]>::len),
         Some(2)
     );
-    assert!(config.warnings.is_empty());
+    assert_eq!(
+        config
+            .verify_rpc_endpoints(NetworkId::ArbitrumSepolia)
+            .map(<[String]>::len),
+        Some(2)
+    );
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -169,28 +187,51 @@ arbitrum_endpoints = ['https://arb-a.example', 'https://arb-b.example']
 /// one on-path attacker both halves and the agreement becomes a tautology
 /// that still reports success.
 ///
-/// Refused at **load**, naming the endpoint, before any network call.
+/// Refused at **load**, before any network call. The Bitcoin pair's refusal
+/// names the endpoint; the Arbitrum RPC pair's names the entry by INDEX and
+/// never the URL (U44, D188 R5: an RPC URL that answers
+/// `eth_getTransactionReceipt` commonly carries an API key).
 #[test]
 fn a_plain_http_verify_endpoint_is_refused_at_config_load() {
-    for (key, other) in [
-        ("bitcoin_endpoints", "arbitrum_endpoints"),
-        ("arbitrum_endpoints", "bitcoin_endpoints"),
-    ] {
+    let text = "[verify]\nbitcoin_endpoints = [\"https://good.example\", \"http://plain.example/api\"]\n\
+                [verify.arbitrum-one]\nrpc_endpoints = [\"https://a.example\", \"https://b.example\"]\n";
+    let err = parse(text).expect_err("a plain-http must-agree endpoint is refused");
+    let rendered = err.detail.clone();
+    assert!(
+        rendered.contains("http://plain.example/api"),
+        "the failure must name the offending endpoint: {rendered}"
+    );
+    assert!(
+        rendered.contains("must be https"),
+        "…and the reason: {rendered}"
+    );
+    assert!(
+        rendered.contains("bitcoin_endpoints"),
+        "…and the key: {rendered}"
+    );
+
+    for network in ["arbitrum-one", "arbitrum-sepolia"] {
         let text = format!(
-            "[verify]\n{key} = [\"https://good.example\", \"http://plain.example/api\"]\n\
-             {other} = [\"https://a.example\", \"https://b.example\"]\n"
+            "[verify]\nbitcoin_endpoints = [\"https://a.example\", \"https://b.example\"]\n\
+             [verify.{network}]\nrpc_endpoints = [\"https://good.example\", \"http://plain.example/api\"]\n"
         );
-        let err = parse(&text).expect_err("a plain-http must-agree endpoint is refused");
+        let err = parse(&text).expect_err("a plain-http RPC endpoint is refused");
         let rendered = err.detail.clone();
         assert!(
-            rendered.contains("http://plain.example/api"),
-            "the failure must name the offending endpoint: {rendered}"
+            rendered.contains("must be https"),
+            "[verify.{network}]: the reason: {rendered}"
         );
         assert!(
-            rendered.contains("must be https"),
-            "…and the reason: {rendered}"
+            rendered.contains("`rpc_endpoints`")
+                && rendered.contains(&format!("[verify.{network}]"))
+                && rendered.contains("entry 1"),
+            "[verify.{network}]: the key, the table and the entry index: {rendered}"
         );
-        assert!(rendered.contains(key), "…and the key: {rendered}");
+        assert!(
+            !rendered.contains("plain.example"),
+            "[verify.{network}]: never the URL: {rendered}"
+        );
+        assert_eq!(err.line, 4, "[verify.{network}]: the key's line: {err:?}");
     }
 }
 
@@ -207,7 +248,9 @@ tsa_urls = ["http://timestamp.digicert.com"]
 
 [verify]
 bitcoin_endpoints = ["https://btc-a.example", "http://127.0.0.1:8332/rest"]
-arbitrum_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
+
+[verify.arbitrum-one]
+rpc_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
 "#;
     let config = parse(text).expect("https, loopback literals and a plain-http TSA all load");
     assert_eq!(
@@ -215,7 +258,9 @@ arbitrum_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
         Some(2)
     );
     assert_eq!(
-        config.verify_arbitrum_endpoints.as_ref().map(Vec::len),
+        config
+            .verify_rpc_endpoints(NetworkId::ArbitrumOne)
+            .map(<[String]>::len),
         Some(2)
     );
     assert_eq!(
@@ -228,6 +273,504 @@ arbitrum_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
     for hostile in ["http://localhost:8332/", "http://127.0.0.1.evil.example/"] {
         let text = format!("[verify]\nbitcoin_endpoints = [\"{hostile}\"]\n");
         parse(&text).expect_err(hostile);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U44 (D188) — the calendar list, and the per-network verify RPC pair
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U44 Accept row 1, at load (D188 R1).** `[anchors] ots_calendars` is a
+/// string array checked by the substrate's own parser under the SUBMIT path's
+/// TLS policy (`TlsPolicy::Optional`, the one `ots/submit.rs` applies), so
+/// load and use apply one rule: plain http loads — a calendar cannot forge an
+/// OpenTimestamps proof — while a hostless URL, a scheme the substrate cannot
+/// speak and embedded credentials are refused, naming the key, the entry and
+/// the line. Order is kept as written and `[]` loads; that both collapse to
+/// D54's defaults downstream is asserted in `anchor_stage.rs`, the one suite
+/// allowed to name the stage's constructor.
+#[test]
+fn ots_calendars_load_validated_and_replace_wholesale() {
+    let parse_list = |list: &str| parse(&format!("[anchors]\nots_calendars = {list}\n"));
+
+    let config = parse_list(r#"["https://cal-b.example.org", "https://cal-a.example.org"]"#)
+        .expect("two https calendars load");
+    assert_eq!(
+        config.ots_calendars,
+        Some(vec![
+            "https://cal-b.example.org".to_owned(),
+            "https://cal-a.example.org".to_owned()
+        ]),
+        "loaded as written, in order"
+    );
+    assert!(
+        config.warnings.is_empty(),
+        "a recognised key, not a warning: {:?}",
+        config.warnings
+    );
+
+    let empty = parse_list("[]").expect("an empty list loads");
+    assert_eq!(empty.ots_calendars, Some(Vec::new()));
+
+    // The submit path's own policy: a plain-http calendar loads.
+    let plain = parse_list(r#"["http://cal.example.org"]"#).expect("plain http loads");
+    assert_eq!(
+        plain.ots_calendars,
+        Some(vec!["http://cal.example.org".to_owned()])
+    );
+
+    let refused = [
+        ("http:///x", "not a usable endpoint URL"),
+        ("gopher://cal.example.org", "http:// or https://"),
+        ("https://user:pw@cal.example.org", "userinfo"),
+    ];
+    assert_eq!(refused.len(), 3);
+    for (entry, why) in refused {
+        let err = parse(&format!(
+            "# calendars\n[anchors]\nots_calendars = [\"https://ok.example.org\", \"{entry}\"]\n"
+        ))
+        .expect_err(entry);
+        assert_eq!(err.line, 3, "{entry}: the key's line is named: {err:?}");
+        assert!(
+            err.detail.contains("`ots_calendars`"),
+            "{entry}: names the key: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains(entry),
+            "{entry}: names the entry (a calendar URL is no credential): {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains(why),
+            "{entry}: says why ({why}): {}",
+            err.detail
+        );
+    }
+
+    let err = parse_list(r#""https://cal.example.org""#).expect_err("a string is not a list");
+    assert!(err.detail.contains("takes an array"), "{}", err.detail);
+}
+
+/// **U44 Accept row 2 (D188 R4).** The two networks' tables load into
+/// DISTINCT pairs, read back through the accessor every consumer uses — which
+/// has no devnet pair to return. One table alone sets one network and leaves
+/// the other on its pinned pair; an unknown key under a known table warns.
+#[test]
+fn verify_rpc_pairs_are_per_network() {
+    let text = r#"
+[verify.arbitrum-one]
+rpc_endpoints = ["https://one-a.example", "https://one-b.example"]
+
+[verify.arbitrum-sepolia]
+rpc_endpoints = ["https://sep-a.example", "https://sep-b.example"]
+"#;
+    let config = parse(text).expect("both per-network tables load");
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    let one = config
+        .verify_rpc_endpoints(NetworkId::ArbitrumOne)
+        .expect("arbitrum-one's pair")
+        .to_vec();
+    let sepolia = config
+        .verify_rpc_endpoints(NetworkId::ArbitrumSepolia)
+        .expect("arbitrum-sepolia's pair")
+        .to_vec();
+    assert_eq!(
+        one,
+        vec![
+            "https://one-a.example".to_owned(),
+            "https://one-b.example".to_owned()
+        ]
+    );
+    assert_eq!(
+        sepolia,
+        vec![
+            "https://sep-a.example".to_owned(),
+            "https://sep-b.example".to_owned()
+        ]
+    );
+    assert_ne!(one, sepolia, "two networks, two pairs");
+    assert_eq!(
+        config.verify_rpc_endpoints(NetworkId::Devnet),
+        None,
+        "devnet has no pair"
+    );
+
+    let only_sepolia = parse(
+        "[verify.arbitrum-sepolia]\nrpc_endpoints = [\"https://sep-a.example\", \"https://sep-b.example\"]\n",
+    )
+    .expect("one table loads");
+    assert_eq!(
+        only_sepolia.verify_rpc_endpoints(NetworkId::ArbitrumOne),
+        None,
+        "arbitrum-one keeps its pinned pair"
+    );
+    assert!(
+        only_sepolia
+            .verify_rpc_endpoints(NetworkId::ArbitrumSepolia)
+            .is_some()
+    );
+
+    let extra =
+        parse("[verify.arbitrum-one]\nfuture_knob = \"x\"\n").expect("an unknown key warns");
+    assert_eq!(extra.warnings.len(), 1, "{:?}", extra.warnings);
+    assert!(
+        extra.warnings[0].contains("[verify.arbitrum-one]")
+            && extra.warnings[0].contains("ignored"),
+        "{:?}",
+        extra.warnings
+    );
+}
+
+/// **U44 Accept row 2's refusals (D188 R4).** `[verify.devnet]` is refused
+/// whatever the key, with its reason; an unknown network keeps the
+/// `[networks.<id>]` answer word for word.
+#[test]
+fn a_devnet_or_unknown_verify_table_is_refused() {
+    for body in [
+        "rpc_endpoints = [\"https://a.example\", \"https://b.example\"]",
+        "future_knob = \"x\"",
+    ] {
+        let err = parse(&format!("[verify.devnet]\n{body}\n")).expect_err(body);
+        assert_eq!(err.line, 2, "{body}: {err:?}");
+        assert!(
+            err.detail.contains("`[verify.devnet]`")
+                && err.detail.contains("no RPC pair to override")
+                && err.detail.contains("fresh Anvil per run"),
+            "{body}: names the table and the reason: {}",
+            err.detail
+        );
+    }
+
+    let verify =
+        parse("[verify.ropsten]\nrpc_endpoints = [\"https://a.example\", \"https://b.example\"]\n")
+            .expect_err("an unknown network is refused");
+    assert_eq!(
+        verify.detail,
+        "`[verify.ropsten]` is not a known network (valid: arbitrum-one, arbitrum-sepolia, devnet)"
+    );
+    let networks = parse("[networks.ropsten]\nbootstrap = [\"192.0.2.10:10000\"]\n")
+        .expect_err("the same name under [networks.*]");
+    assert_eq!(
+        verify.detail.replace("[verify.", "[networks."),
+        networks.detail,
+        "the [networks.<id>] wording, word for word"
+    );
+}
+
+/// **U44 Accept row 3 (D188 R4, R5).** A verify-RPC override is exactly two
+/// endpoints at two origins, checked at LOAD — never a silent one-endpoint
+/// overlay, never a pair that agrees with itself — and no refusal repeats a
+/// URL or a host, whatever shape the value is written in: the canary sits in
+/// the path, where a provider puts its API key. The control is the same
+/// vehicle with a well-formed pair.
+#[test]
+fn a_verify_rpc_override_is_exactly_two_distinct_origins_at_load() {
+    let c = RPC_URL_CANARY;
+    let cases = [
+        (
+            "one entry",
+            format!(r#"["https://a.example/v2/{c}"]"#),
+            "exactly two endpoints (found 1)",
+        ),
+        (
+            "three entries",
+            format!(
+                r#"["https://a.example/v2/{c}", "https://b.example/v2/{c}", "https://c.example/v2/{c}"]"#
+            ),
+            "exactly two endpoints (found 3)",
+        ),
+        (
+            "no entries",
+            "[]".to_owned(),
+            "exactly two endpoints (found 0)",
+        ),
+        (
+            "one origin, two spellings",
+            format!(r#"["https://a.example/v2/{c}", "https://A.example:443/other/{c}"]"#),
+            "entries 0 and 1 are one origin",
+        ),
+        (
+            "plain http",
+            format!(r#"["https://a.example/v2/{c}", "http://b.example/v2/{c}"]"#),
+            "entry 1 must be https",
+        ),
+        (
+            "no host",
+            format!(r#"["http:///{c}", "https://b.example/v2/{c}"]"#),
+            "entry 0 is not a usable endpoint URL",
+        ),
+        (
+            "credentials",
+            format!(r#"["https://a.example/v2/{c}", "https://{c}:pw@b.example/"]"#),
+            "entry 1 is not a usable endpoint URL (userinfo",
+        ),
+        (
+            "a string",
+            format!(r#""https://a.example/v2/{c}""#),
+            "takes a one-line array",
+        ),
+        (
+            "an unquoted value",
+            format!("https://a.example/v2/{c}"),
+            "takes a one-line array",
+        ),
+        (
+            "an escape sequence",
+            format!(r#"["https://a.example/v2/{c}\t", "https://b.example/v2/{c}"]"#),
+            "takes a one-line array",
+        ),
+    ];
+    assert_eq!(cases.len(), 10);
+    for network in ["arbitrum-one", "arbitrum-sepolia"] {
+        for (shape, value, needle) in &cases {
+            let text = format!("# the pair\n[verify.{network}]\nrpc_endpoints = {value}\n");
+            let err = parse(&text).expect_err(shape);
+            assert_eq!(
+                err.line, 3,
+                "[verify.{network}], {shape}: the key's line: {err:?}"
+            );
+            assert!(
+                err.detail.contains(needle),
+                "[verify.{network}], {shape}: expected {needle:?} in {}",
+                err.detail
+            );
+            assert!(
+                err.detail.contains("`rpc_endpoints`")
+                    && err.detail.contains(&format!("[verify.{network}]")),
+                "[verify.{network}], {shape}: names the key and the table: {}",
+                err.detail
+            );
+            assert!(
+                !err.detail.contains(c) && !err.detail.contains("example"),
+                "[verify.{network}], {shape}: no URL and no host may be repeated — an RPC URL \
+                 often carries an API key: {}",
+                err.detail
+            );
+        }
+    }
+
+    let ok = parse(&format!(
+        "[verify.arbitrum-one]\nrpc_endpoints = [\"https://a.example/v2/{c}\", \"https://b.example/v2/{c}\"]\n"
+    ))
+    .expect("two https endpoints at two origins load");
+    assert_eq!(
+        ok.verify_rpc_endpoints(NetworkId::ArbitrumOne)
+            .map(<[String]>::len),
+        Some(2)
+    );
+}
+
+/// **U44 Accept row 4, reversed (D188 R5).** The flat `[verify]
+/// arbitrum_endpoints` is REFUSED at load — not warned: U30 had wired it, so
+/// a warning would leave `verify --online` probing the pinned pair the user
+/// configured away from (D180's reason, one table over). The refusal names
+/// the key, the table, the line and the two replacement tables, and never the
+/// value, whatever its shape — including the unquoted one, which the subset's
+/// own error would have repeated had the refusal waited for the value.
+#[test]
+fn the_flat_arbitrum_endpoints_key_is_refused_by_name() {
+    let c = RPC_URL_CANARY;
+    let shapes = [
+        (
+            "a pair",
+            format!(r#"["https://a.example/v2/{c}", "https://b.example/v2/{c}"]"#),
+        ),
+        ("one entry", format!(r#"["https://a.example/v2/{c}"]"#)),
+        ("an unquoted value", format!("https://a.example/v2/{c}")),
+        ("a literal string", format!("'https://a.example/v2/{c}'")),
+    ];
+    assert_eq!(shapes.len(), 4);
+    for (shape, value) in &shapes {
+        let text = format!(
+            "[verify]\nbitcoin_endpoints = [\"https://btc-a.example\", \"https://btc-b.example\"]\n\
+             arbitrum_endpoints = {value}\n"
+        );
+        let err = parse(&text).expect_err(shape);
+        assert_eq!(err.line, 3, "{shape}: the key's line: {err:?}");
+        assert!(
+            err.detail.contains("`arbitrum_endpoints`") && err.detail.contains("[verify]"),
+            "{shape}: names the key and the table: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains("[verify.arbitrum-one]")
+                && err.detail.contains("[verify.arbitrum-sepolia]")
+                && err.detail.contains("`rpc_endpoints`"),
+            "{shape}: names where the pair goes now: {}",
+            err.detail
+        );
+        assert!(
+            !err.detail.contains(c),
+            "{shape}: never the value — an RPC URL often carries an API key: {}",
+            err.detail
+        );
+    }
+
+    // The retirement is the flat [verify] key's: under a per-network table the
+    // name is an ordinary unknown key.
+    let elsewhere = parse("[verify.arbitrum-one]\narbitrum_endpoints = [\"https://a.example\"]\n")
+        .expect("not the retired key");
+    assert_eq!(elsewhere.warnings.len(), 1, "{:?}", elsewhere.warnings);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U60 + the grammar (D189) — booleans, and unknown keys' values unread
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U60 Accept (D189 R1, R2), at load.** `[anchors] opportunistic_upgrades`
+/// takes a bare lowercase boolean and nothing else: absent is on, `false` is
+/// off, and every near miss — a quoted `"false"`, `off`, `False`, an array —
+/// is refused with the key's own sentence on the key's line. Booleans are
+/// typed per key: every string or array key refuses one with its own
+/// message, so growing the grammar widened no key that did not ask for it.
+#[test]
+fn booleans_are_in_the_subset_and_typed_per_key() {
+    let with = |value: &str| parse(&format!("[anchors]\nopportunistic_upgrades = {value}\n"));
+
+    let off = with("false").expect("false loads");
+    assert_eq!(off.opportunistic_upgrades, Some(false));
+    assert!(!off.opportunistic_upgrades_enabled());
+    assert!(off.warnings.is_empty(), "{:?}", off.warnings);
+
+    let on = with("true").expect("true loads");
+    assert_eq!(on.opportunistic_upgrades, Some(true));
+    assert!(on.opportunistic_upgrades_enabled());
+
+    let absent = parse("[anchors]\ntsa_urls = []\n").expect("loads");
+    assert_eq!(absent.opportunistic_upgrades, None);
+    assert!(absent.opportunistic_upgrades_enabled(), "absent is on");
+    assert!(
+        Config::default().opportunistic_upgrades_enabled(),
+        "the default is on"
+    );
+
+    let near_misses = [
+        "\"false\"",
+        "'false'",
+        "\"off\"",
+        "off",
+        "False",
+        "TRUE",
+        "0",
+        "[]",
+        "[\"false\"]",
+        "[false]",
+    ];
+    assert_eq!(near_misses.len(), 10);
+    for value in near_misses {
+        let err = with(value).expect_err(value);
+        assert_eq!(err.line, 2, "{value}: the key's line: {err:?}");
+        assert_eq!(
+            err.detail, "`opportunistic_upgrades` takes true or false",
+            "{value}"
+        );
+    }
+
+    // Typed per key: a boolean where a string or an array belongs.
+    let typed = [
+        (
+            "default_network = true\n",
+            1,
+            "`default_network` takes a string, not a boolean",
+        ),
+        (
+            "[anchors]\ntsa_urls = true\n",
+            2,
+            "`tsa_urls` takes an array of strings, not a boolean",
+        ),
+        (
+            "[anchors]\nots_calendars = false\n",
+            2,
+            "`ots_calendars` takes an array of strings, not a boolean",
+        ),
+        (
+            "[verify]\nbitcoin_endpoints = true\n",
+            2,
+            "`bitcoin_endpoints` takes an array of strings, not a boolean",
+        ),
+        (
+            "[networks.arbitrum-one]\nbootstrap = true\n",
+            2,
+            "`bootstrap` takes an array of \"ip:port\" strings",
+        ),
+        (
+            "[verify.arbitrum-one]\nrpc_endpoints = true\n",
+            2,
+            "`rpc_endpoints` under [verify.arbitrum-one] takes a one-line array",
+        ),
+        (
+            "[anchors]\ntsa_urls = [true]\n",
+            2,
+            "a boolean inside an array is outside the config subset",
+        ),
+    ];
+    assert_eq!(typed.len(), 7);
+    for (text, line, needle) in typed {
+        let err = parse(text).expect_err(text);
+        assert_eq!(err.line, line, "{text:?}: {err:?}");
+        assert!(
+            err.detail.contains(needle),
+            "{text:?}: expected {needle:?} in {:?}",
+            err.detail
+        );
+    }
+}
+
+/// **D189 R3.** An unknown key warns WHATEVER its value — an integer, a date,
+/// an inline table, a float, an unterminated string — because its value is
+/// never parsed, so a config written by a newer antseal, in grammar this
+/// build lacks, still loads (`docs/config.md`'s forward-compatibility
+/// promise, now true for every single-line value). The controls hold both
+/// sides: a RECOGNISED key with such a value is still refused, and a table
+/// whose network is unknown is still refused by its name, judged first.
+#[test]
+fn an_unknown_key_warns_whatever_its_value() {
+    let text = r#"
+answer = 42
+[future]
+when = 2026-01-01
+table = { a = 1 }
+ratio = 0.5
+open = "unterminated
+[anchors]
+future_knob = 7
+[networks.arbitrum-one]
+future_knob = true
+[verify.arbitrum-sepolia]
+future_knob = [1, 2]
+"#;
+    let config = parse(text).expect("an unknown key never fails on its value");
+    assert_eq!(config.warnings.len(), 8, "{:#?}", config.warnings);
+    for warning in &config.warnings {
+        assert!(
+            warning.contains("unknown key") && warning.contains("ignored"),
+            "{warning}"
+        );
+    }
+
+    // Control 1: a recognised key's value is still held to the subset.
+    for text in [
+        "default_network = 42\n",
+        "[anchors]\ntsa_urls = 42\n",
+        "[verify]\nbitcoin_endpoints = 2026-01-01\n",
+    ] {
+        let err = parse(text).expect_err(text);
+        assert!(
+            err.detail.contains("not a quoted string"),
+            "{text:?}: {:?}",
+            err.detail
+        );
+    }
+    // Control 2: a table's network name is judged before its unknown key is
+    // warned on, whatever the value.
+    for text in ["[networks.ropsten]\nx = 1\n", "[verify.ropsten]\nx = 1\n"] {
+        let err = parse(text).expect_err(text);
+        assert!(
+            err.detail.contains("is not a known network"),
+            "{text:?}: {:?}",
+            err.detail
+        );
     }
 }
 
@@ -766,6 +1309,70 @@ fn an_rpc_url_key_is_exit_17_before_any_command_runs() {
     );
 }
 
+/// **U44 (D188 R5) — the flat `[verify] arbitrum_endpoints`, through the
+/// binary.** Exit 17 with its envelope before any command runs (on `verify`,
+/// whose own code for a missing bundle would be 4), naming the key, the table
+/// and the line, and the value on neither stream. The control is the same
+/// vehicle once the pair has moved to its per-network table.
+#[test]
+fn a_flat_arbitrum_endpoints_key_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("flat-arbitrum-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    std::fs::write(
+        layout.beside_path(BesideFile::Config),
+        format!(
+            "[verify]\narbitrum_endpoints = [\"https://a.example/v2/{RPC_URL_CANARY}\", \
+             \"https://b.example/v2/{RPC_URL_CANARY}\"]\n"
+        ),
+    )
+    .expect("write config");
+
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(17),
+        "malformed-config code; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+            .expect("one JSON document");
+    assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+    let message = doc["error"]["message"].as_str().expect("a message");
+    assert!(
+        message.contains("`arbitrum_endpoints`")
+            && message.contains("[verify.arbitrum-one]")
+            && message.contains("config.toml:2"),
+        "names the key, the replacement table and the line: {message}"
+    );
+    for (stream, bytes) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(RPC_URL_CANARY),
+            "{stream} must not carry the value: {text}"
+        );
+    }
+
+    // The control: the same pair, moved to where it now lives, loads.
+    std::fs::write(
+        layout.beside_path(BesideFile::Config),
+        format!(
+            "[verify.arbitrum-one]\nrpc_endpoints = [\"https://a.example/v2/{RPC_URL_CANARY}\", \
+             \"https://b.example/v2/{RPC_URL_CANARY}\"]\n"
+        ),
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "with the pair under [verify.arbitrum-one] the config loads and the handler's own \
+         code follows; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // D47 cross-test: exported config survives import and still resolves
 // ─────────────────────────────────────────────────────────────────────
@@ -785,8 +1392,16 @@ fn exported_config_survives_import_and_resolves() {
     let mut rng = ChaCha20Rng::from_seed([0x42u8; 32]);
     let vault =
         create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng).expect("create");
-    let config_text =
-        "default_network = \"devnet\"\n\n[anchors]\ntsa_urls = [\"https://freetsa.org/tsr\"]\n";
+    // U44 Accept 5, restated (D188 R7): the export round trip carries the new
+    // keys and they load. (`init` writes none of them, so there is no "old
+    // shape" in `initial_config_text` to replace; `initial_config_round_trips`
+    // asserts it still parses with zero warnings.)
+    let config_text = "default_network = \"devnet\"\n\n[anchors]\n\
+                       tsa_urls = [\"https://freetsa.org/tsr\"]\n\
+                       ots_calendars = [\"https://cal.example.org\"]\n\
+                       opportunistic_upgrades = false\n\n\
+                       [verify.arbitrum-sepolia]\n\
+                       rpc_endpoints = [\"https://sep-a.example\", \"https://sep-b.example\"]\n";
     antseal_cli::vault::fs::atomic_write(
         &layout.beside_path(BesideFile::Config),
         config_text.as_bytes(),
@@ -806,5 +1421,17 @@ fn exported_config_survives_import_and_resolves() {
     let config = load_from(&layout).expect("restored config loads");
     assert_eq!(config.default_network, Some(NetworkId::Devnet));
     assert_eq!(config.tsa_urls.as_ref().map(Vec::len), Some(1));
+    assert_eq!(
+        config.ots_calendars.as_deref(),
+        Some(&["https://cal.example.org".to_owned()][..])
+    );
+    assert_eq!(
+        config
+            .verify_rpc_endpoints(NetworkId::ArbitrumSepolia)
+            .map(<[String]>::len),
+        Some(2)
+    );
+    assert_eq!(config.opportunistic_upgrades, Some(false));
+    assert!(config.warnings.is_empty(), "{:?}", config.warnings);
     assert_eq!(effective_network(None, &config), NetworkId::Devnet);
 }

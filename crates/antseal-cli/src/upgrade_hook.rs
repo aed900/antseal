@@ -27,7 +27,7 @@
 //!    a hook outcome could reach the exit status.
 //!
 //! D42's rule is that the hook runs **iff** the dispatching command already
-//! holds an unlocked vault handle. No point that sees all ten subcommands
+//! holds an unlocked vault handle. No point that sees all eleven subcommands
 //! holds one (`run::run` takes a `&Cli`; every handler unlocks for itself; and
 //! `UnlockedVault` is deliberately `!Clone`), so the handle is *moved up*
 //! into a [`VaultSlot`] the dispatcher owns, through the single expression
@@ -52,12 +52,15 @@
 //!
 //! # What it costs
 //!
-//! One pass is bounded by [`UpgradeBudget::opportunistic`] — 3 s of wall clock
-//! and 4 polls — plus at most one in-flight call, so the achievable bound on
-//! *lateness of exit* is about 6 s. A human never sees it: the answer is
-//! already printed and the shell prompt is the only thing waiting. A **script**
-//! sees all of it, because `$(antseal list --json)` waits for process exit;
-//! that residual is recorded in D99 §8 and its remedy is U58's config key.
+//! One pass's polling is bounded by [`UpgradeBudget::opportunistic`] — 3 s of
+//! wall clock and 4 polls — plus at most one in-flight call. That is not the
+//! whole of the *lateness of exit*: the block-header confirmation that follows
+//! a successful poll is not under the budget (A141). A human never sees it:
+//! the answer is already printed and the shell prompt is the only thing
+//! waiting. A **script** sees all of it, because `$(antseal list --json)` waits
+//! for process exit; that residual is recorded in D99 §8, and its remedy is
+//! U60's `[anchors] opportunistic_upgrades = false` (D189), which this hook
+//! reads before it builds any client, takes any lock or issues any poll.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -90,6 +93,16 @@ pub const HOOK_ARMED: &str = "opportunistic OTS upgrade hook: armed";
 /// silent no-op, never a prompt, never a vault creation).
 pub const HOOK_NOT_ARMED: &str =
     "opportunistic OTS upgrade hook: not armed — this invocation holds no unlocked vault";
+
+/// The line an **armed** invocation emits when `config.toml` turned the pass
+/// off (U60, D189 R2) — a third sentence, after [`HOOK_ARMED`]: holding a
+/// vault is still what arms the hook (D42), and the key is what stopped it.
+///
+/// It names the key, so a reader of the trace learns which setting suppressed
+/// the pass and how to undo it, and none of the three sentences contains
+/// another, so the enumeration's exactly-one-arm reading stays exact.
+pub const HOOK_SUPPRESSED: &str = "opportunistic OTS upgrade pass skipped: config.toml sets \
+     [anchors] opportunistic_upgrades = false";
 
 /// The handle a vault-holding command moves up to the dispatcher.
 ///
@@ -308,6 +321,14 @@ pub fn run_after_output(slot: &VaultSlot, config: &Config, network: &str) {
         return;
     };
     tracing::debug!(network, "{HOOK_ARMED}");
+    // U60 (D189 R2): the off switch, read after the arming is traced — holding
+    // a vault still arms the hook — and before `HookContext::production`, so a
+    // suppressed pass builds no client, takes no lock and polls nothing. The
+    // handle drops on return.
+    if !config.opportunistic_upgrades_enabled() {
+        tracing::debug!(network, "{HOOK_SUPPRESSED}");
+        return;
+    }
 
     let ctx = match HookContext::production(&vault, config, crate::commands::now_unix_secs()) {
         Ok(ctx) => ctx,
@@ -529,15 +550,27 @@ pub fn run_with(ctx: &HookContext<'_>) -> HookPass {
 mod tests {
     use super::*;
 
-    /// The two trace sentences are the enumeration test's only handle on which
-    /// arm an invocation took, so they must stay distinguishable by a
-    /// substring search: one must not be a prefix of the other, or a
-    /// not-armed run would satisfy an "armed" assertion.
+    /// The trace sentences are the tests' only handle on which arm an
+    /// invocation took, so they must stay distinguishable by a substring
+    /// search: none may contain another, or a not-armed run would satisfy an
+    /// "armed" assertion. U60 added the third (D189 R2), which must also name
+    /// its key and must not read as a completed pass.
     #[test]
-    fn the_two_trace_arms_cannot_be_mistaken_for_each_other() {
-        assert!(!HOOK_NOT_ARMED.contains(HOOK_ARMED));
-        assert!(!HOOK_ARMED.contains(HOOK_NOT_ARMED));
-        assert_ne!(HOOK_ARMED, HOOK_NOT_ARMED);
+    fn the_three_trace_sentences_cannot_be_mistaken_for_each_other() {
+        let sentences = [HOOK_ARMED, HOOK_NOT_ARMED, HOOK_SUPPRESSED];
+        assert_eq!(sentences.len(), 3);
+        let mut compared = 0;
+        for (i, a) in sentences.iter().enumerate() {
+            for (j, b) in sentences.iter().enumerate() {
+                if i != j {
+                    assert!(!a.contains(b), "{a:?} contains {b:?}");
+                    compared += 1;
+                }
+            }
+        }
+        assert_eq!(compared, 6, "every ordered pair was compared");
+        assert!(HOOK_SUPPRESSED.contains("opportunistic_upgrades"));
+        assert!(!HOOK_SUPPRESSED.contains("pass complete"));
     }
 
     /// An empty slot is the D42 no-op, and taking from it is not an error.

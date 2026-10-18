@@ -16,13 +16,18 @@ data. `antseal init` writes the initial file; edit it by hand afterwards.
   cannot be read is never silently ignored — silently dropped overrides
   are worse than a loud stop.
 - **Unknown keys and sections are warnings**, printed to stderr and
-  otherwise ignored, so a config written by a newer antseal still loads.
+  otherwise ignored, so a config written by a newer antseal still loads:
+  an unknown key's value is never read, so it cannot fail the file
+  whatever it holds.
   Invalid **values** for recognized keys are hard errors. One recognized
   key is an error in the wrong table: `bootstrap` under
   `[networks.arbitrum-sepolia]` or `[networks.devnet]` (see "Bootstrap
   peers"); outside the `[networks.*]` tables it is an unknown key, warned
   and ignored like any other. One retired key is an error in every
-  `[networks.*]` table: `rpc_url` (see "The payment RPC").
+  `[networks.*]` table: `rpc_url` (see "The payment RPC"). Another is an
+  error under `[verify]`: `arbitrum_endpoints`, whose pair now lives in a
+  per-network table — and `[verify.devnet]` is an error whatever it holds
+  (see "Online-verification endpoints").
 
 ## Precedence
 
@@ -74,21 +79,59 @@ bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 # built-in defaults wholesale; empty or absent = the defaults (FreeTSA +
 # DigiCert). The >= 1-verified-token-or-abort gate applies to whatever this
 # list resolves to, so a list of unreachable endpoints aborts the seal
-# before any payment rather than sealing without a timestamp.
+# before any payment rather than sealing without a timestamp. Only
+# authorities whose root is compiled into antseal count toward the anchor
+# gate: FreeTSA, DigiCert, zeitstempel.dfn.de and Sectigo (Entrust is
+# Sectigo); SwissSign, GlobalSign and Certum return tokens that verify but
+# never count, and Apple is refused — see docs/user/timestamp-authorities.md
+# §1 and §3.
 [anchors]
 tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 
-# Pinned online endpoints for `verify --online` (two independent,
-# must-agree sources per evidence class). Reserved slot: validated now,
-# consumed when online verification lands (M3).
-# These MUST be https. Unlike a timestamp token, an esplora or RPC reply
-# carries no signature of its own — it is believed only because two
-# independent endpoints agree — so the transport is its only integrity
-# control, and one plain-http endpoint would let a single on-path attacker
-# supply both halves of a "must agree" pair.
+# OpenTimestamps calendars for the seal-time anchor stage. LIVE: `seal`
+# submits to exactly these calendars. A non-empty list REPLACES the built-in
+# four (the OpenTimestamps client's own defaults) wholesale; empty or absent
+# = the defaults; a calendar listed twice is used once. Fewer than two
+# calendars answering marks the seal's anchor set degraded, and never stops
+# a seal. This list is also the only way past the three pinned calendar
+# domains when antseal upgrades a pending attestation: keep a calendar listed
+# until the works stamped with it no longer show a pending OpenTimestamps
+# anchor in `antseal status` — remove it earlier and its attestations can no
+# longer be upgraded. Plain http is accepted for stamping, but upgrades are
+# fetched over https only. See "OpenTimestamps calendars" below.
+ots_calendars = ["https://a.pool.opentimestamps.org", "https://b.pool.opentimestamps.org"]
+
+# The opportunistic upgrade pass. After any command that unlocked the vault,
+# antseal asks the OpenTimestamps calendars whether pending attestations have
+# reached Bitcoin. It runs after the command's output is printed but before
+# the process exits, so a script waiting on the process waits for it too — a
+# few seconds, longer when a calendar or block explorer is slow. false turns
+# the pass off; pending attestations then upgrade only when you run
+# `antseal status <work-id> --upgrade`. Absent = true. Write a bare true or
+# false: "false" in quotes, off and False are refused (exit 17).
+opportunistic_upgrades = false
+
+# Online endpoints: two independent sources per evidence class, whose
+# answers must agree. These MUST be https. Unlike a timestamp token, an
+# esplora or RPC reply carries no signature of its own — it is believed only
+# because two independent endpoints agree — so the transport is its only
+# integrity control, and one plain-http endpoint would let a single on-path
+# attacker supply both halves of a "must agree" pair.
+# bitcoin_endpoints: the esplora pair. LIVE: `verify --online` confirms
+# Bitcoin block headers against it, and so do `status --upgrade` and the
+# opportunistic upgrade pass when they upgrade an attestation.
 [verify]
 bitcoin_endpoints = ["https://a.example", "https://b.example"]
-arbitrum_endpoints = ["https://c.example", "https://d.example"]
+
+# The Arbitrum receipt check is per network: a pair for arbitrum-one and a
+# pair for arbitrum-sepolia, each exactly two endpoints at different origins,
+# each REPLACING that network's built-in pair. LIVE: `verify --online` uses
+# the pair of the network it runs on. devnet has no pair (its chain lives for
+# one run) and [verify.devnet] is refused. The older single
+# `arbitrum_endpoints` key under [verify] is refused when the file is read
+# (exit 17): move its two URLs under the table for the network they serve.
+[verify.arbitrum-one]
+rpc_endpoints = ["https://c.example", "https://d.example"]
 ```
 
 ## The accepted TOML subset
@@ -101,34 +144,43 @@ per-line error, never a misparse:
 | --- | --- |
 | blank lines, `#` comments | escape sequences in `"…"` strings |
 | `[section]`, `[section.sub]` headers | multi-line strings and arrays |
-| `key = "basic string"` | integers, booleans, dates |
+| `key = "basic string"` | integers, floats, dates |
 | `key = 'literal string'` | inline tables `{ … }` |
 | `key = ["a", "b"]` (one line) | array-of-tables `[[…]]` |
-| | duplicate keys or sections |
+| `key = true`, `key = false` (bare, lowercase) | duplicate keys or sections |
 
-URLs in `tsa_urls`, `bitcoin_endpoints`, and `arbitrum_endpoints` must start
-with `http://` or `https://`.
+Only a recognized key's value is held to this subset, and each key takes one
+kind of value: a key that takes a string or a list refuses `true`, and the
+one key that takes a boolean refuses `"false"`. An unknown key's value is
+not read at all — the key is warned about and ignored — so a config written
+by a newer antseal, whose values may use more of TOML, still loads.
 
-`tsa_urls`, `bitcoin_endpoints` and `arbitrum_endpoints` are additionally
-parsed as real endpoints when the file is read, so a URL with no host
-(`http:///tsr`), an unusable scheme, or embedded credentials
-(`http://user:pw@host/`) is refused at load — naming the entry and the
-line — rather than surfacing as a failed anchor midway through a seal.
+URLs in `tsa_urls`, `ots_calendars`, `bitcoin_endpoints` and
+`rpc_endpoints` must start with `http://` or `https://`.
 
-`bitcoin_endpoints` and `arbitrum_endpoints` must additionally be
-**`https://`**, and the file is refused at load if one is not — naming the
-endpoint, before any network call. The only exemption is a loopback **IP
-literal** (`127.0.0.0/8` or `::1`), which exists so the project's own
-stub-server tests can run; the *name* `localhost` is not exempt, and neither
-is a hostname that merely contains a literal (`127.0.0.1.evil.example`).
+They are additionally parsed as real endpoints when the file is read, so a
+URL with no host (`http:///tsr`), an unusable scheme, or embedded
+credentials (`http://user:pw@host/`) is refused at load — naming the line
+and the entry — rather than surfacing as a failed anchor midway through a
+seal. An `rpc_endpoints` entry is named by its position (`entry 0`,
+`entry 1`), never by its URL (see "Online-verification endpoints").
 
-`tsa_urls` is deliberately not subject to that rule. An RFC 3161 timestamp
-token is signed by the authority and bound to a nonce we chose, so plain
-HTTP cannot let anyone forge, replay or substitute one — and one of the two
-default authorities, `timestamp.digicert.com`, offers no HTTPS at all. What
-plain HTTP does cost there is privacy: a passive observer learns that this
-machine timestamped a particular 32-byte digest. If that matters to you,
-drop DigiCert from the list; nothing else changes.
+`bitcoin_endpoints` and `rpc_endpoints` must additionally be **`https://`**,
+and the file is refused at load if one is not, before any network call. The
+only exemption is a loopback **IP literal** (`127.0.0.0/8` or `::1`), which
+exists so the project's own stub-server tests can run; the *name*
+`localhost` is not exempt, and neither is a hostname that merely contains a
+literal (`127.0.0.1.evil.example`).
+
+`tsa_urls` and `ots_calendars` are deliberately not subject to that rule.
+An RFC 3161 timestamp token is signed by the authority and bound to a nonce
+we chose, so plain HTTP cannot let anyone forge, replay or substitute one —
+and one of the two default authorities, `timestamp.digicert.com`, offers no
+HTTPS at all. An OpenTimestamps calendar cannot forge a time either, even
+one an attacker controls completely (D54 §4). What plain HTTP does cost is
+privacy: a passive observer learns that this machine timestamped a
+particular 32-byte digest. If that matters to you, drop DigiCert from the
+TSA list and list only https calendars; nothing else changes.
 
 ## Bootstrap peers
 
@@ -183,6 +235,70 @@ file is read — a malformed config (exit code 17), raised before any command
 runs, naming the key, the table and the line. The error never repeats the
 value: an RPC URL usually carries an API key, and error messages end up in
 terminals, logs and `--json` output. Delete the line.
+
+## OpenTimestamps calendars
+
+`[anchors] ots_calendars` is the list of calendars `seal` submits to, and the
+same list decides which calendars antseal may ask, later, to upgrade a
+pending attestation to a Bitcoin one:
+
+- **Replace, never merge.** A non-empty list replaces the four built-in
+  calendars (the OpenTimestamps client's own defaults); an empty or absent
+  list uses them. A calendar listed twice is used once.
+- **OpenTimestamps never stops a seal.** Fewer than two calendars answering
+  marks the seal's anchor set degraded — so a list of one marks every seal
+  degraded — and none answering leaves the seal with no OpenTimestamps
+  anchor. The seal proceeds either way: the check that can stop a seal
+  before payment counts timestamp-authority tokens only (D54 §3).
+- **Keep a calendar listed while its attestations are pending.** antseal
+  upgrades a pending attestation by asking the calendar that issued it, and
+  it asks only calendars under three pinned domains or on this list (that
+  calendar's host and its subdomains). Remove a calendar while works stamped
+  with it still show a pending OpenTimestamps anchor in `antseal status`,
+  and those attestations can no longer be upgraded.
+- **Upgrades are fetched over https only.** Stamping accepts a plain-http
+  calendar, but a calendar whose attestations name it by an `http://`
+  address is never upgraded.
+- **A longer list upgrades over more commands.** The opportunistic upgrade
+  pass that follows a command asks at most four calendars — one work's worth
+  with the built-in list — so with a longer list a work's attestations are
+  upgraded over several commands. `antseal status <work-id> --upgrade` is
+  not limited to four.
+
+## Online-verification endpoints
+
+`verify --online` checks two kinds of evidence against two independent
+sources each, and reports agreement only when both give the same answer:
+
+- **`[verify] bitcoin_endpoints`** — the esplora pair Bitcoin block headers
+  are confirmed against. `status --upgrade` and the opportunistic upgrade
+  pass confirm headers against the same pair. It must name exactly two
+  endpoints at different origins, which is checked when the pair is used: a
+  list of another size is a usage error (exit code 2) from `verify --online`,
+  and from `status --upgrade` when it has an attestation to upgrade, and it
+  makes the opportunistic pass skip silently.
+- **`[verify.arbitrum-one] rpc_endpoints` and
+  `[verify.arbitrum-sepolia] rpc_endpoints`** — the Arbitrum RPC pair a
+  payment receipt is confirmed against, one pair per network. A pair you set
+  replaces that network's built-in pair, and `verify --online` uses only the
+  pair of the network it runs on. Each must name exactly two endpoints at
+  different origins, which is checked when the file is read: anything else
+  is a malformed config (exit code 17). devnet has no pair — its chain is a
+  fresh local chain for each run, so `verify --online` confirms no receipt
+  there — and `[verify.devnet]` is a malformed config.
+- **These refusals never repeat an RPC URL.** An Arbitrum endpoint that
+  serves old receipts usually needs an API key, and providers put the key in
+  the URL. A refusal names the key, the table, the line and the entry's
+  position instead. `verify --online` itself does print every endpoint it
+  consulted, by full URL, on its `endpoints:` line and in `--json` output,
+  so a key in one of these URLs appears there: treat that output as you
+  would the key.
+- **The older `arbitrum_endpoints` key is refused.** Earlier builds read one
+  `arbitrum_endpoints` list under `[verify]` and applied it to whichever
+  network a command ran on. It is now a malformed config (exit code 17),
+  raised before any command runs, naming the key and the two tables that
+  replace it but never its value. Move its two URLs under the table of the
+  network they serve.
 
 ## Files outside the vault
 

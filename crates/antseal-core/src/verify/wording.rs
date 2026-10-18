@@ -757,6 +757,20 @@ pub fn live_blob_fetch_error_line(subject: &str, reason: &str) -> String {
     format!("{subject}: fetch failed ({reason}) — nothing established either way")
 }
 
+/// The one word for a `Transport`-class failure (no usable answer arrived) at
+/// **both** boundaries: [`live_fetch_failure_class_label`] (storage) and
+/// [`probe_failure_class_label`] (online) each spell their `Transport` class
+/// through it. D190 R3 (R91) rules the two words REQUIRED equal, not equal by
+/// coincidence: until D190 they were two independent literals, and only the
+/// live one is in the R18-frozen snapshot, so respelling the online word alone
+/// moved no frozen byte and reddened nothing. One constant makes the equality
+/// structural, and `verdict_wording.rs`'s
+/// `the_live_and_online_transport_labels_are_one_word` asserts it across the
+/// two functions. Private on purpose: its only callers are those two
+/// functions, and a public item with no caller outside them would be the
+/// test-only surface D190 R2 removed from `FetchFailureClass`.
+const TRANSPORT_FAILURE_LABEL: &str = "transport failure";
+
 /// The failure-class word for one live fetch failure. Wildcard-free so a new
 /// class cannot ship unspelled (the L2 discipline at the class level), and
 /// the **one** place a live fetch failure is spelled anywhere in the product.
@@ -770,15 +784,17 @@ pub fn live_blob_fetch_error_line(subject: &str, reason: &str) -> String {
 /// The snapshot generator now renders this function over
 /// [`FetchFailureClass::ALL`], so the two are one fact.
 ///
-/// `Transport`'s word is [`probe_failure_class_label`]'s for the same class,
-/// and it is the word the R18-frozen row already carried before the move, so
-/// that half moved no frozen byte. `BackendRefused`'s is a **new** frozen
-/// sentence: it had no row of its own, because before R89 nothing rendered
-/// the class set exhaustively.
+/// `Transport`'s word is [`probe_failure_class_label`]'s for the same class —
+/// **required** equal since D190 R3: one private constant
+/// (`TRANSPORT_FAILURE_LABEL`) behind both arms rather than two literals that
+/// happened to agree — and it is the word the R18-frozen row already carried
+/// before the move, so that half moved no frozen byte. `BackendRefused`'s is a
+/// **new** frozen sentence: it had no row of its own, because before R89
+/// nothing rendered the class set exhaustively.
 #[must_use]
 pub const fn live_fetch_failure_class_label(class: FetchFailureClass) -> &'static str {
     match class {
-        FetchFailureClass::Transport => "transport failure",
+        FetchFailureClass::Transport => TRANSPORT_FAILURE_LABEL,
         FetchFailureClass::BackendRefused => "the backend refused the read",
     }
 }
@@ -890,10 +906,17 @@ pub fn no_evidence_line(slot: &str, height: u64) -> String {
 
 /// The failure-class word for one endpoint's probe failure. Wildcard-free so
 /// a new class cannot ship unspelled (the L2 discipline at the class level).
+///
+/// `Transport`'s word is [`live_fetch_failure_class_label`]'s for the storage
+/// boundary's `Transport` — **required** equal by D190 R3, so both arms read
+/// one private constant (`TRANSPORT_FAILURE_LABEL`). It matters most on this
+/// side: the frozen snapshot renders the online failure line with no failures,
+/// so it cannot catch this word drifting alone; the shared constant and
+/// `verdict_wording.rs`'s cross-function test do.
 #[must_use]
 pub const fn probe_failure_class_label(class: ProbeFailureClass) -> &'static str {
     match class {
-        ProbeFailureClass::Transport => "transport failure",
+        ProbeFailureClass::Transport => TRANSPORT_FAILURE_LABEL,
         ProbeFailureClass::Payload => "unusable reply",
         ProbeFailureClass::WrongChain => "wrong chain",
     }

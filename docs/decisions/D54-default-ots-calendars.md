@@ -462,3 +462,34 @@ bytes, so it passes `cap + 1`) applies unchanged.
   suffix, append-only.
 - Any proposal to make OTS success a seal precondition → §3's argument must
   be defeated first.
+
+## Addendum — 2026-10-17 (wave 38, D188 §2 R1–R3, R11): §6.3's validator and TLS policy
+
+§6.3 prescribed *"the existing `expect_url_array` validation so no second
+convention is invented"* (`:359`, and the parser arm at `:371`). Since A49/A50
+the override keys are validated by `expect_endpoint_array(value, what, tls)`
+(`config.rs:563-573` at `23f3093`), with the TLS policy as a parameter and the
+rule that one implementation of "which URLs this build will contact" runs at
+load and again at use. §6.3 named no policy for calendars.
+
+D188 (`U44`, `U52`, `U64`) rules it:
+- **Validator and policy:** `expect_endpoint_array(value, "ots_calendars",
+  TlsPolicy::Optional)` — the submit path's own policy
+  (`ots/submit.rs:328-335`), which records the deliberate asymmetry with A42's
+  https-only upgrade URI, so load and use cannot disagree. A plain-http calendar
+  weakens no evidence (this record's Status: *"a liveness decision, not a trust
+  decision"*); its cost is documented in `docs/config.md` — upgrades are fetched
+  over https only, so a calendar that names itself by an `http://` URI in its
+  attestations is never upgraded. An invalid entry is exit 17, naming the key,
+  the line and the entry.
+- **§6.2's `effective_calendars` deduplicates**, like `effective_tsa_urls`.
+  Absent or `[]` still means the four defaults; how to say "no OTS wanted" is
+  `A94`'s, not decided.
+- **One source, two roles.** The key is both the seal's submit list and §6.2's
+  `configured` widening of the upgrade allowlist; D188 asserts that the two
+  constructors' lists are equal. Removing a calendar later strands its stored
+  pending attestations (`HostNotAllowed`) — the same reason §4 makes the pinned
+  suffix list append-only (`:247`) — and `docs/config.md` says so.
+
+§6.3's TOML shape, the `[anchors]` placement, *"Precedence is U4's"* and
+*"Wired by **U44**"* stand. The text above stays as written.

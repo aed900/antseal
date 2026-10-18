@@ -49,8 +49,9 @@
 use antseal_core::crypto::secrets::SealId;
 use antseal_net::NetworkId;
 
-use crate::error::CliError;
-use crate::pipeline::journal::{SealState, recorded_state};
+use crate::error::{CliError, ConsentOutcome};
+use crate::pipeline::SealJournal;
+use crate::pipeline::journal::{SealState, recorded_plan, recorded_state};
 use crate::vault::store::{SealShapingFlags, WorkState, WorkStore};
 
 /// One incomplete work, reduced to what the matching rule reads.
@@ -202,6 +203,7 @@ pub fn match_candidates(
             return Ok(ResumeDecision::Resume(Box::new((*candidate).clone())));
         }
         return Err(CliError::ResumeFlagMismatch {
+            seal_id: hex_seal(&candidate.seal_id),
             detail: format!(
                 "work {}: recorded `{}`, this invocation `{}`",
                 hex_seal(&candidate.seal_id),
@@ -256,6 +258,7 @@ pub fn match_candidates(
             )
         };
         return Err(CliError::ResumeOverlapNotExact {
+            seal_id: hex_seal(&candidate.seal_id),
             detail: format!(
                 "work {} ({relation}); resume it with `{}`",
                 hex_seal(&candidate.seal_id),
@@ -301,27 +304,55 @@ impl AbandonReport {
                 hex_seal(&self.seal_id)
             )];
         }
+        // U17 wrote "so nothing is lost but the local encryption work", true
+        // for a work stopped before its anchor step and false for one that
+        // got anchors: those timestamp *this* manifest, and a fresh seal has
+        // a different one (D185 R4 names them as the destructive part of the
+        // act). The report cannot tell the two apart — the anchor tag is
+        // written even when `--no-anchor` skipped the step — so it states
+        // what is true of both, and the anchors are counted where it matters,
+        // in the preview shown before the question.
         vec![
             format!(
                 "Abandoned the interrupted seal {}.",
                 hex_seal(&self.seal_id)
             ),
-            "  Nothing was paid for it and nothing was uploaded, so nothing is lost but the \
-             local encryption work. Sealing these files again starts a completely fresh work: \
-             a new seal_id, a new master secret, freshly drawn nonces, and therefore a \
-             different work-id."
+            "  Nothing was paid for it and nothing was uploaded. Sealing these files again \
+             starts a completely fresh work: a new seal_id, a new master secret, freshly drawn \
+             nonces, and therefore a different work-id — none of this work's records, its \
+             staged copy, its consent or any anchors, carries over to it."
                 .to_owned(),
-            "  The staged ciphertexts stay in the vault until it is compacted; they are no \
-             longer resumable and no longer match any invocation."
+            // U17 wrote "until it is compacted": no command compacts a vault
+            // (none exists, and no row or record proposes one), so the
+            // sentence promised a mechanism the product does not have.
+            "  The staged ciphertexts stay in the vault; they are no longer resumable and no \
+             longer match any invocation."
                 .to_owned(),
         ]
+    }
+
+    /// The `--json` result of `antseal abandon` (D185 R7; tier C, D65).
+    ///
+    /// `seal_id` is the 32-hex form every resume message prints, `already`
+    /// is the idempotent outcome (the work was abandoned before this run and
+    /// nothing was written), and `previous_state` is the fine journal state
+    /// the work was in — `null` when its journal carried no tag. There is
+    /// deliberately no `work_id` member: a work killed mid-staging has none,
+    /// and `list --json` carries both ids for every work.
+    #[must_use]
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "seal_id": hex_seal(&self.seal_id),
+            "already": self.already,
+            "previous_state": self.previous_state.map(SealState::name),
+        })
     }
 }
 
 /// Abandon a **pre-pay** incomplete work at the user's explicit request
 /// (U17; the exit D45's flag-mismatch error records as missing).
 ///
-/// # Why this exists, and why nothing calls it yet
+/// # Why this exists, and what calls it
 ///
 /// D45 §2 makes an inexact re-run a hard error: a user with a staged work
 /// over paths `P` who now wants different flags cannot resume (the flags
@@ -332,12 +363,13 @@ impl AbandonReport {
 /// here"*.
 ///
 /// This function is that mechanism, with its safety rules and its tests.
-/// The **surface token** that would invoke it — a `seal` flag, a `vault`
-/// subcommand, or a new verb — is deliberately *not* added here: the
-/// canonical command surface is frozen and shared, adding to it is the
-/// deliberate decision D45 asked for rather than a side effect of an
-/// implementation lane, and `cli.rs` is outside this lane's containment.
-/// Recorded as **U41**.
+/// U17 built it without a surface token, on purpose: the canonical command
+/// surface is frozen and shared, and adding to it was the deliberate
+/// decision D45 asked for. **D185 made that decision**: a top-level
+/// `antseal abandon <ID> [--yes]`, whose handler reaches this function
+/// through [`run_abandon`] and calls it **unchanged** — the rules below are
+/// the safety case, and the surface adds a confirmation in front of them,
+/// never a second copy of them.
 ///
 /// # The three rules, in the order they are checked
 ///
@@ -424,6 +456,318 @@ pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
         previous_state,
         already: false,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D185: `antseal abandon <ID> [--yes]`, the surface over the engine above
+// ─────────────────────────────────────────────────────────────────────
+
+/// The two id forms `antseal abandon` takes, named by every refusal of its
+/// argument (D185 R2).
+const ABANDON_ID_FORMS: &str = "`antseal abandon` takes the seal id an interrupted seal's \
+                                messages print (32 hexadecimal characters) or the work id \
+                                `antseal list` prints (64 hexadecimal characters), in full";
+
+/// Resolve `antseal abandon`'s one argument to the vault's store key
+/// (D185 R2).
+///
+/// # Two forms, told apart by length alone
+///
+/// The works that need this command most are named by **seal-id**: both
+/// D45 refusals print it, and a seal killed before its staging finished has
+/// no work-id at all (`list` prints `(no work id yet; seal …)` for it). Once
+/// a work is staged, `list` prints its 64-hex **work-id** instead. Each form
+/// has exactly one length, so the length alone says which key the argument
+/// is. This is not a prefix scheme: a prefix of either form is refused like
+/// any other malformed id, for the reason
+/// [`resolve_work_id`](crate::pipeline::restore::resolve_work_id) gives — a
+/// prefix match is a second, silently ambiguous naming scheme. That
+/// resolver answers the work-id form here too, so every command that takes
+/// a work-id resolves it the same way; the seal-id form is this command's
+/// own. Upper-case hex is accepted, since users paste what they are given.
+///
+/// A complete or an already-abandoned work resolves: what to do with it is
+/// [`abandon_pre_pay`]'s question, and it answers in its own words.
+///
+/// # Errors
+///
+/// [`CliError::Usage`] naming the two forms — for an argument of any other
+/// shape, and for a well-formed id that no work in this vault carries; the
+/// store's own classes for a damaged vault.
+pub fn resolve_abandon_id(store: &WorkStore<'_>, id: &str) -> Result<SealId, CliError> {
+    let not_found = |kind: &str| CliError::Usage {
+        message: format!("no work in this vault has the {kind} `{id}`: {ABANDON_ID_FORMS}"),
+    };
+    let hex = id.bytes().all(|b| b.is_ascii_hexdigit());
+    if hex && id.len() == 32 {
+        let mut bytes = [0u8; 16];
+        for (slot, pair) in bytes.iter_mut().zip(id.as_bytes().chunks_exact(2)) {
+            *slot = (hex_digit(pair[0]) << 4) | hex_digit(pair[1]);
+        }
+        let seal_id = SealId::from_bytes(bytes);
+        return if store.list_works()?.contains(&seal_id) {
+            Ok(seal_id)
+        } else {
+            Err(not_found("seal id"))
+        };
+    }
+    if hex && id.len() == 64 {
+        return crate::pipeline::restore::resolve_work_id(store, id).map_err(|err| match err {
+            crate::pipeline::restore::RestoreError::WorkNotFound => not_found("work id"),
+            other => other.into(),
+        });
+    }
+    Err(CliError::Usage {
+        message: format!("`{id}` is neither a seal id nor a work id: {ABANDON_ID_FORMS}"),
+    })
+}
+
+/// One ASCII hex digit's value. Reached only after `is_ascii_hexdigit` has
+/// accepted every byte, so the last arm is unreachable — and harmless.
+const fn hex_digit(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 0,
+    }
+}
+
+/// What `antseal abandon` shows before it asks (D185 R3, R4).
+///
+/// # Read only for a work the engine would actually write
+///
+/// A preview exists only for an incomplete work whose coarse tag is pre-pay
+/// and which has **no journaled receipt** — the two facts
+/// [`abandon_pre_pay`] decides by, read the same way. Every other work goes
+/// straight to the engine with nothing asked: it refuses a complete or a
+/// paid work, and reports an abandoned one as already done, each in its own
+/// sentence. Asking "abandon it?" first would put a question in front of a
+/// refusal, and the question says *"Nothing was paid for it"*, which would be
+/// false for a paid work.
+///
+/// The engine stays the authority. It reads both facts again after the
+/// confirmation — under the vault lock the handler holds for the whole run,
+/// so nothing can move between the two reads — and a preview decides only
+/// whether a question is asked, never what happens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbandonPreview {
+    seal_id: SealId,
+    title: Option<String>,
+    paths: Vec<String>,
+    network: String,
+    /// The fine journal state, `None` when the journal carries no tag.
+    tag: Option<SealState>,
+    /// Whether the seal plan was journaled — the last write of staging.
+    planned: bool,
+    /// How many anchor artifacts the vault holds for the work. Counted from
+    /// the slots, never inferred from the tag: the pipeline writes
+    /// `Anchored` after the anchor step even when `--no-anchor` skipped it,
+    /// so the tag alone would claim anchors an unanchored work never had.
+    anchor_slots: usize,
+}
+
+impl AbandonPreview {
+    /// The preview for `seal_id`, or `None` when the engine would not
+    /// abandon the work (see the type's docs).
+    ///
+    /// # Errors
+    ///
+    /// The store's and the journal's classes.
+    pub fn read<J: SealJournal>(
+        store: &WorkStore<'_>,
+        journal: &J,
+        seal_id: &SealId,
+    ) -> Result<Option<Self>, CliError> {
+        let meta = store.load_meta(seal_id)?;
+        if meta.state != WorkState::IncompletePrePay
+            || journal.receipt(seal_id).map_err(CliError::from)?.is_some()
+        {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            seal_id: *seal_id,
+            title: meta.shaping.title.clone(),
+            paths: meta.input_paths_as_given.clone(),
+            network: meta.network.clone(),
+            tag: recorded_state(store, seal_id).map_err(CliError::from)?,
+            planned: recorded_plan(store, seal_id)
+                .map_err(CliError::from)?
+                .is_some(),
+            anchor_slots: store.list_anchors(seal_id)?.len(),
+        }))
+    }
+
+    /// Whether anchors were already obtained for the work — at least one
+    /// anchor artifact is recorded. What abandoning gives up then includes
+    /// those timestamps: they are over this work's manifest, and a fresh
+    /// seal of the same files has a different one.
+    #[must_use]
+    pub const fn anchored(&self) -> bool {
+        self.anchor_slots > 0
+    }
+
+    /// The screen shown before the question — and shown under `--yes` and in
+    /// machine mode too, where nothing is asked (D51 invariant 1).
+    #[must_use]
+    pub fn render(&self) -> Vec<String> {
+        let progress = match (self.tag, self.planned) {
+            (Some(SealState::Staged), false) => {
+                "staging was interrupted before it finished; not paid".to_owned()
+            }
+            (Some(SealState::Staged), true) => "staged; not paid".to_owned(),
+            (Some(SealState::Anchored), _) => {
+                "staged and past its anchor step; not paid".to_owned()
+            }
+            (Some(other), _) => format!("the journal records `{}`", other.name()),
+            (None, _) => "the journal records no state for it".to_owned(),
+        };
+        let anchors = match self.anchor_slots {
+            0 => "none recorded".to_owned(),
+            n => format!("{n} recorded, and they cannot be carried over to a new seal"),
+        };
+        vec![
+            format!("Interrupted seal {}", hex_seal(&self.seal_id)),
+            format!(
+                "  title:    {}",
+                self.title.as_deref().unwrap_or("(untitled)")
+            ),
+            format!("  files:    {}", self.paths.join(", ")),
+            format!("  network:  {}", self.network),
+            format!("  progress: {progress}"),
+            format!("  anchors:  {anchors}"),
+        ]
+    }
+
+    /// The confirmation question, verbatim from D185 R4: default no, and the
+    /// anchors clause only when anchors were obtained.
+    #[must_use]
+    pub fn question(&self) -> String {
+        let anchors = if self.anchored() {
+            ", and the anchors already obtained for it,"
+        } else {
+            ""
+        };
+        format!(
+            "Abandon interrupted seal {}? Nothing was paid for it; the staged work{anchors} can \
+             no longer be used. [y/N] ",
+            hex_seal(&self.seal_id)
+        )
+    }
+}
+
+/// How `antseal abandon` is confirmed: D51's destructive-confirm class,
+/// with `--yes` as its declared channel (D185 R4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbandonConfirm {
+    /// `--yes`: confirmed in advance. It wins in every mode (D51).
+    pub yes: bool,
+    /// D51 machine mode, from [`crate::machine::machine_mode_for`] — the
+    /// single detection point; nothing here probes a terminal.
+    pub machine_mode: bool,
+}
+
+/// `antseal abandon <ID>` over an unlocked vault: resolve the id, show what
+/// will be lost, confirm, then call [`abandon_pre_pay`] — **unchanged**
+/// (D185 R3).
+///
+/// `emit` receives the preview's lines (the handler routes them to stdout,
+/// or to stderr under `--json`). `ask` is asked the question on an
+/// interactive terminal and answers whether the user said yes; in
+/// production it is [`ask_on_tty`](crate::seal_consent::ask_on_tty), the one
+/// implementation of "EOF, a blank line and anything unrecognised mean no"
+/// every consent-class prompt shares.
+///
+/// Nothing is written before the confirmation: resolution and the preview
+/// only read, so a declined or unobtainable confirmation leaves the vault
+/// exactly as it was.
+///
+/// # Errors
+///
+/// - [`CliError::Usage`] — an argument that is not a seal id or a work id,
+///   an id no work carries, and the engine's own refusals of a complete or a
+///   paid work;
+/// - [`CliError::AbandonNotConfirmed`] — machine mode without `--yes`, or a
+///   declined prompt;
+/// - the prompt's own channel failure, and the store's and journal's
+///   classes.
+pub fn run_abandon<J, E, A>(
+    store: &WorkStore<'_>,
+    journal: &J,
+    id: &str,
+    confirm: AbandonConfirm,
+    mut emit: E,
+    mut ask: A,
+) -> Result<AbandonReport, CliError>
+where
+    J: SealJournal,
+    E: FnMut(&str),
+    A: FnMut(&str) -> Result<bool, CliError>,
+{
+    let seal_id = resolve_abandon_id(store, id)?;
+    if let Some(preview) = AbandonPreview::read(store, journal, &seal_id)? {
+        for line in preview.render() {
+            emit(&line);
+        }
+        // `--yes` first: it is the declared channel, and D51's matrix has it
+        // win in every row it appears in, TTY or not.
+        if !confirm.yes {
+            if confirm.machine_mode {
+                return Err(CliError::AbandonNotConfirmed {
+                    reason: ConsentOutcome::MachineModeWithoutYes,
+                });
+            }
+            if !ask(&preview.question())? {
+                return Err(CliError::AbandonNotConfirmed {
+                    reason: ConsentOutcome::Declined,
+                });
+            }
+        }
+    }
+    abandon_pre_pay(store, journal, &seal_id)
+}
+
+/// Whether `seal_id` is a seal interrupted before its staging finished
+/// (D185 R6's T3), **measured** rather than assumed: no seal plan was
+/// journaled (the plan is staging's last write), the state tag still reads
+/// `Staged`, and no receipt exists.
+///
+/// `run_seal` asks this only after a resume failed with
+/// `SealError::NothingStaged`, which has other producers whose works may be
+/// further along; only this shape gets [`interrupted_before_staging`]'s
+/// sentence, so each of its clauses is a fact about the work it names. A
+/// read that fails counts as "not measured", and the original error stands.
+#[must_use]
+pub fn staging_never_finished(store: &WorkStore<'_>, seal_id: &SealId) -> bool {
+    matches!(recorded_plan(store, seal_id), Ok(None))
+        && matches!(recorded_state(store, seal_id), Ok(Some(SealState::Staged)))
+        && matches!(store.get_receipt(seal_id), Ok(None))
+}
+
+/// T3's way forward (D185 R6): what re-running the command of a seal
+/// interrupted before its staging finished meets, instead of a usage error
+/// that repeated on every run with no exit.
+///
+/// `sink.begin` writes the work record and the `Staged` tag before the first
+/// blob is staged, and the plan is written only once staging is done, so a
+/// kill in between (Ctrl-C during encryption: the CLI installs no signal
+/// handler) leaves an incomplete pre-pay work that resume cannot finish and
+/// that every re-run matches again. The sentence says **"before its staging
+/// finished"**, not "nothing was staged": unit blobs are journaled one by
+/// one, so some may be in the vault. Nothing was anchored or paid — the tag
+/// and the absent receipt say so ([`staging_never_finished`]) — and the
+/// re-run after `antseal abandon` is a fresh seal, because an abandoned work
+/// is never a resume candidate. The deeper fix is S45's.
+#[must_use]
+pub fn interrupted_before_staging(seal_id: &SealId) -> CliError {
+    let id = hex_seal(seal_id);
+    CliError::Usage {
+        message: format!(
+            "seal {id} was interrupted before its staging finished: nothing was anchored or paid \
+             for it and there is nothing to resume — discard it with `antseal abandon {id}` and \
+             re-run this command"
+        ),
+    }
 }
 
 /// The resume plan U17's merged render shows beside the fresh quote: what

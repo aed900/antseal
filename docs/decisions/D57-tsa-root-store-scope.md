@@ -571,3 +571,21 @@ C1/C3 channels (§6) are executed.
   (its `AllCertificateRecordsCSVFormatv2` URL 404'd at
   `2026-08-02T19:34:22Z`) → that would give C2 coverage for Sectigo and
   SwissSign and should be added to the C2 menu.
+
+## Addendum — 2026-10-17 (wave 38, D192 §2 R2): the quarantine's disposition for `Q34`
+
+§5's correction quarantined `swisssign-signature-services-root-2020-2` and left its promotion
+to `A56`. `MVP-SPEC.md:109` still lists SwissSign as a documented alternate, so the divergence
+needed a stated disposition before `Q34`. **D192 records it: flagged, not promoted.** SwissSign
+ships documented, configurable and never counting:
+- configured **alone**, it aborts the seal before payment;
+- configured **beside a pinned TSA**, it marks every seal degraded;
+- the release notes carry `docs/anchors/root-store-update.md` §6's quarantine disclosure, and
+  owe both consequences above;
+- promotion stays `A56`'s — C1 from a host SwissSign does not block, or a reviewed amendment
+  to this record — followed by an `A26` append to store v2 and a page redeploy.
+
+Nothing in §5 or §6 changes. The channel rule stands, and D192 refuses promotion on this
+record's own price (*"each root is an organisation that can sign a false, earlier time"*,
+`:77-79`), set against two outward acts and one store-version event, for an authority with a
+published quota of about ten requests a day.

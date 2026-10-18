@@ -743,3 +743,44 @@ fn the_same_token_against_the_pinned_store_aborts_the_gate() {
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0].class, "untrusted-chain");
 }
+
+// ── Q89: calendar routes and TSA identities are two labelled counts ─────
+
+/// Q89: one number, one label. The count line names the OTS figure by the
+/// seal summary's own label — **calendar routes** (U22's; the datum is
+/// `distinct_calendar_routes`, D92 §11) — so a seal holding more calendars
+/// than independent authorities reads as two counts, never as D92's
+/// "2 distinct calendars, 1 independent party" contradiction.
+///
+/// Built from the **real** `degradation_report()`: two accepting calendars
+/// (D54's `Complete`), one verified FreeTSA token captured through a stub,
+/// and one failing TSA — a failure is what makes the count line print at all.
+#[test]
+fn more_calendar_routes_than_distinct_tsas_render_as_two_labelled_counts() {
+    let mut tsa = one_verified_tsa();
+    tsa.attempts
+        .extend(failed_tsa(&["https://unpinned.example"]).attempts);
+    let sub = submission(complete_ots(), tsa);
+
+    // The case under test, measured rather than assumed: more calendar
+    // routes than distinct TSAs.
+    assert_eq!(sub.ots.distinct_calendars(), 2);
+    assert_eq!(sub.verified_tsa_count(), 1);
+    assert_eq!(sub.distinct_tsas(), 1);
+
+    let report = sub.degradation_report();
+    assert_eq!(
+        report.len(),
+        2,
+        "one failure line, one count line: {report:?}"
+    );
+    let counts: Vec<&String> = report
+        .iter()
+        .filter(|line| line.starts_with("tsa: "))
+        .collect();
+    assert_eq!(counts.len(), 1, "exactly one count line: {report:?}");
+    let line = counts[0];
+    assert!(!line.contains("distinct calendar"), "{line}");
+    assert!(line.contains("ots: 2 calendar route(s)"), "{line}");
+    assert!(line.contains("from 1 distinct TSA(s)"), "{line}");
+}

@@ -57,7 +57,7 @@ use antseal_net::{
 
 use super::anchors::{AnchorSummary, artifacts_of};
 use super::consent::{ConsentDecision, ConsentHook, ConsentRequest, consent_record};
-use super::error::{Barrier, BarrierHook, SealError};
+use super::error::{Barrier, BarrierHook, GateRefusal, SealError};
 use super::journal::{
     BlobSlot, SealJournal, SealPlan, SealState, StagedBytesUnavailable, check_staged_integrity,
 };
@@ -138,7 +138,7 @@ where
     /// [`SealError::StagedBytes`] (the work is marked abandoned first);
     /// [`SealError::ConsentDeclined`] (no state change);
     /// [`SealError::ConsentDeclined`] when the re-consented re-payment D36
-    /// requires is refused (`:457`); [`SealError::Storage`]
+    /// requires is refused (`:465`); [`SealError::Storage`]
     /// (`StorageError::ProofsExpired`) only if the *replacement* proofs
     /// expire in turn — the first expiry is handled here (`:274`) and never
     /// reaches the caller; plus the
@@ -383,7 +383,15 @@ where
         if unanchored {
             return Ok(None);
         }
-        let outcome = self.gate.run(digest).await?;
+        // D194: the gate's error names no work, so it is paired with this
+        // one's seal-id here, the only place the gate is called; the CLI's
+        // abort message hands that id to `antseal abandon`.
+        let outcome = self.gate.run(digest).await.map_err(|error| {
+            SealError::AnchorGate(GateRefusal {
+                seal_id: *seal_id,
+                error,
+            })
+        })?;
         let Some(submission) = outcome.submission() else {
             // A gate that submitted nothing and did not refuse: the
             // `--no-anchor` gate driven on a development network. Nothing to
@@ -485,7 +493,33 @@ where
         // capture fires from inside it.
         self.journal.arm_receipts(seal_id, prior.as_ref());
 
-        let receipt = self.backend.pay(quote).await?;
+        // S37 (D186 R3), the first of the two points where the receipt's
+        // durability decides the class: a payment that stranded after its
+        // latest capture failed has moved money the vault may not show, so it
+        // is `payment-unrecorded` (37) and not the finishable 28.
+        let receipt = match self.backend.pay(quote).await {
+            Ok(receipt) => receipt,
+            Err(StorageError::StrandedPayment {
+                landed_tx_count,
+                reason,
+            }) => {
+                return Err(match self.journal.receipts_unrecorded() {
+                    Some(fault) => SealError::PaymentUnrecorded {
+                        landed_tx_count,
+                        fault,
+                        detail: reason,
+                    },
+                    None => SealError::Storage(StorageError::StrandedPayment {
+                        landed_tx_count,
+                        reason,
+                    }),
+                });
+            }
+            Err(other) => return Err(other.into()),
+        };
+        // What THIS payment landed; the merge below adds a prior round's
+        // transactions, which were already durable before it began.
+        let landed_tx_count = receipt.txs.len();
         // Only the LAST sub-batch's receipt is still unwritten when `pay`
         // returns cleanly — every earlier one was journaled from inside
         // `pay` by the sink. This write supersedes them with the complete
@@ -502,7 +536,21 @@ where
         // The one window where money has moved and nothing records it.
         // With `NoBarriers` this call is the empty statement it looks like.
         self.barriers.at(Barrier::PostPayPreReceiptJournal)?;
-        self.journal.put_receipt(seal_id, &receipt)?;
+        // S37 (D186 R3), the second point: `pay` succeeded but this write
+        // failed. If the latest capture was durable, the vault already holds
+        // the whole receipt and this is an ordinary I/O failure (4). If it was
+        // not, nothing durable covers what was just bought — the same harm
+        // as above, reached without a stranded payment.
+        if let Err(err) = self.journal.put_receipt(seal_id, &receipt) {
+            return Err(match self.journal.receipts_unrecorded() {
+                Some(fault) => SealError::PaymentUnrecorded {
+                    landed_tx_count,
+                    fault,
+                    detail: err.to_string(),
+                },
+                None => err.into(),
+            });
+        }
         // The machine only moves forward. A first payment advances the work
         // to `Paid`; a *re*-payment of an expired-proof work (D37) is money
         // moving again on a work that is already past that barrier, and the
@@ -1241,5 +1289,493 @@ mod tests {
             merged.covers_all_paid_quotes(),
             "the merged map must satisfy finalize's gap rule"
         );
+    }
+
+    /// **S37 (D186)**: which money-moved class a payment ends in is decided
+    /// by whether its receipt is durable. Each row drives a real pipeline
+    /// over a real vault, with the real sink attached to the real journal
+    /// (as `SealSession` wires them) and a backend that captures after every
+    /// landed sub-batch, the order `ant_backend.rs` keeps.
+    mod s37 {
+        use std::sync::Arc;
+
+        use antseal_core::crypto::secrets::SealId;
+        use antseal_net::test_util::MockBackend;
+        use antseal_net::{
+            Address, Blob, BlobCost, BlobQuote, CostQuote, PaymentReceipt, StorageBackend,
+            StorageError,
+        };
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        use super::{Vault, YesConsent, YesGate, block_on, files, request};
+        use crate::error::{CliError, ErrorClass};
+        use crate::pipeline::error::{NoBarriers, SealError};
+        use crate::pipeline::journal::{
+            BlobSlot, JournalError, RecordedIdentity, SealJournal, SealPlan, SealState, StagedBlob,
+            WorkIdentity,
+        };
+        use crate::pipeline::receipt_sink::{ReceiptSinkFault, VaultReceiptSink, merge_receipts};
+        use crate::pipeline::resume::Pipeline;
+        use crate::pipeline::seal::SealResult;
+        use crate::pipeline::vault_journal::VaultJournal;
+        use crate::vault::store::{ConsentRecord, StoreError, WorkStore};
+
+        /// D37's hook on a real multi-tx payment, at mock speed. Each
+        /// sub-batch (one blob per transaction at cap 1) is paid through the
+        /// inner mock, and the real sink then captures the **cumulative**
+        /// receipt-so-far. `fails(n)` scripts which captures (1-based) fail,
+        /// through the sink's own test seam. With `strand_after: Some(k)` the
+        /// payment dies after `k` landings and returns `StrandedPayment`
+        /// after its latest capture; with `None` it pays every line.
+        struct CapturesEachSubBatch<'m> {
+            inner: &'m MockBackend,
+            sink: Arc<VaultReceiptSink>,
+            strand_after: Option<usize>,
+            fails: fn(usize) -> bool,
+        }
+
+        fn line_total(line: &BlobQuote) -> u128 {
+            match &line.cost {
+                BlobCost::AlreadyStored => 0,
+                BlobCost::Priced { payments, .. } => payments.iter().map(|p| p.amount_atto).sum(),
+            }
+        }
+
+        impl StorageBackend for CapturesEachSubBatch<'_> {
+            async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+                self.inner.quote_batch(blobs).await
+            }
+
+            async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+                self.inner.balances().await
+            }
+
+            async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+                let landings = self
+                    .strand_after
+                    .map_or(quote.blobs.len(), |k| k.min(quote.blobs.len()));
+                let mut so_far: Option<PaymentReceipt> = None;
+                for (index, line) in quote.blobs.iter().take(landings).enumerate() {
+                    let landed = self
+                        .inner
+                        .pay(&CostQuote {
+                            blobs: vec![line.clone()],
+                            total_ant_atto: line_total(line),
+                            gas_estimate_wei: 0,
+                        })
+                        .await?;
+                    let cumulative = match so_far.take() {
+                        Some(earlier) => merge_receipts(earlier, landed),
+                        None => landed,
+                    };
+                    if (self.fails)(index + 1) {
+                        self.sink.fail_next_writes(1);
+                    }
+                    self.sink.capture(&cumulative);
+                    so_far = Some(cumulative);
+                }
+                let so_far = so_far.ok_or_else(|| StorageError::Payment {
+                    reason: "test: the quote had nothing to pay".into(),
+                })?;
+                match self.strand_after {
+                    Some(_) => Err(StorageError::StrandedPayment {
+                        landed_tx_count: so_far.txs.len(),
+                        reason: "test: killed between sub-batch txs".into(),
+                    }),
+                    None => Ok(so_far),
+                }
+            }
+
+            async fn finalize_batch(
+                &self,
+                receipt: &PaymentReceipt,
+                blobs: &[Blob],
+            ) -> Result<Vec<Address>, StorageError> {
+                self.inner.finalize_batch(receipt, blobs).await
+            }
+
+            async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+                self.inner.get_data(address).await
+            }
+        }
+
+        /// A journal whose post-`pay` receipt write fails, as a full disk
+        /// would make it fail. Every other call — `arm_receipts` and
+        /// `receipts_unrecorded` included — goes to the real journal
+        /// underneath, so the sink is armed and read exactly as in
+        /// production.
+        struct FailsTheReceiptWrite<'j, J> {
+            inner: &'j J,
+        }
+
+        impl<J: SealJournal> SealJournal for FailsTheReceiptWrite<'_, J> {
+            fn begin(&self, identity: &WorkIdentity<'_>) -> Result<(), JournalError> {
+                self.inner.begin(identity)
+            }
+            fn put_staged(&self, seal_id: &SealId, blob: &StagedBlob) -> Result<(), JournalError> {
+                self.inner.put_staged(seal_id, blob)
+            }
+            fn staged(&self, seal_id: &SealId, slot: BlobSlot) -> Result<StagedBlob, JournalError> {
+                self.inner.staged(seal_id, slot)
+            }
+            fn staged_slots(&self, seal_id: &SealId) -> Result<Vec<BlobSlot>, JournalError> {
+                self.inner.staged_slots(seal_id)
+            }
+            fn put_plan(&self, seal_id: &SealId, plan: &SealPlan) -> Result<(), JournalError> {
+                self.inner.put_plan(seal_id, plan)
+            }
+            fn plan(&self, seal_id: &SealId) -> Result<Option<SealPlan>, JournalError> {
+                self.inner.plan(seal_id)
+            }
+            fn set_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
+                self.inner.set_state(seal_id, state)
+            }
+            fn state(&self, seal_id: &SealId) -> Result<SealState, JournalError> {
+                self.inner.state(seal_id)
+            }
+            fn put_receipt(
+                &self,
+                _seal_id: &SealId,
+                _receipt: &PaymentReceipt,
+            ) -> Result<(), JournalError> {
+                Err(JournalError::Store(Box::new(StoreError::Io {
+                    path: std::path::PathBuf::from("/test/vault/store/works/w/receipt"),
+                    source: std::io::Error::new(std::io::ErrorKind::StorageFull, "test: disk full"),
+                })))
+            }
+            fn receipt(&self, seal_id: &SealId) -> Result<Option<PaymentReceipt>, JournalError> {
+                self.inner.receipt(seal_id)
+            }
+            fn arm_receipts(&self, seal_id: &SealId, prior: Option<&PaymentReceipt>) {
+                self.inner.arm_receipts(seal_id, prior);
+            }
+            fn receipts_unrecorded(&self) -> Option<ReceiptSinkFault> {
+                self.inner.receipts_unrecorded()
+            }
+            fn put_consent(
+                &self,
+                seal_id: &SealId,
+                consent: ConsentRecord,
+            ) -> Result<(), JournalError> {
+                self.inner.put_consent(seal_id, consent)
+            }
+            fn consent(&self, seal_id: &SealId) -> Result<Option<ConsentRecord>, JournalError> {
+                self.inner.consent(seal_id)
+            }
+            fn recorded_identity(
+                &self,
+                seal_id: &SealId,
+            ) -> Result<RecordedIdentity, JournalError> {
+                self.inner.recorded_identity(seal_id)
+            }
+            /// Refuses rather than forwards. The S37 rows seal with
+            /// `no_anchor`, so the gate submits nothing and no anchor slot is
+            /// ever written; forwarding would make this double a fifth
+            /// anchor-slot write site in `src/`, which
+            /// `tests/seal_journal.rs` enumerates as exactly four (D97 R3).
+            fn put_anchor(
+                &self,
+                _seal_id: &SealId,
+                _slot: &str,
+                _bytes: &[u8],
+            ) -> Result<(), JournalError> {
+                Err(JournalError::IllegalAnchorWrite {
+                    detail: "the S37 rows never anchor, so this double refuses anchor writes",
+                })
+            }
+            fn mark_degraded(&self, seal_id: &SealId) -> Result<(), JournalError> {
+                self.inner.mark_degraded(seal_id)
+            }
+            fn record_outcome(
+                &self,
+                seal_id: &SealId,
+                work_id: Option<[u8; 32]>,
+                cost_atto: Option<u128>,
+            ) -> Result<(), JournalError> {
+                self.inner.record_outcome(seal_id, work_id, cost_atto)
+            }
+            fn incomplete_works(&self) -> Result<Vec<(SealId, Option<SealState>)>, JournalError> {
+                self.inner.incomplete_works()
+            }
+        }
+
+        /// One `seal` over `fx`'s vault: the sink attached to the journal,
+        /// the scripted backend, and — when `receipt_write_fails` — the
+        /// journal wrapped so its post-`pay` write fails.
+        fn seal_once(
+            fx: &Vault,
+            mock: &MockBackend,
+            sink: &Arc<VaultReceiptSink>,
+            script: (Option<usize>, fn(usize) -> bool),
+            receipt_write_fails: bool,
+        ) -> (Result<SealResult, SealError>, SealId) {
+            let mut rng = ChaCha20Rng::from_seed([37u8; 32]);
+            let journal = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+                .with_receipt_sink(Arc::clone(sink));
+            let backend = CapturesEachSubBatch {
+                inner: mock,
+                sink: Arc::clone(sink),
+                strand_after: script.0,
+                fails: script.1,
+            };
+            let files = files();
+            let mut seal_rng = ChaCha20Rng::from_seed([38u8; 32]);
+            let consent = YesConsent::default();
+            let result = if receipt_write_fails {
+                let failing = FailsTheReceiptWrite { inner: &journal };
+                block_on(
+                    Pipeline::new(&backend, &YesGate, &failing, &consent, &NoBarriers)
+                        .seal(&request(&files), &mut seal_rng),
+                )
+            } else {
+                block_on(
+                    Pipeline::new(&backend, &YesGate, &journal, &consent, &NoBarriers)
+                        .seal(&request(&files), &mut seal_rng),
+                )
+            };
+            let works = WorkStore::new(fx.vault.as_ref())
+                .list_works()
+                .expect("enumerate");
+            assert_eq!(works.len(), 1, "one seal, one work");
+            (result, works[0])
+        }
+
+        /// What the vault holds afterwards, read through a fresh sinkless
+        /// journal — the disk, not the sink.
+        fn durable_receipt(fx: &Vault, seal_id: &SealId) -> Option<PaymentReceipt> {
+            let mut rng = ChaCha20Rng::from_seed([39u8; 32]);
+            VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+                .receipt(seal_id)
+                .expect("read the receipt")
+        }
+
+        fn state_of(fx: &Vault, seal_id: &SealId) -> SealState {
+            let mut rng = ChaCha20Rng::from_seed([40u8; 32]);
+            VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+                .state(seal_id)
+                .expect("read the state")
+        }
+
+        fn staged_count(fx: &Vault, seal_id: &SealId) -> usize {
+            let mut rng = ChaCha20Rng::from_seed([41u8; 32]);
+            let plan = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng)
+                .plan(seal_id)
+                .expect("read the plan")
+                .expect("staging finished");
+            plan.unit_count as usize + 1
+        }
+
+        /// **D186 test (1).** The payment strands after captures that did not
+        /// become durable — here every one failed, so the vault holds no
+        /// record at all — and the class is `payment-unrecorded` (37), with a
+        /// message naming the count that landed and why the record failed.
+        #[test]
+        fn stranded_payment_whose_last_capture_failed_is_payment_unrecorded() {
+            const LANDED: usize = 2;
+            let fx = Vault::new("s37-unrecorded");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (Some(LANDED), |_| true), false);
+            let err = result.expect_err("the payment strands");
+
+            // Positive controls: money really moved, and no record of it
+            // reached the disk — so this row cannot pass over a vault that
+            // holds the receipt after all.
+            assert_eq!(
+                mock.paid_map().len(),
+                LANDED,
+                "the landed sub-batches moved money"
+            );
+            assert!(
+                durable_receipt(&fx, &seal_id).is_none(),
+                "positive control: the injected failures must leave nothing durable"
+            );
+            assert_eq!(sink.writes(), 0);
+
+            let fault = match &err {
+                SealError::PaymentUnrecorded {
+                    landed_tx_count,
+                    fault,
+                    ..
+                } => {
+                    assert_eq!(*landed_tx_count, LANDED);
+                    fault.clone()
+                }
+                other => panic!("expected payment-unrecorded (37), got {other:?}"),
+            };
+            assert!(matches!(fault, ReceiptSinkFault::Write { .. }), "{fault:?}");
+            let cli: CliError = err.into();
+            assert_eq!(cli.class(), ErrorClass::PaymentUnrecorded);
+            assert_eq!(cli.exit_code(), 37);
+            let message = cli.to_string();
+            assert!(
+                message.contains(&format!(" {LANDED} sub-batch transaction(s) landed")),
+                "{message}"
+            );
+            assert!(message.contains(&format!("({fault})")), "{message}");
+            assert!(
+                message.contains("test: killed between sub-batch txs"),
+                "{message}"
+            );
+        }
+
+        /// The **latest** capture decides, not any capture. The first
+        /// sub-batch's record reached the disk and the second's did not, so
+        /// the vault shows one of the two transactions as paid — and the class
+        /// is still 37, because a re-run would buy the second one again.
+        #[test]
+        fn a_capture_that_fails_after_a_durable_one_is_still_payment_unrecorded() {
+            let fx = Vault::new("s37-heal-then-fail");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (Some(2), |n| n == 2), false);
+            let err = result.expect_err("the payment strands");
+
+            let on_disk = durable_receipt(&fx, &seal_id).expect("the first capture is durable");
+            assert_eq!(
+                (on_disk.blobs.len(), on_disk.txs.len()),
+                (1, 1),
+                "positive control: the vault records the first sub-batch only"
+            );
+            assert_eq!(mock.paid_map().len(), 2, "two sub-batches moved money");
+            assert!(
+                matches!(
+                    err,
+                    SealError::PaymentUnrecorded {
+                        landed_tx_count: 2,
+                        ..
+                    }
+                ),
+                "{err:?}"
+            );
+            assert_eq!(CliError::from(err).exit_code(), 37);
+        }
+
+        /// **D186 test (2).** A failed capture healed by a later durable one
+        /// leaves a finishable payment: `payment-stranded` (28), with the
+        /// receipt on disk. The diagnostic `fault()` still holds the first
+        /// failure, which is exactly why the pipeline must not read it.
+        #[test]
+        fn a_failed_capture_healed_by_a_later_capture_stays_payment_stranded() {
+            let fx = Vault::new("s37-healed");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (Some(2), |n| n == 1), false);
+            let err = result.expect_err("the payment strands");
+
+            assert!(
+                matches!(sink.fault(), Some(ReceiptSinkFault::Write { .. })),
+                "anti-vacuity: the first capture really failed ({:?})",
+                sink.fault()
+            );
+            // The class first, so a regression reports the harm itself: a
+            // healed payment called unrecorded.
+            assert!(
+                matches!(
+                    err,
+                    SealError::Storage(StorageError::StrandedPayment {
+                        landed_tx_count: 2,
+                        ..
+                    })
+                ),
+                "a healed payment must stay payment-stranded, got {err:?}"
+            );
+            let cli = CliError::from(err);
+            assert_eq!(cli.class(), ErrorClass::PaymentStranded);
+            assert_eq!(cli.exit_code(), 28);
+            assert_eq!(sink.unrecorded(), None, "the second capture healed it");
+            let on_disk = durable_receipt(&fx, &seal_id).expect("the healed receipt is durable");
+            assert_eq!(
+                on_disk.blobs.len(),
+                2,
+                "both landed sub-batches are recorded"
+            );
+        }
+
+        /// **D186 test (3), S37 Accept 2.** A payment that succeeds changes
+        /// nothing even when **every** capture failed: the post-`pay` write
+        /// makes the complete receipt durable and the seal completes.
+        #[test]
+        fn a_successful_pay_with_a_failed_capture_changes_nothing() {
+            let fx = Vault::new("s37-success");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (None, |_| true), false);
+            let outcome = match result.expect("a successful payment completes the seal") {
+                SealResult::Sealed(outcome) => outcome,
+                SealResult::DryRun(_) => panic!("not a dry run"),
+            };
+
+            // Positive control: no capture became durable, so the receipt on
+            // disk can only have come from the post-`pay` write.
+            assert_eq!(sink.writes(), 0);
+            assert!(sink.unrecorded().is_some(), "every capture failed");
+            let staged = staged_count(&fx, &seal_id);
+            let on_disk = durable_receipt(&fx, &seal_id).expect("the receipt is durable");
+            assert_eq!(on_disk.blobs.len(), staged, "the whole receipt is on disk");
+            assert!(outcome.paid_here);
+            assert_eq!(state_of(&fx, &seal_id), SealState::Complete);
+            assert_eq!(mock.paid_map().len(), staged, "one paying quote per blob");
+            assert!(mock.double_paid().is_empty(), "{:?}", mock.double_paid());
+        }
+
+        /// **D186 test (4).** `pay` succeeded, its latest capture was not
+        /// durable, and the post-`pay` write failed too: nothing durable
+        /// covers what was bought, so the class is 37, not the bare I/O error
+        /// (4) that never mentions money. The control is the same failing
+        /// write after durable captures, which stays the I/O class: the
+        /// vault already holds the whole receipt.
+        #[test]
+        fn a_successful_pay_whose_receipt_cannot_be_written_is_payment_unrecorded() {
+            let fx = Vault::new("s37-postpay");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (None, |_| true), true);
+            let err = result.expect_err("the receipt write fails");
+
+            let staged = staged_count(&fx, &seal_id);
+            assert_eq!(mock.paid_map().len(), staged, "money moved for every blob");
+            assert!(
+                durable_receipt(&fx, &seal_id).is_none(),
+                "positive control: neither the captures nor the final write reached the disk"
+            );
+            assert_eq!(
+                state_of(&fx, &seal_id),
+                SealState::Anchored,
+                "the work never reached Paid"
+            );
+            assert!(
+                matches!(&err, SealError::PaymentUnrecorded { landed_tx_count, .. } if *landed_tx_count == staged),
+                "{err:?}"
+            );
+            let cli = CliError::from(err);
+            assert_eq!(cli.class(), ErrorClass::PaymentUnrecorded);
+            assert_eq!(cli.exit_code(), 37);
+            let message = cli.to_string();
+            assert!(message.contains("test: disk full"), "{message}");
+            assert!(
+                message.contains("injected write failure (test seam)"),
+                "{message}"
+            );
+
+            // The control: durable captures, the same failing final write.
+            let fx = Vault::new("s37-postpay-control");
+            let mock = MockBackend::new().with_max_transfers_per_tx(1);
+            let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+
+            let (result, seal_id) = seal_once(&fx, &mock, &sink, (None, |_| false), true);
+            let err = result.expect_err("the receipt write fails");
+            assert_eq!(sink.unrecorded(), None, "every capture was durable");
+            let on_disk = durable_receipt(&fx, &seal_id).expect("the captures are durable");
+            assert_eq!(on_disk.blobs.len(), staged_count(&fx, &seal_id));
+            assert!(matches!(err, SealError::Journal(_)), "{err:?}");
+            assert_eq!(CliError::from(err).class(), ErrorClass::IoError);
+        }
     }
 }

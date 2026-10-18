@@ -36,7 +36,7 @@ use super::journal::{
     SealState, StagedBlob, StagedBytesUnavailable, WorkIdentity, corrupt, decode_plan,
     decode_state, encode_plan, encode_state, recorded_state,
 };
-use super::receipt_sink::{VaultReceiptSink, decode_receipt, encode_receipt};
+use super::receipt_sink::{ReceiptSinkFault, VaultReceiptSink, decode_receipt, encode_receipt};
 use crate::vault::store::{ConsentRecord, WorkRecord, WorkState, WorkStore};
 
 /// The production seal journal over an unlocked vault's record store.
@@ -275,6 +275,12 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
         if let Some(receipts) = &self.receipts {
             receipts.arm(seal_id, prior);
         }
+    }
+
+    fn receipts_unrecorded(&self) -> Option<ReceiptSinkFault> {
+        self.receipts
+            .as_ref()
+            .and_then(|receipts| receipts.unrecorded())
     }
 
     fn receipt(&self, seal_id: &SealId) -> Result<Option<PaymentReceipt>, JournalError> {

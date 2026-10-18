@@ -79,8 +79,8 @@
 use antseal_anchor::agree::EndpointPair;
 use antseal_anchor::http::{Endpoint, HttpClient, HttpPolicy, TlsPolicy};
 use antseal_anchor::ots::{
-    DEFAULT_OTS_CALENDARS, PendingWork, StoredOtsAnchor, StoredTsaAnchor, UpgradeBudget,
-    UpgradeReport, upgrade_pending,
+    PendingWork, StoredOtsAnchor, StoredTsaAnchor, UpgradeBudget, UpgradeReport,
+    effective_calendars, upgrade_pending,
 };
 use antseal_core::anchor::model::{
     AnchorSource, AnchorVerdict, BlockEvidence, OtsArtifactView, TsaArtifactView,
@@ -761,13 +761,19 @@ fn verdict_json(verdict: &AnchorVerdict) -> serde_json::Value {
 /// pair the block header is confirmed against.
 ///
 /// Read from U4's config exactly as `AnchorStageConfig::from_config` reads the
-/// seal-side endpoints, so one file cannot resolve a calendar for `seal` and a
-/// different one for `status`.
+/// seal-side endpoints — the calendar list through the same
+/// `antseal_anchor::ots::effective_calendars` (U64, D188 R3) — so one file
+/// cannot resolve a calendar for `seal` and a different one for `status`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeConfig {
-    /// The configured calendar list. Its only role here is to **widen A42's
-    /// allowlist** to the hosts the user chose: the URIs actually polled come
-    /// out of the stored artifact, never out of this list.
+    /// The calendar list `seal` submits to: `[anchors] ots_calendars`, or
+    /// D54's four when the key is absent or empty. Its only role here is to
+    /// **widen A42's allowlist** to the hosts the user chose: the URIs actually
+    /// polled come out of the stored artifact, never out of this list. One
+    /// list in two roles has a residual, documented rather than fixed
+    /// (`docs/config.md`): a calendar removed from the list later can no
+    /// longer upgrade the attestations it issued (`HostNotAllowed`), the same
+    /// reason A42's pinned suffixes are append-only.
     pub calendars: Vec<String>,
     /// The two esplora endpoints `confirm_header` must agree between.
     pub bitcoin_endpoints: Vec<String>,
@@ -778,10 +784,9 @@ impl UpgradeConfig {
     #[must_use]
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
-            calendars: DEFAULT_OTS_CALENDARS
-                .iter()
-                .map(|url| (*url).to_owned())
-                .collect(),
+            // U64 (D188 R3): the seal stage's own list, through the seal
+            // stage's own collapse rule — never a second spelling of it.
+            calendars: effective_calendars(config.ots_calendars.as_deref()),
             bitcoin_endpoints: config.verify_bitcoin_endpoints.clone().unwrap_or_else(|| {
                 antseal_anchor::esplora::DEFAULT_ESPLORA_ENDPOINTS
                     .iter()

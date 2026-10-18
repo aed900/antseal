@@ -87,6 +87,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use antseal_core::verify::orchestration::FetchFailureClass;
+use antseal_core::verify::overlay::ProbeFailureClass;
 use antseal_core::verify::report::{AnchorKind, AnchorState, SignatureScheme};
 use antseal_core::verify::wording::*;
 
@@ -702,6 +703,36 @@ fn the_positioning_sweep_catches_a_planted_violation() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// the one `Transport` word (D190 R3)
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D190 R3 — the live and the online `Transport` words are required
+/// equal.** `live_fetch_failure_class_label` and `probe_failure_class_label`
+/// spell the same class of failure — no usable answer arrived — at the
+/// storage and the online boundary, and both words can render in one
+/// `verify` output. Until D190 they were two independent literals that agreed
+/// by coincidence, and only the live one is frozen here (section 9 sweeps
+/// `FetchFailureClass::ALL`; section 10 renders the online failure line with
+/// no failures), so respelling the online word alone moved no snapshot byte.
+/// D190 R3 rules them one word: a single constant behind both functions, and
+/// this cross-function assertion, which reddens if either function stops
+/// using it.
+#[test]
+fn the_live_and_online_transport_labels_are_one_word() {
+    let live = live_fetch_failure_class_label(FetchFailureClass::Transport);
+    let online = probe_failure_class_label(ProbeFailureClass::Transport);
+    assert!(
+        !live.is_empty(),
+        "an empty word would make the equality below vacuous"
+    );
+    assert_eq!(
+        live, online,
+        "the live and the online Transport words diverged; D190 R3 requires one word for both \
+         boundaries"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // the source scan (R18 Accept row 3)
 // ─────────────────────────────────────────────────────────────────────
 
@@ -736,10 +767,18 @@ fn single_sourced() -> Vec<(String, &'static str)> {
         ),
         (LIVE_LAYER_LABEL.to_owned(), "the --live layer label"),
         // R89's new frozen sentence. Only `BackendRefused`'s word joins the
-        // table: `Transport`'s is `probe_failure_class_label`'s word for the
-        // *online* class too, so it is shared by construction and a scan for
-        // it would report the sharing as an offence. Derived from the table
-        // rather than restated, so a deliberate reword moves needle and
+        // table. `Transport`'s ("transport failure") stays out: a two-word
+        // phrase is not the distinctive clause this table admits, and the
+        // risk that word carries is a different one — the live and online
+        // labels drifting apart. D190 R3 rules them REQUIRED equal, one
+        // constant behind both table functions, asserted by
+        // `the_live_and_online_transport_labels_are_one_word`; a needle here
+        // could not see that, because this scan reads renderer copies under
+        // `SCAN_ROOTS`, never the table. (This comment used to call the word
+        // "shared by construction" and say a needle "would report the sharing
+        // as an offence"; neither held — two independent literals, both in
+        // antseal-core and so outside the scan's roots.) Derived from the
+        // table rather than restated, so a deliberate reword moves needle and
         // sentence together — this entry guards against a *second copy* in a
         // renderer, which is a different claim from the wording being frozen.
         (

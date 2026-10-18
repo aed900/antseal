@@ -33,7 +33,7 @@ use antseal_cli::error::{
 // ─────────────────────────────────────────────────────────────────────
 
 /// The documented table (module docs of `antseal_cli::error`), literally.
-const TABLE: [(ErrorClass, u8, &str); 35] = [
+const TABLE: [(ErrorClass, u8, &str); 36] = [
     (ErrorClass::Internal, 1, "internal"),
     (ErrorClass::Usage, 2, "usage"),
     (ErrorClass::NotImplemented, 3, "not-implemented"),
@@ -109,6 +109,11 @@ const TABLE: [(ErrorClass, u8, &str); 35] = [
         36,
         "reveal-inputs-unusable",
     ),
+    // D186's third money-moved class. 20–29 has been full since D147, so it
+    // takes the first free code above that band (D69 §5's precedent, as 36
+    // did), among the vault-file classes because what failed is a vault
+    // write. No assigned code moved; 44–49 stays reserved.
+    (ErrorClass::PaymentUnrecorded, 37, "payment-unrecorded"),
     // D69's verdict band. 40 is the `Err` arm of `verify_bundle`; 41/42/43
     // are the severity rungs of a run that SUCCEEDED, and have no `CliError`
     // variant at all — they ride on `Outcome::exit_class` and the run still
@@ -367,7 +372,12 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 name: "os-keystore, reserved (D50)",
             },
         ),
-        ("anchor-gate-abort", CliError::AnchorGateAbort),
+        // **D194** (A97 + U97): through its real producer, `From<SealError>`,
+        // over the anchor crate's own failure values (`gate_abort` below), so
+        // the frozen text is what a user meets: each failed endpoint with its
+        // class, the trust state by its frozen name, and the abandon way
+        // forward carrying this work's seal-id.
+        ("anchor-gate-abort", gate_abort()),
         (
             "network-failure",
             CliError::NetworkFailure {
@@ -399,28 +409,23 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
             }),
         ),
         (
-            "resume-source-changed",
-            CliError::ResumeSafetyAbort {
-                reason: ResumeSafetyReason::SourceChanged,
-            },
-        ),
-        (
             "resume-staged-bytes-missing",
             CliError::ResumeSafetyAbort {
                 reason: ResumeSafetyReason::StagedBytesMissing,
             },
         ),
+        // D185 R6 moved both D45 texts, and they are now built through the
+        // real producer — `match_candidates`, the function `seal`'s
+        // detection calls — rather than hand-written: the way-forward clause
+        // carries the work's seal-id as the `antseal abandon` argument, and a
+        // hand-written detail could not show that the two ids agree.
         (
             "resume-overlap-not-exact",
-            CliError::ResumeOverlapNotExact {
-                detail: "2 of 3 paths match incomplete work a1b2c3".into(),
-            },
+            d45_refusal(&["notes.txt"], false),
         ),
         (
             "resume-flag-mismatch",
-            CliError::ResumeFlagMismatch {
-                detail: "incomplete work a1b2c3 was started without --split".into(),
-            },
+            d45_refusal(&["notes.txt", "draft.md"], true),
         ),
         (
             "invalid-seal-argument-one",
@@ -531,7 +536,142 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 antseal_net::StorageError::ProofsExpired,
             )),
         ),
+        // **D185** (U41), appended for D147's reason: this vector is
+        // append-ordered, so the blessed diff is these appended blocks plus
+        // the two D45 texts above, which moved in place.
+        //
+        // `abandon`'s destructive confirm — D51's second, and the first with
+        // a channel (`--yes`) — in both of its outcomes. One class, two
+        // messages (D51 invariant 3).
+        (
+            "abandon-declined",
+            CliError::AbandonNotConfirmed {
+                reason: ConsentOutcome::Declined,
+            },
+        ),
+        (
+            "abandon-machine-mode",
+            CliError::AbandonNotConfirmed {
+                reason: ConsentOutcome::MachineModeWithoutYes,
+            },
+        ),
+        // T3's way forward (D185 R6), through its real producer — the
+        // function `run_seal`'s resume arm returns for a seal interrupted
+        // before its staging finished. It is a usage message, frozen here
+        // because it is the only exit that dead end has.
+        (
+            "usage (seal interrupted before staging finished)",
+            antseal_cli::seal_resume::interrupted_before_staging(
+                &antseal_core::crypto::secrets::SealId::from_bytes([0xE4; 16]),
+            ),
+        ),
+        // **D186** (S37), appended for D147's reason. The third money-moved
+        // class, through its real producer — `From<SealError>` — with the
+        // fault rendered as the sink renders a failed store write
+        // (`ReceiptSinkFault::Write` over the store error's own `Display`).
+        // The OS text is hand-written, not `from_raw_os_error`, whose wording
+        // differs by platform.
+        (
+            "payment-unrecorded",
+            CliError::from(antseal_cli::pipeline::error::SealError::PaymentUnrecorded {
+                landed_tx_count: 2,
+                fault: antseal_cli::pipeline::receipt_sink::ReceiptSinkFault::Write {
+                    detail: antseal_cli::vault::store::StoreError::Io {
+                        path: PathBuf::from(
+                            "/home/user/.antseal/store/works/\
+                                 a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/receipt",
+                        ),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::StorageFull,
+                            "No space left on device (os error 28)",
+                        ),
+                    }
+                    .to_string(),
+                },
+                detail: "a payment sub-batch transaction reverted on-chain".into(),
+            }),
+        ),
     ]
+}
+
+/// A D45 refusal exactly as `seal` produces one: [`match_candidates`] — the
+/// real producer — over one recorded incomplete work, given the attempted
+/// paths and whether `--split` was added. NON-SECRET fixture paths.
+///
+/// [`match_candidates`]: antseal_cli::seal_resume::match_candidates
+fn d45_refusal(attempted: &[&str], split: bool) -> CliError {
+    use antseal_cli::seal_resume::{ResumeCandidate, match_candidates};
+    use antseal_cli::vault::store::{SealShapingFlags, WorkState};
+
+    let candidate = ResumeCandidate {
+        seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xA1; 16]),
+        absolute_paths: vec![
+            "/home/user/notes.txt".to_owned(),
+            "/home/user/draft.md".to_owned(),
+        ],
+        as_given_paths: vec!["notes.txt".to_owned(), "draft.md".to_owned()],
+        shaping: SealShapingFlags::default(),
+        network: "arbitrum-one".to_owned(),
+        state: WorkState::IncompletePrePay,
+        journal_state: None,
+    };
+    let shaping = SealShapingFlags {
+        split_blank_lines: split,
+        ..SealShapingFlags::default()
+    };
+    let attempted: Vec<String> = attempted
+        .iter()
+        .map(|path| format!("/home/user/{path}"))
+        .collect();
+    match_candidates(&[candidate], &attempted, &shaping)
+        .expect_err("the fixture inputs are a D45 near miss")
+}
+
+/// The anchor-gate abort exactly as `seal` produces one: `From<SealError>`
+/// over a `MinimumAnchor` whose two failures are the anchor crate's own
+/// values (an HTTP 503, and a token that verifies but reaches no pinned
+/// root), assembled the way `submit.rs` assembles them. NON-SECRET fixture
+/// URLs on RFC 2606 documentation hosts.
+fn gate_abort() -> CliError {
+    use antseal_anchor::gate::{AnchorEndpointFailure, AnchorGateError, AnchorStage};
+    use antseal_anchor::tsa::TsaFailure;
+    use antseal_cli::pipeline::error::{GateRefusal, SealError};
+
+    let entry = |endpoint: &str, failure: TsaFailure, elapsed_millis: u128| AnchorEndpointFailure {
+        stage: AnchorStage::Tsa,
+        endpoint: endpoint.to_owned(),
+        class: failure.class(),
+        detail: failure.to_string(),
+        elapsed_millis,
+    };
+    let down = "https://tsa-one.example/tsr";
+    let unpinned = "https://tsa-two.example/tsr";
+    CliError::from(SealError::AnchorGate(GateRefusal {
+        seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xA1; 16]),
+        error: AnchorGateError::MinimumAnchor {
+            attempted: 2,
+            failures: vec![
+                entry(
+                    down,
+                    TsaFailure::Http(antseal_anchor::AnchorHttpError::Status {
+                        endpoint: down.to_owned(),
+                        status: 503,
+                        body: b"timestamping is offline for maintenance".to_vec(),
+                    }),
+                    212,
+                ),
+                entry(
+                    unpinned,
+                    TsaFailure::Untrusted {
+                        endpoint: unpinned.to_owned(),
+                        state: antseal_core::verify::report::AnchorState::InternallyConsistentOnly,
+                        fault: None,
+                    },
+                    388,
+                ),
+            ],
+        },
+    }))
 }
 
 #[test]

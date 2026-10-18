@@ -163,7 +163,13 @@ impl<'a> StorageRecord<'a> {
 /// Rows come out in **work-global manifest order** (files in order, each
 /// file's units in order — raw mirrors included, since a mirror is a
 /// stored blob like any other), with the encrypted-manifest record, when
-/// supplied, appended last.
+/// supplied, appended last. That is the order D190 R5 (R90) rules for
+/// `verify --live`'s rows, stated once in `antseal-cli`'s `machine.rs`
+/// module doc: the CLI's builder (`verify_host::collect_live`) is asserted
+/// against it by its own test, and this one by the R11 tests
+/// `the_builder_spans_every_file_of_a_multi_file_work` and
+/// `the_encrypted_manifest_record_is_appended_last` — each against the
+/// statement, not against the other.
 ///
 /// Coverage is **exact**: every unit in the table must have a ciphertext
 /// and every supplied ciphertext must belong to the table. A live check
@@ -578,7 +584,11 @@ mod tests {
             .collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
-        assert_eq!(ids, sorted, "unit ids are the manifest-order ordinals");
+        assert_eq!(
+            ids, sorted,
+            "unit ids are the manifest-order ordinals: ascending, the order D190 R5 states for \
+             verify --live's rows"
+        );
     }
 
     #[test]

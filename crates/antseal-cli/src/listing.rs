@@ -761,7 +761,15 @@ impl WorkListing {
                     // information needed to choose *different* flags for
                     // the copy.
                     Some(ResumeRefusal::SplitOnNoFineTree { files, patterns }) => {
-                        out.extend(blocked_lines(files, patterns, resume));
+                        // The id `antseal abandon` is told to take is the one
+                        // this row's header printed: the work-id once the
+                        // manifest exists (always, for a blocked work — the
+                        // verdict is read from it), else the seal-id.
+                        let abandon_id = row
+                            .work_id
+                            .as_ref()
+                            .map_or_else(|| hex_seal(&row.seal_id), crate::pipeline::hex32);
+                        out.extend(blocked_lines(files, patterns, resume, &abandon_id));
                     }
                     // No verdict is not a verdict. An `Undetermined` work
                     // has no journaled manifest, which (D152 §1.7) means
@@ -1437,16 +1445,30 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
 /// `ResumeDecision::Fresh` — and it appears in none of the three refusals as
 /// an instruction.
 ///
-/// It also never says *abandon*: `Command` has nine subcommands and none of
-/// them is one, and `abandon_pre_pay` has no production caller. That is
-/// **U41**, and the last sentence here becomes false the day U41 lands.
+/// # The abandon exit (U41, D185 R6) — and why only for an unpaid work
+///
+/// Until U41 this copy ended *"This build has no command that discards a
+/// staged work"*, which was true. D185 added `antseal abandon <ID>`, and it
+/// changes what the pre-pay branch can promise: once the work is
+/// abandoned it is no longer a resume candidate (D45 §2 excludes abandoned
+/// works), so the **same** paths with either flag dropped seal as a fresh
+/// work instead of meeting 26. That is the only reason the pre-pay branch
+/// may say *drop a flag* without *at a different path*, and it says it only
+/// after the abandon; `tests/list_command.rs` measures the before and the
+/// after. The post-pay branch keeps D152's copy and adds that the command
+/// refuses a paid work — the engine's rule 2, read from the receipt.
 ///
 /// Every offending file is named, comma-joined in `file_id` order — D46's
 /// *"every offending argument named"*, the rule
 /// `refuse_split_on_no_fine_tree` follows for the same refusal. Verb
 /// agreement follows the count so that the single-file rendering is D152 §2
 /// R5's copy byte for byte.
-fn blocked_lines(files: &[String], patterns: &[String], resume: &ResumeHint) -> Vec<String> {
+fn blocked_lines(
+    files: &[String],
+    patterns: &[String],
+    resume: &ResumeHint,
+    abandon_id: &str,
+) -> Vec<String> {
     let (was, is) = if files.len() == 1 {
         ("was", "is")
     } else {
@@ -1460,11 +1482,25 @@ fn blocked_lines(files: &[String], patterns: &[String], resume: &ResumeHint) -> 
         .map(|pattern| shell_quote(pattern))
         .collect::<Vec<_>>()
         .join(", ");
-    // The only clause that keys on the clock, and it takes `ResumeClock`'s
-    // own two-way split rather than inventing a third reading of it.
-    let money = match resume.clock {
-        ResumeClock::ReQuote => "nothing was paid, so only the local staged copy is lost.",
-        ResumeClock::TimeBoxed => "this seal is paid for and the payment cannot be recovered.",
+    // The only line that keys on the clock, and it takes `ResumeClock`'s own
+    // two-way split rather than inventing a third reading of it: the money
+    // clause, and — since U41 — which exits exist.
+    let way_out = match resume.clock {
+        ResumeClock::ReQuote => format!(
+            "nothing was paid, so only the local staged copy is lost. To seal this material, \
+             discard this work with `antseal abandon {abandon_id}` and seal the same files again \
+             with either --split or --no-fine-tree dropped, or move or copy the file(s) to a \
+             different path and seal them there with either flag dropped: re-running the \
+             recorded command is refused, and so is re-running the same paths with different \
+             flags while this work is kept."
+        ),
+        ResumeClock::TimeBoxed => "this seal is paid for and the payment cannot be recovered. \
+                                   To seal this material, move or copy the file(s) to a \
+                                   different path and seal them there with either --split or \
+                                   --no-fine-tree dropped: re-running the recorded command is \
+                                   refused, re-running the same paths with different flags is \
+                                   refused too, and `antseal abandon` refuses a paid work."
+            .to_owned(),
     };
     vec![
         format!(
@@ -1473,12 +1509,7 @@ fn blocked_lines(files: &[String], patterns: &[String], resume: &ResumeHint) -> 
              (D24). D45 makes the recorded flags this work's identity, so no re-run can change \
              them."
         ),
-        format!(
-            "  {money} To seal this material, move or copy the file(s) to a different path and \
-             seal them there with either --split or --no-fine-tree dropped: re-running the \
-             recorded command is refused, and re-running the same paths with different flags is \
-             refused too. This build has no command that discards a staged work."
-        ),
+        format!("  {way_out}"),
         format!(
             "  recorded invocation, refused — do not re-run: {}",
             resume.invocation

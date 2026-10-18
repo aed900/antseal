@@ -1041,7 +1041,7 @@ impl WorkRecord {
                         channel: channel.ok_or(corrupt("consent channel missing"))?,
                     });
                 }
-                _ => return Err(corrupt("unknown meta key (strict v1 schema)")),
+                _ => return Err(corrupt("unknown meta key (strict schema)")),
             }
         }
         b.finish().map_err(codec)?;

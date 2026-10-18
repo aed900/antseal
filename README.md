@@ -20,9 +20,9 @@ full, including why no deniability feature exists and none is claimed.
 
 **Status:** the M0, M1, M2 and M3 gates have passed; **M4 (hardening and
 release) is in progress**. The verifier page is live at
-<https://antseal.org/>, and the `antseal` binary has nine subcommands
+<https://antseal.org/>, and the `antseal` binary has ten subcommands
 (`init`, `seal`, `list`, `show`, `status`, `restore`, `reveal`, `verify`,
-`vault`).
+`vault`, `abandon`).
 
 **There is no release yet** — no signed binaries are published, so the only
 way to run it today is to build from source. Treat it as pre-release: the CLI
@@ -82,8 +82,9 @@ That default build does everything except reach Autonomi: it reads and
 writes vaults, it checks proof bundles, and it reaches the timestamp
 network — `verify --online` probes a bundle's anchors, `status --upgrade`
 polls the calendars to complete pending attestations, and an opportunistic
-pass does the same after any command that opened a vault. The timestamp
-side is deliberately not feature-gated; only the Autonomi side is.
+pass does the same after any command that opened a vault (unless
+`config.toml` turns it off — see [docs/config.md](docs/config.md)). The
+timestamp side is deliberately not feature-gated; only the Autonomi side is.
 **The build that can seal is a different one**, opt-in because it pulls in
 a much heavier dependency graph:
 
@@ -125,7 +126,7 @@ what each copy is worth.
 Every step below runs on a machine with no wallet, no funds and no network —
 except the one step that cannot, which is named rather than faked.
 
-**1. See the surface.** Nine subcommands, and `--help` on any of them:
+**1. See the surface.** Ten subcommands, and `--help` on any of them:
 
 ```sh
 ./target/debug/antseal --help
@@ -238,7 +239,7 @@ Two limits on granularity are worth knowing before you seal rather than after.
 | `crates/antseal-core` | Pure logic, WASM-safe (no I/O, no tokio): canonicalization, crypto, manifest/bundle formats, FULL verification including all anchor verification |
 | `crates/antseal-anchor` | Network side of anchoring: OTS calendar submit/upgrade polling, RFC 3161 TSA HTTP, Arbitrum receipt capture |
 | `crates/antseal-net` | Autonomi storage behind the batch-first `StorageBackend` (ant-core impl + `MockBackend`) |
-| `crates/antseal-cli` | Binary `antseal` (clap + tokio): the nine subcommands above |
+| `crates/antseal-cli` | Binary `antseal` (clap + tokio): the ten subcommands above |
 | `verifier-web/` | Static offline verifier page: plain HTML/JS + antseal-core via wasm-bindgen — built, deployed and live at <https://antseal.org/> |
 | `testdata/` | Golden vectors, UTF-8 corpus, tamper matrix, fine-tree range-proof fixtures |
 

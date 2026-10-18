@@ -350,3 +350,25 @@ ruling did, or less:
 It changes code, tests, one cargo configuration file and documents in the tree, and
 authorises no network act: every test it adds refuses before any socket or runs against a
 dead loopback export. Nothing here authorises a push, a dispatch or a settings write.
+
+## Addendum — 2026-10-17 (wave 38, D191 §2 R3): the wrapper's *"could not be reached"* is changed, not only recorded
+
+§6 recorded that `backend::degrade`'s words *"could not be reached"* misdescribe this
+record's environment refusal, as they already did the storage gate's, and closed with *"This
+is recorded, not changed, this wave"* (`:322-324`). **D191 changes them.** `degrade` now
+carries one kind-neutral prefix, *"no connection to the Autonomi network was made:
+{detail}"*, and its trace says the same (D191 §2 R1).
+
+Why one prefix and not words chosen by kind: every connect-time failure reaches `degrade` as
+`StorageError::Network`, so the kind is not a type there; five kinds reach it, and three of them
+are refusals (the storage gate, this record's §2 R1 refusal, and the peer-locality refusal);
+and on the pinned stack an unreachable network never reaches it at all, because a dead or
+empty bootstrap connects `Ok` and fails per fetch (D170 §2 R2). The only kind for which the
+old words were arguable is the connect bound, and the neutral prefix followed by the bound's
+own reason says the same thing truthfully.
+
+What this leaves of §6: the `reveal` message it quotes (`:319-321`) is the text before D191.
+This record's rows assert `contains(REFUSAL)`, which still holds; D191 adds to the same
+`assert_refused` that the message carries the neutral prefix and does not contain *"could not
+be reached"*. `U96`'s Accept control — a dead-loopback `reveal` that still prints *"could not
+be reached"* — is struck as unsatisfiable (D191 §2 R2). §2 R1–R7 of this record are unchanged.

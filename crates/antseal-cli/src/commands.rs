@@ -71,7 +71,7 @@ pub(crate) struct Outcome {
 /// Two variants because D65 §5 forbids one of them for `verify`: routing the
 /// report through `serde_json::Value` alphabetizes its keys (`Map` is a
 /// `BTreeMap` in this build) and destroys D29 rule 1's declaration order,
-/// and `success_envelope`'s only signature takes a `Value`. Nine commands
+/// and `success_envelope`'s only signature takes a `Value`. Ten commands
 /// build a `Value` and are unaffected; `verify` renders its whole `result`
 /// through serde on typed values and hands over the text.
 pub(crate) enum MachineResult {
@@ -1155,6 +1155,62 @@ pub(crate) fn vault_import(
         "wallet_restored": summary.wallet_present,
         "config_restored": summary.config_present,
     })))
+}
+
+/// `abandon <ID> [--yes]` (U41, D185): discard an interrupted seal nothing
+/// has been paid for. Resolution, the preview, the D51 confirmation and the
+/// call into U17's engine — [`crate::seal_resume::abandon_pre_pay`],
+/// unchanged — are [`crate::seal_resume::run_abandon`]; this handler opens
+/// the vault and renders.
+///
+/// It opens the vault the way `show` and `status` do — the passphrase seam,
+/// then `unlock_for_command`, the one expression that unlocks and arms (D99
+/// R2) — reaches no network, and ignores `--network` as they do: the id
+/// names the work, and the work records its own network. Unlike them it
+/// **writes** (the S10 transition to `Abandoned`), so it takes the U5
+/// single-writer lock first, before the passphrase, as `seal` does: a
+/// running seal is never asked to share its work with a discard, and an
+/// invocation that cannot proceed does not first ask for a secret. The lock
+/// is held across the confirmation, so the state the preview showed is the
+/// state the engine acts on.
+///
+/// The journal comes from a [`SealSession`](crate::seal_session::SealSession)
+/// although nothing here pays: S36's scan allows the sinkless
+/// `VaultJournal::new` in exactly one production file. The session's
+/// receipt sink is never armed — only the seal pipeline arms it — so it
+/// captures nothing.
+pub(crate) fn abandon(
+    globals: &GlobalArgs,
+    id: &str,
+    yes: bool,
+    slot: &VaultSlot,
+) -> Result<Outcome, CliError> {
+    let ui = Ui { json: globals.json };
+    let layout = open_layout()?;
+    let _lock =
+        VaultLock::acquire(&layout.beside_path(BesideFile::Lockfile)).map_err(CliError::from)?;
+    let passphrase = collect_passphrase(globals, PassphrasePurpose::Unlock)?;
+    let session =
+        crate::seal_session::SealSession::open(unlock_for_command(&layout, &passphrase, slot)?);
+    let store = WorkStore::new(session.vault());
+    let mut rng = OsEntropy;
+    let journal = session.journal(&mut rng);
+    let confirm = crate::seal_resume::AbandonConfirm {
+        yes,
+        machine_mode: crate::machine::machine_mode_for(globals),
+    };
+    let report = crate::seal_resume::run_abandon(
+        &store,
+        &journal,
+        id,
+        confirm,
+        |line| ui.line(line),
+        crate::seal_consent::ask_on_tty,
+    )?;
+    for line in report.render() {
+        ui.line(&line);
+    }
+    Ok(Outcome::value(report.json()))
 }
 
 /// This invocation's clock read, POSIX seconds UTC. Shared with U24's hook,

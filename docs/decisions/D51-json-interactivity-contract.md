@@ -164,3 +164,31 @@ Invariants riding every row:
 - `--yes` in shared shell history authorizes real spends; nothing
   technical mitigates a leaked habit of `--yes` — wallet-hygiene docs
   carry the caution (Q).
+
+## Addendum — 2026-10-17 (wave 38, D185 §2 R4): a second destructive-confirm row, with `--yes` as its channel
+
+The prompt-class table has had one destructive-confirm row, `vault import`
+over an existing vault, with no channel by design. D185 (`U41`) adds a second:
+
+| Class | Prompts | Non-interactive channel | Unobtainable in machine mode → |
+|---|---|---|---|
+| destructive confirm | `antseal abandon <ID>` (U41, D185) | `--yes` | **consent-not-obtained** class |
+
+- On a TTY it asks, default No: *"Abandon interrupted seal {id}? Nothing was
+  paid for it; the staged work{, and the anchors already obtained for it,} can
+  no longer be used. [y/N]"* (the anchors clause only when the work is
+  anchored).
+- `--yes` confirms in advance. Machine mode, or no TTY, without `--yes` → 10,
+  and nothing is changed; a declined prompt → 10, nothing changed.
+- The prompt is declared in `machine.rs`'s `spec()` with channel `--yes`, so the
+  registry stays complete and `the_only_channel_less_prompt_is_the_import_overwrite`
+  stays true.
+
+Why a channel here when `vault import` has none: U41's Do ruled the
+channel-less precedent wrong for this verb — *"abandoning is how a script gets
+unstuck"* — and the engine already refuses the irreversible cases (a complete
+or paid work). `vault import`'s row and its reasoning are unchanged.
+
+This amends the U1 consequence above, *"`--yes` already exists exactly where
+consent does … and D51 deliberately adds none elsewhere"*: D185 adds one, on
+`abandon`, as a destructive-confirm channel. No exit code is added.

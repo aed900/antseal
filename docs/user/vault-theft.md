@@ -67,9 +67,9 @@ subject.
 ## There is no rotation. This was measured, not assumed
 
 There is no command to change a passphrase, re-key a vault, or re-encrypt what
-is already uploaded. The frozen command surface has nine commands and none of
+is already uploaded. The frozen command surface has ten commands and none of
 them is `rotate`, `passwd` or `change-passphrase`
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`).
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`).
 
 The one re-encryption that exists is `vault import`, and it is worth
 understanding exactly what it does *not* do: it builds a **new** vault with a
@@ -147,7 +147,7 @@ Argon2id is the default and scrypt is available only by explicit choice at
 `init`. Note which direction that choice runs: `--kdf scrypt` needs **more**
 memory, about 1 GiB against Argon2id's 256 MiB, and `init`'s own help says so
 in as many words — *"it is not a low-RAM escape"*
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:67-74`). There is no
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:68-75`). There is no
 setting anywhere that makes this cheaper.
 
 Three consequences you can observe:
@@ -155,7 +155,7 @@ Three consequences you can observe:
 - **The floor cannot be negotiated away, even by you.** A machine that cannot
   allocate 256 MiB fails at both create and unlock with a distinct error, class
   `vault-kdf-memory`, exit code **13**, and no fallback
-  (`crates/antseal-cli/src/error.rs:556-564`): *"the memory floor is a security
+  (`crates/antseal-cli/src/error.rs:642-650`): *"the memory floor is a security
   parameter … antseal will not create or open a weaker vault"*.
 - **A tampered header cannot weaken it either — and it fails before it costs
   anything.** The vault header is not encrypted, because an unlock has to read
@@ -165,7 +165,7 @@ Three consequences you can observe:
   `:288`) that `decode` runs at `:438` — one line ahead of key derivation
   (`crates/antseal-cli/src/vault/session.rs:423-427`). It carries its own class,
   `vault-kdf-params-out-of-range`, exit code **14**
-  (`crates/antseal-cli/src/error.rs:375`, `:445`), so the failure names its
+  (`crates/antseal-cli/src/error.rs:430`, `:512`), so the failure names its
   cause instead of collapsing into a generic authentication error.
   `downgraded_params_are_rejected_pre_auth`
   (`crates/antseal-cli/tests/vault_encryption.rs:505`) rewrites a real vault's
@@ -195,7 +195,7 @@ record of that correction is `docs/threat-model.md` §2.1.
 `antseal init --wrap keyfile` generates 32 bytes of operating-system randomness
 and makes that file **required alongside the passphrase at every unlock**
 (`crates/antseal-cli/src/vault/keyfile.rs:67`,
-`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:79-86`). The two
+`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:80-87`). The two
 factors are combined with HKDF rather than XOR, so neither is recoverable from
 the vault and neither is recoverable from the other
 (`crates/antseal-cli/src/vault/keyfile.rs:10-24`).
@@ -234,7 +234,7 @@ deliberately.
 **Only the keyfile half ships.** The keystore is registered as wrap-mode id 2 in
 the vault header (`crates/antseal-cli/src/vault/header.rs:83`) and is not
 implemented: `antseal init --wrap` offers exactly `none` and `keyfile` and
-nothing else (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:83-84`),
+nothing else (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:84-85`),
 and a vault header naming mode 2 is refused at unlock with its own class,
 `vault-wrap-mode-unsupported`, exit code **19**
 (`crates/antseal-cli/src/vault/session.rs:398-403`;
@@ -259,10 +259,10 @@ what cannot be undone.
    way to win that race.** No command prints or exports the wallet key on its
    own. The key arrives at `init` — by default **generated there** (`--wallet`
    defaults to `generate`;
-   `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`), or imported
+   `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`), or imported
    from a file descriptor or a hidden paste if you asked for that — and it never
    comes back out. Inside the vault it is read to sign a payment
-   (`crates/antseal-cli/src/commands.rs:381`, `:387`), to open the payment RPC
+   (`crates/antseal-cli/src/commands.rs:416`, `:417`), to open the payment RPC
    in a build with the storage backend compiled in
    (`crates/antseal-cli/src/backend.rs:699`, `:717`, under
    `#[cfg(feature = "ant-backend")]`), and to be copied into a `vault export`
@@ -338,19 +338,19 @@ decade. It does.
 
 | Claim on this page | Where it is enforced |
 | --- | --- |
-| the theft warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:74-77` |
-| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:353-358`; `crates/antseal-cli/src/vault/bookkeeping.rs:264` |
+| the theft warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:79-82` |
+| `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:369-376`; `crates/antseal-cli/src/vault/bookkeeping.rs:301` |
 | retroactive, permanent, unrotatable — stated in the code too | `crates/antseal-core/src/crypto/secrets.rs:47-49` |
 | `W` is per work; everything derives from it | `crates/antseal-cli/src/vault/store.rs:198-201`; `crates/antseal-core/src/crypto/hkdf.rs:137-146` |
 | an export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:99-100` |
 | the wallet sub-key decouples records, not the passphrase | `crates/antseal-cli/src/vault/wallet.rs:9-12` |
-| no command exports the wallet key; it is read to sign, to open the payment RPC, and to be copied into an export — three uses, no exit | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:52-65`; `crates/antseal-cli/src/commands.rs:381`, `:387`; `crates/antseal-cli/src/backend.rs:699`, `:717`; `crates/antseal-cli/src/vault/export.rs:761` |
-| no rotate / passwd / change-passphrase: nine commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15` |
-| scrypt costs more memory, not less — no low-RAM escape | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:67-74` |
+| no command exports the wallet key; it is read to sign, to open the payment RPC, and to be copied into an export — three uses, no exit | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`; `crates/antseal-cli/src/commands.rs:416`, `:417`; `crates/antseal-cli/src/backend.rs:699`, `:717`; `crates/antseal-cli/src/vault/export.rs:761` |
+| no rotate / passwd / change-passphrase: ten commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16` |
+| scrypt costs more memory, not less — no low-RAM escape | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:68-75` |
 | import re-encrypts local records and never touches `W` | `crates/antseal-cli/src/vault/export.rs:130-131` |
 | 12-byte creation floor, length only, creation only | `crates/antseal-cli/src/passphrase.rs:38-51`, `:87`, `:238` |
 | frozen Argon2id and scrypt parameters | `crates/antseal-cli/src/vault/kdf.rs:104`, `:111-119` |
-| memory floor has no fallback — exit **13** | `crates/antseal-cli/src/error.rs:556-564`; exit table at `:374` |
+| memory floor has no fallback — exit **13** | `crates/antseal-cli/src/error.rs:642-650`; exit table at `:429` |
 | below-floor parameters are refused pre-auth — exit **14** | `crates/antseal-cli/src/vault/kdf.rs:280`, `:288`, `:438`; `crates/antseal-cli/src/vault/session.rs:423-427`; `crates/antseal-cli/tests/vault_encryption.rs:505` |
 | the whole header is bound as associated data — exit **12** | `crates/antseal-cli/src/vault/cipher.rs:180-186`; `crates/antseal-cli/tests/vault_encryption.rs:537`, `:574` |
 | parameter ceilings, against a memory bomb | `crates/antseal-cli/src/vault/kdf.rs:126-130` |

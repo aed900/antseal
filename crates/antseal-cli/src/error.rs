@@ -17,7 +17,7 @@
 //! | 2    | `usage` | argv/parse/cross-validation errors (clap's own convention, kept) |
 //! | 3    | `not-implemented` | U1 frozen-surface stubs; message names the arriving milestone. (U13's M1 anchor-stage gate also mapped here until U22 wired the real stage and deleted it) |
 //! | 4    | `io-error` | ordinary filesystem I/O failure (D46 row 4's "ordinary I/O class") |
-//! | 10   | `consent-not-obtained` | D51: declined ≡ unobtainable, one class; also machine-mode / declined `vault import` overwrite (D51 prompt-class table, "destructive confirm" row) |
+//! | 10   | `consent-not-obtained` | D51: declined ≡ unobtainable, one class; also the two destructive confirms (D51 prompt-class table, "destructive confirm" rows): `vault import`'s overwrite, refused in every mode, and `abandon`'s, declined or unobtainable without `--yes` (D185) |
 //! | 11   | `passphrase-unavailable` | D41: no TTY and no `--passphrase-fd`; fd read failure / empty / forbidden bytes / over-cap |
 //! | 12   | `vault-auth-failure` | bad passphrase, AAD-detected tamper, or corrupt store — one code insofar as safe (U6) |
 //! | 13   | `vault-kdf-memory` | D40 §2: cannot allocate the KDF floor, at create AND unlock; no fallback exists |
@@ -31,11 +31,11 @@
 //! | 21   | `insufficient-eth-gas` | distinct from token by spec (core flow 1) |
 //! | 22   | `anchor-gate-abort` | zero TSA tokens and no `--force-degraded`; aborts pre-payment |
 //! | 23   | `network-failure` | storage/anchor network I/O failure (transient class; D48 severity floor) |
-//! | 24   | `resume-safety-abort` | spec line 145: changed source / missing staged bytes — never re-encrypts |
+//! | 24   | `resume-safety-abort` | spec line 145: missing staged bytes — never re-encrypts (a changed source is not an abort: resume never reads a source file, D45 §4) |
 //! | 25   | `resume-overlap-not-exact` | D45 §2: input overlap with an incomplete work that is not an exact match |
 //! | 26   | `resume-flag-mismatch` | D45 §2: same inputs, different seal-shaping flags |
 //! | 27   | `invalid-seal-argument` | D46: directory / non-regular file / duplicate path, pre-consent |
-//! | 28   | `payment-stranded` | D147: payment failed mid-sequence with money already moved — never the transient class; re-running `seal` finishes it and re-pays no quote the journaled receipt already maps |
+//! | 28   | `payment-stranded` | D147: payment failed mid-sequence with money already moved — never the transient class; re-running `seal` finishes it and re-pays no quote the journaled receipt already maps (when the vault recorded the receipt; 37 when it could not, D186) |
 //! | 29   | `payment-proofs-expired` | D147 / D37 Decision 6 / D179: a majority of the storing peers refused the journaled payment proof and the payment is more than 24 h old by its block time, so completing the seal costs a **second**, separately consented payment |
 //! | 30   | `refused-overwrite` | D48: restore found an existing, differing file (per-file; most-severe-class reporting) |
 //! | 31   | `malformed-restore-record` | D48: a vault record that cannot drive a safe restore |
@@ -44,30 +44,45 @@
 //! | 34   | `import-newer-version` | D47: export written by a newer antseal |
 //! | 35   | `restore-verification-failed` | D48 §6: restore fetched bytes that did not open their manifest commitment; nothing written for those files |
 //! | 36   | `reveal-inputs-unusable` | D69 §5 group 3: a manifest, vault record, ciphertext or anchor artifact disagrees with the manifest, so no bundle can be built — no argv change and no retry fixes it (reveal's sibling of 35) |
+//! | 37   | `payment-unrecorded` | D186 (S37): money moved and the vault could not record what it bought — the payment's most recent receipt capture did not become durable, then `pay` failed mid-sequence or the post-`pay` receipt write failed too; a re-run quotes, and charges again for, everything the vault does not show as paid, so this is never 28 |
 //! | 40   | `verify-bundle-rejected` | D69 §3 R2 `‡`: the `Err` arm of `verify_bundle` — tamper, forgery, malformation, over-cap and non-canonical bytes are **one** class; the specific `VerifyError::code()` rides in the message, never in the integer |
 //! | 41   | `verify-anchor-refuted` | D69 §3 R2 rung 1: ≥1 anchor slot is `invalid` (MVP-SPEC.md line 134 — *"signature/op check fails"*), offline or by agreed online refutation |
 //! | 42   | `verify-headline-divergence` | D69 §3 R2 rung 2: headline-eligible anchors disagree by strictly more than 48 h (MVP-SPEC.md line 137) |
 //! | 43   | `verify-unanchored` | D69 §3 R2 rung 3: zero headline-eligible anchors — **deliberately nonzero and deliberately distinct**, so a caller who accepts undated bundles opts back in with one line |
 //! | 44–49 | *reserved* | D69 §3 R9: a future storage-linkage rung (only if R6 is ever overturned), a `sig_policy` split, or report-v2 growth — **do not mint here** |
 //!
-//! # 28 and 29 are the money-moved pair (D147)
+//! # 28, 29 and 37 are the money-moved trio (D147, D186)
 //!
 //! Of the classes the storage boundary produces
 //! ([`crate::pipeline::error`]'s `storage_to_cli`), 20 and 21 are
 //! shortfalls found *before* anything is paid and 23 is the transient
 //! class a caller is **right** to retry: all three leave the wallet
-//! untouched by the failed attempt. 28 and 29 are the two where ANT has
-//! already left it, and they are separate codes because the remedies
-//! differ: 28 is finished by re-running `antseal seal` on the same inputs
-//! (the journaled partial receipt is authoritative, so no mapped quote is
-//! re-paid), while 29 needs a new, separately consented payment. A
-//! wrapper that retries 23 the way it retries a peer timeout must not be
-//! handed either of them.
+//! untouched by the failed attempt. 28, 29 and 37 are the three where ANT
+//! has already left it, and they are separate codes because the remedies
+//! differ:
 //!
-//! They are minted **inside** the seal/payment/resume band D69 §1(a)
+//! - 28 is finished by re-running `antseal seal` on the same inputs: the
+//!   journaled partial receipt is authoritative, so no mapped quote is
+//!   re-paid. That holds only while the vault recorded the receipt.
+//! - 29 needs a new, separately consented payment.
+//! - 37 says the vault could **not** record what was bought, so a re-run
+//!   quotes, and charges again for, everything the vault does not show as
+//!   paid. The remedy is to fix the vault's storage and review that quote
+//!   rather than consent to it in advance with `--yes`.
+//!
+//! A wrapper that retries 23 the way it retries a peer timeout must not be
+//! handed any of them, and one that re-runs 28 unattended must not be
+//! handed 37.
+//!
+//! 28 and 29 are minted **inside** the seal/payment/resume band D69 §1(a)
 //! surveyed and recorded free, not appended past 43 — the same placement
 //! rule that put `restore-verification-failed` at 35 *"beside the other
-//! restore classes"* rather than in the 40s. No assigned code moved and
+//! restore classes"* rather than in the 40s. D147 filled that band, so 37
+//! is the first free code above it (D69 §5's precedent, which put
+//! `reveal-inputs-unusable` at 36), among the vault-file classes because
+//! what failed is a vault write (D186 R4). 37 is decided by the pipeline,
+//! not by `storage_to_cli`: whether the receipt is durable is the
+//! journal's knowledge, not the storage error's. No assigned code moved and
 //! 44–49 stays reserved (D134 §2 R3).
 //!
 //! # The three verdict rungs are not errors (D69 §3 R1's third arm)
@@ -190,6 +205,29 @@ impl ConsentOutcome {
             }
         }
     }
+
+    /// The message for `antseal abandon`'s destructive confirm (D185 R4),
+    /// the same two outcomes in the words that fit them.
+    ///
+    /// The consent tail above would be true here — an unconfirmed abandon
+    /// pays, anchors, uploads and discloses nothing — but it is silent on
+    /// the one thing the user was deciding, which is whether the work is
+    /// discarded. So this tail says that nothing was changed: the confirm
+    /// runs before [`crate::seal_resume::abandon_pre_pay`], the only step
+    /// that writes.
+    fn describe_abandon(self) -> &'static str {
+        match self {
+            ConsentOutcome::Declined => {
+                "abandon declined: nothing was changed, and the interrupted seal is still in \
+                 the vault"
+            }
+            ConsentOutcome::MachineModeWithoutYes => {
+                "abandoning requires confirmation: machine mode (--json, non-TTY stdin, or \
+                 --passphrase-fd 0) never prompts — pass --yes to confirm in advance; nothing \
+                 was changed"
+            }
+        }
+    }
 }
 
 /// Why the passphrase channel failed (D41 byte semantics). Reasons name
@@ -246,32 +284,26 @@ impl PassphraseFailure {
 }
 
 /// Why a resume was refused as unsafe (spec line 145: resume never
-/// re-encrypts — one exit code, distinguishing messages).
+/// re-encrypts).
+///
+/// One reason today. The enum is kept rather than collapsed, so the
+/// `CliError::ResumeSafetyAbort { reason }` shape and its `--json` error
+/// object are unchanged and a future reason is additive (D187 R3).
+///
+/// # Why there is no "source changed" reason (U42, D187)
+///
+/// A changed source file is not an abort: resume never opens a source
+/// file (`RecordedIdentity` carries no `W`, and the re-upload is of the
+/// journaled staged ciphertexts), so a resume with edited sources
+/// restores the **original** bytes — S18 case (3), the rule D45 §4 states.
+/// A changed-source reason existed until D187: constructed by nothing, it
+/// owned a frozen exemplar that said "so this seal is abandoned" for exactly
+/// the case D45 rules *resumes*, and D187 removed it before U32 froze that
+/// line (D187 R1's removal arm). A future path that does read plaintext
+/// against a journaled nonce would add its own reason here, with its own
+/// exemplar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeSafetyReason {
-    /// A source file no longer reproduces the anchored commitments;
-    /// re-encrypting under the journaled nonce would be catastrophic
-    /// `(k_u, nonce)` reuse.
-    ///
-    /// # Unreachable by construction on the resume path, deliberately
-    ///
-    /// Nothing constructs this variant, and that is the *stronger*
-    /// outcome rather than a gap. U17 asked for an abort when a source
-    /// file changed; S11 implemented something better — resume never
-    /// opens a source file at all (`RecordedIdentity` carries no `W`, and
-    /// the re-upload is of the journaled staged ciphertexts), so a
-    /// changed source is not a hazard to abort on but a non-event: S18
-    /// case (3) proves a resume with edited sources restores the
-    /// **original** bytes. There is no abort because the wrong thing
-    /// cannot happen.
-    ///
-    /// The variant is kept rather than deleted: it is the frozen class
-    /// for any future path that *does* read plaintext against a journaled
-    /// nonce (a re-stage or repair feature would need exactly this
-    /// refusal), and its `Display` states the rule that makes such a path
-    /// illegal. Whether to keep it or shrink the error universe by one is
-    /// recorded as **U42**.
-    SourceChanged,
     /// The journaled staged ciphertext bytes are unavailable; the
     /// in-progress seal is abandoned rather than ever re-encrypted.
     StagedBytesMissing,
@@ -280,11 +312,6 @@ pub enum ResumeSafetyReason {
 impl ResumeSafetyReason {
     fn describe(self) -> &'static str {
         match self {
-            ResumeSafetyReason::SourceChanged => {
-                "a source file changed since the interrupted seal: resume never re-encrypts \
-                 (re-using a journaled nonce on new plaintext would break the encryption), so \
-                 this seal is abandoned; re-run `antseal seal` to start a fresh one"
-            }
             // U17 fixes the exact wording this abort owes the user: what
             // was lost, that losing it was chosen, and what a fresh seal
             // will and will not reuse. "Start a fresh one" alone left the
@@ -333,6 +360,7 @@ pub enum ErrorClass {
     InvalidSealArgument,
     PaymentStranded,
     PaymentProofsExpired,
+    PaymentUnrecorded,
     RefusedOverwrite,
     MalformedRestoreRecord,
     ExportSelfVerifyFailed,
@@ -348,7 +376,7 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Every class, for table tests. Grows only by deliberate review.
-    pub const ALL: [ErrorClass; 35] = [
+    pub const ALL: [ErrorClass; 36] = [
         ErrorClass::Internal,
         ErrorClass::Usage,
         ErrorClass::NotImplemented,
@@ -370,6 +398,7 @@ impl ErrorClass {
         ErrorClass::InvalidSealArgument,
         ErrorClass::PaymentStranded,
         ErrorClass::PaymentProofsExpired,
+        ErrorClass::PaymentUnrecorded,
         ErrorClass::RefusedOverwrite,
         ErrorClass::MalformedRestoreRecord,
         ErrorClass::ExportSelfVerifyFailed,
@@ -430,6 +459,11 @@ impl ErrorClass {
             // not a bundle-verification verdict and the band's own wording
             // forbids borrowing it.
             ErrorClass::RevealInputsUnusable => 36,
+            // D186 R4: the third money-moved class. 20–29 has been full since
+            // D147, so it takes the first free code above that band (D69 §5's
+            // precedent, as 36 did), among the vault-file classes because what
+            // failed is a vault write; outside the reserved 44–49.
+            ErrorClass::PaymentUnrecorded => 37,
             // D69 §3 R2's verdict band. The **numeric** order runs opposite
             // to the severity rank (41 is the worst rung and 43 the mildest),
             // which is exactly why the ladder is
@@ -491,6 +525,7 @@ impl ErrorClass {
             ErrorClass::InvalidSealArgument => "invalid-seal-argument",
             ErrorClass::PaymentStranded => "payment-stranded",
             ErrorClass::PaymentProofsExpired => "payment-proofs-expired",
+            ErrorClass::PaymentUnrecorded => "payment-unrecorded",
             ErrorClass::RefusedOverwrite => "refused-overwrite",
             ErrorClass::MalformedRestoreRecord => "malformed-restore-record",
             ErrorClass::ExportSelfVerifyFailed => "export-self-verify-failed",
@@ -584,6 +619,14 @@ pub enum CliError {
     )]
     ImportRefusedExistingVault { vault_dir: PathBuf },
 
+    /// D185 R4: `antseal abandon`'s confirmation was not obtained — D51's
+    /// second destructive confirm, and the first with a channel (`--yes`).
+    /// Declined and unobtainable are one class, as for every prompt of this
+    /// family (D51 invariant 3: the message distinguishes, the code does
+    /// not). Nothing was changed in either case.
+    #[error("{}", .reason.describe_abandon())]
+    AbandonNotConfirmed { reason: ConsentOutcome },
+
     /// D41: the passphrase channel failed; the prompt-parity abort.
     #[error("passphrase unavailable: {}", .reason.describe())]
     PassphraseUnavailable { reason: PassphraseFailure },
@@ -675,12 +718,50 @@ pub enum CliError {
 
     /// The ≥1-TSA-or-abort gate: aborting cheaply and reversibly before
     /// any payment.
+    ///
+    /// # What it says, and why each clause is true (D194)
+    ///
+    /// - **What failed (`U97`, R1).** One entry per failed endpoint, in the
+    ///   gate's own verbatim form, so each one names its class and a TSA
+    ///   trust state appears by its frozen name. An `untrusted-chain` entry
+    ///   adds that such a token never counts: that endpoint *answered*, and
+    ///   advice to wait for a reachable authority could never work for it.
+    /// - **Nothing was paid or uploaded.** The gate runs strictly before
+    ///   `pay` (S12).
+    /// - **The work is left staged** (`pipeline/resume.rs`: the gate's `?`
+    ///   returns before the `Anchored` transition).
+    /// - **This exact command resumes it**, re-quoting and asking for consent
+    ///   again (D45 §2 and §4). The condition is a token that *counts*, not
+    ///   an authority that *answers*: an unpinned authority answers every
+    ///   time.
+    /// - **`--force-degraded` cannot be added to that re-run.** It is part of
+    ///   the recorded command (D45 §1), so the re-run would be exit 26.
+    /// - **A degraded seal is reached through `antseal abandon`** (D185),
+    ///   with this work's seal-id filled in so the command can be pasted.
+    ///
+    /// The lines ride in the message as text. `--json` gains no key (D194
+    /// R3: `message` is human copy at every tier, D65). The message stays one
+    /// line, so the per-endpoint entries are separated by `; ` (the
+    /// single-line rule `tests/exit_codes.rs` enforces for every variant).
     #[error(
-        "no RFC 3161 timestamp token could be obtained, so the seal aborts before anything \
-         is paid or uploaded (the anchor gate); re-run when a TSA is reachable, or pass \
-         --force-degraded to proceed with a loudly recorded degraded anchor set"
+        "no RFC 3161 timestamp token that counts toward the anchor gate was obtained, so the \
+         seal stopped before anything was paid or uploaded. What failed: {}. The work is left \
+         staged: running this exact command again resumes it — it quotes again and asks for \
+         your consent again — once a timestamp authority returns a token that counts. \
+         --force-degraded cannot be added to that re-run, because the flags are part of the \
+         recorded command; to seal with a loudly recorded degraded anchor set instead, \
+         discard the work with `antseal abandon {seal_id}` and run the command again with \
+         --force-degraded",
+        .failures.join("; ")
     )]
-    AnchorGateAbort,
+    AnchorGateAbort {
+        /// What failed: one entry per failed endpoint, rendered by
+        /// `pipeline::error`'s conversion from the gate's own failures.
+        failures: Vec<String>,
+        /// The staged work's seal-id — 32 lowercase hex digits, the form
+        /// `antseal abandon` takes.
+        seal_id: String,
+    },
 
     /// Storage/anchor network I/O failure (transient class).
     #[error("network failure: {detail}")]
@@ -689,6 +770,12 @@ pub enum CliError {
     /// **D147**: a payment failed mid-sequence with money already moved. Never
     /// the transient network class — a caller retrying this the way it retries a
     /// peer timeout spends against a wallet that has already paid.
+    ///
+    /// **Narrowed by D186:** this class, and the safe re-run its text promises,
+    /// are for a payment whose receipt-so-far the vault recorded. When the
+    /// payment's most recent capture did not become durable, the pipeline
+    /// raises [`Self::PaymentUnrecorded`] (37) instead; this frozen text is
+    /// unchanged because it stays true for the domain that remains.
     #[error(
         "payment stranded mid-sequence: {landed_tx_count} sub-batch transaction(s) landed \
          before the failure and the journaled partial receipt is authoritative — this is not \
@@ -721,6 +808,43 @@ pub enum CliError {
          not recoverable"
     )]
     PaymentProofsExpired,
+
+    /// **D186 (S37)**: money moved and the vault could not record what it
+    /// bought — the payment's most recent receipt capture did not become
+    /// durable, and then either `pay` failed mid-sequence or the post-`pay`
+    /// receipt write failed too.
+    ///
+    /// Resume decides "already paid" from the journaled receipt alone, so a
+    /// re-run quotes, and charges again for, everything the vault does not
+    /// show as paid: the quote hashes already bought cannot be re-derived,
+    /// and nothing else records them. That is the one promise of 28 this
+    /// outcome breaks, so it is its own class, and its text tells the user
+    /// to review the re-run's quote rather than consent in advance.
+    ///
+    /// The remedy is conditional because `fault` can, in principle, be a
+    /// wiring or encoding fault rather than a storage one; the storage case
+    /// is the one a user can meet.
+    #[error(
+        "payment not recorded: {landed_tx_count} sub-batch transaction(s) landed but the \
+         vault could not record all of them ({fault}) — money has moved and antseal does not \
+         know all of what it bought, so re-running `antseal seal` will quote, and charge again \
+         for, everything the vault does not show as paid; the ANT already spent on the \
+         unrecorded part cannot be recovered. If the vault's storage caused this (free space, \
+         permissions, the disk), fix it first; then review the re-run's quote instead of \
+         passing --yes ({detail})"
+    )]
+    PaymentUnrecorded {
+        /// Sub-batch transactions this payment landed.
+        landed_tx_count: usize,
+        /// Why the most recent capture did not become durable — the
+        /// `ReceiptSinkFault`'s own rendering (paths and I/O classes, never
+        /// receipt content).
+        fault: String,
+        /// What failed after it: the storage layer's stranded-payment
+        /// reason (already redacted at `ant_backend.rs`'s
+        /// `redact_evm_error`), or the post-`pay` receipt write's error.
+        detail: String,
+    },
 
     /// Spec line 145: resume never re-encrypts.
     #[error("resume safety abort: {}", .reason.describe())]
@@ -768,33 +892,59 @@ pub enum CliError {
     /// D45 §2: the invocation's inputs overlap an incomplete work without
     /// matching it exactly — refuse loudly rather than guess.
     ///
-    /// The way-forward clause names only actions this build can actually
-    /// perform. It used to end "or abandon it first", which was an
-    /// instruction with no command behind it: the abandon **mechanism**
-    /// exists ([`crate::seal_resume::abandon_pre_pay`]) but the surface
-    /// token that would invoke it is D45's deliberately-deferred decision
-    /// (U41). An error that tells a trapped user to do something
-    /// impossible leaves them worse off than one that names the two exits
-    /// that work.
+    /// # The abandon exit is back, naming its command (D185 R6)
+    ///
+    /// This message used to end "or abandon it first" while no command
+    /// could abandon anything: the engine
+    /// ([`crate::seal_resume::abandon_pre_pay`]) existed, the surface token
+    /// did not, and U17 cut the clause rather than instruct the impossible.
+    /// D185 added the token — `antseal abandon <ID>` — so the exit is back,
+    /// with the work's seal-id filled in so the command can be pasted.
+    ///
+    /// The clause is **conditional** ("if nothing has been paid for it")
+    /// rather than decided here, on purpose: detection reads meta records
+    /// only, and the coarse tag can still read pre-pay while a receipt is
+    /// already journaled (S16's window). The engine decides by the receipt
+    /// and refuses a paid work with that work's own way forward, so the
+    /// sentence is true whichever way the money question falls.
     #[error(
         "these inputs overlap an incomplete seal without matching it exactly ({detail}): \
          re-run with exactly the original path list to resume it, or with a disjoint path \
-         list to start a fresh seal — `antseal list` shows the incomplete seal and the \
-         exact command that finishes it (D45)"
+         list to start a fresh seal; or, if nothing has been paid for it, discard it with \
+         `antseal abandon {seal_id}` and re-run this command. `antseal list` shows the \
+         incomplete seal and the exact command that finishes it (D45)"
     )]
-    ResumeOverlapNotExact { detail: String },
+    ResumeOverlapNotExact {
+        /// The relation to the incomplete work and the command that resumes
+        /// it, rendered by [`crate::seal_resume::match_candidates`].
+        detail: String,
+        /// The incomplete work's seal-id — 32 lowercase hex digits, the form
+        /// `antseal abandon` takes.
+        seal_id: String,
+    },
 
     /// D45 §2: same inputs, different seal-shaping flags.
     ///
-    /// See [`Self::ResumeOverlapNotExact`] on why the way-forward clause
-    /// no longer offers an abandon.
+    /// The abandon clause is [`Self::ResumeOverlapNotExact`]'s, for the same
+    /// reasons (D185 R6). The copy-under-a-different-path exit stays: it is
+    /// the one that works for a **paid** work whose recorded flags are a
+    /// pair `build_plan` now refuses (D152's blocked work), where both
+    /// "re-run with the original flags" and `antseal abandon` refuse.
     #[error(
         "these inputs match an incomplete seal but the seal-shaping flags differ \
-         ({detail}): re-run with the original flags to resume and finish it. This build \
-         has no way to discard a staged work, so finishing it — or sealing a copy under a \
-         different path — are the two ways forward; `antseal list` shows it (D45)"
+         ({detail}): re-run with the original flags to resume and finish it; or, if nothing \
+         has been paid for it, discard it with `antseal abandon {seal_id}` and re-run this \
+         command to start a fresh seal; or seal a copy of the files under a different path. \
+         `antseal list` shows it (D45)"
     )]
-    ResumeFlagMismatch { detail: String },
+    ResumeFlagMismatch {
+        /// The recorded and the attempted command lines, rendered by
+        /// [`crate::seal_resume::match_candidates`].
+        detail: String,
+        /// The incomplete work's seal-id — 32 lowercase hex digits, the form
+        /// `antseal abandon` takes.
+        seal_id: String,
+    },
 
     /// D46: directory / non-regular file / duplicate path — every
     /// offending argument named, pre-consent.
@@ -934,9 +1084,11 @@ impl CliError {
             // D51's prompt-class table maps the vault-import destructive
             // confirm into the consent class: declined ≡ unobtainable,
             // and the manual move/remove is the consent.
-            CliError::ConsentNotObtained { .. } | CliError::ImportRefusedExistingVault { .. } => {
-                ErrorClass::ConsentNotObtained
-            }
+            // D185 R4 adds the second destructive confirm, `abandon`'s, with
+            // `--yes` as its channel — the same class, by the same rule.
+            CliError::ConsentNotObtained { .. }
+            | CliError::ImportRefusedExistingVault { .. }
+            | CliError::AbandonNotConfirmed { .. } => ErrorClass::ConsentNotObtained,
             CliError::PassphraseUnavailable { .. } => ErrorClass::PassphraseUnavailable,
             CliError::VaultAuthFailure => ErrorClass::VaultAuthFailure,
             CliError::VaultKdfMemory { .. } => ErrorClass::VaultKdfMemory,
@@ -948,10 +1100,11 @@ impl CliError {
             CliError::VaultWrapModeUnsupported { .. } => ErrorClass::VaultWrapModeUnsupported,
             CliError::InsufficientAntToken { .. } => ErrorClass::InsufficientAntToken,
             CliError::InsufficientEthGas { .. } => ErrorClass::InsufficientEthGas,
-            CliError::AnchorGateAbort => ErrorClass::AnchorGateAbort,
+            CliError::AnchorGateAbort { .. } => ErrorClass::AnchorGateAbort,
             CliError::NetworkFailure { .. } => ErrorClass::NetworkFailure,
             CliError::PaymentStranded { .. } => ErrorClass::PaymentStranded,
             CliError::PaymentProofsExpired => ErrorClass::PaymentProofsExpired,
+            CliError::PaymentUnrecorded { .. } => ErrorClass::PaymentUnrecorded,
             CliError::ResumeSafetyAbort { .. } => ErrorClass::ResumeSafetyAbort,
             CliError::ResumeOverlapNotExact { .. } => ErrorClass::ResumeOverlapNotExact,
             CliError::ResumeFlagMismatch { .. } => ErrorClass::ResumeFlagMismatch,
@@ -1038,6 +1191,7 @@ mod tests {
             ErrorClass::VerifyUnanchored => 32,
             ErrorClass::PaymentStranded => 33,
             ErrorClass::PaymentProofsExpired => 34,
+            ErrorClass::PaymentUnrecorded => 35,
         }
     }
 

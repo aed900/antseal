@@ -507,7 +507,7 @@ and before any allocation**, by `KdfParams::check_ranges`
 `crates/antseal-cli/src/vault/session.rs:423-427` runs one line ahead of the
 key derivation — *"D40 §3: caps inside this decode run before any KDF
 allocation."* It carries its own error class, `vault-kdf-params-out-of-range`
-(`crates/antseal-cli/src/error.rs:445`, exit 14), so the failure names its
+(`crates/antseal-cli/src/error.rs:512`, exit 14), so the failure names its
 cause instead of collapsing into a generic auth error. The deviation is
 recorded at the test that proves it, not only here:
 `crates/antseal-cli/tests/vault_encryption.rs:502-503` — *"strictly stronger
@@ -587,21 +587,21 @@ rotation, TSA signing-key rotation as a *verifier's* concern, test-fixture
 bookkeeping, and prose asserting this absence. `re-encrypt|rekey|rewrap` and
 their spellings return test harnesses, verifier prose, and explicit refusals
 (`crates/antseal-core/src/crypto/unit_aead.rs:28`,
-`crates/antseal-cli/src/seal_resume.rs:108`). The frozen CLI surface has nine
+`crates/antseal-cli/src/seal_resume.rs:109`). The frozen CLI surface has ten
 commands and none of them is `rotate`, `passwd` or `change-passphrase`
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`). The one
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`). The one
 re-encryption that exists is `vault import`, which builds a **new** vault
 with a fresh salt and re-encrypts every *local* record (`export.rs:130-131`);
 it does not touch `W`, and nothing can touch what is already uploaded.
 
 **What the product does about it.** It nags, loudly, on first seal, and the
 nag is the only mitigation available at this layer: `export_nag`
-(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:498`, rendered at
-`:142-144`), whose copy opens *"NO BACKUP YET — this vault has never been
-exported."* (`crates/antseal-cli/src/vault/bookkeeping.rs:257-259`) and
-carries both the loss and the theft warning (`:68`, `:74`).
+(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:540`, rendered at
+`:146-148`), whose copy opens *"NO BACKUP YET — this vault has never been
+exported."* (`crates/antseal-cli/src/vault/bookkeeping.rs:285-291`) and
+carries both the loss and the theft warning (`:73`, `:79`).
 `the_first_seal_nags_about_the_missing_backup_and_a_recorded_export_stops_it`
-(`crates/antseal-cli/tests/seal_command.rs:950-1027`) asserts the nag fires,
+(`crates/antseal-cli/tests/seal_command.rs:1140-1217`) asserts the nag fires,
 asserts the exact strings, then records an export and asserts the nag stops —
 both directions, so a nag that could never fire would fail the test.
 
@@ -645,9 +645,9 @@ counterparty, and it does not weaken a verdict anyone has already been shown.
 
 **The backup mechanism, precisely.** Two commands, no flags at all —
 `antseal vault export [FILE]` and `antseal vault import <FILE>`
-(`crates/antseal-cli/src/cli.rs:467`, `:475`; the frozen surface snapshot
-`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:357` and `:384`
-carries only the three global options). The design note at `cli.rs:462` is
+(`crates/antseal-cli/src/cli.rs:516`, `:524`; the frozen surface snapshot
+`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:358` and `:385`
+carries only the three global options). The design note at `cli.rs:511` is
 the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 
 - **The export is encrypted, under its own fresh salt.** One AEAD over the
@@ -786,9 +786,9 @@ changing which set the address is in.
 
 **The deciding cost is one antseal has no affordance for.** A standing
 allowance is reduced only by another `approve`, and this tool ships no
-command that emits one: the nine subcommands are `init`, `seal`, `list`,
-`show`, `status`, `restore`, `reveal`, `verify` and `vault`
-(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-15`), and none of
+command that emits one: the ten subcommands are `init`, `seal`, `list`,
+`show`, `status`, `restore`, `reveal`, `verify`, `vault` and `abandon`
+(`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`), and none of
 them touches the allowance. **Any standing allowance antseal creates is one
 antseal cannot undo** — revoking it would mean importing the payment key into
 a third-party wallet, which is the funding-hygiene chain
@@ -842,8 +842,8 @@ pinned the behaviour — stopped being true with the file named above.)*
 
 The receipt is **excluded from bundles by default**, and the default is
 `bool`'s `false` with no `default_value` anywhere — there is no line to get
-wrong (`crates/antseal-cli/src/cli.rs:388-390`; the shipped help snapshot
-`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:285-286` carries the
+wrong (`crates/antseal-cli/src/cli.rs:437-439`; the shipped help snapshot
+`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` carries the
 same warning to the user). The include branch is a single `if`
 (`crates/antseal-cli/src/pipeline/reveal.rs:653-657`), and at format level
 *presence is the opt-in*: there is no parse-decidable condition on the
@@ -853,7 +853,7 @@ section, its presence **is** the sealer's choice
 Opting in ships the **whole journaled receipt**, not a summary: the wire
 record is `tx_hashes`, `block_number` and an opaque `payload`
 (`schema.rs:738-741`) whose payload is the entire `PaymentReceipt`
-JSON-encoded (`crates/antseal-cli/src/pipeline/receipt_sink.rs:79-82`).
+JSON-encoded (`crates/antseal-cli/src/pipeline/receipt_sink.rs:84-87`).
 
 **No field of it names the payer.** The linkage runs through `tx_hashes`: a
 tx hash resolves on any public explorer to the sending address, and from
@@ -1014,7 +1014,7 @@ implemented and one is not**, and this document should not imply otherwise:
 | commitment | state |
 | --- | --- |
 | receipt excluded from bundles by default | **implemented**, proven above |
-| `--include-receipt` to opt in | **implemented** (`cli.rs:388-390`) |
+| `--include-receipt` to opt in | **implemented** (`cli.rs:437-439`) |
 | wallet-hygiene docs (fresh address per work/client) | **docs-only, and there is no CLI affordance behind it** |
 
 Measured: no `seal`-time wallet or address flag exists on the frozen CLI
@@ -1404,7 +1404,7 @@ and **the check itself is fault-planted**:
 (`tamper.rs:286-301`) registers two rows expecting the same code and asserts
 exactly one failure naming the earlier row. The contract states what a
 collision means, so nobody edits the registry to make one go away
-(`docs/testing/error-code-contract.md:485-487`): *"it means two mutations are
+(`docs/testing/error-code-contract.md:493-495`): *"it means two mutations are
 genuinely indistinguishable to a verifier, and the fix is a new error variant
 with its own code in the owning domain."* Cross-domain reach is exercised
 rather than assumed — `seeded_rows_span_multiple_domains`
@@ -1437,7 +1437,7 @@ and the unprefixed structural codes. CI lane: `tamper-matrix`
   registry rather than hidden:** the `-s-root` code is currently unreachable
   through the pipeline, because a full reveal always carries a `file_salt`
   and the file-salt row fires first (`tamper_rows_structural.rs:42`;
-  `docs/testing/error-code-contract.md:649-652`). It is reached by calling
+  `docs/testing/error-code-contract.md:657-660`). It is reached by calling
   the classifier directly, and it is recorded as unreachable rather than
   presented as a live guard.
 
@@ -1623,7 +1623,7 @@ never a downgrade of the original. Executed by
 
 **Claimed time is the sealer's, and it is subordinate by absence rather than
 by a filter.** The value is injected once, at the one place a clock is
-trusted (`crates/antseal-cli/src/seal_run.rs:577-579`), and lands in the
+trusted (`crates/antseal-cli/src/seal_run.rs:681-683`), and lands in the
 manifest body as informational only (`body.rs:1204-1209`). In the verifier it
 lives in a field named for its status —
 `claimed_time_informational_only` (`crates/antseal-core/src/verify/report.rs:278`)
@@ -1786,7 +1786,7 @@ asymmetry worth naming.**
 **`--split` is what turns a size into a histogram.** The default is one
 whole-file unit (`crates/antseal-core/src/content/unit.rs:5-7`, asserted at
 `:635-641`), and the only splitting mode admitted in v1 is
-`--split blank-lines` (`crates/antseal-cli/src/cli.rs:298-300`, `:346-352`).
+`--split blank-lines` (`crates/antseal-cli/src/cli.rs:347-349`, `:395-401`).
 Under it the manifest publishes **the paragraph-length histogram of every
 split text file, in the clear** — `range` and `true_length` per unit, kept as
 two fields deliberately (`docs/format/registry-v1.md:631-632`). There is no
@@ -1856,7 +1856,7 @@ countermeasure exists in the codebase**, and none is claimed.
 **`--no-fine-tree` is the one structural choice that is permanent.** A file
 excluded from the fine tree becomes exactly one whole-file unit bound by
 `unit_commit`, and is whole-file-revealable only, forever
-(`crates/antseal-cli/src/cli.rs:306-309`; structurally at
+(`crates/antseal-cli/src/cli.rs:355-358`; structurally at
 `crates/antseal-core/src/manifest/body.rs:274-286` and
 `crates/antseal-core/src/content/unit.rs:664-674`). The CLI says so before
 the seal, in those terms: *"PERMANENTLY whole-file-reveal only … the opt-out
@@ -1919,7 +1919,7 @@ the time it records is the *agreed* header's `nTime` — never the embedded
 one's. Two must-agree esplora endpoints, `blockstream.info` and
 `mempool.space`, are the default (`crates/antseal-anchor/src/esplora.rs:83-84`),
 and the whole path is behind `--online`
-(`crates/antseal-cli/src/verify_host.rs:148`).
+(`crates/antseal-cli/src/verify_host.rs:151`).
 
 `a_minted_single_branch_committed_ots_answers_all_three_online_cases`
 (`crates/antseal-core/tests/anchor_ots_writer.rs:48-88`) walks one minted
@@ -1956,10 +1956,13 @@ robustness the collapse case does not deliver.
 
 **The minimum-anchor policy, and the escape.** `evaluate_seal_gate`
 (`submit.rs:252-276`) aborts a seal that produced zero verified tokens unless
-`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:335-337`), and
-the abort is loud about what did *not* happen: *"the minimum-anchor policy
-was not met: 0 of {attempted} TSA endpoint(s) produced a verified token, so
-nothing was paid for"* (`crates/antseal-anchor/src/gate.rs:184-189`).
+`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:384-386`), and
+the abort is loud about what did *not* happen: `antseal seal` exits 22 with
+*"no RFC 3161 timestamp token that counts toward the anchor gate was obtained,
+so the seal stopped before anything was paid or uploaded"*, names every
+endpoint that failed with its class, and states the resume rules
+(`crates/antseal-cli/src/error.rs:719-764`). The gate's own text carries the
+same facts (`crates/antseal-anchor/src/gate.rs:191-202`).
 `--force-degraded` cannot buy everything: it cannot authorise a `--no-anchor`
 seal on a permanent network, and the test loops both flag combinations to
 prove it (`submit/tests.rs:251`).
@@ -2011,7 +2014,7 @@ receipt arm carries **no time field and no state field, not a null one,
 none** (`crates/antseal-core/src/verify/report.rs:756-759`). Even a
 successful two-RPC online confirmation leaves it ineligible
 (`anchor/verdicts/tests.rs:2269`), and every online-confirmation string ends
-`— supporting evidence only` (`wording.rs:968-998`). §2.3 covers what
+`— supporting evidence only` (`wording.rs:991-1021`). §2.3 covers what
 including it costs.
 
 ### The claimed time never competes with an anchor
@@ -2026,14 +2029,18 @@ rather than by a filter (§2.7; `crates/antseal-core/src/verify/verdict.rs:26-35
 A `pending` OTS is a debt, and the product chases it without being asked: the
 opportunistic upgrade hook runs at the end of **every** invocation
 (`crates/antseal-cli/src/upgrade_hook.rs:1-3`, single call site
-`crates/antseal-cli/src/lib.rs:185`), inside a deliberately small budget — 3
-seconds and 4 polls (`upgrade_hook.rs:55-57`) — so it can never delay a
-command meaningfully. `list` nags while any work is in that state, and only
+`crates/antseal-cli/src/lib.rs:198`), polling inside a deliberately small
+budget — 3 seconds and 4 polls (`upgrade_hook.rs:55-57`). A human never
+waits on it; a script waiting on the process does, by a few seconds and more
+when a calendar or block explorer is slow (the block-header confirmation
+after a successful poll is outside that budget, A141), and
+`[anchors] opportunistic_upgrades = false` turns the pass off (U60, D189).
+`list` nags while any work is in that state, and only
 then: the classifier is wildcard-free and `OnlyPendingOts` is the single
 nagging state (`crates/antseal-anchor/src/ots/engine.rs:619-700`), rendering
 *"ANCHORS PENDING: {n} calendar attestation(s) not yet confirmed by Bitcoin,
 and nothing else here proves a time independently"* plus the exact command to
-run (`crates/antseal-cli/src/listing.rs:760-769`). A genuinely unanchored
+run (`crates/antseal-cli/src/listing.rs:871-880`). A genuinely unanchored
 work is **labelled, never nagged** — the nag exists for a state that will
 resolve itself, not for one that will not
 (`crates/antseal-cli/tests/list_command.rs:875-921`).
@@ -2135,7 +2142,7 @@ consent given at the gate.
 SwissSign's ~10/day), configuring a custom list, and what `--force-degraded`
 means for a user are `docs/user/timestamp-authorities.md`'s (Q26): its §2–§4
 and §6. Their operator-side sources are
-`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:72-79,125-131`.
+`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:77-89,175-183`.
 
 ## 2.10 WASM zeroization caveat
 

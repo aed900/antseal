@@ -537,6 +537,7 @@ fn run(
     let struct_units = structural_units(rows.rows());
     let touched = touched_files(bundle);
     let revealed_ids = bundle.revealed_unit_ids();
+    // ⊆ revealed_ids by construction, so check_reveal_refs' proof arm idles in v1 (D187 R2).
     let proof_refs: Vec<u64> = bundle
         .covered_reveals()
         .iter()

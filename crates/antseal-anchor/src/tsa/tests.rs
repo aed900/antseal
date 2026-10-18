@@ -733,3 +733,117 @@ fn two_endpoints_serving_one_mock_collapse_to_one_tsa() {
             .any(|line| line.contains("[one-tsa-two-endpoints]"))
     );
 }
+
+/// A140 (D193 R5): a TSA that answers **HTTP 429** receives exactly **one**
+/// request, not three.
+///
+/// The TSA POST is `AtMostOnceAfterSend`, and a `429` is a refusal made
+/// *because of the request rate*. D90 §6.3's original table retried it under
+/// both idempotency classes, so a seal re-sent it at +200 ms and +600 ms —
+/// three requests in under a second to an endpoint whose only recorded
+/// caveat is a spacing rule (Sectigo ~15 s).
+///
+/// The `503` control is what keeps the count of 1 from being vacuous: the
+/// same client and the same seal policy against a server declining for an
+/// outage, and the stub sees the policy's whole budget of three. So the 1 is
+/// the classifier stopping on a 429 — not a one-attempt policy, and not a
+/// stub that stopped recording.
+#[test]
+fn a_tsa_answering_429_receives_exactly_one_request() {
+    assert_eq!(
+        HttpPolicy::seal().max_attempts,
+        3,
+        "the 503 control needs a budget of three to tell 1 from 3"
+    );
+
+    let rate_limited = StubServer::spawn(
+        StubScript::new().always(StubReply::body(429, b"too many requests".to_vec())),
+    );
+    let failure = capture_one(
+        &client(),
+        &STAMPED,
+        &rate_limited.base_url(),
+        &NONCE_FREETSA,
+        store(),
+        FETCH_DATE,
+    )
+    .expect_err("a 429 is not a token");
+    assert!(
+        matches!(
+            failure,
+            TsaFailure::Http(AnchorHttpError::Status { status: 429, .. })
+        ),
+        "{failure:?}"
+    );
+    assert_eq!(failure.class(), "http");
+    assert_eq!(
+        rate_limited.requests().len(),
+        1,
+        "a TSA that answered 429 was asked again"
+    );
+
+    let outage = StubServer::spawn(
+        StubScript::new().always(StubReply::body(503, b"maintenance window".to_vec())),
+    );
+    let failure = capture_one(
+        &client(),
+        &STAMPED,
+        &outage.base_url(),
+        &NONCE_FREETSA,
+        store(),
+        FETCH_DATE,
+    )
+    .expect_err("a 503 is not a token");
+    assert!(
+        matches!(
+            failure,
+            TsaFailure::Http(AnchorHttpError::Status { status: 503, .. })
+        ),
+        "{failure:?}"
+    );
+    assert_eq!(
+        outage.requests().len(),
+        3,
+        "the 503 control must exhaust the seal policy's budget of three"
+    );
+}
+
+// ── U50 (u4): the TSA `failure_class` spelling no other test pins ──────
+
+/// `not-granted`, minted by the real fan-out from the seven-byte rejection
+/// that [`a_non_granted_status_is_its_own_outcome`] decodes.
+///
+/// `failure_class` is `seal --json`'s per-endpoint key — always present,
+/// `null` on success and a kebab-case string on failure (D65 §9.2) — and
+/// after U32 a respelling is a breaking change (D65 §6). Of the TSA half's
+/// four spellings this is the one no test asserted, so it is pinned on the
+/// typed failure and on the rendered report line.
+#[test]
+fn a_rejected_request_is_class_not_granted_in_the_report() {
+    let rejection = [0x30u8, 0x05, 0x30, 0x03, 0x02, 0x01, 0x02];
+    let server = StubServer::spawn(tsa_stub(&rejection));
+    let stage = capture_from_tsas(
+        &client(),
+        &STAMPED,
+        &[server.base_url()],
+        store(),
+        FETCH_DATE,
+    )
+    .expect("the CSPRNG works in CI");
+    assert_eq!(server.requests().len(), 1, "the stub was not contacted");
+    assert_eq!(stage.attempts.len(), 1);
+
+    let failure = stage.attempts[0]
+        .outcome
+        .as_ref()
+        .expect_err("a rejection is not a token");
+    assert!(
+        matches!(failure, TsaFailure::NotGranted { .. }),
+        "{failure:?}"
+    );
+    assert_eq!(failure.class(), "not-granted");
+
+    let report = stage.degradation_report();
+    assert_eq!(report.len(), 1, "{report:?}");
+    assert!(report[0].contains("[not-granted]"), "{report:?}");
+}

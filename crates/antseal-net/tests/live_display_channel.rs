@@ -303,7 +303,7 @@ fn the_fetch_failure_vocabulary_is_finite_and_static() {
     );
 
     let mut labels: Vec<&'static str> = Vec::new();
-    let mut tokens: Vec<&'static str> = Vec::new();
+    let mut spellings: Vec<String> = Vec::new();
     for class in FetchFailureClass::ALL {
         let label = wording::live_fetch_failure_class_label(class);
         assert!(!label.is_empty(), "{class:?} renders as nothing");
@@ -312,14 +312,21 @@ fn the_fetch_failure_vocabulary_is_finite_and_static() {
             "{class:?}'s label is not one line: {label:?}"
         );
         labels.push(label);
-        tokens.push(class.token());
+        // The machine spelling is serde's, kebab-case since D190 R1 — which
+        // also deleted the test-only `token()` this loop used to read, so
+        // what is checked distinct is what a `--json` consumer receives.
+        spellings.push(serde_json::to_string(&class).expect("the class serializes"));
     }
     labels.sort_unstable();
     labels.dedup();
-    tokens.sort_unstable();
-    tokens.dedup();
+    spellings.sort_unstable();
+    spellings.dedup();
     assert_eq!(labels.len(), FetchFailureClass::ALL.len(), "labels collide");
-    assert_eq!(tokens.len(), FetchFailureClass::ALL.len(), "tokens collide");
+    assert_eq!(
+        spellings.len(),
+        FetchFailureClass::ALL.len(),
+        "wire spellings collide"
+    );
 }
 
 /// The classifier is total over `StorageError` **and** keeps the
@@ -393,8 +400,8 @@ fn the_serialized_outcome_carries_a_token_and_not_the_backend_string() {
 
     let json = serde_json::to_string(&report).expect("the report serializes");
     assert!(
-        json.contains("Transport"),
-        "the machine-readable class is present: {json}"
+        json.contains(r#""class":"transport""#),
+        "the machine-readable class is present as its kebab-case token (D190 R1): {json}"
     );
     for (what, fragment) in forbidden_fragments() {
         assert!(

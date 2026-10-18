@@ -197,8 +197,8 @@ bundle stop verifying.** That is obligation 2 of `MVP-SPEC.md` line 123, and
 
 | number | how to read it |
 | --- | --- |
-| release version of your binary | `antseal --version` (the flag is declared at `crates/antseal-cli/src/cli.rs:46`) |
-| release version recorded in a bundle | the manifest's `app_version`, key 1 of registry §7.2; written at `crates/antseal-cli/src/commands.rs:413` as `antseal/<version>` |
+| release version of your binary | `antseal --version` (the flag is declared at `crates/antseal-cli/src/cli.rs:50`) |
+| release version recorded in a bundle | the manifest's `app_version`, key 1 of registry §7.2; written at `crates/antseal-cli/src/commands.rs:423` as `antseal/<version>` |
 | format version of a bundle | key 0 of the bundle map, registry §7.6 — the first key on the wire, by design |
 | format versions your build accepts | `SUPPORTED_VERSIONS`, `crates/antseal-core/src/format.rs:115` |
 | the page's build identity | the footer at `https://antseal.org/`, and `build_info()` at `crates/antseal-wasm/src/build_info.rs:52-60` |
@@ -236,6 +236,6 @@ bundle stop verifying.** That is obligation 2 of `MVP-SPEC.md` line 123, and
 | the signature carries version, basename and commit | `scripts/sign-release.sh:250`; D71 §2 R4 |
 | a release candidate is an unpublished draft under the final name, with no tag kind of its own | D172 §2 R8 |
 | one version names one signed set, and a candidate that fails after handoff uses up its version | D172 §2 R7; genuine signatures under another version are refused as a whole-release replay by `scripts/verify-release.sh --self-test` |
-| `--version` exists on the CLI | `crates/antseal-cli/src/cli.rs:46` |
-| the recorded version in a seal is `antseal/<version>` | `crates/antseal-cli/src/commands.rs:413` |
+| `--version` exists on the CLI | `crates/antseal-cli/src/cli.rs:50` |
+| the recorded version in a seal is `antseal/<version>` | `crates/antseal-cli/src/commands.rs:423` |
 | the format-stability promise itself | `MVP-SPEC.md` line 123; `format-stability.md` §1 |

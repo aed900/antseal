@@ -507,9 +507,15 @@ pub fn block_on_vault_local<F: core::future::Future>(future: F) -> Result<F::Out
 // The read-only commands' backend (D170 §2 R1/R2)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// A [`StorageBackend`](antseal_net::StorageBackend) for a network that
-/// **could not be reached**: every call fails on its own, in the transient
-/// network class, and is counted.
+/// A [`StorageBackend`](antseal_net::StorageBackend) for a read-only command
+/// whose connection attempt **made no connection** — refused, failed, or
+/// abandoned at its bound (see [`degrade`]): every call fails on its own, in
+/// the transient network class, and is counted.
+///
+/// The name predates D191 and is kept. What the type stands for is a
+/// connection that was not made, whatever stopped it — not a network known to
+/// be down: on the pinned stack a dead bootstrap set connects `Ok` and fails
+/// per fetch, so it never produces one of these (D170 §2 R2).
 ///
 /// # Why a connect failure becomes this rather than an error (D170 §2 R2)
 ///
@@ -529,10 +535,10 @@ pub fn block_on_vault_local<F: core::future::Future>(future: F) -> Result<F::Out
 ///
 /// That type is U72's *"this build cannot fetch"*, and its sentence blames the
 /// build. This one exists only in a build that **can** fetch and tried: its
-/// reason is the connection failure's, so a user reading a per-file
-/// `fetch-failed` row is told the network was unreachable rather than that a
-/// feature is missing. The class is the same because the situation, from the
-/// caller's side, is the same: no bytes could be obtained.
+/// reason is the connection attempt's, so a user reading a per-file
+/// `fetch-failed` row is told that no connection was made, and why, rather
+/// than that a feature is missing. The class is the same because the
+/// situation, from the caller's side, is the same: no bytes could be obtained.
 ///
 /// # The instrument
 ///
@@ -542,9 +548,10 @@ pub fn block_on_vault_local<F: core::future::Future>(future: F) -> Result<F::Out
 /// from their output.
 #[derive(Debug)]
 pub struct UnreachableBackend {
-    /// Why the network could not be reached — carried into every failure.
-    /// Never key material: it is rendered from a connection error, which
-    /// names peers and transports at most.
+    /// Why no connection was made — [`degrade`]'s kind-neutral words, then
+    /// the attempt's own reason (D191) — carried into every failure. Never
+    /// key material: it is rendered from a connection error, which names
+    /// peers and transports at most.
     reason: String,
     /// How many seam calls were made.
     calls: std::sync::atomic::AtomicUsize,
@@ -721,6 +728,25 @@ impl<R: antseal_net::StorageBackend> antseal_net::StorageBackend for ReadOnlyBac
 /// ends at the connection (D170 §2 R2 — and for `--live`, D69 §3 R6's
 /// sanction for a seam refusal belongs to the build with no backend only).
 ///
+/// # What a degraded fetch says (D191)
+///
+/// `no connection to the Autonomi network was made: {reason}` — the attempt's
+/// own reason, whole, after words true of **every** attempt that reaches this
+/// arm. Nothing here tells those attempts apart: they arrive as
+/// [`StorageError::Network`](antseal_net::StorageError::Network) by recorded
+/// design (D173 §2 R9, D178 R1) and differ only in their text, which D191
+/// refused to classify. Five kinds arrive: three refusals antseal makes before
+/// any socket — the storage gate (D173 §2 R9), upstream's state directory
+/// (S42, D178 R1), and a bootstrap set no transport mode can dial (D173 §2 R8;
+/// the handlers' `read_only_network` refuses such a set first, as a usage
+/// error, so only a caller that skips it meets this one) — upstream failing to
+/// create or start its client node, and the caller's bound expiring. The
+/// reason says which. The words used to be *"the Autonomi network could not
+/// be reached"*, which reported antseal's own refusals as an outage (U96) and
+/// fit none of the five: on the pinned stack a dead bootstrap set connects
+/// `Ok` and fails per fetch, in the fetch's own words, so an unreachable
+/// network never arrives here (D170 §2 R2).
+///
 /// `command` names the caller in the one trace this emits. The trace is at
 /// `warn`, like the engine's own cache-fallback trace, because a run that
 /// continues without the network is a run the user should be able to see
@@ -739,20 +765,25 @@ pub fn degrade<R>(
         },
         Err(error) => {
             // The network class's own text, without its `network error:`
-            // prefix, so the per-fetch failure does not read it twice.
+            // prefix, so the per-fetch failure does not read it twice. Any
+            // other variant is rendered whole — `map_ant_error` can hand a
+            // connect a `Quote` for an upstream payment-class or
+            // already-stored error — and the words before it hold for it too.
             let detail = match error {
                 antseal_net::StorageError::Network { reason } => reason,
                 other => other.to_string(),
             };
+            // Kind-neutral on purpose (D191): the rustdoc above names the
+            // five kinds these words must fit.
             tracing::warn!(
                 command,
                 error = %detail,
-                "the Autonomi network could not be reached; every fetch will fail on its own, so \
-                 verified local copies can still be used (D170 §2 R2)"
+                "no connection to the Autonomi network was made; every fetch will fail on its \
+                 own, so verified local copies can still be used (D170 §2 R2)"
             );
             ReadOnlyBackend {
                 source: ReadOnlySource::Unreachable(UnreachableBackend::new(format!(
-                    "the Autonomi network could not be reached: {detail}"
+                    "no connection to the Autonomi network was made: {detail}"
                 ))),
             }
         }
@@ -2243,6 +2274,132 @@ mod tests {
         }
     }
 
+    /// **D191 R1 (U96): the degrade's words fit every kind that reaches
+    /// them.** Failed connection attempts arrive as
+    /// [`StorageError::Network`](antseal_net::StorageError::Network) by
+    /// recorded design and the degrade does not tell them apart, so a fetch
+    /// from the degraded backend must say only what is true of all of them —
+    /// *"no connection to the Autonomi network was made"* — and then the
+    /// attempt's own reason, whole: never *"could not be reached"*, which
+    /// reported antseal's own refusals as an outage.
+    ///
+    /// No network and no binary, in both builds. K1–K3 come from their real
+    /// producers, which are pure: the storage gate armed the way a debug build
+    /// arms it, over an RFC 5737 documentation peer (a verdict on a list — no
+    /// socket exists here); the upstream-state verdict on an environment with
+    /// none of its variables; the peer-locality verdict on an empty set, in the
+    /// words the feature build's `client_config` wraps it in. K5 is the bound's
+    /// sentence (`connect_within`, driven for real by the feature-build test
+    /// below). K4 — upstream's own client-start error — has no producer
+    /// without a live client; it meets the same arm, and so does a variant
+    /// other than `Network`, the last row.
+    #[test]
+    fn every_kind_that_reaches_the_degrade_is_told_no_connection_was_made() {
+        use antseal_net::network::{peer_locality, storage_gate, upstream_state};
+        use antseal_net::test_util::{MockBackend, block_on};
+        use antseal_net::{Address, NetworkId, StorageBackend, StorageError};
+
+        use super::degrade;
+
+        const NO_CONNECTION: &str = "no connection to the Autonomi network was made: ";
+
+        let documentation_peer = std::net::SocketAddr::from(([192, 0, 2, 10], 10_000));
+        let gate = storage_gate::verdict(
+            storage_gate::decide(false, true, None),
+            &[documentation_peer],
+        )
+        .expect_err("K1: an armed gate refuses a non-loopback peer");
+        let upstream = upstream_state::verdict(upstream_state::Os::Other, |_| None)
+            .expect_err("K2: no variable at all is upstream's panic case");
+        let locality =
+            peer_locality(NetworkId::Devnet, &[]).expect_err("K3: an empty set is refused");
+        let kinds = [
+            (
+                "K1, the storage gate",
+                StorageError::Network {
+                    reason: gate.to_string(),
+                },
+                storage_gate::REFUSAL,
+            ),
+            (
+                "K2, upstream's state directory",
+                StorageError::Network {
+                    reason: upstream.to_string(),
+                },
+                upstream_state::REFUSAL,
+            ),
+            (
+                "K3, a bootstrap set no transport mode can dial",
+                StorageError::Network {
+                    reason: format!(
+                        "refusing to connect over the {} bootstrap set: {locality}",
+                        NetworkId::Devnet
+                    ),
+                },
+                "refusing to connect over the devnet bootstrap set: the bootstrap peer set is \
+                 empty",
+            ),
+            (
+                "K5, the bound",
+                StorageError::Network {
+                    reason: format!(
+                        "the connection attempt did not finish within {:?}",
+                        std::time::Duration::from_secs(60)
+                    ),
+                },
+                "the connection attempt did not finish within 60s",
+            ),
+            (
+                "a variant other than Network",
+                StorageError::Quote {
+                    reason: "upstream payment-class error during quoting".to_owned(),
+                },
+                "upstream payment-class error during quoting",
+            ),
+        ];
+        assert_eq!(kinds.len(), 5, "K1, K2, K3, K5 and the non-network row");
+
+        for (kind, error, own_words) in kinds {
+            // What the per-fetch failure must carry after the words: the
+            // attempt's text as `degrade` takes it — a `Network` reason bare,
+            // any other variant rendered whole.
+            let carried = match &error {
+                StorageError::Network { reason } => reason.clone(),
+                other => other.to_string(),
+            };
+            assert!(
+                carried.contains(own_words),
+                "{kind}: the fixture is the producer's own text: {carried}"
+            );
+            let degraded = degrade("reveal", Err::<MockBackend, _>(error));
+            let unreachable = degraded
+                .degraded()
+                .unwrap_or_else(|| panic!("{kind}: a failed attempt degrades"));
+            let fetch = block_on(degraded.get_data(Address::from_bytes([0x5A; 32])))
+                .expect_err("every fetch of a degraded backend fails");
+            assert!(
+                matches!(fetch, StorageError::Network { .. }),
+                "{kind}: the network class, so the per-fetch policy runs: {fetch:?}"
+            );
+            let shown = fetch.to_string();
+            assert!(
+                !shown.contains("could not be reached"),
+                "{kind}: U96 — no connection was made, and nothing says the network was down: \
+                 {shown}"
+            );
+            assert_eq!(
+                shown,
+                format!("network error: {NO_CONNECTION}{carried}"),
+                "{kind}: D191's words, then the attempt's own reason, whole"
+            );
+            assert_eq!(
+                unreachable.calls(),
+                1,
+                "{kind}: the one fetch reached the seam"
+            );
+        }
+    }
+
     /// **D170 §2 R2's bound, driven without a network or a minute.** A
     /// connection attempt that never finishes degrades once its budget
     /// passes: the command gets a backend whose fetch fails **in the network
@@ -2291,9 +2448,9 @@ mod tests {
         );
         assert_eq!(
             fetch.to_string(),
-            "network error: the Autonomi network could not be reached: the connection attempt \
-             did not finish within 20ms",
-            "the reason names the bound and nothing else"
+            "network error: no connection to the Autonomi network was made: the connection \
+             attempt did not finish within 20ms",
+            "D191's kind-neutral words, then the bound and nothing else"
         );
         assert_eq!(unreachable.calls(), 1, "the one fetch reached the seam");
 

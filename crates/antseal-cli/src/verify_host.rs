@@ -139,9 +139,10 @@ impl VerifyHost for CollectedInputs {
 /// drives this collector against stub endpoints and reads what went out on the
 /// wire (D132 §3 R9.2, §7.4).
 ///
-/// Endpoints are the caller's: U4's `[verify] bitcoin_endpoints` /
-/// `arbitrum_endpoints` overrides, or A16/A17's pinned defaults. `overridden`
-/// is disclosed in the overlay, never inferred there.
+/// Endpoints are the caller's: U4's `[verify] bitcoin_endpoints` and U44's
+/// per-network `[verify.<network>] rpc_endpoints` overrides, or A16/A17's
+/// pinned defaults. `overridden` is disclosed in the overlay, never inferred
+/// there.
 ///
 /// Every failure is an *outcome*, never an error: this function is
 /// infallible by design, because a probe that could fail the run would make
@@ -187,11 +188,16 @@ pub fn probe_online(
     // The id is taken in the SAME `let` chain as the pair and the target, so
     // "probed, chain unknown" is unreachable rather than merely unwritten —
     // the same move `ProbeLog::with_receipt` makes in core. The `None` arm is
-    // devnet, where `verify_rpcs` is also `None` and `endpoints.arbitrum` is
-    // therefore already `None`; that is two tables agreeing, and
+    // devnet, where `endpoints.arbitrum` is already `None` whenever the pairs
+    // came from `endpoints_from_config`: devnet has no pinned pair
+    // (`verify_rpcs`) and no config slot (`Config::verify_rpc_endpoints`,
+    // U44 — `[verify.devnet]` is refused at load). That is three tables
+    // agreeing, and two tests assert the implications rather than leaving
+    // them to be noticed:
     // `a_network_with_no_expected_chain_id_has_no_pair_to_probe_with`
-    // (`antseal-anchor`'s `arbitrum/endpoints.rs`) is what asserts the
-    // implication rather than leaving it to be noticed.
+    // (`antseal-anchor`'s `arbitrum/endpoints.rs`) and
+    // `endpoints_from_config_reads_only_the_effective_networks_pair` (this
+    // module's `tests`).
     if let Some(pair) = &endpoints.arbitrum
         && let Some(target) = &plan.receipt
         && let Some(chain_id) = expected_chain_id(network)
@@ -258,14 +264,25 @@ impl OnlineEndpoints {
     }
 }
 
-/// Resolve `--online`'s endpoint pairs: U4's `[verify]` overrides if the
-/// config carries them, A16/A17's pinned defaults otherwise.
+/// Resolve `--online`'s endpoint pairs: the config's overrides where it
+/// carries them — U4's `[verify] bitcoin_endpoints`, and **`network`'s own**
+/// `[verify.<network>] rpc_endpoints` (U44, D188 R6) — and A16/A17's pinned
+/// defaults otherwise.
 ///
-/// An override **replaces the pair wholesale and must supply exactly two**
-/// (the `[verify]` slots' own rule): a one-element override would leave a
-/// must-agree pair agreeing with a default the user thought they had
-/// replaced, and a three-element one has no defined reading. Both are
-/// refused as `usage` (2), before any network work.
+/// Only `network`'s Arbitrum pair is read: a pair configured for the other
+/// network is not consulted, and is not counted in `overridden` either, so a
+/// run is disclosed as overridden exactly when an endpoint it consults came
+/// from the file. Devnet has no slot (`Config::verify_rpc_endpoints`) and no
+/// pinned pair, so its `arbitrum` is `None` by construction.
+///
+/// An override **replaces the pair wholesale and must supply exactly two**: a
+/// one-element override would leave a must-agree pair agreeing with a default
+/// the user thought they had replaced, and a three-element one has no defined
+/// reading. The Arbitrum pair was already checked when the file was read, by
+/// the same function used here ([`crate::config`]'s `rpc_endpoint_pair`), so
+/// load and use cannot disagree and its refusals never repeat a URL (an RPC
+/// URL often carries an API key, D188 R5). The Bitcoin pair is checked here,
+/// at use. Both are refused as `usage` (2), before any network work.
 ///
 /// Returns `None` only when this network has no Bitcoin pair to consult,
 /// which no shipped network does — the arm exists so a future one cannot
@@ -288,30 +305,38 @@ pub fn endpoints_from_config(
         .verify_bitcoin_endpoints
         .as_ref()
         .unwrap_or(&bitcoin_default);
-    let bitcoin = parse_pair(bitcoin_urls, "bitcoin_endpoints")?;
+    let bitcoin = parse_pair(bitcoin_urls, "`[verify] bitcoin_endpoints`")?;
 
-    let arbitrum_default: Option<Vec<String>> =
-        antseal_anchor::arbitrum::endpoints::verify_rpcs(network)
-            .map(|urls| urls.iter().map(|url| (*url).to_owned()).collect());
-    let arbitrum = match config.verify_arbitrum_endpoints.as_ref() {
-        Some(urls) => Some(parse_pair(urls, "arbitrum_endpoints")?),
-        None => match &arbitrum_default {
-            Some(urls) => Some(parse_pair(urls, "arbitrum_endpoints")?),
+    let arbitrum_override = config.verify_rpc_endpoints(network);
+    let arbitrum = match arbitrum_override {
+        Some(urls) => Some(
+            crate::config::rpc_endpoint_pair(urls, network)
+                .map_err(|message| CliError::Usage { message })?,
+        ),
+        None => match antseal_anchor::arbitrum::endpoints::verify_rpcs(network) {
+            Some(pinned) => {
+                let urls: Vec<String> = pinned.iter().map(|url| (*url).to_owned()).collect();
+                Some(parse_pair(
+                    &urls,
+                    &format!("the pinned {network} RPC pair"),
+                )?)
+            }
             None => None,
         },
     };
 
-    let overridden =
-        config.verify_bitcoin_endpoints.is_some() || config.verify_arbitrum_endpoints.is_some();
+    let overridden = config.verify_bitcoin_endpoints.is_some() || arbitrum_override.is_some();
     Ok(Some(OnlineEndpoints::new(bitcoin, arbitrum, overridden)))
 }
 
-/// Parse exactly two URLs into a must-agree pair.
-fn parse_pair(urls: &[String], key: &str) -> Result<EndpointPair, CliError> {
+/// Parse exactly two URLs into a must-agree pair; `what` names the list in
+/// the refusal. These refusals repeat the URL: D188 R5's no-echo rule belongs
+/// to the Arbitrum RPC override, which never reaches this function.
+fn parse_pair(urls: &[String], what: &str) -> Result<EndpointPair, CliError> {
     let [first, second] = urls else {
         return Err(CliError::Usage {
             message: format!(
-                "`[verify] {key}` must list exactly two endpoints (found {}): an override \
+                "{what} must list exactly two endpoints (found {}): an override \
                  replaces the pinned pair wholesale, and a must-agree pair needs two \
                  independent sources",
                 urls.len()
@@ -324,11 +349,11 @@ fn parse_pair(urls: &[String], key: &str) -> Result<EndpointPair, CliError> {
             antseal_anchor::TlsPolicy::RequiredExceptLoopback,
         )
         .map_err(|source| CliError::Usage {
-            message: format!("`[verify] {key}`: {source}"),
+            message: format!("{what}: {source}"),
         })
     };
     EndpointPair::new(parse(first)?, parse(second)?).map_err(|source| CliError::Usage {
-        message: format!("`[verify] {key}`: {source}"),
+        message: format!("{what}: {source}"),
     })
 }
 
@@ -508,8 +533,16 @@ where
         })
         .collect();
 
-    // Embedded ciphertexts, in bundle order — the revealed side.
-    let embedded: Vec<(u64, &[u8])> = bundle
+    // Embedded ciphertexts — the revealed side — in work-global manifest
+    // order: ascending `unit_id`, which is manifest order because a unit's
+    // `unit_id` is its manifest-order ordinal (a decode invariant). D190 R5
+    // (R90) rules this the order of `verify --live`'s rows, with the
+    // encrypted-manifest row last (below); `machine.rs`'s module doc is where
+    // the order is stated, and `tests/verify_live_manifest.rs` asserts it
+    // here. The bundle's own order — covered reveals ascending, then
+    // non-covered ascending — is not ascending overall, and it is what this
+    // list carried before D190.
+    let mut embedded: Vec<(u64, &[u8])> = bundle
         .covered_reveals()
         .iter()
         .map(|reveal| (reveal.unit_id(), reveal.ciphertext().as_slice()))
@@ -520,6 +553,7 @@ where
                 .map(|reveal| (reveal.unit_id(), reveal.ciphertext().as_slice())),
         )
         .collect();
+    embedded.sort_by_key(|&(unit_id, _)| unit_id);
 
     let mut records: Vec<StorageRecord<'_>> = Vec::with_capacity(embedded.len() + 1);
     for (unit_id, ciphertext) in embedded {

@@ -1220,12 +1220,13 @@ fn verify_runs_on_a_vault_less_machine_without_prompting() {
 /// 2. **`verify`'s own handler body is zero.** Counted over the body
 ///    extracted from `commands.rs` by brace-matching, for every device
 ///    primitive **and** every in-crate seam. This has to be body-level and
-///    not file-level: `commands.rs` names the passphrase collector nine
-///    times: eight handler bodies plus the definition (`restore`'s
-///    `ant-backend` arm became the eighth with D170). The file `verify`
-///    lives in is one of the most prompt-dense in the crate.
+///    not file-level: `commands.rs` names the passphrase collector ten
+///    times: nine handler bodies plus the definition (`restore`'s
+///    `ant-backend` arm became the eighth with D170, and `abandon` the
+///    ninth with U41, D185). The file `verify` lives in is one of the most
+///    prompt-dense in the crate.
 /// 3. **The handlers that do collect a secret are an enumerated set of
-///    eight, and `verify` is not among them** — with an *accounting*
+///    nine, and `verify` is not among them** — with an *accounting*
 ///    identity (`file total == sum over spans + definition lines`) that
 ///    reddens if the span extractor ever stops seeing a function, rather
 ///    than silently reporting zero for a body it failed to find.
@@ -1423,7 +1424,11 @@ fn verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan() {
     /// The handlers in `commands.rs` that **do** reach a prompt. `verify` is
     /// not one, and this is the list that says so by exhaustion rather than
     /// by absence of three English words.
-    const PROMPTING_HANDLERS: [(&str, &str); 8] = [
+    const PROMPTING_HANDLERS: [(&str, &str); 9] = [
+        (
+            "abandon",
+            "the vault passphrase, then D185's destructive confirm unless --yes",
+        ),
         ("list", "opens the vault to resolve work ids"),
         (
             "restore",

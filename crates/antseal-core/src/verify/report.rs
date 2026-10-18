@@ -899,7 +899,7 @@ pub struct FileReveal {
     ///
     /// **A manifest-declared figure** — the sealer's datum, structurally
     /// constrained but never independently measured. `check_tiling`
-    /// (`crates/antseal-core/src/verify/structural.rs:307`) requires the
+    /// (`crates/antseal-core/src/verify/structural.rs:345`) requires the
     /// file's non-mirror units to be sorted, non-overlapping, and to
     /// exactly tile `[0, total_size)`, so the number cannot disagree with
     /// the manifest's own unit table; and every span in
@@ -973,7 +973,7 @@ pub struct UnrevealedFilePlaceholder {
     /// units under part of it: a wholly unrevealed file has no opened
     /// unit at all, so agreement with the manifest's own unit table
     /// (`check_tiling`,
-    /// `crates/antseal-core/src/verify/structural.rs:307`) is the *only*
+    /// `crates/antseal-core/src/verify/structural.rs:345`) is the *only*
     /// constraint on this number, and nothing outside the manifest can
     /// contradict it. Render it as declared, never as measured.
     pub size: u64,

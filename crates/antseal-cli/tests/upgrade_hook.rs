@@ -48,7 +48,9 @@ use antseal_cli::pipeline::journal::{SealJournal, SealPlan, SealState, WorkIdent
 use antseal_cli::pipeline::{
     AnchorArtifact, ArtifactKind, OTS_SLOT, StoredAnchors, VaultJournal, tsa_slot,
 };
-use antseal_cli::upgrade_hook::{HOOK_ARMED, HOOK_NOT_ARMED, HookContext, run_with};
+use antseal_cli::upgrade_hook::{
+    HOOK_ARMED, HOOK_NOT_ARMED, HOOK_SUPPRESSED, HookContext, run_with,
+};
 use antseal_cli::vault::session::UnlockedVault;
 use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
 use antseal_core::anchor::testing::ots_writer;
@@ -747,7 +749,7 @@ impl Drop for TestDir {
 /// through it"
 ///
 /// That row was factually unsatisfiable (D99 §1.1): neither point that sees
-/// all ten subcommands holds a vault — `run::run` takes a `&Cli` and every
+/// all eleven subcommands holds a vault — `run::run` takes a `&Cli` and every
 /// handler unlocks for itself — so a hook placed there could not satisfy D42
 /// at all. The property it was reaching for is *no command silently skips the
 /// hook*, and that is what this asserts: the hook is invoked unconditionally,
@@ -791,7 +793,7 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
 
     // `(command, arms, why)` — indexed by `ALL_COMMAND_NAMES`/`MINIMAL_ARGV`,
     // which the machine registry already asserts are 1:1 and in order.
-    let expectations: [(&str, bool, &str); 10] = [
+    let expectations: [(&str, bool, &str); 11] = [
         (
             "init",
             false,
@@ -852,6 +854,15 @@ fn every_subcommand_either_arms_the_hook_or_is_a_documented_non_armer() {
             false,
             "D99 R2: its only unlock is the self-verification inside `import_vault`, which \
              never leaves that function",
+        ),
+        (
+            "abandon",
+            true,
+            "D185: `abandon` unlocks through the same `unlock_for_command` expression as `show` \
+             and `status` — the one expression that arms (D99 R2) — and, like them, arms BEFORE \
+             resolving the id, so the minimal argv's unknown id still leaves the invocation \
+             armed. It takes the U5 lock before the passphrase; the hook takes the lock only \
+             after this handler has released its own",
         ),
     ];
 
@@ -1066,5 +1077,69 @@ fn a_pass_with_nothing_dialable_costs_no_budget() {
         elapsed < Duration::from_secs(20),
         "a pass whose every URI is refused by A42 before any request must not pay the \
          opportunistic budget, let alone a network timeout — took {elapsed:?}"
+    );
+}
+
+/// **U60 Accept (D189 R2), against the real binary.** `[anchors]
+/// opportunistic_upgrades = false` turns the pass off, and the trace says so
+/// by naming the key: the run still ARMS (it holds a vault — D42), then emits
+/// the suppression sentence and performs no pass. The command itself is
+/// untouched — same exit code, byte-identical stdout — and the control is the
+/// same vault with the key removed, whose pass runs.
+#[test]
+fn the_config_key_turns_the_pass_off_and_says_so() {
+    let dir = TestDir::new("off-switch");
+    let vault = fixture_vault("hook-off-switch");
+    let root = vault.layout.root();
+    let args = ["--json", "--passphrase-fd", "0", "list"];
+    let config = root.join("config.toml");
+
+    std::fs::write(&config, "[anchors]\nopportunistic_upgrades = false\n").expect("write config");
+    let off = spawn_at(root, &dir.0, &args, Some(HOOK_LOG));
+    std::fs::remove_file(&config).expect("remove config");
+    let on = spawn_at(root, &dir.0, &args, Some(HOOK_LOG));
+
+    assert_eq!(on.code, Some(0), "the control runs; stderr:\n{}", on.stderr);
+    assert_eq!(
+        off.code, on.code,
+        "the key must not reach the exit code; stderr:\n{}",
+        off.stderr
+    );
+    assert_eq!(
+        off.stdout, on.stdout,
+        "nor the output: stdout is byte-identical"
+    );
+
+    assert!(
+        armed(&off),
+        "a vault-holding command still arms the hook; stderr:\n{}",
+        off.stderr
+    );
+    assert!(
+        off.stderr.contains(HOOK_SUPPRESSED),
+        "the trace must say the pass was suppressed; stderr:\n{}",
+        off.stderr
+    );
+    assert!(
+        off.stderr.contains("opportunistic_upgrades"),
+        "and name the key that suppressed it; stderr:\n{}",
+        off.stderr
+    );
+    assert!(
+        !off.stderr.contains("pass complete"),
+        "a suppressed hook performs no pass; stderr:\n{}",
+        off.stderr
+    );
+
+    assert!(armed(&on), "the control arms too; stderr:\n{}", on.stderr);
+    assert!(
+        on.stderr.contains("pass complete"),
+        "without the key the pass runs — absent is on; stderr:\n{}",
+        on.stderr
+    );
+    assert!(
+        !on.stderr.contains(HOOK_SUPPRESSED),
+        "and nothing claims it was suppressed; stderr:\n{}",
+        on.stderr
     );
 }

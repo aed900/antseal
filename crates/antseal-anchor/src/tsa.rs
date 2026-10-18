@@ -64,14 +64,14 @@
 //! will hoist one shared fan-out for A10/A13/A16/A17; when it lands only the
 //! block in [`capture_from_tsas`] changes.
 //!
-//! # Minimum-interval caveats (Sectigo ~15 s, SwissSign ~10/day)
+//! # Pacing: per URL within one seal, the operator's across seals
 //!
-//! Within one seal each *distinct* endpoint is contacted exactly once, so no
-//! spacing rule can be violated by this stage — provided the list really is
-//! distinct, which is why [`effective_tsa_urls`] deduplicates rather than
-//! trusting the config to. Honouring a spacing rule **across** invocations
-//! needs a persisted last-contact time, which is vault state this crate does
-//! not have; recorded as owed work (U49) rather than faked here.
+//! Within one seal each URL gets one capture ([`effective_tsa_urls`] drops
+//! exact duplicates) and a `429` is never re-sent (A140) — per URL, **not per
+//! authority**: Entrust is served by Sectigo (A31), so a list naming both
+//! sends Sectigo two requests concurrently. Spacing **across** runs is not
+//! implemented: A10's minimum-interval clause was withdrawn at A137, and
+//! `docs/user/timestamp-authorities.md` §4 leaves it to the operator.
 
 use std::time::{Duration, Instant};
 
@@ -191,8 +191,8 @@ pub enum TsaFailure {
     /// property is that a gate-passing seal holds at least one anchor that
     /// renders with an independently proven time offline, and neither of
     /// these does.
-    #[error("{endpoint}: the token verifies but does not chain to a pinned root ({state:?}{})",
-        match fault { Some(f) => format!(", {}", f.code()), None => String::new() })]
+    #[error("{endpoint}: the token verifies but does not chain to a pinned root ({}{})",
+        state.wire_name(), match fault { Some(f) => format!(", {}", f.code()), None => String::new() })]
     Untrusted {
         /// The TSA endpoint URL.
         endpoint: String,

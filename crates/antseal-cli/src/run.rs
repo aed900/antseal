@@ -17,7 +17,10 @@
 //! **`verify` — U30, LANDED** (the last handler of the frozen surface:
 //! R21's orchestration behind D69's exit-code fold, D65's byte-verbatim
 //! `--json` carriage, and D128's always-on storage-linkage section — it
-//! needs no vault and never prompts).
+//! needs no vault and never prompts). **`abandon` — U41, LANDED** (D185's
+//! amendment to that surface: it unlocks like `show` and `status`, but it
+//! writes, so it holds the U5 lock, and it confirms before U17's engine,
+//! which it calls unchanged).
 //!
 //! **`reveal` — U28/U29, LANDED.** [`crate::reveal_out::run_reveal`]
 //! resolves `-o`/D68's default, refuses an occupied target *before*
@@ -97,5 +100,6 @@ pub(crate) fn run(cli: &Cli, slot: &VaultSlot) -> Result<Outcome, CliError> {
             }
             VaultCommand::Import { file } => commands::vault_import(&cli.globals, file, slot),
         },
+        Command::Abandon { id, yes } => commands::abandon(&cli.globals, id, *yes, slot),
     }
 }

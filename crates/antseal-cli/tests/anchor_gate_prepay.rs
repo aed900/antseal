@@ -133,9 +133,10 @@ fn the_real_gate_aborts_before_pay_with_no_money_spent() {
     });
 
     // The abort is A20's, named, and carries the endpoint verbatim.
-    let Err(SealError::AnchorGate(error)) = outcome else {
+    let Err(SealError::AnchorGate(refusal)) = outcome else {
         panic!("expected an anchor-gate abort, got {outcome:?}");
     };
+    let error = refusal.error;
     let AnchorGateError::MinimumAnchor {
         attempted,
         ref failures,

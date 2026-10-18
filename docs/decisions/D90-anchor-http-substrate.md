@@ -1619,3 +1619,29 @@ Under **M2 — Anchors**, in the decision register block beside D53–D61:
 ```
 - [x] **D90** Anchor network substrate: HTTP-client pin, execution model, and dependency-graph position — **RESOLVED 2026-08-02** — `ureq = "=3.3.0"` (`default-features = false`, `features = ["rustls"]`), **blocking**, **ungated**, declared by `antseal-anchor` alone; default `--workspace` graph 129 → 144, ant-backend 447 → 451, devnet 475 → 479. No runtime is created, borrowed or required — `AnchorGate::run` keeps its frozen `async fn` and completes in one poll under the existing noop-waker executor; endpoint independence is `std::thread::scope`. Gating it behind `ant-backend` was refused on D89's ground: required CI is default-features-only, so every Accept row of A3/A10/A13/A16/A17 — all local-stub unit tests — would be compiled by nothing. Also settled: per-phase timeouts (10 s global, confirming A3), `Idempotency::AtMostOnceAfterSend` for the calendar/TSA writes so a retry can never double-submit, `max_redirects(0)` **plus** our own 3xx classification (ureq returns the 3xx rather than erroring), `.proxy(None)` (ureq's default reads `HTTP_PROXY`, which would collapse A16's must-agree pair onto one origin), HTTPS mandatory for esplora/RPC and plain HTTP permitted for RFC 3161 (DigiCert has no port 443 at all — measured), a streaming receive ceiling whose `.limit(N)` accepts only N−1 bytes, **four receive caps sized from measurement** (calendar reply 64 KiB, not `MAX_OTS_BYTES` — largest of 18 real replies is 220 B and F4 makes a too-high cap permanent; Arbitrum RPC 512 KiB, not 64 KiB — D37's 256-transfer maximum is a 188 328 B receipt, so 64 KiB would fail A17 on exactly the large seals it corroborates), and **a non-2xx failure that carries its body** (D58's three-way calendar discriminator is a 404 *body*; the draft discarded it and would have made A14 unimplementable). Found: the `core-dep-graph` forbidden-crate scan is the one rule in that lane with **no self-test**, and its denylist is measurably weaker than its headline — D90 adds the client name + the self-test as an interim guard and is **adjacent to Q74, not blocked by it**. Discovered: **A49**, **P29**, **Q83**, **Q84** — gates A3 → A10/A13/A16/A17 → A14/A15/A20/A25
 ```
+
+## Addendum — 2026-10-17 (wave 38, D193 §2 R5): a 429 stops an at-most-once POST
+
+§6.3's table classes *"status `429`, `503` | no (server declined) | retry | retry"*
+(`:692`). **D193 §2 R5 (row `A140`) moves 429 under `Idempotency::AtMostOnceAfterSend` to
+stop.** The row now reads: 429 — retry under `SafeToRepeat`, stop under
+`AtMostOnceAfterSend`; 503 — retry in both columns, unchanged. No `Retry-After` handling is
+added.
+
+Why: §6.3's dividing line — whether the request bytes reached the server — still holds, and a
+declined request still cannot double-submit, so the table's reasoning is not withdrawn. A
+second criterion joins it for at-most-once POSTs: a 429 is a *pacing* refusal. This record's
+own context priced repetition against the TSA caveats (*"three attempts burns 30 % of
+SwissSign's daily quota on one failure"*, `:678-679`), and the ladder of +200 ms and +600 ms
+(three attempts in about 0.8 s) cannot satisfy a ~15-second spacing. A 503 is an outage, not a
+pacing refusal, and keeps its retry.
+
+Scope: the column holds both at-most-once call sites named under *Call-site assignment* — the
+A10 TSA POST (`crates/antseal-anchor/src/tsa.rs:459`) and the A13 calendar submit
+(`crates/antseal-anchor/src/ots/submit.rs:348`) — so a calendar that answers 429 now receives
+one request as well. That cost is bounded: no OTS outcome ever fails a seal (D54 §3).
+
+The table test `the_classifier_reproduces_d90_table_6_3`
+(`crates/antseal-anchor/src/http/retry.rs:158`) flips its 429 row to
+`(status(429), Retry, Stop)` before the classifier changes, as the red-first witness, and a
+stub-server test asserts that a TSA answering 429 receives one request, not three.

@@ -105,12 +105,14 @@ fn snapshot_enumerates_every_command_node() {
         "════ antseal vault ════",
         "════ antseal vault export ════",
         "════ antseal vault import ════",
+        // D185 (U41): the one surface amendment since U1, appended last.
+        "════ antseal abandon ════",
     ] {
         assert!(rendered.contains(header), "snapshot lost section {header}");
     }
     assert_eq!(
         rendered.matches("════ antseal").count(),
-        12,
+        13,
         "command tree grew or shrank: update the canonical list, the \
          snapshot, and this count together (deliberately)"
     );
@@ -598,6 +600,39 @@ fn no_anchor_parses_but_is_hidden_from_help() {
         !render_surface().contains("no-anchor"),
         "--no-anchor is dev-only and must stay hidden from help output"
     );
+}
+
+/// D185 R1/R2: `abandon` takes exactly one id and an optional `--yes`, and
+/// nothing else — no prefix scheme is a parse concern, the id is checked
+/// against the vault after unlock, but a missing or a second id is a usage
+/// error before anything runs.
+#[test]
+fn abandon_takes_exactly_one_id_and_an_optional_yes() {
+    let id = "00112233445566778899aabbccddeeff";
+    for (argv, yes) in [
+        (vec!["antseal", "abandon", id], false),
+        (vec!["antseal", "abandon", id, "--yes"], true),
+        (vec!["antseal", "--json", "abandon", "--yes", id], true),
+    ] {
+        let cli = parse(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        match cli.command {
+            Command::Abandon {
+                id: got,
+                yes: got_yes,
+            } => {
+                assert_eq!((got.as_str(), got_yes), (id, yes), "{argv:?}");
+            }
+            other => panic!("expected abandon, got {other:?}"),
+        }
+    }
+    for argv in [
+        vec!["antseal", "abandon"],
+        vec!["antseal", "abandon", id, id],
+        vec!["antseal", "abandon", id, "--force"],
+    ] {
+        let err = parse(&argv).expect_err("refused at parse");
+        assert_eq!(err.exit_code(), 2, "{argv:?}: clap's usage code");
+    }
 }
 
 #[test]

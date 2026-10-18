@@ -531,8 +531,9 @@
 - Do: wire the fault into the pipeline's error path. A `SealJournal` provided method mirroring `arm_receipts` is the obvious shape (the journal already owns the sink); `consent_anchor_pay` reads it on the `pay`-errored path and reports the stranded state *with* the durability failure rather than instead of it.
 - Accept:
   - A sink write failure during a `pay` that then fails produces a distinct, user-facing message naming both facts; asserted with an injected write failure, not by inspection.
-  - A sink write failure during a `pay` that succeeds changes nothing (the complete receipt is durable regardless) — asserted, so the new error class cannot fire spuriously.
+  - ~~A sink write failure during a `pay` that succeeds changes nothing (the complete receipt is durable regardless) — asserted, so the new error class cannot fire spuriously.~~ **[AMENDED 2026-10-17 by D186 §2 R7 — *"durable regardless"* assumed that the post-pay `put_receipt` cannot fail.]** A sink write failure during a `pay` that succeeds changes nothing **when the post-pay `put_receipt` succeeds**; when it also fails, the new class fires. Both halves asserted, so the class can neither fire spuriously nor stay silent.
 - Notes: deliberately not taken inside S31. It costs a distinct `SealError` variant, i.e. an **error-universe event**, and growing the taxonomy inside a lane whose subject is payment durability is how a taxonomy grows by accident. Worth pairing with whoever next opens `pipeline/error.rs`.
+- Notes: **[2026-10-18, wave 38 — TICKED (D186, lane L-ERR2).]** Captures on the `TODO.md` row; D186 §6 records what was built and every deviation.
 
 ### S39 — The adapter reports an unreachable or undecided network as `NotFound`, which every consumer reads as "the network answered: no data here"
 - Milestone: M4
@@ -655,3 +656,37 @@
 - ⚠️ **The second `Accept` clause is overturned.** *"Give the test binary either a per-test vault or an enumeration-safe fixture"* — refused by D106 §7: after the fix, those four shared-vault rows are the tree's only witness that a whole-store scan is **total under real concurrent mutation**, and isolating them would trade a load-dependent red for a permanently green vacuum (D100 R10.2, A104). They stay, and `incomplete_works_are_enumerable_with_their_state` now carries a docstring saying why.
 - ⚠️ **`Why it is not only a test defect` was right for the wrong reason.** `incomplete_works` itself has **zero production callers**. The reachable radius is `antseal list` and `antseal status <work-id>`, both lock-free by deliberate design, both exiting 2 over the whole vault with *"no work with this id exists in the vault (see `antseal list`)"* — `list` telling the user to run `list`, and `status` denying an id the user typed.
 - **[2026-08-09 CLOSED with U66 under D106.]** S38, S34 and U66 are three recordings of one defect across eight days, and the reason all three missed it is one false sentence in `vault/store.rs:65-66` — *"Readers are safe against a concurrent writer because every write is an atomic rename"*, a **per-file** guarantee offered as a **per-work** one. Every individual write is old-or-new; a work is many files, and no primitive in this tree makes a set of them appear together.
+### S45 — A seal killed while staging leaves a work that can never be resumed, and its exact re-run fails the same way every time
+- Milestone: M4
+- Size: S
+- Deps: after U41 (D185's abandon verb is the exit this row's message names until the deeper fix lands)
+- Spec: S10 (the journal state machine); D45 §2 (resume detection)
+- Discovered by: wave-38 planning lane P1, 2026-10-17, code-traced (not executed). Id assigned centrally.
+- Problem: `sink.begin` (`crates/antseal-cli/src/pipeline/seal.rs:279` → `vault_journal.rs:116-141`) writes the meta record and the journal tag `Staged` before any blob is staged, contrary to `SealState::Staged`'s own doc (`journal.rs:164-166`); the plan is written only at `seal.rs:351`. A kill in between (Ctrl-C during encryption — no SIGINT handler exists) leaves an `IncompletePrePay` candidate with no plan; its exact re-run hits `SealError::NothingStaged` → usage (2) with no state change, every time (`resume.rs:153-156`). D185 R6 maps that message to name `antseal abandon {seal-id}`; this row owns the defect itself.
+- Do: rule between auto-abandoning an exact-match candidate that has no plan, no anchors and no receipt (a D45 §2 amendment — nothing was quoted, consented or paid) and a pre-staging journal tag so `Staged` means what its doc says (an S10 state-machine change); add a `Barrier` between `begin` and `put_plan` so the kill point is injectable.
+- Accept:
+  - A test that calls `journal.begin` directly and then `run_seal` with the same plan reaches the ruled outcome (a fresh seal with a notice, or the D185 message) — red baseline recorded first.
+- Notes: **[2026-10-18, wave 38 — a second window, the same fix.]** Lane L-ERR1 traced a narrower one inside `begin` itself: between `create_work` (the meta record, coarse `IncompletePrePay`) and the `Staged` tag write (`pipeline/vault_journal.rs:132-140`). A kill there leaves a work that `detect` lists, whose exact re-run fails in `journal.state()` (*"work has no journal state record"*, `vault_journal.rs:259`), and which `antseal abandon` cannot exit either: `set_state` reads `state()` first (`:221`) and fails the same way, after the preview and the confirmation. Code-traced, not executed. A pre-staging tag would close both windows; this row's ruling must cover both, and its test must reach both.
+
+### S46 — A failed receipt capture does not stop the next sub-batch payment, so a vault that cannot write loses the record of every remaining sub-batch
+- Milestone: M4
+- Size: M
+- Deps: after S37 (it reuses D186's predicate and class)
+- Spec: D37 Decision 2 (*"journals that sub-batch's record … before submitting the next"*; the one-transaction loss bound)
+- Discovered by: wave-38 planning lane P1, 2026-10-17, by reading code. Id assigned centrally.
+- Problem: `CaptureHook = Arc<dyn Fn(&PaymentReceipt) + Send + Sync>` (`crates/antseal-net/src/ant_backend.rs:174`) returns nothing and `emit_capture` (`:1616-1641`) cannot report failure, so the payment loop (`:807-813`) submits sub-batch N+1 after capture N failed. Under a persistent vault write failure every remaining sub-batch is paid unrecorded — D186's case at full scale, and D37 Decision 2's loss bound does not hold.
+- Do: make the hook report durability and stop submitting after a non-durable capture (returning `StrandedPayment` with D186's predicate), bounding the loss to one sub-batch; touches the `ReceiptSink` trait (`crates/antseal-cli/src/backend.rs:1163`) and its implementations; S20 containment applies to `ant_backend.rs`.
+- Accept:
+  - A devnet case with a failing sink: exactly one sub-batch's payment is unrecorded, and the on-chain delta equals the receipt plus one sub-batch.
+- Notes: **[2026-10-18, wave 38 — a false rustdoc for this row's fix to correct.]** `crates/antseal-net/src/error.rs:80-85` (`StorageError::StrandedPayment`) says *"the partial quote→tx map is journaled before this error surfaces, so the evidence of money spent is never only in the error"*. That is false when a capture fails, which is S37's case and this row's subject. It was false before wave 38 too: S37 surfaced the case as class 37 without changing the doc. Lane L-ERR2 left it, because the optional edit there (D186 §2 R6) was the Display, which D147 R11 freezes; the rustdoc is not frozen.
+
+### S47 — A connect-time `Payment` or `AlreadyStored` error is classed as a quote failure
+- Milestone: M4
+- Size: XS
+- Deps: after U96 (D191 put the connect error's own text after kind-neutral words)
+- Spec: `AntCoreReader::connect`'s documented contract (a connect fails as `StorageError::Network`); D191 §1.2
+- Discovered by: wave-38 lane L-NET, 2026-10-17, while proving D191's premise that every kind reaching `degrade` arrives as `Network`. Id assigned centrally.
+- Problem: `map_ant_error(ErrContext::Connect, _)` (`crates/antseal-net/src/ant_backend.rs:1736-1770`) gives `ErrContext::Connect` no class of its own, so `AntError::Payment` and `AntError::AlreadyStored` fall to the `_` arm and become `StorageError::Quote`, against `AntCoreReader::connect`'s Network-only contract (`:1032-1035`). `degrade` renders a non-`Network` error whole after its words, so a read-only command would print *"no connection to the Autonomi network was made: quote collection failed: upstream payment-class error during quoting …"*. Implausible on the pinned stack, which is why it is XS and not urgent.
+- Do: give `ErrContext::Connect` its own arm in `map_ant_error` that classes every connect error as `Network`.
+- Accept:
+  - A connect-context `Payment` and `AlreadyStored` each map to `StorageError::Network`, asserted in-crate; the `degrade` unit test's non-`Network` row is then re-read against the contract.

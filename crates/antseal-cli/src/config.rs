@@ -51,17 +51,43 @@
 //! [anchors]
 //! tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 //!
-//! # Pinned online-endpoint override SLOTS for `verify --online`
-//! # (consumer: U30 at M3; two independent must-agree sources per
-//! # evidence class). These MUST be https (loopback IP literals are the
-//! # only exemption) — their replies are unsigned, so the transport is
-//! # their only integrity control and a plain-http override would let one
-//! # on-path attacker forge both halves of a "must agree" pair (A49,
-//! # decision D90 §6.6). `tsa_urls` above is deliberately not subject to
-//! # this: RFC 3161 tokens are signed and nonce-bound.
+//! # OpenTimestamps calendar list (U44, D188) — ONE list in two roles
+//! # (U52, U64): `seal`'s submit targets, and the only widening of A42's
+//! # upgrade allowlist past the three pinned calendar domains
+//! # (`status --upgrade` and the opportunistic pass). The `tsa_urls`
+//! # conventions: a non-empty list replaces D54's four wholesale, an empty
+//! # or absent one is the defaults, duplicates collapse
+//! # (`antseal_anchor::ots::effective_calendars`, the one function both
+//! # roles call). Validated at load under `TlsPolicy::Optional` — the
+//! # submit path's own policy, since a calendar cannot forge a proof (D54
+//! # §4) — so load and use cannot disagree.
+//! ots_calendars = ["https://a.pool.opentimestamps.org", "https://b.pool.opentimestamps.org"]
+//!
+//! # The opportunistic upgrade pass's off switch (U60, D189; consumer:
+//! # `crate::upgrade_hook::run_after_output`). Absent or `true` = the pass
+//! # runs after every vault-holding command; `false` = it is skipped before
+//! # any client, lock or poll exists. `status <work-id> --upgrade` is never
+//! # affected. A bare boolean is the only accepted value.
+//! opportunistic_upgrades = true
+//!
+//! # Online-endpoint overrides (consumer: U30's `verify --online`; the
+//! # esplora pair also feeds `status --upgrade` and the opportunistic pass).
+//! # Two independent must-agree sources per evidence class. These MUST be
+//! # https (loopback IP literals are the only exemption) — their replies are
+//! # unsigned, so the transport is their only integrity control and a
+//! # plain-http override would let one on-path attacker forge both halves of
+//! # a "must agree" pair (A49, decision D90 §6.6). `tsa_urls` and
+//! # `ots_calendars` above are deliberately not subject to this: RFC 3161
+//! # tokens are signed and nonce-bound, and a calendar cannot forge a proof.
 //! [verify]
 //! bitcoin_endpoints = ["https://a.example", "https://b.example"]
-//! arbitrum_endpoints = ["https://c.example", "https://d.example"]
+//!
+//! # The Arbitrum receipt pair is PER NETWORK (U44, D188 R4; A17's Accept):
+//! # exactly two endpoints at two origins, checked at load, replacing that
+//! # network's pinned pair. There is no `[verify.devnet]` (refused: devnet's
+//! # chain is a fresh Anvil per run, D55 §5).
+//! [verify.arbitrum-one]
+//! rpc_endpoints = ["https://c.example", "https://d.example"]
 //! ```
 //!
 //! Unknown top-level keys and unknown sections are **warnings**
@@ -79,7 +105,11 @@
 //! The refusal names the key, the table and the line and never repeats the
 //! value, which in its common real form carries an API key; it is raised on
 //! the key, before the value is parsed, so a malformed value cannot echo it
-//! through the subset's own errors either.
+//! through the subset's own errors either. The flat `[verify]
+//! arbitrum_endpoints` is refused the same way and for the same reason (U44,
+//! D188 R5): its pair moved to `[verify.<network>] rpc_endpoints`, whose own
+//! refusals name the entry's index, never its URL. And `[verify.devnet]` is
+//! refused whatever it holds: devnet has no RPC pair to override.
 //!
 //! # The TOML subset, documented (and why it is hand-parsed)
 //!
@@ -94,13 +124,19 @@
 //! - `key = "basic string"` (no escape sequences — a backslash is a
 //!   precise error) or `key = 'literal string'`;
 //! - `key = ["a", "b"]` single-line arrays of strings;
+//! - `key = true` / `key = false`, bare and lowercase (U60, D189 R1) — typed
+//!   per key: a string or array key refuses a boolean with its own message;
 //! - duplicate keys/sections are errors.
 //!
 //! Everything a v1 key needs is expressible; everything else — escapes,
 //! multi-line strings, integers, dates, inline tables — is rejected with
 //! a message naming the construct, so a hand-written full-TOML file
-//! degrades into a precise complaint, never a misparse. `docs/config.md`
-//! carries the user-facing statement of the same grammar.
+//! degrades into a precise complaint, never a misparse. That applies to a
+//! **recognised** key's value only (D189 R3): an unknown key's value is
+//! never parsed — the key is warned on by name, after its `[networks.<id>]`
+//! or `[verify.<id>]` table name is judged — so a config written by a newer
+//! antseal, whose values may use grammar this build lacks, still loads.
+//! `docs/config.md` carries the user-facing statement of the same grammar.
 
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
@@ -137,13 +173,77 @@ pub struct Config {
     /// [`antseal_anchor::effective_tsa_urls`](antseal_anchor::submit::AnchorEndpoints::from_config)'s,
     /// so one function decides it for every consumer.
     pub tsa_urls: Option<Vec<String>>,
-    /// `[verify] bitcoin_endpoints` (consumer: U30 at M3).
+    /// `[anchors] ots_calendars` (U44, D188) — the OpenTimestamps calendar
+    /// list, read in **two roles from one source** (U52, U64): the calendars
+    /// `seal`'s anchor stage submits to
+    /// ([`AnchorStageConfig::from_config`](crate::seal_run::AnchorStageConfig::from_config)),
+    /// and the hosts `status --upgrade` and the opportunistic pass admit beyond
+    /// A42's three pinned calendar domains
+    /// ([`UpgradeConfig::from_config`](crate::status::UpgradeConfig::from_config)).
+    /// `None` and `Some(empty)` both mean D54's four defaults; the collapse —
+    /// wholesale replacement and deduplication — is
+    /// [`antseal_anchor::ots::effective_calendars`]'s, one function on both
+    /// paths, so the two roles cannot read different lists.
+    pub ots_calendars: Option<Vec<String>>,
+    /// `[anchors] opportunistic_upgrades` (U60, D189 R2) — whether the
+    /// opportunistic OpenTimestamps upgrade pass runs after a command that
+    /// unlocked the vault. `None` is "no key", which means on; read it through
+    /// [`Config::opportunistic_upgrades_enabled`]. Honoured by
+    /// [`crate::upgrade_hook::run_after_output`] only — `status <work-id>
+    /// --upgrade` is the user asking, and this key never suppresses it.
+    pub opportunistic_upgrades: Option<bool>,
+    /// `[verify] bitcoin_endpoints` — the esplora pair `verify --online`
+    /// (U30), `status --upgrade` and the opportunistic pass confirm block
+    /// headers against. Its count and origins are checked at use.
     pub verify_bitcoin_endpoints: Option<Vec<String>>,
-    /// `[verify] arbitrum_endpoints` (consumer: U30 at M3).
-    pub verify_arbitrum_endpoints: Option<Vec<String>>,
+    /// `[verify.arbitrum-one] rpc_endpoints` (U44, D188 R4) — arbitrum-one's
+    /// Arbitrum receipt pair for `verify --online`, replacing A17's pinned
+    /// pair wholesale. Checked at load: exactly two endpoints at two origins
+    /// ([`rpc_endpoint_pair`]). Consumers read it through
+    /// [`Config::verify_rpc_endpoints`].
+    pub verify_arbitrum_one_rpc_endpoints: Option<Vec<String>>,
+    /// `[verify.arbitrum-sepolia] rpc_endpoints` — as above, for
+    /// arbitrum-sepolia. There is no devnet slot: devnet's chain is a fresh
+    /// Anvil per run (D55 §5), and `[verify.devnet]` is refused at load.
+    pub verify_arbitrum_sepolia_rpc_endpoints: Option<Vec<String>>,
     /// Unknown-key/section warnings (forward compat) — rendered once on
     /// stderr by the entry point, never fatal, never on stdout.
     pub warnings: Vec<String>,
+}
+
+impl Config {
+    /// `network`'s `[verify.<network>] rpc_endpoints` override, if the file
+    /// set one (U44, D188 R6). The match has no wildcard arm on purpose: a
+    /// network added later must decide here whether it has a pair, rather
+    /// than inherit another network's. `Devnet` has none.
+    #[must_use]
+    pub fn verify_rpc_endpoints(&self, network: NetworkId) -> Option<&[String]> {
+        match network {
+            NetworkId::ArbitrumOne => self.verify_arbitrum_one_rpc_endpoints.as_deref(),
+            NetworkId::ArbitrumSepolia => self.verify_arbitrum_sepolia_rpc_endpoints.as_deref(),
+            NetworkId::Devnet => None,
+        }
+    }
+
+    /// Whether the opportunistic upgrade pass runs: the file's
+    /// `[anchors] opportunistic_upgrades`, or `true` when the key is absent —
+    /// so a config without it, and [`Config::default`], keep the pass (U60,
+    /// D189 R2).
+    #[must_use]
+    pub fn opportunistic_upgrades_enabled(&self) -> bool {
+        self.opportunistic_upgrades.unwrap_or(true)
+    }
+
+    /// The slot `[verify.<network>] rpc_endpoints` loads into — `None` for the
+    /// network with no pair to override (devnet), so the loader and
+    /// [`Config::verify_rpc_endpoints`] cannot disagree about which exist.
+    fn verify_rpc_slot(&mut self, network: NetworkId) -> Option<&mut Option<Vec<String>>> {
+        match network {
+            NetworkId::ArbitrumOne => Some(&mut self.verify_arbitrum_one_rpc_endpoints),
+            NetworkId::ArbitrumSepolia => Some(&mut self.verify_arbitrum_sepolia_rpc_endpoints),
+            NetworkId::Devnet => None,
+        }
+    }
 }
 
 /// The effective network: flag > config > built-in `arbitrum-one`
@@ -325,9 +425,28 @@ pub fn parse(text: &str) -> Result<Config, ConfigParseError> {
         {
             return Err(err(rpc_url_refusal(network_name)));
         }
-        let value = parse_value(value_raw.trim()).map_err(err)?;
+        // U44 (D188 R5): the flat `[verify] arbitrum_endpoints` is retired the
+        // same way and for the same reason — refused on the KEY, so no shape
+        // of its value can reach the error (see `arbitrum_endpoints_refusal`).
+        if let [family] = section.as_slice()
+            && family == "verify"
+            && key == "arbitrum_endpoints"
+        {
+            return Err(err(arbitrum_endpoints_refusal()));
+        }
 
-        apply(&mut config, &section, key, &full_key, value, line_no)?;
+        // The value goes to `apply` RAW: each recognised key parses it there,
+        // so a key whose value must never be repeated
+        // (`[verify.<network>] rpc_endpoints`, D188 R5) can refuse it without
+        // passing through the subset's own errors, which quote what they reject.
+        apply(
+            &mut config,
+            &section,
+            key,
+            &full_key,
+            value_raw.trim(),
+            line_no,
+        )?;
     }
     Ok(config)
 }
@@ -336,6 +455,9 @@ pub fn parse(text: &str) -> Result<Config, ConfigParseError> {
 enum Value {
     Str(String),
     Array(Vec<String>),
+    /// A bare lowercase `true` / `false` (U60, D189 R1). Typed per key: every
+    /// string or array key refuses one with its own message.
+    Bool(bool),
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -360,6 +482,14 @@ fn is_bare_key(key: &str) -> bool {
 }
 
 fn parse_value(raw: &str) -> Result<Value, String> {
+    // D189 R1: exactly TOML's two spellings, bare and lowercase. `True`,
+    // `"false"` and `off` are not booleans here; a key that wants one says so
+    // in its own words.
+    match raw {
+        "true" => return Ok(Value::Bool(true)),
+        "false" => return Ok(Value::Bool(false)),
+        _ => {}
+    }
     if raw.starts_with('[') {
         let inner = raw
             .strip_prefix('[')
@@ -375,6 +505,11 @@ fn parse_value(raw: &str) -> Result<Value, String> {
                     Value::Str(s) => items.push(s),
                     Value::Array(_) => {
                         return Err("nested arrays are outside the config subset".to_owned());
+                    }
+                    Value::Bool(_) => {
+                        return Err("array entries must be quoted strings: a boolean inside \
+                                    an array is outside the config subset"
+                            .to_owned());
                     }
                 }
             }
@@ -429,9 +564,8 @@ fn parse_string(raw: &str) -> Result<String, String> {
         }
     }
     Err(format!(
-        "value `{raw}` is not a quoted string or a [\"…\"] array \
-         (integers, booleans, dates, and inline tables are outside the \
-         antseal config subset)"
+        "value `{raw}` is not a quoted string, a [\"…\"] array, or a bare true/false \
+         (integers, dates, and inline tables are outside the antseal config subset)"
     ))
 }
 
@@ -501,10 +635,7 @@ fn parse_bootstrap_override(items: &[String]) -> Result<Vec<SocketAddr>, String>
 /// *not a quoted string* error repeats the raw value it rejects.
 fn rpc_url_refusal(network_name: &str) -> String {
     match network_name.parse::<NetworkId>() {
-        Err(_) => format!(
-            "`[networks.{network_name}]` is not a known network (valid: \
-             arbitrum-one, arbitrum-sepolia, devnet)"
-        ),
+        Err(_) => unknown_network("networks", network_name),
         Ok(id) => format!(
             "`rpc_url` under [networks.{id}] is refused: antseal reads no payment-RPC \
              override — arbitrum-one and arbitrum-sepolia pay through their pinned public \
@@ -515,37 +646,189 @@ fn rpc_url_refusal(network_name: &str) -> String {
     }
 }
 
-/// Route one parsed `key = value` into the schema: recognized keys with
-/// invalid values are hard errors; unrecognized keys/sections warn.
+/// The refusal for the flat `[verify] arbitrum_endpoints` — **U44's ruling
+/// (D188 R5): the key is retired, and refused at load.**
+///
+/// One flat list could not hold A17's per-network pairs, so the Arbitrum
+/// receipt pair moved to `[verify.arbitrum-one]` and
+/// `[verify.arbitrum-sepolia]` (`rpc_endpoints`). D55 §6 planned to *warn* on
+/// the old key, on the premise that nothing consumed it; U30 had wired it to
+/// `verify --online` by then, so a warning would leave `verify --online`
+/// probing the pinned pair the user had configured away from — D180's reason
+/// for refusing `rpc_url`, one table over. The text names the key, the table
+/// and the replacement tables — the line rides on [`ConfigParseError::line`]
+/// — and never the value; the caller raises it before the value is parsed.
+fn arbitrum_endpoints_refusal() -> String {
+    "`arbitrum_endpoints` under [verify] is retired: the Arbitrum RPC pair is set per \
+     network — write `rpc_endpoints` under [verify.arbitrum-one] or \
+     [verify.arbitrum-sepolia] instead. Its value is not repeated here, because an RPC \
+     URL often carries an API key"
+        .to_owned()
+}
+
+/// The answer for a `[<family>.<network_name>]` table whose network is not
+/// one of the three — the same words for `[networks.*]` and `[verify.*]`.
+fn unknown_network(family: &str, network_name: &str) -> String {
+    format!(
+        "`[{family}.{network_name}]` is not a known network (valid: arbitrum-one, \
+         arbitrum-sepolia, devnet)"
+    )
+}
+
+/// The refusal for any key under `[verify.devnet]` (U44, D188 R4).
+fn devnet_verify_refusal() -> String {
+    "`[verify.devnet]` is refused: devnet has no RPC pair to override — its chain is a \
+     fresh Anvil per run (D55 §5), so `verify --online` probes no Arbitrum endpoint on \
+     devnet. Delete the table"
+        .to_owned()
+}
+
+/// `[verify.<network_name>]`'s table-name check (U44, D188 R4), run before
+/// any key in the table is read: an unknown network keeps the
+/// `[networks.<id>]` answer, and `devnet` is refused whatever the key,
+/// because there is nothing on devnet for the table to configure.
+fn verify_table_network(network_name: &str) -> Result<NetworkId, String> {
+    let id: NetworkId = network_name
+        .parse()
+        .map_err(|_| unknown_network("verify", network_name))?;
+    match id {
+        NetworkId::Devnet => Err(devnet_verify_refusal()),
+        NetworkId::ArbitrumOne | NetworkId::ArbitrumSepolia => Ok(id),
+    }
+}
+
+/// What every `rpc_endpoints` refusal says in place of the value (D188 R5).
+const RPC_VALUE_NOT_REPEATED: &str =
+    "the value is not repeated here, because an RPC URL often carries an API key";
+
+/// The `rpc_endpoints` value as a list, parsed **without ever repeating it**
+/// (D188 R5): the subset's own refusals quote what they reject (*value `…` is
+/// not a quoted string*), so every failure here becomes one sentence naming
+/// the accepted shape instead.
+fn rpc_endpoints_value(raw: &str, network: NetworkId) -> Result<Vec<String>, String> {
+    match parse_value(raw) {
+        Ok(Value::Array(items)) => Ok(items),
+        _ => Err(format!(
+            "`rpc_endpoints` under [verify.{network}] takes a one-line array of exactly two \
+             quoted endpoint URLs; {RPC_VALUE_NOT_REPEATED}"
+        )),
+    }
+}
+
+/// `[verify.<network>] rpc_endpoints`' one validator (U44, D188 R4, R5) — the
+/// load-time check AND the pair `verify --online` is built with, so the two
+/// cannot disagree (A50's one-implementation rule, as for the URL check in
+/// [`apply`]).
+///
+/// Exactly two entries: one endpoint cannot be a must-agree pair, and a third
+/// has no defined reading (U44). Each is parsed by the substrate's own
+/// [`antseal_anchor::Endpoint::parse`] under
+/// [`antseal_anchor::TlsPolicy::RequiredExceptLoopback`] — the reply is
+/// unsigned, so the transport is its only integrity control (A49) — and the
+/// two must be different origins by the substrate's own
+/// [`antseal_anchor::agree::EndpointPair::new`].
+///
+/// Every refusal names the key, the table and the entry **index**, never a URL
+/// and never an origin: an Arbitrum RPC endpoint that answers
+/// `eth_getTransactionReceipt` commonly carries an API key in its URL (D55 §2
+/// round 2), and error text ends up in terminals, logs and `--json` output
+/// (D180 §2).
+///
+/// # Errors
+///
+/// The refusal text, for the caller to place: a [`ConfigParseError`] at load,
+/// a usage error at use.
+pub(crate) fn rpc_endpoint_pair(
+    items: &[String],
+    network: NetworkId,
+) -> Result<antseal_anchor::agree::EndpointPair, String> {
+    let [first, second] = items else {
+        return Err(format!(
+            "`rpc_endpoints` under [verify.{network}] must list exactly two endpoints (found \
+             {}): an override replaces that network's pinned pair wholesale, and a must-agree \
+             pair needs two independent sources",
+            items.len()
+        ));
+    };
+    let parse = |index: usize, url: &str| {
+        antseal_anchor::Endpoint::parse(url, antseal_anchor::TlsPolicy::RequiredExceptLoopback)
+            .map_err(|refusal| {
+                format!(
+                    "`rpc_endpoints` under [verify.{network}]: entry {index} {}; \
+                     {RPC_VALUE_NOT_REPEATED}",
+                    endpoint_refusal_without_url(&refusal)
+                )
+            })
+    };
+    antseal_anchor::agree::EndpointPair::new(parse(0, first)?, parse(1, second)?).map_err(|_| {
+        format!(
+            "`rpc_endpoints` under [verify.{network}]: entries 0 and 1 are one origin, and a \
+             must-agree pair of one endpoint agrees with itself and proves nothing; \
+             {RPC_VALUE_NOT_REPEATED}"
+        )
+    })
+}
+
+/// An [`antseal_anchor::EndpointError`], said without the URL it carries.
+fn endpoint_refusal_without_url(refusal: &antseal_anchor::EndpointError) -> String {
+    match refusal {
+        antseal_anchor::EndpointError::Invalid { reason, .. } => {
+            format!("is not a usable endpoint URL ({reason})")
+        }
+        antseal_anchor::EndpointError::TlsRequired { .. } => {
+            "must be https (only a loopback IP literal is exempt)".to_owned()
+        }
+        // `#[non_exhaustive]`: a class added upstream is still said without
+        // its URL.
+        _ => "is not a usable endpoint URL".to_owned(),
+    }
+}
+
+/// Route one `key = value` into the schema: recognized keys with invalid
+/// values are hard errors; unrecognized keys/sections warn.
+///
+/// `raw` is the value's text, unparsed. Every recognised arm parses it
+/// itself — through [`parse_value`] for the ordinary keys, and value-free for
+/// `rpc_endpoints` (D188 R5).
 fn apply(
     config: &mut Config,
     section: &[String],
     key: &str,
     full_key: &str,
-    value: Value,
+    raw: &str,
     line_no: usize,
 ) -> Result<(), ConfigParseError> {
     let err = |detail: String| ConfigParseError {
         line: line_no,
         detail,
     };
+    // The subset parse, for every key whose refusals may quote its value.
+    let value = || parse_value(raw).map_err(err);
     let expect_str = |value: Value, what: &str| match value {
         Value::Str(s) => Ok(s),
         Value::Array(_) => Err(err(format!("`{what}` takes a string, not an array"))),
+        Value::Bool(_) => Err(err(format!("`{what}` takes a string, not a boolean"))),
     };
     let expect_url_array = |value: Value, what: &str| -> Result<Vec<String>, ConfigParseError> {
         match value {
             Value::Array(items) => {
                 for item in &items {
                     if !http_url_shape(item) {
+                        // The entry is named, as the substrate's refusal below
+                        // names it: these keys' URLs are no credential (the
+                        // `rpc_endpoints` pair, whose URLs can be, never comes
+                        // through here — D188 R5).
                         return Err(err(format!(
-                            "`{what}` entries must be http:// or https:// URLs"
+                            "`{what}` entries must be http:// or https:// URLs (got `{item}`)"
                         )));
                     }
                 }
                 Ok(items)
             }
             Value::Str(_) => Err(err(format!("`{what}` takes an array of strings"))),
+            Value::Bool(_) => Err(err(format!(
+                "`{what}` takes an array of strings, not a boolean"
+            ))),
         }
     };
     // A49/A50: the same array shape, plus antseal-anchor's transport rule.
@@ -575,7 +858,7 @@ fn apply(
     let section_names: Vec<&str> = section.iter().map(String::as_str).collect();
     match (section_names.as_slice(), key) {
         ([], "default_network") => {
-            let name = expect_str(value, "default_network")?;
+            let name = expect_str(value()?, "default_network")?;
             let id: NetworkId = name.parse().map_err(|_| {
                 err(format!(
                     "`default_network` must be one of arbitrum-one, arbitrum-sepolia, \
@@ -597,12 +880,9 @@ fn apply(
         // defaults": a present layer is non-empty where it is parsed, so no
         // layer is ever silently skipped (D173 §2 R6).
         (["networks", network_name], "bootstrap") => {
-            let id: NetworkId = network_name.parse().map_err(|_| {
-                err(format!(
-                    "`[networks.{network_name}]` is not a known network (valid: \
-                     arbitrum-one, arbitrum-sepolia, devnet)"
-                ))
-            })?;
+            let id: NetworkId = network_name
+                .parse()
+                .map_err(|_| err(unknown_network("networks", network_name)))?;
             if id != NetworkId::ArbitrumOne {
                 return Err(err(format!(
                     "`bootstrap` is accepted under [networks.arbitrum-one] only; \
@@ -611,9 +891,9 @@ fn apply(
                      run of a devnet"
                 )));
             }
-            let items = match value {
+            let items = match value()? {
                 Value::Array(items) => items,
-                Value::Str(_) => {
+                Value::Str(_) | Value::Bool(_) => {
                     return Err(err(
                         "`bootstrap` takes an array of \"ip:port\" strings".to_owned()
                     ));
@@ -625,12 +905,9 @@ fn apply(
             // The section family is recognized; validate its name even
             // for unknown keys, then warn on the key (forward compat).
             // `rpc_url` never arrives here: `parse` refuses it on its key.
-            let _: NetworkId = network_name.parse().map_err(|_| {
-                err(format!(
-                    "`[networks.{network_name}]` is not a known network (valid: \
-                     arbitrum-one, arbitrum-sepolia, devnet)"
-                ))
-            })?;
+            let _: NetworkId = network_name
+                .parse()
+                .map_err(|_| err(unknown_network("networks", network_name)))?;
             config.warnings.push(format!(
                 "config.toml line {line_no}: unknown key `{other}` under \
                  [networks.{network_name}] — ignored (newer antseal?)"
@@ -645,10 +922,42 @@ fn apply(
         // a seal.
         (["anchors"], "tsa_urls") => {
             config.tsa_urls = Some(expect_endpoint_array(
-                value,
+                value()?,
                 "tsa_urls",
                 antseal_anchor::TlsPolicy::Optional,
             )?);
+        }
+        // U44 (D188 R1): the OpenTimestamps calendar list — `seal`'s submit
+        // targets and the upgrade allowlist's only widening, one list in two
+        // roles (U52, U64). The `tsa_urls` conventions throughout: a non-empty
+        // list replaces D54's four wholesale, an empty one is the defaults,
+        // and a bad entry is refused here, at load, naming the key, the entry
+        // and the line (a calendar URL carries no credential, so the entry is
+        // echoed as `tsa_urls`' are). The TLS policy is the SUBMIT path's own
+        // (`ots/submit.rs` parses each calendar under `TlsPolicy::Optional`:
+        // a calendar cannot forge an OpenTimestamps proof, D54 §4), so load and
+        // use apply one rule and cannot disagree (A50). Upgrades are fetched
+        // over https only (A42) — a cost `docs/config.md` states.
+        (["anchors"], "ots_calendars") => {
+            config.ots_calendars = Some(expect_endpoint_array(
+                value()?,
+                "ots_calendars",
+                antseal_anchor::TlsPolicy::Optional,
+            )?);
+        }
+        // U60 (D189 R2): the opportunistic upgrade pass's off switch. Only the
+        // bare booleans load; every other spelling — `"false"`, `off`,
+        // `False`, `[]` — is refused with this key's own sentence rather than
+        // the subset's generic one, so a user who meant "off" is told the one
+        // spelling that means it. Honoured by `upgrade_hook::run_after_output`
+        // alone: `status <work-id> --upgrade` is the user asking.
+        (["anchors"], "opportunistic_upgrades") => {
+            let Ok(Value::Bool(on)) = parse_value(raw) else {
+                return Err(err(
+                    "`opportunistic_upgrades` takes true or false".to_owned()
+                ));
+            };
+            config.opportunistic_upgrades = Some(on);
         }
         // A49 (decision D90 §6.6): the `[verify]` endpoints are the two
         // must-agree pairs, and their replies are **unsigned** — an esplora
@@ -664,18 +973,41 @@ fn apply(
         // nonce-bound, and `timestamp.digicert.com` has no port 443 at all.
         (["verify"], "bitcoin_endpoints") => {
             config.verify_bitcoin_endpoints = Some(expect_endpoint_array(
-                value,
+                value()?,
                 "bitcoin_endpoints",
                 antseal_anchor::TlsPolicy::RequiredExceptLoopback,
             )?);
         }
-        (["verify"], "arbitrum_endpoints") => {
-            config.verify_arbitrum_endpoints = Some(expect_endpoint_array(
-                value,
-                "arbitrum_endpoints",
-                antseal_anchor::TlsPolicy::RequiredExceptLoopback,
-            )?);
+        // U44 (D188 R4, R5): A17's per-network Arbitrum receipt pair. The
+        // table is judged first — an unknown network keeps the
+        // `[networks.<id>]` answer, devnet is refused with its reason — and
+        // then the value, value-free: exactly two endpoints at two origins,
+        // checked here at load by the same function `verify --online` builds
+        // its pair with, and every refusal names the key, the table, the line
+        // and the entry index, never a URL.
+        (["verify", network_name], "rpc_endpoints") => {
+            let id = verify_table_network(network_name).map_err(err)?;
+            let items = rpc_endpoints_value(raw, id).map_err(err)?;
+            rpc_endpoint_pair(&items, id).map_err(err)?;
+            let Some(slot) = config.verify_rpc_slot(id) else {
+                return Err(err(devnet_verify_refusal()));
+            };
+            *slot = Some(items);
         }
+        (["verify", network_name], other) => {
+            // The table family is recognized: its network is judged even for
+            // a key this build does not know, then the key is warned on.
+            verify_table_network(network_name).map_err(err)?;
+            config.warnings.push(format!(
+                "config.toml line {line_no}: unknown key `{other}` under \
+                 [verify.{network_name}] — ignored (newer antseal?)"
+            ));
+        }
+        // D189 R3 (G3): an unknown key's value is NOT parsed. It is warned on
+        // by its key alone — after any table name above was judged — so a
+        // value in grammar this build lacks (an integer, a date, a construct a
+        // newer antseal added) cannot turn a newer config into a hard error
+        // here. Only a recognised key's value must be in the subset.
         _ => {
             config.warnings.push(format!(
                 "config.toml line {line_no}: unknown key `{full_key}` — ignored \
